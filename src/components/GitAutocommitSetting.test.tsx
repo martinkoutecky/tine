@@ -56,13 +56,16 @@ it("offers no control outside a repository or off desktop, and names why Tine ca
   view.dispose();
 });
 
-it("keeps a failed change on screen", async () => {
-  vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo());
+it("keeps a failed change on screen and shows the device's actual choice", async () => {
+  const status = vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo());
   vi.spyOn(backend(), "setGitAutocommit").mockRejectedValue(new Error("disk full"));
   const { root, dispose } = mount();
   await vi.waitFor(() => expect(root.querySelector("[data-git-policy]")).not.toBeNull());
   const select = root.querySelector<HTMLSelectElement>("[data-git-policy]")!;
   select.value = "commit"; select.dispatchEvent(new Event("change"));
   await vi.waitFor(() => expect(root.querySelector("[role=alert]")?.textContent).toContain("Couldn't change git settings: disk full"));
+  expect(status).toHaveBeenCalledTimes(2);
+  expect(root.querySelector<HTMLSelectElement>("[data-git-policy]")!.value).toBe("off");
+  expect(root.querySelector("[data-git-interval]")).toBeNull();
   dispose();
 });

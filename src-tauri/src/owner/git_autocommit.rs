@@ -25,13 +25,14 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use git2::{Oid, Repository, Status, StatusOptions};
 use serde::Serialize;
 
-use super::git_run::{open_repo_at, remove_stale_copies, IndexLock, Repo, CAS_ATTEMPTS, RUN_LOCK};
+use super::git_run::{open_repo_at, IndexLock, LockRefusal, Repo, CAS_ATTEMPTS, RUN_LOCK};
 use crate::state::GraphSlot;
 
 /// No publication for this long before a timed autocommit (G9).
@@ -52,6 +53,13 @@ const STALE_LOCK_CYCLES: u32 = 3;
 /// The device-settings key (`tine-settings.json`), keyed by graph root.
 pub(crate) const SETTINGS_KEY: &str = "git_autocommit";
 const MESSAGE: &str = "Tine: autosave";
+/// What the exit flush leaves an aborting commit to release its lock.
+const EXIT_GRACE: Duration = Duration::from_millis(500);
+
+/// The app is exiting: a commit in flight aborts at its next file or before
+/// it moves the branch, and none starts (review N2: a commit killed by the
+/// exit would leave `index.lock` behind).
+static EXITING: AtomicBool = AtomicBool::new(false);
 
 /// What Tine does with a git graph on this device (ADR 0078 §1). Slice 1
 /// offers `Off` and `Commit`; sync arrives with slice 2.
@@ -137,6 +145,10 @@ pub(crate) enum Unusable {
     Precompose,
     /// Another git command holds `index.lock` (retried).
     Busy,
+    /// The index has unresolved conflicts.
+    Conflicted,
+    /// Tine is quitting; the commit was abandoned before it changed anything.
+    Quitting,
     /// libgit2 or the file system failed.
     Failed(String),
 }
@@ -150,6 +162,8 @@ impl Unusable {
             Self::Sparse => "sparse",
             Self::Precompose => "precompose",
             Self::Busy => "busy",
+            Self::Conflicted => "conflicted",
+            Self::Quitting => "quitting",
             Self::Failed(_) => "failed",
         }
     }
@@ -163,13 +177,44 @@ impl Unusable {
             ),
             Self::Sparse => "The repository uses sparse checkout; Tine would record the files it leaves out as deleted.".into(),
             Self::Precompose => "On this Mac the repository needs `git config core.precomposeunicode true`, or page names with accents would be recorded as renames.".into(),
-            Self::Busy => "Another git command is using the repository (its index.lock is held).".into(),
+            Self::Busy => LockRefusal::Held.message(),
+            Self::Conflicted => LockRefusal::Conflicted.message(),
+            Self::Quitting => "Tine quit before this commit finished; it is made on the next start.".into(),
         }
     }
 }
 
 fn failed(error: git2::Error) -> Unusable {
     Unusable::Failed(format!("git: {}", error.message()))
+}
+
+fn lock_refused(refusal: LockRefusal) -> Unusable {
+    match refusal {
+        LockRefusal::Held => Unusable::Busy,
+        LockRefusal::Conflicted => Unusable::Conflicted,
+        missing @ LockRefusal::Missing => Unusable::Repository(missing.message()),
+        LockRefusal::Failed(m) => Unusable::Failed(m),
+    }
+}
+
+/// The attributes that make a file's committed bytes differ from its work
+/// tree bytes in a way a raw commit would bypass (`.gitattributes`).
+const CONVERTING: [&str; 3] = ["filter", "ident", "working-tree-encoding"];
+
+/// The first converting attribute set for `path` (work-tree relative).
+fn converting(repo: &Repository, path: &Path) -> Result<Option<&'static str>, Unusable> {
+    for attr in CONVERTING {
+        let value = repo
+            .get_attr(path, attr, git2::AttrCheckFlags::FILE_THEN_INDEX)
+            .map_err(failed)?;
+        if !matches!(
+            git2::AttrValue::from_string(value),
+            git2::AttrValue::Unspecified | git2::AttrValue::False
+        ) {
+            return Ok(Some(attr));
+        }
+    }
+    Ok(None)
 }
 
 /// Open and check the repository holding `root` for autocommits.
@@ -196,7 +241,8 @@ fn open_checked(root: &Path) -> Result<Repo, Unusable> {
 fn check_config(repo: &Repo) -> Result<(), Unusable> {
     let config = repo.repo.config().map_err(failed)?;
     let flag = |key: &str| config.get_bool(key).ok();
-    // Representative graph paths: `.gitattributes` applies by pattern.
+    // Representative graph paths, so Settings can say so up front;
+    // `stage` checks every file it adds (`.gitattributes` applies by pattern).
     for sample in [
         "pages/a.md",
         "journals/a.md",
@@ -205,18 +251,8 @@ fn check_config(repo: &Repo) -> Result<(), Unusable> {
         "logseq/config.edn",
         "assets/a.png",
     ] {
-        let path = repo.prefix.join(sample);
-        for attr in ["filter", "ident", "working-tree-encoding"] {
-            let value = repo
-                .repo
-                .get_attr(&path, attr, git2::AttrCheckFlags::FILE_THEN_INDEX)
-                .map_err(failed)?;
-            if !matches!(
-                git2::AttrValue::from_string(value),
-                git2::AttrValue::Unspecified | git2::AttrValue::False
-            ) {
-                return Err(Unusable::Conversion(format!("{attr} for {sample}")));
-            }
+        if let Some(attr) = converting(&repo.repo, &repo.prefix.join(sample))? {
+            return Err(Unusable::Conversion(format!("{attr} for {sample}")));
         }
     }
     if flag("core.sparseCheckout") == Some(true) {
@@ -288,12 +324,20 @@ pub(crate) fn commit_now(root: &Path, message: &str) -> Result<Outcome, Unusable
 
 /// [`commit_now`] for a caller that already holds [`RUN_LOCK`].
 fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
-    let repo = open_checked(root)?;
-    let prefix = prefix_of(&repo);
     for _ in 0..CAS_ATTEMPTS {
-        let Some(mut lock) = IndexLock::acquire(&repo.repo) else {
-            return Err(Unusable::Busy);
-        };
+        if EXITING.load(Ordering::Acquire) {
+            return Err(Unusable::Quitting);
+        }
+        let repo = open_checked(root)?;
+        let prefix = prefix_of(&repo);
+        let mut lock = IndexLock::acquire(&repo.repo).map_err(lock_refused)?;
+        // A checkout between the open and the lock: the index is now the
+        // other branch's (review F3).
+        let head = repo.repo.find_reference("HEAD").map_err(failed)?;
+        if head.symbolic_target_bytes() != Some(repo.branch.as_bytes()) {
+            continue;
+        }
+        drop(head);
         if has_skip_worktree(&lock.index, &prefix) {
             return Err(Unusable::Sparse);
         }
@@ -323,6 +367,9 @@ fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
             .repo
             .commit(None, &user, &user, message, &tree, &parents)
             .map_err(failed)?;
+        if EXITING.load(Ordering::Acquire) {
+            return Err(Unusable::Quitting);
+        }
         if repo
             .advance(tip.as_ref().map(|c| c.id()), oid, "tine: autocommit")
             .map_err(failed)?
@@ -338,7 +385,11 @@ fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
 /// Stage every change git sees under the graph root into `index` (a copy):
 /// new and modified regular files with their exact bytes, deletions removed.
 /// Ignored files, untracked nested repositories, symlinks and Tine's own
-/// temp files are left out.
+/// temp files are left out. A file `.gitattributes` filters or re-encodes
+/// refuses the whole commit (git-lfs, git-crypt: its raw bytes must not be
+/// committed). A file the user untracked with `git rm --cached` but did not
+/// ignore is added back: G5 commits every change git sees, and `.gitignore`
+/// is how a file stays out.
 fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusable> {
     let workdir = repo
         .repo
@@ -374,11 +425,10 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
         if tine_temp(path) {
             continue;
         }
-        let status = entry.status();
-        // `git rm --cached`: the user untracked a file that is still there.
-        if status.contains(Status::INDEX_DELETED) && status.contains(Status::WT_NEW) {
-            continue;
+        if EXITING.load(Ordering::Acquire) {
+            return Err(Unusable::Quitting);
         }
+        let status = entry.status();
         if !status.intersects(
             Status::WT_NEW
                 | Status::WT_MODIFIED
@@ -396,12 +446,18 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
             Err(e) => return Err(Unusable::Failed(format!("{path}: {e}"))),
             Ok(meta) if !meta.is_file() => {}
             Ok(meta) => {
-                let bytes =
-                    std::fs::read(&full).map_err(|e| Unusable::Failed(format!("{path}: {e}")))?;
-                let id = repo.repo.blob(&bytes).map_err(failed)?;
+                if let Some(attr) = converting(&repo.repo, Path::new(path))? {
+                    return Err(Unusable::Conversion(format!("{attr} for {path}")));
+                }
+                let io = |e: std::io::Error| Unusable::Failed(format!("{path}: {e}"));
+                // Streamed: an asset is never held in memory whole.
+                let mut file = std::fs::File::open(&full).map_err(io)?;
+                let mut writer = repo.repo.blob_writer(None).map_err(failed)?;
+                let size = std::io::copy(&mut file, &mut writer).map_err(io)?;
+                let id = writer.commit().map_err(failed)?;
                 let old_mode = index.get_path(Path::new(path), 0).map(|e| e.mode);
                 index
-                    .add(&entry_for(path, id, &bytes, &meta, filemode, old_mode))
+                    .add(&entry_for(path, id, size, &meta, filemode, old_mode))
                     .map_err(failed)?;
             }
         }
@@ -412,7 +468,7 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
 fn entry_for(
     path: &str,
     id: Oid,
-    bytes: &[u8],
+    size: u64,
     meta: &std::fs::Metadata,
     filemode: bool,
     old_mode: Option<u32>,
@@ -459,7 +515,8 @@ fn entry_for(
         mode,
         uid,
         gid,
-        file_size: bytes.len() as u32,
+        // git keeps the low 32 bits of the size.
+        file_size: size as u32,
         id,
         flags: 0,
         flags_extended: 0,
@@ -479,9 +536,34 @@ fn loose_object_count(objects: &Path) -> usize {
     count
 }
 
-/// Pack everything reachable from refs and `HEAD`, then delete only the loose
-/// objects that pack holds. Returns how many were deleted; `Ok(0)` when
-/// skipped (a `git gc` is running, or the repository is not SHA-1).
+/// The ids of the loose objects under `objects`.
+fn loose_objects(objects: &Path) -> Vec<Oid> {
+    let mut out = Vec::new();
+    for byte in 0..=255u8 {
+        let hex = format!("{byte:02x}");
+        let Ok(entries) = std::fs::read_dir(objects.join(&hex)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(rest) = name.to_str().filter(|r| r.len() == 38) else {
+                continue;
+            };
+            if let Ok(oid) = Oid::from_str(&format!("{hex}{rest}")) {
+                out.push(oid);
+            }
+        }
+    }
+    out
+}
+
+/// Pack the loose objects into one new pack, then delete only the loose
+/// objects that pack holds (git's `repack -d` without `-a`, then
+/// `prune-packed`). Existing packs are never rewritten, so a repack costs
+/// what was added since the last one, not the history (review N1).
+/// Unreachable loose objects are packed too, not dropped. Returns how many
+/// were deleted; `Ok(0)` when skipped (a `git gc` is running, or the
+/// repository is not SHA-1).
 pub(crate) fn repack(repo: &Repository) -> Result<usize, String> {
     let gitdir = repo.path();
     if gitdir.join("gc.pid").exists() {
@@ -498,13 +580,15 @@ pub(crate) fn repack(repo: &Repository) -> Result<usize, String> {
     let objects = gitdir.join("objects");
     let pack_dir = objects.join("pack");
     std::fs::create_dir_all(&pack_dir).map_err(|e| e.to_string())?;
-    let mut walk = repo.revwalk().map_err(|e| e.to_string())?;
-    let _ = walk.push_head();
-    walk.push_glob("refs/*").map_err(|e| e.to_string())?;
-    let mut builder = repo.packbuilder().map_err(|e| e.to_string())?;
-    builder.insert_walk(&mut walk).map_err(|e| e.to_string())?;
-    if builder.object_count() == 0 {
+    let loose = loose_objects(&objects);
+    if loose.is_empty() {
         return Ok(0);
+    }
+    let mut builder = repo.packbuilder().map_err(|e| e.to_string())?;
+    for oid in &loose {
+        builder
+            .insert_object(*oid, None)
+            .map_err(|e| e.to_string())?;
     }
     builder.write(&pack_dir, 0o444).map_err(|e| e.to_string())?;
     let name = builder
@@ -521,27 +605,31 @@ pub(crate) fn repack(repo: &Repository) -> Result<usize, String> {
     sync_dir(&pack_dir)?;
     let packed = idx_oids(&std::fs::read(&idx).map_err(|e| e.to_string())?)?;
     let mut removed = 0;
-    for byte in 0..=255u8 {
-        let hex = format!("{byte:02x}");
-        let dir = objects.join(&hex);
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(rest) = name.to_str() else { continue };
-            let Ok(oid) = Oid::from_str(&format!("{hex}{rest}")) else {
-                continue;
-            };
-            if rest.len() == 38 && packed.contains(oid.as_bytes()) {
-                if std::fs::remove_file(entry.path()).is_ok() {
-                    removed += 1;
-                }
-            }
+    for oid in loose.iter().filter(|oid| packed.contains(oid.as_bytes())) {
+        let hex = oid.to_string();
+        let file = objects.join(&hex[..2]).join(&hex[2..]);
+        if remove_object(&file).is_ok() {
+            removed += 1;
         }
-        let _ = std::fs::remove_dir(&dir);
+    }
+    for byte in 0..=255u8 {
+        let _ = std::fs::remove_dir(objects.join(format!("{byte:02x}")));
     }
     Ok(removed)
+}
+
+/// Delete a loose object file. git writes them read-only, which on Windows
+/// refuses the unlink until the attribute is cleared (as git-for-windows
+/// does).
+fn remove_object(file: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        let mut permissions = std::fs::metadata(file)?.permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(file, permissions)?;
+    }
+    std::fs::remove_file(file)
 }
 
 #[cfg(unix)]
@@ -641,6 +729,8 @@ mod registry {
         pub(super) last: LastAttempt,
         pub(super) commits_since_repack: u32,
         pub(super) running: bool,
+        /// The worker left the registry; a new bind makes a new one.
+        pub(super) retired: bool,
     }
 
     static WORKERS: Mutex<Option<HashMap<PathBuf, Arc<Worker>>>> = Mutex::new(None);
@@ -673,15 +763,12 @@ mod registry {
         (worker, true)
     }
 
-    pub(super) fn remove(worker: &Arc<Worker>) {
+    /// Take `worker` out of the registry. Lock order: a worker's state, then
+    /// the registry; nothing holds the registry while taking a state.
+    pub(super) fn unregister(worker: &Arc<Worker>) {
         let mut map = WORKERS.lock().unwrap();
         if let Some(map) = map.as_mut() {
-            if map
-                .get(&worker.root)
-                .is_some_and(|w| Arc::ptr_eq(w, worker))
-            {
-                map.remove(&worker.root);
-            }
+            map.retain(|_, w| !Arc::ptr_eq(w, worker));
         }
     }
 
@@ -701,10 +788,15 @@ mod registry {
 
 /// Start (or retarget) the autocommit worker of `slot`'s graph root with
 /// `settings` read from the device settings at bind.
-pub(crate) fn start(slot: &Arc<GraphSlot>, settings: GitSettings) {
-    let (worker, fresh) = registry::get_or_insert(&slot.root_key);
-    {
+pub(crate) fn start_worker(slot: &Arc<GraphSlot>, settings: GitSettings) {
+    let worker = loop {
+        let (worker, fresh) = registry::get_or_insert(&slot.root_key);
         let mut state = worker.state.lock().unwrap();
+        if state.retired {
+            // Unregistered while we looked it up: the next lookup makes a
+            // new worker (review F1).
+            continue;
+        }
         state.slot = Arc::downgrade(slot);
         state.settings = settings;
         if !fresh && state.running {
@@ -712,14 +804,18 @@ pub(crate) fn start(slot: &Arc<GraphSlot>, settings: GitSettings) {
             return;
         }
         state.running = true;
-    }
+        drop(state);
+        break worker;
+    };
     let spawned = std::thread::Builder::new().name("tine-git".into()).spawn({
         let worker = worker.clone();
-        move || run(worker)
+        move || autocommit_worker(worker)
     });
     if spawned.is_err() {
-        worker.state.lock().unwrap().running = false;
-        registry::remove(&worker);
+        let mut state = worker.state.lock().unwrap();
+        state.running = false;
+        state.retired = true;
+        registry::unregister(&worker);
     }
 }
 
@@ -737,10 +833,13 @@ pub(crate) fn last_attempt(root: &Path) -> LastAttempt {
         .unwrap_or_default()
 }
 
-/// Ask every worker for an autocommit now and wait up to `budget` for them
-/// (app exit, G9 "at once on quit").
+/// App exit (G9 "at once on quit"): ask every worker for an autocommit and
+/// wait for them until `budget` less [`EXIT_GRACE`]. Then no commit may run
+/// on: [`EXITING`] makes one in flight abort, which releases its
+/// `index.lock`, and taking [`RUN_LOCK`] for good, within the grace, makes
+/// sure none is left when the process ends (review N2).
 pub(crate) fn flush_all(budget: Duration) {
-    let deadline = Instant::now() + budget;
+    let deadline = Instant::now() + budget.saturating_sub(EXIT_GRACE);
     let workers = registry::all();
     let mut waits = Vec::new();
     for worker in &workers {
@@ -751,23 +850,37 @@ pub(crate) fn flush_all(budget: Duration) {
             worker.wake.notify_all();
         }
     }
-    for (worker, before) in waits {
+    'wait: for (worker, before) in waits {
         let mut state = worker.state.lock().unwrap();
         while state.flushed == before && state.running {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                return;
+                break 'wait;
             }
             state = worker.wake.wait_timeout(state, left).unwrap().0;
         }
     }
+    EXITING.store(true, Ordering::Release);
+    let grace = Instant::now() + EXIT_GRACE;
+    loop {
+        match RUN_LOCK.try_lock() {
+            Ok(guard) => return std::mem::forget(guard),
+            Err(std::sync::TryLockError::Poisoned(p)) => return std::mem::forget(p.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) if Instant::now() < grace => {
+                std::thread::sleep(Duration::from_millis(10))
+            }
+            Err(std::sync::TryLockError::WouldBlock) => return,
+        }
+    }
 }
 
-fn run(worker: Arc<registry::Worker>) {
+/// The slot is gone or its background work was cancelled (unbind).
+fn ended(slot: Option<&Arc<GraphSlot>>) -> bool {
+    slot.is_none_or(|s| s.background_cancelled.load(Ordering::Acquire))
+}
+
+fn autocommit_worker(worker: Arc<registry::Worker>) {
     let root = worker.root.clone();
-    if let Ok(repo) = Repository::discover(&root) {
-        remove_stale_copies(repo.path());
-    }
     let mut last_rev = None;
     let mut changed_at: Option<Instant> = None;
     let mut last_commit: Option<Instant> = None;
@@ -783,13 +896,10 @@ fn run(worker: Arc<registry::Worker>) {
             let flush = std::mem::take(&mut state.flush);
             (state.settings, flush, state.slot.upgrade())
         };
-        let ended = slot.as_ref().is_none_or(|s| {
-            s.background_cancelled
-                .load(std::sync::atomic::Ordering::Acquire)
-        });
+        let ending = ended(slot.as_ref());
         let rev = slot
             .as_ref()
-            .filter(|_| !ended)
+            .filter(|_| !ending)
             .and_then(|s| s.store.whole_graph().ok())
             .map(|view| view.rev());
         drop(slot);
@@ -799,7 +909,7 @@ fn run(worker: Arc<registry::Worker>) {
             }
             last_rev = rev;
         }
-        let commit = settings.policy == Policy::Commit;
+        let commit = settings.policy == Policy::Commit && !EXITING.load(Ordering::Acquire);
         let due = changed_at.is_some_and(|at| at.elapsed() >= IDLE)
             && last_commit.is_none_or(|at| at.elapsed() >= settings.interval);
         // At bind: changes made while Tine was closed are committed after
@@ -808,7 +918,7 @@ fn run(worker: Arc<registry::Worker>) {
             && changed_at.is_none()
             && rev.is_some()
             && started.elapsed() >= IDLE;
-        if commit && (flush || ended || due || first) {
+        if commit && (flush || ending || due || first) {
             let outcome = commit_now(&root, MESSAGE);
             let mut state = worker.state.lock().unwrap();
             match &outcome {
@@ -839,9 +949,10 @@ fn run(worker: Arc<registry::Worker>) {
                         busy_since = None;
                     }
                     state.last.refused = Some((error.code().into(), error.message()));
-                    if first {
+                    if first && *error != Unusable::Busy {
                         // Not usable now: look again after an interval, not
-                        // every tick.
+                        // every tick. A held lock is retried every tick, so
+                        // a stale one is named even on an idle graph.
                         last_commit = Some(Instant::now());
                     }
                 }
@@ -853,14 +964,16 @@ fn run(worker: Arc<registry::Worker>) {
                 maybe_repack(&worker, &root, repack_due);
             }
         }
-        if flush || ended {
+        if flush || ending {
             let mut state = worker.state.lock().unwrap();
             state.flushed += 1;
             worker.wake.notify_all();
-            if ended {
+            // Decided under the state lock: a bind that retargeted this
+            // worker meanwhile keeps it (review F1).
+            if ending && ended(state.slot.upgrade().as_ref()) {
                 state.running = false;
-                drop(state);
-                registry::remove(&worker);
+                state.retired = true;
+                registry::unregister(&worker);
                 return;
             }
         }
@@ -898,7 +1011,7 @@ pub(crate) struct GitStatus {
     pub(crate) last: LastAttempt,
 }
 
-pub(crate) fn status(root: &Path, settings: GitSettings) -> GitStatus {
+pub(crate) fn git_status(root: &Path, settings: GitSettings) -> GitStatus {
     let checked = open_checked(root).and_then(|repo| {
         let prefix = prefix_of(&repo);
         if let Ok(index) = repo.repo.index() {

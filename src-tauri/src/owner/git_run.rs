@@ -371,10 +371,50 @@ pub(super) struct IndexLock {
 /// a crash can leave one, which [`remove_stale_copies`] removes.
 const SCRATCH_PREFIX: &str = "tine-index-";
 
+/// Why [`IndexLock::acquire`] could not take the index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum LockRefusal {
+    /// Another git command holds `index.lock`.
+    Held,
+    /// The index has unmerged entries (a conflicted `git stash pop`, say).
+    Conflicted,
+    /// `HEAD` has commits but there is no index: committing from an empty
+    /// index would record every file as deleted (`rm .git/index` before a
+    /// `git reset`).
+    Missing,
+    Failed(String),
+}
+
+impl LockRefusal {
+    pub(super) fn message(&self) -> String {
+        match self {
+            Self::Held => {
+                "Another git command is using the repository (its index.lock is held).".into()
+            }
+            Self::Conflicted => {
+                "The repository's index has unresolved conflicts; resolve them in git first.".into()
+            }
+            Self::Missing => {
+                "The repository's index is missing; run `git reset` in it to rebuild it.".into()
+            }
+            Self::Failed(m) => m.clone(),
+        }
+    }
+}
+
+/// The entry count a version 2–4 index file's header declares.
+fn header_entries(bytes: &[u8]) -> Option<usize> {
+    if bytes.len() < 12 || &bytes[..4] != b"DIRC" {
+        return None;
+    }
+    Some(u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize)
+}
+
 impl IndexLock {
-    /// `None`: another git command holds the index, it is conflicted, or it
-    /// cannot be read.
-    pub(super) fn acquire(repo: &Repository) -> Option<Self> {
+    /// Take `index.lock` and open a private copy of the index under it.
+    /// Every honest copy holder holds the lock, so copies present once it is
+    /// taken are a crash's leftovers and are removed here, never elsewhere.
+    pub(super) fn acquire(repo: &Repository) -> Result<Self, LockRefusal> {
         let gitdir = repo.path();
         let index_file = gitdir.join("index");
         let lock_file = gitdir.join("index.lock");
@@ -382,48 +422,75 @@ impl IndexLock {
             .write(true)
             .create_new(true)
             .open(&lock_file)
-            .ok()?;
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::AlreadyExists => LockRefusal::Held,
+                _ => LockRefusal::Failed(format!("{}: {e}", lock_file.display())),
+            })?;
+        remove_stale_copies(gitdir);
         let scratch = gitdir.join(format!(
             "{SCRATCH_PREFIX}{}.tmp",
             uuid::Uuid::new_v4().simple()
         ));
-        let opened = (|| -> Result<git2::Index, Box<dyn std::error::Error>> {
-            match std::fs::copy(&index_file, &scratch) {
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
+        let opened = (|| -> Result<git2::Index, LockRefusal> {
+            let failed = |what: &dyn std::fmt::Display| {
+                LockRefusal::Failed(format!("the index could not be read: {what}"))
+            };
+            let bytes = match std::fs::read(&index_file) {
+                Ok(bytes) => Some(bytes),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => return Err(failed(&e)),
+            };
+            let expected = match &bytes {
+                None if repo.head().and_then(|h| h.peel_to_commit()).is_ok() => {
+                    return Err(LockRefusal::Missing)
+                }
+                None => None,
+                Some(bytes) => {
+                    std::fs::write(&scratch, bytes).map_err(|e| failed(&e))?;
+                    Some(header_entries(bytes).ok_or_else(|| failed(&"not an index file"))?)
+                }
+            };
+            let index = git2::Index::open(&scratch).map_err(|e| failed(&e.message()))?;
+            if expected.is_some_and(|n| n != index.len()) {
+                return Err(failed(&"the copy is incomplete"));
             }
-            Ok(git2::Index::open(&scratch)?)
+            if index.has_conflicts() {
+                return Err(LockRefusal::Conflicted);
+            }
+            Ok(index)
         })();
-        let mut held = Self {
-            lock,
-            lock_file,
-            index_file,
-            scratch,
-            // Replaced below; an in-memory index owns no file.
-            index: git2::Index::new().ok()?,
-            installed: false,
-        };
-        let index = opened.ok()?;
-        if index.has_conflicts() {
-            return None;
+        match opened {
+            Ok(index) => Ok(Self {
+                lock,
+                lock_file,
+                index_file,
+                scratch,
+                index,
+                installed: false,
+            }),
+            Err(refusal) => {
+                let _ = std::fs::remove_file(&scratch);
+                let _ = std::fs::remove_file(scratch.with_extension("tmp.lock"));
+                drop(lock);
+                let _ = std::fs::remove_file(&lock_file);
+                Err(refusal)
+            }
         }
-        held.index = index;
-        Some(held)
     }
 
     /// [`Self::acquire`], waiting up to about a second for a git command that
     /// holds the lock briefly.
-    pub(super) fn acquire_waiting(repo: &Repository) -> Option<Self> {
-        for attempt in 0..10 {
-            if let Some(held) = Self::acquire(repo) {
-                return Some(held);
-            }
-            if attempt < 9 {
-                std::thread::sleep(std::time::Duration::from_millis(100));
+    pub(super) fn acquire_waiting(repo: &Repository) -> Result<Self, LockRefusal> {
+        let mut attempt = 0;
+        loop {
+            match Self::acquire(repo) {
+                Err(LockRefusal::Held) if attempt < 9 => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                other => return other,
             }
         }
-        None
     }
 
     /// Point the entry of `path` at a committed `blob`, unless the user had
@@ -646,12 +713,18 @@ fn commit_pair(
             .commit(None, &agent, &agent, agent_msg, &agent_tree, &parents)
             .map_err(git_failed)?;
         // No index lock, no branch move (ADR 0078 review R2).
-        let Some(mut lock) = IndexLock::acquire_waiting(&repo.repo) else {
-            return Err(super::write::refused(
+        let mut lock = match IndexLock::acquire_waiting(&repo.repo) {
+            Ok(lock) => lock,
+            Err(LockRefusal::Held) => return Err(super::write::refused(
                 "git-busy",
                 None,
                 "another git command held the repository's index; the file is saved, its commit is missing",
-            ));
+            )),
+            Err(refusal) => return Err(super::write::refused(
+                "git",
+                None,
+                format!("{} The file is saved, its commit is missing.", refusal.message()),
+            )),
         };
         if repo
             .advance(tip.as_ref().map(|c| c.id()), oid, "tine run: commit")

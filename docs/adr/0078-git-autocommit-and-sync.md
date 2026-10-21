@@ -63,7 +63,13 @@ Every change git sees under the graph root, honouring `.gitignore`: Tine's saves
 deletions. The graph root is matched as a literal path prefix in the staging callback, never as a pathspec pattern
 (a folder named `Notes [work]` is a glob). Skipped: Tine's own in-flight temp files (`atomic_file::temp_path`'s
 shape) and untracked nested repositories (never added as gitlinks). Like `git commit -a`, an intermediate staged
-version of a file is replaced by the working tree's. It is built on a private copy of the index taken while Tine holds
+version of a file is replaced by the working tree's. A file the user untracked (`git rm --cached`) but did not
+ignore is still a change git sees, so it is committed again: `.gitignore` is how a file stays out (review F2;
+honouring the untrack would only delete it once). A file whose `.gitattributes` sets `filter`, `ident` or
+`working-tree-encoding` refuses the whole commit, naming it (git-lfs, git-crypt: its raw bytes must never be
+committed); every staged file is checked, not only sample paths (review B2). A missing index while `HEAD` has
+commits refuses (`run git reset`): staging into an empty index would record every file as deleted (review B1); an
+index with unresolved conflicts refuses as such. It is built on a private copy of the index taken while Tine holds
 `index.lock` (the protocol `git_run.rs` already uses): stage the graph root's changes into the copy, write its
 tree, take only the graph root's subtree into `HEAD`'s tree (a user's staged changes outside the graph are never
 committed), commit, move the branch by compare-and-swap, then rename the copy over the index. Author and
@@ -78,14 +84,20 @@ first, run the operation, then commit its files with its verb (`Rename page "A" 
 leaves only the first commit. Autocommits take the CLI runs' lock, so they never fall between a run write's
 snapshot and its agent commit; a run whose tip an autocommit moved is not squashed (CL1 already refuses a moved
 tip), and the reply says so. Pulls and structural brackets hold the same lock from their first commit to their
-last ref move. At bind, `tine-index-*.tmp` files a crash left in `.git` are removed.
+last ref move. `tine-index-*.tmp` copies a crash left in `.git` are removed by the next holder of `index.lock`,
+never otherwise (another holder's copy is live). On quit, the flush waits for pending commits until shortly
+before its budget ends; then a commit still in flight aborts at its next file or before it moves the branch,
+releasing `index.lock`, and none starts (review N2).
 
 All git work runs on one dedicated thread per graph binding, never an async worker (spike finding: libgit2
 blocks, and a push cannot be cancelled). libgit2 runs with `GIT_OPT_ENABLE_FSYNC_GITDIR`. After 50 loose
-commits the thread repacks: libgit2's pack builder writes a pack of everything reachable from refs, the pack and
-its index are fsynced, and then only loose objects contained in that pack are deleted (git's `prune-packed`).
-Unreachable loose objects are never deleted: they may be the user's `git add`, stash or reflog history, or a
-concurrent `git commit`'s objects before its ref moves. Skipped while `gc.pid` or a lock it would replace exists.
+commits (or 6 700 loose objects) the thread repacks incrementally, like `git repack -d` without `-a`: libgit2's
+pack builder writes one new pack of the loose objects, the pack, its index and the pack directory are fsynced,
+and then only the loose objects that pack holds are deleted (git's `prune-packed`). Existing packs are never
+rewritten, so a repack costs what was added since the last one, not the history (review N1). Unreachable loose
+objects are packed, never dropped: they may be the user's `git add`, stash or reflog history, or a concurrent
+`git commit`'s objects before its ref moves; the user's own `git gc` prunes them as usual. Skipped while
+`gc.pid` exists (a `git gc` is running).
 
 ### 4. Applying a pull (the one-way door)
 Sync = fetch, then fast-forward, then push. The fast-forward never runs git's checkout. Let `H` be `HEAD` and `U`
@@ -153,9 +165,11 @@ Measured in the spike (`specs/campaigns/2026-10-git-sync/spike/measure/*.txt`, c
   25 KB at 1 000. Files: one loose object per new object (blobs + 2 trees + commit), plus ref and reflog, and the
   index rewritten whole (880 KB at 10 000 pages).
 - **Rate:** at most one autocommit per interval of editing (default 10 min) plus one per structural operation:
-  ≤ 6 per editing hour, ≤ 1.5 MB loose per editing hour at 10 000 pages. Repacking at 50 commits deltifies the
-  trees: 100 one-page autocommits on 10 000 pages packed to 13.3 MB in 2.6 s, of which ≈ 12 MB is the initial
-  commit's pages, so ≈ 13 KB per packed commit (same size as `git gc`).
+  ≤ 6 per editing hour, ≤ 1.5 MB loose per editing hour at 10 000 pages. The incremental repack at 50 commits
+  deltifies the trees: on 10 000 flat pages, 50 one-page autocommits (200 loose objects) pack to 265 KB in
+  0.33 s, ≈ 5.3 KB per commit, and the pack written before is untouched, so `.git` grows linearly
+  (`measure_incremental_repack`, an ignored test in `git_autocommit_tests.rs`; caman, 2026-10-21). The spike's
+  whole-history repack measured ≈ 13 KB per commit; slice 1 does not rewrite history.
 - **Transport:** push ≈ 240 KB per pushed commit at 10 000 pages (25 KB at 1 000; libgit2 sends the tree
   undeltified); fetch of the same commit ≈ 1 KB (the server deltifies). A 60-page edit: push 309 KB, fetch 33 KB.
 - **Enabling:** the first autocommit of a graph never committed before stores every file (10 000 pages: 12 s
@@ -174,7 +188,7 @@ Measured in the spike (`specs/campaigns/2026-10-git-sync/spike/measure/*.txt`, c
 
 ## Open questions for Martin
 
-1. **Unit cost:** accept 247 KB loose per autocommit (≈ 13 KB once repacked) and ≈ 240 KB upload per push at
+1. **Unit cost:** accept 247 KB loose per autocommit (≈ 5.3 KB once repacked) and ≈ 240 KB upload per push at
    10 000 flat pages, with the interval as the user's lever?
 2. **Credentials (slice 2):** vision 9(b) says OS keychain; quick share (ADR 0076, your S1) chose a private
    app-data file instead (keychains are uneven on Android/iOS; the trust model does not require one). Follow 0076

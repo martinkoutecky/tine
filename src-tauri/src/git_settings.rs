@@ -25,14 +25,14 @@ mod imp {
 
     /// At bind: start the graph's autocommit worker with its settings.
     pub(crate) fn bound(app: &tauri::AppHandle, slot: &Arc<GraphSlot>) {
-        autocommit::start(slot, read(app, &slot.root_key));
+        autocommit::start_worker(slot, read(app, &slot.root_key));
     }
 
-    pub(crate) fn status(app: &tauri::AppHandle, slot: &GraphSlot) -> GitStatus {
-        autocommit::status(&slot.root_key, read(app, &slot.root_key))
+    pub(crate) fn autocommit_status(app: &tauri::AppHandle, slot: &GraphSlot) -> GitStatus {
+        autocommit::git_status(&slot.root_key, read(app, &slot.root_key))
     }
 
-    pub(crate) fn set(
+    pub(crate) fn set_autocommit(
         app: &tauri::AppHandle,
         slot: &GraphSlot,
         policy: Policy,
@@ -48,7 +48,7 @@ mod imp {
             autocommit::settings_into_json(json, &slot.root_key, settings)
         })?;
         autocommit::set_settings(&slot.root_key, settings);
-        Ok(autocommit::status(&slot.root_key, settings))
+        Ok(autocommit::git_status(&slot.root_key, settings))
     }
 
     pub(crate) fn around<T, E>(
@@ -88,11 +88,11 @@ mod imp {
 
     pub(crate) fn bound(_app: &tauri::AppHandle, _slot: &Arc<GraphSlot>) {}
 
-    pub(crate) fn status(_app: &tauri::AppHandle, _slot: &GraphSlot) -> Status {
+    pub(crate) fn autocommit_status(_app: &tauri::AppHandle, _slot: &GraphSlot) -> Status {
         Status { available: false }
     }
 
-    pub(crate) fn set(
+    pub(crate) fn set_autocommit(
         _app: &tauri::AppHandle,
         _slot: &GraphSlot,
         _policy: PolicyArg,
@@ -120,7 +120,7 @@ pub(crate) async fn git_autocommit_status(
     state: crate::state::GraphContext<'_>,
 ) -> Result<imp::Status, String> {
     let slot = crate::state::slot_for_context(&state)?;
-    crate::state::off_ui(move || Ok(imp::status(&app, &slot))).await
+    crate::state::off_ui(move || Ok(imp::autocommit_status(&app, &slot))).await
 }
 
 #[tauri::command]
@@ -131,7 +131,7 @@ pub(crate) async fn set_git_autocommit(
     state: crate::state::GraphContext<'_>,
 ) -> Result<imp::Status, String> {
     let slot = crate::state::slot_for_context(&state)?;
-    crate::state::off_ui(move || imp::set(&app, &slot, policy, interval_minutes)).await
+    crate::state::off_ui(move || imp::set_autocommit(&app, &slot, policy, interval_minutes)).await
 }
 
 #[cfg(test)]

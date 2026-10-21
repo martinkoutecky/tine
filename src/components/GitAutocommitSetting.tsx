@@ -24,7 +24,12 @@ export function GitAutocommitSetting(): JSX.Element {
       if (owner()) setError(t("git-settings-load-failed", { error: message(failure) }));
     }
   };
-  onMount(() => void load());
+  onMount(() => {
+    void load();
+    // The last commit and a long-held lock change while Settings is open.
+    const timer = setInterval(() => void load(), 15_000);
+    onCleanup(() => clearInterval(timer));
+  });
 
   const change = async (policy: GitPolicy, minutes: number) => {
     const owner = bindingOwner(() => alive);
@@ -32,7 +37,13 @@ export function GitAutocommitSetting(): JSX.Element {
       const answer = await writeOwned(owner, backend().setGitAutocommit(policy, minutes));
       if (answer.kind === "current") { setStatus(answer.value); setError(null); }
     } catch (failure) {
-      if (owner()) setError(t("git-settings-save-failed", { error: message(failure) }));
+      if (!owner()) return;
+      // The control shows what the device has, not the refused choice.
+      await load();
+      // A fresh object even when nothing changed: the select is reset too.
+      const now = status();
+      if (now) setStatus({ ...now });
+      setError(t("git-settings-save-failed", { error: message(failure) }));
     }
   };
 
@@ -65,6 +76,7 @@ export function GitAutocommitSetting(): JSX.Element {
           onChange={(e) => {
             const minutes = Number(e.currentTarget.value);
             if (Number.isInteger(minutes) && minutes >= 1) void change("commit", Math.min(minutes, 1440));
+            else e.currentTarget.value = String(status()!.interval_minutes ?? 10);
           }} />
         {t("git-settings-minutes")}
       </Show>

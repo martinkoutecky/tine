@@ -248,8 +248,11 @@ fn skip_worktree_entries_refuse_instead_of_committing_deletions() {
     assert_eq!(commit_now(&f.work, MESSAGE), Err(Unusable::Sparse));
 }
 
+/// G5: every change git sees. A file the user untracked but did not ignore
+/// is still there for git, so it stays committed (review F2: skipping it
+/// only deleted it once, and made a lost index a mass deletion).
 #[test]
-fn an_untracked_by_the_user_file_is_not_added_back() {
+fn a_file_untracked_but_not_ignored_stays_committed() {
     let f = fixture(&[("pages/a.md", "- a\n"), ("pages/private.md", "- p\n")]);
     let mut index = f.repo.index().unwrap();
     index.remove_path(Path::new("pages/private.md")).unwrap();
@@ -257,10 +260,91 @@ fn an_untracked_by_the_user_file_is_not_added_back() {
     write(&f.work, "pages/a.md", "- a2\n");
     commit_now(&f.work, MESSAGE).unwrap();
     assert_eq!(
-        at_head(&f.repo, "pages/private.md"),
-        None,
-        "the user's `git rm --cached` stands"
+        at_head(&f.repo, "pages/private.md").as_deref(),
+        Some("- p\n")
     );
+    assert!(dirty(&f.repo).is_empty(), "{:?}", dirty(&f.repo));
+}
+
+/// Review B1: committing from a missing index would delete every file.
+#[test]
+fn a_missing_index_refuses_instead_of_committing_deletions() {
+    let f = fixture(&[("pages/a.md", "- a\n"), ("pages/b.md", "- b\n")]);
+    write(&f.work, "pages/a.md", "- a2\n");
+    fs::remove_file(f.repo.path().join("index")).unwrap();
+    let before = head(&f.repo).id();
+    let refused = commit_now(&f.work, MESSAGE).unwrap_err();
+    assert_eq!(refused.code(), "repository", "{refused:?}");
+    assert!(
+        refused.message().contains("git reset"),
+        "{}",
+        refused.message()
+    );
+    assert_eq!(head(&f.repo).id(), before);
+    assert!(!f.repo.path().join("index").exists(), "nothing installed");
+    assert!(!f.repo.path().join("index.lock").exists(), "lock released");
+}
+
+/// Review B1(b): another holder's live copy is never removed: copies are
+/// cleaned only by a holder of `index.lock`.
+#[test]
+fn a_live_index_copy_survives_while_another_holds_the_lock() {
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    let held = IndexLock::acquire(&f.repo).unwrap();
+    let copies = |dir: &Path| {
+        fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("tine-index-"))
+            .count()
+    };
+    assert_eq!(copies(f.repo.path()), 1);
+    write(&f.work, "pages/a.md", "- a2\n");
+    assert_eq!(commit_now(&f.work, MESSAGE), Err(Unusable::Busy));
+    assert_eq!(copies(f.repo.path()), 1, "the holder's copy is untouched");
+    drop(held);
+    assert_eq!(copies(f.repo.path()), 0);
+}
+
+/// Review B2: `.gitattributes` applies by pattern, so every staged file is
+/// checked, not only sample paths.
+#[test]
+fn an_lfs_tracked_asset_refuses_the_commit() {
+    let f = fixture(&[
+        (
+            ".gitattributes",
+            "*.pdf filter=lfs diff=lfs merge=lfs -text\n",
+        ),
+        ("pages/a.md", "- a\n"),
+    ]);
+    assert!(git_status(&f.work, GitSettings::default())
+        .unusable
+        .is_none());
+    write(&f.work, "pages/a.md", "- a2\n");
+    write(&f.work, "assets/paper.pdf", "%PDF raw");
+    let refused = commit_now(&f.work, MESSAGE).unwrap_err();
+    assert_eq!(refused.code(), "conversion", "{refused:?}");
+    assert!(
+        refused.message().contains("assets/paper.pdf"),
+        "{}",
+        refused.message()
+    );
+    assert_eq!(at_head(&f.repo, "assets/paper.pdf"), None);
+    assert_eq!(at_head(&f.repo, "pages/a.md").as_deref(), Some("- a\n"));
+}
+
+#[test]
+fn a_conflicted_index_is_named_not_busy() {
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    let mut index = f.repo.index().unwrap();
+    let mut entry = index.get_path(Path::new("pages/a.md"), 0).unwrap();
+    index.remove_path(Path::new("pages/a.md")).unwrap();
+    for stage in [1u16, 2, 3] {
+        entry.flags = (entry.flags & !0x3000) | (stage << 12);
+        index.add(&entry).unwrap();
+    }
+    index.write().unwrap();
+    assert_eq!(commit_now(&f.work, MESSAGE), Err(Unusable::Conflicted));
 }
 
 #[test]
@@ -312,20 +396,61 @@ fn repack_deletes_only_packed_loose_objects() {
     let objects = f.repo.path().join("objects");
     let before = loose_object_count(&objects);
     let removed = repack(&f.repo).unwrap();
-    assert!(removed > 0 && removed < before, "{removed} of {before}");
-    let hex = staged_only.to_string();
-    assert!(
-        objects.join(&hex[..2]).join(&hex[2..]).exists(),
-        "an unreachable loose object is never deleted"
+    assert_eq!(
+        removed, before,
+        "every loose object is packed, then deleted"
     );
-    // Every reachable object is still readable.
+    // Every object, reachable or not, is still readable.
     let reopened = Repository::open(&f.work).unwrap();
     assert_eq!(at_head(&reopened, "pages/a.md").as_deref(), Some("- a4\n"));
+    assert_eq!(
+        reopened.find_blob(staged_only).unwrap().content(),
+        b"staged only",
+        "an unreachable object is packed, never dropped"
+    );
     let mut walk = reopened.revwalk().unwrap();
     walk.push_head().unwrap();
     assert_eq!(walk.count(), 6);
     // A second repack with nothing new loose deletes nothing more.
     assert_eq!(repack(&reopened).unwrap(), 0);
+}
+
+/// Review N1: a repack packs only what was added since the last one; the
+/// packed history is never rewritten.
+#[test]
+fn a_repack_packs_only_new_objects() {
+    let f = fixture(&[("pages/a.md", "- a\n"), ("pages/b.md", "- b\n")]);
+    let pack_dir = f.repo.path().join("objects/pack");
+    let packs = || -> Vec<(PathBuf, u64)> {
+        let mut out: Vec<_> = fs::read_dir(&pack_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "pack"))
+            .map(|e| (e.path(), e.metadata().unwrap().len()))
+            .collect();
+        out.sort();
+        out
+    };
+    for n in 0..20 {
+        write(
+            &f.work,
+            "pages/a.md",
+            &format!("- a{n}\n{}\n", "x".repeat(400)),
+        );
+        commit_now(&f.work, MESSAGE).unwrap();
+    }
+    repack(&f.repo).unwrap();
+    let first = packs();
+    assert_eq!(first.len(), 1);
+    write(&f.work, "pages/b.md", "- b changed\n");
+    commit_now(&f.work, MESSAGE).unwrap();
+    let loose = loose_object_count(&f.repo.path().join("objects"));
+    assert_eq!(repack(&f.repo).unwrap(), loose);
+    let second = packs();
+    assert_eq!(second.len(), 2);
+    assert!(second.contains(&first[0]), "the first pack is untouched");
+    let added = second.iter().find(|p| !first.contains(p)).unwrap();
+    assert!(added.1 < first[0].1, "{} vs {}", added.1, first[0].1);
 }
 
 #[test]
@@ -374,7 +499,7 @@ fn around_brackets_an_operation_with_two_commits_when_the_graph_autocommits() {
     );
     assert!(failed.is_err());
     assert_eq!(head(&f.repo).message().ok(), Some(MESSAGE));
-    registry::remove(&worker);
+    registry::unregister(&worker);
 
     // Off: no commits at all.
     write(&f.work, "pages/b.md", "- off\n");
@@ -424,14 +549,70 @@ fn tine_temp_matches_only_the_atomic_save_shape() {
 }
 
 #[test]
-fn a_crash_left_index_copy_is_removed_but_not_a_held_lock() {
+fn a_crash_left_index_copy_is_removed_only_under_the_lock() {
     let f = fixture(&[("pages/a.md", "- a\n")]);
     let gitdir = f.repo.path();
     fs::write(gitdir.join("tine-index-abc.tmp"), "x").unwrap();
     fs::write(gitdir.join("tine-index-abc.tmp.lock"), "x").unwrap();
     fs::write(gitdir.join("index.lock"), "x").unwrap();
-    remove_stale_copies(gitdir);
+    // Someone else's lock: nothing is cleaned.
+    assert_eq!(commit_now(&f.work, MESSAGE), Err(Unusable::Busy));
+    assert!(gitdir.join("tine-index-abc.tmp").exists());
+    assert!(gitdir.join("index.lock").exists());
+    // Once the lock is free, the next holder removes the leftovers.
+    fs::remove_file(gitdir.join("index.lock")).unwrap();
+    drop(IndexLock::acquire(&f.repo).unwrap());
     assert!(!gitdir.join("tine-index-abc.tmp").exists());
     assert!(!gitdir.join("tine-index-abc.tmp.lock").exists());
-    assert!(gitdir.join("index.lock").exists());
+    assert!(!gitdir.join("index.lock").exists());
+}
+
+/// I-25 measurement (ADR 0078 Unit cost): on 10 000 flat pages, what one
+/// incremental repack of 50 one-page autocommits adds to `.git`. Run with
+/// `cargo test -p tine --lib -- --ignored measure_incremental_repack --nocapture`.
+#[test]
+#[ignore]
+fn measure_incremental_repack() {
+    let pages: Vec<(String, String)> = (0..10_000)
+        .map(|n| {
+            (
+                format!("pages/page {n}.md"),
+                format!("- page {n} {}\n", "x".repeat(500)),
+            )
+        })
+        .collect();
+    let refs: Vec<(&str, &str)> = pages
+        .iter()
+        .map(|(p, t)| (p.as_str(), t.as_str()))
+        .collect();
+    let f = fixture(&refs);
+    let pack_bytes = |repo: &Repository| -> u64 {
+        fs::read_dir(repo.path().join("objects/pack"))
+            .map(|d| d.flatten().map(|e| e.metadata().unwrap().len()).sum())
+            .unwrap_or(0)
+    };
+    repack(&f.repo).unwrap();
+    let base = pack_bytes(&f.repo);
+    for round in 0..2 {
+        let started = Instant::now();
+        for n in 0..50 {
+            write(
+                &f.work,
+                &format!("pages/page {}.md", n * 37),
+                &format!("- edit {round} {n}\n"),
+            );
+            commit_now(&f.work, MESSAGE).unwrap();
+        }
+        let loose = loose_object_count(&f.repo.path().join("objects"));
+        let before = pack_bytes(&f.repo);
+        let t = Instant::now();
+        repack(&f.repo).unwrap();
+        let added = pack_bytes(&f.repo) - before;
+        println!(
+            "round {round}: initial pack {base} B; 50 commits ({:?}) -> {loose} loose objects; repack {:?} adds {added} B ({} B per commit)",
+            started.elapsed(),
+            t.elapsed(),
+            added / 50
+        );
+    }
 }
