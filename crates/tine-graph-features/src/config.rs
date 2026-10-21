@@ -364,10 +364,7 @@ pub fn set_journal_page_title_format(store: &Store, fmt: &str) -> io::Result<()>
 /// [`set_journal_page_title_format`], then the reloaded config's journal
 /// pattern diagnostics (D-20261020-CH3). An own write emits no external-config
 /// event, so Settings takes the fresh notes from this result.
-pub fn set_journal_page_title_format_with_diagnostics(
-    store: &Store,
-    fmt: &str,
-) -> io::Result<Vec<String>> {
+pub fn store_journal_page_title_format(store: &Store, fmt: &str) -> io::Result<Vec<String>> {
     set_journal_page_title_format(store, fmt)?;
     Ok(store.config().config.journal_config_diagnostics.clone())
 }
