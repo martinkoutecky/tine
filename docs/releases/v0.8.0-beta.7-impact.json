@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "version": "0.8.0-beta.7",
+  "baseTag": "v0.8.0-beta.6",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "**A query export no longer publishes pages marked `public:: false`**, as every other export already did: when the query matches such a page, the page, its results and its share of the result count stay out of the export, and the review lists only the pages that are exported. A query that matches only such pages is refused (REG-QUERY-EXPORT-PRIVATE-PAGES).",
+      "userVisible": true,
+      "regressions": [
+        "REG-QUERY-EXPORT-PRIVATE-PAGES"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-QUERY-EXPORT-PRIVATE-PAGES (fail-before proven on release/0.8: the plan exported [\"Org private\",\"Private\",\"Public\"]; a mutation check showed the result rows still leaked without the og 6878bbcd4 part). Store-integration tests; no native journey.",
+        "refs": [
+          "crates/tine-graph-features/tests/query_publication.rs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The Guide and the export dialog (en, zh-CN) said a query export ignores public::; corrected in 27ae6d73f and asserted in crates/tine-core/src/guide.rs.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md",
+          "crates/tine-core/src/guide.rs",
+          "src/i18n/locales/en/query.ftl"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A Markdown file with a quote whose first line is a `#+NAME: VALUE` line followed by a `key::` line no longer crashes Tine when the graph loads (the parser recursed until the stack overflowed; lsdoc v0.5.10, REG-OG-GH644-F2-QUOTE-PROPERTY-GROUP).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-GH644-F2-QUOTE-PROPERTY-GROUP"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-OG-GH644-F2-QUOTE-PROPERTY-GROUP (fail-before proven: the test aborts with a stack overflow on lsdoc v0.5.9 and passes on v0.5.10). Core parser test; no native journey.",
+        "refs": [
+          "crates/tine-core/tests/og_gh644_f2_quote_property_group.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A crash fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A page marked `template::` in its own property header (the lines at the top of the page, before the first bullet, or an Org page's `#+TEMPLATE:` line or head drawer) is now listed as a template, as in Logseq: `/` shows it as **Template: Name** and typing `/template` lists it with the others, and choosing it inserts the page's property lines as one block, without the `template::` line and with `<% today %>` and the like filled in. Before, only a `template::` on a block counted, so a page that Logseq listed as a template was missing from Tine (discussion #729, UI-GH729-PAGE-PROPERTY-TEMPLATE). The template is the property header only, not the page's blocks below it; `template-including-parent:: false` on a header therefore inserts nothing. Ctrl+K never listed templates in Logseq either.",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH729-PAGE-PROPERTY-TEMPLATE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH729-PAGE-PROPERTY-TEMPLATE. Unit fail-before: with the fix disabled only 1 of 6 templates is listed; the native journey scripts/e2e-gh729-page-template.mjs fails on the beta.6 binary and passed 3/3 on the branch and in the release/0.8 integration gate (Linux).",
+        "refs": [
+          "crates/tine-store/src/query.rs",
+          "scripts/e2e-gh729-page-template.mjs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The Guide says a page can be a template through its own property header; asserted in src/guideGh729.test.ts.",
+        "refs": [
+          "crates/tine-core/src/templates/journals-tasks-scheduling.md",
+          "src/guideGh729.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}
