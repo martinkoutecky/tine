@@ -57,6 +57,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Property value suggestions and popup position** (GH #737): typing a property value no longer offers whole multi-value strings such as `[[a]], [[b]]`; a value holding several page references or tags is offered as its individual `[[a]]` and `[[b]]`, as in Logseq, while plain text (commas included), a single reference and a quoted value stay whole. The suggestion list now opens against the line you are typing on, instead of below the last row of a long property block (often past the bottom of the window), flips above that line near the bottom of the window, and stays inside its right edge. It applies to page properties and block properties, in the main pane and the sidebar.
 - Chinese command input keeps the `/` and `<` pickers open and finds their localized labels (GH #107). Settings search now shows the matching text for hidden keywords, aliases and English labels too, including `父` for block embed breadcrumbs (GH #706).
 - Tab on a block directly below the page properties now explains that a block cannot be indented under them; moving blocks above the properties keeps its existing explanation (GH #210).
 - Settings → Journals now shows the same unsupported journal date-pattern notes as today's journal, beside Journal date format, and updates them when the setting changes (GH #317).
