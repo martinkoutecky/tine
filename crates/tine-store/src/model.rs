@@ -5423,9 +5423,11 @@ mod tests {
             "alias:: Foo\ntags:: Other\n- src body\n",
         )
         .unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         let _ = store.whole_graph().unwrap();
-        tine_graph_features::pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md")
+        tine_graph_features::pages::merge_pages(&store, &host, "pages/src.md", "pages/dst.md")
             .unwrap();
         let merged = fs::read_to_string(dir.join("pages").join("dst.md")).unwrap();
         assert!(
@@ -5457,6 +5459,7 @@ mod tests {
             !dir.join("pages").join("src.md").exists(),
             "src moved to trash"
         );
+        drop(host);
         store.close();
         let _ = fs::remove_dir_all(&dir);
     }
@@ -6481,7 +6484,9 @@ mod tests {
     fn find_entry_cache_rebuilds_after_file_rescue_generation_bump() {
         let dir = scratch("find-entry-cache-rescue");
         fs::write(dir.join("journals").join("Loose.md"), "- loose\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
 
         let before = store.whole_graph().unwrap();
         assert!(matches!(
@@ -6495,7 +6500,7 @@ mod tests {
 
         tine_graph_features::pages::rename_file_to_page(
             &store,
-            None,
+            &host,
             "journals/Loose.md",
             "Rescued",
         )
@@ -6509,6 +6514,7 @@ mod tests {
             after.resolve("Rescued", false),
             tine_store::Resolved::Existing { .. }
         ));
+        drop(host);
         store.close();
         let _ = fs::remove_dir_all(&dir);
     }
@@ -6985,10 +6991,12 @@ mod tests {
         .unwrap();
         // A canonical file for another day must be left untouched.
         fs::write(dir.join("journals").join("2026_06_24.org"), "* prior\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         let listed = tine_graph_features::journals::journal_filename_migrations(&store).unwrap();
         assert_eq!(
-            tine_graph_features::journals::migrate_journal_filenames(&store, None, &listed)
+            tine_graph_features::journals::migrate_journal_filenames(&store, &host, &listed)
                 .unwrap()
                 .migrated,
             1,
@@ -7023,6 +7031,7 @@ mod tests {
             names.iter().any(|n| n == "Thursday, 25-06-2026"),
             "listed: {names:?}"
         );
+        drop(host);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -8720,7 +8729,9 @@ mod tests {
     #[test]
     fn write_highlights_refuses_unreadable_artifacts_without_partial_commit() {
         let dir = scratch("highlights-invalid-utf8");
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         let key = tine_core::pdf::asset_key("paper.pdf");
         let edn_path = dir.join("assets").join(format!("{key}.edn"));
         fs::create_dir_all(dir.join("assets")).unwrap();
@@ -8730,7 +8741,7 @@ mod tests {
 
         let err = tine_graph_features::pdf::write_highlights(
             &store,
-            None,
+            &host,
             "paper.pdf",
             "Paper",
             &[h],
@@ -8741,6 +8752,7 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&edn_path).unwrap(), unknown);
         assert!(!dir.join("pages").join(format!("hls__{key}.md")).exists());
+        drop(host);
         store.close();
         let _ = fs::remove_dir_all(&dir);
     }
@@ -8754,7 +8766,9 @@ mod tests {
             "{:preferred-format \"Org\"}\n",
         )
         .unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         let state = tine_graph_features::pdf::open_pdf(&store, "paper.pdf", "Paper").unwrap();
         assert!(state.highlights.is_empty());
         assert_eq!(state.page, None);
@@ -8764,7 +8778,7 @@ mod tests {
         assert!(!dir.join("assets").join("paper.edn").exists());
         assert!(!dir.join("pages").join("hls__paper.org").exists());
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
-        tine_graph_features::pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[h], &[])
+        tine_graph_features::pdf::write_highlights(&store, &host, "paper.pdf", "Paper", &[h], &[])
             .unwrap();
 
         let sidecar = fs::read_to_string(dir.join("assets").join("paper.edn")).unwrap();
@@ -8781,6 +8795,7 @@ mod tests {
             "{org}"
         );
         assert!(org.contains("#+FILE-PATH: ../assets/paper.pdf"), "{org}");
+        drop(host);
         store.close();
         let _ = fs::remove_dir_all(&dir);
     }
@@ -8788,7 +8803,9 @@ mod tests {
     #[test]
     fn highlight_write_preserves_view_state_and_foreign_edn() {
         let dir = scratch("pdf-view-state");
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         let key = tine_core::pdf::asset_key("paper.pdf");
         let sidecar_path = dir.join("assets").join(format!("{key}.edn"));
         fs::create_dir_all(dir.join("assets")).unwrap();
@@ -8802,7 +8819,7 @@ mod tests {
 
         tine_graph_features::pdf::write_highlights(
             &store,
-            None,
+            &host,
             "paper.pdf",
             "Paper",
             &[h.clone(), h2.clone()],
@@ -8823,6 +8840,7 @@ mod tests {
                 .and_then(tine_core::edn::Edn::as_str),
             Some("keep")
         );
+        drop(host);
         store.close();
         let _ = fs::remove_dir_all(&dir);
     }
@@ -8836,9 +8854,11 @@ mod tests {
             "{:preferred-format \"Org\"}\n",
         )
         .unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         let h = mkhl("11111111-1111-1111-1111-111111111111", 3, Some("text"));
-        tine_graph_features::pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[h], &[])
+        tine_graph_features::pdf::write_highlights(&store, &host, "paper.pdf", "Paper", &[h], &[])
             .unwrap();
         let org_path = dir.join("pages").join("hls__paper.org");
         let org = fs::read_to_string(&org_path).unwrap();
@@ -8854,12 +8874,15 @@ mod tests {
             "{:preferred-format \"Markdown\"}\n",
         )
         .unwrap();
+        drop(host);
         store.close();
-        let reopened = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let reopened =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&reopened);
         let h2 = mkhl("22222222-2222-2222-2222-222222222222", 4, Some("more"));
         tine_graph_features::pdf::write_highlights(
             &reopened,
-            None,
+            &host,
             "paper.pdf",
             "Paper",
             &[h2],
@@ -8868,6 +8891,7 @@ mod tests {
         .unwrap();
         assert!(org_path.exists());
         assert!(!dir.join("pages").join("hls__paper.md").exists());
+        drop(host);
         reopened.close();
         let _ = fs::remove_dir_all(&dir);
     }
@@ -8875,7 +8899,9 @@ mod tests {
     #[test]
     fn write_highlights_checks_notes_page_before_sidecar_commit() {
         let dir = scratch("highlights-invalid-page");
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         let key = tine_core::pdf::asset_key("paper.pdf");
         let page_path = dir.join("pages").join(format!("hls__{key}.md"));
         let unknown = b"\xff\xfeunknown notes bytes";
@@ -8884,7 +8910,7 @@ mod tests {
 
         let err = tine_graph_features::pdf::write_highlights(
             &store,
-            None,
+            &host,
             "paper.pdf",
             "Paper",
             &[h],
@@ -8895,6 +8921,7 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&page_path).unwrap(), unknown);
         assert!(!dir.join("assets").join(format!("{key}.edn")).exists());
+        drop(host);
         store.close();
         let _ = fs::remove_dir_all(&dir);
     }
@@ -8917,10 +8944,12 @@ mod tests {
         fs::write(&sidecar_path, original).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         let err = tine_graph_features::pdf::write_highlights(
             &store,
-            None,
+            &host,
             "paper.pdf",
             "Paper",
             &[h],
@@ -8931,13 +8960,19 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(fs::read_to_string(&sidecar_path).unwrap(), original);
         assert_eq!(fs::read_to_string(&page_path).unwrap(), "* a\n*** c\n");
+        drop(host);
         store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// The sidecar is saved before the annotation page's host operation
+    /// (host-only-writer DESIGN §3.4 pre), so a page that cannot be written
+    /// leaves the highlights saved and the page update pending: the error
+    /// says so, and the update lands once the page can be written. (The
+    /// deleted no-host transaction rolled the sidecar back instead.)
     #[cfg(unix)]
     #[test]
-    fn write_highlights_rolls_back_sidecar_when_notes_page_commit_fails() {
+    fn write_highlights_keeps_the_saved_sidecar_when_the_notes_page_write_fails() {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = scratch("highlights-page-commit-rollback");
@@ -8950,8 +8985,9 @@ mod tests {
         let sidecar_before = "{:highlights [] :extra {:plugin \"keep\"}}\n";
         fs::write(&sidecar_path, sidecar_before).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        let before_rev = store.whole_graph().unwrap().rev();
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
 
         let pages = dir.join("pages");
         let original_permissions = fs::metadata(&pages).unwrap().permissions();
@@ -8960,33 +8996,57 @@ mod tests {
         fs::set_permissions(&pages, read_only).unwrap();
         let result = tine_graph_features::pdf::write_highlights(
             &store,
-            None,
+            &host,
             "paper.pdf",
             "Paper",
             &[h],
             &[],
         );
+        assert_eq!(fs::read_to_string(&page_path).unwrap(), page_before);
         fs::set_permissions(&pages, original_permissions).unwrap();
 
+        let error = result.expect_err("the notes page cannot be written in a read-only directory");
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock, "{error}");
         assert!(
-            result.is_err(),
-            "the notes-page commit must fail in a read-only directory"
+            error
+                .to_string()
+                .starts_with("The highlights were saved, but "),
+            "{error}"
         );
-        assert_eq!(fs::read_to_string(&sidecar_path).unwrap(), sidecar_before);
-        assert_eq!(fs::read_to_string(&page_path).unwrap(), page_before);
-        store.refresh(tine_store::Depth::Stamps).unwrap();
-        assert_eq!(
-            store.whole_graph().unwrap().rev(),
-            before_rev,
-            "a failed page commit must not publish a watcher change"
+        let sidecar = fs::read_to_string(&sidecar_path).unwrap();
+        assert!(
+            sidecar.contains("11111111-1111-1111-1111-111111111111")
+                && sidecar.contains(":plugin \"keep\""),
+            "{sidecar}"
         );
+        page_update_lands(&page_path);
+        drop(host);
         store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// The pending annotation page update of a highlight save completes
+    /// once the page can be written.
+    #[cfg(unix)]
+    fn page_update_lands(page_path: &Path) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !fs::read_to_string(page_path)
+            .unwrap()
+            .contains("id:: 11111111-1111-1111-1111-111111111111")
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the pending annotation page update never landed"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// As above, with no sidecar before the save: the new sidecar is saved
+    /// and stays (the deleted no-host transaction quarantined it).
     #[cfg(unix)]
     #[test]
-    fn write_highlights_quarantines_new_sidecar_when_notes_page_commit_fails() {
+    fn write_highlights_keeps_a_new_sidecar_when_the_notes_page_write_fails() {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = scratch("highlights-new-sidecar-page-failure");
@@ -8997,7 +9057,9 @@ mod tests {
         fs::create_dir_all(dir.join("assets")).unwrap();
         let sidecar_path = dir.join("assets").join(format!("{key}.edn"));
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
 
         let pages = dir.join("pages");
         let original_permissions = fs::metadata(&pages).unwrap().permissions();
@@ -9006,22 +9068,25 @@ mod tests {
         fs::set_permissions(&pages, read_only).unwrap();
         let result = tine_graph_features::pdf::write_highlights(
             &store,
-            None,
+            &host,
             "paper.pdf",
             "Paper",
             &[h],
             &[],
         );
+        assert_eq!(fs::read_to_string(&page_path).unwrap(), page_before);
         fs::set_permissions(&pages, original_permissions).unwrap();
 
-        assert!(result.is_err());
+        let error = result.expect_err("the notes page cannot be written in a read-only directory");
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock, "{error}");
         assert!(
-            !sidecar_path.exists(),
-            "the failed pair must leave the primary target absent"
+            fs::read_to_string(&sidecar_path)
+                .unwrap()
+                .contains("11111111-1111-1111-1111-111111111111"),
+            "the new sidecar is saved"
         );
-        assert_eq!(fs::read_to_string(&page_path).unwrap(), page_before);
-        // The production transaction rolls back both files. The failed new
-        // highlight never becomes live, so there is no sidecar to recover.
+        page_update_lands(&page_path);
+        drop(host);
         store.close();
         let _ = fs::remove_dir_all(&dir);
     }
@@ -9029,7 +9094,9 @@ mod tests {
     #[test]
     fn write_highlights_preserves_malformed_utf8_sidecar() {
         let dir = scratch("highlights-malformed-edn");
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         let key = tine_core::pdf::asset_key("paper.pdf");
         let edn_path = dir.join("assets").join(format!("{key}.edn"));
         fs::create_dir_all(dir.join("assets")).unwrap();
@@ -9039,7 +9106,7 @@ mod tests {
 
         let err = tine_graph_features::pdf::write_highlights(
             &store,
-            None,
+            &host,
             "paper.pdf",
             "Paper",
             &[h],
@@ -9050,13 +9117,16 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read_to_string(&edn_path).unwrap(), malformed);
         assert!(!dir.join("pages").join(format!("hls__{key}.md")).exists());
+        drop(host);
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn write_highlights_rejects_valid_map_with_trailing_sync_data() {
         let dir = scratch("highlights-trailing-edn");
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         let key = tine_core::pdf::asset_key("paper.pdf");
         let edn_path = dir.join("assets").join(format!("{key}.edn"));
         fs::create_dir_all(dir.join("assets")).unwrap();
@@ -9066,7 +9136,7 @@ mod tests {
 
         let err = tine_graph_features::pdf::write_highlights(
             &store,
-            None,
+            &host,
             "paper.pdf",
             "Paper",
             &[h],
@@ -9076,6 +9146,7 @@ mod tests {
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read_to_string(&edn_path).unwrap(), malformed);
+        drop(host);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -9114,7 +9185,9 @@ mod tests {
         )
         .unwrap();
 
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         // Read-fallback: the legacy file is found under the new-key lookup.
         let read = tine_graph_features::pdf::read_highlights(&store, pdf);
         assert_eq!(read.len(), 1);
@@ -9124,7 +9197,7 @@ mod tests {
         let h2 = mkhl("22222222-2222-2222-2222-222222222222", 4, Some("new text"));
         tine_graph_features::pdf::write_highlights(
             &store,
-            None,
+            &host,
             pdf,
             "My Paper",
             &[h1.clone(), h2.clone()],
@@ -9153,6 +9226,7 @@ mod tests {
                 .exists(),
             "legacy hls page removed"
         );
+        drop(host);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -9186,10 +9260,12 @@ mod tests {
         )
         .unwrap();
 
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         tine_graph_features::pdf::write_highlights(
             &store,
-            None,
+            &host,
             pdf,
             "Paper",
             &[h.clone()],
@@ -9206,6 +9282,7 @@ mod tests {
         assert!(fs::read_to_string(migrated)
             .unwrap()
             .contains("private note"));
+        drop(host);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -9250,7 +9327,9 @@ mod tests {
             .join(format!("{}.md", tine_core::pdf::hls_page_name(&lower_key)));
         fs::write(&lower_page_path, &lower_page_bytes).unwrap();
 
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         let spaced_highlight = mkhl(
             "44444444-4444-4444-4444-444444444444",
             4,
@@ -9258,7 +9337,7 @@ mod tests {
         );
         tine_graph_features::pdf::write_highlights(
             &store,
-            None,
+            &host,
             spaced_pdf,
             "My Paper",
             &[spaced_highlight],
@@ -9306,6 +9385,7 @@ mod tests {
             !spaced_page.contains(&lower_highlight.id),
             "colliding pdf highlight must not be merged into the spaced pdf hls page"
         );
+        drop(host);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -9316,14 +9396,16 @@ mod tests {
         // delete-rewrite) must be recognized as Tine's OWN write by the watcher,
         // not flagged as an external change.
         let dir = scratch("hldel");
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         let changes = store.subscribe();
         let h1 = mkhl("aaaaaaaa-0000-0000-0000-000000000001", 1, Some("one"));
         let h2 = mkhl("bbbbbbbb-0000-0000-0000-000000000002", 2, Some("two"));
         let page_path = dir.join("pages").join("hls__paper.md");
         tine_graph_features::pdf::write_highlights(
             &store,
-            None,
+            &host,
             "paper.pdf",
             "Paper",
             &[h1.clone(), h2.clone()],
@@ -9345,7 +9427,7 @@ mod tests {
         // Delete h2 (write just h1; baseline = both) — the rewrite must also be ours.
         tine_graph_features::pdf::write_highlights(
             &store,
-            None,
+            &host,
             "paper.pdf",
             "Paper",
             &[h1.clone()],
@@ -9363,6 +9445,7 @@ mod tests {
                 "delete-rewrite looked external (false conflict): {change:?}"
             );
         }
+        drop(host);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -10996,11 +11079,13 @@ mod tests {
     #[test]
     fn merge_pages_appends_stray_into_canonical_and_trashes_stray() {
         let dir = dup_day_graph("merge");
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         let _ = store.whole_graph().unwrap();
         tine_graph_features::pages::merge_pages(
             &store,
-            None,
+            &host,
             "journals/Friday, 26-06-2026.org",
             "journals/2026_06_26.org",
         )
@@ -11021,6 +11106,7 @@ mod tests {
         let trash = dir.join("logseq").join(".tine-trash");
         let kept = fs::read_dir(&trash).unwrap().flatten().count();
         assert_eq!(kept, 1, "stray sits in the recoverable trash");
+        drop(host);
         store.close();
         let _ = fs::remove_dir_all(&dir);
     }
@@ -11028,11 +11114,13 @@ mod tests {
     #[test]
     fn rename_file_to_page_rescues_stray_and_refuses_collision() {
         let dir = dup_day_graph("renamefile");
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let host = crate::test_fixture_io::test_host(&store);
         let _ = store.whole_graph().unwrap();
         tine_graph_features::pages::rename_file_to_page(
             &store,
-            None,
+            &host,
             "journals/Friday, 26-06-2026.org",
             "Old Friday",
         )
@@ -11057,7 +11145,7 @@ mod tests {
         assert!(
             tine_graph_features::pages::rename_file_to_page(
                 &store,
-                None,
+                &host,
                 "journals/Saturday, 27-06-2026.org",
                 "Old Friday",
             )
@@ -11070,6 +11158,7 @@ mod tests {
                 .exists(),
             "source left intact on refusal"
         );
+        drop(host);
         store.close();
         let _ = fs::remove_dir_all(&dir);
     }

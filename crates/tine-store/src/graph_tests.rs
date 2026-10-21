@@ -2567,7 +2567,8 @@ fn resolve_sync_conflict_merges_and_trashes() {
     let conflict_name = "Foo.sync-conflict-20260705-120000-ABCDEFG.md";
     std::fs::write(pages.join(conflict_name), conflict).unwrap();
 
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_fixture_io::test_host(&store);
     let win_rel = "pages/Foo.md";
     let conf_rel = format!("pages/{conflict_name}");
 
@@ -2592,7 +2593,7 @@ fn resolve_sync_conflict_merges_and_trashes() {
     crate::test_fixture_io::atomic_write(pages.join("Foo.md"), &changed_winner).unwrap();
     let err = conflicts::resolve_sync_conflict(
         &store,
-        None,
+        &host,
         win_rel,
         &conf_rel,
         &HashMap::new(),
@@ -2621,7 +2622,7 @@ fn resolve_sync_conflict_merges_and_trashes() {
     crate::test_fixture_io::atomic_write(pages.join(conflict_name), &changed_conflict).unwrap();
     let err = conflicts::resolve_sync_conflict(
         &store,
-        None,
+        &host,
         win_rel,
         &conf_rel,
         &HashMap::new(),
@@ -2652,7 +2653,7 @@ fn resolve_sync_conflict_merges_and_trashes() {
     let conflict_rev = crate::model::content_rev(conflict);
     conflicts::resolve_sync_conflict(
         &store,
-        None,
+        &host,
         win_rel,
         &conf_rel,
         &decisions,
@@ -2693,6 +2694,7 @@ fn resolve_sync_conflict_merges_and_trashes() {
         "conflict copy not in trash: {trashed:?}"
     );
 
+    drop(host);
     std::fs::remove_dir_all(&root).ok();
 }
 

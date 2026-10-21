@@ -523,7 +523,10 @@ fn crash_feature_worker() {
     store.inject_fault(FaultPoint::AbortAfterStep(boundary));
     match journey.as_str() {
         "merge" => {
-            pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md").unwrap();
+            hosted(&store, |host| {
+                pages::merge_pages(&store, host, "pages/src.md", "pages/dst.md")
+            })
+            .unwrap();
         }
         "rename" => {
             hosted(&store, |host| {
@@ -555,18 +558,20 @@ fn crash_feature_worker() {
                 .iter()
                 .map(|row| (row.id.clone(), "both".to_owned()))
                 .collect();
-            conflicts::resolve_sync_conflict(
-                &store,
-                None,
-                "pages/Foo.md",
-                copy,
-                &decisions,
-                &diff.base_rev,
-                &diff.conflict_rev,
-                None,
-                &[],
-                "union",
-            )
+            hosted(&store, |host| {
+                conflicts::resolve_sync_conflict(
+                    &store,
+                    host,
+                    "pages/Foo.md",
+                    copy,
+                    &decisions,
+                    &diff.base_rev,
+                    &diff.conflict_rev,
+                    None,
+                    &[],
+                    "union",
+                )
+            })
             .unwrap();
         }
         _ => panic!("unknown crash journey"),

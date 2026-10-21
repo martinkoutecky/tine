@@ -83,6 +83,24 @@ const EXEMPT: &[(&str, &str)] = &[
         "crates/tine-graph-features/src/pages.rs::trash_rescue_source",
         "post-Applied guarded trash of a non-page rescue source; Store::as_page is None",
     ),
+    // host-only-writer S1: the writers' no-host arms are gone; a non-page
+    // target is an ordinary guarded transaction (DESIGN §1 table, non-page
+    // files), where the arm used to be `reserved` with no host.
+    (
+        "crates/tine-graph-features/src/journals.rs::migrate_one",
+        "guarded move of a journal file Store::as_page does not name; a page's migration is \
+         migrate_hosted's host operation; no page",
+    ),
+    (
+        "crates/tine-graph-features/src/lib.rs::trash_current",
+        "guarded trash of a journal file Store::as_page does not name (trash_journal_file's \
+         non-page arm; a page's trash is its host operation); no page",
+    ),
+    (
+        "crates/tine-graph-features/src/guide.rs::create_if_absent",
+        "its transaction outside the host operation creates a Guide asset, which \
+         Store::as_page does not name; a Guide page is its host operation (census below); no page",
+    ),
 ];
 
 #[derive(Default)]
@@ -637,11 +655,13 @@ fn every_production_page_writer_runs_under_a_host_reservation() {
         "crates/tine-graph-features/src/pages.rs::rename_file_to_page",
         "crates/tine-graph-features/src/conflicts.rs::fold_pair",
         "crates/tine-graph-features/src/conflicts.rs::resolve_vcs_marker_conflict",
-        "crates/tine-graph-features/src/journals.rs::migrate_journal_filenames",
+        // A page's migration (host-only-writer S1: the no-host arm that
+        // reserved from `migrate_journal_filenames` itself is gone).
+        "crates/tine-graph-features/src/journals.rs::migrate_hosted",
         "crates/tine-graph-features/src/journals.rs::trash_journal_file",
         "crates/tine-graph-features/src/pdf.rs::write_highlights",
-        // W4: a page with a host is one host operation; an asset, and any
-        // file with no host, is a transaction under `reserved`.
+        // W4: a page is one host operation; an asset is a plain transaction
+        // (EXEMPT).
         "crates/tine-graph-features/src/guide.rs::create_if_absent",
         "src-tauri/src/backup/restore.rs::restore_backup",
     ] {

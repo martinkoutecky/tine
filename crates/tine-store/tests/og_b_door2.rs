@@ -239,7 +239,9 @@ fn org_real_conflicts_beside_literal_examples_are_inventory_and_resolution_candi
         format!("{literal}<<<<<<< HEAD\n* mine\n=======\n* theirs\n>>>>>>> topic\n"),
     )
     .unwrap();
-    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
     let inventory = conflicts::conflict_inventory(&store).unwrap();
     assert_eq!(inventory.vcs_markers.len(), 1);
     let reviewed = conflicts::vcs_marker_conflict_diff(&store, "pages/Real.org")
@@ -253,7 +255,7 @@ fn org_real_conflicts_beside_literal_examples_are_inventory_and_resolution_candi
         .collect();
     conflicts::resolve_vcs_marker_conflict(
         &store,
-        None,
+        &host,
         "pages/Real.org",
         &decisions,
         &reviewed.diff.base_rev,

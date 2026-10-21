@@ -604,7 +604,8 @@ fn memoized_query_and_backlinks_invalidate_after_edit() {
 fn write_highlights_preserves_externally_added_ones() {
     use tine_core::pdf::{Highlight, Position, Rect};
     let root = mk("hlmerge");
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_fixture_io::test_host(&store);
     let mk_hl = |id: &str, text: &str| {
         let r = Rect {
             top: 0.0,
@@ -636,7 +637,7 @@ fn write_highlights_preserves_externally_added_ones() {
     // Tine writes H1 (no baseline yet).
     pdf::write_highlights(
         &store,
-        None,
+        &host,
         "paper.pdf",
         "Paper",
         &[mk_hl("H1", "one")],
@@ -654,7 +655,7 @@ fn write_highlights_preserves_externally_added_ones() {
     // Tine, baseline [H1], adds H3 and writes — H2 (external) must NOT be dropped.
     pdf::write_highlights(
         &store,
-        None,
+        &host,
         "paper.pdf",
         "Paper",
         &[mk_hl("H1", "one"), mk_hl("H3", "three")],
@@ -671,7 +672,7 @@ fn write_highlights_preserves_externally_added_ones() {
     let base = pdf::read_highlights(&store, "paper.pdf");
     pdf::write_highlights(
         &store,
-        None,
+        &host,
         "paper.pdf",
         "Paper",
         &[mk_hl("H1", "one"), mk_hl("H3", "three")],
@@ -687,6 +688,7 @@ fn write_highlights_preserves_externally_added_ones() {
         after.contains("H1") && after.contains("H3"),
         "kept ones must survive: {after:?}"
     );
+    drop(host);
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -697,7 +699,8 @@ fn highlight_write_is_not_seen_as_external_change() {
     // against it — post-write, disk_revs reflects the write and suppresses the poll.
     use tine_core::pdf::{Highlight, Position, Rect};
     let root = mk("hlself");
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_fixture_io::test_host(&store);
     store.whole_graph().unwrap();
     let changes = store.subscribe();
 
@@ -721,7 +724,7 @@ fn highlight_write_is_not_seen_as_external_change() {
         text: Some("noted".into()),
         image: None,
     };
-    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[h], &[]).unwrap();
+    pdf::write_highlights(&store, &host, "paper.pdf", "Paper", &[h], &[]).unwrap();
 
     store.refresh(tine_store::Depth::Stamps).unwrap();
     let observed: Vec<_> = std::iter::from_fn(|| changes.try_recv().unwrap()).collect();
@@ -735,6 +738,7 @@ fn highlight_write_is_not_seen_as_external_change() {
             .all(|change| change.files.iter().all(|(file, _, _)| file != &highlights)),
         "highlight write must not be reported as an external change: {observed:?}"
     );
+    drop(host);
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -915,6 +919,9 @@ fn delete_page_errors_when_trash_path_is_file_and_keeps_page_cached() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// The journal's deletion is a host operation (host-only-writer S1), so a
+/// blocked trash leaves it pending, as a page deletion's is above: the
+/// error says the trash finishes once it can, and the journal stays.
 #[test]
 fn trash_journal_file_errors_when_trash_path_is_file_and_keeps_source() {
     let root = mk("journaltrash-blocked");
@@ -922,18 +929,21 @@ fn trash_journal_file_errors_when_trash_path_is_file_and_keeps_source() {
     std::fs::write(root.join("logseq").join(".tine-trash"), "not a dir").unwrap();
     let journal = root.join("journals").join("2026_06_20.md");
     std::fs::write(&journal, "- journal body\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
-    let err = journals::trash_journal_file(&store, None, "2026_06_20.md")
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_fixture_io::test_host(&store);
+    let err = journals::trash_journal_file(&store, &host, "2026_06_20.md")
         .expect_err("trash path is blocked");
-    assert!(
-        err.to_string().contains(".tine-trash"),
-        "error should name the trash path: {err}"
+    assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock, "{err}");
+    assert_eq!(
+        err.to_string(),
+        "“journals/2026_06_20.md” could not be written; moving the journal to trash finishes once it can be."
     );
     assert!(journal.is_file(), "source journal survives");
     assert_eq!(
         std::fs::read_to_string(&journal).unwrap(),
         "- journal body\n"
     );
+    drop(host);
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -1232,10 +1242,11 @@ fn migrate_renames_title_named_journal_files() {
         "- TODO recovered\n",
     )
     .unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_fixture_io::test_host(&store);
     let n = journals::migrate_journal_filenames(
         &store,
-        None,
+        &host,
         &journals::journal_filename_migrations(&store).unwrap(),
     )
     .unwrap();
@@ -1257,6 +1268,7 @@ fn migrate_renames_title_named_journal_files() {
             .any(|(day, id)| *day == tine_store::Day(20260618)
                 && store.page(id).unwrap().doc.name == "Jun 18th, 2026")
     );
+    drop(host);
     store.close();
     let _ = std::fs::remove_dir_all(&root);
 }

@@ -308,24 +308,22 @@ fn issue232_runtime_ids_distinguish_structure_and_physical_owner() {
     assert_ne!(a.blocks[0].id, b.blocks[0].id);
 }
 
+/// GH #232: the merged page's block ids are the ones a reload of the
+/// destination gives. The merge is a host operation (host-only-writer S1),
+/// which publishes the written bytes parsed as the file, so the moved
+/// blocks take file-backed ids, not the source's runtime ids (which the
+/// deleted no-host transaction carried into the cache).
 #[test]
 fn issue232_merge_output_matches_destination_reload_identity() {
     let fixture = Fixture::new("merge-destination-identity");
     fixture.page("Source", "- moved one\n- moved two\n");
     fixture.page("Destination", "- kept\n");
-    let store = Store::open(&fixture.root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&fixture.root, Default::default()).unwrap().0);
+    let host = crate::test_fixture_io::test_host(&store);
     store.whole_graph().unwrap();
     let destination = PageId::from("pages/Destination.md");
-    let source_ids = store
-        .page(&PageId::from("pages/Source.md"))
-        .unwrap()
-        .doc
-        .blocks
-        .into_iter()
-        .map(|block| block.id)
-        .collect::<Vec<_>>();
     let kept_id = store.page(&destination).unwrap().doc.blocks[0].id.clone();
-    pages::merge_pages(&store, None, "pages/Source.md", "pages/Destination.md").unwrap();
+    pages::merge_pages(&store, &host, "pages/Source.md", "pages/Destination.md").unwrap();
     let merged_ids = store
         .page(&destination)
         .unwrap()
@@ -336,7 +334,6 @@ fn issue232_merge_output_matches_destination_reload_identity() {
         .collect::<Vec<_>>();
     assert_eq!(merged_ids.len(), 3);
     assert_eq!(merged_ids[0], kept_id);
-    assert_eq!(&merged_ids[1..], source_ids);
 
     let reopened = Store::open(&fixture.root, Default::default()).unwrap().0;
     let reloaded_ids = reopened
@@ -347,8 +344,7 @@ fn issue232_merge_output_matches_destination_reload_identity() {
         .into_iter()
         .map(|block| block.id)
         .collect::<Vec<_>>();
-    assert_eq!(reloaded_ids.len(), 3);
-    assert_ne!(&merged_ids[1..], &reloaded_ids[1..]);
+    assert_eq!(merged_ids, reloaded_ids);
 }
 
 #[test]

@@ -32,6 +32,31 @@ pub(crate) fn hosted<T>(store: &Arc<Store>, run: impl FnOnce(&Store, &PageHost) 
     run(store, &host)
 }
 
+/// A running page host for `store`, the only writer of page files
+/// (host-only-writer DESIGN §3.6), under its own app data; it derefs to the
+/// host, so `&test_host(&store)` is a writer's `&PageHost`. Drop it before
+/// removing the graph.
+pub(crate) struct TestHost {
+    host: PageHost,
+    _app_data: tempfile::TempDir,
+}
+
+impl std::ops::Deref for TestHost {
+    type Target = PageHost;
+    fn deref(&self) -> &PageHost {
+        &self.host
+    }
+}
+
+pub(crate) fn test_host(store: &Arc<Store>) -> TestHost {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = PageHost::start_for_tests(store, app_data.path()).unwrap();
+    TestHost {
+        host,
+        _app_data: app_data,
+    }
+}
+
 /// A page's deletion as the window runs it (STEP3 §7, §4.4, Q-P2b-5):
 /// `page_delete` by name, kind and displayed path through the GH #620
 /// identity checks, then `page_owed` and `page_wait` until it is published.
