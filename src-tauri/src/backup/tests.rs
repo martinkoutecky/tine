@@ -1543,6 +1543,110 @@ fn a_headless_launch_backup_is_one_verified_zip_and_a_stop_cancels_it() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(desktop)]
+#[test]
+fn a_headless_restart_with_a_recent_zip_preserves_the_backup_slots() {
+    let g = Graph::new("headless-recent-backup");
+    assert!(g.snap("", 12).failure.is_none());
+    let before = g.zip_names();
+    g.store.close();
+    write(
+        &g.graph.join("pages/A.md"),
+        "- changed between scripted restarts\n",
+    );
+    let slot = Arc::new(GraphSlot::new(
+        Store::open(&g.graph, Default::default()).unwrap().0,
+        g.source.root.clone(),
+    ));
+    slot.finish_startup_warm(slot.begin_startup_warm());
+    launch_backup_headless(slot.clone(), g.root.join("app"))
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(
+        g.zip_names(),
+        before,
+        "a recent zip must prevent rotation even when graph content changed"
+    );
+    // The app still snapshots the changed graph despite a recent serve zip.
+    launch_backup(
+        slot.clone(),
+        Some(g.root.join("app")),
+        None,
+        report_launch_outcome,
+    )
+    .unwrap()
+    .join()
+    .unwrap();
+    assert_eq!(g.zip_names().len(), before.len() + 1);
+    let snapshot = verified(&g.newest_zip());
+    assert!(snapshot
+        .manifest
+        .files
+        .iter()
+        .zip(&snapshot.files)
+        .any(|(file, bytes)| {
+            file.path == "pages/A.md" && bytes == b"- changed between scripted restarts\n"
+        }));
+    slot.store.close();
+    g.close();
+}
+
+fn serve_backup_recent_at_noon(base: &std::path::Path) -> bool {
+    let now = chrono::DateTime::parse_from_rfc3339("2026-10-21T12:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    has_recent_backup_zip(base, now, chrono::TimeDelta::hours(6))
+}
+
+#[test]
+fn serve_skips_a_backup_zip_younger_than_six_hours() {
+    let base = scratch("serve-backup-younger").join("graph");
+    // Rotation recognizes names without opening archives. Old/new mtimes are
+    // irrelevant, and a newer partial or legacy directory is not a zip.
+    write(&zip_base(&base).join("2026-10-21_06-00-01.zip"), "");
+    write(
+        &zip_base(&base).join(".partial-2026-10-22_00-00-00.zip"),
+        "",
+    );
+    std::fs::create_dir_all(base.join("2026-10-22_00-00-00")).unwrap();
+    assert!(serve_backup_recent_at_noon(&base));
+}
+
+#[test]
+fn serve_takes_a_backup_when_the_newest_zip_is_at_least_six_hours_old() {
+    let base = scratch("serve-backup-older").join("graph");
+    write(&zip_base(&base).join("2026-10-21_05-00-00.zip"), "");
+    assert!(!serve_backup_recent_at_noon(&base));
+    write(&zip_base(&base).join("2026-10-21_06-00-00.zip"), "");
+    assert!(
+        !serve_backup_recent_at_noon(&base),
+        "exactly six hours takes a backup"
+    );
+}
+
+#[test]
+fn serve_takes_a_backup_when_no_backup_zips_exist() {
+    let base = scratch("serve-backup-none").join("graph");
+    assert!(!serve_backup_recent_at_noon(&base));
+    assert!(!base.exists(), "the throttle check creates nothing");
+    std::fs::create_dir_all(base.join("2026-10-21_11-00-00")).unwrap();
+    write(
+        &zip_base(&base).join(".partial-2026-10-21_11-00-00.zip"),
+        "",
+    );
+    write(&zip_base(&base).join("unrecognized.zip"), "");
+    assert!(!serve_backup_recent_at_noon(&base));
+}
+
+#[test]
+fn serve_takes_a_backup_when_the_newest_zip_is_future_dated() {
+    let base = scratch("serve-backup-future").join("graph");
+    write(&zip_base(&base).join("2026-10-21_11-00-00.zip"), "");
+    write(&zip_base(&base).join("2026-10-21_12-00-01.zip"), "");
+    assert!(!serve_backup_recent_at_noon(&base));
+}
+
 #[test]
 fn backup_root_ids_do_not_conflate_punctuation() {
     let root = scratch("backup-root-id");

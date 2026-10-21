@@ -1898,6 +1898,8 @@ mod og_20d_guide_tests {
             vec![
                 "tine serve",
                 "launch snapshot",
+                "newest backup zip",
+                "6 hours",
                 "files, external edits, and backups",
             ],
             vec!["handover", "60", "timeout", "--stop"],

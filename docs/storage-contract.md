@@ -527,9 +527,14 @@ failure alike. Proof `src-tauri/src/backup/restore.rs`
 Tine snapshots a graph at launch and before a rewrite the user asked for
 (`pre-restore`, `pre-journal-rename`) into app data, outside every graph
 (`src-tauri/src/backup.rs`). A launch is the app opening the graph or a
-headless `tine serve` owning it (`launch_backup`, one policy for both: after
+headless `tine serve` owning it (`launch_backup`, both wait until after
 the binding's warm and a quiet turn, at most three minutes, one copy at a time
-per process). Serve starts it once its endpoint answers and reports a failure on
+per process). Serve alone skips the snapshot if the newest backup zip is less
+than six hours old (D-20261020-CF4), logging one line on stderr. It uses the
+rotation's `scan` listing and newest-last `Record::order`: the UTC timestamp in
+the zip's name, not its filesystem mtime. A future or invalid timestamp does
+not suppress a snapshot; neither do legacy folders or partial zips. The app's
+launch policy is unchanged. Serve starts its worker once its endpoint answers and reports a failure on
 stderr (its start log) and in the diagnostic log. Its stop cancels a copy
 that is still waiting or reading; one that has finished reading still
 publishes, unreported. Serve joins the worker after releasing the lease, so it

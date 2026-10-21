@@ -116,21 +116,54 @@ fn wait_launch_backup(slot: &GraphSlot) -> bool {
 pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
     let data_dir = app.path().app_data_dir().ok();
     let report_slot = slot.clone();
-    launch_backup(slot, data_dir, move |outcome| {
+    launch_backup(slot, data_dir, None, move |outcome| {
         report_launch_failure(&app, &report_slot, outcome)
     });
 }
 
 /// The headless owner's launch backup (`tine serve`, journal D-20261019-QC
-/// item 3): the app's policy, with stderr (serve's start log) and the
-/// diagnostic log as the only report. The handle lets serve wait for a
+/// item 3, D-20261020-CF4): the app's backup path, throttled to preserve
+/// backup slots across scripted restarts. Stderr (serve's start log) and the
+/// diagnostic log are the only report. The handle lets serve wait for a
 /// cancelled backup to stop before the process exits.
 #[cfg(desktop)]
 pub(crate) fn launch_backup_headless(
     slot: Arc<GraphSlot>,
     app_data: PathBuf,
 ) -> Option<std::thread::JoinHandle<()>> {
-    launch_backup(slot, Some(app_data), report_launch_outcome)
+    launch_backup(
+        slot,
+        Some(app_data),
+        Some(chrono::TimeDelta::hours(6)),
+        report_launch_outcome,
+    )
+}
+
+/// Use rotation's listing and ordering, restricted to completed zip names.
+/// Missing/unreadable directories or invalid/future stamps never suppress a
+/// backup. No graph reads, archive reads, lock acquisition or writes here.
+fn has_recent_backup_zip(
+    base: &std::path::Path,
+    now: chrono::DateTime<chrono::Utc>,
+    minimum_age: chrono::TimeDelta,
+) -> bool {
+    let Ok(scan) = scan(base, &zip_base(base)) else {
+        return false;
+    };
+    let Some(newest) = scan
+        .records
+        .iter()
+        .rev()
+        .find(|record| record.namespace == naming::Namespace::Zip)
+    else {
+        return false;
+    };
+    let Ok(stamp) = chrono::NaiveDateTime::parse_from_str(&newest.name.stamp, "%Y-%m-%d_%H-%M-%S")
+    else {
+        return false;
+    };
+    let age = now.signed_duration_since(stamp.and_utc());
+    age >= chrono::TimeDelta::zero() && age < minimum_age
 }
 
 /// Validate the source at launch, then copy it on a detached worker once the
@@ -140,6 +173,7 @@ pub(crate) fn launch_backup_headless(
 fn launch_backup(
     slot: Arc<GraphSlot>,
     data_dir: Option<PathBuf>,
+    minimum_age: Option<chrono::TimeDelta>,
     report: impl Fn(&BackupOutcome) + Send + 'static,
 ) -> Option<std::thread::JoinHandle<()>> {
     let source = match BackupSource::from_store(&slot.store, &slot.root_key) {
@@ -161,6 +195,13 @@ fn launch_backup(
             .unwrap();
         if slot.background_cancelled.load(Ordering::Acquire) {
             return;
+        }
+        if let (Some(minimum_age), Some(data_dir)) = (minimum_age, data_dir.as_deref()) {
+            let base = data_dir.join("backups").join(root_backup_id(&source.root));
+            if has_recent_backup_zip(&base, chrono::Utc::now(), minimum_age) {
+                eprintln!("[tine] serve launch backup skipped: newest backup zip is less than 6 hours old");
+                return;
+            }
         }
         let outcome = backup_into(data_dir.as_deref(), &slot.store, source, "", &|| {
             slot.background_cancelled.load(Ordering::Acquire)
