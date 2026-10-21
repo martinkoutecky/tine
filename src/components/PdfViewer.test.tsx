@@ -416,6 +416,60 @@ describe("PdfViewer resource safety", () => {
     } finally { dispose(); }
   });
 
+  it("stretches a built text layer during a zoom instead of re-laying out its text", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="text.pdf" label="Text" />, host);
+    try {
+      await flush();
+      const wrapper = host.querySelector<HTMLElement>(".pdf-page")!;
+      TestIntersectionObserver.instances.at(-1)!.show(wrapper);
+      await vi.advanceTimersByTimeAsync(150);
+      await flush();
+      const text = wrapper.querySelector<HTMLElement>(".textLayer")!;
+      expect(text.style.getPropertyValue("--scale-factor")).toBe("1");
+      (host.querySelector('button[title="Zoom in"]') as HTMLButtonElement).click();
+      await flush();
+      // Mid-zoom the spans keep their laid-out size; only a transform follows the page.
+      expect(text.style.getPropertyValue("--scale-factor")).toBe("1");
+      expect(text.style.transform).toBe("scale(1.1)");
+    } finally {
+      dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("prefetches the pages below after a jump back up the document", async () => {
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const pages = Array.from({ length: 10 }, () => page(612, 792));
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages(pages)) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="jump.pdf" label="Jump" />, host);
+    try {
+      await flush();
+      const scroller = host.querySelector<HTMLElement>(".pdf-scroll")!;
+      Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 800 });
+      scroller.scrollTop = 6000;
+      scroller.dispatchEvent(new Event("scroll"));
+      // An outline or page-number jump lands above: the reader reads on downward.
+      scroller.scrollTop = 1800;
+      scroller.dispatchEvent(new Event("scroll"));
+      await flush();
+      TestIntersectionObserver.instances.at(-1)!.show(host.querySelectorAll<HTMLElement>(".pdf-page")[2]);
+      await flush();
+      expect(pages[2].render).toHaveBeenCalledOnce();
+      expect(pages[3].render, "the next page down is prefetched").toHaveBeenCalledOnce();
+      expect(pages[1].render, "not the page above the jump target").not.toHaveBeenCalled();
+    } finally { dispose(); }
+  });
+
   it("keeps a typed page jump when Enter blurs the page field", async () => {
     vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
     vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));

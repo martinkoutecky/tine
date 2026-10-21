@@ -503,6 +503,7 @@
 .pdf-page .textLayer {
   position: absolute;
   inset: 0;
+  transform-origin: 0 0;
   overflow: hidden;
   opacity: 1;
   line-height: 1;
