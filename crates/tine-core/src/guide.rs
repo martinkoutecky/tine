@@ -377,7 +377,7 @@ mod journal_guide_tests {
             "read-only preview",
             // GH #735: Logseq's hover delay and height cap, and page-faithful content.
             "opens after a one-second pause",
-            "It stops at 600 pixels",
+            "It stops at 600 pixels or half the window, whichever is taller",
             "shows code blocks, callouts, quotes and folds the way the page does",
             "**Open source**",
             "source page's title and page properties",
