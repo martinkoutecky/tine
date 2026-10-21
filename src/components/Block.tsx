@@ -40,7 +40,7 @@ import { typoTypeReplace } from "../render/typography";
 import { rangeInLiteral } from "../editor/inlineLiteral";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
-import { restoreMovedSelection, keepCaretThroughRewrite } from "../editor/restoreMovedSelection";
+import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
 import { pageByName, blockPageReadOnly, blockWritable, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
@@ -1059,8 +1059,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const applyEdit = (ed: Edit) => {
     commit(ed.text);
     queueMicrotask(() => {
-      ref.value = ed.text;
-      ref.setSelectionRange(ed.start, ed.end, ed.direction);
+      syncTextareaToStore(ref, ed.text, textareaValue(), ed.start, ed.end, ed.direction);
       ref.focus();
       autosize();
     });
@@ -1258,8 +1257,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     commit(newRaw);
     const pos = start + text.length;
     queueMicrotask(() => {
-      ref.value = newRaw;
-      ref.setSelectionRange(pos, pos);
+      syncTextareaToStore(ref, newRaw, textareaValue(), pos);
       autosize();
     });
   };
@@ -1690,8 +1688,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         commit(next);
         closeAc();
         queueMicrotask(() => {
-          ref.value = next;
-          ref.setSelectionRange(next.length, next.length);
+          syncTextareaToStore(ref, next, textareaValue(), next.length);
           ref.focus();
           autosize();
         });
@@ -2234,8 +2231,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     commit(newRaw);
     const pos = Math.max(0, start + delta);
     queueMicrotask(() => {
-      ref.value = newRaw;
-      ref.setSelectionRange(pos, pos);
+      syncTextareaToStore(ref, newRaw, textareaValue(), pos);
       autosize();
     });
   };
