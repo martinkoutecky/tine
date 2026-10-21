@@ -65,6 +65,28 @@ export interface GpuEnv {
   portable: boolean;
 }
 
+/** Settings → Graph → Git (ADR 0078): the bound graph's autocommit state. On a
+ *  platform without git only `available: false` is sent. */
+export type GitPolicy = "off" | "commit";
+export interface GitAutocommitStatus {
+  available: boolean;
+  /** The graph is inside a git work tree. */
+  repository?: boolean;
+  branch?: string | null;
+  /** Why Tine cannot commit here: [code, message]. */
+  unusable?: [string, string] | null;
+  policy?: GitPolicy;
+  interval_minutes?: number;
+  last?: {
+    /** Unix seconds of this process's last autocommit. */
+    committed_at: number | null;
+    commit: string | null;
+    refused: [string, string] | null;
+    /** An `index.lock` held through several cycles over 30 minutes. */
+    stale_lock: string | null;
+  };
+}
+
 export interface BackupInfo {
   /** What `restoreBackup` takes: `zip:<name>` or `dir:<name>` (a zip and a
    *  legacy snapshot directory with the same name are distinct backups). */

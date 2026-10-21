@@ -45,10 +45,12 @@ messages, the settings shape) can change later without touching anyone's data.
 A graph whose root is a git work tree root, or lies inside one, offers in Settings → Graph → Git: **Off**
 (default), **Commit automatically**, **Commit and sync on demand**, **Commit and sync automatically**. The
 choice, and the G9 interval, are device settings in the existing `tine-settings.json`, keyed by graph path; the
-webview hands them to the graph's binding when it binds and on every change. Nothing is written to the repository
-or its config. Refused with a reason in Settings: bare repository, merge/rebase/cherry-pick in progress, detached
-HEAD (commit only, no sync), eol/filter conversion of graph text files (`core.autocrlf`, `.gitattributes`
-`text`/`eol`/`filter`: git's bytes would differ from Tine's), sparse checkout (`core.sparseCheckout` or any
+backend reads them when the graph binds and applies a change from Settings to the running worker at once. Nothing
+is written to the repository or its config. Refused with a reason in Settings: bare repository,
+merge/rebase/cherry-pick in progress, detached HEAD (no branch to advance), content conversion of graph files
+(`.gitattributes` `filter`, `ident`, `working-tree-encoding`: the committed blob would not be what git expects to
+check out; eol normalisation (`core.autocrlf`, `text`/`eol`) refuses only sync, per G5, because a commit stores
+Tine's exact bytes and a later normalising checkout changes only line endings), sparse checkout (`core.sparseCheckout` or any
 skip-worktree entry under the graph root: libgit2's add would commit the excluded files as deleted), and on macOS
 and iOS a repository without `core.precomposeunicode = true` (decomposed names would commit every diacritic page as
 a delete plus an add). A held `index.lock` is "busy, retry"; after three busy cycles spanning 30 minutes Settings

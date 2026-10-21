@@ -908,6 +908,22 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn git_autocommit_is_documented() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for behavior in [
+            "**Commit changes to git** → **Commit automatically**",
+            "Tine never pushes or pulls",
+            "changes you staged elsewhere stay staged",
+            "`index.lock`",
+        ] {
+            assert!(
+                files.contains(behavior),
+                "missing git Guide text: {behavior}"
+            );
+        }
+    }
+
+    #[test]
     fn referenced_fileless_journal_days_are_documented() {
         let text = include_str!("templates/journals-tasks-scheduling.md");
         for behavior in [
