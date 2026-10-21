@@ -456,7 +456,7 @@ mod tests {
         let retirement = registry.retirement.clone();
         assert!(retirement.wait_idle(Duration::from_millis(2500)).is_err());
         assert!(
-            slot.host_slot().unwrap().running().is_some(),
+            slot.host_slot().unwrap().running().is_ok(),
             "the host stays alive"
         );
         assert!(!f.closed());
@@ -689,7 +689,7 @@ mod tests {
     /// of `slot`, on `slot` as a worker that captured it finds it.
     fn late_writer(slot: &GraphSlot, to: &str) -> Result<(), String> {
         let gate = slot.host_slot()?;
-        rename(&slot.store, gate.running(), to)
+        rename(&slot.store, gate.running().ok(), to)
     }
 
     fn rename(store: &Store, host: Option<&PageHost>, to: &str) -> Result<(), String> {
@@ -725,7 +725,7 @@ mod tests {
             Err(STALE_BINDING.to_owned()),
             "revoked for good, not only while the page is reserved"
         );
-        assert!(fresh.host_slot().unwrap().running().is_some());
+        assert!(fresh.host_slot().unwrap().running().is_ok());
         assert!(registry.remove("graph-2").is_none());
         assert_eq!(retirement.wait_idle(Duration::from_secs(20)), Ok(()));
         assert_eq!(f.disk(), "- one\n");
@@ -755,7 +755,7 @@ mod tests {
                 let gate = old.host_slot().unwrap();
                 entered.wait();
                 release.wait();
-                rename(&old.store, gate.running(), "inside")
+                rename(&old.store, gate.running().ok(), "inside")
             });
             entered.wait();
             let adopt = scope.spawn(|| retirement.adopt(&f.root));

@@ -598,7 +598,7 @@ pub fn journal_filename_migrations(store: &Store) -> io::Result<Vec<JournalFilen
 /// migrated file bytes).
 pub fn migrate_journal_filenames(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     confirmed: &[JournalFilenameMigration],
 ) -> io::Result<MigrationResult> {
     let fmt = format(store);
@@ -636,22 +636,12 @@ pub fn migrate_journal_filenames(
         let Ok(to) = store.file_id(Area::Journals, &target) else {
             continue; // `migration_plan` already refused an invalid name.
         };
-        let moved = match (host, store.as_page(&entry), store.as_page(&to)) {
-            (Some(running), Some(from), Some(page)) => {
-                migrate_hosted(store, running, (&entry, from), (&to, page), &target)
+        let moved = match (store.as_page(&entry), store.as_page(&to)) {
+            (Some(from), Some(page)) => {
+                migrate_hosted(store, host, (&entry, from), (&to, page), &target)
             }
-            // No host: the transaction under the retained-writer route, as before P3.
-            _ => {
-                let pages = crate::retained::pages(store, [&entry, &to]);
-                crate::retained::reserved(
-                    host,
-                    Input::Flush,
-                    || Ok(pages.clone()),
-                    crate::retained::unsaved,
-                    |_| Ok(migrate_one(store, &entry, &to)),
-                )
-                .and_then(|moved| moved)
-            }
+            // Not a page (Store::as_page): the plain move, no host fence.
+            _ => migrate_one(store, &entry, &to),
         };
         match moved {
             Ok(()) => {
@@ -815,24 +805,15 @@ pub fn read_journal_file(store: &Store, name: &str) -> io::Result<String> {
 /// With a host, one host operation deletes the page (DESIGN §3.1); the host
 /// keeps the deleted bytes in graph trash. The page's unsaved input is saved
 /// first (`Input::Flush`).
-pub fn trash_journal_file(store: &Store, host: Option<&PageHost>, name: &str) -> io::Result<()> {
+pub fn trash_journal_file(store: &Store, host: &PageHost, name: &str) -> io::Result<()> {
     journal_name(name)?;
     let id = store.file_id(Area::Journals, name).map_err(store_error)?;
     let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
-    let (Some(running), Some(page)) = (host, store.as_page(&id)) else {
-        // No host: the transaction under the retained-writer route, as before P2.
-        let discover = || Ok(crate::retained::pages(store, [&id]));
-        return crate::retained::reserved(
-            host,
-            Input::Flush,
-            discover,
-            crate::retained::unsaved,
-            |_| {
-                crate::retry_on_conflict("journal changed repeatedly during trash", || {
-                    crate::trash_current(store, &id, max, "no such journal file")
-                })
-            },
-        );
+    let Some(page) = store.as_page(&id) else {
+        // Not a page (Store::as_page): the guarded trash, no host fence.
+        return crate::retry_on_conflict("journal changed repeatedly during trash", || {
+            crate::trash_current(store, &id, max, "no such journal file")
+        });
     };
     let plan = || {
         let rev = match store.read(&id, max) {
@@ -848,7 +829,7 @@ pub fn trash_journal_file(store: &Store, host: Option<&PageHost>, name: &str) ->
         crate::retained::plan(crate::trash_transaction(store, &id, rev)).map(Some)
     };
     crate::retained::operation(
-        running,
+        host,
         Input::Flush,
         std::slice::from_ref(&page),
         "moving the journal to trash",

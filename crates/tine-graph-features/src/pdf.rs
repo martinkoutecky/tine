@@ -290,8 +290,6 @@ pub fn write_pdf_area_image(
 
 const LEGACY_SIDECAR_LEFT: &str =
     "tine pdf: highlights saved; the old-key highlight sidecar could not be retired and was left in place";
-const LEGACY_PAGE_LEFT: &str =
-    "tine pdf: highlights saved; the old-key annotation page could not be retired and was left in place";
 const DELETED_CROP_LEFT: &str =
     "tine pdf: highlights saved; a deleted area highlight's image could not be removed and was left in place";
 
@@ -702,7 +700,7 @@ fn annotation_steps(
 /// the annotation page is absent (up to O(P)).
 pub fn write_highlights(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     pdf_name: &str,
     label: &str,
     highlights: &[Highlight],
@@ -737,57 +735,12 @@ pub fn write_highlights(
         let next = pdf::write_highlights(&merged.highlights, raw);
         io::Result::Ok((current, old, merged, next))
     };
-    let Some(running) = host else {
-        // No host: one store transaction under the retained-writer route,
-        // as before P3.
-        let discover = || Ok(pages.clone());
-        return crate::retained::reserved(
-            host,
-            Input::Flush,
-            discover,
-            crate::retained::unsaved,
-            |_| {
-                crate::retry_on_conflict(SIDECAR_CHANGED, || {
-                    let (current, old, merged, next) = read()?;
-                    let annotation = annotation(store, &name, &old_name, migrate)?;
-                    let page_dto = annotation_dto(&annotation, &name, pdf_name, label, &merged);
-                    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-                    let guard = legacy_id.as_ref().zip(old.as_ref());
-                    sidecar_steps(&mut tx, &primary, current.as_ref(), &next, guard);
-                    if let Some((id, raw, rev)) = &annotation.legacy {
-                        if optional(store, &id.file())? != Some((raw.clone(), rev.clone())) {
-                            return Ok(None);
-                        }
-                    }
-                    annotation_steps(&mut tx, &annotation, &page_dto, false);
-                    if !crate::commit_retry(tx.commit())? {
-                        return Ok(None);
-                    }
-                    let source_key = if old.is_some() { &legacy } else { &key };
-                    retire(
-                        store,
-                        pdf_name,
-                        legacy_id.as_ref(),
-                        old.as_ref(),
-                        source_key,
-                        &merged,
-                    );
-                    if let Some((id, _, rev)) = annotation.legacy {
-                        let mut cleanup = store.transaction(Some(tine_store::EditKind::DeletePage));
-                        cleanup.trash(&id.file(), rev, tine_store::TrashIf::Any);
-                        report_cleanup(cleanup.commit(), LEGACY_PAGE_LEFT);
-                    }
-                    Ok(Some(merged.highlights))
-                })
-            },
-        );
-    };
     // The writer's Flush contract before anything is written: an operation
     // with nothing to write saves the pages' unsaved input.
     let flush = || Ok(None);
     let unsaved = crate::retained::unsaved;
     crate::retained::operation(
-        running,
+        host,
         Input::Flush,
         &pages,
         PAGE_UPDATE,
@@ -843,7 +796,7 @@ pub fn write_highlights(
             Ok((!unchanged).then_some(op))
         };
         crate::retained::operation(
-            running,
+            host,
             Input::Flush,
             &pages,
             PAGE_UPDATE,

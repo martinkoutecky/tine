@@ -490,7 +490,7 @@ mod tests {
             let reloaded = serde_json::to_value(reply.reloaded.unwrap()).unwrap();
             assert!(sessions.insert(reloaded["session"].as_u64().unwrap()));
             assert!(
-                slot.read().unwrap().running().is_some(),
+                slot.read().unwrap().running().is_ok(),
                 "R7: one fresh host after the restore, on failure too"
             );
         }
@@ -616,7 +616,7 @@ mod tests {
         });
         assert_eq!(reply, Err(STALE_BINDING.to_owned()));
         assert!(!entered, "the restore never ran on the adopted Store");
-        assert!(fresh.host_slot().unwrap().running().is_some());
+        assert!(fresh.host_slot().unwrap().running().is_ok());
         drop(reservation);
         drop((fresh, old));
         std::fs::remove_dir_all(root).unwrap();

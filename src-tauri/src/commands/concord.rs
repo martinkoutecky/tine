@@ -85,7 +85,7 @@ pub(crate) async fn resolve_sync_conflict(
         };
         let outcome = tine_graph_features::conflicts::resolve_sync_conflict(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &winner,
             &conflict,
             &decisions,
@@ -113,7 +113,7 @@ pub(crate) async fn trash_sync_conflict(
     crate::state::off_ui(move || {
         let outcome = tine_graph_features::conflicts::trash_sync_conflict(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running().ok(),
             &conflict,
         )
         .map_err(|e| e.to_string());
@@ -159,7 +159,7 @@ pub(crate) async fn resolve_duplicate_journal_day(
     tauri::async_runtime::spawn_blocking(move || {
         let outcome = tine_graph_features::conflicts::resolve_duplicate_journal_day(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &canonical,
             &stray,
             &decisions,
@@ -224,7 +224,7 @@ pub(crate) async fn resolve_vcs_marker_conflict(
     tauri::async_runtime::spawn_blocking(move || {
         let outcome = tine_graph_features::conflicts::resolve_vcs_marker_conflict(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &path,
             &decisions,
             &base_rev,

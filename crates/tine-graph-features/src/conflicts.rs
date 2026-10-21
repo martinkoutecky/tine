@@ -663,7 +663,7 @@ pub(crate) fn dto(store: &Store, id: &PageId, mut doc: Document) -> PageDto {
 /// four attempts.
 pub fn resolve_sync_conflict(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     winner: &str,
     conflict: &str,
     decisions: &HashMap<String, String>,
@@ -719,7 +719,7 @@ pub fn resolve_sync_conflict(
 #[allow(clippy::too_many_arguments)]
 fn fold_pair(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     (win, conf): (&FileId, &FileId),
     decisions: &HashMap<String, String>,
     revs: (&str, &str),
@@ -763,15 +763,6 @@ fn fold_pair(
         }
         tx
     };
-    let Some(running) = host else {
-        let discover = || Ok(crate::retained::pages(store, [win, conf]));
-        return crate::retained::reserved(host, Input::Refuse, discover, refused, |_| {
-            crate::retry_on_conflict(EXHAUSTED, || {
-                let fold = fold()?;
-                Ok(crate::commit_retry(transaction(&fold, true).commit())?.then_some(()))
-            })
-        });
-    };
     let mut copy_rev = None;
     let plan = || {
         let fold = fold()?;
@@ -786,7 +777,7 @@ fn fold_pair(
     };
     let touched = crate::retained::pages(store, [win, conf]);
     let applied = crate::retained::operation(
-        running,
+        host,
         Input::Refuse,
         &touched,
         "the merge",
@@ -969,7 +960,7 @@ pub fn duplicate_journal_diff(
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_duplicate_journal_day(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     canonical: &str,
     stray: &str,
     decisions: &HashMap<String, String>,
@@ -1083,7 +1074,7 @@ pub fn vcs_marker_conflict_diff(
 /// four attempts.
 pub fn resolve_vcs_marker_conflict(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     rel: &str,
     decisions: &HashMap<String, String>,
     base_rev: &str,
@@ -1116,15 +1107,6 @@ pub fn resolve_vcs_marker_conflict(
         );
         tx
     };
-    let Some(running) = host else {
-        let discover = || Ok(vec![page.clone()]);
-        return crate::retained::reserved(None, Input::Refuse, discover, refused, |_| {
-            crate::retry_on_conflict(EXHAUSTED, || {
-                let (_, rev, merged) = reviewed()?;
-                Ok(crate::commit_retry(transaction(rev, &merged).commit())?.then_some(()))
-            })
-        });
-    };
     // C4: the durable non-page marker copy precedes the read-only planner.
     let (content, rev, merged) = reviewed()?;
     transaction(rev, &merged).plan().map_err(crate::why_error)?;
@@ -1136,7 +1118,7 @@ pub fn resolve_vcs_marker_conflict(
         crate::retained::plan(transaction(rev, &merged)).map(Some)
     };
     crate::retained::operation(
-        running,
+        host,
         Input::Refuse,
         std::slice::from_ref(&page),
         "resolving the merge",

@@ -451,7 +451,7 @@ pub(crate) async fn copy_guide_into_graph(
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::guide::copy_guide_into_graph(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &title,
         )
         .map_err(|error| error.to_string())
@@ -566,7 +566,7 @@ pub(crate) async fn rename_page(
         // statement-temporary guard (A-K3, `host_slot_guard_tests.rs`).
         tine_graph_features::pages::rename_or_merge_page(
             &slot.store,
-            slot.host_slot()?.running().ok_or("no page host")?,
+            slot.host_slot()?.running()?,
             &old,
             &new,
             expected_path.as_deref(),
@@ -2127,7 +2127,7 @@ pub(crate) async fn apply_journal_filename_migrations(
         crate::backup::snapshot_before_rewrite(&app, &slot, "pre-journal-rename")?;
         let result = journals::migrate_journal_filenames(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &migrations,
         )
         .map_err(|error| error.to_string())?;
@@ -2147,7 +2147,7 @@ pub(crate) async fn trash_journal_file(
     crate::state::off_ui(move || {
         tine_graph_features::journals::trash_journal_file(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &name,
         )
         .map_err(|e| e.to_string())
@@ -2196,7 +2196,7 @@ pub(crate) async fn merge_pages(
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::pages::merge_pages(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &src,
             &dst,
         )
@@ -2239,7 +2239,7 @@ pub(crate) async fn rename_file_to_page(
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::pages::rename_file_to_page(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &path,
             &new_name,
         )
@@ -2304,7 +2304,7 @@ pub(crate) async fn write_highlights(
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::pdf::write_highlights(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &pdf,
             &label,
             &highlights,

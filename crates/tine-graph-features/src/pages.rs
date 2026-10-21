@@ -1211,7 +1211,7 @@ pub enum RenameOutcome {
 /// source bytes) per try; four tries maximum.
 pub fn rename_file_to_page(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     src_rel: &str,
     new_name: &str,
 ) -> io::Result<()> {
@@ -1247,23 +1247,6 @@ pub fn rename_file_to_page(
         tx.move_file(&src, rev, &to, None);
         tx
     };
-    let Some(running) = host else {
-        // No host: the transaction under the retained-writer route, as before P3.
-        let discover = || Ok(crate::retained::pages(store, [&src, &to]));
-        return crate::retained::reserved(
-            host,
-            Input::Flush,
-            discover,
-            crate::retained::unsaved,
-            |_| {
-                crate::retry_on_conflict("page changed repeatedly during rescue", || {
-                    unclaimed()?;
-                    let (_, rev) = store.read(&src, max).map_err(store_error)?;
-                    Ok(crate::commit_retry(transaction(rev).commit())?.then_some(()))
-                })
-            },
-        );
-    };
     let mut cleanup_rev = None;
     let plan = || {
         unclaimed()?;
@@ -1276,7 +1259,7 @@ pub fn rename_file_to_page(
     };
     let touched = crate::retained::pages(store, [&src, &to]);
     crate::retained::operation(
-        running,
+        host,
         Input::Flush,
         &touched,
         "renaming the file",
@@ -1306,12 +1289,7 @@ fn trash_rescue_source(store: &Store, src: &FileId, rev: FileRev) -> io::Result<
 /// rewrites inbound refs in this operation. With a host, one host operation
 /// of both pages (DESIGN §3.1): their unsaved input is saved first. Cost O(source + survivor
 /// bytes and blocks) per try; four complete attempts maximum.
-pub fn merge_pages(
-    store: &Store,
-    host: Option<&PageHost>,
-    src_rel: &str,
-    dst_rel: &str,
-) -> io::Result<()> {
+pub fn merge_pages(store: &Store, host: &PageHost, src_rel: &str, dst_rel: &str) -> io::Result<()> {
     let src = text_file(store, src_rel)?;
     let dst = text_file(store, dst_rel)?;
     if src == dst {
@@ -1340,22 +1318,6 @@ pub fn merge_pages(
         tx.trash(&src, survivor.src_rev.clone(), tine_store::TrashIf::Any);
         tx
     };
-    let Some(running) = host else {
-        // No host: the transaction under the retained-writer route, as before P2.
-        let discover = || Ok(vec![src_id.clone(), dst_id.clone()]);
-        return crate::retained::reserved(
-            host,
-            Input::Flush,
-            discover,
-            crate::retained::unsaved,
-            |_| {
-                crate::retry_on_conflict("pages changed repeatedly during merge", || {
-                    let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
-                    Ok(crate::commit_retry(transaction(&survivor).commit())?.then_some(()))
-                })
-            },
-        );
-    };
     // One host operation (DESIGN §3.1): the survivor's write, then the
     // source's deletion, a move's order (the survivor holds the source's
     // blocks), from one draft, so a crash between them completes the
@@ -1367,7 +1329,7 @@ pub fn merge_pages(
         Ok(Some(op))
     };
     crate::retained::operation(
-        running,
+        host,
         Input::Flush,
         &[dst_id.clone(), src_id.clone()],
         "the merge",

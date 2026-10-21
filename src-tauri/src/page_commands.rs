@@ -21,7 +21,7 @@ pub(crate) fn with_host<T>(
 ) -> Result<T, String> {
     match &*slot.host.read().unwrap_or_else(|e| e.into_inner()) {
         PageHostSlot::Running(host) => Ok(work(host)),
-        PageHostSlot::Off => Err("no page host runs for this graph".into()),
+        PageHostSlot::Off => Err(crate::state::NO_PAGE_HOST.into()),
         PageHostSlot::Revoked => Err(crate::state::STALE_BINDING.into()),
     }
 }

@@ -131,8 +131,8 @@ impl Drop for QueryRun<'_> {
 }
 
 /// Where the binding's page host stands. `Off` before the open starts it,
-/// and after a restore whose fresh host could not start (writers then run
-/// as with no host).
+/// and after a restore whose fresh host could not start (page writers then
+/// refuse with [`NO_PAGE_HOST`]; DESIGN host-only-writer §3.6).
 #[derive(Default)]
 pub(crate) enum PageHostSlot {
     #[default]
@@ -146,16 +146,21 @@ pub(crate) enum PageHostSlot {
 }
 
 impl PageHostSlot {
-    /// The running host, which census writers reserve their pages from.
-    /// Reached only through `GraphSlot::host_slot`, which refuses a revoked
-    /// slot.
-    pub(crate) fn running(&self) -> Option<&tine_store::PageHost> {
+    /// The running host, the only writer of page files. Reached only
+    /// through `GraphSlot::host_slot`, which refuses a revoked slot; an off
+    /// one refuses with [`NO_PAGE_HOST`] and writes nothing (in-scope
+    /// scenario: the host failed to start, or to relaunch after a restore,
+    /// on a disk error).
+    pub(crate) fn running(&self) -> Result<&tine_store::PageHost, &'static str> {
         match self {
-            Self::Running(host) => Some(host),
-            Self::Off | Self::Revoked => None,
+            Self::Running(host) => Ok(host),
+            Self::Off | Self::Revoked => Err(NO_PAGE_HOST),
         }
     }
 }
+
+/// An off host's refusal of a page write (host-only-writer DESIGN §3.6).
+pub(crate) const NO_PAGE_HOST: &str = "The graph isn't open right now. Reopen it, then try again.";
 
 /// A revoked slot's outcome: the existing stale-binding refusal (scenario:
 /// a command queued before its window closed and the root was reopened).
