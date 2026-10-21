@@ -31,6 +31,20 @@ describe("PDF perf gate verdict", () => {
     expect(compare([1990, 2000, 2010], [2600, 2610, 2620], "blank").status).toBe("regression");
   });
 
+  it("does not flag the same-binary spreads measured on the reference machine", () => {
+    // Same fixed-viewer binary, session values from the validation runs
+    // (evidence/pdf-perf-gate): S1a fast blank at DPR 1 across two runs, and
+    // the bimodal max frame of a DPR 2 zoom burst within one A/A run.
+    expect(compare([46.1, 95.3, 75.8], [472, 195.6, 213.6], "blank").status).not.toBe("regression");
+    expect(compare([76, 78, 79], [151, 144, 143], "max").status).not.toBe("regression");
+  });
+
+  it("flags the old viewer's zoom regressions against the fixed one", () => {
+    // DPR 2 button zoom-in blank, and Ctrl+wheel anchor drift (validation run v2).
+    expect(compare([0, 0, 0], [991, 656, 1090], "blank").status).toBe("regression");
+    expect(compare([4, 4, 4], [403, 403, 403], "drift").status).toBe("regression");
+  });
+
   it("reports improvements against the candidate's range", () => {
     expect(compare([500, 800, 1500], [0, 5, 10], "blank").status).toBe("improvement");
   });

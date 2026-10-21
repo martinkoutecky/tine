@@ -18,9 +18,9 @@
 // reference machine (docs/pdf-perf-harness.md).
 
 export const FAMILIES = {
-  blank: { label: "blank ms", unit: "ms", floor: 40, rel: 0.25 },
+  blank: { label: "blank", unit: "ms", floor: 150, rel: 0.25 },
   p95: { label: "p95 frame", unit: "ms", floor: 15, rel: 0.2 },
-  max: { label: "max frame", unit: "ms", floor: 40, rel: 0.25 },
+  max: { label: "max frame", unit: "ms", floor: 100, rel: 0.25 },
   over100: { label: "frames >100 ms", unit: "", floor: 3, rel: 0.5 },
   sharp: { label: "time to sharp", unit: "ms", floor: 80, rel: 0.25 },
   drift: { label: "anchor drift", unit: "px", floor: 25, rel: 0.2 },
@@ -129,7 +129,8 @@ export function resultTable(results, { withBase = true } = {}) {
     const f = FAMILIES[r.family];
     const label = `${f.label}${f.unit ? ` (${f.unit})` : ""}`;
     if (!withBase) { lines.push(`| ${r.dpr} | ${r.cell} | ${label} | ${fmtRange(r.cand)} |`); continue; }
-    const status = r.status === "regression" ? "**REGRESSION**" : r.status === "improvement" ? "improvement" : r.status;
+    const status = r.status === "regression" ? "**REGRESSION**"
+      : r.status === "watch" ? `watch (${r.gap > 0 ? "worse" : "better"})` : r.status;
     lines.push(`| ${r.dpr} | ${r.cell} | ${label} | ${fmtRange(r.base)} | ${fmtRange(r.cand)} | ${fmtN(r.threshold)} | ${status}${r.note ? ` (${r.note})` : ""} |`);
   }
   return lines.join("\n");

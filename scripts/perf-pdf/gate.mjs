@@ -3,6 +3,7 @@
 //
 //   node scripts/perf-pdf/gate.mjs --base <tine binary> --candidate <tine binary> [--out <dir>]
 //     [--sessions 3] [--dprs 1,2] [--load-max 4] [--load-wait-min 15] [--cpus <taskset list>]
+//   node scripts/perf-pdf/gate.mjs --report-only <out>   # re-render report.md/json from <out>/raw
 //
 // Runs the trimmed scenario set (run.mjs --gate, Tine's viewer only) in fresh
 // sessions, base and candidate interleaved per DPR and repetition (order
@@ -25,20 +26,23 @@ import { FAMILIES, resultTable, sideOf, verdict } from "./verdict.mjs";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../..");
 const arg = (name, dflt) => { const i = process.argv.indexOf(`--${name}`); return i >= 0 ? process.argv[i + 1] : dflt; };
-const BASE = arg("base"), CAND = arg("candidate");
-if (!BASE || !CAND) { console.error("usage: gate.mjs --base <binary> --candidate <binary> [--out dir]"); process.exit(2); }
-const OUT = path.resolve(arg("out", path.join(ROOT, "target/perf-pdf-gate", new Date().toISOString().replace(/[:.]/g, "-"))));
+const BASE = arg("base"), CAND = arg("candidate"), REPORT_ONLY = arg("report-only");
+if (!REPORT_ONLY && (!BASE || !CAND)) { console.error("usage: gate.mjs --base <binary> --candidate <binary> [--out dir] | --report-only <out>"); process.exit(2); }
+const OUT = path.resolve(REPORT_ONLY || arg("out", path.join(ROOT, "target/perf-pdf-gate", new Date().toISOString().replace(/[:.]/g, "-"))));
 const RAW = path.join(OUT, "raw");
-const SESSIONS = Number(arg("sessions", "3"));
-const DPRS = arg("dprs", "1,2").split(",").map(Number);
-const LOAD_MAX = Number(arg("load-max", "4"));
-const LOAD_WAIT_MIN = Number(arg("load-wait-min", "15"));
-const CPUS = arg("cpus", "");
+// --report-only re-renders an earlier run (e.g. after a threshold change) from its raw rows.
+const prior = REPORT_ONLY ? JSON.parse(fs.readFileSync(path.join(OUT, "report.json"), "utf8")) : null;
+const settings = prior?.settings ?? { sessions: Number(arg("sessions", "3")), dprs: arg("dprs", "1,2").split(",").map(Number),
+  loadMax: Number(arg("load-max", "4")), loadWaitMin: Number(arg("load-wait-min", "15")), cpus: arg("cpus", "") };
+const { sessions: SESSIONS, dprs: DPRS, loadMax: LOAD_MAX, loadWaitMin: LOAD_WAIT_MIN, cpus: CPUS } = settings;
 const SESSION_TIMEOUT_MS = 15 * 60_000;
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const load1 = () => os.loadavg()[0];
 const loads = () => os.loadavg().map((x) => Math.round(x * 100) / 100);
 
+let binaries = prior?.binaries, sessions = prior?.sessions ?? [], baseNoProbe = prior?.baseNoProbe ?? false, abort = prior?.abort ?? null;
+const started = Date.now();
+if (!prior) {
 // ---------------------------------------------------------------- preflight
 const problems = [];
 for (const tool of ["xvfb-run", "tauri-driver", "xdotool"]) {
@@ -52,12 +56,26 @@ for (const [label, bin] of [["base", BASE], ["candidate", CAND]]) {
 // One harness session per machine: a second one shares the CPUs and driver ports.
 const other = spawnSync("pgrep", ["-f", "perf-pdf/run.mjs"], { encoding: "utf8" }).stdout.trim();
 if (other) problems.push(`another harness session is running (pids ${other.split("\n").join(", ")})`);
+// pgrep cannot see a second gate that is still waiting for a quiet machine; the lock can.
+const LOCK = path.join(os.tmpdir(), "tine-pdf-perf-gate.lock");
+const lockHolder = () => { try { const pid = Number(fs.readFileSync(path.join(LOCK, "pid"), "utf8")); process.kill(pid, 0); return pid; } catch { return null; } };
+if (!problems.length) {
+  try { fs.mkdirSync(LOCK); } catch {
+    const pid = lockHolder();
+    if (pid) problems.push(`another PDF perf gate is running (pid ${pid}, lock ${LOCK})`);
+    else { fs.rmSync(LOCK, { recursive: true, force: true }); fs.mkdirSync(LOCK); }
+  }
+  if (!problems.length) {
+    fs.writeFileSync(path.join(LOCK, "pid"), String(process.pid));
+    process.on("exit", () => { if (lockHolder() === process.pid) fs.rmSync(LOCK, { recursive: true, force: true }); });
+  }
+}
 if (problems.length) { for (const p of problems) console.error(p); process.exit(2); }
 
 const { corpus, dist } = await ensureAssets();
 fs.mkdirSync(RAW, { recursive: true });
 const sha = (f) => crypto.createHash("sha256").update(fs.readFileSync(f)).digest("hex");
-const binaries = { base: { path: path.resolve(BASE), sha256: sha(BASE) }, cand: { path: path.resolve(CAND), sha256: sha(CAND) } };
+binaries = { base: { path: path.resolve(BASE), sha256: sha(BASE) }, cand: { path: path.resolve(CAND), sha256: sha(CAND) } };
 
 // ---------------------------------------------------------------- sessions
 async function waitForQuietMachine() {
@@ -94,9 +112,6 @@ function runSession(side, dpr, rep) {
   });
 }
 
-const started = Date.now();
-const sessions = [];
-let baseNoProbe = false, abort = null;
 outer: for (let rep = 1; rep <= SESSIONS; rep++) {
   for (const dpr of DPRS) {
     const order = rep % 2 ? ["base", "cand"] : ["cand", "base"];
@@ -113,6 +128,8 @@ outer: for (let rep = 1; rep <= SESSIONS; rep++) {
   }
 }
 
+}
+
 // ---------------------------------------------------------------- report
 const rows = [];
 for (const f of fs.readdirSync(RAW)) {
@@ -120,7 +137,8 @@ for (const f of fs.readdirSync(RAW)) {
   for (const line of fs.readFileSync(path.join(RAW, f), "utf8").split("\n")) if (line.trim()) rows.push(JSON.parse(line));
 }
 const failed = sessions.filter((s) => s.exit !== 0 && !(s.exit === 4 && s.side === "base"));
-const errored = rows.filter((r) => r.error);
+// A base without the probe fails its first open by design; that is not an error.
+const errored = rows.filter((r) => r.error && !(sideOf(r.tag) === "base" && baseNoProbe && String(r.error).includes("NO_PROBE")));
 const v = verdict(rows);
 const incomplete = abort != null || failed.length > 0 || errored.length > 0;
 const outcome = abort?.startsWith("1-min load") ? { code: 3, text: `ABORTED: ${abort}` }
@@ -128,13 +146,14 @@ const outcome = abort?.startsWith("1-min load") ? { code: 3, text: `ABORTED: ${a
   : baseNoProbe ? { code: 4, text: "NO VERDICT: the base binary has no PDF probe (built before D-20261021-PV2), so only the candidate was measured" }
   : v.regressions.length ? { code: 1, text: `REGRESSION: ${v.regressions.length} metric(s) worse than base beyond the run-to-run spread` }
   : { code: 0, text: `PASS: no regression (${v.improvements.length} improvement(s), ${v.watch.length} watch)` };
-const wallMin = Math.round((Date.now() - started) / 6000) / 10;
+const wallMin = prior?.wallMin ?? Math.round((Date.now() - started) / 6000) / 10;
+const measureMin = Math.round(sessions.reduce((a, s) => a + s.wallS, 0) / 6) / 10;
 
 const md = [];
 md.push(`# PDF perf gate: ${outcome.text}`, "");
 md.push(`- base: \`${binaries.base.path}\` (sha256 \`${binaries.base.sha256.slice(0, 16)}…\`)${baseNoProbe ? " **no probe**" : ""}`);
 md.push(`- candidate: \`${binaries.cand.path}\` (sha256 \`${binaries.cand.sha256.slice(0, 16)}…\`)`);
-md.push(`- host: ${os.hostname()}, ${os.cpus().length} CPUs, pinned: ${CPUS || "no"}; wall time ${wallMin} min; sessions per side and DPR: ${SESSIONS}; DPR ${DPRS.join(", ")}`);
+md.push(`- host: ${os.hostname()}, ${os.cpus().length} CPUs, pinned: ${CPUS || "no"}; wall time ${wallMin} min (${measureMin} min in sessions, the rest waiting for a quiet machine); sessions per side and DPR: ${SESSIONS}; DPR ${DPRS.join(", ")}`);
 md.push(`- rule: regression = candidate's best session worse than base's worst by more than max(base range, floor, rel × base median); see docs/pdf-perf-harness.md`);
 md.push("");
 if (errored.length) {
@@ -155,7 +174,7 @@ md.push("## Sessions", "", "| session | exit | wall s | load at start (1/5/15 mi
 for (const s of sessions) md.push(`| ${s.tag} | ${s.exit} | ${s.wallS} | ${s.loadStart.join(" / ")} | ${s.loadEnd.join(" / ")} |`);
 md.push("", "Thresholds (floor, rel): " + Object.entries(FAMILIES).map(([, f]) => `${f.label} ${f.floor}${f.unit} / ${f.rel * 100}%`).join("; "), "");
 fs.writeFileSync(path.join(OUT, "report.md"), md.join("\n"));
-fs.writeFileSync(path.join(OUT, "report.json"), JSON.stringify({ outcome, binaries, baseNoProbe, abort, wallMin, sessions,
+fs.writeFileSync(path.join(OUT, "report.json"), JSON.stringify({ outcome, binaries, settings, baseNoProbe, abort, wallMin, measureMin, sessions,
   families: FAMILIES, regressions: v.regressions, improvements: v.improvements, watch: v.watch, results: v.results }, null, 1));
 log(outcome.text);
 log(`report: ${path.join(OUT, "report.md")}`);

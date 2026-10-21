@@ -68,6 +68,8 @@ Both arguments are Linux release binaries built with `custom-protocol` (the
 deployed raw binary, or the `tine` binary of a release build). Options:
 `--out <dir>` (default `target/perf-pdf-gate/<timestamp>`), `--sessions 3`,
 `--dprs 1,2`, `--load-max 4`, `--load-wait-min 15`, `--cpus <taskset list>`.
+`--report-only <out>` re-renders an earlier run's report from its raw rows.
+Only one gate runs at a time (a lock under the temp directory).
 
 It runs a trimmed scenario set (`run.mjs --gate`) in fresh sessions, one Tine
 launch on a fresh graph each:
@@ -107,18 +109,26 @@ became sharp) counts as a regression.
 
 | family | floor | rel |
 |---|---|---|
-| blank ms | 40 ms | 25 % |
+| blank ms | 150 ms | 25 % |
 | p95 frame | 15 ms | 20 % |
-| max frame | 40 ms | 25 % |
+| max frame | 100 ms | 25 % |
 | frames > 100 ms | 3 | 50 % |
 | time to sharp | 80 ms | 25 % |
 | anchor drift | 25 px | 20 % |
 | web RSS peak (per session) | 64 MiB | 10 % |
 
-The floors come from same-binary (A/A) runs on the reference machine (Ryzen 5
-8600G, 6 cores × 2 threads, WebKitGTK 2.50.6, Xvfb): with them an A/A run
-flags nothing, while the known blank-on-zoom and zoom-anchor regressions of the
-old viewer are flagged.
+The floors come from same-binary (A/A) comparisons on the reference machine
+(Ryzen 5 8600G, 6 cores × 2 threads, WebKitGTK 2.50.6, Xvfb): 14 pairs of
+same-binary session triplets, taken from three gate runs 20–50 minutes apart.
+None flags with these floors; the largest same-binary gap reaches two thirds of
+its threshold. Two families needed floors above the first guess: blank time on
+a fast S1 scroll at DPR 1 varies 46–472 ms between runs of one binary, and a
+zoom burst's max frame is bimodal (about 77 ms, or one 140–180 ms frame), so a
+session median of three cycles can land in either mode. With these floors the
+old viewer, measured as a candidate against the current one, is still flagged
+for blank-on-zoom at DPR 2, zoom-anchor drift, zoom frame times and scroll
+blank time (33 metrics); its 45 ms zoom blank at DPR 1 is below the blank
+floor and is caught there only through frame times and drift.
 
 Exit codes:
 
