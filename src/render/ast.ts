@@ -514,7 +514,7 @@ export interface TimestampInline extends InlineSpan {
 }
 
 /** The exact `timestamp.ts` vocabulary. */
-export type TimestampTs = "Date" | "Range" | "Scheduled" | "Deadline" | "Closed";
+export type TimestampTs = "Date" | "Range" | "Scheduled" | "Deadline" | "Closed" | "Clock";
 
 /** A `{date,wday,active,time?,repetition?}` calendar point (mldoc raw record). */
 export interface TimestampPoint {
@@ -533,11 +533,15 @@ export interface TimestampPoint {
 /** `timestamp.date` is OPAQUE for rendering (passed through as mldoc JSON).
  *  - For `ts` ∈ {Date,Scheduled,Deadline,Closed}: a single `TimestampPoint`.
  *  - For `ts: "Range"`: `{ start: TimestampPoint, stop: TimestampPoint }`.
+ *  - For `ts: "Clock"`: a `[kind, value]` pair (see below).
  *  A renderer that needs a display string must FORMAT this record itself — the
  *  AST carries NO raw timestamp string (see RISKS). Typed loosely on purpose. */
 export type TimestampValue =
   | TimestampPoint
   | { start: TimestampPoint; stop: TimestampPoint }
+  // `ts: "Clock"` (a CLOCK line outside a recognised drawer, GH #741):
+  // `["Started", TimestampPoint]` or `["Stopped", { start, stop }]`.
+  | readonly unknown[]
   // Fallback: anything mldoc emits that doesn't match the shapes above. Always
   // guard with runtime checks before reading fields.
   | Record<string, unknown>;

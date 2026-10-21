@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Typing `DOING` no longer sends the rest of your text to the end of the block, and a stray `CLOCK:` line no longer blanks the page.** The clock-in that Tine writes under a task (the `:LOGBOOK:` lines) moved the caret to the end of the block, so the next characters you typed landed after `:END:`; the caret now stays on the task line. Typing on after `DOING` also no longer adds a second clock-in line. A `CLOCK:` line that is not inside a complete `:LOGBOOK:` drawer (for example `:END:  test`) used to make the page show "This page could not be displayed" (`TypeError: Cannot read properties of undefined (reading 'year')`); it now renders as a time stamp, and any other time stamp shape Tine does not know renders as nothing instead of failing (GH #741, UI-GH741-DOING-CLOCK-IN). This happened on stable 0.7.x too.
+
 ## [0.8.0-beta.7] - 2026-10-21
 
 ### Fixed
