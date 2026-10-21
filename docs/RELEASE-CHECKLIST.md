@@ -39,11 +39,12 @@ may tag, publish, comment, and close issues.
    paints before shipping. Then run the PDF viewer gate on the same idle Linux
    machine (Xvfb, tauri-driver, WebKitWebDriver, xdotool; about 20 minutes, no
    builds meanwhile):
-   `node scripts/perf-pdf/gate.mjs --base <previous release binary> --candidate <candidate binary> --out <evidence dir>`.
-   Retain `report.md`, `report.json` and `raw/`. Exit 1 (a regression beyond
-   the measured run-to-run spread) is a stop/consult decision; exit 4 (the
-   previous release predates the PDF probe) leaves a candidate-only report to
-   retain. See `docs/pdf-perf-harness.md`.
+   `node scripts/perf-pdf/gate.mjs --base <base binary> --candidate <candidate binary> --out <evidence dir>`.
+   The base is the newest published release, stable or Beta, that carries the
+   PDF probe (D-20261021-PV4). Retain `report.md`, `report.json` and `raw/`.
+   Exit 1 (a regression beyond the measured run-to-run spread) is a
+   stop/consult decision; exit 4 means the base has no probe, so pick a newer
+   base. See `docs/pdf-perf-harness.md`.
 9. Push the frozen exact candidate, manually dispatch `ci.yml` with
    `scope=full`, and require all four full jobs to succeed on that SHA. Record
    the Actions URL and confirm it with `scripts/check-ci-evidence.mjs`. PR or

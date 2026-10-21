@@ -5,7 +5,9 @@ and measures what a reader of the PDF viewer sees: how much of the viewport is
 blank, how long frames take, how quickly the view becomes sharp, how far a zoom
 moves the point under the pointer, and how much memory the web process takes.
 It runs before every stable cut as a gate that compares the candidate binary
-with the previous release on the same machine (decision D-20261021-PV2).
+with a base release on the same machine (decision D-20261021-PV2). The base is
+the newest published release, stable or Beta, that carries the PDF probe
+(D-20261021-PV4): releases before the probe give exit 4, no verdict.
 
 ## What it measures
 
@@ -61,7 +63,7 @@ the CPUs and the driver ports. The gate refuses to start while another
 ## The gate
 
 ```bash
-node scripts/perf-pdf/gate.mjs --base <previous release binary> --candidate target/release/tine
+node scripts/perf-pdf/gate.mjs --base <newest probed release binary> --candidate target/release/tine
 ```
 
 Both arguments are Linux release binaries built with `custom-protocol` (the
