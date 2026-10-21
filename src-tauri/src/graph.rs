@@ -1241,10 +1241,24 @@ mod tests {
     #[test]
     fn only_the_applied_proposal_renames_journal_files() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        // A test-only module (declared `#[cfg(test)] mod x;` in a crate root)
+        // runs no command: `host_off_refusal_tests.rs` calls the writer only to
+        // show an off host refuses it.
+        let test_only = |dir: &str, stem: &str| {
+            ["lib.rs", "main.rs"].iter().any(|crate_root| {
+                std::fs::read_to_string(root.join(dir).join(crate_root))
+                    .unwrap_or_default()
+                    .contains(&format!("#[cfg(test)]\nmod {stem};"))
+            })
+        };
         let mut callers = Vec::new();
         for dir in ["src-tauri/src", "crates/tine-graph-features/src"] {
             for entry in std::fs::read_dir(root.join(dir)).unwrap() {
                 let path = entry.unwrap().path();
+                let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
+                if test_only(dir, &stem) {
+                    continue;
+                }
                 let text = std::fs::read_to_string(&path).unwrap_or_default();
                 // A call, not the definition or this census's own string literals.
                 let calls = text.lines().filter(|line| {

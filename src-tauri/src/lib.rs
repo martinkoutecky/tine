@@ -34,6 +34,8 @@ mod flight;
 mod flight_store;
 mod graph;
 mod graph_verification;
+#[cfg(test)]
+mod host_off_refusal_tests;
 mod host_retirement;
 #[cfg(test)]
 mod host_slot_guard_tests;

@@ -689,11 +689,10 @@ mod tests {
     /// of `slot`, on `slot` as a worker that captured it finds it.
     fn late_writer(slot: &GraphSlot, to: &str) -> Result<(), String> {
         let gate = slot.host_slot()?;
-        rename(&slot.store, gate.running().ok(), to)
+        rename(&slot.store, gate.running()?, to)
     }
 
-    fn rename(store: &Store, host: Option<&PageHost>, to: &str) -> Result<(), String> {
-        let host = host.ok_or("no page host")?;
+    fn rename(store: &Store, host: &PageHost, to: &str) -> Result<(), String> {
         tine_graph_features::pages::rename_page_expected(store, host, "a", to, None)
             .map_err(|error| error.to_string())
     }
@@ -755,7 +754,7 @@ mod tests {
                 let gate = old.host_slot().unwrap();
                 entered.wait();
                 release.wait();
-                rename(&old.store, gate.running().ok(), "inside")
+                rename(&old.store, gate.running()?, "inside")
             });
             entered.wait();
             let adopt = scope.spawn(|| retirement.adopt(&f.root));

@@ -55,6 +55,12 @@ fn open_slot(dir: &Path, app_data: PathBuf) -> (Arc<GraphSlot>, tine_store::Subs
     (slot, subscription)
 }
 
+/// A running page host for `slot`'s store under `<dir>/host-app`: the
+/// resolve writes the winner through it (host-only-writer DESIGN §3.6).
+fn running_host(slot: &GraphSlot, dir: &Path) -> tine_store::PageHost {
+    tine_store::PageHost::start_for_tests(&slot.store, &dir.join("host-app")).unwrap()
+}
+
 /// Deliver every published change the way the dispatch thread does, then
 /// wait for the ledger worker. Returns whether the conflict queue changed.
 fn pump(slot: &GraphSlot, subscription: &tine_store::Subscription) -> bool {
@@ -313,9 +319,10 @@ fn a_syncthing_copy_resolves_three_way_with_the_ledger_base() {
         .expect("a merged proposal");
     assert_eq!(row.suggestion.as_deref(), Some("merged"));
     let decisions = preselected(&diff);
+    let host = running_host(&slot, &dir);
     conflicts::resolve_sync_conflict(
         &slot.store,
-        None,
+        &host,
         "pages/Desk.md",
         COPY,
         &decisions,
@@ -473,9 +480,10 @@ fn an_unwritable_ledger_never_blocks_saves_or_resolves() {
         .iter()
         .map(|row| (row.id.clone(), "theirs".to_owned()))
         .collect();
+    let host = running_host(&slot, &dir);
     conflicts::resolve_sync_conflict(
         &slot.store,
-        None,
+        &host,
         "pages/Desk.md",
         COPY,
         &decisions,
@@ -522,9 +530,10 @@ fn a_stale_or_foreign_base_never_loses_data_silently() {
     assert!(decisions.values().any(|d| d == "merged"));
     // The ledger moved: the base the review showed is no longer offered.
     let moved = vec![body("Desktop 4")];
+    let host = running_host(&slot, &dir);
     let err = conflicts::resolve_sync_conflict(
         &slot.store,
-        None,
+        &host,
         "pages/Desk.md",
         COPY,
         &decisions,
@@ -539,7 +548,7 @@ fn a_stale_or_foreign_base_never_loses_data_silently() {
     // A failed ledger read at apply time refuses the merged row the same way.
     let err = conflicts::resolve_sync_conflict(
         &slot.store,
-        None,
+        &host,
         "pages/Desk.md",
         COPY,
         &decisions,
@@ -567,7 +576,7 @@ fn a_stale_or_foreign_base_never_loses_data_silently() {
     // time does not refuse them.
     conflicts::resolve_sync_conflict(
         &slot.store,
-        None,
+        &host,
         "pages/Desk.md",
         COPY,
         &preselected(&diff),
