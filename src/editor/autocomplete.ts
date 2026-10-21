@@ -305,7 +305,7 @@ export function detectTrigger(
   }
 
   // /command — `/` at start or after whitespace.
-  const cmd = /(^|\s)\/([\w-]*)$/.exec(before);
+  const cmd = /(^|\s)\/([\p{L}\p{M}\p{N}_-]*)$/u.exec(before);
   if (cmd) {
     const start = lineStart + before.length - cmd[2].length - 1;
     return { kind: "command", query: cmd[2], start, end: caret };
@@ -315,7 +315,7 @@ export function detectTrigger(
   // start, so ordinary prose such as `word<quote` remains literal. OG opens its
   // block-command action when `<` is typed (og/src/main/frontend/handler/editor.cljs:1901-1905,
   // checkout 6e7afa8eb); this narrower boundary is the frozen Tine contract.
-  const advanced = /^<([\w-]*)$/.exec(before);
+  const advanced = /^<([\p{L}\p{M}\p{N}_-]*)$/u.exec(before);
   if (advanced) {
     return { kind: "advanced-command", query: advanced[1], start: lineStart, end: caret };
   }
@@ -791,8 +791,14 @@ export function codeLanguageItems(query: string): CodeLanguageItem[] {
 /** Fuzzy score for a command against `query`: the best of its label and its
  *  optional short `key` (so a one-letter query can surface it first). */
 export function commandScore(query: string, c: Command): number {
-  return Math.max(fuzzyScore(query, c.matchLabel ?? c.label), c.key ? fuzzyScore(query, c.key) : 0,
-    activeLocale() === "zh-CN" && /[^\x00-\x7f]/.test(query) ? fuzzyScore(query, c.label) : 0);
+  return Math.max(commandLabelScore(query, c), c.key ? fuzzyScore(query, c.key) : 0);
+}
+
+// Keep the established English-keyword scores for ASCII input; also search
+// the displayed gloss for localized input. Shared by the / and < pickers.
+function commandLabelScore(query: string, command: { matchLabel?: string; label: string }): number {
+  return Math.max(fuzzyScore(query, command.matchLabel ?? command.label),
+    activeLocale() === "zh-CN" && /[^\x00-\x7f]/.test(query) ? fuzzyScore(query, command.label) : 0);
 }
 
 /** Slash-command matches for `query`, ranked best-first (OG-style). An empty
@@ -883,7 +889,7 @@ export const ADVANCED_BLOCK_COMMANDS: readonly AdvancedBlockCommand[] = Object.f
 export function filterAdvancedBlockCommands(query: string): AdvancedBlockCommand[] {
   if (!query) return ADVANCED_BLOCK_COMMANDS.slice();
   return ADVANCED_BLOCK_COMMANDS
-    .map((command) => ({ command, score: fuzzyScore(query, command.matchLabel ?? command.label) }))
+    .map((command) => ({ command, score: commandLabelScore(query, command) }))
     .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score || a.command.matchTieOrder - b.command.matchTieOrder)
     .map(({ command }) => command);

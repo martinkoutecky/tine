@@ -32,6 +32,18 @@ it("matches translated and original English vocabulary after a language change",
 const text = (value: string | Msg) => typeof value === "string" ? value : render(value);
 const labelsFor = (query: string) => rankedSettingMatches(SETTING_SEARCH, query).map(entry => text(entry.label));
 
+it("explains matches outside the visible label, including keyword and alias hits (GH #706)", async () => {
+  await setActiveLocale("zh-CN");
+  const embed = SETTING_SEARCH.find(entry => text(entry.label) === "块嵌入面包屑")!;
+  expect(settingMatches(embed, "父")).toBe(true);
+  expect(matchedDescription(embed, "父")).toContain("父");
+  const language = SETTING_SEARCH.find(entry => text(entry.label) === "语言")!;
+  expect(matchedDescription(language, "Language")).toContain("Language");
+  expect(matchedDescription(language, "Chinese")).toContain("Chinese");
+  expect(matchedDescription({ tab: "graph", label: "Alpha", description: "Elsewhere", keywords: "hidden zebra" }, "zebra")).toBe("hidden zebra");
+  expect(matchedDescription({ tab: "graph", label: "Alpha", description: "Elsewhere", aliases: ["quux"] }, "quux")).toBe("quux");
+});
+
 it("a one-character query matches shown-language names and descriptions, not hidden English (GH #706)", async () => {
   await setActiveLocale("zh-CN");
   // 图谱 and 拼写检查语言 contain 发 in their descriptions: beta.5 dropped them (4 -> 2).
