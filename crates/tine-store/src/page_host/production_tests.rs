@@ -2284,6 +2284,23 @@ fn trash_ancestors_are_synced_once_per_incarnation() {
     }
     let whole = chain(f);
     assert_eq!(whole.len(), 4, "{whole:?}");
+    // A sync the filesystem does not offer witnesses nothing either.
+    settle(f);
+    take_synced_directories();
+    SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::InvalidInput)));
+    assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Unsupported));
+    assert_eq!(take_synced_directories(), whole);
+    assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Durable));
+    assert_eq!(
+        take_synced_directories(),
+        whole,
+        "Unsupported recorded a witness"
+    );
+    // Start over with fresh times.
+    fs::File::open(&whole[1])
+        .unwrap()
+        .set_modified(std::time::SystemTime::now())
+        .unwrap();
     // Fresh modification times witness nothing (a same-tick change is invisible).
     take_synced_directories();
     assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Durable));
@@ -2297,6 +2314,16 @@ fn trash_ancestors_are_synced_once_per_incarnation() {
     assert!(f.host.fs.trash_sync("a.md", "p1").is_err());
     take_synced_directories();
     assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), whole);
+    assert_eq!(f.host.fs.trash_sync("b.md", "p2"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), vec![f.trash.clone()]);
+    // A tool that sets an ancestor's time back (`rsync -a`, `cp -a`) moves its
+    // status-change time.
+    let parent = fs::File::open(&whole[1]).unwrap();
+    parent
+        .set_modified(parent.metadata().unwrap().modified().unwrap())
+        .unwrap();
+    assert_eq!(f.host.fs.trash_sync("b.md", "p2"), Ok(Witness::Durable));
     assert_eq!(take_synced_directories(), whole);
     assert_eq!(f.host.fs.trash_sync("b.md", "p2"), Ok(Witness::Durable));
     assert_eq!(take_synced_directories(), vec![f.trash.clone()]);

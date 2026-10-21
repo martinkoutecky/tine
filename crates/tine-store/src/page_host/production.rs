@@ -56,9 +56,12 @@ pub(super) struct ProductionIo {
     /// launch's best-effort syncs are not witnesses (REVIEW-2b F2).
     trash_chain: Option<Vec<ChainId>>,
     /// Whether custody markers are written to disk. Not on Windows
-    /// (D-20261021-GQ3): there directory syncs are no-ops, so a marker cannot be
-    /// ordered before the move it guards and protects nothing; it cost a flush,
-    /// a write-through move and an unlink per deletion.
+    /// (D-20261021-GQ3): after a crash a marker only makes launch redo the
+    /// deletion's trash sync, and directory syncs do no I/O there, so it
+    /// protected nothing; it cost a flush, a write-through move and an unlink
+    /// per deletion. Unit tests keep markers on every platform (the marker
+    /// tests and native conformance read them); `production_tests` turns them
+    /// off explicitly.
     pub(super) marker_files: bool,
     /// Markers named but not written (`marker_files` off): their retirement
     /// has nothing to unlink.
@@ -105,7 +108,7 @@ impl ProductionIo {
             down: None,
             untouchable: Default::default(),
             trash_chain: None,
-            marker_files: !cfg!(windows),
+            marker_files: cfg!(test) || !cfg!(windows),
             unwritten: Default::default(),
             #[cfg(any(test, feature = "test-faults"))]
             faults: ATTACH_FAULTS.with(|faults| faults.take()),
@@ -284,12 +287,15 @@ fn chain<'a>(graph: &'a Path, dir: &'a Path) -> impl Iterator<Item = &'a Path> {
         .take_while(move |dir| dir.starts_with(graph))
 }
 
-/// An ancestor's state: device, inode and modification time. Adding, removing
-/// or renaming an entry in a directory moves its modification time, so while
-/// every ancestor's state is unchanged, each ancestor's entry for the next
-/// directory down is the one its last sync made durable. (An inode number
-/// alone is not enough: a recreated directory can reuse it.)
-type ChainId = (u64, u64, i64, i64);
+/// An ancestor's state: device, inode, modification and status-change times.
+/// Adding, removing or renaming an entry in a directory moves both times, so
+/// while every ancestor's state is unchanged, each ancestor's entry for the
+/// next directory down is the one its last sync made durable. An inode number
+/// alone is not enough (a recreated directory can reuse it), nor is mtime
+/// (`rsync -a`, `cp -a`, `tar x` set it back); setting it back moves ctime,
+/// which no tool can set. Only mtime must be settled: a later entry change
+/// moves it off its settled value, and ctime need only catch the restore.
+type ChainId = (u64, u64, i64, i64, i64, i64);
 
 /// How recent a modification time may be and still witness anything: a change
 /// within the same timestamp tick after the sync would not move it (the
@@ -310,7 +316,15 @@ fn chain_ids(graph: &Path, dir: &Path) -> Option<Vec<ChainId>> {
             .map(|dir| {
                 let meta = fs::metadata(dir).ok()?;
                 let settled = now.duration_since(meta.modified().ok()?).ok()? >= SETTLED;
-                settled.then(|| (meta.dev(), meta.ino(), meta.mtime(), meta.mtime_nsec()))
+                settled.then(|| {
+                    let times = (
+                        meta.mtime(),
+                        meta.mtime_nsec(),
+                        meta.ctime(),
+                        meta.ctime_nsec(),
+                    );
+                    (meta.dev(), meta.ino(), times.0, times.1, times.2, times.3)
+                })
             })
             .collect()
     }

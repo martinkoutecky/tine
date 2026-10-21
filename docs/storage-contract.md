@@ -425,14 +425,14 @@ B1/R3 cases beside them, `src/document/host/wiring.publicationDebt.test.ts`
 makes the trash *name* durable: the custody marker, then the move, then a sync
 of `pages/` and each existing ancestor up to the graph root, then the source
 directory. The ancestors are synced only until one deletion has synced them all
-durably in this host's run while their modification times were at least 2 s old;
-after that, while no ancestor's device, inode or modification time has changed
-(any entry added, removed or renamed in it moves the time), a deletion syncs
-`pages/` alone (GH3 step 2, Martin 2026-10-11 and 2026-10-21; ModelFs
+durably in this host's run while their modification times were at least 2 s old; after that, while no ancestor's device, inode, modification or
+status-change time has changed (any entry added, removed or renamed in it moves
+both; a tool can set mtime back but not ctime), a deletion syncs the trash
+directory alone (GH3 step 2, Martin 2026-10-11 and 2026-10-21; ModelFs
 `chain_witnessed`; proof
 `page_host::production_tests::trash_ancestors_are_synced_once_per_incarnation`). On
-Windows, where a directory sync is a no-op and so cannot order a marker before
-the move, no custody marker file is written (D-20261021-GQ3; proof
+Windows no custody marker file is written: after a crash a marker only makes
+launch redo the deletion's trash sync, and a directory sync does no I/O there (D-20261021-GQ3; proof
 `page_host::production_tests::without_marker_files_a_deletion_leaves_no_custody_file`). It does not sync the trashed file's data: Tine's own saves synced
 those bytes already. Residual R-UNFLUSHED: bytes another program wrote into
 the page without flushing them may be lost at a power cut after Tine deletes
@@ -1071,7 +1071,9 @@ referrer, the destination page and the source's custody marker (16 before
 RO3 (a), which stopped syncing the trashed source's data). The probe counts 20: one more is the
 host launch's draft sync, and four are the fresh graph's first deletion creating the trash chain
 and the custody directory (each created directory's parent sync, counted since 2026-10-21). On
-Windows the custody marker is not written (D-20261021-GQ3), so a rename writes 3 files. The
+Windows the custody marker is not written (D-20261021-GQ3), so a rename writes 3 files and 199/4,036 bytes and counts 17 syncs
+(measured with markers forced off on Linux; the counter counts each sync call, and Windows'
+directory syncs are no-ops). The
 referrer's old and new payloads are each written once into the operation
 draft, and the new one into the page (three payload copies). Each extra page
 of an operation adds one file (its page) and two syncs (the file and its
