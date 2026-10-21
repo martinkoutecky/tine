@@ -395,7 +395,7 @@ fn page_host::Stopped::relaunch
 # pages for the caller to write itself, `rename` is one fixed move. `reserve` goes in P4.
 struct page_host::HostOp
 field page_host::HostOp.pages
-field page_host::HostOp.moved
+field page_host::HostOp.moves
 field page_host::HostOp.policy
 field page_host::HostOp.kinds
 fn page_host::PageHost::apply

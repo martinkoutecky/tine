@@ -53,7 +53,7 @@ fn op(pages: Vec<(&str, Effect, Expected)>, policy: Input) -> HostOp {
             .collect(),
         kinds: vec![EditKind::InsertBlocks],
         policy,
-        moved: None,
+        moves: Vec::new(),
     }
 }
 
@@ -255,7 +255,10 @@ fn a_move_applies_and_a_malformed_operation_is_refused() {
     let live = Live::new(&[("pages/a.md", "- a\n"), ("pages/c.md", "- c\n")]);
     let moving = |source: Expected, moved: Option<(&str, &str)>| HostOp {
         creation_checks: Vec::new(),
-        moved: moved.map(|(dst, src)| (PageId::from(dst), PageId::from(src))),
+        moves: moved
+            .map(|(dst, src)| (PageId::from(dst), PageId::from(src)))
+            .into_iter()
+            .collect(),
         ..op(
             vec![
                 (
@@ -321,5 +324,65 @@ fn a_move_applies_and_a_malformed_operation_is_refused() {
     assert_eq!(applied, Ok(()));
     assert_eq!(live.disk("pages/b.md"), "- a\n");
     assert!(!live.root.join("pages/a.md").exists());
+    live.host.stop();
+}
+
+/// S2: one operation carries several moves (a namespace rename); a page in
+/// two moves is not an operation.
+#[test]
+fn several_moves_apply_as_one_operation_and_a_shared_page_is_refused() {
+    let live = Live::new(&[("pages/a.md", "- a\n"), ("pages/c.md", "- c\n")]);
+    let pages = || {
+        vec![
+            (
+                "pages/b.md",
+                Effect::Write(bytes("- a\n")),
+                Expected::Absent,
+            ),
+            (
+                "pages/a.md",
+                Effect::Delete,
+                Expected::Bytes(bytes("- a\n")),
+            ),
+            (
+                "pages/d.md",
+                Effect::Write(bytes("- c\n")),
+                Expected::Absent,
+            ),
+            (
+                "pages/c.md",
+                Effect::Delete,
+                Expected::Bytes(bytes("- c\n")),
+            ),
+        ]
+    };
+    let moving = |moves: &[(&str, &str)]| HostOp {
+        moves: moves
+            .iter()
+            .map(|(dst, src)| (PageId::from(*dst), PageId::from(*src)))
+            .collect(),
+        ..op(pages(), Input::Refuse)
+    };
+    assert_eq!(
+        live.host.apply(moving(&[
+            ("pages/b.md", "pages/a.md"),
+            ("pages/d.md", "pages/a.md")
+        ])),
+        Err(ApplyRefusal::Refused),
+        "a source in two moves"
+    );
+    assert_eq!(live.disk("pages/a.md"), "- a\n");
+    assert_eq!(live.disk("pages/c.md"), "- c\n");
+    assert_eq!(
+        live.host.apply(moving(&[
+            ("pages/b.md", "pages/a.md"),
+            ("pages/d.md", "pages/c.md")
+        ])),
+        Ok(())
+    );
+    assert_eq!(live.disk("pages/b.md"), "- a\n");
+    assert_eq!(live.disk("pages/d.md"), "- c\n");
+    assert!(!live.root.join("pages/a.md").exists());
+    assert!(!live.root.join("pages/c.md").exists());
     live.host.stop();
 }

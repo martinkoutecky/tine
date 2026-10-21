@@ -28,7 +28,7 @@ impl Transaction<'_> {
             pages: Vec::new(),
             kinds: self.kinds.clone(),
             policy: Input::Refuse,
-            moved: None,
+            moves: Vec::new(),
             creation_checks: Vec::new(),
         };
         for (step, prepared) in self.steps.iter().zip(prepared) {
@@ -54,11 +54,6 @@ impl Transaction<'_> {
                     .store
                     .as_page(&dst)
                     .ok_or_else(|| Why::Refused(Refusal::InvalidTarget(dst.as_str().into())))?;
-                if op.moved.is_some() {
-                    return Err(Why::Refused(Refusal::InvalidTarget(
-                        "one move per host operation".into(),
-                    )));
-                }
                 let bytes = new.ok_or_else(|| {
                     Why::Refused(Refusal::InvalidTarget(
                         "a host operation requires staged page bytes".into(),
@@ -72,7 +67,7 @@ impl Transaction<'_> {
                     HostExpected::Absent,
                 ));
                 if let Some(page) = page {
-                    op.moved = Some((destination, page.clone()));
+                    op.moves.push((destination, page.clone()));
                     op.pages.push((page, HostEffect::Delete, expected));
                 }
             } else {

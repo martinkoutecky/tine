@@ -1325,7 +1325,7 @@ pub fn merge_pages(store: &Store, host: &PageHost, src_rel: &str, dst_rel: &str)
     let plan = || {
         let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
         let mut op = crate::retained::plan(transaction(&survivor))?;
-        op.moved = Some((dst_id.clone(), src_id.clone()));
+        op.moves.push((dst_id.clone(), src_id.clone()));
         Ok(Some(op))
     };
     crate::retained::operation(

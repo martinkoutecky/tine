@@ -91,8 +91,8 @@ fn a_move_plan_keeps_the_source_exception_and_publication_order() {
     tx.move_file(&src, rev, &dst, None);
     let op = tx.plan().unwrap();
     assert_eq!(
-        op.moved,
-        Some((PageId::from(dst.as_str()), PageId::from(src.as_str())))
+        op.moves,
+        [(PageId::from(dst.as_str()), PageId::from(src.as_str()))]
     );
     assert!(dir.path().join(src.as_str()).exists());
     assert!(!dir.path().join(dst.as_str()).exists());
@@ -156,9 +156,9 @@ fn a_merge_declares_its_move_after_planning_and_keeps_both_kinds() {
         Content::Bytes(b"- referrer\n".to_vec()),
     );
     let mut op = tx.plan().unwrap();
-    assert_eq!(op.moved, None);
-    op.moved = Some((receiver.clone(), source.clone()));
-    assert_eq!(op.moved, Some((receiver, source)));
+    assert!(op.moves.is_empty());
+    op.moves.push((receiver.clone(), source.clone()));
+    assert_eq!(op.moves, [(receiver, source)]);
     assert_eq!(op.kinds, [EditKind::InsertBlocks, EditKind::DeletePage]);
     let app = tempfile::tempdir().unwrap();
     let host = PageHost::start_for_tests(&store, app.path()).unwrap();
@@ -265,7 +265,7 @@ fn a_declared_transfer_keeps_create_news_dto_name_check() {
         tx
     };
     let mut op = transaction().plan().unwrap();
-    op.moved = Some((dst.clone(), src.clone()));
+    op.moves.push((dst.clone(), src.clone()));
     let owner = b"title:: Hidden\nbroken:: \xff\n\n- imported\n";
     fs::write(dir.path().join("pages/Other.md"), owner).unwrap();
     store.refresh(tine_store::Depth::Bytes).unwrap();
@@ -302,5 +302,5 @@ fn independent_save_and_trash_do_not_infer_a_transfer() {
         Content::Bytes(b"- independent\n".to_vec()),
     );
     tx.trash(&src.file(), source.rev, TrashIf::Any);
-    assert_eq!(tx.plan().unwrap().moved, None);
+    assert!(tx.plan().unwrap().moves.is_empty());
 }

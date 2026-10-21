@@ -36,11 +36,12 @@ pub struct HostOp {
     pub kinds: Vec<EditKind>,
     /// The writer's contract for unsaved input on its pages.
     pub policy: Input,
-    /// `(receiver, source)`: the receiver's new bytes took the source's,
-    /// which the operation deletes; its writes publish in a rename's order
-    /// (the receiver, then the other pages, then the source's deletion).
-    /// One move per operation in P2.
-    pub moved: Option<(PageId, PageId)>,
+    /// Each `(receiver, source)`: the receiver's new bytes took the
+    /// source's, which the operation deletes; its writes publish in a
+    /// rename's order (the receivers, then the other pages, then the
+    /// sources' deletions). No page is in two moves (S2: a namespace rename
+    /// moves every page of the namespace in one operation).
+    pub moves: Vec<(PageId, PageId)>,
     /// Transaction creation preconditions: page, optional DTO name, optional
     /// move source. In-memory admission metadata; no persisted format changes.
     /// Hand-built operations use an empty vector and the raw-create checks.
@@ -133,19 +134,22 @@ impl PageHost {
         // A move deletes its source, planned from its bytes, and writes its
         // receiver; the host checks the same shape, so a refusal under its
         // state is only ever a changed page.
-        let moved = match &op.moved {
-            Some((dst, src)) => match (spellings.get(dst), spellings.get(src)) {
+        let mut moved = Vec::new();
+        let mut in_a_move = BTreeSet::new();
+        for (dst, src) in &op.moves {
+            match (spellings.get(dst), spellings.get(src)) {
                 (Some(dst), Some(src))
                     if dst != src
                         && matches!(effects.get(src), Some((None, Some(_))))
-                        && matches!(effects.get(dst), Some((Some(_), _))) =>
+                        && matches!(effects.get(dst), Some((Some(_), _)))
+                        && in_a_move.insert(dst.clone())
+                        && in_a_move.insert(src.clone()) =>
                 {
-                    Some((dst.clone(), src.clone()))
+                    moved.push((dst.clone(), src.clone()));
                 }
                 _ => return Err(ApplyRefusal::Refused),
-            },
-            None => None,
-        };
+            }
+        }
         // OG-RULES Rule 8 (A-K1): an operation records the edit kinds it names.
         if effects.is_empty() || op.kinds.is_empty() {
             return Err(ApplyRefusal::Refused);
@@ -197,8 +201,7 @@ impl PageHost {
                     }
                 }
                 let (disposition, reply) = state.progress.with_host(|host| {
-                    let moved = moved.as_ref().map(|(d, s)| (d.as_str(), s.as_str()));
-                    let disposition = host.apply(&effects, moved);
+                    let disposition = host.apply(&effects, &moved);
                     let pending = disposition == Disposition::Pending;
                     (
                         disposition,

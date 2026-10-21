@@ -45,32 +45,44 @@ pub(super) struct Slot {
     pub superseded: Option<PageKey>,
 }
 
-/// One running rename's order: the pages still unwitnessed (`open`) at the
-/// versions the operation installed. A referrer waits for `dst`; `src` (its
-/// deletion, or text a later submit resurrected) waits for every other page.
+/// One running operation's order over its moves `(dst, src)`: the pages
+/// still unwitnessed (`open`) at the versions the operation installed
+/// (DESIGN §3.1). A receiver (`dst`) never waits; a page that is neither
+/// waits while any receiver is open; a source (its deletion, or text a later
+/// submit resurrected) waits while any non-source page is open. With one
+/// move: a referrer waits for `dst`, and `src` for every other page.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Gates {
-    dst: PageKey,
-    src: PageKey,
+    moves: Vec<(PageKey, PageKey)>,
     versions: BTreeMap<PageKey, u64>,
     open: BTreeSet<PageKey>,
 }
 
 impl Gates {
-    /// A rename's order over its pages at their installed versions.
-    pub fn new(dst: &str, src: &str, versions: BTreeMap<PageKey, u64>) -> Self {
+    /// An operation's order over its pages at their installed versions.
+    /// `moves` is non-empty, and no page is in two moves (`Host::apply`).
+    pub fn new(moves: Vec<(PageKey, PageKey)>, versions: BTreeMap<PageKey, u64>) -> Self {
+        debug_assert!(!moves.is_empty());
         Self {
-            dst: dst.into(),
-            src: src.into(),
+            moves,
             open: versions.keys().cloned().collect(),
             versions,
         }
     }
 
+    fn receiver(&self, key: &str) -> bool {
+        self.moves.iter().any(|(dst, _)| dst == key)
+    }
+
+    fn source(&self, key: &str) -> bool {
+        self.moves.iter().any(|(_, src)| src == key)
+    }
+
     fn gates(&self, key: &str) -> bool {
         self.open.contains(key)
-            && key != self.dst
-            && (self.open.contains(&self.dst) || (key == self.src && self.open.len() > 1))
+            && !self.receiver(key)
+            && (self.moves.iter().any(|(dst, _)| self.open.contains(dst))
+                || (self.source(key) && self.open.iter().any(|k| !self.source(k))))
     }
 }
 
@@ -108,22 +120,21 @@ impl Order {
         self.replies.len()
     }
 
-    /// The running orders as (dst, src, versions, open), in install order:
+    /// The running orders as (moves, versions, open), in install order:
     /// the conformance projection onto the model's `gates`.
     #[cfg(test)]
     pub fn view(
         &self,
     ) -> impl Iterator<
         Item = (
-            &PageKey,
-            &PageKey,
+            &[(PageKey, PageKey)],
             &BTreeMap<PageKey, u64>,
             &BTreeSet<PageKey>,
         ),
     > {
         self.gates
             .iter()
-            .map(|g| (&g.dst, &g.src, &g.versions, &g.open))
+            .map(|g| (g.moves.as_slice(), &g.versions, &g.open))
     }
 
     /// Answer `id`; false when its caller already left.
@@ -156,12 +167,13 @@ impl Order {
     }
 
     /// The page whose disk bytes a Discard of `key` also reads: a running
-    /// rename's source, when `key` is its unwitnessed destination.
+    /// move's source, when `key` is its unwitnessed destination.
     pub fn partner(&self, key: &str) -> Option<&PageKey> {
         self.gates
             .iter()
-            .find(|g| g.dst == key && g.open.contains(key))
-            .map(|g| &g.src)
+            .filter(|g| g.open.contains(key))
+            .find_map(|g| g.moves.iter().find(|(dst, _)| dst == key))
+            .map(|(_, src)| src)
     }
 
     /// `key` published `version` (its save's directory sync completed).
@@ -196,18 +208,24 @@ impl Order {
     }
 
     /// A Discard of `key` took the disk's bytes. An unwitnessed destination
-    /// ends its whole order (the caller reverts the source); a referrer or the
-    /// source leaves its order.
+    /// cancels its move: the move leaves its order, with its source (the
+    /// caller reverts it), and an order left with no move ends. A referrer or
+    /// a source leaves its order. With one move: an unwitnessed destination
+    /// ends its whole order.
     pub fn discarded(&mut self, key: &str) {
         self.supersede(key);
-        self.gates
-            .retain(|g| !(g.dst == key && g.open.contains(key)));
         for g in &mut self.gates {
-            if g.dst != key {
-                g.open.remove(key);
+            if !g.open.contains(key) {
+                continue;
             }
+            if let Some(at) = g.moves.iter().position(|(dst, _)| dst == key) {
+                let (_, src) = g.moves.remove(at);
+                g.open.remove(&src);
+            }
+            g.open.remove(key);
         }
-        self.gates.retain(|g| !g.open.is_empty());
+        self.gates
+            .retain(|g| !g.open.is_empty() && !g.moves.is_empty());
     }
 
     /// A stop ends every order; slots stay with their callers, who see the
@@ -274,5 +292,84 @@ impl<F: HostIo> Host<F> {
         let id = *id;
         self.order.register(id);
         Some(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn order(moves: &[(&str, &str)], pages: &[&str]) -> Order {
+        let versions = pages.iter().map(|p| (p.to_string(), 1)).collect();
+        let moves = moves
+            .iter()
+            .map(|(d, s)| (d.to_string(), s.to_string()))
+            .collect();
+        let mut order = Order::default();
+        order.install(Some(Gates::new(moves, versions)));
+        order
+    }
+
+    /// With one move the rule is the pre-S2 one exactly: a referrer waits
+    /// for `dst`, `src` waits for every other page. Every subset of
+    /// witnessed pages of a move with two referrers.
+    #[test]
+    fn one_move_gates_as_before() {
+        let pages = ["d", "s", "r1", "r2"];
+        for witnessed in 0..16u32 {
+            let open: BTreeSet<PageKey> = pages
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| witnessed & (1 << i) == 0)
+                .map(|(_, p)| p.to_string())
+                .collect();
+            let mut o = order(&[("d", "s")], &pages);
+            o.gates[0].open = open.clone();
+            for key in pages {
+                let before = open.contains(key)
+                    && key != "d"
+                    && (open.contains("d") || (key == "s" && open.len() > 1));
+                assert_eq!(o.gated(key), before, "{key} with open {open:?}");
+            }
+        }
+    }
+
+    /// Two moves and a referrer (a namespace rename): no receiver waits, the
+    /// referrer waits while any receiver is open, a source while any
+    /// non-source page is open.
+    #[test]
+    fn several_moves_order_receivers_then_others_then_sources() {
+        let pages = ["d1", "d2", "s1", "s2", "r"];
+        let mut o = order(&[("d1", "s1"), ("d2", "s2")], &pages);
+        assert!(!o.gated("d1") && !o.gated("d2"));
+        assert!(o.gated("r") && o.gated("s1") && o.gated("s2"));
+        o.published("d1", 1);
+        assert!(o.gated("r"), "d2 is still open");
+        o.published("d2", 1);
+        assert!(!o.gated("r") && o.gated("s1") && o.gated("s2"));
+        o.published("r", 1);
+        assert!(!o.gated("s1") && !o.gated("s2"), "only sources are left");
+        o.published("s1", 1);
+        o.published("s2", 1);
+        assert!(o.gates.is_empty());
+    }
+
+    /// A Discard of one unwitnessed receiver cancels its move only: its
+    /// source is its partner and leaves the order; the other move keeps its
+    /// order. With no move left, the order ends.
+    #[test]
+    fn a_discarded_receiver_cancels_its_own_move() {
+        let pages = ["d1", "d2", "s1", "s2", "r"];
+        let mut o = order(&[("d1", "s1"), ("d2", "s2")], &pages);
+        assert_eq!(o.partner("d1").map(String::as_str), Some("s1"));
+        assert_eq!(o.partner("d2").map(String::as_str), Some("s2"));
+        assert_eq!(o.partner("r"), None);
+        o.discarded("d1");
+        assert_eq!(o.partner("d1"), None);
+        assert!(!o.gated("s1"), "the reverted source left the order");
+        assert!(o.gated("r") && o.gated("s2"), "d2 is still open");
+        assert!(o.touches(&BTreeSet::from(["s1".to_string()])));
+        o.discarded("d2");
+        assert!(o.gates.is_empty(), "no move left: the order ends");
     }
 }
