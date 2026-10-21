@@ -1593,7 +1593,9 @@ const OG_AUTOCOMPLETE_HIDDEN_PROPS: &[&str] = &[
 /// Collect visible keys and distinct nonempty values from page preblocks and
 /// blocks. Limits charge both keys and values plus estimated bytes. Return sorted
 /// facets and a flag when the next distinct item cannot fit; stop at first
-/// excess. Otherwise may scan all graph blocks. No disk read.
+/// excess. Otherwise may scan all graph blocks. No disk read. Values are the
+/// strings OG's value autocomplete offers (`property_value_completions`): a
+/// multi-ref value contributes its individual refs, not the joined text.
 pub(crate) fn autocomplete_property_facets_bounded(
     graph: &ReadSnapshot,
     max_items: usize,
@@ -1612,6 +1614,7 @@ pub(crate) fn autocomplete_property_facets_bounded(
                 .map(|key| property_key_norm(key.trim_start_matches(':'))),
         )
         .collect();
+    let parse_config = tine_core::query::atom::ParseConfig::from_config(graph.config());
     let mut items = 0usize;
     let mut bytes = 0usize;
     let exceeded = std::cell::Cell::new(false);
@@ -1649,9 +1652,28 @@ pub(crate) fn autocomplete_property_facets_bounded(
             map.entry(key).or_default().insert(value.to_string());
         };
 
-        for (_entry, doc) in pages {
+        // OG `get-property-values`: a value holding several page refs offers
+        // each ref, never the joined string (GH #737). The parser decides.
+        let mut offer_value = |entry: &PageEntry, key: String, value: String| {
+            if hidden.contains(&property_key_norm(&key)) {
+                return;
+            }
+            for completion in tine_core::query::atom::property_value_completions(
+                &key,
+                &value,
+                index::atom_format(entry),
+                &parse_config,
+            ) {
+                offer(key.clone(), completion);
+                if exceeded.get() {
+                    return;
+                }
+            }
+        };
+
+        for (entry, doc) in pages {
             for (key, value) in page_facets(doc).0 {
-                offer(key, value);
+                offer_value(entry, key, value);
                 if exceeded.get() {
                     break;
                 }
@@ -1661,7 +1683,7 @@ pub(crate) fn autocomplete_property_facets_bounded(
             }
             if !walk_until(&doc.roots, &mut |block| {
                 for (key, value) in block.properties() {
-                    offer(key, value);
+                    offer_value(entry, key, value);
                     if exceeded.get() {
                         return false;
                     }
@@ -3376,6 +3398,54 @@ mod tests {
                     .sum::<usize>()
                 <= 3
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn gh737_autocomplete_values_split_page_ref_sets_and_keep_plain_text_whole() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join(format!(
+            "tine-gh737-autocomplete-values-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(dir.join("logseq/config.edn"), "{}").unwrap();
+        // OG `get-property-values` (db/model.cljs:1422-1443): a value with two
+        // or more page refs contributes each ref (as `[[x]]`, `#x` or bare);
+        // a single ref and every plain value stay whole.
+        fs::write(
+            dir.join("pages/Refs.md"),
+            "tags:: [[Header B]], [[Header A]]\n\n- first\n  tags:: [[Beta]], [[Alpha]]\n  note:: plain, with commas\n  related:: [[One]] and [[Two]]\n  solo:: [[Solo]]\n  hashes:: #x #y\n  authors:: Ann, Bob\n  quoted:: \"[[Q1]], [[Q2]]\"\n- second\n  tags:: [[Alpha]]\n  tags2:: red\n- third\n  alias:: red, green\n",
+        )
+        .unwrap();
+
+        let graph = test_snapshot(&dir);
+        let (facets, exceeded) =
+            autocomplete_property_facets_bounded(&graph, usize::MAX, usize::MAX);
+        assert!(!exceeded);
+        let values = |key: &str| -> Vec<String> {
+            facets
+                .iter()
+                .find(|(candidate, _)| candidate == key)
+                .map(|(_, values)| values.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            values("tags"),
+            ["[[Alpha]]", "[[Beta]]", "[[Header A]]", "[[Header B]]"],
+            "page-ref sets are offered as their individual values, never as `[[a]], [[b]]`"
+        );
+        assert_eq!(values("note"), ["plain, with commas"]);
+        assert_eq!(values("related"), ["[[One]]", "[[Two]]"]);
+        assert_eq!(values("solo"), ["[[Solo]]"]);
+        assert_eq!(values("hashes"), ["#x", "#y"]);
+        assert_eq!(values("authors"), ["Ann, Bob"]);
+        assert_eq!(values("quoted"), ["\"[[Q1]], [[Q2]]\""]);
+        assert_eq!(values("alias"), ["green", "red"]);
         let _ = fs::remove_dir_all(&dir);
     }
 
