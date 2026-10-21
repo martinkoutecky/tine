@@ -1,7 +1,7 @@
 import { Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { t } from "../i18n";
 import { backend, type GitAutocommitStatus, type GitPolicy } from "../backend";
-import { graphOwner, readOwned } from "../owned";
+import { graphOwner, readOwned, writeOwned } from "../owned";
 import { Field } from "./settingsField";
 
 /** Settings → Graph → Git (ADR 0078 slice 1): whether Tine commits this graph's changes to the git repository it
@@ -29,7 +29,7 @@ export function GitAutocommitSetting(): JSX.Element {
   const change = async (policy: GitPolicy, minutes: number) => {
     const owner = graphOwner(() => alive);
     try {
-      const answer = await readOwned(owner, backend().setGitAutocommit(policy, minutes));
+      const answer = await writeOwned(owner, backend().setGitAutocommit(policy, minutes));
       if (answer.kind === "current") { setStatus(answer.value); setError(null); }
     } catch (failure) {
       if (owner()) setError(t("git-settings-save-failed", { error: message(failure) }));

@@ -1165,6 +1165,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "savePdfAreaImage",
   "rollbackPdfAreaImage",
   "setBackupKeep",
+  "setGitAutocommit",
   "setCaptureEnterFiles",
   "setWatchMode",
   "restoreBackup",

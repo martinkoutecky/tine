@@ -124,7 +124,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "mergePages", "renameFileToPage", "resolveSyncConflict", "resolveVcsMarkerConflict", "resolveDuplicateJournalDay", "trashSyncConflict", "saveAsset",
   "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard", "copyAssetFileToClipboard",
   "writeHighlights", "savePdfAreaImage", "rollbackPdfAreaImage",
-  "setBackupKeep", "setCaptureEnterFiles", "setWatchMode", "restoreBackup",
+  "setBackupKeep", "setGitAutocommit", "setCaptureEnterFiles", "setWatchMode", "restoreBackup",
   "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck", "setUiLocale",
   "debugLog", "diagnosticFrontendEvent", "diagnosticTimingEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
   "saveGraphVerificationReport", "addDefenderExclusion", "dismissDefenderHint",
@@ -160,7 +160,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   // prepareGraphFolder: iOS container check + iCloud download before a graph
   // bind; it writes no graph data (master 027b5ae15).
   "pickGraphFolder", "prepareGraphFolder", "pickFile", "capturePhoto", "startRecording", "stopRecording", "cancelRecording",
-  "openPdf", "readHighlights", "onGraphChanged", "onGraphChangedBulk", "onGraphWatchStatus", "onGraphRescanComplete", "rescanGraphNow", "onGraphConfigChanged", "onCustomCssChanged", "onAssetChanged", "onOwnerFlushRequest", "ownerFlushAnswer", "getBackupKeep", "getCaptureEnterFiles", "getLinkFirstMatch",
+  "openPdf", "readHighlights", "onGraphChanged", "onGraphChangedBulk", "onGraphWatchStatus", "onGraphRescanComplete", "rescanGraphNow", "onGraphConfigChanged", "onCustomCssChanged", "onAssetChanged", "onOwnerFlushRequest", "ownerFlushAnswer", "getBackupKeep", "gitAutocommitStatus", "getCaptureEnterFiles", "getLinkFirstMatch",
   "getWatchMode", "listBackups", "loadSession", "loadWorkspaces", "localClock", "gpuEnv", "getSmoothScroll",
   "getAppBool", "getAppString", "listSpellcheckDictionaries", "debugInfo",
   "diagnosticReport", "defenderHint", "appArchitecture", "watcherLatencyRecent", "takeDataHomeFallbackNotice",
