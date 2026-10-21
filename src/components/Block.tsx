@@ -125,6 +125,7 @@ import {
   caretOffsetOnLastRow,
   textareaCaretLeft,
 } from "../editor/caretRows";
+import { revealCaretSettled } from "../editor/caretReveal";
 import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
 import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
@@ -1898,13 +1899,23 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
 
   const focusNow = () => {
+    placeCaretNow();
+    cancelReveal?.();
+    cancelReveal = revealCaretSettled(ref, nearestScrollableY(ref));
+  };
+  let cancelReveal: (() => void) | undefined;
+  onCleanup(() => cancelReveal?.());
+  const placeCaretNow = () => {
     const historySelection = takeHistoryEditorSelectionFor(props.id, surfaceKey);
     const want = takeCaretFor(props.id);
     const rawCaret = historySelection && !codeBodyProjection(editorValue(), pageFmt()) ? historySelection.start
       : typeof want === "number" ? want : null;
     if (rawCaret !== null) codeView.enter(rawCaret, historySelection?.end ?? rawCaret);
     ref.value = codeShown()?.body ?? (historySelection ? editorValue() : ref.value);
-    ref.focus();
+    // GH #745: focus() would scroll the field into view by the engine's own rule
+    // (Chromium centres it, WebKit leaves it where it is). `revealCaretSettled`
+    // owns that: no move while the caret row is visible, else the least move.
+    ref.focus({ preventScroll: true });
     const v = ref.value;
     if (historySelection) {
       const offset = codeView.mixed() ? codeShown()!.open.length : 0;

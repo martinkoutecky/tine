@@ -224,3 +224,35 @@ export function textareaCaretLeft(ta: HTMLTextAreaElement, offset: number): numb
     div.remove();
   }
 }
+
+/** The visual row holding the caret at `offset`, as `top`/`bottom` in the
+ *  textarea's border-box coordinates minus its border (the origin of its
+ *  scrollable content, before any internal scroll). One mirror build, O(value
+ *  length) text layout; null where there is no layout (jsdom), so callers
+ *  leave the scroll alone. */
+export function textareaCaretRow(ta: HTMLTextAreaElement, offset: number): { top: number; bottom: number } | null {
+  if (typeof document === "undefined") return null;
+  const at = Math.min(Math.max(0, offset), ta.value.length);
+  const div = buildMirror(ta);
+  bodyOf(ta).appendChild(div); // measure in the textarea's own window (P1)
+  try {
+    div.textContent = "M";
+    const padTop = parseFloat(div.style.paddingTop) || 0;
+    const padBottom = parseFloat(div.style.paddingBottom) || 0;
+    const lineHeight = div.clientHeight - padTop - padBottom;
+    if (!(lineHeight > 0)) return null; // no layout (tests)
+    div.textContent = "";
+    div.appendChild(document.createTextNode(ta.value.slice(0, at)));
+    const marker = document.createElement("span");
+    marker.textContent = ta.value.slice(at, at + 1) || "​";
+    div.appendChild(marker);
+    div.appendChild(document.createTextNode(ta.value.slice(at + 1)));
+    // The marker's offsetTop is measured from the mirror's padding edge and
+    // lies inside its line box, so the row index is a rounded quotient.
+    const row = Math.max(0, Math.round((marker.offsetTop - padTop) / lineHeight));
+    const top = padTop + row * lineHeight;
+    return { top, bottom: top + lineHeight };
+  } finally {
+    div.remove();
+  }
+}
