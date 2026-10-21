@@ -6,7 +6,7 @@ icon:: 📄
 	- **Select text** in the PDF to highlight it; click a highlight again to change its color.
 	- Hold **Shift** while dragging a rectangle on Linux or Windows, or **Command** on macOS, then choose a color to clip a figure or equation as an image highlight. Dismissing the color chooser writes nothing.
 	- Use the reader toolbar to choose a persistent **Light**, **Warm**, or **Dark** page theme, and open **Outline** to navigate a PDF's nested table of contents.
-	- Zoom, find text, and jump to a page from the toolbar. Your page and zoom are restored when you reopen the PDF. At high zoom, only visible page regions are rendered sharply.
+	- Zoom, find text, and jump to a page from the toolbar. **Ctrl/Cmd + wheel** or a touchpad pinch zooms around the pointer. Your page and zoom are restored when you reopen the PDF. At high zoom, only visible page regions are rendered sharply.
 	- On a phone, select text or long-press a highlight to open its annotation actions.
 	- Every highlight becomes a **block** on a notes page named after the PDF, so you can write underneath it, link it, and reference it like any other bullet — and each note jumps straight back to its spot in the document.
 	- If the highlight file changes outside Tine, choose **Keep mine** to merge your edits or **Use disk version** to discard them. If the disk highlight file cannot be read, **Discard my changes** asks for confirmation, clears only your local highlight edits, and leaves the disk file untouched; an unused local area image may remain.

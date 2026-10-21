@@ -1257,8 +1257,8 @@ try {
       top: highlight.style.top,
       width: highlight.style.width,
       height: highlight.style.height,
-      leftRatio: parseFloat(highlight.style.left) / parseFloat(page.style.width),
-      widthRatio: parseFloat(highlight.style.width) / parseFloat(page.style.width),
+      leftRatio: parseFloat(highlight.style.left) / page.offsetWidth,
+      widthRatio: parseFloat(highlight.style.width) / page.offsetWidth,
     } : null;
   });
   if (!geometry || Object.values(geometry).some((value) => !value || String(value).includes("NaN"))) {

@@ -1,6 +1,7 @@
 import * as pdfjs from "pdfjs-dist";
 import { isMobilePlatform } from "../nativeChrome";
 import { viewportOf } from "../windowRealm";
+import { pdfProbe } from "./pdfProbe";
 
 const TILE_CSS_SIZE = 768;
 const TILE_PIXEL_CAP = 1_572_864;
@@ -29,6 +30,7 @@ export function createPdfTiles(onError: (error: unknown) => void) {
   let pending = 0;
 
   function remove(tile: Tile) {
+    pdfProbe({ type: "tile-remove", page: tile.page, key: tile.key });
     tile.task?.cancel();
     tile.canvas.width = 0;
     tile.canvas.height = 0;
@@ -130,11 +132,14 @@ export function createPdfTiles(onError: (error: unknown) => void) {
       layer.appendChild(canvas);
       const tile: Tile = { key: item.key, page: pageNumber, canvas, pixels: canvas.width * canvas.height };
       tiles.set(item.key, tile);
+      pdfProbe({ type: "tile-start", page: pageNumber, key: item.key, scale, ratio,
+        x: item.x * TILE_CSS_SIZE, y: item.y * TILE_CSS_SIZE, w: width, h: height });
       pending++;
       try {
         tile.task = page.render({ canvasContext: canvas.getContext("2d")!, viewport,
           transform: [ratio, 0, 0, ratio, -item.x * TILE_CSS_SIZE * ratio, -item.y * TILE_CSS_SIZE * ratio] });
-        void tile.task.promise.catch((error: unknown) => {
+        void tile.task.promise.then(() => pdfProbe({ type: "tile-end", page: pageNumber, key: item.key }))
+          .catch((error: unknown) => {
           if ((error as { name?: string }).name !== "RenderingCancelledException" && generation === current) onError(error);
         }).finally(() => {
           if (generation !== current) return;
