@@ -1484,7 +1484,7 @@ fn launch_backup_read_failure_reaches_diagnostic_adapter() {
     g.close();
 }
 
-/// Journal D-20261019-QC item 3: `tine serve`'s launch backup is the app's.
+/// Journal D-20261019-QC item 3: `tine serve` uses the app's backup path.
 /// After the warm and the quiet turn it publishes one verified zip under the
 /// app data it was given; a binding revoked first (serve's stop) publishes
 /// nothing and its worker ends, so serve can wait for it before exiting.
@@ -1604,7 +1604,14 @@ fn serve_skips_a_backup_zip_younger_than_six_hours() {
     let base = scratch("serve-backup-younger").join("graph");
     // Rotation recognizes names without opening archives. Old/new mtimes are
     // irrelevant, and a newer partial or legacy directory is not a zip.
-    write(&zip_base(&base).join("2026-10-21_06-00-01.zip"), "");
+    let zip = zip_base(&base).join("2026-10-21_06-00-01.zip");
+    write(&zip, "");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(zip)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH)
+        .unwrap();
     write(
         &zip_base(&base).join(".partial-2026-10-22_00-00-00.zip"),
         "",
@@ -1616,7 +1623,18 @@ fn serve_skips_a_backup_zip_younger_than_six_hours() {
 #[test]
 fn serve_takes_a_backup_when_the_newest_zip_is_at_least_six_hours_old() {
     let base = scratch("serve-backup-older").join("graph");
-    write(&zip_base(&base).join("2026-10-21_05-00-00.zip"), "");
+    let zip = zip_base(&base).join("2026-10-21_05-00-00.zip");
+    write(&zip, "");
+    // An old name remains old even when the zip was just touched at noon.
+    let noon = std::time::SystemTime::from(
+        chrono::DateTime::parse_from_rfc3339("2026-10-21T12:00:00Z").unwrap(),
+    );
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(zip)
+        .unwrap()
+        .set_modified(noon)
+        .unwrap();
     assert!(!serve_backup_recent_at_noon(&base));
     write(&zip_base(&base).join("2026-10-21_06-00-00.zip"), "");
     assert!(
@@ -1644,6 +1662,15 @@ fn serve_takes_a_backup_when_the_newest_zip_is_future_dated() {
     let base = scratch("serve-backup-future").join("graph");
     write(&zip_base(&base).join("2026-10-21_11-00-00.zip"), "");
     write(&zip_base(&base).join("2026-10-21_12-00-01.zip"), "");
+    assert!(!serve_backup_recent_at_noon(&base));
+}
+
+#[test]
+fn serve_takes_a_backup_when_the_newest_zip_has_an_invalid_date() {
+    let base = scratch("serve-backup-invalid-date").join("graph");
+    write(&zip_base(&base).join("2026-10-21_11-00-00.zip"), "");
+    // Rotation's name grammar recognizes the stamp's shape, not calendar validity.
+    write(&zip_base(&base).join("2026-13-21_11-00-00.zip"), "");
     assert!(!serve_backup_recent_at_noon(&base));
 }
 

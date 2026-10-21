@@ -1900,6 +1900,7 @@ mod og_20d_guide_tests {
                 "launch snapshot",
                 "newest backup zip",
                 "6 hours",
+                "future-dated",
                 "files, external edits, and backups",
             ],
             vec!["handover", "60", "timeout", "--stop"],

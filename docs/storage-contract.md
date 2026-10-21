@@ -534,14 +534,16 @@ than six hours old (D-20261020-CF4), logging one line on stderr. It uses the
 rotation's `scan` listing and newest-last `Record::order`: the UTC timestamp in
 the zip's name, not its filesystem mtime. A future or invalid timestamp does
 not suppress a snapshot; neither do legacy folders or partial zips. The app's
-launch policy is unchanged. Serve starts its worker once its endpoint answers and reports a failure on
-stderr (its start log) and in the diagnostic log. Its stop cancels a copy
-that is still waiting or reading; one that has finished reading still
+launch policy is unchanged. Serve starts its worker once its endpoint answers
+and reports a failure on stderr (its start log) and in the diagnostic log.
+Its stop cancels a copy that is still waiting or reading; one that has finished reading still
 publishes, unreported. Serve joins the worker after releasing the lease, so it
 never exits mid-publication (proofs
 `serve_takes_the_apps_launch_backup_once_it_has_gone_quiet`,
 `a_stop_during_the_quiet_wait_ends_serves_backup_before_it_returns`,
-`a_headless_launch_backup_is_one_verified_zip_and_a_stop_cancels_it`). The backups directory is private to the device:
+`a_headless_launch_backup_is_one_verified_zip_and_a_stop_cancels_it`,
+`a_headless_restart_with_a_recent_zip_preserves_the_backup_slots`, and the
+`serve_*backup*` age-boundary tests). The backups directory is private to the device:
 only Tine writes it and no sync tool delivers into it. A hand edit there is
 outside the threat model; verification still detects damage it causes.
 
