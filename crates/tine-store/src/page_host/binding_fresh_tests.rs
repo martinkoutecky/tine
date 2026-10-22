@@ -378,12 +378,17 @@ fn store_image(store: &Store) -> (crate::WholeGraph, String) {
     (view, normalized(&out, &store.graph.root))
 }
 
-/// Absolute paths read `<root>`. The referenced-name index keeps the first
+/// Absolute paths read `<root>`, in the spelling the image holds them: plain
+/// (`{}`) and `Debug`-escaped (`{:?}` of a path string, where a Windows
+/// separator is a doubled backslash). The referenced-name index keeps the first
 /// case variant of a name it met, which differs between a patched
 /// generation and a rebuilt one (`random_alias_edits_equal_a_fresh_build`):
 /// those lines compare case-folded.
 fn normalized(image: &str, root: &Path) -> String {
-    let image = image.replace(&*root.to_string_lossy(), "<root>");
+    let plain = root.to_string_lossy();
+    let image = image
+        .replace(&*plain, "<root>")
+        .replace(&plain.replace('\\', "\\\\"), "<root>");
     let mut out = String::with_capacity(image.len());
     for line in image.lines() {
         let folded = [
@@ -1024,6 +1029,23 @@ fn run_all(watch: crate::WatchMode, default_seeds: &[u64], default_steps: usize)
     for action in ["open", "submit", "external rewrite"] {
         assert!(total.contains_key(action), "no {action} ran");
     }
+}
+
+/// A Windows root (verbatim prefix and backslashes) reads `<root>` wherever
+/// the image holds it: plain, or inside a `Debug`-printed path or path list,
+/// where every backslash is doubled. The temp directory differs between the
+/// live store and the cold copy, so a path that survives fails the comparison
+/// on Windows only (hosted run 39687809556).
+#[test]
+fn a_windows_root_reads_root_in_plain_and_debug_escaped_paths() {
+    let root = Path::new(r"\\?\C:\Users\runneradmin\AppData\Local\Temp\.tmpHdiv69\graph");
+    let page = format!("{}\\pages\\Beta.md", root.display());
+    let image = format!("plain {page}\nexplicit 1 \"delta\" {:?}\n", [&page]);
+    assert_eq!(
+        normalized(&image, root),
+        "plain <root>\\pages\\Beta.md\n\
+         explicit 1 \"delta\" [\"<root>\\\\pages\\\\Beta.md\"]\n"
+    );
 }
 
 /// F2/F5 with the default Notify watcher.
