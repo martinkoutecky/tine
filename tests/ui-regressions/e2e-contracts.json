@@ -65,6 +65,12 @@
       "nonRequirements":["Modifier destinations of crumbs (component-level), and native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh726-embeds.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"On a routed page, a block or page embed's host bullet cuts only its host; a source bullet copies, cuts and deletes its source. Cross-page paste retains source identity, properties and folded children, updates embeds and references, and Undo restores host and source changes (GH #726).","blocking":true}],
+      "acceptableVariations":["Bullet inset, menu placement, styling and save latency may vary while the selected block's identity and persisted outline match its visible handle."],
+      "nonRequirements":["Exact pixels, a combined selection spanning host and source outlines (the scope refuses it), or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-query-result-cut.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Right-clicking a {{tine-query}} or {{query}} result (bullet or text) and choosing Cut or Delete removes that result from its own page file and puts it on the clipboard for Cut, while the query host block stays in its page; in table view and the OG legacy query table a right click on a result never offers the host block's Cut/Delete (GH #726).","blocking":true}],
       "acceptableVariations":["Menu placement, the menu offered by table cells, styling and save latency may vary while the query host's file bytes are unchanged and the chosen result leaves its source page."],

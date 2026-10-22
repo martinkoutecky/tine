@@ -505,8 +505,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
                       </div>
                     )}
                   </Show>
-                  <Block id={id} forceExpanded={contextRootIds().has(id)} hideRefCount={!!props.embedId && id === props.embedId}
-                    dragHostId={props.surface === "embed" && id === props.embedId ? props.hostBlockId : undefined} />
+                  <Block id={id} forceExpanded={contextRootIds().has(id)} hideRefCount={!!props.embedId && id === props.embedId} />
                 </Show>
               </>
             );
