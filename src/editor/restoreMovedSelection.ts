@@ -31,3 +31,20 @@ export function keepCaretThroughRewrite(ta: HTMLTextAreaElement | undefined, ena
     before.direction ?? undefined,
   );
 }
+
+/** After a programmatic edit committed `committed`, put the textarea back in step
+ *  with the store's text `live` and map the selection onto it. The commit may
+ *  have canonicalised the block (a marker change clocks in or out, GH #741), and
+ *  writing the pre-commit string back would let the next keystroke commit text
+ *  without that transition. */
+export function syncTextareaToStore(
+  ta: HTMLTextAreaElement,
+  committed: string,
+  live: string,
+  start: number,
+  end = start,
+  direction?: "forward" | "backward" | "none",
+): void {
+  ta.value = live;
+  ta.setSelectionRange(offsetThroughRewrite(committed, live, start), offsetThroughRewrite(committed, live, end), direction);
+}

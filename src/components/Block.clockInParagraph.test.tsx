@@ -178,3 +178,44 @@ describe("typing DOING keeps the caret on the task line (GH #741)", () => {
     }
   });
 });
+
+// A marker change made by a command (Ctrl+Enter here; the slash marker, paste and
+// format edits share the path) writes the clock-in/out into the store. The
+// textarea must take the store's text, or the next keystroke commits the
+// pre-transition text and drops the clock change (review R1 of GH #741).
+describe("a command marker change keeps its clock change when you keep typing (GH #741)", () => {
+  const ctrlEnter = (ta: HTMLTextAreaElement) =>
+    ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+  const flush = () => new Promise<void>((r) => queueMicrotask(r));
+
+  it("DOING to DONE clocks out and stays clocked out", async () => {
+    const { textarea, blockId, dispose } = mountPage(`DOING taskA\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:00:00]\n:END:`, true);
+    try {
+      textarea!.setSelectionRange(11, 11);
+      ctrlEnter(textarea!);
+      await flush();
+      expect(textarea!.value).toBe(doc.byId[blockId].raw);
+      typeChar(textarea!, "x");
+      expect(doc.byId[blockId].raw).toMatch(/^DONE taskAx\n:LOGBOOK:\nCLOCK: \[2026-10-21 Wed 08:00:00\]--\[[^\]]+\] =>\s+\d\d:\d\d:\d\d\n:END:$/);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("TODO to DOING keeps the new clock-in next to an old one", async () => {
+    const closed = "CLOCK: [2026-10-20 Tue 08:00:00]--[2026-10-20 Tue 09:00:00] =>  01:00:00";
+    const { textarea, blockId, dispose } = mountPage(`TODO taskB\n:LOGBOOK:\n${closed}\n:END:`, true);
+    try {
+      textarea!.setSelectionRange(10, 10);
+      ctrlEnter(textarea!);
+      await flush();
+      expect(doc.byId[blockId].raw.match(/CLOCK:/g)).toHaveLength(2);
+      typeChar(textarea!, "x");
+      const raw = doc.byId[blockId].raw;
+      expect(raw).toMatch(/^DOING taskBx\n:LOGBOOK:\n/);
+      expect(raw.match(/CLOCK:/g)).toHaveLength(2);
+    } finally {
+      dispose();
+    }
+  });
+});

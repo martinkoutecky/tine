@@ -26,9 +26,8 @@ const EMPTY_INFO: LogbookInfo = { seconds: 0, summary: "0s", rows: [] };
  *  bare `DOING` (the parser accepts that marker only at the end of the text), so
  *  the buffer `DOING\n:LOGBOOK:...` reads as markerless to the parser; the next
  *  keystroke would then look like a fresh `DOING` and clock in a second time
- *  (GH #741). OG reads the marker off the title line (its marker pattern is
- *  `^(#+\s+)?(MARKER)?\s?`), so a bare marker line followed by more lines
- *  counts. */
+ *  (GH #741). OG takes the old marker from the saved block, which still has
+ *  it; reading it off the title line gives the same answer here. */
 function previousMarker(oldRaw: string, format: Format): string | null {
   const marker = leadingMarker(oldRaw, format);
   if (marker !== null) return marker;
