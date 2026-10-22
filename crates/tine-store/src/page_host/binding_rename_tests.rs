@@ -175,7 +175,7 @@ fn host_rename_and_delete_publish_their_edit_kinds() {
         let deleted = live.host.delete(
             live.host.session(),
             &PageId::from("pages/gone.md"),
-            b"- gone\n",
+            Some(&b"- gone\n"[..]),
         );
         if deleted != PageOperation::Waiting || std::time::Instant::now() > deadline {
             break deleted;
@@ -943,7 +943,7 @@ fn every_operation_on_an_ended_driver_is_refused() {
     let old = PageId::from("pages/Old.md");
     let opened = live.host.open(session, 1, &old, "Old").err();
     assert_eq!(opened, Some(PageRefusal::NotAdmitted), "open");
-    let deleted = live.host.delete(session, &old, b"- body\n");
+    let deleted = live.host.delete(session, &old, Some(&b"- body\n"[..]));
     assert_eq!(deleted, PageOperation::Refused, "delete");
     assert_eq!(live.host.owed(session, Some(&[old.clone()])), None, "owed");
     let renamed = live.host.rename(
@@ -985,7 +985,7 @@ fn a_rename_or_delete_under_a_held_path_lock_is_bounded() {
         });
         let gone = PageId::from("pages/Gone.md");
         let host = &live.host;
-        let deleted = scope.spawn(move || host.delete(session, &gone, b"- gone\n"));
+        let deleted = scope.spawn(move || host.delete(session, &gone, Some(&b"- gone\n"[..])));
         (renamed.join().unwrap(), deleted.join().unwrap())
     });
     let waited = started.elapsed();

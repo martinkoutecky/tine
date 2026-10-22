@@ -60,7 +60,7 @@ fn l2_04_conflicted_delete_preserves_input_on_refusal_and_deletes_on_success() {
             live.host.delete(
                 live.host.session(),
                 &PageId::from(key.clone()),
-                external.as_bytes()
+                Some(external.as_bytes())
             ),
             PageOperation::Refused
         );
@@ -75,7 +75,7 @@ fn l2_04_conflicted_delete_preserves_input_on_refusal_and_deletes_on_success() {
             live.host.delete(
                 live.host.session(),
                 &PageId::from(key.clone()),
-                external.as_bytes()
+                Some(external.as_bytes())
             ),
             PageOperation::Applied
         );
@@ -106,4 +106,48 @@ fn l2_04_conflicted_delete_preserves_input_on_refusal_and_deletes_on_success() {
         );
         live.host.stop();
     }
+}
+
+#[test]
+fn a_conflicted_delete_of_an_externally_deleted_file_keeps_the_input_recoverable() {
+    // L9 review R1: the file vanished while the page held input; deleting
+    // the page has nothing to delete but must copy the draft first.
+    let local = "- local draft\n";
+    let live = Live::new(&[("pages/a.md", "- base\n")]);
+    let (key, page) = live.open("pages/a.md");
+    fs::remove_file(live.root.join(&key)).unwrap();
+    let id = live.submit(&key, local, page.version, None).unwrap();
+    live.answer(&key, id);
+    live.wait(&key, "conflict", |mail| {
+        mail.page.as_ref().is_some_and(|p| p.conflict)
+    });
+    let page_id = PageId::from(key.clone());
+    let trash = live.root.join("logseq/.tine-trash/conflicts");
+    fs::create_dir_all(trash.parent().unwrap()).unwrap();
+    fs::write(&trash, "unavailable trash directory").unwrap();
+    assert_eq!(
+        live.host.delete(live.host.session(), &page_id, None),
+        PageOperation::Refused
+    );
+    live.host.driver.shared.with_state_for_tests(|state| {
+        let page = &state.progress.host.pages[&key];
+        assert_eq!(page.buf.as_deref(), Some(local.as_bytes()));
+        assert!(page.conflict);
+    });
+    fs::rename(&trash, trash.with_extension("obstruction")).unwrap();
+    assert_eq!(
+        live.host.delete(live.host.session(), &page_id, None),
+        PageOperation::Applied
+    );
+    assert!(!live.root.join(&key).exists());
+    let copies: Vec<_> = fs::read_dir(&trash).unwrap().flatten().collect();
+    assert_eq!(copies.len(), 1);
+    assert_eq!(fs::read(copies[0].path()).unwrap(), local.as_bytes());
+    // A reappeared file is not this case: refuse, keep the input.
+    fs::write(live.root.join(&key), "- back\n").unwrap();
+    assert_eq!(
+        live.host.delete(live.host.session(), &page_id, None),
+        PageOperation::Refused
+    );
+    live.host.stop();
 }

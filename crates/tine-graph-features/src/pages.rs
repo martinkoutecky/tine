@@ -331,6 +331,11 @@ pub fn delete_page_expected(
                 Err(error) => return Err(store_error(error)),
                 Ok(_) => return Err(error(io::ErrorKind::NotFound, "stale page target")),
             }
+            // A conflicted draft of the vanished file is kept recoverably
+            // before the window discards it (L9 review R1).
+            if let Some(page) = store.as_page(&file) {
+                return Ok(host.delete(session, &page, None));
+            }
         }
         return Ok(PageOperation::Applied);
     };
@@ -338,7 +343,7 @@ pub fn delete_page_expected(
     let (checked, _) = store
         .read(&id.file(), Some(tine_store::PARSE_INPUT_MAX_BYTES))
         .map_err(store_error)?;
-    Ok(host.delete(session, id, &checked))
+    Ok(host.delete(session, id, Some(&checked[..])))
 }
 
 /// Rename a page and its file-backed namespace descendants in one transaction.

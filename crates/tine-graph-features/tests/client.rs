@@ -1821,7 +1821,7 @@ fn page_merge_delete_and_rescue_match_legacy_bytes() {
             .unwrap();
         let page = tine_store::PageId::from("pages/delete.md");
         assert_eq!(
-            host.delete(session, &page, &stale),
+            host.delete(session, &page, Some(&stale[..])),
             tine_store::PageOperation::Refused
         );
         assert_eq!(disk_tree(&a), before_delete, "stale delete changed disk");

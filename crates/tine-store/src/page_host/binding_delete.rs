@@ -13,8 +13,12 @@ impl PageHost {
     /// published it; `Refused` when its draft failed (nothing changed);
     /// `Pending` when the page cannot publish without the user (a conflict
     /// or a persistent save error; it completes once it can); `Superseded`
-    /// or `Uncertain` otherwise.
-    pub fn delete(&self, session: u64, page: &PageId, checked: &[u8]) -> PageOperation {
+    /// or `Uncertain` otherwise. `checked: None` means the caller's check
+    /// found the file absent: see [`Self::delete_absent`].
+    pub fn delete(&self, session: u64, page: &PageId, checked: Option<&[u8]>) -> PageOperation {
+        let Some(checked) = checked else {
+            return self.delete_absent(session, page);
+        };
         // A host that ended deletes nothing.
         let Some((key, spelling, ..)) = self.try_identify(page) else {
             return PageOperation::Refused;
@@ -68,6 +72,64 @@ impl PageHost {
             }
             // Not admitted in time: the page stayed busy (a path lock held).
             Ok((Disposition::Waiting, _)) | Err(Unanswered::Withdrawn) => PageOperation::Waiting,
+            Err(Unanswered::Late) => PageOperation::Uncertain,
+            _ => PageOperation::Refused,
+        }
+    }
+}
+
+impl PageHost {
+    /// `page_delete` of a page whose file is already gone (an external
+    /// delete while the page was conflicted): there is nothing to delete, but
+    /// a conflicted draft is copied recoverably under the page lock first, so
+    /// the window's discard after `Applied` loses nothing (L9 review R1).
+    /// `Applied` when no conflicted input is held or its copy is durable;
+    /// `Refused` when the file reappeared or the copy failed (input kept);
+    /// `Waiting` while the page is busy.
+    fn delete_absent(&self, session: u64, page: &PageId) -> PageOperation {
+        let Some((key, spelling, ..)) = self.try_identify(page) else {
+            return PageOperation::Refused;
+        };
+        if self.store.as_page(&spelling.file()).is_none() {
+            return PageOperation::Refused;
+        }
+        if self.try_register(&key, &spelling).is_none() {
+            return PageOperation::Refused;
+        }
+        let deadline = std::time::Instant::now() + retained::OPERATION_WAIT;
+        let (store, file) = (self.store.clone(), spelling.file());
+        let stage = move |state: &mut State<ProductionIo, SystemClock>| {
+            if state.book.session != session {
+                return Disposition::Refused;
+            }
+            state.progress.with_host(|host| {
+                let Some(input) = host
+                    .pages
+                    .get(&key)
+                    .filter(|page| page.conflict)
+                    .map(|page| page.buf.clone())
+                else {
+                    return Disposition::Applied;
+                };
+                let keys = BTreeSet::from([key.clone()]);
+                if host.worker.is_some() || host.busy(&key) || host.lacks_locks(&keys) {
+                    return Disposition::Waiting;
+                }
+                // Still absent under the page lock, or this is not that case.
+                if !host.fs.read_page(&key).is_ok_and(|now| now.is_none()) {
+                    return Disposition::Refused;
+                }
+                match input {
+                    Some(input) if store.stage_marker_copy(&file, &input).is_err() => {
+                        Disposition::Refused
+                    }
+                    _ => Disposition::Applied,
+                }
+            })
+        };
+        match (self.driver.shared).locked_step(Deadline::At(deadline), stage) {
+            Ok(Disposition::Applied) => PageOperation::Applied,
+            Ok(Disposition::Waiting) | Err(Unanswered::Withdrawn) => PageOperation::Waiting,
             Err(Unanswered::Late) => PageOperation::Uncertain,
             _ => PageOperation::Refused,
         }
