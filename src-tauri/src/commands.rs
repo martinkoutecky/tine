@@ -467,18 +467,43 @@ pub(crate) async fn copy_guide_into_graph(
 }
 
 /// PROBE-ONLY (GH #746, branch probe/gh746-*, never merge): ARTIFICIAL CPU cost.
-/// `TINE_PROBE_READ_SPIN_MS=N` busy-spins N ms inside each whole-graph refresh
-/// read (backlinks, unlinked refs, page icons, resolve_blocks, query_run), on the
-/// same blocking-pool thread as the real work, so a refresh round costs more.
+/// `TINE_PROBE_READ_SPIN_MS=N` adds a fixed amount of CPU *work* to each
+/// whole-graph refresh read (backlinks, unlinked refs, page icons,
+/// resolve_blocks, query_run), on the same blocking-pool thread as the real work:
+/// as much work as one uncontended thread does in N ms (calibrated once on first
+/// use). Like real work, it takes longer when the cores are contended.
 pub(crate) fn probe_spin() {
-    static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    let ms = *MS.get_or_init(|| std::env::var("TINE_PROBE_READ_SPIN_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(0));
-    if ms > 0 {
-        let start = std::time::Instant::now();
-        while start.elapsed() < std::time::Duration::from_millis(ms) {
-            std::hint::spin_loop();
+    use std::hint::black_box;
+    use std::sync::OnceLock;
+    use std::time::{Duration, Instant};
+    static MS: OnceLock<u64> = OnceLock::new();
+    static PER_MS: OnceLock<u64> = OnceLock::new();
+    fn work(n: u64) -> u64 {
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        for i in 0..n {
+            x = black_box(x.rotate_left(7) ^ i).wrapping_mul(0xff51_afd7_ed55_8ccd);
         }
+        x
     }
+    let ms = *MS.get_or_init(|| {
+        std::env::var("TINE_PROBE_READ_SPIN_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    });
+    if ms == 0 {
+        return;
+    }
+    let per_ms = *PER_MS.get_or_init(|| {
+        let start = Instant::now();
+        let mut n = 0u64;
+        while start.elapsed() < Duration::from_millis(200) {
+            black_box(work(10_000));
+            n += 10_000;
+        }
+        (n / 200).max(1)
+    });
+    black_box(work(per_ms * ms));
 }
 
 #[tauri::command]
