@@ -113,7 +113,7 @@ describe("no reader of a clock/logbook date throws on a damaged logbook (GH #741
         finally { mounted?.dispose(); endEdit("page-navigation"); resetStore(); document.body.innerHTML = ""; }
       }
     }
-  });
+  }, 60_000); // ~2 s here, over 5 s on the hosted Linux runner (full CI 39694278146)
 });
 
 describe("timestampText never throws on a timestamp shape it does not know (GH #741)", () => {
