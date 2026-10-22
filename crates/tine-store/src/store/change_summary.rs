@@ -13,6 +13,26 @@ pub(super) struct UnlinkedRegistry {
     pub(super) targets: BTreeMap<String, UnlinkedTarget>,
 }
 
+impl UnlinkedRegistry {
+    /// Prune dead leases; the live target names and the current counter.
+    pub(super) fn live(&mut self) -> (Vec<String>, u64) {
+        self.targets.retain(|_, target| target.live());
+        let names: BTreeSet<_> = self.targets.values().map(|t| t.name.clone()).collect();
+        (names.into_iter().collect(), self.generation)
+    }
+
+    /// A target registered after the publication snapshotted the registry:
+    /// its reader may have read the snapshot this publication replaces, so
+    /// the publication fires its key (over-invalidation, never staleness).
+    pub(super) fn fire_since(&self, generation: u64, summary: &mut ChangeSummary) {
+        for target in self.targets.values() {
+            if target.added > generation && target.live() {
+                summary.text_to.insert(page_key(&target.name));
+            }
+        }
+    }
+}
+
 pub(super) struct UnlinkedTarget {
     pub(super) name: String,
     /// `generation` when this registration was made.
@@ -47,13 +67,6 @@ pub(super) struct ChangeSummary {
 }
 
 impl ChangeSummary {
-    /// A target registered after the publication snapshotted the registry:
-    /// its reader may have read the snapshot this publication replaces, so
-    /// the publication fires its key (over-invalidation, never staleness).
-    pub(super) fn add_late_unlinked_target(&mut self, name: &str) {
-        self.text_to.insert(page_key(name));
-    }
-
     #[cfg(test)]
     pub(super) fn fires_text(&self, key: &str) -> bool {
         self.text_to.contains(key)

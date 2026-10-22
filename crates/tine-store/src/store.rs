@@ -544,18 +544,7 @@ impl ChangeFeed {
                 journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
         }
         let rev = GraphRev(self.rev().0 + 1);
-        let (unlinked_targets, registry_generation) = {
-            let mut registry = self.unlinked_targets.lock().unwrap();
-            registry.targets.retain(|_, target| target.live());
-            let names = registry
-                .targets
-                .values()
-                .map(|target| target.name.clone())
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>();
-            (names, registry.generation)
-        };
+        let (unlinked_targets, registry_generation) = self.unlinked_targets.lock().unwrap().live();
         let mut snapshot = Snapshot::capture(
             &self.graph,
             &self.config,
@@ -580,15 +569,12 @@ impl ChangeFeed {
         state.rev += 1;
         let rev = GraphRev(state.rev);
         debug_assert_eq!(snapshot.rev, rev);
-        // Registration never waits on this publication; one made during the
-        // capture fires its key here. Holding the snapshot write lock orders
-        // a later registration's first read after this install.
+        // Holding the snapshot write lock orders a later registration's first
+        // read after this install; one made during the capture fires here.
         let mut current = self.snapshot.write().unwrap();
-        for target in self.unlinked_targets.lock().unwrap().targets.values() {
-            if target.added > registry_generation && target.live() {
-                snapshot.answers.2.add_late_unlinked_target(&target.name);
-            }
-        }
+        let registry = self.unlinked_targets.lock().unwrap();
+        registry.fire_since(registry_generation, &mut snapshot.answers.2);
+        drop(registry);
         let snapshot = Arc::new(snapshot);
         #[cfg(test)]
         self.publish_hooks.published(&snapshot);
