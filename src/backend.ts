@@ -385,6 +385,9 @@ class TauriBackend implements Backend {
   getUnlinkedRefs(name: string) {
     return this.call<RefGroup[]>("get_unlinked_refs", { name });
   }
+  registerUnlinkedReference(subscription: string, target: string | null, bindingGeneration: number) {
+    return this.call<void>("register_unlinked_reference", { subscription, target }, bindingGeneration);
+  }
   warmDone() {
     return this.call<boolean>("warm_done");
   }

@@ -222,7 +222,7 @@ export interface GraphAnswersChange {
   summary?: ChangeSummary;
 }
 
-/** Transport evidence only. S1 leaves every view's existing refresh intact.
+/** Publication invalidation evidence for the shared keyed refresh layer.
  * `blocks` includes runtime and persisted ids, plus affected ancestors.
  * `props` maps source-page/alias keys to changed property keys; `linksTo`
  * includes old and new explicit targets even if membership did not change. */
@@ -231,6 +231,11 @@ export interface ChangeSummary {
   pages: string[];
   blocks: string[];
   linksTo: string[];
+  /** S2 fields are optional for older hosts. */
+  textTo?: string[];
+  tagsTo?: string[];
+  tagTableTo?: string[];
+  refsTo?: string[];
   props: Record<string, string[]>;
   inventoryChanged: boolean;
   full: boolean;

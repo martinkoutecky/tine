@@ -429,6 +429,9 @@ impl Clone for EntryList {
     }
 }
 impl EntryList {
+    pub(crate) fn get_path(&self, path: &std::path::Path) -> Option<&PageEntry> {
+        self.paths.get(path).and_then(|slot| self.rows.get(slot))
+    }
     pub(crate) fn iter(&self) -> impl Iterator<Item = &PageEntry> {
         self.rows.values()
     }

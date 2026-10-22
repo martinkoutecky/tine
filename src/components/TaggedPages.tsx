@@ -1,7 +1,8 @@
 import { t } from "../i18n";
 import { For, Show, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { dataRev } from "../graphSession";
+import { changed } from "../changeKeys";
+import { referenceKey } from "../referenceKeys";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { isPublishedExport } from "../publishedBackend";
 import { readOr } from "../resourceRead";
@@ -13,14 +14,14 @@ import { ReferenceDisclosure } from "./ReferenceDisclosure";
  * unlike OG (GH #715), any name in its alias group, the same group Linked
  * References use; a page tagging itself so is listed too, as in OG. The backend owns membership
  * (`tagged_pages`: normalization, Org, aliases); `(page-tags …)` queries stay
- * literal. Cost: one page scan per graph revision, O(pages), plus O(matches log
+ * literal. Cost: one page scan per relevant tag change, O(pages), plus O(matches log
  * matches) display sorting. Read failures render a retry; stale graph reads are
  * discarded. Published exports have no live query engine and omit the section. */
 export function TaggedPages(props: { name: string }): JSX.Element {
   const owners = {};
   const [collapsed, setCollapsed] = createSignal(false);
   const [answer, { refetch }] = createResource(
-    () => isPublishedExport() ? null : `${props.name}\0${dataRev()}`,
+    () => isPublishedExport() ? null : `${props.name}\0${changed(referenceKey("tags", props.name))}`,
     async () => {
       const owner = latestOwner(owners, "tagged-pages", graphOwner());
       const result = await readOwned(owner, backend().taggedPages(props.name));

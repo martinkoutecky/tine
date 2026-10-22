@@ -172,6 +172,7 @@ export interface Backend {
    *  Linked References filter. Ordinary backlink DTOs stay shallow. */
   getBacklinkFilterContext(name: string, targets: BacklinkFilterTarget[]): Promise<BacklinkFilterContext>;
   getUnlinkedRefs(name: string): Promise<RefGroup[]>;
+  registerUnlinkedReference?(subscription: string, target: string | null, bindingGeneration: number): Promise<void>;
   /** True once the background whole-graph warm has built derived graph-open caches. */
   warmDone(): Promise<boolean>;
   /** Map of block uuid → number of blocks that reference it (the count badge). */

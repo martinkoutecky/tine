@@ -302,6 +302,8 @@ pub enum SubscriptionEnd {
 }
 
 pub(crate) struct ChangeFeed {
+    /// Mounted unlinked readers only; owned by this graph/window's binding.
+    unlinked_targets: Mutex<change_summary::UnlinkedRegistry>,
     state: Mutex<FeedState>,
     ready: Condvar,
     graph: Arc<Graph>,
@@ -398,6 +400,7 @@ impl ChangeFeed {
         journal_ids: Arc<Mutex<HashMap<Day, PageId>>>,
     ) -> Self {
         Self {
+            unlinked_targets: Default::default(),
             state: Mutex::new(FeedState {
                 rev: 0,
                 subscription: 0,
@@ -428,6 +431,7 @@ impl ChangeFeed {
             false,
             GraphRev(0),
             &HashMap::new(),
+            &[],
         );
         *self.snapshot.write().unwrap() = Some(Arc::new(snapshot));
     }
@@ -540,7 +544,19 @@ impl ChangeFeed {
                 journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
         }
         let rev = GraphRev(self.rev().0 + 1);
-        let snapshot = Arc::new(Snapshot::capture(
+        let (unlinked_targets, registry_generation) = {
+            let mut registry = self.unlinked_targets.lock().unwrap();
+            registry.targets.retain(|_, target| target.live());
+            let names = registry
+                .targets
+                .values()
+                .map(|target| target.name.clone())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            (names, registry.generation)
+        };
+        let mut snapshot = Snapshot::capture(
             &self.graph,
             &self.config,
             old.as_deref(),
@@ -549,7 +565,8 @@ impl ChangeFeed {
             rebuild,
             rev,
             published,
-        ));
+            &unlinked_targets,
+        );
         // A fold leaves the launch checkpoint's derived state true; its file
         // stamp is stale, so the next launch diff rereads that one file
         // (ADR 0070) instead of the whole checkpoint being rewritten for it.
@@ -558,13 +575,26 @@ impl ChangeFeed {
             self.checkpoint.get().inspect(|signal| signal.published());
         }
         #[cfg(test)]
-        self.publish_hooks.before_publish(&snapshot);
+        self.publish_hooks.before_publish();
         let mut state = self.state.lock().unwrap();
         state.rev += 1;
         let rev = GraphRev(state.rev);
         debug_assert_eq!(snapshot.rev, rev);
+        // Registration never waits on this publication; one made during the
+        // capture fires its key here. Holding the snapshot write lock orders
+        // a later registration's first read after this install.
+        let mut current = self.snapshot.write().unwrap();
+        for target in self.unlinked_targets.lock().unwrap().targets.values() {
+            if target.added > registry_generation && target.live() {
+                snapshot.answers.2.add_late_unlinked_target(&target.name);
+            }
+        }
+        let snapshot = Arc::new(snapshot);
+        #[cfg(test)]
+        self.publish_hooks.published(&snapshot);
         let answers = snapshot.answers.clone();
-        *self.snapshot.write().unwrap() = Some(snapshot);
+        *current = Some(snapshot);
+        drop(current);
         before_notify();
         if !state.closed {
             state.queue.push_back(Change {
@@ -5029,6 +5059,57 @@ mod rev5_tests {
             assert_eq!(count, 1);
             assert!(matches!(resolved, Resolved::Existing { .. }));
         }
+        store.close();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unlinked_registration_during_publication_neither_waits_nor_goes_stale() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-d3-unlinked-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/Source.md"), "- before\n").unwrap();
+        fs::write(root.join("pages/Target.md"), "- target\n").unwrap();
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        store.whole_graph().unwrap();
+        let id = PageId::from("pages/Source.md");
+        let read = store.page(&id).unwrap();
+        let mut doc = read.doc;
+        // Not a mention of Target: only the late registration can fire its key.
+        doc.blocks[0].raw.push_str(" edited");
+        let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        *store.changes.publish_hooks.pause.lock().unwrap() = Some(Arc::clone(&pause));
+        let writer_store = Arc::clone(&store);
+        let writer = std::thread::spawn(move || {
+            writer_store.save(
+                crate::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &doc,
+            )
+        });
+        wait_hook(&pause);
+        assert!(
+            store.writer.try_lock().is_err(),
+            "publication holds the writer"
+        );
+        let (send, receive) = mpsc::channel();
+        let register_store = Arc::clone(&store);
+        let register = std::thread::spawn(move || {
+            register_store.register_unlinked_reference("late".into(), Some("Target".into()));
+            send.send(()).unwrap();
+        });
+        let registered = receive.recv_timeout(Duration::from_secs(2));
+        release_hook(&pause);
+        *store.changes.publish_hooks.pause.lock().unwrap() = None;
+        assert!(matches!(writer.join().unwrap(), SaveOutcome::Saved(_)));
+        register.join().unwrap();
+        registered.expect("registration waited behind the writer");
+        let published = store.changes.snapshot.read().unwrap().clone().unwrap();
+        assert!(published.answers.2.fires_text("target"));
         store.close();
         fs::remove_dir_all(root).unwrap();
     }

@@ -49,6 +49,9 @@ fn fixture(blocks: usize) -> (tempfile::TempDir, Store) {
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
     store.whole_graph().unwrap();
     store.stop_watcher_for_tests();
+    for &target in TARGETS {
+        store.register_unlinked_reference(target.to_owned(), Some(target.to_owned()));
+    }
     (dir, store)
 }
 
@@ -102,6 +105,8 @@ struct Answers {
     icons: BTreeMap<String, Value>,
     blocks: BTreeMap<String, Value>,
     pages: BTreeMap<String, Value>,
+    referrers: BTreeMap<String, Value>,
+    tables: BTreeMap<String, Value>,
 }
 
 fn groups(groups: &[RefGroup]) -> Value {
@@ -142,10 +147,40 @@ fn answers(store: &Store, root: &std::path::Path) -> Answers {
         out.blocks
             .insert(id, serde_json::to_value(&answer[0]).unwrap());
     }
+    out.referrers.insert(
+        PERSISTED.to_owned(),
+        groups(&view.block_referrers(PERSISTED).unwrap()),
+    );
     for &target in TARGETS {
         let key = page_key(target);
         out.linked
             .insert(key.clone(), groups(&view.backlinks(target).unwrap()));
+        let (query, table_view) = tine_core::query::parse_query_text(
+            &format!("(tag \"{target}\")"),
+            tine_core::query::QueryDialect::Og,
+            tine_core::date::JournalDate::today(),
+        );
+        let IrAnswer::Result(table) = view
+            .query_ir(
+                IrRequest::Run {
+                    query: &query,
+                    view: &table_view,
+                    context: &Default::default(),
+                },
+                &Cancel::default(),
+            )
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("table answer")
+        };
+        let tine_core::query::ir::QueryRows::Block {
+            groups: table_groups,
+        } = table.rows
+        else {
+            panic!("tag table groups")
+        };
+        out.tables.insert(key.clone(), groups(&table_groups));
         out.unlinked.insert(
             key.clone(),
             groups(&view.unlinked_references(target).unwrap()),
@@ -186,21 +221,7 @@ fn changed_keys(
         .collect()
 }
 
-// Readers whose target is open need S2's host registrations for text:P and
-// tags:P. S1's universal source-page keys are sufficient to conservatively
-// invalidate those readers, without pretending explicit links cover prose.
-fn changed_source_keys(before: &Value, after: &Value) -> BTreeSet<String> {
-    let empty = serde_json::Map::new();
-    let a = before.as_object().unwrap_or(&empty);
-    let b = after.as_object().unwrap_or(&empty);
-    a.keys()
-        .chain(b.keys())
-        .filter(|key| a.get(*key) != b.get(*key))
-        .cloned()
-        .collect()
-}
-
-fn check(before: &Answers, after: &Answers, summary: &Value) -> Result<[usize; 6], String> {
+fn check(before: &Answers, after: &Answers, summary: &Value) -> Result<[usize; 8], String> {
     let counts = [
         changed_keys(&before.linked, &after.linked).len(),
         changed_keys(&before.unlinked, &after.unlinked).len(),
@@ -208,6 +229,8 @@ fn check(before: &Answers, after: &Answers, summary: &Value) -> Result<[usize; 6
         changed_keys(&before.icons, &after.icons).len(),
         changed_keys(&before.blocks, &after.blocks).len(),
         changed_keys(&before.pages, &after.pages).len(),
+        changed_keys(&before.referrers, &after.referrers).len(),
+        changed_keys(&before.tables, &after.tables).len(),
     ];
     if summary["full"] == true {
         return Ok(counts);
@@ -215,37 +238,63 @@ fn check(before: &Answers, after: &Answers, summary: &Value) -> Result<[usize; 6
     let pages = strings(&summary["pages"]);
     let blocks = strings(&summary["blocks"]);
     let links = strings(&summary["linksTo"]);
-    for target in changed_keys(&before.linked, &after.linked) {
-        if !links.contains(&target) {
-            // Existing contributors' subtrees can change even if this block
-            // has no own explicit refs (inherited refs / displayed children).
-            let old_groups: Vec<RefGroup> = before.linked[&target]
-                .as_object()
-                .unwrap()
-                .values()
-                .map(|group| serde_json::from_value(group.clone()).unwrap())
-                .collect();
-            let mut shown = BTreeSet::new();
-            for group in old_groups {
-                block_ids(&group.blocks, &mut shown);
-            }
-            if shown.is_disjoint(&blocks) {
-                return Err(format!("linked:{target}"));
+    let shown_changed = |old: Option<&Value>| {
+        let old_groups: Vec<RefGroup> = old
+            .unwrap_or(&json!({}))
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|group| serde_json::from_value(group.clone()).unwrap())
+            .collect();
+        let mut shown = BTreeSet::new();
+        let mut ancestor_source = false;
+        for group in old_groups {
+            block_ids(&group.blocks, &mut shown);
+            // Existing breadcrumb DTOs expose text, not ancestor identities.
+            // The frontend conservatively keys those ancestors by source page.
+            ancestor_source |= pages.contains(&page_key(&group.page))
+                && group
+                    .blocks
+                    .iter()
+                    .any(|block| !block.breadcrumb.is_empty());
+        }
+        ancestor_source || !shown.is_disjoint(&blocks)
+    };
+    for (kind, old, new, targets) in [
+        ("linked", &before.linked, &after.linked, links.clone()),
+        (
+            "table",
+            &before.tables,
+            &after.tables,
+            strings(&summary["tagTableTo"]),
+        ),
+        (
+            "referrers",
+            &before.referrers,
+            &after.referrers,
+            strings(&summary["refsTo"]),
+        ),
+    ] {
+        for target in changed_keys(old, new) {
+            if !targets.contains(&target) {
+                // Existing contributors' subtrees can change even if this block
+                // has no own explicit refs (inherited refs / displayed children).
+                if !shown_changed(old.get(&target)) {
+                    return Err(format!("{kind}:{target}"));
+                }
             }
         }
     }
     for target in changed_keys(&before.unlinked, &after.unlinked) {
-        for source in changed_source_keys(&before.unlinked[&target], &after.unlinked[&target]) {
-            if !pages.contains(&source) {
-                return Err(format!("unlinked:{target} source:{source}"));
-            }
+        if !strings(&summary["textTo"]).contains(&target)
+            && !shown_changed(before.unlinked.get(&target))
+        {
+            return Err(format!("unlinked:{target}"));
         }
     }
     for target in changed_keys(&before.tagged, &after.tagged) {
-        for source in changed_source_keys(&before.tagged[&target], &after.tagged[&target]) {
-            if !pages.contains(&source) || !summary["props"][&source].is_array() {
-                return Err(format!("tagged:{target} source:{source}"));
-            }
+        if !strings(&summary["tagsTo"]).contains(&target) {
+            return Err(format!("tagged:{target}"));
         }
     }
     for target in changed_keys(&before.icons, &after.icons) {
@@ -272,8 +321,8 @@ fn check(before: &Answers, after: &Answers, summary: &Value) -> Result<[usize; 6
 #[test]
 fn change_summary_random_reader_oracle() {
     let _guard = crate::integration_lock();
-    let (mut total, mut full, mut readers, mut precise_readers) = (0, 0, [0; 6], [0; 6]);
-    let mut omitted = [0; 4];
+    let (mut total, mut full, mut readers, mut precise_readers) = (0, 0, [0; 8], [0; 8]);
+    let mut omitted = [0; 8];
     for seed in 1..=8u64 {
         let (dir, store) = fixture(3);
         let mut random = seed;
@@ -396,16 +445,25 @@ fn change_summary_random_reader_oracle() {
             if summary["full"] == true {
                 full += 1;
             }
-            for i in 0..6 {
+            for i in 0..8 {
                 readers[i] += counts[i];
                 if summary["full"] == false {
                     precise_readers[i] += counts[i];
                 }
             }
             if summary["full"] == false {
-                for (i, field) in ["pages", "blocks", "linksTo", "props"]
-                    .into_iter()
-                    .enumerate()
+                for (i, field) in [
+                    "pages",
+                    "blocks",
+                    "linksTo",
+                    "props",
+                    "textTo",
+                    "tagsTo",
+                    "refsTo",
+                    "tagTableTo",
+                ]
+                .into_iter()
+                .enumerate()
                 {
                     let mut mutant = summary.clone();
                     mutant[field] = if field == "props" {
@@ -427,13 +485,17 @@ fn change_summary_random_reader_oracle() {
                 empty["blocks"] = json!([]);
                 empty["linksTo"] = json!([]);
                 empty["props"] = json!({});
+                empty["textTo"] = json!([]);
+                empty["tagsTo"] = json!([]);
+                empty["refsTo"] = json!([]);
+                empty["tagTableTo"] = json!([]);
                 assert!(check(&before, &after, &empty).is_err());
             }
         }
         store.close();
     }
-    eprintln!("GX4 oracle: 8 sequences, {total} commits, full={full}; changed reader answers [linked, unlinked, tagged, icons, blocks, pages]={readers:?}; precise={precise_readers:?}");
-    eprintln!("GX4 field-omission mutants rejected [pages, blocks, linksTo, props]={omitted:?}");
+    eprintln!("GX4 oracle: 8 sequences, {total} commits, full={full}; changed reader answers [linked, unlinked, tagged, icons, blocks, pages, referrers, tables]={readers:?}; precise={precise_readers:?}");
+    eprintln!("GX4 field-omission mutants rejected [pages, blocks, linksTo, props, textTo, tagsTo, refsTo, tagTableTo]={omitted:?}");
     assert!(
         omitted.iter().all(|&count| count > 0),
         "each field must have a sensitive oracle"
@@ -460,7 +522,7 @@ fn change_summary_wire_cost_is_the_changed_block_not_page_size() {
             });
         }
         let wire = edit(&store, "pages/A.md", |doc| {
-            doc.blocks[0].raw = "one keystroke".into()
+            doc.blocks[0].raw = "one Target keystroke".into()
         });
         assert_eq!(wire["summary"]["full"], false);
         assert_eq!(wire["summary"]["blocks"].as_array().unwrap().len(), 1);
@@ -472,6 +534,122 @@ fn change_summary_wire_cost_is_the_changed_block_not_page_size() {
     }
     assert_eq!(sizes[0], sizes[1]);
     assert!(sizes[0] < 400);
+}
+
+#[test]
+fn change_summary_registered_mentions_and_incoming_targets() {
+    let _guard = crate::integration_lock();
+    let (dir, store) = fixture(3);
+    // Compare actual answers on add, retained-text edit and removal, including
+    // alias, namespace and journal spellings. Code is not a plain occurrence.
+    for raw in [
+        "Target added",
+        "Shortcut edited",
+        "NS/Leaf plain",
+        "2026-10-22 date",
+        "Oct 22nd, 2026 date",
+        "2026_10_22 date",
+        "`Target` code",
+        "nothing",
+    ] {
+        let before = answers(&store, dir.path());
+        let wire = edit(&store, "pages/A.md", |doc| doc.blocks[0].raw = raw.into());
+        assert_eq!(wire["summary"]["full"], false);
+        check(&before, &answers(&store, dir.path()), &wire["summary"]).unwrap();
+    }
+    // Own-page text is excluded, even while the section is mounted collapsed.
+    let own = edit(&store, "pages/Target.md", |doc| {
+        doc.blocks[0].raw = "Target Shortcut".into()
+    });
+    let text = strings(&own["summary"]["textTo"]);
+    assert!(!text.contains("target") && !text.contains("shortcut"));
+    // An untouched mention on an edited page must not run the open reader.
+    edit(&store, "pages/A.md", |doc| {
+        doc.blocks[1].raw = "Target untouched".into()
+    });
+    let unrelated = edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = "unrelated edit".into()
+    });
+    assert!(strings(&unrelated["summary"]["textTo"]).is_empty());
+    for tags in [
+        Some("tags:: Shortcut"),
+        Some("tags:: Target\nicon:: changed"),
+        Some("icon:: changed\ntags:: Target"),
+        Some("tags:: NS/Leaf"),
+        None,
+    ] {
+        let before = answers(&store, dir.path());
+        let wire = edit(&store, "pages/A.md", |doc| {
+            doc.pre_block = tags.map(str::to_owned)
+        });
+        check(&before, &answers(&store, dir.path()), &wire["summary"]).unwrap();
+        assert!(!strings(&wire["summary"]["tagsTo"]).is_empty());
+    }
+    for raw in [
+        format!("(({PERSISTED})) first"),
+        format!("(({PERSISTED})) edited"),
+        "removed".into(),
+    ] {
+        let before = answers(&store, dir.path());
+        let wire = edit(&store, "pages/A.md", |doc| doc.blocks[0].raw = raw);
+        check(&before, &answers(&store, dir.path()), &wire["summary"]).unwrap();
+        assert!(strings(&wire["summary"]["refsTo"]).contains(PERSISTED));
+    }
+    // Independent mounted readers share a target; releasing one keeps the other.
+    store.register_unlinked_reference("second".into(), Some("Target".into()));
+    for &target in TARGETS {
+        store.register_unlinked_reference(target.into(), None);
+    }
+    let remaining = edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = "Target still mounted".into()
+    });
+    assert_eq!(
+        strings(&remaining["summary"]["textTo"]),
+        BTreeSet::from(["target".into()])
+    );
+    store.register_unlinked_reference("second".into(), None);
+    let released = edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = "Target no reader".into()
+    });
+    assert!(strings(&released["summary"]["textTo"]).is_empty());
+    let revoked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    store.register_unlinked_reference_while_live("binding".into(), Some("Target".into()), &revoked);
+    revoked.store(true, std::sync::atomic::Ordering::Release);
+    let retired = edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = "Target retired binding".into()
+    });
+    assert!(strings(&retired["summary"]["textTo"]).is_empty());
+    store.register_unlinked_reference_while_live("late".into(), Some("Target".into()), &revoked);
+    let late = edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = "Target late registration".into()
+    });
+    assert!(strings(&late["summary"]["textTo"]).is_empty());
+    let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    store.register_unlinked_reference_while_live("dropped".into(), Some("Target".into()), &dropped);
+    drop(dropped);
+    let dropped = edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = "Target dropped binding".into()
+    });
+    assert!(strings(&dropped["summary"]["textTo"]).is_empty());
+    store.close();
+}
+
+#[test]
+fn change_summary_date_named_page_does_not_hide_mentions_of_a_real_journal() {
+    let _guard = crate::integration_lock();
+    let (dir, store) = fixture(1);
+    let mut doc = store.page(&PageId::from("pages/A.md")).unwrap().doc;
+    doc.pre_block = None;
+    doc.blocks[0].raw = "2026-10-22 mention".into();
+    commit(&store, &[("pages/2026-10-22.md", doc, SaveBase::CreateNew)]);
+    let before = answers(&store, dir.path());
+    let wire = edit(&store, "pages/2026-10-22.md", |doc| {
+        doc.blocks[0].raw = "2026-10-22 changed mention".into()
+    });
+    assert_eq!(wire["summary"]["full"], false);
+    assert!(strings(&wire["summary"]["textTo"]).contains("2026-10-22"));
+    check(&before, &answers(&store, dir.path()), &wire["summary"]).unwrap();
+    store.close();
 }
 
 #[test]

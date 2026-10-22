@@ -83,8 +83,11 @@ pub(crate) struct PublishHooks {
 
 #[cfg(test)]
 impl PublishHooks {
-    pub(super) fn before_publish(&self, snapshot: &Arc<Snapshot>) {
+    pub(super) fn before_publish(&self) {
         super::pause_at_hook(&self.pause);
+    }
+
+    pub(super) fn published(&self, snapshot: &Arc<Snapshot>) {
         self.log.lock().unwrap().push(Arc::clone(snapshot));
     }
 }
@@ -135,6 +138,7 @@ impl Snapshot {
         rebuild: bool,
         rev: GraphRev,
         published: &HashMap<FileId, PageEntry>,
+        unlinked_targets: &[String],
     ) -> Self {
         // The publication caller holds the store writer lock. A load worker
         // publishes only after its initial parse has finished.
@@ -369,6 +373,7 @@ impl Snapshot {
             name_set_changed,
             inventory,
             edited_pages.as_deref(),
+            unlinked_targets,
         );
         snapshot.answers = (inventory, counts, summary);
         snapshot

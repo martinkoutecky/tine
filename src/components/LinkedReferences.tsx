@@ -27,6 +27,7 @@ import { activeSurface } from "../editorController";
 import { navigationName } from "../pageIndex";
 import { readPageProperty, setPageProperty } from "../document";
 import { parseReferenceFilters, writeReferenceFilters } from "../referenceFilters";
+import { referenceKey, referenceRevision, registerUnlinkedReader } from "../referenceKeys";
 
 // One identity fold for chips, filters and group merging: the old private `norm`
 // (trim + toLowerCase) split NFC/NFD and boundary-slash spellings of one page
@@ -121,6 +122,8 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
   let alive = true;
   onCleanup(() => { alive = false; });
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
+  const registration = registerUnlinkedReader(() => props.unlinked ? props.name : undefined);
+  const dependency = referenceRevision(() => referenceKey(props.unlinked ? "text" : "links", props.name));
   const [groupsResource] = createMembershipResource(
     () => props.name,
     () => props.name,
@@ -128,6 +131,8 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
       const owner = latestOwner(readScope, "backlinks", graphOwner(() => alive && props.name === n));
       setLoadError(null);
       try {
+        if (props.unlinked) await registration();
+        if (!owner()) return [];
         const result = await readOwned(owner, props.unlinked ? backend().getUnlinkedRefs(n) : backend().getBacklinks(n));
         return result.kind === "current" ? result.value : [];
       } catch (error) {
@@ -139,9 +144,11 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
     // backlinks change. Only an editor inside the result surface needs its
     // answer retained until blur; source edits may follow published revisions.
     (groups, id) => (!props.journalFeed || !!activeSurface()?.startsWith("ref:")) && groupsContainEdit(groups, id),
+    undefined, false, dependency.revision,
   );
   // The resource loader reports failures through loadError; readOr covers reads.
   const groups = () => readOr(groupsResource, undefined, "linked references");
+  createEffect(() => dependency.remember(groups() ?? []));
   const mergedGroups = createMemo(() => mergeReferenceGroups(groups() ?? []));
   // Unlinked's saved override is historically "open", linked's is "collapsed".
   const savedCollapse = () => props.unlinked ? !(sectionOverride(section, props.name) ?? false) : sectionOverride(section, props.name) ?? null;

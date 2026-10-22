@@ -497,6 +497,24 @@ pub(crate) async fn get_backlink_filter_context(
 }
 
 #[tauri::command]
+pub(crate) async fn register_unlinked_reference(
+    subscription: String,
+    target: Option<String>,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
+    crate::state::off_ui(move || {
+        slot.store.register_unlinked_reference_while_live(
+            subscription,
+            target,
+            &slot.background_cancelled,
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
 pub(crate) async fn get_unlinked_refs(
     name: String,
     state: GraphContext<'_>,

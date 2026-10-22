@@ -59,6 +59,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Reference sections, tagged pages and block referrers refresh after related edits without refetching on unrelated saves, including while collapsed (GH #746; development 0.9).
 - References, embeds, favorite blocks, journal sections and page icons stay live after target edits without fetching unrelated targets again on every save (GH #746).
 
 - **Soft Settings hierarchy** (GH #649, thanks @EllisMorrow): labels, descriptions and author/version/build details have distinct emphasis in light and dark mode, with quieter dividers and hover/selection borders; every text role keeps at least 4.5:1 contrast.

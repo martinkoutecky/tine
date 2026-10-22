@@ -80,7 +80,7 @@ checkpoint (ADR 0070) it answers from the checkpoint until the launch diff ends.
 `whole_graph_reconciled()` never serves the checkpoint: it waits for the launch
 diff, for graph-wide destructive operations and for a one-shot lookup that
 missed in the checkpoint (a cold-start `tine://` link, GH #181). The public operation
-surface is 46 operations: the methods of `Store` and `Transaction` plus every
+surface is 47 operations: the methods of `Store` and `Transaction` plus every
 public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
 The graph-command boundary guard lives at `crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is
@@ -910,16 +910,59 @@ these in `watch.rs`, `tests/watch.rs` and `src-tauri/src/watcher.rs`.
 
 Every publication, including an own text-only save, carries the existing
 `answers: {rev, inventoryChanged, blockRefCounts}` envelope with an added
-`summary: {rev, pages, blocks, linksTo, props, inventoryChanged, full}`.
+`summary: {rev, pages, blocks, linksTo, textTo, tagsTo, tagTableTo, refsTo, props, inventoryChanged, full}`.
 The revision is a decimal string, monotonic per graph. `pages` contains edited
 source-page keys; `blocks` contains changed runtime and persisted block ids,
 including affected ancestors for subtree readers. `linksTo` conservatively
 includes old and new explicit reference targets, namespace ancestors, aliases
 and journal-day spellings. `props` maps source-page and alias keys to changed
-page-property keys. These are invalidation hints, not result patches. Plain
-text mentions are represented by changed source pages/blocks; precise
-`text:<target>` and `tags:<target>` subscriptions require the later registered
-reader slice, and cannot be inferred from `linksTo` alone.
+page-property keys. These are invalidation hints, not result patches.
+
+`register_unlinked_reference(subscription, target)` registers a mounted reader;
+`target: null` releases it. Registrations are in-memory in the graph/window's
+Store, pinned to the native binding generation. A weak reference to the slot's
+existing cancellation flag retires matching immediately on revocation/drop,
+even when another binding adopts the same Store; publication prunes dead leases.
+The frontend registers before its initial read, orders release after registration,
+and keeps collapsed readers registered. Registration never waits on a writer
+(reads never wait on writes) and neither reads nor writes graph files: a
+publication snapshots the registry with its counter before capture, and at
+install, under the snapshot write lock, fires `text:<P>` for every target
+registered since, so the reader's first read either sees that publication or
+is invalidated by it (`unlinked_registration_during_publication_neither_waits_nor_goes_stale`). Each publication
+selects changed blocks and their ancestors once per edited page side, then
+checks only those projections (and a changed header) against registered names,
+using the unlinked reader's parser-owned plain-occurrence matcher, alias/day
+closure and source exclusions. `textTo` contains matching target keys from
+before or after. Work is O(edited page + changed blocks × mounted targets),
+plus the reachable alias/day closures, never a graph scan.
+Journal self-exclusion reuses the reader's name resolver, supplying the
+configured-title claimant lookup through the existing name and path indices.
+An ordinary date-named page is therefore still a source for a real journal's
+unlinked references; no per-publication journal scan is introduced.
+
+`tagsTo` contains old/new page-property tag targets, widened through the same
+alias/day owner. Any changed page property emits these keys because tagged page
+rows expose all properties. `refsTo` is the union of incoming block-reference
+targets in changed old/new projections, including changed headers and ancestors;
+retained references with edited text therefore invalidate too.
+
+`tagTableTo` includes `linksTo` and the edited page's own name/namespace
+ancestors, with alias/day widening. Unlike backlinks, `(tag P)` includes
+blocks from P itself via inherited page refs, so this separate key is needed
+for new rows and header edits without refreshing P's reference sections.
+
+Linked references subscribe to `links:<target>`, block-tag tables to
+`tagTable:<target>`, unlinked
+references to `text:<target>`, tagged pages to `tags:<target>`, and block
+referrers to `refsTo:<id>`. Readers displaying block subtrees also subscribe to
+their already-shown block ids. Collapsed sections refresh on the same keys as
+expanded ones. The tag table remains a block-tag query; tagged pages remain a
+page-property query. Neither is changed into the other.
+Breadcrumbs currently carry ancestor text without ancestor ids. A result with
+displayed breadcrumbs therefore also subscribes to its contributing source
+page; this can over-invalidate an unrelated edit within that source, but keeps
+ancestor edits live without a graph walk or a second Markdown parser.
 
 Initial publication, rebuild/config change, alias change, create/rename/delete,
 unavailable old/new pages, unreadable-inventory changes, more than 32 edited
@@ -928,8 +971,10 @@ publication has no external page-reload entries: its answers arrive in an
 empty `graph-changed-bulk` envelope. External publications attach the answers
 once, on their first `graph-changed` entry or their bulk envelope. The frontend
 receiver also treats its first summary after binding and revision gaps as
-`full`, and ignores duplicate/older revisions. S1 changes no view's refresh
-trigger or `dataRev` behavior and persists no new state.
+`full`, and ignores duplicate/older revisions. S3's shared key layer releases
+these invalidations at the existing publication/refresh-hold boundary; result
+retention is unchanged. Legacy summaries lacking S2 fields conservatively
+refresh their reader families. No new state is persisted or save path changed.
 
 Full runtime graph-text scans with unchanged configuration enumerate metadata outside the page/save writer.
 They validate the cache generation and publication revision after acquiring the

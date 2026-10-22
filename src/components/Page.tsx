@@ -14,6 +14,7 @@ import { openShareDialog } from "../shareState";
 import { ShareIcon } from "./ShareIcon";
 import { graphEpoch, dataRev, graphMeta } from "../graphSession";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "../binding";
+import { createTagTableResource } from "../tagTable";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
 import { blockRef, isConflicted, pageLoadRefusalMessage, reportPageLoadRefusal, whenPageReplaceable, type PageLoadRefusal } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
@@ -1346,45 +1347,16 @@ function tagTableEnabled(pageName: string): boolean {
   return readPageProperty(pageName, TAG_TABLE_PROP)?.toLowerCase() === "true";
 }
 
-function quoteQueryString(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
-}
-
-function tagQuery(pageName: string): string {
-  return `(tag ${quoteQueryString(pageName)})`;
-}
-
 function taggedCount(groups: readonly RefGroup[] | undefined): number {
   return groups?.reduce((sum, group) => sum + group.blocks.length, 0) ?? 0;
 }
 
-async function tagTableGroups(pageName: string, owners: object): Promise<{ groups: RefGroup[]; error?: string } | undefined> {
-  const owner = latestOwner(owners, "tag-table", graphOwner());
-  try {
-    const reading = await readOwned(owner, backend().parseQuery(tagQuery(pageName), "macro_query"));
-    if (reading.kind === "stale") return undefined;
-    const result = await readOwned(owner, backend().queryRun(reading.value.query, reading.value.view));
-    if (result.kind === "stale") return undefined;
-    const answer = result.value;
-    const diagnostic = (answer.diagnostics ?? []).find((item) => !item.disabled);
-    return diagnostic
-      ? { groups: [], error: diagnostic.message }
-      : { groups: answer.anchor === "block" ? answer.groups : [] };
-  } catch (error) {
-    return { groups: [], error: error instanceof Error ? error.message : String(error) };
-  }
-}
-
 export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
-  const owners = {};
   // A published export has no query engine behind `queryRun` and cannot save the
   // page property this button toggles, so it offers no toggle and asks nothing
   // (master GH #549).
   const live = !isPublishedExport();
-  const [groups] = createResource(
-    () => (live && props.page.kind === "page" ? `${props.page.name}\0${dataRev()}` : null),
-    () => tagTableGroups(props.page.name, owners)
-  );
+  const [groups] = createTagTableResource(() => props.page.name, () => live && props.page.kind === "page");
   const enabled = () => tagTableEnabled(props.page.name);
   const visible = () => live && props.page.kind === "page" && (enabled() || taggedCount(readOr(groups, undefined, "tag table toggle")?.groups) > 0);
   return (
@@ -1400,12 +1372,8 @@ export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
 }
 
 export function TagPageTable(props: { pageName: string }): JSX.Element {
-  const owners = {};
-  const [groupsResource, { refetch }] = createResource(
-    () => `${props.pageName}\0${dataRev()}`,
-    () => tagTableGroups(props.pageName, owners)
-  );
-  // A rejected read (tagTableGroups reports its own failures as `error`, so this
+  const [groupsResource, { refetch }] = createTagTableResource(() => props.pageName);
+  // A rejected read (the query lifecycle reports its own failures as `error`, so this
   // is the unanticipated case) must not throw into render: readOr, and the
   // failure row because an empty table would claim "no tagged blocks".
   const answer = () => readOr(groupsResource, undefined, "tag table");

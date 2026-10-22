@@ -1212,6 +1212,21 @@ impl ReadSnapshot {
     pub(crate) fn reference_real_page_names(&self) -> Option<Arc<crate::query::RealPageNames>> {
         Some(Arc::clone(&self.real_page_names))
     }
+    /// Journal entries are named by the configured date title (page_identity's
+    /// listed_entry). Probe only claimants of that name, not every journal.
+    pub(crate) fn reference_journal_name(
+        &self,
+        day: tine_core::date::JournalDate,
+    ) -> Option<String> {
+        let title = crate::query::journal_format(&self.config).title(day);
+        self.real_page_names
+            .paths(&tine_core::refs::page_key(&title))
+            .filter_map(|path| self.list.get_path(path))
+            .find(|entry| {
+                entry.kind == PageKind::Journal && entry.date_key == Some(day.ordinal_key())
+            })
+            .map(|entry| entry.name.clone())
+    }
     pub(crate) fn reference_candidate_pages(
         &self,
         names: &[String],

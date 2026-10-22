@@ -1455,6 +1455,98 @@ pub(crate) fn page_affects_block_referrers(uuid: &str, doc: &Document) -> bool {
     hit
 }
 
+/// Publication's bounded subset of the same parser-owned plain occurrence
+/// predicate as unlinked reads. Ancestors are selected too: displayed subtrees
+/// can change underneath a retained mention. Names/exclusions share the readers'
+/// owners, without the query-time journal source selection scan.
+pub(crate) fn changed_page_affects_unlinked(
+    graph: &ReadSnapshot,
+    target: &str,
+    entry: &PageEntry,
+    blocks: &[&DocBlock],
+    header: Option<&DocBlock>,
+) -> bool {
+    let real = real_page_names(graph);
+    let aliases = graph.alias_edges();
+    let config = graph.config();
+    let (_, _, self_page) =
+        graph_equivalent_page_names_with(&real, &aliases, &journal_format(config), target, |day| {
+            graph.reference_journal_name(day)
+        });
+    if refs::ReferenceSourceExclusions::new(&self_page, config.favorites_page.as_deref())
+        .excludes_name(&entry.name)
+    {
+        return false;
+    }
+    let names = reference_invalidation_names(graph, target);
+    let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names);
+    if header
+        .is_some_and(|block| block_has_reference(block, &needles, ReferenceKind::Plain, config))
+    {
+        return true;
+    }
+    blocks
+        .iter()
+        .any(|block| block_has_reference(block, &needles, ReferenceKind::Plain, config))
+}
+
+/// Select once per edited page side, outside the registered-target loop.
+pub(crate) fn changed_reference_source_blocks<'a>(
+    entry: &PageEntry,
+    doc: &'a Document,
+    config: &tine_core::config::Config,
+    changed: &std::collections::BTreeSet<String>,
+    header_changed: bool,
+) -> (Option<DocBlock>, Vec<&'a DocBlock>) {
+    fn select<'a>(
+        roots: &'a [DocBlock],
+        changed: &std::collections::BTreeSet<String>,
+        out: &mut Vec<&'a DocBlock>,
+    ) {
+        for block in roots {
+            if changed.contains(&block.uuid) {
+                out.push(block);
+            }
+            select(&block.children, changed, out);
+        }
+    }
+    let mut blocks = Vec::new();
+    select(&doc.roots, changed, &mut blocks);
+    let header = doc
+        .pre_block
+        .as_deref()
+        .filter(|_| header_changed)
+        .and_then(|pre| {
+            page_property_block_with_config(
+                entry,
+                pre,
+                &tine_core::query::atom::ParseConfig::from_config(config),
+            )
+        });
+    (header, blocks)
+}
+
+/// Incoming block-referrer answers also change when referrer text changes but
+/// its target set does not. Emit the union of old/new selected projections.
+pub(crate) fn changed_block_reference_targets(
+    doc: &Document,
+    changed: &std::collections::BTreeSet<String>,
+    header_changed: bool,
+) -> Vec<String> {
+    let mut targets = Vec::new();
+    if header_changed {
+        if let Some(block) = document_page_property_block(doc) {
+            targets.extend(block.projection().block_refs().iter().cloned());
+        }
+    }
+    walk(&doc.roots, &mut |block| {
+        if changed.contains(&block.uuid) {
+            targets.extend(block.projection().block_refs().iter().cloned());
+        }
+    });
+    targets
+}
+
 pub(crate) fn rejected_advanced_query(reason: &str) -> AdvancedResult {
     AdvancedResult {
         groups: Vec::new(),

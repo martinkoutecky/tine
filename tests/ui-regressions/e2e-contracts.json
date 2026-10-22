@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-reference-keys.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"On a routed page with linked/unlinked references expanded and tagged pages visible, typing on that page and an unrelated sidebar page causes no reference requests for the routed target. Adding a plain mention, link and page tag in the sidebar or through an external file write updates the corresponding sections; external removal removes those answers.","blocking":true,"authority":"GX4 S2; GH #746"}],
+      "acceptableVariations": ["Publication, watcher and rendering latency; batching of related refreshes."],
+      "nonRequirements": ["Exact pixels or counts for related reads; native certification outside Linux WebKitGTK; tag-table and popup boundary cases covered by cheap tests."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-keyed-refresh.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A routed page's inline block refs, block embed, page embed and unloaded page icon update after external target edits. With those readers still mounted, typing on an unrelated page in the sidebar causes no resolve_blocks, page_icons or get_page requests for those targets; the debug full-refresh control exercises all three.","blocking":true,"authority":"GX4 S3; GH #746"}],
       "acceptableVariations": ["Publication, watcher and rendering latency may vary; IPC batches may contain multiple affected targets."],

@@ -51,7 +51,17 @@ struct link_identity::LinkInspection
 field link_identity::LinkInspection.identity
 field link_identity::LinkInspection.target_possible
 
-## Freshness (ceiling: 26)
+## Freshness (ceiling: 28)
+# GX4 S2 explicitly requires mounted unlinked targets in the publication host.
+# Store::subscribe owns the one dispatch stream, not the changing set of views;
+# adding a subscribe parameter cannot register/release targets after dispatch
+# starts without replacing that stream. One native lifetime-bound registration
+# operation controls those transient dependencies; it does not add a faster
+# sibling of an existing reader. Revocation uses the existing binding flag.
+fn store::Store::register_unlinked_reference_while_live
+# test-oracle: Store-only fixtures register readers without a native window's
+# cancellation flag; production uses the lifetime-bound operation above.
+fn store::Store::register_unlinked_reference
 enum store::Depth
 enum store::ChangeKind
 enum store::Origin

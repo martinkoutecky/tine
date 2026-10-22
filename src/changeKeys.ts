@@ -43,10 +43,20 @@ function ensureEpoch(): number {
 /** Reactive revision for exactly one dependency. Unknown key kinds receive full
  * invalidations only. Keys/caches are bounded to the current graph lifetime. */
 export function changed(key: string): string {
+  return changedAny([key]);
+}
+
+/** One token for a dynamic set of dependencies. Adding a freshly shown member
+ * at revision zero establishes its subscription without causing another read. */
+export function changedAny(dependencies: readonly string[]): string {
   const current = ensureEpoch();
-  let signal = keys.get(key);
-  if (!signal) { signal = createSignal(0); keys.set(key, signal); }
-  return `${current}:${fullRevision()}:${signal[0]()}`;
+  let revision = 0;
+  for (const key of dependencies) {
+    let signal = keys.get(key);
+    if (!signal) { signal = createSignal(0); keys.set(key, signal); }
+    revision += signal[0]();
+  }
+  return `${current}:${fullRevision()}:${revision}`;
 }
 
 export function stageChangeKeys(change: ChangeSummary): void {
@@ -56,6 +66,15 @@ export function stageChangeKeys(change: ChangeSummary): void {
   for (const name of change.pages) pending.add(`page:${name}`);
   for (const id of change.blocks) pending.add(`block:${id}`);
   for (const name of change.linksTo) pending.add(`links:${name}`);
+  for (const name of change.textTo ?? []) pending.add(`text:${name}`);
+  for (const name of change.tagsTo ?? []) pending.add(`tags:${name}`);
+  for (const name of change.tagTableTo ?? []) pending.add(`tagTable:${name}`);
+  for (const id of change.refsTo ?? []) pending.add(`refsTo:${id}`);
+  // Legacy hosts lack S2 evidence: retain conservative refreshes for just
+  // these reader families rather than silently keeping their answers stale.
+  for (const [field, prefix] of [[change.textTo, "text:"], [change.tagsTo, "tags:"], [change.tagTableTo, "tagTable:"], [change.refsTo, "refsTo:"]] as const) {
+    if (!field) for (const key of keys.keys()) if (key.startsWith(prefix)) pending.add(key);
+  }
   for (const [name, props] of Object.entries(change.props)) {
     for (const prop of props) pending.add(`prop:${prop}`);
     if (props.some(prop => prop === "icon" || prop === "tine.icon")) pending.add(`icon:${name}`);
