@@ -3219,8 +3219,8 @@ impl WholeGraph {
     /// the page structure changes, while persisted ids remain external refs.
     /// Cost: O(ids) index lookups plus one walk of each answering page; an id
     /// no page holds costs a lookup, never a scan (I-13). The block index is
-    /// built in O(B) on a generation lineage's first lookup and carried by
-    /// per-file deltas after that. More than 20,000 requested ids returns
+    /// built once in O(B) by the first lookup and carried by per-file deltas
+    /// after that. More than 20,000 requested ids returns
     /// `ResultTooLarge` with `RequestedBlockRefs`; result data is also limited
     /// to 20,000 rows and 32 MiB.
     pub fn blocks(&self, uuids: &[String]) -> Result<Vec<Option<RefGroup>>, QueryError> {
