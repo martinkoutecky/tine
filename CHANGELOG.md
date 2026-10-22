@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.8.0-beta.9] - 2026-10-22
+
+One fix for the 0.8.0 stable candidate: typing no longer freezes on pages with many references (GH #746), a regression since 0.8.0-beta.1. Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
+
 ### Fixed
 
 - **Holding a key on a large graph no longer makes typing stall more and more.** While you type, Tine saves the page about once a second, and after each save it refreshes the linked and unlinked references, page icons, block references and queries. When one refresh took longer than a second, the next one started before it finished, the refreshes piled up and competed with your typing. Now a refresh waits for the previous one to finish, and the saves made meanwhile are covered by one refresh afterwards, so the views still end up showing your latest text. Related to GH #746 (UI-GH746-REFRESH-ROUNDS-DO-NOT-PILE-UP).
