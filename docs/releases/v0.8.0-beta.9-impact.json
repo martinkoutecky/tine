@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "version": "0.8.0-beta.9",
+  "baseTag": "v0.8.0-beta.8",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "**Holding a key on a large graph no longer makes typing stall more and more.** While you type, Tine saves the page about once a second, and after each save it refreshes the linked and unlinked references, page icons, block references and queries. When one refresh took longer than a second, the next one started before it finished, the refreshes piled up and competed with your typing. Now a refresh waits for the previous one to finish, and the saves made meanwhile are covered by one refresh afterwards, so the views still end up showing your latest text. Related to GH #746 (UI-GH746-REFRESH-ROUNDS-DO-NOT-PILE-UP).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH746-REFRESH-ROUNDS-DO-NOT-PILE-UP"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH746-REFRESH-ROUNDS-DO-NOT-PILE-UP. Unit fail-before on release/0.8 (src/document/host/wiring.refreshGuard.test.ts, src/backend.refreshReads.test.ts); native journeys in the og and release/0.8 integration gates (Linux); hosted-Windows probe (artificial >1 s rounds) confirms the pile-up without the guard and none with it.",
+        "refs": [
+          "src/document/host/wiring.refreshGuard.test.ts",
+          "src/backend.refreshReads.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Typing no longer freezes for a moment every second or two on a page with many unlinked or linked references.** After each save, the references at the bottom of the page reload. With every reload, Tine also rebuilt the index behind the references filter, over every reference and all of its child blocks. It did that even with the section collapsed and the filter closed, which could take most of a second. Now the index is built only while you use the filter or its search. A reload also keeps the references on screen instead of showing \"Loading…\", and leaves unchanged rows alone instead of drawing them again. GH #746 (UI-GH746-REFERENCE-REFRESH-COST).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH746-REFERENCE-REFRESH-COST"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH746-REFERENCE-REFRESH-COST. Unit fail-before (src/components/References.refreshCost.test.tsx); real-app Linux repro on a 13k-page graph with 2,000 accented/CJK unlinked mentions: max input gap 1,663 ms before, 94-113 ms after; typing-stall bench 573 ms/s blocking before, 22-29 ms/s after. Native journeys e2e-reference-batch, e2e-result-membership, e2e-og-parity-references passed in the og and release/0.8 gates.",
+        "refs": [
+          "src/components/References.refreshCost.test.tsx",
+          "scripts/e2e-reference-batch.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}

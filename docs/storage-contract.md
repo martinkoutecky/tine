@@ -18,8 +18,12 @@ Asset trash rechecks references in the latest published graph under the Store
 writer lock, including external/sync arrivals already published by the watcher.
 An incomplete graph view cannot prove orphan-ness and refuses trash. External
 arrivals not yet published, and changes after the final check by another process,
-remain a window the Store writer cannot exclude. Duplicate-day stray reference
-completeness remains a separate recorded finding.
+remain a window the Store writer cannot exclude. Both the unused-asset inventory
+and the trash guard include block and preamble references from physical page
+files set aside by duplicate-day journal presentation. These files use the same
+bounded parser and asset-reference collector as indexed pages; a failed read or
+analysis refuses the inventory and trash, naming the file. Only set-aside files
+are read and parsed again; they are not added to backlinks or query indexes.
 
 `Store::read_is_current` compares a streaming descriptor with a fresh validated
 open using the existing cross-platform file-identity primitive, O(1). Verification
