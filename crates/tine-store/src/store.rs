@@ -35,8 +35,7 @@ use crate::path_identity::canonical_existing_path;
 mod page_identity;
 #[cfg(any(test, feature = "test-faults"))]
 mod save_failure;
-use std::collections::{BTreeMap, VecDeque};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -345,6 +344,7 @@ struct Snapshot {
 }
 
 mod answer_changes;
+mod asset_inventory;
 pub(crate) mod checkpoint;
 mod diagnostics;
 #[cfg(test)]
@@ -2889,7 +2889,8 @@ impl WholeGraph {
     /// Asset names mentioned in page preambles or blocks, including decoded URL
     /// spellings and the first segment of nested image references. Cost
     /// O(P + B + scanned text bytes) on every call. This does not infer a
-    /// sidecar reference merely from its PDF base name.
+    /// sidecar reference merely from its PDF base name. Parsed pages only:
+    /// orphan safety uses [`Store::referenced_assets`] (set-aside files too).
     pub fn referenced_assets(&self) -> Arc<HashSet<String>> {
         let mut names = HashSet::new();
         self.graph.with_pages(|pages| {

@@ -30,7 +30,7 @@ pub(crate) use page_identity::{
 use page_parse::{carry_saved_runtime_ids, isolate_page_parse, page_dto, parse_page_content};
 
 use crate::path_identity::canonical_existing_path;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -323,6 +323,17 @@ fn parse_doc(path: &Path, content: &str) -> Document {
         Format::Md => doc::parse(content),
         Format::Org => tine_core::org::parse_org(content),
     }
+}
+
+/// Asset safety also includes physical files omitted from the query snapshot.
+/// Use the normal bounded input and format parser, isolating parser failures.
+pub(crate) fn collect_file_asset_refs(path: &Path, names: &mut HashSet<String>) -> io::Result<()> {
+    let content = read_parse_input(path)?;
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let doc = parse_doc(path, &content);
+        tine_core::asset_refs::collect_document_asset_refs(&doc, names);
+    }))
+    .map_err(|_| io::Error::other("asset reference parser panicked"))
 }
 
 /// Whether `bytes`, read as the page file at `path`, hold a block with id
