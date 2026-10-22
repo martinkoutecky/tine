@@ -5,6 +5,7 @@ import { t } from "./i18n";
 
 import { markCommandSlow } from "./slowBackend";
 import { orderedLane } from "./orderedWrites";
+import { REFRESH_READ_COMMANDS, trackRefreshRead } from "./refreshReads";
 import { timingNamesForCommand } from "./focusTiming";
 import type { GraphVerificationProgress, GraphVerificationReport } from "./graphVerification";
 import type {
@@ -74,23 +75,6 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-// PROBE-ONLY (GH #746 variant C, branch probe/gh746-*): counts the whole-graph
-// refresh reads in flight, so the probe's in-flight guard can hold the next
-// dataRev bump until the previous refresh round's reads have all answered.
-const PROBE_REFRESH_READS: ReadonlySet<string> = new Set([
-  "get_backlinks", "get_unlinked_refs", "page_icons", "resolve_blocks", "query_run", "query_parse", "get_page",
-]);
-let probeRefreshInFlight = 0;
-let probeIdleWaiters: (() => void)[] = [];
-function probeRefreshDone(): void {
-  probeRefreshInFlight--;
-  if (probeRefreshInFlight === 0) { const w = probeIdleWaiters; probeIdleWaiters = []; for (const f of w) f(); }
-}
-/** Resolves once no refresh read is in flight (at once if none is). */
-export function probeRefreshIdle(): Promise<void> {
-  return probeRefreshInFlight === 0 ? Promise.resolve() : new Promise((resolve) => probeIdleWaiters.push(resolve));
-}
-
 export type { Backend } from "./backendInterface";
 import type { Backend } from "./backendInterface";
 
@@ -143,17 +127,14 @@ class TauriBackend implements Backend {
 
   graphBindingGeneration() { return this.bindingGeneration; }
 
-  /** R3: write commands keep their call order (src/orderedWrites.ts). */
+  /** R3: write commands keep their call order (src/orderedWrites.ts). A
+   *  refresh read is counted until it settles (src/refreshReads.ts). */
   private call<T>(cmd: string, args?: Record<string, unknown>, bindingGeneration = this.bindingGeneration): Promise<T> {
-    return this.ordered(cmd, () => this.issue<T>(cmd, args, bindingGeneration));
+    const issued = this.ordered(cmd, () => this.issue<T>(cmd, args, bindingGeneration));
+    return REFRESH_READ_COMMANDS.has(cmd) ? trackRefreshRead(issued) : issued;
   }
 
   private async issue<T>(cmd: string, args: Record<string, unknown> | undefined, bindingGeneration: number): Promise<T> {
-    if (PROBE_REFRESH_READS.has(cmd)) { probeRefreshInFlight++; try { return await this.issueInner<T>(cmd, args, bindingGeneration); } finally { probeRefreshDone(); } }
-    return this.issueInner<T>(cmd, args, bindingGeneration);
-  }
-
-  private async issueInner<T>(cmd: string, args: Record<string, unknown> | undefined, bindingGeneration: number): Promise<T> {
     await this.ready;
     const leasedArgs = bindingGeneration
       ? { ...(args ?? {}), bindingGeneration }

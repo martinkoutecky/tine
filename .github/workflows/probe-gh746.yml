@@ -14,7 +14,7 @@ jobs:
     name: GH746 typing probe / windows ${{ matrix.arch }}
     runs-on: windows-latest
     env:
-      PROBE_VARIANTS: "A B C"
+      PROBE_VARIANTS: "A C"
     strategy:
       fail-fast: false
       matrix:
@@ -87,7 +87,7 @@ jobs:
           PROBE_SETTLE_MS: "60000"
         run: |
           port=4612
-          for spin in 0 400 800; do
+          for spin in 0 800; do
             for v in $PROBE_VARIANTS; do
               port=$((port + 2))
               E2E_DRIVER_PORT=$port E2E_NATIVE_PORT=$((port + 1)) E2E_WEBVIEW_USER_DATA_ROOT="${RUNNER_TEMP}\\wv2-$v-$spin" \

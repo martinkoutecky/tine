@@ -6,7 +6,7 @@
 // page write is the host's (the audited save path).
 
 import { createEffect, createRoot, createSignal, on, untrack } from "solid-js";
-import { backend, probeRefreshIdle } from "../../backend";
+import { backend } from "../../backend";
 import { benchEvent } from "../../benchEvents";
 import { captureBinding, clearOnBindingInvalidated } from "../../binding";
 import type { ClipboardSourcePage } from "../../clipboard";
@@ -34,6 +34,7 @@ import { runSequence, type SequenceStep } from "./planner";
 import type { DiskToken, HostPort, MailNotice, PageMail, PageOperation, PageRefusal } from "./protocol";
 import { settle, unpublishedAfterDrain } from "./settle";
 import { beginResultsChange, installResultsPendingGate, resetResultsEpoch } from "../../queryResultsEpoch";
+import { refreshReadsIdle, resetRefreshReads } from "../../refreshReads";
 
 // ------------------------------------------------------------------ state
 
@@ -222,6 +223,9 @@ clearOnBindingInvalidated(() => {
   if (dataTimer) clearTimeout(dataTimer);
   dataTimer = null;
   pendingNeeds.clear();
+  queuedBump?.cancel();
+  queuedBump = null;
+  resetRefreshReads();
   hostChanged();
 });
 
@@ -285,7 +289,11 @@ function pageWritable(name: string): boolean {
 const pendingNeeds = new Map<string, number>();
 let dataTimer: ReturnType<typeof setTimeout> | null = null;
 let dataWaits = 0;
-let probeBumpQueued = false;
+/** The one trailing bump waiting for the previous refresh round (GH #746). */
+let queuedBump: { cancel: () => void } | null = null;
+/** The trailing bump waits at most this long for the previous round, so a read
+ * that never settles, or reads that never go quiet, cannot stop refreshes. */
+export const REFRESH_HOLD_MAX_MS = 5000;
 
 /** Whole-graph views recompute once the host published what it took, after
  * edits go quiet (today's 700 ms coalescing). */
@@ -302,32 +310,45 @@ function notePublication(key: string, version: number): void {
     dataWaits += 1;
     void c.published(needs).finally(() => {
       dataWaits -= 1;
-      if (client !== c) return;
-      // PROBE-ONLY (GH #746 variant C): with `globalThis.__probe746Guard`, no new
-      // refresh round starts while the previous one's reads are in flight; the
-      // publications that land meanwhile coalesce into one trailing bump.
-      if ((globalThis as { __probe746Guard?: boolean }).__probe746Guard) {
-        if (probeBumpQueued) return;
-        probeBumpQueued = true;
-        void probeRefreshIdle().then(() => {
-          probeBumpQueued = false;
-          if (client !== c) return;
-          bumpDataRev();
-          setHostRevision(value => value + 1);
-          if (inventoryPending) { inventoryPending = false; bumpPageInventoryRev(); }
-        });
-        return;
-      }
-      bumpDataRev();
-      setHostRevision(value => value + 1);
-      if (inventoryPending) { inventoryPending = false; bumpPageInventoryRev(); }
+      if (client === c) bumpAfterRefreshRound(c);
     });
   }, 700);
 }
 
+/** GH #746: one save-driven refresh round at a time. While the previous
+ * round's reads run (the host never cancels them), the bump waits; every
+ * publication meanwhile is covered by this one trailing bump, which runs after
+ * all of them, so the last state is always refreshed. Cheap rounds are idle
+ * by now and bump at once, as before. */
+function bumpAfterRefreshRound(c: HostClient): void {
+  // PROBE-ONLY (branch probe/gh746-fixcheck, never merged): variant A = the
+  // unguarded beta.8 bump, to compare against the production guard (C).
+  if ((globalThis as { __probe746NoGuard?: boolean }).__probe746NoGuard) {
+    bumpDataRev();
+    setHostRevision(value => value + 1);
+    if (inventoryPending) { inventoryPending = false; bumpPageInventoryRev(); }
+    return;
+  }
+  if (queuedBump) return;
+  let done = false;
+  const bump = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(hold);
+    queuedBump = null;
+    if (client !== c) return;
+    bumpDataRev();
+    setHostRevision(value => value + 1);
+    if (inventoryPending) { inventoryPending = false; bumpPageInventoryRev(); }
+  };
+  const hold = setTimeout(bump, REFRESH_HOLD_MAX_MS);
+  queuedBump = { cancel: () => { done = true; clearTimeout(hold); } };
+  void refreshReadsIdle().then(bump);
+}
+
 /** Read-only: derived membership waits for the coalesced publication revision. */
 export function pendingDataRevision(): boolean {
-  return dataTimer !== null || dataWaits > 0;
+  return dataTimer !== null || dataWaits > 0 || queuedBump !== null;
 }
 
 // ------------------------------------------------------------------ state view

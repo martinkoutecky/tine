@@ -303,7 +303,7 @@ try {
   report.firstTitleMs = Date.now() - launchedAt;
   console.log(await browser.execute(INSTRUMENT));
   report.variant = VARIANT;
-  await browser.execute((v) => { if (v === "B") globalThis.__probe746MaxWait = 3000; if (v === "C") globalThis.__probe746Guard = true; }, VARIANT);
+  await browser.execute((v) => { if (v === "B") globalThis.__probe746MaxWait = 3000; if (v === "A") globalThis.__probe746NoGuard = true; }, VARIANT);
   await openPageByName(browser, "GH746 typing", { timeout: 180000 });
   // Settle: at least SETTLE ms after launch, then until no IPC started for 5 s (max 240 s).
   const settle = async () => {
