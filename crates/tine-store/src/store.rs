@@ -220,9 +220,10 @@ pub enum ChangeKind {
 /// `Change` is `Send + Sync` and can cross worker-thread boundaries.
 /// Its Serialize implementation emits a bounded derived-answer wire: `rev`,
 /// `inventoryChanged` (name/alias/reference-name or unreadable inventory inputs),
-/// and `blockRefCounts` (final changed-target counts, zero for removal). Save
+/// `blockRefCounts` (final changed-target counts, zero for removal), and a
+/// transport-only `summary` of changed page/block/reference/property keys. Save
 /// results and notifications use this same signal. Serialization costs O(changed
-/// targets); publication computes it from changed parsed pages without inventory
+/// targets and summary keys); publication computes it from changed parsed pages without inventory
 /// materialization. Initial publication may include all counts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Change {
@@ -249,7 +250,7 @@ pub struct Change {
     /// they are excluded from parsed search, backlinks, and page inventory.
     pub files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
     pages: Vec<(FileId, PageKind, String)>,
-    answers: (bool, BTreeMap<String, usize>),
+    answers: (bool, BTreeMap<String, usize>, change_summary::ChangeSummary),
     /// The watcher batch that produced this publication, for latency
     /// receipts (GH #337 diagnosis); `None` for every other publisher.
     pub watch: Option<WatchBatch>,
@@ -341,12 +342,13 @@ struct Snapshot {
     claimants: Arc<SharedMap<(bool, String), Vec<PageEntry>>>,
     name_by_path: Arc<SharedMap<PathBuf, (PageKind, String)>>,
     unreadable: Arc<Vec<(FileId, String)>>,
-    answers: (bool, BTreeMap<String, usize>),
+    answers: (bool, BTreeMap<String, usize>, change_summary::ChangeSummary),
     /// This publication only folded or unfolded blocks (GH #623 item 3).
     folds_only: bool,
 }
 
 mod answer_changes;
+mod change_summary;
 pub(crate) mod checkpoint;
 mod diagnostics;
 mod first_view;

@@ -908,6 +908,29 @@ replaces a page holding an unsaved draft, and the frontend's "always ask"
 policy only holds clean changes it would otherwise apply silently. Tests cover
 these in `watch.rs`, `tests/watch.rs` and `src-tauri/src/watcher.rs`.
 
+Every publication, including an own text-only save, carries the existing
+`answers: {rev, inventoryChanged, blockRefCounts}` envelope with an added
+`summary: {rev, pages, blocks, linksTo, props, inventoryChanged, full}`.
+The revision is a decimal string, monotonic per graph. `pages` contains edited
+source-page keys; `blocks` contains changed runtime and persisted block ids,
+including affected ancestors for subtree readers. `linksTo` conservatively
+includes old and new explicit reference targets, namespace ancestors, aliases
+and journal-day spellings. `props` maps source-page and alias keys to changed
+page-property keys. These are invalidation hints, not result patches. Plain
+text mentions are represented by changed source pages/blocks; precise
+`text:<target>` and `tags:<target>` subscriptions require the later registered
+reader slice, and cannot be inferred from `linksTo` alone.
+
+Initial publication, rebuild/config change, alias change, create/rename/delete,
+unavailable old/new pages, unreadable-inventory changes, more than 32 edited
+pages, or a day change since the previous publication set `full`. An own
+publication has no external page-reload entries: its answers arrive in an
+empty `graph-changed-bulk` envelope. External publications attach the answers
+once, on their first `graph-changed` entry or their bulk envelope. The frontend
+receiver also treats its first summary after binding and revision gaps as
+`full`, and ignores duplicate/older revisions. S1 changes no view's refresh
+trigger or `dataRev` behavior and persists no new state.
+
 Full runtime graph-text scans with unchanged configuration enumerate metadata outside the page/save writer.
 They validate the cache generation and publication revision after acquiring the
 writer, retrying an observation crossed by an own edit or another publication.

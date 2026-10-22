@@ -422,6 +422,17 @@ fn page_event_payloads(
     }
 }
 
+/// Summary delivery is unconditional, including own text-only publications.
+/// Own changes keep an empty page list, so this cannot request a page reload.
+fn publication_event_payloads(
+    events: Vec<GraphChange>,
+    binding_generation: u64,
+    change: &Change,
+) -> Vec<(&'static str, serde_json::Value)> {
+    let answers = serde_json::to_value(change).expect("Change answer serialization");
+    page_event_payloads(events, binding_generation, Some(answers))
+}
+
 /// Emit one publication's window events; an external publication is also
 /// recorded as a fixed-shape `watcher.batch` diagnostic event (counts only).
 fn dispatch(app: &tauri::AppHandle, label: &str, slot: &Arc<GraphSlot>, change: Change) {
@@ -443,15 +454,7 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &Arc<GraphSlot>, change: 
     );
     let conflicts_dirty = concord_observe(slot, &change) || copies_changed;
     let pages = events.len();
-    // Own publications also update derived answers for deletes/renames and
-    // other windows. Empty text-only deltas emit no additional event.
-    let answers = serde_json::to_value(&change).expect("Change answer serialization");
-    let answers = (answers["inventoryChanged"] == true
-        || answers["blockRefCounts"]
-            .as_object()
-            .is_some_and(|counts| !counts.is_empty()))
-    .then_some(answers);
-    for (name, payload) in page_event_payloads(events, binding_generation, answers) {
+    for (name, payload) in publication_event_payloads(events, binding_generation, &change) {
         let _ = app.emit_to(label, name, payload);
     }
     if let Some(payload) = asset_event_payload(&change, binding_generation) {
@@ -651,6 +654,54 @@ mod tests {
         assert_eq!(payload["binding_generation"], 7);
         assert_eq!(payload["changes"][3]["name"], "p3");
         assert_eq!(payload["changes"][3]["binding_generation"], 7);
+    }
+
+    #[test]
+    fn an_own_text_save_delivers_its_summary_without_an_external_reload() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-watch-summary-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::write(root.join("pages/A.md"), "- before\n").unwrap();
+        let store = tine_store::Store::open(&root, Default::default())
+            .unwrap()
+            .0;
+        store.whole_graph().unwrap();
+        let id = tine_store::PageId::from("pages/A.md");
+        let mut read = store.page(&id).unwrap();
+        read.doc.blocks[0].raw = "after".into();
+        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+        tx.save_page(
+            &[tine_store::EditKind::ReplacePage],
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &read.doc,
+        );
+        let tine_store::TxOutcome::Committed {
+            change: Some(change),
+            ..
+        } = tx.commit()
+        else {
+            panic!("text save")
+        };
+        assert_eq!(change.origin, Origin::Own);
+        let (events, _) = window_events(&change);
+        let payloads = publication_event_payloads(events, 7, &change);
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0].0, "graph-changed-bulk");
+        let payload = &payloads[0].1;
+        assert_eq!(payload["changes"], serde_json::json!([]));
+        assert_eq!(payload["binding_generation"], 7);
+        assert_eq!(payload["answers"]["inventoryChanged"], false);
+        assert_eq!(payload["answers"]["blockRefCounts"], serde_json::json!({}));
+        assert_eq!(
+            payload["answers"]["summary"]["pages"],
+            serde_json::json!(["a"])
+        );
+        assert_eq!(payload["answers"]["summary"]["full"], false);
+        store.close();
     }
 
     #[test]

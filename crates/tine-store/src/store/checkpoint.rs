@@ -551,7 +551,9 @@ impl ChangeFeed {
             folds_only: false,
         };
         // The first publication carries every answer, as a cold one does.
-        snapshot.answers = snapshot.answer_changes(None, &[], true);
+        let (inventory, counts) = snapshot.answer_changes(None, &[], true);
+        let summary = snapshot.change_summary(None, &[], true, inventory, None);
+        snapshot.answers = (inventory, counts, summary);
         let change = Change {
             graph_rev: snapshot.rev,
             origin: Origin::External,

@@ -447,6 +447,15 @@ fn equivalent_page_names(
     edges: &AliasEdges,
     target: &str,
 ) -> (String, Vec<String>, String) {
+    equivalent_page_names_with(real_pages, edges, target, |_| Vec::new())
+}
+
+fn equivalent_page_names_with(
+    real_pages: &RealPageNames,
+    edges: &AliasEdges,
+    target: &str,
+    widen: impl Fn(&str) -> Vec<String>,
+) -> (String, Vec<String>, String) {
     let target_norm = refs::page_key(target);
     let mut component = std::collections::BTreeSet::new();
     let mut pending = vec![target_norm.clone()];
@@ -455,6 +464,7 @@ fn equivalent_page_names(
             continue;
         }
         pending.extend(edges.neighbors(&name).cloned());
+        pending.extend(widen(&name));
     }
 
     let canonical = component
@@ -590,6 +600,36 @@ fn widen_for_journal_day(names_norm: &mut Vec<String>, format: &JournalFormat, t
     }
 }
 
+fn invalidation_page_names(
+    real_pages: &RealPageNames,
+    aliases: &AliasEdges,
+    journal: &JournalFormat,
+    target: &str,
+) -> (String, Vec<String>) {
+    let (canonical, mut names, _) = equivalent_page_names(real_pages, aliases, target);
+    widen_for_journal_day(&mut names, journal, target);
+    (canonical, names)
+}
+
+/// The same conservative closure as scoped backlink/unlinked invalidation.
+/// Unlike query-time canonical journal selection, this never scans journals.
+pub(crate) fn reference_invalidation_names(graph: &ReadSnapshot, target: &str) -> Vec<String> {
+    let journal = journal_format(graph.config());
+    // Include aliases of day spellings, and day spellings reached via aliases.
+    // This uses the same component traversal, visiting each key once.
+    equivalent_page_names_with(
+        &real_page_names(graph),
+        &graph.alias_edges(),
+        target,
+        |name| {
+            let mut names = Vec::new();
+            widen_for_journal_day(&mut names, &journal, name);
+            names
+        },
+    )
+    .1
+}
+
 fn page_property_block(entry: &PageEntry, pre: &str) -> Option<DocBlock> {
     page_property_block_with_config(entry, pre, &tine_core::query::atom::ParseConfig::default())
 }
@@ -634,29 +674,64 @@ pub(crate) fn document_explicit_reference_names(
     doc: &Document,
     config: &tine_core::config::Config,
 ) -> Vec<String> {
-    fn collect(blocks: &[DocBlock], names: &mut Vec<String>) {
+    explicit_reference_names_where(entry, doc, config, &|_| true, true)
+}
+
+/// Publication uses the same parser/policy projection, selecting changed
+/// blocks and their ancestors rather than sending every target on the page.
+pub(crate) fn changed_explicit_reference_names(
+    entry: &PageEntry,
+    doc: &Document,
+    config: &tine_core::config::Config,
+    changed: &std::collections::BTreeSet<String>,
+    header_changed: bool,
+) -> Vec<String> {
+    explicit_reference_names_where(
+        entry,
+        doc,
+        config,
+        &|block| changed.contains(&block.uuid),
+        header_changed,
+    )
+}
+
+fn explicit_reference_names_where(
+    entry: &PageEntry,
+    doc: &Document,
+    config: &tine_core::config::Config,
+    accept: &dyn Fn(&DocBlock) -> bool,
+    include_header: bool,
+) -> Vec<String> {
+    fn collect(blocks: &[DocBlock], names: &mut Vec<String>, accept: &dyn Fn(&DocBlock) -> bool) {
         for block in blocks {
-            names.extend(
-                block
-                    .projection()
-                    .reference_source()
-                    .explicit
-                    .iter()
-                    .flat_map(|reference| refs::namespace_refs(&reference.name))
-                    .map(refs::page_key),
-            );
-            collect(&block.children, names);
+            if accept(block) {
+                names.extend(
+                    block
+                        .projection()
+                        .reference_source()
+                        .explicit
+                        .iter()
+                        .flat_map(|reference| refs::namespace_refs(&reference.name))
+                        .map(refs::page_key),
+                );
+            }
+            collect(&block.children, names, accept);
         }
     }
 
     let mut names = Vec::new();
-    if let Some(block) = doc.pre_block.as_deref().and_then(|pre| {
-        page_property_block_with_config(
-            entry,
-            pre,
-            &tine_core::query::atom::ParseConfig::from_config(config),
-        )
-    }) {
+    if let Some(block) = doc
+        .pre_block
+        .as_deref()
+        .filter(|_| include_header)
+        .and_then(|pre| {
+            page_property_block_with_config(
+                entry,
+                pre,
+                &tine_core::query::atom::ParseConfig::from_config(config),
+            )
+        })
+    {
         names.extend(
             block
                 .projection()
@@ -667,7 +742,7 @@ pub(crate) fn document_explicit_reference_names(
                 .map(refs::page_key),
         );
     }
-    collect(&doc.roots, &mut names);
+    collect(&doc.roots, &mut names, accept);
     names.sort_unstable();
     names.dedup();
     names
@@ -1277,8 +1352,7 @@ pub(crate) fn page_affects_backlinks(
     doc: &Document,
     config: &tine_core::config::Config,
 ) -> bool {
-    let (canonical, mut names_norm, _) = equivalent_page_names(real_pages, aliases, target);
-    widen_for_journal_day(&mut names_norm, journal, target);
+    let (canonical, names_norm) = invalidation_page_names(real_pages, aliases, journal, target);
     // Invalidation shares the live graph's property-reference policy with reads.
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
@@ -1323,8 +1397,7 @@ pub(crate) fn page_affects_unlinked(
     doc: &Document,
     config: &tine_core::config::Config,
 ) -> bool {
-    let (canonical, mut names_norm, _) = equivalent_page_names(real_pages, aliases, target);
-    widen_for_journal_day(&mut names_norm, journal, target);
+    let (canonical, names_norm) = invalidation_page_names(real_pages, aliases, journal, target);
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
         page_property_block_with_config(

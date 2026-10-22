@@ -218,6 +218,22 @@ export interface GraphAnswersChange {
   rev: string;
   inventoryChanged: boolean;
   blockRefCounts: Record<string, number>;
+  /** Absent with older hosts and synthetic legacy notifications. */
+  summary?: ChangeSummary;
+}
+
+/** Transport evidence only. S1 leaves every view's existing refresh intact.
+ * `blocks` includes runtime and persisted ids, plus affected ancestors.
+ * `props` maps source-page/alias keys to changed property keys; `linksTo`
+ * includes old and new explicit targets even if membership did not change. */
+export interface ChangeSummary {
+  rev: string;
+  pages: string[];
+  blocks: string[];
+  linksTo: string[];
+  props: Record<string, string[]>;
+  inventoryChanged: boolean;
+  full: boolean;
 }
 
 /** `graph-custom-css-changed`: an outside actor created, replaced or deleted

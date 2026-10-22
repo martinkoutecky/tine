@@ -312,6 +312,13 @@ impl Snapshot {
             .map(|(id, _, _)| id.as_str().to_owned())
             .collect();
         let mut folds_only = false;
+        // Share one old/new document lookup between memo carry and the wire
+        // summary. Do not retain these previous documents in the new snapshot.
+        // Anything but "nothing text-eligible changed" or a computed edit list
+        // stays None, which the summary publishes as `full` (ADR 0014: over-
+        // invalidate, never stale).
+        let mut edited_pages =
+            (changed_paths.is_empty() && !config_changed && !rebuild).then(Vec::new);
         let evaluator = if let Some(old) = old.filter(|old| {
             old.cache_generation == cache_generation && !config_changed && !rebuild && !unnamed
         }) {
@@ -327,7 +334,13 @@ impl Snapshot {
             );
             if !name_set_changed {
                 if let Some(old) = old {
-                    let folds = evaluator.carry_from(&old.graph, &changed_paths);
+                    let edits = evaluator.edited_pages(&old.graph, &changed_paths);
+                    let folds = edits
+                        .as_deref()
+                        .is_some_and(|edits| evaluator.carry_from(&old.graph, edits));
+                    if !config_changed && !rebuild {
+                        edited_pages = edits;
+                    }
                     folds_only = folds
                         && files
                             .iter()
@@ -349,7 +362,15 @@ impl Snapshot {
             answers: Default::default(),
             folds_only,
         };
-        snapshot.answers = snapshot.answer_changes(old, &changed_paths, name_set_changed);
+        let (inventory, counts) = snapshot.answer_changes(old, &changed_paths, name_set_changed);
+        let summary = snapshot.change_summary(
+            old,
+            &changed_paths,
+            name_set_changed,
+            inventory,
+            edited_pages.as_deref(),
+        );
+        snapshot.answers = (inventory, counts, summary);
         snapshot
     }
 }

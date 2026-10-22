@@ -41,6 +41,9 @@ mod alias_groups;
 #[path = "answer_changes.rs"]
 mod answer_changes;
 
+#[path = "change_summary.rs"]
+mod change_summary;
+
 #[path = "asset_watch.rs"]
 mod asset_watch;
 

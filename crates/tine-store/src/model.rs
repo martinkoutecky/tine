@@ -927,13 +927,14 @@ impl ReadSnapshot {
     /// list and the memos. Returns whether the edit only folded or unfolded
     /// blocks ([`collapse_only::collapse_only`]). The edited pages are looked
     /// up once (I-13: only the edited page is inspected).
-    pub(crate) fn carry_from(&self, old: &Self, changed_paths: &[String]) -> bool {
-        if changed_paths.is_empty() {
+    pub(crate) fn carry_from(
+        &self,
+        old: &Self,
+        edits: &[(PageEntry, Arc<Document>, Arc<Document>)],
+    ) -> bool {
+        if edits.is_empty() {
             return false;
         }
-        let Some(edits) = self.edited_pages(old, changed_paths) else {
-            return false;
-        };
         let aliases_unchanged = edits.iter().all(|(_, previous, current)| {
             crate::query::document_alias_spellings(previous)
                 == crate::query::document_alias_spellings(current)
@@ -951,7 +952,7 @@ impl ReadSnapshot {
     fn carry_memos_from(
         &self,
         old: &Self,
-        edits: Vec<(tine_core::model::PageEntry, Arc<Document>, Arc<Document>)>,
+        edits: &[(tine_core::model::PageEntry, Arc<Document>, Arc<Document>)],
     ) {
         if old.memos.derived_cache.read().unwrap().is_none() && old.memos.query.is_empty() {
             return;
@@ -961,24 +962,18 @@ impl ReadSnapshot {
         let parse_config = tine_core::query::atom::ParseConfig::from_config(&self.config);
         self.memos
             .query
-            .carry_from(&old.memos.query, &parse_config, &edits);
+            .carry_from(&old.memos.query, &parse_config, edits);
         for (entry, previous, current) in edits {
             // GH #623 item 3: a fold changes no predicate (collapse_only.rs),
             // so only answers holding this page's blocks are dropped and the
             // graph-wide alias and page-name sets are not rebuilt.
-            let scope = if collapse_only::collapse_only(&previous, &current) {
+            let scope = if collapse_only::collapse_only(previous, current) {
                 Scope::FoldOnly
             } else {
                 Scope::Predicates
             };
-            self.memos.scope_derived_invalidation(
-                self,
-                &entry,
-                Some(&previous),
-                &current,
-                0,
-                scope,
-            );
+            self.memos
+                .scope_derived_invalidation(self, entry, Some(previous), current, 0, scope);
         }
     }
 
@@ -6665,8 +6660,8 @@ mod tests {
         let store = model_store(&dir);
         let snapshot = published_snapshot(&store);
         assert!(
-            snapshot.alias_relation.get().is_none(),
-            "alias cache starts cold"
+            snapshot.alias_relation.get().is_some(),
+            "publication primes aliases so change summaries never cold-walk the graph on an edit"
         );
         assert!(
             snapshot.block_ref_counts.get().is_some(),

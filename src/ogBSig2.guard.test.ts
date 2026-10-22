@@ -8,7 +8,7 @@ it("I-12/I-25: publications own name/count invalidation; exemplar store/answer_c
   // Own saves have no direct reply (step 3b P2b: the page host publishes them),
   // so their answers arrive as a page-less bulk event that external.ts applies.
   const watcher = source("src-tauri/src/watcher.rs");
-  expect(watcher).toContain("serde_json::to_value(&change)");
+  expect(watcher).toMatch(/serde_json::to_value\(&?change\)/);
   expect(watcher).toMatch(/events\.is_empty\(\) && answers\.is_some\(\)/);
   expect(source("crates/tine-store/src/store/snapshot.rs")).toContain("snapshot.answer_changes(old, &changed_paths, name_set_changed)");
 });
