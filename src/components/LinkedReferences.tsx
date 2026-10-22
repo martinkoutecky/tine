@@ -202,7 +202,13 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
   // The "Couldn't index descendant text" row below was unreachable: reading a
   // rejected `nativeContext` threw before any Show could render it.
   const nativeContext = () => readOr(nativeContextResource, undefined, "reference filter index");
-  const fallbackByRoot = createMemo(() =>
+  const parsedSearch = createMemo(() => parseSearchQuery(searchQuery(), searchRemoveAccents()));
+  // GH #746: the filter index (folded search text, page facets) costs a wasm
+  // fold per reference root and is built only while a filter or search needs
+  // it. Memos run eagerly, so an ungated index was rebuilt over every result
+  // (13 MB of unlinked references: 0.7 s) after each save, collapsed or not.
+  const indexNeeded = () => filterOpen() || Object.keys(filters()).length > 0 || parsedSearch().kind !== "empty";
+  const fallbackByRoot = createMemo(() => !indexNeeded() ? new Map<string, SearchableFilterEntry>() :
     new Map(
       mergedGroups().flatMap((group) =>
         group.blocks.map((block) => [
@@ -230,7 +236,6 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
     })
   );
 
-  const parsedSearch = createMemo(() => parseSearchQuery(searchQuery(), searchRemoveAccents()));
   const searchError = createMemo(() => {
     const parsed = parsedSearch();
     return parsed.kind === "invalid" ? parsed.error : null;
@@ -253,6 +258,8 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
   // Co-referenced pages/tags and task states in each backlink tree, with counts.
   const coRefs = createMemo(() => {
     const counts = new Map<string, { name: string; count: number }>();
+    // Only the open filter panel shows the chips.
+    if (!filterOpen()) return [];
     for (const g of textMatchedGroups()) {
       for (const b of g.blocks) {
         // Count reference roots, not spellings: two aliases (or an alias and
@@ -362,7 +369,7 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
         <div class="references-header" onClick={() => setCollapsedOverride(!collapsed())}>
           <ReferenceDisclosure collapsed={collapsed()} />
           {heading()} <span class="references-count">{count()}</span>
-          <Show when={props.unlinked && groupsResource.loading}><span class="references-loading"> {t("references-loading")}</span></Show>
+          <Show when={props.unlinked && groupsResource.loading && groups() === undefined}><span class="references-loading"> {t("references-loading")}</span></Show>
           <button type="button" class="reference-export-toggle"
             aria-label={t(props.unlinked ? "references-copy-unlinked" : "references-copy-linked")} title={t(props.unlinked ? "references-copy-unlinked-title" : "references-copy-linked-title")}
             disabled={!count()}

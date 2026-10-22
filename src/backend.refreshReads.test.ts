@@ -47,3 +47,18 @@ it("every counted command is one the native backend issues", () => {
   const source = readFileSync(new URL("./backend.ts", import.meta.url), "utf8");
   for (const cmd of REFRESH_READ_COMMANDS) expect(source).toMatch(new RegExp(`this\\.call<.*?>\\("${cmd}"`));
 });
+
+it("counts the reads the block-referrer panel, the reference filter and All pages refetch after a save", async () => {
+  // GX4 inventory: these readers refetch on dataRev (or on the refreshed groups) too.
+  const pending: (() => void)[] = [];
+  invoke.mockImplementation((cmd: string) => cmd === "startup_graph_path"
+    ? Promise.resolve(null)
+    : new Promise((resolve) => { pending.push(() => resolve(cmd === "page_modified" ? { modified: [] } : [])); }));
+  const { b, reads } = await tauriBackend();
+  const all = Promise.all([b.getBlockReferrers("u"), b.getBacklinkFilterContext("A", []), b.pageBacklinkCounts(), b.pageModified()]);
+  await vi.waitFor(() => expect(pending.length).toBe(4));
+  expect(reads.refreshReadsInFlight()).toBe(4);
+  for (const finish of pending) finish();
+  await all;
+  expect(reads.refreshReadsInFlight()).toBe(0);
+});
