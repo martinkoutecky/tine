@@ -10,6 +10,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+#[path = "production_guard_tests.rs"]
+mod guard_tests;
+
 struct Fixture {
     root: tempfile::TempDir,
     graph: PathBuf,

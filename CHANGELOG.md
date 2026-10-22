@@ -59,7 +59,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A save no longer stalls, and renames or moves no longer report Busy, when another writer releases a page at the moment Tine's page host goes to sleep: the host's path-lock retry could be dropped, leaving it waiting for an unrelated wake (internal: page-host driver lost wakeup).
+- Renaming a page preserves longer tags such as `#foo+bar`, `#c++`, `#R&D` and `#foo🎉` when only their prefix matches, and updates complete tags before trailing punctuation such as `#foo.`. Renaming `c++` also updates `#c++` (audit L3-02).
+- A page being deleted stops accepting typing, paste, property and sheet edits until the delete answers. If deletion fails or is not confirmed, the page becomes editable again with its text intact; input can no longer slip past unsaved-text tracking during deletion (audit L9-06).
+- A draft whose name is an alias is added to its owner only once even when the owner's save is not confirmed. A later edit replaces the landed copy instead of appending a second copy, and a refused landing keeps the draft recoverable (audit L9-05).
 - Settings → unused assets now keeps images referenced only by a duplicate journal file for the same day, including references in its page properties. Moving an asset to trash checks those files too, and refuses if one cannot be read or analyzed (audit L8-03).
+- Refuse page-host I/O through a folder moved outside the graph and replaced by
+  a symlink, retaining queued and recovered text (audit L8-01).
+- Refuse a creating save when a new title claimant or possible unreadable owner
+  arrives while the absent page is open; retain the text and name the claimant
+  (audit L8-02).
+
 - Long sessions release unloaded block facets and obsolete block-reference answers, bound historical parse and inactive answer memory by bytes, and clear retained graph text on reset (audit L10-01, L10-02, L10-04 / L7-01).
 - Reference sections, tagged pages and block referrers refresh after related edits without refetching on unrelated saves, including while collapsed (GH #746; development 0.9).
 - References, embeds, favorite blocks, journal sections and page icons stay live after target edits without fetching unrelated targets again on every save (GH #746).

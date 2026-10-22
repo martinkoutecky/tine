@@ -122,6 +122,16 @@ pub(super) trait HostIo {
     /// The page file's alternate-extension twin (`.md` ↔ `.org`), if one
     /// exists: another file claiming the page's name (STEP3 §3.2, Q9).
     fn page_twin(&mut self, page: &str) -> IoResult<Option<String>>;
+    /// Extra production creation refusal: a published logical claimant or a
+    /// possible unreadable owner. Ordinary replacements never call this.
+    fn page_owner(
+        &mut self,
+        _page: &str,
+        _bytes: &Text,
+        _source: Option<&str>,
+    ) -> IoResult<Option<String>> {
+        Ok(None)
+    }
     /// No-replace move of the page's file to the graph trash as `payload`.
     fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult;
     /// Trash custody (A4): (a) check the payload still exists, then (b) sync
