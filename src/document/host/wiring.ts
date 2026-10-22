@@ -6,7 +6,7 @@
 // page write is the host's (the audited save path).
 
 import { createEffect, createRoot, createSignal, on, untrack } from "solid-js";
-import { backend } from "../../backend";
+import { backend, probeRefreshIdle } from "../../backend";
 import { benchEvent } from "../../benchEvents";
 import { captureBinding, clearOnBindingInvalidated } from "../../binding";
 import type { ClipboardSourcePage } from "../../clipboard";
@@ -285,6 +285,7 @@ function pageWritable(name: string): boolean {
 const pendingNeeds = new Map<string, number>();
 let dataTimer: ReturnType<typeof setTimeout> | null = null;
 let dataWaits = 0;
+let probeBumpQueued = false;
 
 /** Whole-graph views recompute once the host published what it took, after
  * edits go quiet (today's 700 ms coalescing). */
@@ -302,6 +303,21 @@ function notePublication(key: string, version: number): void {
     void c.published(needs).finally(() => {
       dataWaits -= 1;
       if (client !== c) return;
+      // PROBE-ONLY (GH #746 variant C): with `globalThis.__probe746Guard`, no new
+      // refresh round starts while the previous one's reads are in flight; the
+      // publications that land meanwhile coalesce into one trailing bump.
+      if ((globalThis as { __probe746Guard?: boolean }).__probe746Guard) {
+        if (probeBumpQueued) return;
+        probeBumpQueued = true;
+        void probeRefreshIdle().then(() => {
+          probeBumpQueued = false;
+          if (client !== c) return;
+          bumpDataRev();
+          setHostRevision(value => value + 1);
+          if (inventoryPending) { inventoryPending = false; bumpPageInventoryRev(); }
+        });
+        return;
+      }
       bumpDataRev();
       setHostRevision(value => value + 1);
       if (inventoryPending) { inventoryPending = false; bumpPageInventoryRev(); }

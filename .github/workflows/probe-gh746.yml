@@ -13,6 +13,8 @@ jobs:
   typing:
     name: GH746 typing probe / windows ${{ matrix.arch }}
     runs-on: windows-latest
+    env:
+      PROBE_VARIANTS: "A B C"
     strategy:
       fail-fast: false
       matrix:
@@ -66,38 +68,32 @@ jobs:
       - name: Generate graphs
         run: |
           node scripts/generate-realistic-graph.mjs ${{ runner.temp }}/g13k 11404 1555 746
-          node scripts/generate-realistic-graph.mjs ${{ runner.temp }}/g1k 880 120 746
-      - name: Probe 13k graph
+      # Follow-up run (Martin's 1 s vs 3 s cadence hypothesis): the edited page has in-degree 899,
+      # both reference sections expanded, embeds and queries (PROBE_HEAVY). TINE_PROBE_READ_SPIN_MS is
+      # an ARTIFICIAL, probe-only CPU cost added to each refresh read so that one refresh round costs
+      # more than 1 s but less than 3 s; 0 = natural cost. Each variant gets a fresh app session.
+      - name: Probe follow-up variants
+        shell: bash
         env:
           TAURI_DRIVER: msedgedriver.exe
           TINE_APP: ${{ github.workspace }}\${{ matrix.app }}
-          E2E_WEBVIEW_USER_DATA_ROOT: ${{ runner.temp }}\wv2-13k
           PROBE_GRAPH: ${{ runner.temp }}/g13k
-          PROBE_LABEL: g13k
+          PROBE_HEAVY: "1"
+          PROBE_LINKED: "899"
+          PROBE_UNLINKED: "156"
+          PROBE_MODES: os
+          PROBE_KEYLIST: "1"
+          PROBE_KEYS: "600"
           PROBE_SETTLE_MS: "60000"
-          PROBE_TRACE: "1"
-        run: node scripts/probe-gh746.mjs
-      - name: Probe 1k graph
-        env:
-          TAURI_DRIVER: msedgedriver.exe
-          TINE_APP: ${{ github.workspace }}\${{ matrix.app }}
-          E2E_WEBVIEW_USER_DATA_ROOT: ${{ runner.temp }}\wv2-1k
-          PROBE_GRAPH: ${{ runner.temp }}/g1k
-          PROBE_LABEL: g1k
-          PROBE_SETTLE_MS: "30000"
-        run: node scripts/probe-gh746.mjs
-      - name: Probe 13k graph again
-        env:
-          TAURI_DRIVER: msedgedriver.exe
-          TINE_APP: ${{ github.workspace }}\${{ matrix.app }}
-          E2E_WEBVIEW_USER_DATA_ROOT: ${{ runner.temp }}\wv2-13k-b
-          PROBE_GRAPH: ${{ runner.temp }}/g13k
-          PROBE_LABEL: g13k-b
-          PROBE_RESOLVE_REFS: "1"
-          PROBE_SETTLE_MS: "60000"
-          E2E_DRIVER_PORT: "4622"
-          E2E_NATIVE_PORT: "4623"
-        run: node scripts/probe-gh746.mjs
+        run: |
+          port=4612
+          for spin in 0 600; do
+            for v in $PROBE_VARIANTS; do
+              port=$((port + 2))
+              E2E_DRIVER_PORT=$port E2E_NATIVE_PORT=$((port + 1)) E2E_WEBVIEW_USER_DATA_ROOT="${RUNNER_TEMP}\\wv2-$v-$spin" \
+                PROBE_VARIANT=$v TINE_PROBE_READ_SPIN_MS=$spin PROBE_LABEL="heavy-$v-spin$spin" node scripts/probe-gh746.mjs || echo "run $v $spin failed"
+            done
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:

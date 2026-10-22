@@ -200,7 +200,11 @@ pub(crate) async fn query_run(
     state: GraphContext<'_>,
 ) -> Result<QueryResult, String> {
     let context = context.unwrap_or_default();
-    on_graph(&state, move |graph| run(graph, &query, &view, &context)).await
+    on_graph(&state, move |graph| {
+        crate::commands::probe_spin();
+        run(graph, &query, &view, &context)
+    })
+    .await
 }
 
 /// SPEC §7.1 `query_explain_empty` (N19): why the query returned nothing — one

@@ -117,6 +117,9 @@ export interface ReviewTicket { name: string; instance: number; session: number;
 const SEND_DEBOUNCE_MS = 400;
 /** A continuous burst still sends at least this often (STEP3 §13, §16-6). */
 const SEND_MAX_WAIT_MS = 1000;
+/** PROBE-ONLY (GH #746 variant B, branch probe/gh746-*): the probe may set
+ * `globalThis.__probe746MaxWait` (ms) to replace SEND_MAX_WAIT_MS at runtime. */
+const sendMaxWait = (): number => (globalThis as { __probe746MaxWait?: number }).__probe746MaxWait ?? SEND_MAX_WAIT_MS;
 /** After a false publication answer no terminal notice explains (a failed call,
  * a host that ended), the window asks again this much later. */
 const PUBLICATION_RETRY_MS = 1000;
@@ -746,7 +749,7 @@ export class HostClient {
     if (page.timer) clearTimeout(page.timer);
     const now = Date.now();
     page.burst ??= now;
-    const wait = Math.max(0, Math.min(SEND_DEBOUNCE_MS, page.burst + SEND_MAX_WAIT_MS - now));
+    const wait = Math.max(0, Math.min(SEND_DEBOUNCE_MS, page.burst + sendMaxWait() - now));
     page.timer = setTimeout(() => { page.timer = null; this.send(page); }, wait);
   }
 

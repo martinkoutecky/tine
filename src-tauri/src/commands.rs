@@ -466,6 +466,21 @@ pub(crate) async fn copy_guide_into_graph(
     .map_err(|error| error.to_string())?
 }
 
+/// PROBE-ONLY (GH #746, branch probe/gh746-*, never merge): ARTIFICIAL CPU cost.
+/// `TINE_PROBE_READ_SPIN_MS=N` busy-spins N ms inside each whole-graph refresh
+/// read (backlinks, unlinked refs, page icons, resolve_blocks, query_run), on the
+/// same blocking-pool thread as the real work, so a refresh round costs more.
+pub(crate) fn probe_spin() {
+    static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let ms = *MS.get_or_init(|| std::env::var("TINE_PROBE_READ_SPIN_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(0));
+    if ms > 0 {
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_millis(ms) {
+            std::hint::spin_loop();
+        }
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn get_backlinks(
     name: String,
@@ -477,6 +492,7 @@ pub(crate) async fn get_backlinks(
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
+        probe_spin();
         view.backlinks(&name).map_err(reference_error)
     })
     .await
@@ -513,6 +529,7 @@ pub(crate) async fn get_unlinked_refs(
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
+        probe_spin();
         view.unlinked_references(&name).map_err(reference_error)
     })
     .await
@@ -764,7 +781,10 @@ pub(crate) async fn page_icons(
     tauri::async_runtime::spawn_blocking(move || {
         slot.store
             .whole_graph()
-            .map(|view| view.page_icons(&names))
+            .map(|view| {
+                probe_spin();
+                view.page_icons(&names)
+            })
             .map_err(|e| format!("graph load failed: {e:?}"))
     })
     .await
@@ -1241,7 +1261,11 @@ pub(crate) async fn resolve_blocks(
     uuids: Vec<String>,
     state: GraphContext<'_>,
 ) -> Result<Vec<Option<RefGroup>>, String> {
-    off_ui_graph_read(&state, move |view| view.blocks(&uuids).map_err(query_error)).await
+    off_ui_graph_read(&state, move |view| {
+        probe_spin();
+        view.blocks(&uuids).map_err(query_error)
+    })
+    .await
 }
 
 /// Explicit, bounded subtree resolution for hover previews. Ordinary

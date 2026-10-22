@@ -45,6 +45,11 @@ const SRC = process.env.PROBE_GRAPH;
 const TARGET_MD = process.env.PROBE_TARGET_MD || path.join(ROOT, "tests/fixtures/gh746/GH746 typing.md");
 const MODES = (process.env.PROBE_MODES || (WIN ? "os,osrepeat,webdriver" : "os,webdriver")).split(",");
 const KEYS = Number(process.env.PROBE_KEYS || 330);
+const HEAVY = process.env.PROBE_HEAVY === "1";
+// Follow-up variants: A = beta.8 as is, B = SEND_MAX_WAIT_MS 3000, C = in-flight refresh guard
+// (both PROBE-ONLY runtime switches in the probe build), D = stable (just a label).
+const VARIANT = process.env.PROBE_VARIANT || "A";
+const KEYLIST = (process.env.PROBE_KEYLIST || "1,Backspace").split(",");
 const DELAY = Number(process.env.PROBE_DELAY_MS || 33);
 const SETTLE = Number(process.env.PROBE_SETTLE_MS || 30000);
 const OUT = path.resolve(process.env.PROBE_OUT || path.join(ROOT, "test-results/probe-gh746"), LABEL);
@@ -63,16 +68,17 @@ for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`,
   let seed = 746;
   const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
   const picked = new Set();
-  while (picked.size < Math.min(196, pages.length)) picked.add(pages[Math.floor(rnd() * pages.length)]);
+  const LINKED = Number(process.env.PROBE_LINKED || 40), UNLINKED = Number(process.env.PROBE_UNLINKED || 156);
+  while (picked.size < Math.min(LINKED + UNLINKED, pages.length)) picked.add(pages[Math.floor(rnd() * pages.length)]);
   [...picked].forEach((f, i) => {
     const file = path.join(GRAPH, "pages", f);
     const text = fs.readFileSync(file, "utf8");
-    const line = i < 40 ? `- mention ${i} of [[GH746 typing]] here\n` : `- plain mention ${i} of GH746 typing here\n`;
+    const line = i < LINKED ? `- mention ${i} of [[GH746 typing]] here\n` : `- plain mention ${i} of GH746 typing here\n`;
     fs.writeFileSync(file, text + (text.endsWith("\n") || text === "" ? "" : "\n") + line);
   });
   // PROBE_RESOLVE_REFS=1: give every ((uuid)) the page references but does not define a target
   // block elsewhere (as in the reporter's real graph), each with a small subtree.
-  if (process.env.PROBE_RESOLVE_REFS === "1") {
+  if (process.env.PROBE_RESOLVE_REFS === "1" || HEAVY) {
     const md = fs.readFileSync(TARGET_MD, "utf8");
     const defined = new Set([...md.matchAll(/id:: ([0-9a-f-]{36})/g)].map((m) => m[1]));
     const wanted = [...new Set([...md.matchAll(/\(\(([0-9a-f-]{36})\)\)/g)].map((m) => m[1]))].filter((u) => !defined.has(u));
@@ -83,6 +89,15 @@ for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`,
     });
     fs.writeFileSync(path.join(GRAPH, "pages", "GH746 targets.md"), out);
     console.log(`resolve refs: ${wanted.length} targets`);
+    // PROBE_HEAVY=1 (follow-up run): the page also embeds five of those subtrees and runs two queries.
+    if (HEAVY) {
+      let extra = "- heavy section: embeds\n";
+      for (const u of wanted.slice(0, 5)) extra += `\t- {{embed ((${u}))}}\n`;
+      extra += "- {{query [[link 1]]}}\n- {{query (and [[GH746 typing]] \"mention 1\")}}\n";
+      const page = path.join(GRAPH, "pages", "GH746 typing.md");
+      const text = fs.readFileSync(page, "utf8");
+      fs.writeFileSync(page, text + (text.endsWith("\n") ? "" : "\n") + extra);
+    }
   }
 }
 
@@ -169,6 +184,20 @@ function analyse(raw, win) {
     if (win) st.ui = win.filter((w) => w.at >= raw.epoch0 + a && w.at <= raw.epoch0 + b).map((w) => `${(w.at - raw.epoch0 - t0).toFixed(0)}+${w.ms}`);
   }
   const stallStarts = stalls.map((s) => s.at);
+  // Refresh rounds (follow-up run): overlap and queueing of the whole-graph refresh reads.
+  const REFRESH = new Set(["get_backlinks", "get_unlinked_refs", "page_icons", "resolve_blocks", "query_run", "query_parse", "get_page"]);
+  const rows = raw.ipc.filter((r) => REFRESH.has(r[0]) && r[1] >= t0 - 50);
+  const tEnd = raw.now ?? (inputs.at(-1) ?? t0);
+  const inflight = (t) => rows.filter((r) => r[1] <= t && (r[2] < 0 || r[2] > t)).length;
+  const perSecondMax = [];
+  for (let s = 0; t0 + s * 1000 < tEnd; s++) { let m = 0; for (let t = t0 + s * 1000; t < t0 + (s + 1) * 1000 && t < tEnd; t += 50) m = Math.max(m, inflight(t)); perSecondMax.push(m); }
+  const roundCmd = rows.some((r) => r[0] === "get_backlinks") ? "get_backlinks" : "resolve_blocks";
+  const roundRows = rows.filter((r) => r[0] === roundCmd).sort((a, b) => a[1] - b[1]);
+  const overlapped = roundRows.filter((r) => roundRows.some((q) => q !== r && q[1] < r[1] && (q[2] < 0 || q[2] > r[1]))).length;
+  const refresh = { roundCmd, rounds: roundRows.length, overlappedRounds: overlapped,
+    roundLatency: roundRows.map((r) => `${(r[1] - t0).toFixed(0)}+${r[2] > 0 ? (r[2] - r[1]).toFixed(0) : "open"}`),
+    inflightMax: perSecondMax.length ? Math.max(...perSecondMax) : 0, inflightPerSecondMax: perSecondMax,
+    unfinishedAtEnd: rows.filter((r) => r[2] < 0).length, reads: rows.length };
   return {
     keydowns: raw.keys.length, trusted: raw.keys.filter((k) => k[3]).length, inputs: inputs.length,
     spanMs: inputs.length ? +(inputs.at(-1) - inputs[0]).toFixed(0) : 0,
@@ -180,7 +209,7 @@ function analyse(raw, win) {
     eventQueueMs: { p50: quant(queue, 0.5), p95: quant(queue, 0.95), max: quant(queue, 1) },
     longTasks: raw.lt ? raw.lt.filter((l) => l[0] >= t0).map((l) => `${(l[0] - t0).toFixed(0)}+${l[1].toFixed(0)}`) : "unsupported",
     stallIntervalsMs: stallStarts.slice(1).map((t, i) => t - stallStarts[i]),
-    stalls, bigFrames, ipc: ipcBy, mails: raw.mail.length, mailBytes: raw.mail.reduce((s, m) => s + m[1], 0),
+    refresh, stalls, bigFrames, ipc: ipcBy, mails: raw.mail.length, mailBytes: raw.mail.reduce((s, m) => s + m[1], 0),
     uiThread: win ? { probes: win.length, over50: win.filter((w) => w.ms > 50).length, max: win.reduce((m, w) => Math.max(m, w.ms), 0), slow: win.filter((w) => w.ms > 50).map((w) => `${(w.at - raw.epoch0 - t0).toFixed(0)}+${w.ms}`) } : undefined,
   };
 }
@@ -273,15 +302,40 @@ try {
   await browser.$(".page-title").waitForExist({ timeout: 180000 });
   report.firstTitleMs = Date.now() - launchedAt;
   console.log(await browser.execute(INSTRUMENT));
+  report.variant = VARIANT;
+  await browser.execute((v) => { if (v === "B") globalThis.__probe746MaxWait = 3000; if (v === "C") globalThis.__probe746Guard = true; }, VARIANT);
   await openPageByName(browser, "GH746 typing", { timeout: 180000 });
   // Settle: at least SETTLE ms after launch, then until no IPC started for 5 s (max 240 s).
-  const settleStart = Date.now();
+  const settle = async () => {
+    const settleStart = Date.now();
+    for (;;) {
+      const quiet = await browser.execute(() => { const P = window.__p746; const now = performance.now();
+        return !P.ipc.some((r) => r[2] < 0 && now - r[1] < 60000) && !P.ipc.some((r) => now - r[1] < 5000); });
+      if (quiet || Date.now() - settleStart > 240000) break;
+      await sleep(1000);
+    }
+  };
   while (Date.now() - launchedAt < SETTLE) await sleep(1000);
-  for (;;) {
-    const quiet = await browser.execute(() => { const P = window.__p746; const now = performance.now();
-      return !P.ipc.some((r) => r[2] < 0 && now - r[1] < 60000) && !P.ipc.some((r) => now - r[1] < 5000); });
-    if (quiet || Date.now() - settleStart > 240000) break;
-    await sleep(1000);
+  await settle();
+  if (HEAVY) {
+    // Expand the Linked and Unlinked References sections (both default to collapsed here).
+    report.expanded = await browser.execute(() => {
+      let n = 0;
+      for (const h of document.querySelectorAll(".references-header")) {
+        const c = h.querySelector(".ref-collapse");
+        if ((c && c.classList.contains("collapsed")) || (!c && h.textContent.trim().startsWith("\u25b8"))) { h.click(); n++; }
+      }
+      return n;
+    });
+    await sleep(3000);
+    await settle();
+    report.rendered = await browser.execute(() => ({
+      linked: document.querySelectorAll(".linked-references .ls-block").length,
+      unlinked: document.querySelectorAll(".unlinked-references .ls-block").length,
+      blocks: document.querySelectorAll(".ls-block").length,
+      headers: [...document.querySelectorAll(".references-header")].map((h) => h.textContent.trim().slice(0, 40)),
+    }));
+    console.log(JSON.stringify({ expanded: report.expanded, rendered: report.rendered }));
   }
   report.settledMs = Date.now() - launchedAt;
   // Edit the third top-level block ("文文", with one child) at its end.
@@ -301,7 +355,7 @@ try {
   await enter();
   report.initialValue = await browser.execute(() => document.activeElement.value);
   for (const mode of MODES) {
-    for (const key of ["1", "Backspace"]) {
+    for (const key of KEYLIST) {
       if (!(await browser.execute(() => document.activeElement?.tagName === "TEXTAREA"))) await enter();
       await sleep(1500);
       await browser.execute(drain);
@@ -316,7 +370,7 @@ try {
       const run = { mode, key, drive: drive.meta, valueLength: value?.length ?? null, ...a };
       report.runs.push(run);
       fs.writeFileSync(path.join(OUT, `raw-${mode}-${key}.json`), JSON.stringify({ raw, win: drive.win }));
-      console.log(JSON.stringify({ label: LABEL, mode, key, trusted: a.trusted, inputs: a.inputs, gap: a.inputGapMs, over: a.gapsOver, frames: a.frameGapMs, ui: a.uiThread && { max: a.uiThread.max, over50: a.uiThread.over50 }, intervals: a.stallIntervalsMs }));
+      console.log(JSON.stringify({ label: LABEL, variant: VARIANT, mode, key, rounds: a.refresh.rounds, overlapped: a.refresh.overlappedRounds, inflightMax: a.refresh.inflightMax, trusted: a.trusted, inputs: a.inputs, gap: a.inputGapMs, over: a.gapsOver, frames: a.frameGapMs, ui: a.uiThread && { max: a.uiThread.max, over50: a.uiThread.over50 }, intervals: a.stallIntervalsMs }));
       await sleep(2000);
     }
   }
