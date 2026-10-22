@@ -1,0 +1,1 @@
+Ninth Tine 0.8 Beta, a fix for the stable candidate. Typing no longer freezes for a moment every second or two on a page with many linked or unlinked references.
