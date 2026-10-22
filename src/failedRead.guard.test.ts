@@ -128,8 +128,12 @@ it("I-2: trash asset checks use the latest publication under the writer; exempla
   expect(preflight).toMatch(/fn prepare_steps[\s\S]*?\.preflight\(step/);
   expect(preflight).toContain("self.check_orphan_asset(file)?");
   expect(checks).toContain("self.store.whole_graph()");
-  expect(checks).toContain("view.unreadable_files()");
-  expect(checks).toContain("view.referenced_assets().contains(name)");
+  expect(checks).toContain(".referenced_assets_in(&view)");
+  // The inventory fails on unreadable files and includes set-aside files (audit L8-03).
+  const inventory = readFileSync("crates/tine-store/src/store/asset_inventory.rs", "utf8");
+  expect(inventory).toContain("view.unreadable_files()");
+  expect(inventory).toContain("view.referenced_assets()");
+  expect(inventory).toContain("name_by_path");
   const commands = readFileSync("src-tauri/src/commands.rs", "utf8");
   const trash = commands.slice(commands.indexOf("pub(crate) async fn trash_asset"), commands.indexOf("pub(crate) async fn asset_trash_stats"));
   expect(trash, "I-22: the reference check can wait for initial parsing; keep trash off the UI thread").toContain("spawn_blocking");

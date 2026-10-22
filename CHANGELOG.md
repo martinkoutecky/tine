@@ -59,6 +59,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Settings → unused assets now keeps images referenced only by a duplicate journal file for the same day, including references in its page properties. Moving an asset to trash checks those files too, and refuses if one cannot be read or analyzed (audit L8-03).
 - Changing favorites, the journal template or display settings no longer re-reads and re-parses every graph page (audit L1-04).
 - In-page find stays responsive when a large block contains thousands of matches, using constant-time span deduplication per hit (audit L2-13).
 

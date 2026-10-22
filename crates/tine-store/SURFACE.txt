@@ -104,7 +104,11 @@ fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
 
-## Reads (ceiling: 16)
+## Reads (ceiling: 17)
+# Audit L8-03: the orphan-asset inventory moved from WholeGraph::referenced_assets
+# (parsed pages only, cannot read set-aside duplicate-day files or fail on an
+# unreadable one) to the store, which can; the WholeGraph question left the surface.
+fn store::Store::referenced_assets
 const model::PARSE_INPUT_MAX_BYTES
 fn model::parse_input_depth_within_limit
 field store::PageRead.doc
@@ -293,11 +297,10 @@ struct store::Inventory
 struct store::InventoryEntry
 struct store::WholeGraph
 
-## WholeGraph: References (ceiling: 5)
+## WholeGraph: References (ceiling: 4)
 fn store::WholeGraph::backlink_filter_context
 fn store::WholeGraph::backlinks
 fn store::WholeGraph::explicit_referrers
-fn store::WholeGraph::referenced_assets
 fn store::WholeGraph::unlinked_references
 
 ## WholeGraph: Block refs (ceiling: 5)
