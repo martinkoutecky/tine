@@ -59,6 +59,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- References, embeds, favorite blocks, journal sections and page icons stay live after target edits without fetching unrelated targets again on every save (GH #746).
+
 - **Soft Settings hierarchy** (GH #649, thanks @EllisMorrow): labels, descriptions and author/version/build details have distinct emphasis in light and dark mode, with quieter dividers and hover/selection borders; every text role keeps at least 4.5:1 contrast.
 - **Touchscreen pinch zooms the PDF around the midpoint between your fingers**, keeping the drawn pages visible while you pinch and sharpening them after release. One-finger scrolling and text selection remain available (GH #742).
 - Block and page embeds keep their own bullet; Copy, Cut, Delete and drag on it act on the embed block, while every bullet inside acts on its source block. Cutting and pasting a source really moves it, and Undo restores it. This retires GH #514's source-root drag redirection to the host (GH #726).

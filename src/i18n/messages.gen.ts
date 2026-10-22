@@ -556,6 +556,7 @@ export interface MessageArgs {
   "delete-reason-uncertain": { "name": string | number };
   "delete-reason-unsaved": { "name": string | number };
   "delete-reason-waiting": { "name": string | number };
+  "diagnostics-refresh-everything": {};
   "diagnostics-tab-a-report-also-carries-statistics-about-your-graph": {};
   "diagnostics-tab-clear-recorded-events": {};
   "diagnostics-tab-copy-report": {};

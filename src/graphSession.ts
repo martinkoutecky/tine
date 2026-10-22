@@ -65,10 +65,7 @@ export function bumpGraphEpoch() {
 // Bumped after a save batch lands (the Rust cache now reflects the edit), so
 // derived whole-graph views — {{query}} results, backlinks — can recompute.
 // This is Tine's stand-in for OG's reactive-DB query invalidation.
-export const [dataRev, setDataRev] = createSignal(0);
-export function bumpDataRev() {
-  setDataRev((n) => n + 1);
-}
+export { dataRev, setDataRev, bumpDataRev } from "./dataRevision";
 // Page-name inventory changes are much rarer than ordinary content saves. Keep
 // their invalidation separate so navigation can refresh canonical names after a
 // create/delete without turning every keystroke save into a whole-page-list IPC.

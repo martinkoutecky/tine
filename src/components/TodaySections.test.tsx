@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
   createWait: null as Promise<void> | null,
   parseWait: null as Promise<void> | null,
   queryRuns: 0,
+  pageReads: 0,
 }));
 vi.mock("../backend", () => ({
   backend: () => ({
@@ -30,7 +31,7 @@ vi.mock("../backend", () => ({
       if (h.locateFails) throw new Error("engine down");
       return { anchor: "page", pages: h.marked.map((name) => ({ name })) };
     },
-    getPage: async (name: string) => { await h.getPageWait; if (h.lookupFails) throw new Error("lookup failed"); return h.pages.get(name) ?? null; },
+    getPage: async (name: string) => { h.pageReads++; await h.getPageWait; if (h.lookupFails) throw new Error("lookup failed"); return h.pages.get(name) ?? null; },
   }),
 }));
 vi.mock("./Macro", () => ({
@@ -63,6 +64,7 @@ vi.mock("../router", () => ({ openPage: (name: string) => { h.opened.push(name);
 vi.mock("../toasts", () => ({ pushToast: (text: string) => h.toasts.push(text) }));
 
 import { bumpDataRev, bumpGraphEpoch, setGraphMeta } from "../graphSession";
+import { applyChangeSummary } from "../changeSummary";
 import { invalidateBinding } from "../binding";
 import { locateSectionsPages } from "../journalSections";
 import { JournalSectionsHeader, TodaySections, customizeTodaySections } from "./TodaySections";
@@ -95,6 +97,34 @@ beforeEach(() => {
 });
 
 describe("today's sections (GH #605)", () => {
+  it("GX4: unrelated saves leave discovery and content alone; page, marker, full and gaps refresh the right answers", async () => {
+    bumpGraphEpoch();
+    let rev = 0;
+    const publish = (pages: string[], props: Record<string, string[]> = {}, full = false) => {
+      applyChangeSummary({ rev: String(++rev), pages, props, full, blocks: [], linksTo: [], inventoryChanged: false });
+      bumpDataRev(true);
+    };
+    publish([]);
+    h.marked = ["Sections"];
+    h.pages.set("Sections", { name: "Sections", kind: "page", title: "Sections", pre_block: null, blocks: [block("{{query (task TODO)}}")] });
+    const { div, dispose } = await mount();
+    try {
+      h.queryRuns = h.pageReads = 0;
+      publish(["other"]); await settle(); await settle();
+      expect(h.queryRuns).toBe(0); expect(h.pageReads).toBe(0);
+      h.pages.set("Sections", { name: "Sections", kind: "page", title: "Sections", pre_block: null, blocks: [block("{{query (task DONE)}}")] });
+      publish(["sections"]); await settle(); await settle();
+      expect(bodies(div)).toEqual(["query (task DONE)"]);
+      expect(h.queryRuns).toBe(0); expect(h.pageReads).toBe(1);
+      h.marked = []; publish([], { sections: ["tine/journal-sections"] }); await settle(); await settle();
+      expect(h.queryRuns).toBe(1);
+      expect(bodies(div)).toContain("query (agenda)");
+      publish([], {}, true); await settle(); await settle();
+      expect(h.queryRuns).toBe(2);
+      rev += 2; publish([]); await settle(); await settle();
+      expect(h.queryRuns).toBe(3);
+    } finally { dispose(); }
+  });
   it("GH #710: explains sections and opens the scheduling Guide in the sidebar", async () => {
     h.sidebar = [];
     const div = document.createElement("div");

@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-keyed-refresh.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A routed page's inline block refs, block embed, page embed and unloaded page icon update after external target edits. With those readers still mounted, typing on an unrelated page in the sidebar causes no resolve_blocks, page_icons or get_page requests for those targets; the debug full-refresh control exercises all three.","blocking":true,"authority":"GX4 S3; GH #746"}],
+      "acceptableVariations": ["Publication, watcher and rendering latency may vary; IPC batches may contain multiple affected targets."],
+      "nonRequirements": ["Exact pixels, frame-time budgets, a fixed IPC count for related edits, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-render-stall.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"Holding a key with linked and heavy Unicode unlinked reference sections expanded records renderer blocking per second, input gaps and frames over 100 ms (GH #746). The provisional Linux blocking budget fails when exceeded; an explicitly empty budget selects calibration only.","blocking":true}],
       "acceptableVariations": ["Frame timing varies by host and WebView; calibration must include both platforms and a before-fix control."],

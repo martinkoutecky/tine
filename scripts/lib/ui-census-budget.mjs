@@ -51,7 +51,7 @@ export const SURFACES = Object.freeze({
   "settings.backups.open": settingsOpen("backups", 3),
   "settings.graph.open": settingsOpen("graph", 7),
   "settings.plugins.open": settingsOpen("plugins", 5),
-  "settings.diagnostics.open": settingsOpen("diagnostics", 5),
+  "settings.diagnostics.open": settingsOpen("diagnostics", 6),
   "settings.shortcuts.open": settingsOpen("shortcuts", 1, " (the rows are the commands budget)"),
   "settings.about.open": settingsOpen("about", 8),
 

@@ -53,7 +53,7 @@ export async function applyGraphChange(c: GraphChange, bypassPolicy = false): Pr
   const finish = beginResultsChange();
   try {
     applyGraphAnswers(c.answers);
-    bumpDataRev();
+    bumpDataRev(!!c.answers?.summary);
     if (c.created || c.removed) bumpPageInventoryRev();
     await applyObservedChange(c, captureExternalChangeUi?.(), bypassPolicy);
   }
@@ -73,8 +73,8 @@ export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; bind
   if (!changes.length) return;
   const finish = beginResultsChange();
   try {
-  bumpDataRev();
   for (const change of changes) applyGraphAnswers(change.answers);
+  bumpDataRev(!!bulk.answers?.summary || changes.some(change => !!change.answers?.summary));
   if (changes.some((c) => c.created || c.removed)) bumpPageInventoryRev();
   const ui = captureExternalChangeUi?.();
   let restart = false, conflicts = 0;

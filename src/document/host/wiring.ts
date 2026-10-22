@@ -17,6 +17,7 @@ import { pagePropertyEntries } from "../../editor/properties";
 import { errorFamily } from "../../errorFamily";
 import { bindingOwner, ownedWhen, readOwned, readOwnedResource, writeOwned } from "../../owned";
 import { bumpDataRev, bumpPageInventoryRev } from "../../graphSession";
+import { installChangeKeyPublicationHold } from "../../changeKeys";
 import { dismissToast, pushToast } from "../../toasts";
 import { msg, renderEnglish, type UiText } from "../../i18n";
 import type { BlockDto, MergeDecision, PageDto, PageKind } from "../../types";
@@ -333,7 +334,7 @@ function bumpAfterRefreshRound(c: HostClient): void {
     clearTimeout(hold);
     queuedBump = null;
     if (client !== c) return;
-    bumpDataRev();
+    bumpDataRev(true);
     setHostRevision(value => value + 1);
     if (inventoryPending) { inventoryPending = false; bumpPageInventoryRev(); }
   };
@@ -346,6 +347,7 @@ function bumpAfterRefreshRound(c: HostClient): void {
 export function pendingDataRevision(): boolean {
   return dataTimer !== null || dataWaits > 0 || queuedBump !== null;
 }
+installChangeKeyPublicationHold(pendingDataRevision);
 
 // ------------------------------------------------------------------ state view
 

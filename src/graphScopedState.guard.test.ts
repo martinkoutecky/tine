@@ -231,7 +231,6 @@ const LEGACY_COLLECTIONS = new Set([
   "src/modeHooks.ts#outlineSelectionListeners",
   "src/modeHooks.ts#editingStartListeners",
   "src/modeHooks.ts#modeResetListeners",
-  "src/pageIconBatch.ts#requested",
   "src/panes.ts#routers",
   "src/pdfNavigation.ts#intents",
   "src/pdfOwnership.ts#participants",

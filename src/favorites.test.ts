@@ -8,6 +8,7 @@ import { backend } from "./backend";
 import { installDiskHost } from "./diskHost.test.support";
 import { bindTestHost } from "./document/host/wiring.test.support";
 import { bumpDataRev, graphMeta, setGraphMeta } from "./graphSession";
+import { applyChangeSummary } from "./changeSummary";
 import {
   addFavoriteGroup, deleteFavoriteGroup, favorites, favoritesLayout, moveFavoriteRow,
   renameFavoriteGroup, seedFavorites, setFavoriteRowCollapsed, toggleFavorite,
@@ -76,6 +77,24 @@ beforeEach(async () => {
 afterEach(() => { vi.restoreAllMocks(); setToasts([]); setGraphMeta(null); });
 
 describe("favorites arrangement page", () => {
+  it("GX4: unrelated saves do not read the arrangement; its page key, full and gaps do", async () => {
+    applyChangeSummary({ rev: "100000", full: true, pages: [], blocks: [], linksTo: [], props: {}, inventoryChanged: false });
+    bumpDataRev(true);
+    disk.set("Favs", { pre_block: "tine/favorites:: true", blocks: [b("[[A]]")], rev: 1 });
+    seedFavorites(["A"], "Favs"); await settle();
+    const read = vi.mocked(backend().getPage);
+    read.mockClear();
+    const publish = (rev: string, pages: string[], full = false) => {
+      applyChangeSummary({ rev, pages, full, blocks: [], linksTo: [], props: {}, inventoryChanged: false });
+      bumpDataRev(true);
+    };
+    publish("100001", ["other"]); await settle();
+    expect(read).not.toHaveBeenCalled();
+    for (const [rev, full] of [["100002", false], ["100003", true], ["100005", false]] as const) {
+      publish(rev, ["favs"], full); await settle();
+      expect(read).toHaveBeenCalledWith("Favs", "page"); read.mockClear();
+    }
+  });
   it("GH #570: favourite action publishes the source ID before the Favorites row through the page host", async () => {
     disk.set("Source", { pre_block: null, blocks: [b("important block")], rev: 1 });
     ensurePageLoaded({ name: "Source", title: "Source", kind: "page", id: "pages/Source.md", rev: "1", format: "md", pre_block: null,

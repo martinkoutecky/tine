@@ -16,7 +16,8 @@ import { openRefTarget } from "../blockRefActions";
 import { editOccurrence, occurrenceEditable, removeOccurrence, createShownOccurrence, useOccurrenceOwner } from "../refOccurrence";
 import { isJournalTitle } from "../journal";
 import { openPageInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
-import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { changed } from "../changeKeys";
 import { pushToast } from "../toasts";
 import { openOutboundLink, reportLinkOpenFailure } from "../components/ExternalLink";
 import { copyImageFromSrc } from "../copyImage";
@@ -1289,7 +1290,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   let anchorEl: HTMLSpanElement | undefined;
   const [grpResource] = createResource(
     // Not a UUID: nothing to resolve (OG's `parse-uuid` gate), so no lookup.
-    () => isBlockRefUuid(props.id) && `${props.id}\0${graphEpoch()}\0${dataRev()}`,
+    () => isBlockRefUuid(props.id) && `${props.id}\0${changed(`block:${props.id}`)}`,
     async () => {
       const result = await readOwned(graphOwner(), resolveBlockBatched(props.id));
       return result.kind === "current" ? result.value : null;
@@ -1355,7 +1356,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   // descendant tree only after the hover dwell, through a backend operation
   // that applies the cap before DTO allocation and IPC serialization.
   const [previewResource] = createResource(
-    () => (peek.open() && grp() ? `${props.id}\0${graphEpoch()}\0${dataRev()}` : null),
+    () => (peek.open() && grp() ? `${props.id}\0${changed(`block:${props.id}`)}` : null),
     async () => {
       const result = await readOwned(graphOwner(), backend().previewBlock(props.id, PEEK_BLOCK_CAP));
       return result.kind === "current" ? result.value : null;

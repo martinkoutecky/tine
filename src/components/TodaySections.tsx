@@ -5,7 +5,8 @@
 import { For, Match, Show, Switch, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingCurrent, captureBinding } from "../binding";
-import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { graphMeta } from "../graphSession";
+import { changed, pageChangeKey } from "../changeKeys";
 import { bindingOwner, graphOwner, readOwned } from "../owned";
 import { errorFamily } from "../errorFamily";
 import { macroNameForDialect } from "../editor/queryMacroName";
@@ -48,11 +49,10 @@ export function JournalSectionsHeader(): JSX.Element {
   </div>;
 }
 
-async function readSections(): Promise<Sections> {
+async function readSections(names: string[]): Promise<Sections> {
   const owner = graphOwner();
-  const located = await readOwned(owner, locateSectionsPages());
-  if (located.kind !== "current" || located.value.length === 0) return null;
-  const names = [...located.value].sort((a, b) => a.localeCompare(b));
+  if (names.length === 0) return null;
+  names = [...names].sort((a, b) => a.localeCompare(b));
   const read = await readOwned(owner, backend().getPage(names[0], "page"));
   if (read.kind !== "current" || !read.value) return null;
   const format = read.value.format ?? "md";
@@ -86,7 +86,11 @@ export async function customizeTodaySections(): Promise<void> {
 }
 
 export function TodaySections(props: { today: string; upcoming?: JSX.Element }): JSX.Element {
-  const [sections, { refetch }] = createResource(() => `${graphEpoch()}\0${dataRev()}`, readSections);
+  const [pages, { refetch: refetchPages }] = createResource(() => changed("prop:tine/journal-sections"), locateSectionsPages);
+  const [sections, { refetch }] = createResource(() => {
+    const names = readOr(pages, undefined, "sections pages");
+    return names && { names, revision: names.map(name => changed(pageChangeKey(name))).join("\0") };
+  }, source => readSections(source.names));
   const current = () => readOr(sections, null, "today sections");
   const [busy, setBusy] = createSignal(false);
   const customize = () => {
@@ -96,6 +100,7 @@ export function TodaySections(props: { today: string; upcoming?: JSX.Element }):
   };
   return (
     <>
+      <ResourceFailure of={pages} what="today's sections" onRetry={() => void refetchPages()} />
       <ResourceFailure of={sections} what="today's sections" onRetry={() => void refetch()} />
       <Show when={current()} fallback={
         // Resolve which sections own this journal before showing the fallback;

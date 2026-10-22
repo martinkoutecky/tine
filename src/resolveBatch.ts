@@ -1,23 +1,25 @@
 import { reportUiFailure } from "./uiFailure";
 import { backend } from "./backend";
 import { blockRef, node as docNode, resolveGuideBlockRef } from "./document";
-import { dataRev, graphEpoch } from "./graphSession";
+import { graphEpoch } from "./graphSession";
+import { changed } from "./changeKeys";
 import { graphOwner, readOwned } from "./owned";
 import type { RefGroup } from "./types";
 
 // Batches inline ((uuid)) reference / embed resolutions: every request made in the
 // same microtask tick is coalesced into ONE resolve_blocks IPC instead of one per
-// ref. Duplicate refs + re-mounts share the result. Visible UUIDs re-resolve as
-// one batch only after a graph transaction lands (`dataRev`), matching OG's
-// reactive UUID-entity semantics without doing graph work on every keystroke.
-let cacheRev = "";
-const cache = new Map<string, Promise<RefGroup | null | undefined>>();
-const resolvedCache = new Map<string, RefGroup>();
-let pending = new Map<string, (v: RefGroup | null | undefined) => void>();
+// ref. Duplicate refs + re-mounts share the result. Visible IDs re-resolve as
+// one batch when their block keys advance after publication (or a full refresh),
+// matching OG's reactive entity semantics without rereading unrelated targets.
+let cacheRev = -1;
+type Answer = RefGroup | null | undefined;
+const cache = new Map<string, { revision: string; promise: Promise<Answer> }>();
+const resolvedCache = new Map<string, { revision: string; group: RefGroup }>();
+let pending = new Map<string, { revision: string; resolve: (v: Answer) => void }>();
 let scheduled = false;
 
 function ensureCacheRev() {
-  const revision = `${graphEpoch()}\0${dataRev()}`;
+  const revision = graphEpoch();
   if (revision !== cacheRev) {
     cache.clear();
     resolvedCache.clear();
@@ -33,40 +35,44 @@ function flush() {
   const resolvers = pending;
   const batchRev = cacheRev;
   pending = new Map();
-  const owner = graphOwner(() => ensureCacheRev() === batchRev);
+  const owner = graphOwner(() => graphEpoch() === batchRev);
   void readOwned(owner, backend().resolveBlocks(batch))
     .then((result) => {
       if (result.kind === "stale") {
-        batch.forEach((id) => resolvers.get(id)?.(null));
+        batch.forEach((id) => resolvers.get(id)?.resolve(null));
         return;
       }
       const results = result.value;
       batch.forEach((id, i) => {
+        const request = resolvers.get(id)!;
+        if (changed(`block:${id}`) !== request.revision) { request.resolve(null); return; }
         // Backend miss → try the virtual in-app Guide (never on disk). No-op for
         // real graphs, so disk resolutions always win.
         const group = results[i] ?? resolveGuideBlockRef(id);
-        if (group && cacheRev === batchRev && ensureCacheRev() === batchRev) resolvedCache.set(id, group);
-        resolvers.get(id)?.(group);
+        if (group) resolvedCache.set(id, { revision: request.revision, group });
+        request.resolve(group);
       });
     })
     .catch((error) => {
       if (owner()) reportUiFailure("block-resolution", error);
       batch.forEach((id) => {
-        if (cacheRev === batchRev) cache.delete(id);
-        resolvers.get(id)?.(undefined);
+        if (cache.get(id)?.revision === resolvers.get(id)?.revision) cache.delete(id);
+        resolvers.get(id)?.resolve(undefined);
       });
     });
 }
 
-/** Resolve one visible block reference — coalesced and memoized for the current
- *  landed graph revision. `null` means absent; `undefined` means a failed read,
+/** Resolve one visible block reference — coalesced and memoized for its landed
+ *  block revision. `null` means absent; `undefined` means a failed read,
  *  reported through uiFailure and evicted so a later request can retry. */
 export function resolveBlockBatched(id: string): Promise<RefGroup | null | undefined> {
   ensureCacheRev();
+  const revision = changed(`block:${id}`);
   const hit = cache.get(id);
-  if (hit) return hit;
-  const p = new Promise<RefGroup | null | undefined>((resolve) => pending.set(id, resolve));
-  cache.set(id, p);
+  if (hit?.revision === revision) return hit.promise;
+  pending.get(id)?.resolve(null);
+  const p = new Promise<Answer>((resolve) => pending.set(id, { revision, resolve }));
+  cache.set(id, { revision, promise: p });
   if (!scheduled) {
     scheduled = true;
     queueMicrotask(flush);
@@ -78,7 +84,8 @@ export function resolveBlockBatched(id: string): Promise<RefGroup | null | undef
  *  async batched path in this graph epoch. */
 export function resolvedBlockRefSync(id: string): RefGroup | null {
   ensureCacheRev();
-  return resolvedCache.get(id) ?? null;
+  const cached = resolvedCache.get(id);
+  return cached?.revision === changed(`block:${id}`) ? cached.group : null;
 }
 
 /** Where navigation to block `uuid` should go, given its resolved group `g`.

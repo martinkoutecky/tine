@@ -498,3 +498,4 @@ settings-prose-launch-with-the-main-window-hidden-open-it-from-the = Launch with
 
 settings-prose-last-rescan = Last rescan finished at { $time }.
 settings-prose-file-size = { $value } { $unit }
+diagnostics-refresh-everything = Refresh everything on every save (debug)

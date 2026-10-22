@@ -1,5 +1,5 @@
 // Block and page embeds ({{embed ((uuid))}} / {{embed [[page]]}}), split out of Macro.tsx (size ratchet).
-import { For, Show, useContext, type JSX } from "solid-js";
+import { For, Show, createSignal, useContext, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { pageIdentityKey } from "../ui";
 import { blocksContainEdit, createMembershipResource } from "../resultMembership";
@@ -10,6 +10,7 @@ import { visibleBody } from "../render/block";
 import { CollapseSurfaceContext } from "./Block";
 import { hostFolded } from "./macroFold";
 import { resolveBlockBatched } from "../resolveBatch";
+import { changed, pageChangeKey } from "../changeKeys";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { PageEmbedHeader } from "./PageEmbedHeader";
 import { InlineText, PageRef } from "../render/inline";
@@ -49,6 +50,15 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
       && pageIdentityKey(sourcePage) === pageIdentityKey(targetPage);
   };
 
+  // The host may answer a page embed under another spelling (journal day, case,
+  // a Guide page); the summary names the page it answered, so key on both.
+  const [answeredPage, setAnsweredPage] = createSignal<string>();
+  const pageRevision = () => {
+    const requested = pageChangeKey(pageTarget() ?? "");
+    const answered = answeredPage();
+    const answeredKey = answered === undefined ? requested : pageChangeKey(answered);
+    return answeredKey === requested ? changed(requested) : `${changed(requested)}\0${changed(answeredKey)}`;
+  };
   const [data] = createMembershipResource(
     () => selfPageEmbed() ? null : target(),
     target,
@@ -67,10 +77,12 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
       const result = await readOwned(graphOwner(), backend().getPage(pageName, "page"));
       if (result.kind === "stale") return null;
       const p = result.value ?? resolveGuidePageDto(pageName);
+      setAnsweredPage(p?.name);
       return p ? { page: p.name, kind: "page" as PageKind, blocks: p.blocks, embedId: undefined } : null;
     }
     return null;
-  }, (value, id) => !!value && blocksContainEdit(value.blocks, id));
+  }, (value, id) => !!value && blocksContainEdit(value.blocks, id), () => true, false,
+  () => blockTarget() ? changed(`block:${blockTarget()}`) : pageRevision());
 
   const embedded = () => readOr(data, undefined, "embed");
   const foldedPageBody = () => {

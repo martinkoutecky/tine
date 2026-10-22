@@ -1,8 +1,9 @@
-/** Per-graph publication evidence for later keyed refresh slices. Receiving a
- * summary never bumps dataRev or starts a read. No views subscribe in S1. */
+/** Per-graph publication evidence. Receiving stages keys; the existing refresh
+ * gates release them after publication, independently of legacy dataRev readers. */
 import { clearOnBindingInvalidated, graphScopedSignal } from "./binding";
 import type { ChangeSummary } from "./backendTypes";
 import { graphEpoch } from "./graphSession";
+import { stageChangeKeys } from "./changeKeys";
 
 let epoch = -1;
 let revision: bigint | undefined;
@@ -22,7 +23,9 @@ export function applyChangeSummary(change: ChangeSummary | null | undefined): vo
   if (revision !== undefined && rev <= revision) return;
   const full = change.full || revision === undefined || rev !== revision + 1n;
   revision = rev;
-  setLatest(full === change.full ? change : { ...change, full });
+  const accepted = full === change.full ? change : { ...change, full };
+  setLatest(accepted);
+  stageChangeKeys(accepted);
 }
 
 /** undefined means this binding has no summary baseline yet. New consumers

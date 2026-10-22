@@ -5,7 +5,7 @@ import { t } from "../i18n";
 // favorite row drag on exactly the same terms.
 import { For, Show, createResource, createSignal, type JSX } from "solid-js";
 import { resolveBlockBatched, blockRefTarget } from "../resolveBatch";
-import { dataRev, graphEpoch } from "../graphSession";
+import { changed } from "../changeKeys";
 import { readOr } from "../resourceRead";
 import { visibleBody } from "../render/block";
 import { openPageTarget, replaceActiveRoute, openInNewTab } from "../router";
@@ -70,7 +70,7 @@ export function SidebarFavorites(props: {
       <For each={visibleRows(favoritesLayout())}>
         {(row, i) => {
           const [block] = createResource(
-            () => row.node.blockId ? `${row.node.blockId}\0${graphEpoch()}\0${dataRev()}` : null,
+            () => row.node.blockId ? `${row.node.blockId}\0${changed(`block:${row.node.blockId}`)}` : null,
             () => resolveBlockBatched(row.node.blockId!),
           );
           const source = () => readOr(block, undefined, "favorite block");
