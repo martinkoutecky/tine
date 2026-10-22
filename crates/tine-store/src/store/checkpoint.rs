@@ -56,7 +56,12 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// candidate indexes and cached backlinks; old disposable caches rebuild.
 /// 15 (GH #699): parser-token extraction separates stored page tag facets and
 /// aliases; older combined names in derived indexes and answers must rebuild.
-pub(crate) const FORMAT: u32 = 15;
+/// 18 (I-13, D-20261022-GX; Beta line): the block index is written as a
+/// built mark and rebuilt from the loaded pages, whose runtime ids the loader
+/// reassigns; the written rows named ids the loaded pages no longer held.
+/// 16 and 17 are development-line formats, skipped so the two lines never
+/// read each other's checkpoint under one number.
+pub(crate) const FORMAT: u32 = 18;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";

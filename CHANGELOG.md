@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Typing on a page with block references no longer does work that grows with the size of the graph after each save.** When a `((reference))` pointed at a block that no longer exists, or at a block that had moved to another page, Tine searched every page of the graph for it each time the page refreshed (about once a second while typing; around a quarter of a second per refresh on a 13,000-page graph). It now looks the block up directly and reads only the page that holds it. The first launch after this update starts without the launch checkpoint, once (related to GH #746, REG-RESOLVE-BLOCKS-WHOLE-GRAPH).
+
 ## [0.8.0-beta.8] - 2026-10-22
 
 Two fixes for the 0.8.0 stable candidate. Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.

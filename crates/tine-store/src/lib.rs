@@ -114,6 +114,8 @@ mod production_index_guard_tests;
 pub mod publish;
 pub mod query;
 pub mod query_plan;
+#[cfg(test)]
+mod resolve_blocks_work_tests;
 pub mod restore;
 #[cfg(test)]
 mod search_edit_tests;
