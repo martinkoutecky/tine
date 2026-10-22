@@ -59,6 +59,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Settings → unused assets now keeps images referenced only by a duplicate journal file for the same day, including references in its page properties. Moving an asset to trash checks those files too, and refuses if one cannot be read or analyzed (audit L8-03).
 - Refuse page-host I/O through a folder moved outside the graph and replaced by
   a symlink, retaining queued and recovered text (audit L8-01).
 - Refuse a creating save when a new title claimant or possible unreadable owner
