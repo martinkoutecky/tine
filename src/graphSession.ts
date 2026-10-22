@@ -1,5 +1,6 @@
 import { msg } from "./i18n";
-import { createSignal } from "solid-js";
+import { createSignal, untrack } from "solid-js";
+import { pageIdentityKey } from "./pageIdentity";
 import { type GraphMeta } from "./types";
 import { backend } from "./backend";
 import { pushToast } from "./toasts";
@@ -66,8 +67,28 @@ export function bumpGraphEpoch() {
 // derived whole-graph views — {{query}} results, backlinks — can recompute.
 // This is Tine's stand-in for OG's reactive-DB query invalidation.
 export const [dataRev, setDataRev] = createSignal(0);
-export function bumpDataRev() {
-  setDataRev((n) => n + 1);
+// GH #746: the last two distinct pages a save-driven bump published, and the
+// last bump with no page list, so a page's own references can tell a save of
+// only that page apart. O(1) per bump and per question.
+let latestPage = { key: "", rev: 0 };
+let earlierPage = { key: "", rev: 0 };
+let unscopedRev = 0;
+/** `pages`: the pages this bump published, when that is all that changed. */
+export function bumpDataRev(pages?: readonly string[]) {
+  const rev = untrack(dataRev) + 1;
+  if (!pages?.length) unscopedRev = rev;
+  for (const name of pages ?? []) {
+    const key = pageIdentityKey(name);
+    if (key !== latestPage.key) earlierPage = latestPage;
+    latestPage = { key, rev };
+  }
+  setDataRev(rev);
+}
+/** Tracks `dataRev`; the latest revision that changed anything but page `name`. */
+export function dataRevBeyond(name: string): number {
+  dataRev();
+  const other = latestPage.key !== pageIdentityKey(name) ? latestPage : earlierPage;
+  return Math.max(unscopedRev, other.rev);
 }
 // Page-name inventory changes are much rarer than ordinary content saves. Keep
 // their invalidation separate so navigation can refresh canonical names after a

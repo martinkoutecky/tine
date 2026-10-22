@@ -223,8 +223,10 @@ clearOnBindingInvalidated(() => {
   if (dataTimer) clearTimeout(dataTimer);
   dataTimer = null;
   pendingNeeds.clear();
+  pendingNames.clear();
   queuedBump?.cancel();
   queuedBump = null;
+  queuedPages = [];
   resetRefreshReads();
   hostChanged();
 });
@@ -245,7 +247,7 @@ function listen(): void {
     try { c.receive(mail); } finally { finish(); }
     const name = mail.session === c.session ? c.nameOfKey(mail.key) : null;
     if (!name || !mail.answer?.took) return;
-    notePublication(mail.key, mail.answer.version);
+    notePublication(mail.key, mail.answer.version, name);
   });
 }
 
@@ -287,18 +289,22 @@ function pageWritable(name: string): boolean {
 // ------------------------------------------------------------------ data revision
 
 const pendingNeeds = new Map<string, number>();
+const pendingNames = new Set<string>();
 let dataTimer: ReturnType<typeof setTimeout> | null = null;
 let dataWaits = 0;
 /** The one trailing bump waiting for the previous refresh round (GH #746). */
 let queuedBump: { cancel: () => void } | null = null;
+/** The pages the queued bump publishes (GH #746: a page's own references skip a save of only that page). */
+let queuedPages: string[] = [];
 /** The trailing bump waits at most this long for the previous round, so a read
  * that never settles, or reads that never go quiet, cannot stop refreshes. */
 export const REFRESH_HOLD_MAX_MS = 5000;
 
 /** Whole-graph views recompute once the host published what it took, after
  * edits go quiet (today's 700 ms coalescing). */
-function notePublication(key: string, version: number): void {
+function notePublication(key: string, version: number, name: string): void {
   pendingNeeds.set(key, Math.max(version, pendingNeeds.get(key) ?? 0));
+  pendingNames.add(name);
   setHostRevision(value => value + 1);
   if (dataTimer) clearTimeout(dataTimer);
   dataTimer = setTimeout(() => {
@@ -306,11 +312,13 @@ function notePublication(key: string, version: number): void {
     const c = client;
     if (!c) return;
     const needs = [...pendingNeeds].map(([need, at]) => ({ key: need, version: at }));
+    const names = [...pendingNames];
     pendingNeeds.clear();
+    pendingNames.clear();
     dataWaits += 1;
     void c.published(needs).finally(() => {
       dataWaits -= 1;
-      if (client === c) bumpAfterRefreshRound(c);
+      if (client === c) bumpAfterRefreshRound(c, names);
     });
   }, 700);
 }
@@ -320,7 +328,9 @@ function notePublication(key: string, version: number): void {
  * publication meanwhile is covered by this one trailing bump, which runs after
  * all of them, so the last state is always refreshed. Cheap rounds are idle
  * by now and bump at once, as before. */
-function bumpAfterRefreshRound(c: HostClient): void {
+function bumpAfterRefreshRound(c: HostClient, names: string[]): void {
+  // The trailing bump covers every publication meanwhile, so it names all their pages.
+  queuedPages.push(...names);
   if (queuedBump) return;
   let done = false;
   const bump = () => {
@@ -328,8 +338,10 @@ function bumpAfterRefreshRound(c: HostClient): void {
     done = true;
     clearTimeout(hold);
     queuedBump = null;
+    const pages = queuedPages;
+    queuedPages = [];
     if (client !== c) return;
-    bumpDataRev();
+    bumpDataRev(pages);
     setHostRevision(value => value + 1);
     if (inventoryPending) { inventoryPending = false; bumpPageInventoryRev(); }
   };

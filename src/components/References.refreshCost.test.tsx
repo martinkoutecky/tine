@@ -2,7 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import type { RefGroup } from "../types";
-import { resetStore } from "../document";
+import { resetStore, setRaw } from "../document";
+import { loadRoutedPage } from "../document/workingSet";
 import { endEdit } from "../editorController";
 import { bumpDataRev } from "../graphSession";
 import { UnlinkedReferences } from "./UnlinkedReferences";
@@ -93,6 +94,42 @@ it("keeps shown unlinked rows in place, without Loading, while a refresh with th
     await tick();
     await tick();
     expect(root.querySelector('[data-reference-block="b1"]'), "an unchanged row is not mounted again").toBe(row);
+  } finally {
+    dispose();
+  }
+});
+
+it("a save that published only this page refreshes neither section, unless it touched the page header", async () => {
+  loadRoutedPage({ name: "Target", kind: "page", title: "Target", id: "pages/Target.md", rev: "r1", pre_block: null,
+    blocks: [
+      { id: "t-head", raw: "tags:: x", collapsed: false, children: [] },
+      { id: "t-body", raw: "body", collapsed: false, children: [] },
+    ] });
+  const unlinked = vi.spyOn(backend(), "getUnlinkedRefs").mockImplementation(async () => answer(2));
+  const linked = vi.spyOn(backend(), "getBacklinks").mockImplementation(async () => answer(2));
+  const { root, dispose } = mount(() => <><LinkedReferences name="Target" /><UnlinkedReferences name="Target" /></>);
+  const reads = () => [linked.mock.calls.length, unlinked.mock.calls.length];
+  const save = async (pages?: string[]) => { bumpDataRev(pages); await tick(); await tick(); };
+  try {
+    await vi.waitFor(() => expect(root.querySelector(".linked-references")).not.toBeNull());
+    expect(reads()).toEqual([1, 1]);
+    setRaw("t-body", "body edited", { timetracking: false });
+    await save(["Target"]);
+    await save(["target"]);
+    expect(reads(), "the host leaves the page's own blocks out of its references").toEqual([1, 1]);
+    await save(["Target", "Source 1"]);
+    expect(reads(), "another page published with it").toEqual([2, 2]);
+    await save(["Source 1"]);
+    expect(reads()).toEqual([3, 3]);
+    await save();
+    expect(reads(), "a change with no page list").toEqual([4, 4]);
+    // alias:: lives in the page header: its saves refresh until one finds the
+    // page settled (never, here: there is no host to take the edit).
+    setRaw("t-head", "tags:: x\nalias:: Goal", { timetracking: false });
+    await save(["Target"]);
+    expect(reads()).toEqual([5, 5]);
+    await save(["Target"]);
+    expect(reads()).toEqual([6, 6]);
   } finally {
     dispose();
   }

@@ -1,7 +1,7 @@
 import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
 import { bulkCollapseTarget } from "../collapseToggle";
 import { t } from "../i18n";
-import { For, Show, createResource, createSignal, createMemo, createEffect, onCleanup, type JSX } from "solid-js";
+import { For, Show, createResource, createSignal, createMemo, createEffect, onCleanup, untrack, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { classifyReferenceLoadError, referenceLoadErrorMessage, type ReferenceLoadError } from "../referenceLoadError";
 import { graphOwner, latestOwner, readOwned } from "../owned";
@@ -9,7 +9,7 @@ import { openPage, openPageInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openPageInSidebar, openPageContextMenu, searchRemoveAccents } from "../ui";
-import { graphMeta } from "../graphSession";
+import { dataRev, dataRevBeyond, graphMeta } from "../graphSession";
 import { LiveRefGroup } from "./LiveRefGroup";
 import type { BacklinkFilterEntry, BacklinkFilterTarget, BlockDto, RefGroup } from "../types";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
@@ -25,7 +25,7 @@ import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 import { activeSurface } from "../editorController";
 import { navigationName } from "../pageIndex";
-import { readPageProperty, setPageProperty } from "../document";
+import { isDirty, isSaving, node as docNode, pageByName, pendingDataRevision, readPageProperty, setPageProperty } from "../document";
 import { parseReferenceFilters, writeReferenceFilters } from "../referenceFilters";
 
 // One identity fold for chips, filters and group merging: the old private `norm`
@@ -121,6 +121,34 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
   let alive = true;
   onCleanup(() => { alive = false; });
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
+  // GH #746: the host leaves this page's own blocks out of both sections, so a
+  // save that published only this page leaves them as they were, unless it
+  // changed the page header (alias::, title::; the pre-block or first block).
+  // A header change refreshes on every save until one finds the page settled.
+  const ownHeader = () => {
+    const page = pageByName(props.name);
+    const first = page?.roots[0];
+    return `${page?.preBlock ?? ""}\0${first ? docNode(first)?.raw ?? "" : ""}`;
+  };
+  let header = untrack(ownHeader);
+  let headerPending = false;
+  let seenRev = untrack(dataRev);
+  let seenBeyond = untrack(() => dataRevBeyond(props.name));
+  let answerRevision = 0;
+  const revision = createMemo(() => {
+    const rev = dataRev();
+    const beyond = dataRevBeyond(props.name);
+    const current = ownHeader();
+    if (current !== header) { header = current; headerPending = true; }
+    if (rev === seenRev) return answerRevision;
+    seenRev = rev;
+    if (beyond !== seenBeyond || headerPending) {
+      seenBeyond = beyond;
+      answerRevision += 1;
+      if (untrack(() => !isDirty(props.name) && !isSaving(props.name) && !pendingDataRevision())) headerPending = false;
+    }
+    return answerRevision;
+  });
   const [groupsResource] = createMembershipResource(
     () => props.name,
     () => props.name,
@@ -139,6 +167,9 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
     // backlinks change. Only an editor inside the result surface needs its
     // answer retained until blur; source edits may follow published revisions.
     (groups, id) => (!props.journalFeed || !!activeSurface()?.startsWith("ref:")) && groupsContainEdit(groups, id),
+    undefined,
+    false,
+    revision,
   );
   // The resource loader reports failures through loadError; readOr covers reads.
   const groups = () => readOr(groupsResource, undefined, "linked references");

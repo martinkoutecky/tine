@@ -30,6 +30,7 @@ export function createMembershipResource<S, T>(
   contains: (value: T, id: string) => boolean,
   invalidate: Accessor<boolean> = () => true,
   guardResults = false,
+  revision: Accessor<number> = dataRev,
 ) {
   let snapshot: T | undefined;
   let scope = "";
@@ -45,7 +46,7 @@ export function createMembershipResource<S, T>(
   const request = createMemo(() => {
     const nextScope = currentScope();
     const input = inputs();
-    const revision = invalidate() ? dataRev() : 0;
+    const answerRevision = invalidate() ? revision() : 0;
     // A suppressed (collapsed) read is display-only: never stamped, so never acted on.
     const guarded = guardResults && invalidate();
     const epoch = guarded ? resultsEpoch() : 0;
@@ -57,7 +58,7 @@ export function createMembershipResource<S, T>(
       retained = undefined;
     }
     const draft = snapshot === undefined ? undefined : resultDrafts().find(draft => untrack(() => contains(snapshot!, draft.id)));
-    if (draft) return { input, scope, revision, epoch, settled, guarded, release, held: true };
+    if (draft) return { input, scope, revision: answerRevision, epoch, settled, guarded, release, held: true };
     if (retained && guarded && retained.epoch !== epoch) { retained = undefined; release++; }
     if (id && snapshot !== undefined && (!guarded || snapshotEpoch === epoch) && untrack(() => contains(snapshot!, id))) {
       retained = { id, page: untrack(() => docNode(id)?.page), epoch };
@@ -65,11 +66,11 @@ export function createMembershipResource<S, T>(
     if (retained) {
       const page = retained.page;
       const unsettled = page && (isDirty(page) || isSaving(page) || isConflicted(page) || pendingDataRevision());
-      if (id === retained.id || unsettled) return { input, scope, revision, epoch, settled, guarded, release, held: true };
+      if (id === retained.id || unsettled) return { input, scope, revision: answerRevision, epoch, settled, guarded, release, held: true };
       retained = undefined;
       release++;
     }
-    return { input, scope, revision, epoch, settled, guarded, release, held: false };
+    return { input, scope, revision: answerRevision, epoch, settled, guarded, release, held: false };
   });
   // Holding never starts another scan. Keep a stable source token during the
   // session, even across many autosave revisions; release starts exactly once.
