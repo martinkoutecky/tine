@@ -17,6 +17,7 @@ import { type PageTarget } from "../routeTypes";
 import { captureHistoryEditorContext, editingId, endEdit, restoreHistoryEditorContext, startEditing } from "../editorController";
 import { existingBlockId } from "../blockIdentity";
 import { clearSeededFacets } from "../render/facets";
+import { clearParseCache } from "../render/parse";
 import { notifyModeReset } from "../modeHooks";
 import { deferExternalReload, replayDeferredExternalReloads, whenPageReplaceable } from "./deferredReload";
 import { isBlockMoving } from "./edits/moves";
@@ -505,9 +506,9 @@ export function resetStore() {
   // after a graph switch would otherwise restore (and save) those into the new
   // graph, even creating a foreign page there.
   clearUndoHistory();
-  // Drop the old graph's seeded facets (the never-evicted tier) so they don't linger
-  // across the switch (audit P2).
+  // Release graph text and owner observers eagerly, before publishing new nodes.
   clearSeededFacets();
+  clearParseCache();
   clearMatrixDimensionCache();
   resetReferenceSectionState();
   for (const name of pageInstanceGenerations.keys()) retirePageInstance(name);
