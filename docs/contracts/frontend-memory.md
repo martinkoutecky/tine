@@ -1,4 +1,4 @@
-# Frontend text lifetimes (L10-01, L10-02, L10-04 / L7-01)
+# Frontend text lifetimes (L10-01–04 / L7-01)
 
 Backend facets belong to loaded document nodes. Removing or replacing an owner
 releases its seed; identical text shared by loaded nodes retains one entry until
@@ -26,5 +26,25 @@ can cause a conservative reread but never a stale cache hit.
 An export preview owns its warmed reference answers until it closes, including
 nested references; output completeness does not depend on inactive-cache capacity.
 
-These are retention charges, not device heap budgets. No persisted format,
-storage write, or journal retirement behavior changes. L10-03 remains separate.
+These are retention charges, not device heap budgets. No persisted format or
+storage write changes.
+
+## Journal feed days (L10-03, development only)
+
+The feed keeps day names and measured-height placeholders, rather than retaining
+every appended document. Once more than 12 days are loaded, measured offscreen
+days retire their nodes, facet owners and undo snapshots. Near-viewport days,
+editing pages, drafts, unsaved/saving/conflicted pages, transfers, graph freezes,
+selection and routed/deep-link/sidebar targets stay loaded even above that bound.
+Every mounted feed surface must have measured the day and be away from it before
+it can retire. A day near any viewport reloads through the normal owned page read
+and admission gate. Retiring and reloading preserve the reader's viewport and
+measured space; no offscreen source text cache is introduced.
+Measured heights survive feed surface disposal/reopening, are pruned on the
+next feed surface update, and clear with the graph binding. No document body
+is retained for this geometry.
+
+Find/Replace searches loaded days only. When Journals is visible, Find shows
+“N older days not searched — search all journals” for retired days. Its action
+opens the existing graph-wide search tab with the current query (D-20261022-JN).
+Find never reads retired bodies from disk.

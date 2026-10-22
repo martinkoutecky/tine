@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-feed-retirement.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Scrolling a long Journals feed down and back releases offscreen documents, preserves the visible scroll position on retirement/reload, saves edits in a reloaded day with sibling content intact, and Find reports retired days while searching loaded documents only.","blocking":true,"authority":"L10-03; D-20261022-JN/JE"}],
+      "acceptableVariations": ["Read and render latency; a few pixels of layout rounding; additional loaded days held by editing, selection, routes or nearby viewports."],
+      "nonRequirements": ["Exact DOM nesting or palette; certification outside Linux WebKitGTK; full graph searching within Find; green-suite burn-in, which belongs to the manager."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-reference-keys.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"On a routed page with linked/unlinked references expanded and tagged pages visible, typing on that page and an unrelated sidebar page causes no reference requests for the routed target. Adding a plain mention, link and page tag in the sidebar or through an external file write updates the corresponding sections; external removal removes those answers.","blocking":true,"authority":"GX4 S2; GH #746"}],
       "acceptableVariations": ["Publication, watcher and rendering latency; batching of related refreshes."],

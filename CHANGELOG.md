@@ -59,6 +59,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Long journal feeds retain fewer documents** (L10-03, development): offscreen days retire behind measured-height placeholders and reload when approached. Editing, unsaved and selected content stays loaded. Find searches loaded days and offers “search all journals” with the same query for older retired days.
+
 - Settings → unused assets now keeps images referenced only by a duplicate journal file for the same day, including references in its page properties. Moving an asset to trash checks those files too, and refuses if one cannot be read or analyzed (audit L8-03).
 - Long sessions release unloaded block facets and obsolete block-reference answers, bound historical parse and inactive answer memory by bytes, and clear retained graph text on reset (audit L10-01, L10-02, L10-04 / L7-01).
 - Reference sections, tagged pages and block referrers refresh after related edits without refetching on unrelated saves, including while collapsed (GH #746; development 0.9).

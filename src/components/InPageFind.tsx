@@ -7,6 +7,8 @@ import {
   inPageFindMatches,
   inPageFindOpen,
   inPageFindQuery,
+  inPageFindRetiredDays,
+  inPageFindPaneScopeId,
   refreshInPageFindHighlights,
   setInPageFindQuery,
   stepInPageFind,
@@ -21,6 +23,7 @@ import {
 } from "../inpageReplace";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 import { onEachWindow } from "../windowRealm";
+import { paneRouter } from "../panes";
 
 const FIND_QUERY_DEBOUNCE_MS = 110;
 
@@ -181,6 +184,16 @@ export function InPageFind(): JSX.Element {
             </svg>
           </button>
         </div>
+        <Show when={inPageFindRetiredDays()}>{count => <div class="inpage-find-retired" role="status">
+          {t("in-page-find-retired-days", { count: count() })}{" — "}
+          <button type="button" class="inpage-replace-btn" onClick={() => {
+            commitQuery();
+            const router = paneRouter(inPageFindPaneScopeId());
+            const query = draftQuery();
+            closeFind();
+            router.openQueryInNewTab(query, "search", true);
+          }}>{t("in-page-find-search-journals")}</button>
+        </div>}</Show>
         <Show when={inPageReplaceOpen()}>
           <div class="inpage-find-row inpage-replace-row">
             <input

@@ -49,7 +49,7 @@ export interface DocState {
   // adapted to lazy loading — the Rust cache is the full graph DB).
   pages: FeedPage[];
   // Page names the MAIN content area shows, in order (a single page, or the
-  // journals feed). A subset of `pages`.
+  // journals feed). Retired feed days retain only their name and UI geometry.
   feed: string[];
   loaded: boolean;
 }

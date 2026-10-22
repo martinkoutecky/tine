@@ -1,6 +1,6 @@
 import { revealOutlineBlock } from "./outlineViewport";
 import { batch, createMemo, createRoot, createSignal } from "solid-js";
-import { mainPages, pageByName, revealNode, resolveBlockRef, node as docNode } from "./document";
+import { mainPages, pageByName, feedNames, revealNode, resolveBlockRef, node as docNode } from "./document";
 import { renderedBlockText, type RenderedTextOptions } from "./render/renderedText";
 import { renderedBlocks } from "./lazyObserve";
 import type { Format } from "./types";
@@ -114,6 +114,13 @@ export const inPageFindQuery = state.query;
 export const inPageFindActiveIndex = state.activeIndex;
 export const inPageFindFocusRequest = state.focusRequest;
 export const inPageFindPaneId = state.paneId;
+
+/** Count shared retired days once, even when several visible panes show Journals.
+ * Find walks loaded roots only and never reads an unloaded day. */
+export function inPageFindRetiredDays(): number {
+  if (!layoutPaneIds(visibleLayoutNode()).some(id => paneRouter(id).route().kind === "journals")) return 0;
+  return feedNames().reduce((count, name) => count + (pageByName(name) ? 0 : 1), 0);
+}
 
 export function inPageFindPreservesEditorBlur(): boolean {
   return state.preserveEditorBlur();
