@@ -264,6 +264,6 @@ export function insertMatrixGridAfter(afterId: string, title: string, matrix: re
 
 export function gridVisibleMatrix(id: string): string[][] {
   return (docNode(id)?.children ?? []).map((rowId) =>
-    (docNode(rowId)?.children ?? []).map((cellId) => visibleBody(docNode(cellId)?.raw ?? "").join("\n")),
+    (docNode(rowId)?.children ?? []).map((cellId) => visibleBody(docNode(cellId)?.raw ?? "", formatForBlock(cellId)).join("\n")),
   );
 }

@@ -893,7 +893,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
     const owner = pageByName(pageName());
     return owner ? pageTargetFromFeedPage(owner) : { name: pageName(), pageKind: pageKind() };
   };
-  const crumb = (id: string) => visibleBody(docNode(id).raw)[0] || "…";
+  const crumb = (id: string) => visibleBody(docNode(id).raw, formatForBlock(id))[0] || "…";
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   const focusTrailing = () => {
     const root = docNode(props.id);

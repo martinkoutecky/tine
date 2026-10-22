@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-rn-cf-org-body.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"An unloaded uppercase-extension Org block's Note:: body remains visible in a routed Markdown page's bare block reference and in Foo's linked references, while the Org source remains byte-identical. Extending a bare running task retains one clock; completing it with its checkbox closes that clock in the saved file.","blocking":false,"authority":"RN-C/F; audits L3-04 and L3-07"}],
+      "acceptableVariations": ["Rendering and inventory arrival latency; whitespace around inline links."],
+      "nonRequirements": ["Exact pixels, DOM layout or timing; export and ancestor boundary cases covered by component tests."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-reference-keys.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"On a routed page with linked/unlinked references expanded and tagged pages visible, typing on that page and an unrelated sidebar page causes no reference requests for the routed target. Adding a plain mention, link and page tag in the sidebar or through an external file write updates the corresponding sections; external removal removes those answers.","blocking":true,"authority":"GX4 S2; GH #746"}],
       "acceptableVariations": ["Publication, watcher and rendering latency; batching of related refreshes."],

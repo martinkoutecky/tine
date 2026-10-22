@@ -6,13 +6,13 @@ const aliasNames = (text: string | null, format?: Format) => aliasNamesOf(pagePr
 
 describe("visibleBody (body text for labels / reference render)", () => {
   it("uses whole-block task recognition before extracting the first visible line", () => {
-    expect(visibleBody("\n\nTODO buy milk")).toEqual(["buy milk"]);
-    expect(visibleBody("TODO\nmore detail")).toEqual(["TODO", "more detail"]);
-    expect(visibleBody("TODO TODO buy milk")).toEqual(["TODO buy milk"]);
-    expect(visibleBody("id:: example\nTODO buy milk")).toEqual(["TODO buy milk"]);
+    expect(visibleBody("\n\nTODO buy milk", "md")).toEqual(["buy milk"]);
+    expect(visibleBody("TODO\nmore detail", "md")).toEqual(["TODO", "more detail"]);
+    expect(visibleBody("TODO TODO buy milk", "md")).toEqual(["TODO buy milk"]);
+    expect(visibleBody("id:: example\nTODO buy milk", "md")).toEqual(["TODO buy milk"]);
   });
   it("drops real property lines but keeps a fenced key:: as code content", () => {
-    const body = visibleBody("title:: Real\n```\nlang:: rust\nlet x = 1;\n```\nfoo:: bar").join("\n");
+    const body = visibleBody("title:: Real\n```\nlang:: rust\nlet x = 1;\n```\nfoo:: bar", "md").join("\n");
     expect(body).not.toContain("title:: Real"); // real block property → not body text
     expect(body).not.toContain("foo:: bar");
     expect(body).toContain("lang:: rust"); // fenced → stays as code content
@@ -78,16 +78,16 @@ describe("isPropertyLine", () => {
 
 describe("visibleBody strips header chrome from the body text", () => {
   it("strips marker / priority / heading prefix from the first line", () => {
-    expect(visibleBody("TODO [#A] ## ship it")).toEqual(["ship it"]);
-    expect(visibleBody("DOING write the doc")).toEqual(["write the doc"]);
+    expect(visibleBody("TODO [#A] ## ship it", "md")).toEqual(["ship it"]);
+    expect(visibleBody("DOING write the doc", "md")).toEqual(["write the doc"]);
   });
   it("removes a standalone SCHEDULED/DEADLINE planning line (it's a date badge)", () => {
-    expect(visibleBody("TODO ship it\nSCHEDULED: <2026-07-06 Mon>")).toEqual(["ship it"]);
-    expect(visibleBody("DEADLINE: <2026-07-06 Mon>\npay rent")).toEqual(["pay rent"]);
+    expect(visibleBody("TODO ship it\nSCHEDULED: <2026-07-06 Mon>", "md")).toEqual(["ship it"]);
+    expect(visibleBody("DEADLINE: <2026-07-06 Mon>\npay rent", "md")).toEqual(["pay rent"]);
   });
   it("keeps an inline (non-standalone) SCHEDULED as body text (not a real timestamp)", () => {
     // Mirrors lsdoc: only a standalone planning line is a Timestamp; inline stays text.
-    expect(visibleBody("do SCHEDULED: <2026-07-06 Mon> the thing")).toEqual([
+    expect(visibleBody("do SCHEDULED: <2026-07-06 Mon> the thing", "md")).toEqual([
       "do SCHEDULED: <2026-07-06 Mon> the thing",
     ]);
   });
@@ -95,29 +95,29 @@ describe("visibleBody strips header chrome from the body text", () => {
 
 describe("visibleBody removes exactly the metadata lsdoc accepted (I-12)", () => {
   it("drops one planning line carrying SCHEDULED and DEADLINE together", () => {
-    expect(visibleBody("first\nSCHEDULED: <2026-01-01 Thu> DEADLINE: <2026-01-02 Fri>\nbody")).toEqual([
+    expect(visibleBody("first\nSCHEDULED: <2026-01-01 Thu> DEADLINE: <2026-01-02 Fri>\nbody", "md")).toEqual([
       "first",
       "body",
     ]);
   });
   it("keeps the text of a drawer that never closes (it is body, not metadata)", () => {
-    expect(visibleBody("first\n:LOGBOOK:\nbody after the open drawer")).toEqual([
+    expect(visibleBody("first\n:LOGBOOK:\nbody after the open drawer", "md")).toEqual([
       "first",
       ":LOGBOOK:",
       "body after the open drawer",
     ]);
   });
   it("keeps a CLOCK-looking line outside any drawer", () => {
-    expect(visibleBody("first\nCLOCK: not really a clock\nbody")).toEqual([
+    expect(visibleBody("first\nCLOCK: not really a clock\nbody", "md")).toEqual([
       "first",
       "CLOCK: not really a clock",
       "body",
     ]);
   });
   it("still drops a closed PROPERTIES drawer and a real logbook drawer", () => {
-    expect(visibleBody("first\n  :PROPERTIES:\n  :a: b\n  :END:\nbody")).toEqual(["first", "body"]);
+    expect(visibleBody("first\n  :PROPERTIES:\n  :a: b\n  :END:\nbody", "md")).toEqual(["first", "body"]);
     expect(
-      visibleBody("TODO first\n:LOGBOOK:\nCLOCK: [2026-01-01 Thu 10:00:00]--[2026-01-01 Thu 10:05:00] =>  00:05:00\n:END:\nbody"),
+      visibleBody("TODO first\n:LOGBOOK:\nCLOCK: [2026-01-01 Thu 10:00:00]--[2026-01-01 Thu 10:05:00] =>  00:05:00\n:END:\nbody", "md"),
     ).toEqual(["first", "body"]);
   });
 });

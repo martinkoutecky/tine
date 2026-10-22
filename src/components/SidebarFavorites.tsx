@@ -8,6 +8,7 @@ import { resolveBlockBatched, blockRefTarget } from "../resolveBatch";
 import { changed } from "../changeKeys";
 import { readOr } from "../resourceRead";
 import { visibleBody } from "../render/block";
+import { formatForPage } from "../document";
 import { openPageTarget, replaceActiveRoute, openInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { openBlockInSidebar, openBlockRefContextMenu } from "../ui";
@@ -103,7 +104,7 @@ export function SidebarFavorites(props: {
             </div>
           );
           const kind = row.node.kind ?? itemKind(name ?? "");
-          const title = () => row.node.blockId ? (source()?.blocks[0] ? visibleBody(source()!.blocks[0].raw).join(" ") : row.node.blockId) : name!;
+          const title = () => row.node.blockId ? (source()?.blocks[0] ? visibleBody(source()!.blocks[0].raw, formatForPage(source()!.page)).join(" ") : row.node.blockId) : name!;
           const open = (gesture: "normal" | "sidebar" | "new-tab" | "pane" | "context", point?: { x: number; y: number }) => {
             if (!row.node.blockId) { props.open(name!, kind, gesture, point); return; }
             const group = source();

@@ -81,7 +81,7 @@ describe("block reference to a soft-line-break block (GH #506)", () => {
   });
 
   it("visibleBody keeps both soft-break lines (the extractor is not the truncating layer)", () => {
-    expect(visibleBody(TARGET_RAW)).toEqual(["A", "B"]);
+    expect(visibleBody(TARGET_RAW, "md")).toEqual(["A", "B"]);
   });
 
   it("the SOURCE block itself renders both soft-break lines", () => {

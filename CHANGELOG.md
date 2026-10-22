@@ -59,6 +59,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Org body text such as `Note:: see [[Foo]]` remains visible in references, breadcrumbs and export (audit L3-04, RN-C). Renaming pages recognizes `.ORG` and `.Org` referrers as Org, preserving inline code and updating Org file links (audit L7s4-01).
+- CLI edits of an already running bare task use the editor's previous-marker rule, avoiding duplicate open clocks and closing the existing clock on completion when the replacement buffer retains its logbook (audit L3-07, RN-F).
 - Settings → unused assets now keeps images referenced only by a duplicate journal file for the same day, including references in its page properties. Moving an asset to trash checks those files too, and refuses if one cannot be read or analyzed (audit L8-03).
 - Reference sections, tagged pages and block referrers refresh after related edits without refetching on unrelated saves, including while collapsed (GH #746; development 0.9).
 - References, embeds, favorite blocks, journal sections and page icons stay live after target edits without fetching unrelated targets again on every save (GH #746).

@@ -125,6 +125,28 @@ fn clock_out_with_regions(
         .expect("CLOCK edit on parsed block")
 }
 
+/// Apply a typed edit using the previous buffer's task state (GH #741, L3-07).
+/// OG's `with-timetracking` takes that state from the saved block. Here the
+/// parser reads the whole previous raw first, then its title line for a bare
+/// marker followed by metadata. Both CLI and WASM use this boundary.
+pub fn apply_edit_transition_at(
+    old_raw: &str,
+    raw: &str,
+    format: LogbookFormat,
+    enabled: bool,
+    with_seconds: bool,
+    now: TimestampParts,
+) -> String {
+    if !enabled {
+        return raw.to_string();
+    }
+    let org = format == LogbookFormat::Org;
+    let marker = |text: &str| crate::block_regions::header_tokens(text, org).marker;
+    let old = marker(old_raw).or_else(|| old_raw.split_once('\n').and_then(|(title, _)| marker(title)));
+    let new = marker(raw);
+    apply_marker_transition_at(raw, format, old.as_deref(), new.as_deref(), enabled, with_seconds, now)
+}
+
 pub fn apply_marker_transition_at(
     raw: &str,
     format: LogbookFormat,

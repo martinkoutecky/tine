@@ -259,7 +259,7 @@ impl<'a> Transaction<'a> {
                 let new = if *rebind_title {
                     rewrite_move(&old, &path, renames, name_format)?
                 } else if let Some(new) = reused {
-                    let is_org = path.extension().and_then(|ext| ext.to_str()) == Some("org");
+                    let is_org = Format::from_path(&path) == Format::Org;
                     refuse_read_only_org(&old, &new, is_org)?;
                     new
                 } else {
