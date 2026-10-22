@@ -177,6 +177,30 @@ pub(crate) fn check_repository(slot: &GraphSlot) -> Result<(), ErrorBody> {
     Ok(())
 }
 
+/// Exact-path admission before a run can flush or save a page.
+pub(crate) fn check_page(slot: &GraphSlot, page: &PageId) -> Result<(), ErrorBody> {
+    let repo = open_repo(slot)?;
+    repo.check_raw_content(&repo.path_of(page))
+}
+
+/// Raw-content eligibility shared by runs and autocommits. Never execute
+/// filters: their working bytes may be plaintext that must not enter Git.
+pub(super) fn raw_content_conversion(
+    repo: &Repository,
+    path: &Path,
+) -> Result<Option<&'static str>, git2::Error> {
+    for attr in ["filter", "ident", "working-tree-encoding"] {
+        let value = repo.get_attr(path, attr, git2::AttrCheckFlags::FILE_THEN_INDEX)?;
+        if !matches!(
+            git2::AttrValue::from_string(value),
+            git2::AttrValue::Unspecified | git2::AttrValue::False
+        ) {
+            return Ok(Some(attr));
+        }
+    }
+    Ok(None)
+}
+
 /// The graph's repository, opened and checked for commits (git-sync DESIGN
 /// §3.1): not bare, no merge/rebase/cherry-pick in progress, on a branch.
 pub(super) struct Repo {
@@ -227,6 +251,37 @@ pub(super) fn open_repo_at(graph_root: &Path) -> Result<Repo, ErrorBody> {
 }
 
 impl Repo {
+    fn check_raw_content(&self, path: &str) -> Result<(), ErrorBody> {
+        if let Some(attr) =
+            raw_content_conversion(&self.repo, Path::new(path)).map_err(git_failed)?
+        {
+            return Err(not_usable(format!(
+                "{path} has the Git {attr} attribute; the run cannot commit its raw bytes; use Git's conversion workflow"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Bind ref/index updates to the branch captured at open. A checkout
+    /// changes the index's owner: refuse, never retry onto that new branch.
+    pub(super) fn lock_index(&self, waiting: bool) -> Result<IndexLock, LockRefusal> {
+        #[cfg(test)]
+        lock_test_hook::pause();
+        let lock = if waiting {
+            IndexLock::acquire_waiting(&self.repo)
+        } else {
+            IndexLock::acquire(&self.repo)
+        }?;
+        let head = self
+            .repo
+            .find_reference("HEAD")
+            .map_err(|e| LockRefusal::Failed(e.message().to_string()))?;
+        if head.symbolic_target_bytes() != Some(self.branch.as_bytes()) {
+            return Err(LockRefusal::BranchChanged);
+        }
+        Ok(lock)
+    }
+
     fn path_of(&self, page: &PageId) -> String {
         let path = self.prefix.join(page.as_str());
         path.to_string_lossy().replace('\\', "/")
@@ -382,6 +437,8 @@ pub(super) enum LockRefusal {
     /// index would record every file as deleted (`rm .git/index` before a
     /// `git reset`).
     Missing,
+    /// An honest checkout changed HEAD before the index lock was taken.
+    BranchChanged,
     Failed(String),
 }
 
@@ -397,6 +454,7 @@ impl LockRefusal {
             Self::Missing => {
                 "The repository's index is missing; run `git reset` in it to rebuild it.".into()
             }
+            Self::BranchChanged => "The active branch changed while the commit was preparing; inspect the saved file and branch before trying again.".into(),
             Self::Failed(m) => m.clone(),
         }
     }
@@ -659,6 +717,8 @@ fn commit_pair(
     author: &str,
 ) -> Result<Committed, ErrorBody> {
     let path = repo.path_of(page);
+    // Recheck at the raw-object boundary, even after pre-save admission.
+    repo.check_raw_content(&path)?;
     if repo
         .repo
         .status_should_ignore(Path::new(&path))
@@ -713,7 +773,7 @@ fn commit_pair(
             .commit(None, &agent, &agent, agent_msg, &agent_tree, &parents)
             .map_err(git_failed)?;
         // No index lock, no branch move (ADR 0078 review R2).
-        let mut lock = match IndexLock::acquire_waiting(&repo.repo) {
+        let mut lock = match repo.lock_index(true) {
             Ok(lock) => lock,
             Err(LockRefusal::Held) => return Err(super::write::refused(
                 "git-busy",
@@ -1149,6 +1209,25 @@ fn text_of(bytes: Option<&[u8]>) -> String {
     bytes
         .map(|b| String::from_utf8_lossy(b).into_owned())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+pub(super) mod lock_test_hook {
+    thread_local! {
+        static HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const {
+            std::cell::RefCell::new(None)
+        };
+    }
+
+    pub(crate) fn install(hook: impl FnOnce() + 'static) {
+        HOOK.with(|h| *h.borrow_mut() = Some(Box::new(hook)));
+    }
+
+    pub(super) fn pause() {
+        if let Some(hook) = HOOK.with(|h| h.borrow_mut().take()) {
+            hook();
+        }
+    }
 }
 
 #[cfg(test)]
