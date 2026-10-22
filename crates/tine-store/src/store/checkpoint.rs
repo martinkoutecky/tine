@@ -62,7 +62,10 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// 17 (card yzhAbnbE): a memoized plan carries `top_level_only`, and an
 /// advanced query with `:remove-block-children? false` now lists every match; its
 /// memo key (the unchanged source text) held the top-level-only answer.
-pub(crate) const FORMAT: u32 = 17;
+/// 18 (I-13, D-20261022-GX/HB4): the block index is written as a built mark
+/// and rebuilt from the loaded pages, whose runtime ids the loader reassigns;
+/// the written rows named ids the loaded pages no longer held.
+pub(crate) const FORMAT: u32 = 18;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";

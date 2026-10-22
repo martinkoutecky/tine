@@ -87,6 +87,10 @@ index.
     the lazily built block, referenced-name, alias and block-ref-count
     indexes; the query index slot (built or seeded); and the memos (the
     derived-result cache and the query memo).
+    The block index is written as a built mark only (`FORMAT` 18, I-13): it
+    indexes runtime block ids, which the loader reassigns, and it must be
+    exact (a lookup it misses is answered "no such block" without a scan),
+    so a built one is rebuilt from the loaded pages at install, O(blocks).
 
   Not written: the graph-level find-entry cache, which belongs to no
   generation, and each query plan's compiled patterns, which are rebuilt from

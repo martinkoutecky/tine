@@ -307,7 +307,7 @@ fn a_loaded_checkpoint_equals_a_fresh_build() {
 fn warm(store: &Store) {
     let view = store.whole_graph_reconciled().unwrap();
     let graph = &view.graph;
-    graph.block_page_hint("x");
+    graph.block_owner_page("x");
     graph.referenced_page_names();
     graph.page_aliases_with_owners();
     graph.alias_owner_paths("bee");
@@ -907,13 +907,13 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (17, GOLDEN),
+        (18, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
 
 #[cfg(unix)]
-const GOLDEN: &str = "16a3cc8f6b5602ef3417e70b39c79b866887dc74f775965ebdd48f6aefb61eef";
+const GOLDEN: &str = "de649ca6d093e9d69bc443b7e3f1b2c226c8eaa28268af88c6f3d75b4c8bca54";
 
 /// GH #623 (FORMAT 6): which cached pages carried a VCS anchor line travels
 /// in the checkpoint, so a warm launch answers the conflict inventory with no
@@ -1506,4 +1506,68 @@ fn a_race_during_the_decode_stops_it() {
         Some(Fallback::Deferred),
         "a race known before the body decodes stops it before it starts"
     );
+}
+
+/// I-13 (D-20261022-GX): the block index is exact, so a warm launch must not
+/// serve one built for the written generation's runtime ids. A block typed in
+/// the editor carries the editor's id; the loader reassigns runtime ids as a
+/// parse does, and every id the loaded pages hold resolves to its page.
+#[test]
+fn a_warm_launch_resolves_every_runtime_block_id_of_the_loaded_pages() {
+    let root = graph();
+    let cp = root.path().join("launch.bin");
+    let store = open_cp(root.path(), &cp);
+    store.whole_graph_reconciled().unwrap();
+    let id = PageId::from("pages/A.md".to_owned());
+    let mut read = store.page(&id).unwrap();
+    let mut typed = read.doc.blocks[0].clone();
+    typed.id = "11111111-2222-4333-8444-555555555555".into();
+    typed.raw = "typed above".into();
+    read.doc.blocks.insert(0, typed);
+    assert!(matches!(
+        store.save(
+            crate::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(read.rev),
+            &read.doc
+        ),
+        SaveOutcome::Saved(_)
+    ));
+    warm(&store);
+    assert!(matches!(
+        store.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    store.close();
+
+    let store = open_cp(root.path(), &cp);
+    let view = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "loaded");
+    assert!(view.graph.warm_parts().0, "a built block index loads built");
+    let held: Vec<(String, String)> = view.graph.with_pages(|pages| {
+        pages
+            .iter()
+            .flat_map(|(entry, doc)| {
+                doc.roots
+                    .iter()
+                    .map(|block| (block.uuid.clone(), entry.name.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    });
+    let ids: Vec<String> = held.iter().map(|(id, _)| id.clone()).collect();
+    let pages: Vec<Option<String>> = view
+        .blocks(&ids)
+        .unwrap()
+        .into_iter()
+        .map(|group| group.map(|group| group.page))
+        .collect();
+    assert_eq!(
+        pages,
+        held.into_iter()
+            .map(|(_, page)| Some(page))
+            .collect::<Vec<_>>(),
+        "every runtime id of a loaded page resolves to that page"
+    );
+    store.close();
 }

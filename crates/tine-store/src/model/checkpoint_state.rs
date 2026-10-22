@@ -7,8 +7,10 @@
 //! generation holds is written and loaded whole, including its lazily built
 //! half ([`DerivedState`]: block index, referenced names, alias tables, the
 //! query index and both memos) in whatever state it is at capture: built
-//! parts are written, unbuilt parts stay unbuilt. A loaded generation is then
-//! carried across the launch diff by the same rules as any published one
+//! parts are written, unbuilt parts stay unbuilt. The block index is the one
+//! part written as a mark only: it indexes runtime block ids, which the
+//! loader reassigns, so a built one is rebuilt from the loaded pages. A
+//! loaded generation is then carried across the launch diff by the same rules as any published one
 //! (`ReadSnapshot::capture`, `carry_memos_from`); nothing here decides
 //! validity. The graph-level `find_entry_cache` is not part of the published
 //! generation and is not written.
@@ -216,7 +218,7 @@ impl Graph {
             real_page_names: Arc::clone(&read.real_page_names),
             icon_index: read.icon_index.get().cloned(),
             block_ref_counts: read.block_ref_counts.get().cloned(),
-            derived: DerivedState::of(read, &self.root),
+            derived: DerivedState::of(read),
         })
     }
 
@@ -254,12 +256,11 @@ impl Graph {
         let mut reference = state.reference_candidate_index;
         reference.positions = Arc::clone(&pages.positions);
         let derived = state.derived;
-        // Rows naming a missing owner cannot follow a passing checksum from
-        // this writer; were they ever read, the index is left unbuilt (the
-        // first block lookup builds it, as at a cold Ready), not refused.
+        // Built from the loaded pages, not loaded: runtime block ids were just
+        // reassigned, and the index must name exactly the ids the pages hold.
         let block_index = derived
             .block_index
-            .and_then(|index| index.into_index(root).ok());
+            .then(|| SnapshotBlockIndex::capture(None, &pages, &[]));
         let query_index = crate::query::index::QueryIndexSlot::from_checkpoint(
             derived.query_index,
             &pages.positions,
@@ -330,7 +331,8 @@ impl Graph {
 /// writer.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct DerivedState {
-    block_index: Option<BlockIndexState>,
+    /// Whether the block index was built (it is rebuilt at load, not read).
+    block_index: bool,
     referenced_name_index: Option<SnapshotPageDerivedIndex>,
     aliases: Option<AliasListState>,
     alias_owner_paths_by_key: Option<AliasOwnersState>,
@@ -342,12 +344,9 @@ pub(crate) struct DerivedState {
 }
 
 impl DerivedState {
-    fn of(read: &ReadSnapshot, root: &Path) -> DerivedState {
+    fn of(read: &ReadSnapshot) -> DerivedState {
         DerivedState {
-            block_index: read.block_index.get().map(|index| BlockIndexState::Out {
-                index: index.clone(),
-                root: root.to_path_buf(),
-            }),
+            block_index: read.block_index.get().is_some(),
             referenced_name_index: read.referenced_name_index.get().cloned(),
             aliases: read
                 .alias_relation
@@ -433,99 +432,6 @@ impl<'de, V: serde::Deserialize<'de>> serde::Deserialize<'de> for Sorted<V> {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let rows = Vec::<(String, V)>::deserialize(d)?;
         Ok(Sorted(Arc::new(rows.into_iter().collect())))
-    }
-}
-
-/// The block-id index with each owning page written once (blocks refer to it
-/// by number) and its path relative to the graph root, so the image does not
-/// depend on where the graph lives; the loader re-joins it under its root.
-pub(crate) enum BlockIndexState {
-    /// A generation's index at capture.
-    Out {
-        index: SnapshotBlockIndex,
-        root: PathBuf,
-    },
-    /// The loaded rows, before their owners are joined under the root.
-    In(BlockIndexParts),
-}
-
-type BlockRows = Vec<(String, Option<u32>)>;
-
-#[derive(serde::Serialize, serde::Deserialize)]
-pub(crate) struct BlockIndexParts {
-    owners: Vec<(PathBuf, String)>,
-    base: BlockRows,
-    overlay: BlockRows,
-}
-
-impl BlockIndexState {
-    /// The index under `root`: one shared owner per page, as a build makes.
-    /// O(blocks), the same order as decoding the rows.
-    fn into_index(self, root: &Path) -> Result<SnapshotBlockIndex, &'static str> {
-        let parts = match self {
-            BlockIndexState::Out { index, .. } => return Ok(index),
-            BlockIndexState::In(parts) => parts,
-        };
-        let owners: Vec<BlockOwner> = parts
-            .owners
-            .into_iter()
-            .map(|(path, name)| Arc::new((root.join(path), name)))
-            .collect();
-        let map = |rows: BlockRows| {
-            rows.into_iter()
-                .map(|(id, number)| match number {
-                    Some(n) => owners
-                        .get(n as usize)
-                        .map(|owner| (id, Some(Arc::clone(owner))))
-                        .ok_or("block index names a missing owner"),
-                    None => Ok((id, None)),
-                })
-                .collect::<Result<SharedMap<_, _>, _>>()
-                .map(Arc::new)
-        };
-        Ok(SnapshotBlockIndex {
-            base: map(parts.base)?,
-            overlay: map(parts.overlay)?,
-        })
-    }
-}
-
-impl serde::Serialize for BlockIndexState {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let (index, root) = match self {
-            BlockIndexState::Out { index, root } => (index, root),
-            BlockIndexState::In(parts) => return parts.serialize(s),
-        };
-        let mut owners = Vec::new();
-        let mut numbers: HashMap<*const (PathBuf, String), u32> = HashMap::new();
-        let mut rows = |map: &SharedMap<String, Option<BlockOwner>>| -> BlockRows {
-            map.iter()
-                .map(|(id, owner)| {
-                    let number = owner.as_ref().map(|owner| {
-                        *numbers.entry(Arc::as_ptr(owner)).or_insert_with(|| {
-                            let path = owner.0.strip_prefix(root).unwrap_or(&owner.0);
-                            owners.push((path.to_path_buf(), owner.1.clone()));
-                            (owners.len() - 1) as u32
-                        })
-                    });
-                    (id.clone(), number)
-                })
-                .collect()
-        };
-        let base = rows(&index.base);
-        let overlay = rows(&index.overlay);
-        BlockIndexParts {
-            owners,
-            base,
-            overlay,
-        }
-        .serialize(s)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for BlockIndexState {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        BlockIndexParts::deserialize(d).map(BlockIndexState::In)
     }
 }
 

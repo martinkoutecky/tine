@@ -166,9 +166,13 @@ fn lazy_lines(
     }
     fn hints(out: &mut String, snapshot: &ReadSnapshot, block: &DocBlock) {
         out.push_str(&format!(
-            "lazy hint {:?} {:?}\n",
+            "lazy block owners {:?} {:?}\n",
             block.uuid,
-            snapshot.block_page_hint(&block.uuid)
+            snapshot
+                .block_owner_slots(&block.uuid)
+                .into_iter()
+                .map(|slot| snapshot.pages[slot].0.name.clone())
+                .collect::<Vec<_>>()
         ));
         for child in &block.children {
             hints(out, snapshot, child);

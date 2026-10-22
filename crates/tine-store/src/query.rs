@@ -1806,14 +1806,15 @@ pub(crate) fn quick_switch_for_editor(
     crate::query_plan::page_hits_to_entries(plan.execute(graph, || false).hits)
 }
 
-/// Resolve many `((uuid))` block references in a single graph pass — the real
-/// batch behind `Graph::resolve_blocks` (a page full of refs/embeds is one IPC,
-/// and now one scan rather than U independent `resolve_block` calls, each of which
-/// could whole-graph-scan on a hint miss). Hinted ids are grouped by page and each
-/// hinted page is walked ONCE for all of its ids; whatever a hint missed (stale or
-/// absent) falls back to a SINGLE whole-graph scan. Match semantics + first-block-
-/// wins ordering are identical to `resolve_block`. Output is positional and
-/// per-input (duplicate input uuids each get their own `Some(..)`/`None`).
+/// Resolve many `((uuid))` block references — the batch behind
+/// `Graph::resolve_blocks` (a page full of refs/embeds is one IPC). Each id's
+/// answering page comes from the exact block index (`block_owner_page`): an
+/// id no page holds is `None` without a walk, and each answering page is
+/// walked once for all of its ids (I-13: cost is O(ids + the answering
+/// pages' blocks), independent of page count). First-block-wins ordering is
+/// the full scan's: the first page in page order, then walk order. Output is
+/// positional and per-input (duplicate input uuids each get their own
+/// `Some(..)`/`None`).
 #[cfg(test)]
 pub(crate) fn resolve_blocks(graph: &ReadSnapshot, uuids: &[String]) -> Vec<Option<RefGroup>> {
     resolve_blocks_bounded(graph, uuids, usize::MAX, usize::MAX).0
@@ -1825,57 +1826,23 @@ pub(crate) fn resolve_blocks_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> (Vec<Option<RefGroup>>, bool, usize) {
-    use std::collections::{HashMap, HashSet};
-    // Distinct requested ids (a page often refs the same uuid repeatedly).
-    let distinct: HashSet<&str> = uuids.iter().map(String::as_str).collect();
-    if distinct.is_empty() {
-        return (uuids.iter().map(|_| None).collect(), false, 0);
-    }
-    // Bucket each distinct id under its page hint (O(1) per id off the cached
-    // uuid index); unhinted ids go straight to the whole-graph fallback.
-    let mut by_page: HashMap<String, Vec<&str>> = HashMap::new();
-    let mut unhinted: Vec<&str> = Vec::new();
-    for &id in &distinct {
-        match graph.block_page_hint(id) {
-            Some(page) => by_page.entry(page).or_default().push(id),
-            None => unhinted.push(id),
+    use std::collections::{BTreeMap, HashMap, HashSet};
+    type Want<'a> = (&'a (PageEntry, std::sync::Arc<Document>), HashSet<&'a str>);
+    let mut by_page: BTreeMap<usize, Want<'_>> = BTreeMap::new();
+    for id in uuids {
+        if let Some((slot, page)) = graph.block_owner_page(id) {
+            by_page
+                .entry(slot)
+                .or_insert_with(|| (page, HashSet::new()))
+                .1
+                .insert(id.as_str());
         }
     }
-
     let mut resolved: HashMap<&str, RefGroup> = HashMap::new();
     let mut resolved_budget = ConstructionBudget::new(max_rows, max_bytes);
-    graph.with_pages(|pages| {
-        let mut page_by_name: HashMap<&str, (&PageEntry, &std::sync::Arc<Document>)> =
-            HashMap::with_capacity(pages.len());
-        for (entry, doc) in pages {
-            page_by_name
-                .entry(entry.name.as_str())
-                .or_insert((entry, doc));
-        }
-        // 1) Each hinted page: ONE walk resolving all of its hinted ids.
-        for (page, ids) in &by_page {
-            if let Some(&(entry, doc)) = page_by_name.get(page.as_str()) {
-                let want: HashSet<&str> = ids.iter().copied().collect();
-                resolve_ids_in_page(entry, doc, &want, &mut resolved, &mut resolved_budget);
-            }
-        }
-        // 2) Remaining ids (no hint, or the hinted page didn't actually hold the
-        //    block) get ONE whole-graph scan — never one-scan-per-id.
-        let mut remaining: HashSet<&str> = unhinted.into_iter().collect();
-        for &id in &distinct {
-            if !resolved.contains_key(id) {
-                remaining.insert(id);
-            }
-        }
-        if !remaining.is_empty() {
-            for (entry, doc) in pages {
-                if resolved.len() == distinct.len() {
-                    break; // everything found
-                }
-                resolve_ids_in_page(entry, doc, &remaining, &mut resolved, &mut resolved_budget);
-            }
-        }
-    });
+    for ((entry, doc), want) in by_page.values() {
+        resolve_ids_in_page(entry, doc, want, &mut resolved, &mut resolved_budget);
+    }
 
     let mut output_budget = ConstructionBudget::new(max_rows, max_bytes);
     let output = uuids
@@ -2148,57 +2115,39 @@ pub(crate) fn preview_block_with_budget(
 ) -> Option<BlockPreview> {
     let max_nodes = max_nodes.max(1);
     let max_bytes = max_bytes.max(1);
-    let hint = graph.block_page_hint(uuid);
-    graph.with_pages(|pages| {
-        let find_in = |entry: &PageEntry, doc: &Document| -> Option<BlockPreview> {
-            let mut found: Option<&DocBlock> = None;
-            walk(&doc.roots, &mut |block| {
-                if found.is_none()
-                    && (block.uuid == uuid || block.property("id").as_deref() == Some(uuid))
-                {
-                    found = Some(block);
-                }
-            });
-            found.map(|block| {
-                let total = subtree_node_count(block);
-                let mut remaining_nodes = max_nodes;
-                let mut remaining_bytes = max_bytes;
-                let blocks =
-                    block_to_bounded_dto(block, &mut remaining_nodes, &mut remaining_bytes)
-                        .into_iter()
-                        .collect::<Vec<_>>();
-                let emitted = max_nodes - remaining_nodes;
-                BlockPreview {
-                    group: RefGroup {
-                        page: entry.name.clone(),
-                        kind: entry.kind,
-                        blocks,
-                        evidence: Vec::new(),
-                    },
-                    truncated: total.saturating_sub(emitted),
-                }
-            })
-        };
-        if let Some(hint) = &hint {
-            if let Some((entry, doc)) = pages.iter().find(|(entry, _)| &entry.name == hint) {
-                if let Some(preview) = find_in(entry, doc) {
-                    return Some(preview);
-                }
-            }
+    // The exact block index names the answering page (see `resolve_blocks`).
+    let (_, (entry, doc)) = graph.block_owner_page(uuid)?;
+    touch_page();
+    let mut found: Option<&DocBlock> = None;
+    walk(&doc.roots, &mut |block| {
+        if found.is_none() && (block.uuid == uuid || block.property("id").as_deref() == Some(uuid))
+        {
+            found = Some(block);
         }
-        for (entry, doc) in pages {
-            if let Some(preview) = find_in(entry, doc) {
-                return Some(preview);
-            }
-        }
-        None
+    });
+    let block = found?;
+    let total = subtree_node_count(block);
+    let mut remaining_nodes = max_nodes;
+    let mut remaining_bytes = max_bytes;
+    let blocks = block_to_bounded_dto(block, &mut remaining_nodes, &mut remaining_bytes)
+        .into_iter()
+        .collect::<Vec<_>>();
+    let emitted = max_nodes - remaining_nodes;
+    Some(BlockPreview {
+        group: RefGroup {
+            page: entry.name.clone(),
+            kind: entry.kind,
+            blocks,
+            evidence: Vec::new(),
+        },
+        truncated: total.saturating_sub(emitted),
     })
 }
 
 /// The pages holding a block whose persisted `id::` is `uuid`, in page
 /// order, compared case-insensitively, stopping at the second: a writer needs to know the id names exactly
-/// one block's page. The block-id index is only a hint, so this walks every
-/// page (O(B), one in-memory pass; no cache).
+/// one block's page. A writer's check, so it walks every page itself rather
+/// than trust the block-id index (O(B), one in-memory pass; no cache).
 pub(crate) fn block_pages(graph: &ReadSnapshot, uuid: &str) -> Vec<String> {
     graph.with_pages(|pages| {
         let mut found = Vec::new();
@@ -2221,9 +2170,8 @@ pub(crate) fn block_pages(graph: &ReadSnapshot, uuid: &str) -> Vec<String> {
     })
 }
 
-/// Walk `doc` once, resolving any block whose uuid (or persisted `id::`) is a
-/// still-unresolved id in `want`. First block in walk order wins per id (matches
-/// `resolve_block`).
+/// Walk `doc` once, resolving every still-unresolved id in `want` that is a
+/// block's uuid or persisted `id::`. First block in walk order wins per id.
 fn resolve_ids_in_page<'a>(
     entry: &PageEntry,
     doc: &Document,
@@ -2231,37 +2179,54 @@ fn resolve_ids_in_page<'a>(
     resolved: &mut std::collections::HashMap<&'a str, RefGroup>,
     budget: &mut ConstructionBudget,
 ) {
+    touch_page();
     walk(&doc.roots, &mut |b| {
-        // A block's identity is its uuid OR its persisted `id::`; check both
-        // against the wanted set with O(1) lookups (no per-id rescan).
-        let hit: Option<&'a str> = want
-            .get(b.uuid.as_str())
-            .copied()
-            .filter(|id| !resolved.contains_key(id))
-            .or_else(|| {
-                b.property("id")
-                    .and_then(|id| want.get(id.as_str()).copied())
-                    .filter(|id| !resolved.contains_key(id))
-            });
-        if let Some(id) = hit {
+        // A block's identity is its uuid AND its persisted `id::`: one block
+        // can answer two requested ids. O(1) lookups, no per-id rescan.
+        let property = b.property("id");
+        for key in [Some(b.uuid.as_str()), property.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            let Some(&id) = want.get(key) else {
+                continue;
+            };
+            if resolved.contains_key(id) {
+                continue;
+            }
             if budget.closed() {
                 budget.deny_match();
                 return;
             }
             if budget.admit_estimated(&entry.name, shallow_dto_estimated_bytes(b, &[])) {
-                let dto = result_dto(b);
                 resolved.insert(
                     id,
                     RefGroup {
                         page: entry.name.clone(),
                         kind: entry.kind,
-                        blocks: vec![dto],
+                        blocks: vec![result_dto(b)],
                         evidence: Vec::new(),
                     },
                 );
             }
         }
     });
+}
+
+#[cfg(test)]
+thread_local! {
+    static RESOLVE_PAGES_TOUCHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Pages a block resolve on this thread has walked so far (test-only work count).
+#[cfg(test)]
+pub(crate) fn resolve_pages_touched() -> usize {
+    RESOLVE_PAGES_TOUCHED.with(std::cell::Cell::get)
+}
+
+fn touch_page() {
+    #[cfg(test)]
+    RESOLVE_PAGES_TOUCHED.with(|count| count.set(count.get() + 1));
 }
 
 #[cfg(test)]
