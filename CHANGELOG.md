@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Renaming a page preserves longer tags such as `#foo+bar`, `#c++`, `#R&D` and `#foo🎉` when only their prefix matches, and updates complete tags before trailing punctuation such as `#foo.`. Renaming `c++` also updates `#c++` (audit L3-02).
+
 ## [0.8.0-beta.9] - 2026-10-22
 
 One fix for the 0.8.0 stable candidate: typing no longer freezes on pages with many references (GH #746), a regression since 0.8.0-beta.1. Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.

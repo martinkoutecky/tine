@@ -503,7 +503,7 @@ fn push_tag(out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>,
     }
 }
 
-fn tag_text(inlines: &[lsdoc::ast::Inline], out: &mut String) {
+pub(crate) fn tag_text(inlines: &[lsdoc::ast::Inline], out: &mut String) {
     use lsdoc::ast::{Inline, Url};
     for i in inlines {
         match i {
