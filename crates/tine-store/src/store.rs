@@ -2891,7 +2891,7 @@ impl WholeGraph {
     /// O(P + B + scanned text bytes) on every call. This does not infer a
     /// sidecar reference merely from its PDF base name. Parsed pages only:
     /// orphan safety uses [`Store::referenced_assets`] (set-aside files too).
-    pub fn referenced_assets(&self) -> Arc<HashSet<String>> {
+    pub(crate) fn referenced_assets(&self) -> Arc<HashSet<String>> {
         let mut names = HashSet::new();
         self.graph.with_pages(|pages| {
             for (_, doc) in pages {
