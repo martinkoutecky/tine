@@ -4,6 +4,7 @@ import { t } from "./i18n";
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
 
 import { markCommandSlow } from "./slowBackend";
+import { renderStallSnapshot, clearRenderStalls } from "./renderStalls";
 import { orderedLane } from "./orderedWrites";
 import { REFRESH_READ_COMMANDS, trackRefreshRead } from "./refreshReads";
 import { timingNamesForCommand } from "./focusTiming";
@@ -905,12 +906,13 @@ class TauriBackend implements Backend {
     return this.call<void>("debug_log", { line });
   }
   diagnosticReport(buildCommit: string, buildTime: string) {
-    return this.call<DiagnosticReport>("diagnostic_report", { buildCommit, buildTime });
+    return this.call<DiagnosticReport>("diagnostic_report", { buildCommit, buildTime, renderer: renderStallSnapshot() });
   }
   saveDiagnosticReport(buildCommit: string, buildTime: string) {
-    return this.call<boolean>("save_diagnostic_report", { buildCommit, buildTime });
+    return this.call<boolean>("save_diagnostic_report", { buildCommit, buildTime, renderer: renderStallSnapshot() });
   }
   clearDiagnostics() {
+    clearRenderStalls();
     return this.call<void>("clear_diagnostics");
   }
   createGraphVerification(operationId: string) { return this.call<GraphVerificationReport>("create_graph_verification", { operationId }); }

@@ -59,6 +59,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Diagnostic reports now include bounded, memory-only renderer stalls while typing, with bundled script attribution where the WebView supports it (GH #746).
+
 - **Holding a key on a large graph no longer makes typing stall more and more.** While you type, Tine saves the page about once a second, and after each save it refreshes the linked and unlinked references, page icons, block references and queries. When one refresh took longer than a second, the next one started before it finished, the refreshes piled up and competed with your typing. Now a refresh waits for the previous one to finish, and the saves made meanwhile are covered by one refresh afterwards, so the views still end up showing your latest text. Related to GH #746 (UI-GH746-REFRESH-ROUNDS-DO-NOT-PILE-UP).
 
 - **On a long page with images, pressing Enter, Backspace or another structural key no longer throws the view back down or loses the block you were editing (most visible on Windows)**: the edit briefly re-lays out the blocks around it, and the editor no longer lets the webview scroll to that interim position; the view now moves only as far as showing the caret needs, and not at all while it is already visible, below any pinned parent rows. Not new in 0.8 (GH #745).
