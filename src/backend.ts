@@ -5,6 +5,7 @@ import { t } from "./i18n";
 
 import { markCommandSlow } from "./slowBackend";
 import { orderedLane } from "./orderedWrites";
+import { REFRESH_READ_COMMANDS, trackRefreshRead } from "./refreshReads";
 import { timingNamesForCommand } from "./focusTiming";
 import type { GraphVerificationProgress, GraphVerificationReport } from "./graphVerification";
 import type {
@@ -126,9 +127,11 @@ class TauriBackend implements Backend {
 
   graphBindingGeneration() { return this.bindingGeneration; }
 
-  /** R3: write commands keep their call order (src/orderedWrites.ts). */
+  /** R3: write commands keep their call order (src/orderedWrites.ts). A
+   *  refresh read is counted until it settles (src/refreshReads.ts). */
   private call<T>(cmd: string, args?: Record<string, unknown>, bindingGeneration = this.bindingGeneration): Promise<T> {
-    return this.ordered(cmd, () => this.issue<T>(cmd, args, bindingGeneration));
+    const issued = this.ordered(cmd, () => this.issue<T>(cmd, args, bindingGeneration));
+    return REFRESH_READ_COMMANDS.has(cmd) ? trackRefreshRead(issued) : issued;
   }
 
   private async issue<T>(cmd: string, args: Record<string, unknown> | undefined, bindingGeneration: number): Promise<T> {
