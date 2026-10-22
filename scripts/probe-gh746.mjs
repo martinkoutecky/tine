@@ -16,6 +16,23 @@ import { fileURLToPath } from "node:url";
 import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
+import WebSocket from "ws";
+
+// Optional Chromium trace of the whole WebView2 (browser + renderer) during one run (PROBE_TRACE=1, Windows).
+async function startTrace(debuggerAddress) {
+  const v = await (await fetch(`http://${debuggerAddress}/json/version`)).json();
+  const ws = new WebSocket(v.webSocketDebuggerUrl, { perMessageDeflate: false, maxPayload: 2 ** 30 });
+  await new Promise((res, rej) => { ws.once("open", res); ws.once("error", rej); });
+  let id = 0; const pending = new Map(); const events = []; let done;
+  const complete = new Promise((res) => { done = res; });
+  ws.on("message", (d) => { const m = JSON.parse(d); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+    else if (m.method === "Tracing.dataCollected") events.push(...m.params.value); else if (m.method === "Tracing.tracingComplete") done(); });
+  const send = (method, params = {}) => new Promise((res) => { const i = ++id; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params })); });
+  const r = await send("Tracing.start", { transferMode: "ReportEvents", traceConfig: { recordMode: "recordAsMuchAsPossible",
+    includedCategories: ["toplevel", "devtools.timeline", "v8.execute", "blink.user_timing", "input", "latencyInfo", "disabled-by-default-devtools.timeline", "blink", "loading"] } });
+  return { started: !r.error, error: r.error, stop: async (file) => { await send("Tracing.end"); await Promise.race([complete, sleep(30000)]);
+    fs.writeFileSync(file, JSON.stringify({ traceEvents: events })); ws.close(); return events.length; } };
+}
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WIN = process.platform === "win32";
@@ -26,8 +43,13 @@ const NATIVE = Number(process.env.E2E_NATIVE_PORT || 4613);
 const LABEL = process.env.PROBE_LABEL || "run";
 const SRC = process.env.PROBE_GRAPH;
 const TARGET_MD = process.env.PROBE_TARGET_MD || path.join(ROOT, "tests/fixtures/gh746/GH746 typing.md");
-const MODES = (process.env.PROBE_MODES || (WIN ? "os,webdriver" : "os,webdriver")).split(",");
+const MODES = (process.env.PROBE_MODES || (WIN ? "os,osrepeat,webdriver" : "os,webdriver")).split(",");
 const KEYS = Number(process.env.PROBE_KEYS || 330);
+const HEAVY = process.env.PROBE_HEAVY === "1";
+// Follow-up variants: A = beta.8 as is, B = SEND_MAX_WAIT_MS 3000, C = in-flight refresh guard
+// (both PROBE-ONLY runtime switches in the probe build), D = stable (just a label).
+const VARIANT = process.env.PROBE_VARIANT || "A";
+const KEYLIST = (process.env.PROBE_KEYLIST || "1,Backspace").split(",");
 const DELAY = Number(process.env.PROBE_DELAY_MS || 33);
 const SETTLE = Number(process.env.PROBE_SETTLE_MS || 30000);
 const OUT = path.resolve(process.env.PROBE_OUT || path.join(ROOT, "test-results/probe-gh746"), LABEL);
@@ -46,13 +68,37 @@ for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`,
   let seed = 746;
   const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
   const picked = new Set();
-  while (picked.size < Math.min(196, pages.length)) picked.add(pages[Math.floor(rnd() * pages.length)]);
+  const LINKED = Number(process.env.PROBE_LINKED || 40), UNLINKED = Number(process.env.PROBE_UNLINKED || 156);
+  while (picked.size < Math.min(LINKED + UNLINKED, pages.length)) picked.add(pages[Math.floor(rnd() * pages.length)]);
   [...picked].forEach((f, i) => {
     const file = path.join(GRAPH, "pages", f);
     const text = fs.readFileSync(file, "utf8");
-    const line = i < 40 ? `- mention ${i} of [[GH746 typing]] here\n` : `- plain mention ${i} of GH746 typing here\n`;
+    const line = i < LINKED ? `- mention ${i} of [[GH746 typing]] here\n` : `- plain mention ${i} of GH746 typing here\n`;
     fs.writeFileSync(file, text + (text.endsWith("\n") || text === "" ? "" : "\n") + line);
   });
+  // PROBE_RESOLVE_REFS=1: give every ((uuid)) the page references but does not define a target
+  // block elsewhere (as in the reporter's real graph), each with a small subtree.
+  if (process.env.PROBE_RESOLVE_REFS === "1" || HEAVY) {
+    const md = fs.readFileSync(TARGET_MD, "utf8");
+    const defined = new Set([...md.matchAll(/id:: ([0-9a-f-]{36})/g)].map((m) => m[1]));
+    const wanted = [...new Set([...md.matchAll(/\(\(([0-9a-f-]{36})\)\)/g)].map((m) => m[1]))].filter((u) => !defined.has(u));
+    let out = "";
+    wanted.forEach((u, i) => {
+      out += `- target block ${i} with a [[link ${i}]] and #tag${i % 5} text text text\n  id:: ${u}\n`;
+      for (let c = 0; c < 12; c++) out += `\t- child ${c} of target ${i}, see [[GH746 typing]] and **bold** \`code\`\n\t\t- grandchild ${c}\n`;
+    });
+    fs.writeFileSync(path.join(GRAPH, "pages", "GH746 targets.md"), out);
+    console.log(`resolve refs: ${wanted.length} targets`);
+    // PROBE_HEAVY=1 (follow-up run): the page also embeds five of those subtrees and runs two queries.
+    if (HEAVY) {
+      let extra = "- heavy section: embeds\n";
+      for (const u of wanted.slice(0, 5)) extra += `\t- {{embed ((${u}))}}\n`;
+      extra += "- {{query [[link 1]]}}\n- {{query (and [[GH746 typing]] \"mention 1\")}}\n";
+      const page = path.join(GRAPH, "pages", "GH746 typing.md");
+      const text = fs.readFileSync(page, "utf8");
+      fs.writeFileSync(page, text + (text.endsWith("\n") ? "" : "\n") + extra);
+    }
+  }
 }
 
 const env = { ...process.env, TINE_GRAPH: GRAPH, XDG_DATA_HOME: `${TMP}/xdg/data`, XDG_CONFIG_HOME: `${TMP}/xdg/config`, XDG_CACHE_HOME: `${TMP}/xdg/cache`,
@@ -138,6 +184,20 @@ function analyse(raw, win) {
     if (win) st.ui = win.filter((w) => w.at >= raw.epoch0 + a && w.at <= raw.epoch0 + b).map((w) => `${(w.at - raw.epoch0 - t0).toFixed(0)}+${w.ms}`);
   }
   const stallStarts = stalls.map((s) => s.at);
+  // Refresh rounds (follow-up run): overlap and queueing of the whole-graph refresh reads.
+  const REFRESH = new Set(["get_backlinks", "get_unlinked_refs", "page_icons", "resolve_blocks", "query_run", "query_parse", "get_page"]);
+  const rows = raw.ipc.filter((r) => REFRESH.has(r[0]) && r[1] >= t0 - 50);
+  const tEnd = raw.now ?? (inputs.at(-1) ?? t0);
+  const inflight = (t) => rows.filter((r) => r[1] <= t && (r[2] < 0 || r[2] > t)).length;
+  const perSecondMax = [];
+  for (let s = 0; t0 + s * 1000 < tEnd; s++) { let m = 0; for (let t = t0 + s * 1000; t < t0 + (s + 1) * 1000 && t < tEnd; t += 50) m = Math.max(m, inflight(t)); perSecondMax.push(m); }
+  const roundCmd = rows.some((r) => r[0] === "get_backlinks") ? "get_backlinks" : "resolve_blocks";
+  const roundRows = rows.filter((r) => r[0] === roundCmd).sort((a, b) => a[1] - b[1]);
+  const overlapped = roundRows.filter((r) => roundRows.some((q) => q !== r && q[1] < r[1] && (q[2] < 0 || q[2] > r[1]))).length;
+  const refresh = { roundCmd, rounds: roundRows.length, overlappedRounds: overlapped,
+    roundLatency: roundRows.map((r) => `${(r[1] - t0).toFixed(0)}+${r[2] > 0 ? (r[2] - r[1]).toFixed(0) : "open"}`),
+    inflightMax: perSecondMax.length ? Math.max(...perSecondMax) : 0, inflightPerSecondMax: perSecondMax,
+    unfinishedAtEnd: rows.filter((r) => r[2] < 0).length, reads: rows.length };
   return {
     keydowns: raw.keys.length, trusted: raw.keys.filter((k) => k[3]).length, inputs: inputs.length,
     spanMs: inputs.length ? +(inputs.at(-1) - inputs[0]).toFixed(0) : 0,
@@ -149,14 +209,14 @@ function analyse(raw, win) {
     eventQueueMs: { p50: quant(queue, 0.5), p95: quant(queue, 0.95), max: quant(queue, 1) },
     longTasks: raw.lt ? raw.lt.filter((l) => l[0] >= t0).map((l) => `${(l[0] - t0).toFixed(0)}+${l[1].toFixed(0)}`) : "unsupported",
     stallIntervalsMs: stallStarts.slice(1).map((t, i) => t - stallStarts[i]),
-    stalls, bigFrames, ipc: ipcBy, mails: raw.mail.length, mailBytes: raw.mail.reduce((s, m) => s + m[1], 0),
+    refresh, stalls, bigFrames, ipc: ipcBy, mails: raw.mail.length, mailBytes: raw.mail.reduce((s, m) => s + m[1], 0),
     uiThread: win ? { probes: win.length, over50: win.filter((w) => w.ms > 50).length, max: win.reduce((m, w) => Math.max(m, w.ms), 0), slow: win.filter((w) => w.ms > 50).map((w) => `${(w.at - raw.epoch0 - t0).toFixed(0)}+${w.ms}`) } : undefined,
   };
 }
 
 // Windows OS-level input + UI-thread probe (one C# helper, compiled by PowerShell).
 const WIN_HELPER = String.raw`
-param([int]$procId, [int]$count, [int]$delay, [int]$vk, [string]$out)
+param([int]$procId, [int]$count, [int]$delay, [int]$vk, [int]$repeat, [string]$out)
 Add-Type -TypeDefinition @"
 using System; using System.Diagnostics; using System.Runtime.InteropServices; using System.Threading; using System.Text; using System.Collections.Generic;
 public static class P746 {
@@ -173,41 +233,43 @@ public static class P746 {
   [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint p);
   static long Epoch() { return (long)(DateTime.UtcNow - new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalMilliseconds; }
   static INPUT Key(ushort vk, bool up) { var i = new INPUT(); i.type = 1; i.u.ki.wVk = vk; i.u.ki.dwFlags = up ? 2u : 0u; return i; }
-  public static string Run(int pid, int count, int delay, int vk) {
+  public static string Run(int pid, int count, int delay, int vk, int repeat) {
     timeBeginPeriod(1);
     var proc = Process.GetProcessById(pid); IntPtr h = proc.MainWindowHandle;
     var sb = new StringBuilder();
     keybd_event(0x12, 0, 0, UIntPtr.Zero); keybd_event(0x12, 0, 2, UIntPtr.Zero); // ALT tap unlocks SetForegroundWindow
     ShowWindow(h, 9); bool fg = SetForegroundWindow(h); Thread.Sleep(300);
     sb.Append("{\"hwnd\":" + h.ToInt64() + ",\"fg\":" + (fg ? "true" : "false") + ",\"isFg\":" + (GetForegroundWindow() == h ? "true" : "false"));
-    var ui = new List<string>(); bool stop = false; int probes = 0;
-    var mon = new Thread(() => { while (!stop) { long a = Epoch(); var sw = Stopwatch.StartNew(); UIntPtr r; SendMessageTimeout(h, 0, UIntPtr.Zero, IntPtr.Zero, 0, 10000, out r); long ms = sw.ElapsedMilliseconds; probes++; if (ms > 8) lock (ui) ui.Add("[" + a + "," + ms + "]"); Thread.Sleep(5); } });
+    var ui = new List<string>(); bool stop = false; int probes = 0; int fails = 0; int firstErr = 0;
+    var mon = new Thread(() => { while (!stop) { long a = Epoch(); var sw = Stopwatch.StartNew(); UIntPtr r; IntPtr ok = SendMessageTimeout(h, 0, UIntPtr.Zero, IntPtr.Zero, 0, 2000, out r); long ms = sw.ElapsedMilliseconds; probes++; if (ok == IntPtr.Zero) { fails++; if (firstErr == 0) firstErr = Marshal.GetLastWin32Error(); } if (ms > 8) lock (ui) ui.Add("[" + a + "," + ms + "]"); Thread.Sleep(5); } });
     mon.Start(); Thread.Sleep(500);
     var sent = new List<long>(); var clock = Stopwatch.StartNew(); long next = 0;
     for (int k = 0; k < count; k++) {
       while (clock.ElapsedMilliseconds < next) Thread.Sleep(1);
-      var arr = new INPUT[] { Key((ushort)vk, false), Key((ushort)vk, true) };
-      SendInput(2, arr, Marshal.SizeOf(typeof(INPUT))); sent.Add(Epoch()); next += delay;
+      // repeat=1 imitates OS autorepeat: key-downs only (the previous-state bit makes them repeats), one key-up at the end.
+      var arr = repeat == 1 ? new INPUT[] { Key((ushort)vk, false) } : new INPUT[] { Key((ushort)vk, false), Key((ushort)vk, true) };
+      SendInput((uint)arr.Length, arr, Marshal.SizeOf(typeof(INPUT))); sent.Add(Epoch()); next += delay;
     }
+    if (repeat == 1) SendInput(1, new INPUT[] { Key((ushort)vk, true) }, Marshal.SizeOf(typeof(INPUT)));
     Thread.Sleep(3000); stop = true; mon.Join();
-    sb.Append(",\"sentFirst\":" + sent[0] + ",\"sentLast\":" + sent[sent.Count - 1] + ",\"probes\":" + probes + ",\"ui\":[" + string.Join(",", ui) + "]}");
+    sb.Append(",\"sentFirst\":" + sent[0] + ",\"sentLast\":" + sent[sent.Count - 1] + ",\"probes\":" + probes + ",\"fails\":" + fails + ",\"firstErr\":" + firstErr + ",\"ui\":[" + string.Join(",", ui) + "]}");
     return sb.ToString();
   }
 }
 "@
-[P746]::Run($procId, $count, $delay, $vk) | Out-File -FilePath $out -Encoding ascii
+[P746]::Run($procId, $count, $delay, $vk, $repeat) | Out-File -FilePath $out -Encoding ascii
 `;
 fs.writeFileSync(path.join(TMP, "p746.ps1"), WIN_HELPER);
 
-async function driveOs(key, browser) {
+async function driveOs(key, browser, repeat = false) {
   if (WIN) {
     const out = path.join(TMP, `os-${key}.json`);
     const pid = webviewTarget.applicationProcess.pid;
     const r = spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(TMP, "p746.ps1"),
-      "-procId", String(pid), "-count", String(KEYS), "-delay", String(DELAY), "-vk", String(key === "1" ? 0x31 : 0x08), "-out", out], { encoding: "utf8", timeout: 120000 });
+      "-procId", String(pid), "-count", String(KEYS), "-delay", String(DELAY), "-vk", String(key === "1" ? 0x31 : 0x08), "-repeat", repeat ? "1" : "0", "-out", out], { encoding: "utf8", timeout: 120000 });
     if (r.status !== 0) throw new Error(`SendInput helper failed: ${r.stdout} ${r.stderr}`);
     const res = JSON.parse(fs.readFileSync(out, "utf8").trim());
-    return { meta: { hwnd: res.hwnd, fg: res.fg, isFg: res.isFg, probes: res.probes, sentSpan: res.sentLast - res.sentFirst }, win: res.ui.map(([at, ms]) => ({ at, ms })) };
+    return { meta: { hwnd: res.hwnd, fg: res.fg, isFg: res.isFg, probes: res.probes, fails: res.fails, firstErr: res.firstErr, sentSpan: res.sentLast - res.sentFirst }, win: res.ui.map(([at, ms]) => ({ at, ms })) };
   }
   const t = Date.now();
   const r = spawnSync("xdotool", ["key", "--delay", String(DELAY), ...Array(KEYS).fill(key === "1" ? "1" : "BackSpace")], { encoding: "utf8", timeout: 120000 });
@@ -240,15 +302,40 @@ try {
   await browser.$(".page-title").waitForExist({ timeout: 180000 });
   report.firstTitleMs = Date.now() - launchedAt;
   console.log(await browser.execute(INSTRUMENT));
+  report.variant = VARIANT;
+  await browser.execute((v) => { if (v === "B") globalThis.__probe746MaxWait = 3000; if (v === "C") globalThis.__probe746Guard = true; }, VARIANT);
   await openPageByName(browser, "GH746 typing", { timeout: 180000 });
   // Settle: at least SETTLE ms after launch, then until no IPC started for 5 s (max 240 s).
-  const settleStart = Date.now();
+  const settle = async () => {
+    const settleStart = Date.now();
+    for (;;) {
+      const quiet = await browser.execute(() => { const P = window.__p746; const now = performance.now();
+        return !P.ipc.some((r) => r[2] < 0 && now - r[1] < 60000) && !P.ipc.some((r) => now - r[1] < 5000); });
+      if (quiet || Date.now() - settleStart > 240000) break;
+      await sleep(1000);
+    }
+  };
   while (Date.now() - launchedAt < SETTLE) await sleep(1000);
-  for (;;) {
-    const quiet = await browser.execute(() => { const P = window.__p746; const now = performance.now();
-      return !P.ipc.some((r) => r[2] < 0 && now - r[1] < 60000) && !P.ipc.some((r) => now - r[1] < 5000); });
-    if (quiet || Date.now() - settleStart > 240000) break;
-    await sleep(1000);
+  await settle();
+  if (HEAVY) {
+    // Expand the Linked and Unlinked References sections (both default to collapsed here).
+    report.expanded = await browser.execute(() => {
+      let n = 0;
+      for (const h of document.querySelectorAll(".references-header")) {
+        const c = h.querySelector(".ref-collapse");
+        if ((c && c.classList.contains("collapsed")) || (!c && h.textContent.trim().startsWith("\u25b8"))) { h.click(); n++; }
+      }
+      return n;
+    });
+    await sleep(3000);
+    await settle();
+    report.rendered = await browser.execute(() => ({
+      linked: document.querySelectorAll(".linked-references .ls-block").length,
+      unlinked: document.querySelectorAll(".unlinked-references .ls-block").length,
+      blocks: document.querySelectorAll(".ls-block").length,
+      headers: [...document.querySelectorAll(".references-header")].map((h) => h.textContent.trim().slice(0, 40)),
+    }));
+    console.log(JSON.stringify({ expanded: report.expanded, rendered: report.rendered }));
   }
   report.settledMs = Date.now() - launchedAt;
   // Edit the third top-level block ("文文", with one child) at its end.
@@ -268,18 +355,22 @@ try {
   await enter();
   report.initialValue = await browser.execute(() => document.activeElement.value);
   for (const mode of MODES) {
-    for (const key of ["1", "Backspace"]) {
+    for (const key of KEYLIST) {
       if (!(await browser.execute(() => document.activeElement?.tagName === "TEXTAREA"))) await enter();
       await sleep(1500);
       await browser.execute(drain);
-      const drive = mode === "os" ? await driveOs(key, browser) : await driveWebdriver(key, browser);
+      const trace = WIN && process.env.PROBE_TRACE === "1" && mode === "os" && key === "1" ? await startTrace(webviewTarget.debuggerAddress).catch((e) => ({ started: false, error: String(e) })) : null;
+      await browser.execute(() => performance.mark("p746-drive-start"));
+      const drive = mode === "os" ? await driveOs(key, browser) : mode === "osrepeat" ? await driveOs(key, browser, true) : await driveWebdriver(key, browser);
+      if (trace?.started) report.traceEvents = await trace.stop(path.join(OUT, `trace-${mode}-${key}.json`));
+      else if (trace) report.traceError = trace.error;
       const raw = JSON.parse(await browser.execute(drain));
       const value = await browser.execute(() => document.activeElement?.tagName === "TEXTAREA" ? document.activeElement.value : null);
       const a = analyse(raw, drive.win);
       const run = { mode, key, drive: drive.meta, valueLength: value?.length ?? null, ...a };
       report.runs.push(run);
       fs.writeFileSync(path.join(OUT, `raw-${mode}-${key}.json`), JSON.stringify({ raw, win: drive.win }));
-      console.log(JSON.stringify({ label: LABEL, mode, key, trusted: a.trusted, inputs: a.inputs, gap: a.inputGapMs, over: a.gapsOver, frames: a.frameGapMs, ui: a.uiThread && { max: a.uiThread.max, over50: a.uiThread.over50 }, intervals: a.stallIntervalsMs }));
+      console.log(JSON.stringify({ label: LABEL, variant: VARIANT, mode, key, rounds: a.refresh.rounds, overlapped: a.refresh.overlappedRounds, inflightMax: a.refresh.inflightMax, trusted: a.trusted, inputs: a.inputs, gap: a.inputGapMs, over: a.gapsOver, frames: a.frameGapMs, ui: a.uiThread && { max: a.uiThread.max, over50: a.uiThread.over50 }, intervals: a.stallIntervalsMs }));
       await sleep(2000);
     }
   }
