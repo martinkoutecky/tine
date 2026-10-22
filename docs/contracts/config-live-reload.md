@@ -59,6 +59,12 @@ scalar setter replaces only the value token. Comments, unknown keys, nested
 maps and spacing elsewhere survive byte for byte. A missing, empty or
 comment-only file gets a new map after its comments.
 
+Collection boundaries skip EDN character literals, including escaped delimiters
+(`\}`, `\]`), named characters (`\newline`, `\space`) and Unicode characters
+(`\u007D`, `\é`). The shared scanner owns this for both readers and setters:
+an unrelated character must neither truncate the root before `:hidden` nor
+leave part of a replaced collection behind (audit L7s1-01).
+
 Renaming the page `:default-home` names, or a namespace parent of it, rewrites
 `:default-home {:page …}` to the new name (OG `rename-page-aux`). A merge does
 not (OG `merge-pages!`). A case-only rename updates `:default-home :page` to the new spelling too.
@@ -88,6 +94,7 @@ risk.
 
 ## Tests
 
+- crates/tine-graph-features/tests/audit_rn_b.rs::audit_l7s1_01_character_literals_keep_hidden_and_surgical_config_edits
 - crates/tine-store/tests/config_live_reload.rs::an_outside_config_edit_is_taken_in_by_the_notify_watcher
 - crates/tine-store/tests/config_live_reload.rs::an_outside_config_edit_is_taken_in_by_the_poll_watcher
 - crates/tine-store/tests/config_live_reload.rs::an_identical_config_rewrite_publishes_nothing

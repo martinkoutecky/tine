@@ -431,7 +431,7 @@ pub fn edn_str_end(s: &str, open: usize) -> usize {
 }
 
 /// Matching close `}` for the map whose `{` is at byte `open`, EDN-aware: skips
-/// strings, `;` comments, and nested braces. End-of-string if unbalanced.
+/// strings, character literals, `;` comments, and nesting. EOF if unbalanced.
 pub fn match_close_brace(s: &str, open: usize) -> usize {
     match_close(s, open, b'{', b'}')
 }
@@ -447,8 +447,8 @@ fn match_close(s: &str, open: usize, openc: u8, closec: u8) -> usize {
     let mut depth = 1usize;
     while i < b.len() {
         let c = b[i];
-        if c == b'"' {
-            i = edn_str_end(s, i);
+        if matches!(c, b'"' | b'\\') {
+            i = form_end(s, i);
             continue;
         }
         if c == b';' {
@@ -558,8 +558,8 @@ pub fn next_value_span(s: &str, from: usize, close: usize) -> Option<(usize, usi
     if i >= close {
         return None;
     }
-    if b[i] == b'"' {
-        return Some((i, edn_str_end(s, i).min(close), true));
+    if matches!(b[i], b'"' | b'\\') {
+        return Some((i, form_end(s, i).min(close), b[i] == b'"'));
     }
     let start = i;
     while i < close

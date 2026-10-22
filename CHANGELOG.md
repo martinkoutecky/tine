@@ -59,6 +59,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Logseq query answers and export notices** (audits L7s1-02, L7s1-03, L7s2-03): advanced property-map queries and self-page joins now visibly refuse instead of answering a guessed page relationship; quoted operands decode EDN escapes as Logseq does. Printed and published queries retain refusal explanations, including legacy scheduled/deadline conversion guidance, rather than claiming there are no matches.
+- **EDN characters in graph settings** (audit L7s1-01): character literals such as `\}` and `\]` no longer hide later `:hidden` exclusions or corrupt config.edn when Favorites are saved. Unrelated settings and comments keep their bytes.
 - Renaming a page preserves longer tags such as `#foo+bar`, `#c++`, `#R&D` and `#foo🎉` when only their prefix matches, and updates complete tags before trailing punctuation such as `#foo.`. Renaming `c++` also updates `#c++` (audit L3-02).
 - A page being deleted stops accepting typing, paste, property and sheet edits until the delete answers. If deletion fails or is not confirmed, the page becomes editable again with its text intact; input can no longer slip past unsaved-text tracking during deletion (audit L9-06).
 - A draft whose name is an alias is added to its owner only once even when the owner's save is not confirmed. A later edit replaces the landed copy instead of appending a second copy, and a refused landing keeps the draft recoverable (audit L9-05).

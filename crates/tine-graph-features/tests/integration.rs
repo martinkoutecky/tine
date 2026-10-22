@@ -36,6 +36,9 @@ fn test_host(store: &std::sync::Arc<tine_store::Store>) -> TestHost {
 #[path = "br3_page_open_before_ready.rs"]
 mod br3_page_open_before_ready;
 
+#[path = "audit_rn_b.rs"]
+mod audit_rn_b;
+
 #[path = "c3s_sync_copy_base.rs"]
 mod c3s_sync_copy_base;
 

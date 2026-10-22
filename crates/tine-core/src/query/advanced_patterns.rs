@@ -375,7 +375,12 @@ pub(super) fn lower_attribute_patterns(
     let mut pages = std::collections::HashSet::new();
     for &index in &active {
         if let Some([subject, attribute, object]) = triple(&groups[index]) {
-            if subject == block && attribute == ":block/page" && object.starts_with('?') {
+            if subject == block
+                && attribute == ":block/page"
+                && object.starts_with('?')
+                && object != block
+                && !inputs.contains_key(&object)
+            {
                 pages.insert(object);
                 consumed.insert(index);
             }
@@ -759,18 +764,15 @@ pub(super) fn advanced_pred_inner(
     } else {
         &[]
     };
-    let (lowered_page_properties, consumed_patterns) = lower_page_property_patterns(block_groups);
     let (lowered_current_pages, current_page_patterns) =
         lower_current_page_patterns(block_groups, &inputs, Some(&find));
-    let consumed_patterns = consumed_patterns
-        .into_iter()
-        .chain(current_page_patterns)
-        .collect::<std::collections::HashSet<_>>();
+    // Property-map/get patterns stay unsupported: neither a page hop nor OG's
+    // entity-level truthiness follows from a property-map binding (L7s1-02).
+    let consumed_patterns = current_page_patterns;
     let taken = consumed_patterns
         .iter()
         .copied()
         .chain(lowered_current_pages.keys().copied())
-        .chain(lowered_page_properties.keys().copied())
         .collect::<std::collections::HashSet<_>>();
     let (mut lowered_attributes, mut attribute_patterns) = lower_attribute_patterns(
         block_groups,
@@ -795,10 +797,6 @@ pub(super) fn advanced_pred_inner(
         .filter_map(|(index, group)| {
             if let Some((pred, label)) = lowered_current_pages.get(&index) {
                 ran.push((*label).into());
-                return Some(pred.clone());
-            }
-            if let Some(pred) = lowered_page_properties.get(&index) {
-                ran.push("page-property".into());
                 return Some(pred.clone());
             }
             if let Some((pred, label)) = lowered_attributes.get(&index) {
@@ -861,77 +859,12 @@ pub(super) fn advanced_pred_inner(
     (Some(query), ran, ignored)
 }
 
-/// EDN strings with escapes are outside this bounded translator. Refuse them
-/// rather than confusing the lexical spelling with the decoded value.
+/// Literal decoding shares the EDN reader used by query inputs and sidecars.
 fn edn_string(token: &str) -> Option<String> {
-    let text = token.strip_prefix('"')?.strip_suffix('"')?;
-    (!text.contains('\\')).then(|| text.to_string())
-}
-
-/// Conservatively lower only the exact DataScript relationship used by the
-/// released BEGIN_QUERY page-property form. The entity/property-map pattern and
-/// `(get ...)` predicate must share the literal `?props` binding; every other
-/// bracket form remains visible as an unsupported `pattern` in `parse_adv_group`.
-fn lower_page_property_patterns(
-    groups: &[String],
-) -> (
-    std::collections::HashMap<usize, Filter>,
-    std::collections::HashSet<usize>,
-) {
-    let relations = groups
-        .iter()
-        .enumerate()
-        .filter_map(|(index, group)| {
-            let inner = group.trim().strip_prefix('[')?.strip_suffix(']')?.trim();
-            (inner.split_whitespace().collect::<Vec<_>>() == ["?p", ":block/properties", "?props"])
-                .then_some(index)
-        })
-        .collect::<Vec<_>>();
-    if relations.len() != 1 {
-        return Default::default();
+    match crate::edn::parse_strict(token)? {
+        crate::edn::Edn::Str(text) => Some(text),
+        _ => None,
     }
-
-    let mut lowered = std::collections::HashMap::new();
-    let mut consumed = std::collections::HashSet::new();
-    for (index, group) in groups.iter().enumerate() {
-        let Some(inner) = group
-            .trim()
-            .strip_prefix('[')
-            .and_then(|s| s.strip_suffix(']'))
-        else {
-            continue;
-        };
-        let Some(call) = inner
-            .trim()
-            .strip_prefix('(')
-            .and_then(|s| s.strip_suffix(')'))
-        else {
-            continue;
-        };
-        let tokens = call.split_whitespace().collect::<Vec<_>>();
-        if tokens.len() != 3 || tokens[0] != "get" || tokens[1] != "?props" {
-            continue;
-        }
-        let Some(key) = tokens[2].strip_prefix(':').filter(|key| !key.is_empty()) else {
-            continue;
-        };
-        if key
-            .chars()
-            .any(|c| c.is_whitespace() || "()[]{}".contains(c))
-        {
-            continue;
-        }
-        lowered.insert(
-            index,
-            Filter::rel(
-                Rel::Page,
-                Quant::Any,
-                og::property_leaf(og::normalize_prop_key(key), None),
-            ),
-        );
-        consumed.insert(relations[0]);
-    }
-    (lowered, consumed)
 }
 
 /// Map one `:where` group to a `Pred` (or None → ignored). Recurses for and/or/not.
@@ -1153,15 +1086,14 @@ fn adv_strings(s: &str) -> Vec<String> {
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'"' {
-            let start = i + 1;
-            i += 1;
-            while i < b.len() && b[i] != b'"' {
-                if b[i] == b'\\' {
-                    i += 1;
-                }
-                i += 1;
+            let Some(end) = crate::query_edn::string_end(s, i) else {
+                break;
+            };
+            if let Some(text) = edn_string(&s[i..end]) {
+                out.push(text);
             }
-            out.push(s[start..i.min(s.len())].to_string());
+            i = end;
+            continue;
         }
         i += 1;
     }
