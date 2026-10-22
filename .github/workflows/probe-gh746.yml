@@ -1,0 +1,86 @@
+# PROBE ONLY (branches probe/gh746-*, never merged): GH #746 held-key typing latency on
+# real WebView2 with a 13k-page and a 1k-page generated graph.
+name: probe-gh746
+
+on:
+  push:
+    branches: ["probe/gh746-**"]
+
+permissions:
+  contents: read
+
+jobs:
+  typing:
+    name: GH746 typing probe / windows
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - run: npm run build
+      - name: Build production-protocol app
+        run: cargo build --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
+      - name: Install Edge WebDriver matching the hosted browser
+        shell: pwsh
+        run: |
+          $edgeExe = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          $version = (Get-Item $edgeExe).VersionInfo.ProductVersion
+          $driverDir = "$env:RUNNER_TEMP\edgedriver"
+          $zip = "$env:RUNNER_TEMP\edgedriver.zip"
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile $zip
+          Expand-Archive $zip -DestinationPath $driverDir -Force
+          $driverDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Machine info
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force test-results/probe-gh746 | Out-Null
+          $o = @()
+          $o += (Get-CimInstance Win32_ComputerSystem | Format-List Model,NumberOfLogicalProcessors,TotalPhysicalMemory | Out-String)
+          $o += (Get-CimInstance Win32_Processor | Format-List Name | Out-String)
+          try { $o += (Get-MpComputerStatus | Format-List RealTimeProtectionEnabled,AMRunningMode | Out-String) } catch { $o += "no MpComputerStatus" }
+          $o += "WebView2: " + (Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" -ErrorAction SilentlyContinue).pv
+          $o | Tee-Object -FilePath test-results/probe-gh746/machine.txt
+      - name: Generate graphs
+        run: |
+          node scripts/generate-realistic-graph.mjs ${{ runner.temp }}/g13k 11404 1555 746
+          node scripts/generate-realistic-graph.mjs ${{ runner.temp }}/g1k 880 120 746
+      - name: Probe 13k graph
+        env:
+          TAURI_DRIVER: msedgedriver.exe
+          E2E_WEBVIEW_USER_DATA_ROOT: ${{ runner.temp }}\wv2-13k
+          PROBE_GRAPH: ${{ runner.temp }}/g13k
+          PROBE_LABEL: g13k
+          PROBE_SETTLE_MS: "60000"
+        run: node scripts/probe-gh746.mjs
+      - name: Probe 1k graph
+        env:
+          TAURI_DRIVER: msedgedriver.exe
+          E2E_WEBVIEW_USER_DATA_ROOT: ${{ runner.temp }}\wv2-1k
+          PROBE_GRAPH: ${{ runner.temp }}/g1k
+          PROBE_LABEL: g1k
+          PROBE_SETTLE_MS: "30000"
+        run: node scripts/probe-gh746.mjs
+      - name: Probe 13k graph again
+        env:
+          TAURI_DRIVER: msedgedriver.exe
+          E2E_WEBVIEW_USER_DATA_ROOT: ${{ runner.temp }}\wv2-13k-b
+          PROBE_GRAPH: ${{ runner.temp }}/g13k
+          PROBE_LABEL: g13k-b
+          PROBE_SETTLE_MS: "60000"
+          E2E_DRIVER_PORT: "4622"
+          E2E_NATIVE_PORT: "4623"
+        run: node scripts/probe-gh746.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-gh746-${{ github.sha }}-${{ github.run_attempt }}
+          path: test-results/probe-gh746
+          retention-days: 30
