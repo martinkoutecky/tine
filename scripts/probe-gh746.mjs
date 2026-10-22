@@ -16,6 +16,23 @@ import { fileURLToPath } from "node:url";
 import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
+import WebSocket from "ws";
+
+// Optional Chromium trace of the whole WebView2 (browser + renderer) during one run (PROBE_TRACE=1, Windows).
+async function startTrace(debuggerAddress) {
+  const v = await (await fetch(`http://${debuggerAddress}/json/version`)).json();
+  const ws = new WebSocket(v.webSocketDebuggerUrl, { perMessageDeflate: false, maxPayload: 2 ** 30 });
+  await new Promise((res, rej) => { ws.once("open", res); ws.once("error", rej); });
+  let id = 0; const pending = new Map(); const events = []; let done;
+  const complete = new Promise((res) => { done = res; });
+  ws.on("message", (d) => { const m = JSON.parse(d); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+    else if (m.method === "Tracing.dataCollected") events.push(...m.params.value); else if (m.method === "Tracing.tracingComplete") done(); });
+  const send = (method, params = {}) => new Promise((res) => { const i = ++id; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params })); });
+  const r = await send("Tracing.start", { transferMode: "ReportEvents", traceConfig: { recordMode: "recordAsMuchAsPossible",
+    includedCategories: ["toplevel", "devtools.timeline", "v8.execute", "blink.user_timing", "input", "latencyInfo", "disabled-by-default-devtools.timeline", "blink", "loading"] } });
+  return { started: !r.error, error: r.error, stop: async (file) => { await send("Tracing.end"); await Promise.race([complete, sleep(30000)]);
+    fs.writeFileSync(file, JSON.stringify({ traceEvents: events })); ws.close(); return events.length; } };
+}
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WIN = process.platform === "win32";
@@ -26,7 +43,7 @@ const NATIVE = Number(process.env.E2E_NATIVE_PORT || 4613);
 const LABEL = process.env.PROBE_LABEL || "run";
 const SRC = process.env.PROBE_GRAPH;
 const TARGET_MD = process.env.PROBE_TARGET_MD || path.join(ROOT, "tests/fixtures/gh746/GH746 typing.md");
-const MODES = (process.env.PROBE_MODES || (WIN ? "os,webdriver" : "os,webdriver")).split(",");
+const MODES = (process.env.PROBE_MODES || (WIN ? "os,osrepeat,webdriver" : "os,webdriver")).split(",");
 const KEYS = Number(process.env.PROBE_KEYS || 330);
 const DELAY = Number(process.env.PROBE_DELAY_MS || 33);
 const SETTLE = Number(process.env.PROBE_SETTLE_MS || 30000);
@@ -156,7 +173,7 @@ function analyse(raw, win) {
 
 // Windows OS-level input + UI-thread probe (one C# helper, compiled by PowerShell).
 const WIN_HELPER = String.raw`
-param([int]$procId, [int]$count, [int]$delay, [int]$vk, [string]$out)
+param([int]$procId, [int]$count, [int]$delay, [int]$vk, [int]$repeat, [string]$out)
 Add-Type -TypeDefinition @"
 using System; using System.Diagnostics; using System.Runtime.InteropServices; using System.Threading; using System.Text; using System.Collections.Generic;
 public static class P746 {
@@ -173,41 +190,43 @@ public static class P746 {
   [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint p);
   static long Epoch() { return (long)(DateTime.UtcNow - new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalMilliseconds; }
   static INPUT Key(ushort vk, bool up) { var i = new INPUT(); i.type = 1; i.u.ki.wVk = vk; i.u.ki.dwFlags = up ? 2u : 0u; return i; }
-  public static string Run(int pid, int count, int delay, int vk) {
+  public static string Run(int pid, int count, int delay, int vk, int repeat) {
     timeBeginPeriod(1);
     var proc = Process.GetProcessById(pid); IntPtr h = proc.MainWindowHandle;
     var sb = new StringBuilder();
     keybd_event(0x12, 0, 0, UIntPtr.Zero); keybd_event(0x12, 0, 2, UIntPtr.Zero); // ALT tap unlocks SetForegroundWindow
     ShowWindow(h, 9); bool fg = SetForegroundWindow(h); Thread.Sleep(300);
     sb.Append("{\"hwnd\":" + h.ToInt64() + ",\"fg\":" + (fg ? "true" : "false") + ",\"isFg\":" + (GetForegroundWindow() == h ? "true" : "false"));
-    var ui = new List<string>(); bool stop = false; int probes = 0;
-    var mon = new Thread(() => { while (!stop) { long a = Epoch(); var sw = Stopwatch.StartNew(); UIntPtr r; SendMessageTimeout(h, 0, UIntPtr.Zero, IntPtr.Zero, 0, 10000, out r); long ms = sw.ElapsedMilliseconds; probes++; if (ms > 8) lock (ui) ui.Add("[" + a + "," + ms + "]"); Thread.Sleep(5); } });
+    var ui = new List<string>(); bool stop = false; int probes = 0; int fails = 0; int firstErr = 0;
+    var mon = new Thread(() => { while (!stop) { long a = Epoch(); var sw = Stopwatch.StartNew(); UIntPtr r; IntPtr ok = SendMessageTimeout(h, 0, UIntPtr.Zero, IntPtr.Zero, 0, 2000, out r); long ms = sw.ElapsedMilliseconds; probes++; if (ok == IntPtr.Zero) { fails++; if (firstErr == 0) firstErr = Marshal.GetLastWin32Error(); } if (ms > 8) lock (ui) ui.Add("[" + a + "," + ms + "]"); Thread.Sleep(5); } });
     mon.Start(); Thread.Sleep(500);
     var sent = new List<long>(); var clock = Stopwatch.StartNew(); long next = 0;
     for (int k = 0; k < count; k++) {
       while (clock.ElapsedMilliseconds < next) Thread.Sleep(1);
-      var arr = new INPUT[] { Key((ushort)vk, false), Key((ushort)vk, true) };
-      SendInput(2, arr, Marshal.SizeOf(typeof(INPUT))); sent.Add(Epoch()); next += delay;
+      // repeat=1 imitates OS autorepeat: key-downs only (the previous-state bit makes them repeats), one key-up at the end.
+      var arr = repeat == 1 ? new INPUT[] { Key((ushort)vk, false) } : new INPUT[] { Key((ushort)vk, false), Key((ushort)vk, true) };
+      SendInput((uint)arr.Length, arr, Marshal.SizeOf(typeof(INPUT))); sent.Add(Epoch()); next += delay;
     }
+    if (repeat == 1) SendInput(1, new INPUT[] { Key((ushort)vk, true) }, Marshal.SizeOf(typeof(INPUT)));
     Thread.Sleep(3000); stop = true; mon.Join();
-    sb.Append(",\"sentFirst\":" + sent[0] + ",\"sentLast\":" + sent[sent.Count - 1] + ",\"probes\":" + probes + ",\"ui\":[" + string.Join(",", ui) + "]}");
+    sb.Append(",\"sentFirst\":" + sent[0] + ",\"sentLast\":" + sent[sent.Count - 1] + ",\"probes\":" + probes + ",\"fails\":" + fails + ",\"firstErr\":" + firstErr + ",\"ui\":[" + string.Join(",", ui) + "]}");
     return sb.ToString();
   }
 }
 "@
-[P746]::Run($procId, $count, $delay, $vk) | Out-File -FilePath $out -Encoding ascii
+[P746]::Run($procId, $count, $delay, $vk, $repeat) | Out-File -FilePath $out -Encoding ascii
 `;
 fs.writeFileSync(path.join(TMP, "p746.ps1"), WIN_HELPER);
 
-async function driveOs(key, browser) {
+async function driveOs(key, browser, repeat = false) {
   if (WIN) {
     const out = path.join(TMP, `os-${key}.json`);
     const pid = webviewTarget.applicationProcess.pid;
     const r = spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(TMP, "p746.ps1"),
-      "-procId", String(pid), "-count", String(KEYS), "-delay", String(DELAY), "-vk", String(key === "1" ? 0x31 : 0x08), "-out", out], { encoding: "utf8", timeout: 120000 });
+      "-procId", String(pid), "-count", String(KEYS), "-delay", String(DELAY), "-vk", String(key === "1" ? 0x31 : 0x08), "-repeat", repeat ? "1" : "0", "-out", out], { encoding: "utf8", timeout: 120000 });
     if (r.status !== 0) throw new Error(`SendInput helper failed: ${r.stdout} ${r.stderr}`);
     const res = JSON.parse(fs.readFileSync(out, "utf8").trim());
-    return { meta: { hwnd: res.hwnd, fg: res.fg, isFg: res.isFg, probes: res.probes, sentSpan: res.sentLast - res.sentFirst }, win: res.ui.map(([at, ms]) => ({ at, ms })) };
+    return { meta: { hwnd: res.hwnd, fg: res.fg, isFg: res.isFg, probes: res.probes, fails: res.fails, firstErr: res.firstErr, sentSpan: res.sentLast - res.sentFirst }, win: res.ui.map(([at, ms]) => ({ at, ms })) };
   }
   const t = Date.now();
   const r = spawnSync("xdotool", ["key", "--delay", String(DELAY), ...Array(KEYS).fill(key === "1" ? "1" : "BackSpace")], { encoding: "utf8", timeout: 120000 });
@@ -272,7 +291,11 @@ try {
       if (!(await browser.execute(() => document.activeElement?.tagName === "TEXTAREA"))) await enter();
       await sleep(1500);
       await browser.execute(drain);
-      const drive = mode === "os" ? await driveOs(key, browser) : await driveWebdriver(key, browser);
+      const trace = WIN && process.env.PROBE_TRACE === "1" && mode === "os" && key === "1" ? await startTrace(webviewTarget.debuggerAddress).catch((e) => ({ started: false, error: String(e) })) : null;
+      await browser.execute(() => performance.mark("p746-drive-start"));
+      const drive = mode === "os" ? await driveOs(key, browser) : mode === "osrepeat" ? await driveOs(key, browser, true) : await driveWebdriver(key, browser);
+      if (trace?.started) report.traceEvents = await trace.stop(path.join(OUT, `trace-${mode}-${key}.json`));
+      else if (trace) report.traceError = trace.error;
       const raw = JSON.parse(await browser.execute(drain));
       const value = await browser.execute(() => document.activeElement?.tagName === "TEXTAREA" ? document.activeElement.value : null);
       const a = analyse(raw, drive.win);

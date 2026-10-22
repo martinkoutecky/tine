@@ -11,8 +11,19 @@ permissions:
 
 jobs:
   typing:
-    name: GH746 typing probe / windows
+    name: GH746 typing probe / windows ${{ matrix.arch }}
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            cargo-target: ""
+            app: target/release/tine.exe
+          # The reporter's beta.8 diagnostics say arch "x86": the experimental 32-bit build.
+          - arch: x86
+            cargo-target: "--target i686-pc-windows-msvc"
+            app: target/i686-pc-windows-msvc/release/tine.exe
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -21,13 +32,16 @@ jobs:
           node-version: 20
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch == 'x86' && 'i686-pc-windows-msvc' || '' }}
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          key: ${{ matrix.arch }}
       - run: npm ci
       - run: npm run build
       - name: Build production-protocol app
-        run: cargo build --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
+        run: cargo build --release ${{ matrix.cargo-target }} --features custom-protocol --manifest-path src-tauri/Cargo.toml
       - name: Install Edge WebDriver matching the hosted browser
         shell: pwsh
         run: |
@@ -47,6 +61,7 @@ jobs:
           $o += (Get-CimInstance Win32_Processor | Format-List Name | Out-String)
           try { $o += (Get-MpComputerStatus | Format-List RealTimeProtectionEnabled,AMRunningMode | Out-String) } catch { $o += "no MpComputerStatus" }
           $o += "WebView2: " + (Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" -ErrorAction SilentlyContinue).pv
+          $o += "app arch: ${{ matrix.arch }}"
           $o | Tee-Object -FilePath test-results/probe-gh746/machine.txt
       - name: Generate graphs
         run: |
@@ -55,14 +70,17 @@ jobs:
       - name: Probe 13k graph
         env:
           TAURI_DRIVER: msedgedriver.exe
+          TINE_APP: ${{ github.workspace }}\${{ matrix.app }}
           E2E_WEBVIEW_USER_DATA_ROOT: ${{ runner.temp }}\wv2-13k
           PROBE_GRAPH: ${{ runner.temp }}/g13k
           PROBE_LABEL: g13k
           PROBE_SETTLE_MS: "60000"
+          PROBE_TRACE: "1"
         run: node scripts/probe-gh746.mjs
       - name: Probe 1k graph
         env:
           TAURI_DRIVER: msedgedriver.exe
+          TINE_APP: ${{ github.workspace }}\${{ matrix.app }}
           E2E_WEBVIEW_USER_DATA_ROOT: ${{ runner.temp }}\wv2-1k
           PROBE_GRAPH: ${{ runner.temp }}/g1k
           PROBE_LABEL: g1k
@@ -71,6 +89,7 @@ jobs:
       - name: Probe 13k graph again
         env:
           TAURI_DRIVER: msedgedriver.exe
+          TINE_APP: ${{ github.workspace }}\${{ matrix.app }}
           E2E_WEBVIEW_USER_DATA_ROOT: ${{ runner.temp }}\wv2-13k-b
           PROBE_GRAPH: ${{ runner.temp }}/g13k
           PROBE_LABEL: g13k-b
@@ -81,6 +100,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: probe-gh746-${{ github.sha }}-${{ github.run_attempt }}
+          name: probe-gh746-${{ matrix.arch }}-${{ github.sha }}-${{ github.run_attempt }}
           path: test-results/probe-gh746
           retention-days: 30
