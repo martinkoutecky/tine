@@ -5,7 +5,8 @@ import { isFavoriteBlock, isFavoritesPage } from "../favorites";
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
 
-import { createExpansionGate, MACRO_EXPANSION_LIMIT_LABEL } from "./expansionBudget";
+import { createExpansionGate, expandTemplate, templateExpansionSize, MACRO_EXPANSION_LIMIT_LABEL } from "./expansionBudget";
+export { expandTemplate } from "./expansionBudget";
 import { leadingMarker, matchLeadingMarker } from "../markers";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
@@ -1225,10 +1226,6 @@ export function InlineText(props: { text: string; blockId?: string; format?: For
 // limit marker) — I-22, one budget with renderedText.ts.
 const userMacroGate = createExpansionGate();
 
-export function expandTemplate(template: string, args: string[]): string {
-  return template.replace(/\$(\d+)/g, (m, d) => args[Number(d) - 1] ?? m);
-}
-
 function isSingleParagraphExpansionBlock(b: AstBlock): boolean {
   // parseBlock re-bullets raw Markdown/Org block bodies, so a plain paragraph
   // arrives as the synthetic header bullet. A heading expansion has `size`.
@@ -1252,9 +1249,8 @@ function expansionHeadingLevel(expanded: string, fmt?: Format): number | null {
 // the args. Single-paragraph expansions stay inline; block-level expansions render
 // through the block renderer, matching OG's macro parse/render split.
 function UserMacroView(props: { name: string; template: string; args: string[]; blockId?: string }): JSX.Element {
-  const expanded = expandTemplate(props.template, props.args);
   return userMacroGate.expand(
-    expanded.length,
+    templateExpansionSize(props.template, props.args),
     () => <span class="macro">{`{{${props.name}}}`}</span>,
     () => (
       <span class="macro macro-expansion-limit" title={`{{${props.name}}}`}>
@@ -1263,6 +1259,7 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
     ),
     () => {
       const fmt = formatForBlock(props.blockId);
+      const expanded = expandTemplate(props.template, props.args);
       if (parserReady() && expansionIsBlockLevel(expanded, fmt)) {
         return (
           <div class="macro-blocks" data-foreign-source="macro">

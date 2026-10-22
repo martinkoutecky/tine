@@ -46,15 +46,18 @@ pub(crate) async fn list_sync_conflicts(
 /// relative paths) — the data behind the two-column merge UI; 3-way with
 /// suggestions when the Concord base ledger holds an ancestor. Read-only.
 #[tauri::command]
-pub(crate) fn sync_conflict_diff(
+pub(crate) async fn sync_conflict_diff(
     winner: String,
     conflict: String,
     state: GraphContext<'_>,
 ) -> Result<Option<tine_core::sync_diff::SyncConflictDiff>, String> {
     let slot = slot_for_context(&state)?;
-    let bases = ledger_bases(&slot, &winner, &conflict);
-    tine_graph_features::conflicts::sync_conflict_diff(&slot.store, &winner, &conflict, &bases)
-        .map_err(|e| e.to_string())
+    crate::state::off_ui(move || {
+        let bases = ledger_bases(&slot, &winner, &conflict);
+        tine_graph_features::conflicts::sync_conflict_diff(&slot.store, &winner, &conflict, &bases)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Resolve a sync-conflict copy: merge it into its winner per the user's per-row

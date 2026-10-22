@@ -728,6 +728,34 @@ pub(crate) fn capture_quick_switch_slot(
 mod tests {
     use super::*;
 
+    #[test]
+    fn off_ui_slow_read_yields_to_its_caller() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Wake, Waker};
+        struct Noop;
+        impl Wake for Noop {
+            fn wake(self: Arc<Self>) {}
+        }
+        let caller = std::thread::current().id();
+        let (release, wait) = std::sync::mpsc::channel();
+        let mut read = Box::pin(off_ui(move || {
+            assert_ne!(std::thread::current().id(), caller);
+            wait.recv().unwrap();
+            Ok("unchanged bytes")
+        }));
+        let waker = Waker::from(Arc::new(Noop));
+        // A suspended native read cannot block the caller's event dispatch.
+        assert!(matches!(
+            read.as_mut().poll(&mut Context::from_waker(&waker)),
+            Poll::Pending
+        ));
+        release.send(()).unwrap();
+        assert_eq!(
+            tauri::async_runtime::block_on(read).unwrap(),
+            "unchanged bytes"
+        );
+    }
+
     /// G6: every exit is the revocable waiter's. The last window's
     /// `close_graph_window` and the `Destroyed` hook each release the
     /// window's graph (which retires its running host) before they leave the

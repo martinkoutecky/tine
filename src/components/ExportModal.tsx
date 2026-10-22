@@ -11,7 +11,6 @@ import { exportNodesFor, formatForPage } from "../document";
 import { backend } from "../backend";
 import { writeClipboardText } from "../clipboard";
 import { resolveBlockBatched, resolvedBlockRefSync } from "../resolveBatch";
-import { expandTemplate } from "../render/inline";
 import { visibleBody, isRenderHiddenProp } from "../render/block";
 import { parseBlock, blockRegions, propertyValueInline } from "../render/parse";
 import { splitTrailingMap } from "../editor/edn";
@@ -134,7 +133,7 @@ function resolveExportMacro(name: string, args: string[]) {
   if (isBuiltInMacro(name)) return null;
   const macros = graphMeta()?.macros;
   if (!macros || !Object.prototype.hasOwnProperty.call(macros, name)) return null;
-  return { raw: expandTemplate(macros[name], args), format: "md" as const };
+  return { raw: macros[name], templateArgs: args, format: "md" as const };
 }
 
 function macroKey(name: string, args: string[]): string {

@@ -59,6 +59,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Slow asset, local-image, CSV, journal and conflict-diff reads now run off the UI thread (audit L7s4-03). Oversized iOS and Android share envelopes are refused before publication instead of reporting a share that cannot be ingested (L7s4-02). Macro rendering and Copy/Export check cumulative substitution size before allocating output (L7s8-02, macro half). Closing a PDF during loading now retires its loading worker, also on owner cancellation or failure (L7s6-01).
+
 - Renaming a page preserves longer tags such as `#foo+bar`, `#c++`, `#R&D` and `#foo🎉` when only their prefix matches, and updates complete tags before trailing punctuation such as `#foo.`. Renaming `c++` also updates `#c++` (audit L3-02).
 - A page being deleted stops accepting typing, paste, property and sheet edits until the delete answers. If deletion fails or is not confirmed, the page becomes editable again with its text intact; input can no longer slip past unsaved-text tracking during deletion (audit L9-06).
 - A draft whose name is an alias is added to its owner only once even when the owner's save is not confirmed. A later edit replaces the landed copy instead of appending a second copy, and a refused landing keeps the draft recoverable (audit L9-05).

@@ -6,9 +6,11 @@ import { initParser } from "../render/parse";
 import { resetStore } from "../document";
 import { type Node as StoreNode } from "../document/model";
 import { setDoc } from "../document/model";
-import { closeExportModal, openExportModal } from "../ui";
+import { closeExportModal, openExportModal, openExportNodesModal } from "../ui";
 import { clearTransientLayersForTest } from "../transientLayers";
 import { setToasts, toasts } from "../toasts";
+import { setGraphMeta } from "../graphSession";
+import { MACRO_EXPANSION_LIMIT_LABEL } from "../render/expansionBudget";
 
 beforeAll(async () => {
   await initParser();
@@ -37,10 +39,32 @@ describe("ExportModal content choice (GH #352)", () => {
   });
 
   afterEach(() => {
+    setGraphMeta(null);
     closeExportModal();
     clearTransientLayersForTest();
     resetStore();
     document.body.innerHTML = "";
+  });
+
+  it("refuses a cumulative macro expansion before allocating its last substitution (L7s8-02)", async () => {
+    const arg = "x".repeat(100);
+    const last = "$1".repeat(1400) + "LAST";
+    setGraphMeta({ macros: { outer: `{{a ${arg}}} {{b ${arg}}}`, a: "$1".repeat(1400), b: last } } as never);
+    const replace = String.prototype.replace;
+    let materialized = false;
+    const spy = vi.spyOn(String.prototype, "replace").mockImplementation(function (this: string, ...args: any[]) {
+      if (String(this) === last) materialized = true;
+      return Reflect.apply(replace, this, args);
+    } as typeof replace);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <ExportModal />, root);
+    try {
+      openExportNodesModal([{ raw: "{{outer}}", format: "md", children: [] }], 1);
+      for (let i = 0; i < 24; i++) await Promise.resolve();
+      expect(root.querySelector<HTMLTextAreaElement>(".export-preview")?.value).toContain(MACRO_EXPANSION_LIMIT_LABEL);
+      expect(materialized).toBe(false);
+    } finally { dispose(); spy.mockRestore(); }
   });
 
   it("offers an explicit preserve-Markdown choice next to the cleaned plain-text one", async () => {

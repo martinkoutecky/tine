@@ -12,7 +12,7 @@ import { urlDest } from "./urlDest";
 // user's `:block-hidden-properties` (graph state).
 
 import { parseBlock } from "./parse";
-import { createExpansionGate, MACRO_EXPANSION_LIMIT_LABEL, MAX_MACRO_EXPANSION_DEPTH } from "./expansionBudget";
+import { createExpansionGate, expandTemplate, templateExpansionSize, MACRO_EXPANSION_LIMIT_LABEL, MAX_MACRO_EXPANSION_DEPTH } from "./expansionBudget";
 import { typographic } from "./typography";
 import { isRenderHiddenProp } from "./block";
 import type { Block, Format, Inline, ListItem, TimestampInline, TimestampPoint } from "./ast";
@@ -89,6 +89,8 @@ export interface RenderedTextResolvedLeaf {
   raw: string;
   format: Format;
   text?: string;
+  /** Unexpanded user template: charge substitutions before allocating them. */
+  templateArgs?: string[];
 }
 
 // Resolved block refs and macros share one gate: depth cap plus the per-tree
@@ -103,10 +105,10 @@ function macroLiteral(name: string, args: string[]): string {
  *  visible limit marker past the tree's budget. */
 function expandResolved(fallback: string, resolved: RenderedTextResolvedLeaf, o: RenderedTextOptions, shape: (text: string) => string): string {
   return resolveGate.expand(
-    (resolved.text ?? resolved.raw).length,
+    resolved.templateArgs ? templateExpansionSize(resolved.raw, resolved.templateArgs) : (resolved.text ?? resolved.raw).length,
     () => fallback,
     () => `${fallback} (${MACRO_EXPANSION_LIMIT_LABEL})`,
-    () => shape(resolved.text ?? renderedBlockText(resolved.raw, resolved.format, o)),
+    () => shape(resolved.text ?? renderedBlockText(resolved.templateArgs ? expandTemplate(resolved.raw, resolved.templateArgs) : resolved.raw, resolved.format, o)),
   );
 }
 
