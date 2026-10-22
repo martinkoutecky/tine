@@ -1,6 +1,8 @@
 //! Launch checkpoint (ADR 0070): round trip, fallbacks, racy stamps, R5.
 use super::*;
 use std::time::{Duration, SystemTime};
+#[path = "checkpoint_golden_paths.rs"]
+mod golden_paths;
 
 fn set_mtime(path: &Path, when: SystemTime) {
     fs::File::options()
@@ -892,18 +894,7 @@ fn the_golden_body_is_pinned_to_format() {
         ..body
     };
     let mut bytes = postcard::to_stdvec(&body).unwrap();
-    // The temp root, replaced by a same-length name so length prefixes hold.
-    let root_bytes = root.to_string_lossy().into_owned().into_bytes();
-    let stand_in = vec![b'r'; root_bytes.len()];
-    let mut at = 0;
-    while let Some(found) = bytes[at..]
-        .windows(root_bytes.len())
-        .position(|window| window == root_bytes.as_slice())
-    {
-        let start = at + found;
-        bytes[start..start + root_bytes.len()].copy_from_slice(&stand_in);
-        at = start + root_bytes.len();
-    }
+    golden_paths::normalize(&mut bytes, &root);
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),

@@ -3,6 +3,9 @@ import { installQuickCaptureReceiver } from "./App";
 import { backend } from "./backend";
 import { loadSingle } from "./document/workingSet";
 import { resetStore, pageByName } from "./document";
+import { doc } from "./document/model";
+import { answerOpensFromDocument } from "./document/host/documentHost.test.support";
+import { journalTitle, appNow } from "./journal";
 import { bindTestHost, submittedPages } from "./document/host/wiring.test.support";
 import { mainPaneRouter, route } from "./router";
 
@@ -17,6 +20,25 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ label: "main" }) }));
 
 afterEach(() => { resetStore(); vi.restoreAllMocks(); h.ack.mockClear(); });
+
+it.each(["Destination", ""])("L9-08: retries a landed capture without inserting twice (title %s)", async (title) => {
+  vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(11);
+  const name = title || journalTitle(appNow());
+  const page = { name, kind: title ? "page" as const : "journal" as const, title: name, id: title ? "pages/Destination.md" : "journals/today.md", rev: "before", pre_block: null, blocks: [] };
+  loadSingle(page);
+  answerOpensFromDocument(await bindTestHost());
+  vi.spyOn(backend(), "getPage").mockResolvedValue(page);
+  const wait = vi.spyOn(backend(), "pageWait").mockResolvedValue(false);
+  const dispose = await installQuickCaptureReceiver();
+  const payload = { id: "retry-landed", target: "main", bindingGeneration: 11, title, text: "- captured thought" };
+  await h.receive!({ payload });
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: false, landed: true });
+  wait.mockResolvedValue(true);
+  await h.receive!({ payload });
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: true });
+  expect(pageByName(name)!.roots.map(id => doc.byId[id].raw).filter(raw => raw === "captured thought")).toHaveLength(1);
+  dispose();
+});
 
 it.each(["Destination", ""])("refuses graph A's delayed capture in graph B (title %s)", async (title) => {
   let generation = 11;

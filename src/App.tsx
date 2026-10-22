@@ -57,13 +57,14 @@ import { pushToast } from "./toasts";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import { flushAll, subscribeOwnerFlush, appendToTodayJournal, captureToPage, unsavedDrafts, unsavedPageCount, pageByName } from "./document";
-import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
+import { flushAll, subscribeOwnerFlush, unsavedDrafts, unsavedPageCount, pageByName } from "./document";
+import { installQuickCaptureReceiver } from "./quickCaptureReceiver";
+export { installQuickCaptureReceiver } from "./quickCaptureReceiver";
 import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { openPublishedPermalink, publishedPermalinkForWorkspace, replacePublishedPermalink } from "./publishedPermalink";
 import { maybeShowDefenderHint } from "./defenderHint";
-import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owned, type Owner, type WriteOwner } from "./owned";
+import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owned, type Owner } from "./owned";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
@@ -555,89 +556,6 @@ export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen(
   // Mobile only, where main is the sole window.
   mainWindow.document.addEventListener("click", onClick, true);
   return () => mainWindow.document.removeEventListener("click", onClick, true);
-}
-
-/** Install the graph window's capture receiver. Each request is deduplicated
- * by id (100 completed ids retained); writes use the document capture door.
- * Work is O(captured blocks + destination page). Transport setup failures reject;
- * Requests must carry the native capture-show binding generation; stale or
- * missing generations acknowledge false. The surface owner covers registration
- * and callbacks; writes capture graphOwner before starting. Save failure
- * acknowledges false and preserves the sender's scratch. Dispose
- * the returned listener when the app surface retires. */
-export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen(() => true)): Promise<() => void> {
-  const owner = ownedWhen(live);
-  const inFlight = new Map<string, Promise<boolean>>();
-  const completed = new Map<string, boolean>();
-  const completedOrder: string[] = [];
-  const rememberCompleted = (id: string, ok: boolean) => {
-    completed.set(id, ok);
-    completedOrder.push(id);
-    while (completedOrder.length > 100) {
-      const old = completedOrder.shift();
-      if (old) completed.delete(old);
-    }
-  };
-  const { emitTo, listen } = await import("@tauri-apps/api/event");
-  const { getCurrentWindow } = await import("@tauri-apps/api/window");
-  const windowLabel = getCurrentWindow().label;
-  const ack = (id: string | undefined, ok: boolean) => {
-    if (id) void emitTo("capture", "quick-capture-ack", { id, ok } satisfies QuickCaptureAck);
-  };
-  if (!owner()) return () => {};
-  const registration = await readOwnedResource(owner, listen<QuickCaptureRequest & { bindingGeneration: number }>("quick-capture", async (e) => {
-    // WebKitGTK currently exposes targeted Tauri events to every graph
-    // listener in this process. Treat the payload label as the authority so
-    // only the selected graph can ever perform the write.
-    if (!owner() || e.payload?.target !== windowLabel) return;
-    const id = e.payload?.id;
-    if (id && completed.has(id)) {
-      ack(id, completed.get(id) ?? false);
-      return;
-    }
-    const existing = id ? inFlight.get(id) : undefined;
-    if (existing) {
-      ack(id, await existing);
-      return;
-    }
-    if (!Number.isSafeInteger(e.payload.bindingGeneration) || e.payload.bindingGeneration <= 0
-        || e.payload.bindingGeneration !== backend().graphBindingGeneration()) {
-      ack(id, false);
-      return;
-    }
-    const saveOwner = bindingOwner(owner);
-    const text = e.payload?.text ?? "";
-    if (!text.trim()) {
-      ack(id, false);
-      return;
-    }
-    // A title routes the capture to a NEW (or existing) page; empty → today.
-    const title = (e.payload?.title ?? "").trim();
-    const save = async () => {
-      let ok = false;
-      try {
-        const result = await writeOwned(saveOwner, title ? captureToPage(title, text) : appendToTodayJournal(text));
-        ok = result.kind === "current" && result.value;
-      } catch {
-        ok = false;
-      }
-      if (saveOwner()) {
-        if (!ok) pushToast(msg("app-capture-couldn-t-be-saved-its-text"), "error");
-        else if (title) pushToast(msg("app-captured-to", { title }), "info");
-        else pushToast(msg("app-captured-to-today-s-journal"), "info");
-      }
-      return ok;
-    };
-    const promise = save();
-    if (id) inFlight.set(id, promise);
-    const ok = await promise;
-    if (id) {
-      inFlight.delete(id);
-      rememberCompleted(id, ok);
-    }
-    ack(id, ok);
-  }), (unlisten) => unlisten());
-  return registration.kind === "current" ? registration.value : () => {};
 }
 
 export function App(): JSX.Element {

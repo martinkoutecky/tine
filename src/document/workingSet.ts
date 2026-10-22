@@ -1,6 +1,6 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
 import { activatePageInstance, pageInstanceGeneration, pageInstanceGenerations, retirePageInstance } from "./instance";
-import { baseRevFor, deletePageOnDisk, forgetSaveState, hostBlocksReload, hostHolds, isConflicted, rekeyPage, releaseHolds, resolveConflict, setBaseRev, unsettledPages, untombstone } from "./host/wiring";
+import { baseRevFor, deletePageOnDisk, forgetSaveState, hostBlocksReload, hostHolds, isConflicted, rekeyPage, releaseHolds, setBaseRev, unsettledPages, untombstone } from "./host/wiring";
 import { clearCollapseEpochs, doc, hydrateWorkingSet, setDoc, FeedPage, pageByName } from "./model";
 import { batch } from "solid-js";
 import { produce } from "solid-js/store";
@@ -332,8 +332,8 @@ export function forgetPage(name: string) {
   invalidateAllMatrixDimensions();
 }
 
-/** Delete a page through the page host: its own input is sent and published
- *  first, then the host deletes the file (STEP3 §12); the loaded page leaves
+/** Delete through the page host: ordinary input is published first; a conflict
+ *  retains input until deletion applies (STEP3 §12, L2-04). The loaded page leaves
  *  the working set only once the file is gone. A refused or failed delete keeps
  *  the page and its input. Returns whether the file was deleted; the optional
  *  `reportFailure` receives the reason already known at the refusal boundary.
@@ -357,10 +357,8 @@ export async function deletePage(
   const loaded = pageByName(name);
   if (expectedPath && loaded?.id !== expectedPath) return refused(msg("delete-reason-target"));
   if (loaded?.readOnly || loaded?.guide) return refused(msg("delete-reason-read-only"));
-  // Delete is a resolution of a conflict (master parity, Q-TS3): the unsaved
-  // input is discarded first (page_discard), then the file is deleted; the
-  // host's own refusal of a delete over unsaved input (D4) stands.
-  if (isConflicted(name) && !await resolveConflict(name, "disk")) return refused(msg("delete-reason-conflict"));
+  // L2-04, D-20261022-JJ6: a delete consumes local input only after Applied.
+  // Every other outcome leaves the conflicted draft available for recovery.
   let deleted = false;
   try {
     deleted = await deletePageOnDisk(name, kind, expectedPath ?? loaded?.id ?? undefined, reportFailure);

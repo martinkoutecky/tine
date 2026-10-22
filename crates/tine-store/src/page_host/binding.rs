@@ -1092,6 +1092,12 @@ impl PageHost {
     ) -> Result<(), PageRefusal> {
         let (spelling, source, base, version) = self.source(key, version, resolve);
         let (bytes, handoff) = self.serialize(&spelling, dto, source.as_ref(), kinds)?;
+        // L9-04: every live resolution, including whole-page Keep mine, keeps
+        // the reviewed disk bytes before any submit can publish over them.
+        if let Some(Some(old)) = &base {
+            self.store
+                .stage_marker_copy(&PageId::from(spelling).file(), old)?;
+        }
         let request = Request {
             id,
             generation: 0,
@@ -1166,71 +1172,6 @@ impl PageHost {
             kind: RequestKind::Close,
         };
         self.admit(session, request, vec![])
-    }
-
-    /// `page_delete` (§7): the host's delete operation, for the current
-    /// window `session` only (S2). D4 refuses a page with unsaved input;
-    /// Waiting means the page is busy (retry when clean). `checked` is the
-    /// file's bytes the caller's identity check read (GH #620,
-    /// `pages::delete_page_expected`); the operation refuses when its own
-    /// read differs (Q-P2b-5). An admitted deletion is waited for, at most
-    /// `OPERATION_WAIT` (Finding B): `Applied` once its own save
-    /// published it; `Refused` when its draft failed (nothing changed);
-    /// `Pending` when the page cannot publish without the user (a conflict
-    /// or a persistent save error; it completes once it can); `Superseded`
-    /// or `Uncertain` otherwise.
-    pub fn delete(&self, session: u64, page: &PageId, checked: &[u8]) -> PageOperation {
-        // A host that ended deletes nothing.
-        let Some((key, spelling, ..)) = self.try_identify(page) else {
-            return PageOperation::Refused;
-        };
-        // `open`'s invalid-target refusal (docs/storage-contract.md
-        // `page_host::delete`): a path that is not a page file of this graph
-        // (outside the root, not a graph text file) deletes nothing. In-scope
-        // scenario: web content, a plugin or a frontend defect passing a path.
-        if self.store.as_page(&spelling.file()).is_none() {
-            return PageOperation::Refused;
-        }
-        if self.try_register(&key, &spelling).is_none() {
-            return PageOperation::Refused;
-        }
-        let deadline = std::time::Instant::now() + retained::OPERATION_WAIT;
-        let (shared, checked) = (Arc::downgrade(&self.driver.shared), checked.to_vec());
-        let delete = move |state: &mut State<ProductionIo, SystemClock>| {
-            if state.book.session != session {
-                return (Disposition::Refused, None);
-            }
-            let (disposition, reply) = state.progress.with_host(|host| {
-                let disposition = host.delete_checked(&key, &checked);
-                let pending = disposition == Disposition::Pending;
-                (
-                    disposition,
-                    pending.then(|| host.register_reply()).flatten(),
-                )
-            });
-            // OG-RULES Rule 8 (A-K1): the operation's write is a deletion.
-            if disposition == Disposition::Pending {
-                state.book.took([key.clone()], EditKind::DeletePage);
-            }
-            let slot = reply.map(|id| retained::ReplySlot::new(shared.clone(), id));
-            (disposition, slot)
-        };
-        let deleted = (self.driver.shared).locked_step(Deadline::At(deadline), delete);
-        match deleted {
-            Ok((Disposition::Pending, Some(slot))) => {
-                match self.settle(&slot, Some(session), deadline) {
-                    retained::Settled::Applied => PageOperation::Applied,
-                    retained::Settled::DraftFailed => PageOperation::Refused,
-                    retained::Settled::Unwritten(_) => PageOperation::Pending,
-                    retained::Settled::Superseded(_) => PageOperation::Superseded,
-                    retained::Settled::Uncertain => PageOperation::Uncertain,
-                }
-            }
-            // Not admitted in time: the page stayed busy (a path lock held).
-            Ok((Disposition::Waiting, _)) | Err(Unanswered::Withdrawn) => PageOperation::Waiting,
-            Err(Unanswered::Late) => PageOperation::Uncertain,
-            _ => PageOperation::Refused,
-        }
     }
 }
 
@@ -1309,6 +1250,8 @@ mod publication;
 #[path = "binding_launch.rs"]
 mod launch;
 
+#[path = "binding_delete.rs"]
+mod delete;
 #[path = "binding_read.rs"]
 mod read;
 pub use read::{HostRead, HostReadError};

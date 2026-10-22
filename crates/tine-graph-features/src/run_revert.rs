@@ -15,9 +15,7 @@
 //!   from "the agent rewrote it and the user deleted that", so the page stays
 //!   as the user has it and the old block is listed as `unclear`.
 //!
-//! Nothing is written here: the caller saves [`RevertedPage::doc`] through
-//! the guarded save, once per page, so the whole revert of a page is one
-//! change.
+//! The caller saves [`RevertedPage::doc`] through the guarded save once per page.
 
 use std::collections::HashMap;
 
@@ -222,6 +220,8 @@ fn decide(
 ) {
     for row in rows {
         if row.kind != RowKind::Unchanged {
+            // Revert's policy is explicit; ordinary omitted choices keep both (L9-03).
+            decisions.insert(row.id.clone(), "mine".into());
             match row.verdict {
                 Some(Diff3Verdict::TheirsOnly) if row.kind == RowKind::Removed => {
                     // An old block missing from the page now. Restore it if the

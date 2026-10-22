@@ -132,6 +132,9 @@ mod journal_migrations;
 #[path = "l8_03_duplicate_day_asset.rs"]
 mod l8_03_duplicate_day_asset;
 
+#[path = "l9_live_safety.rs"]
+mod l9_live_safety;
+
 #[path = "legacy_config.rs"]
 mod legacy_config;
 
