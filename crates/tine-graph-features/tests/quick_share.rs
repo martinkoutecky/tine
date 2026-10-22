@@ -285,6 +285,31 @@ fn quick_share_of_one_page_is_that_page() {
     assert!(refused.is_err());
 }
 
+/// The share lists its pages in the order the review showed (by path), not in
+/// the directory order of the private build graph, which differs by
+/// filesystem: the same selection must make the same document on Linux, macOS
+/// and Windows.
+#[test]
+fn quick_share_lists_pages_in_the_order_the_review_showed() {
+    let _integration_guard = crate::integration_lock();
+    let root = base();
+    let store = corpus(&root);
+    let (preview, doc) = document(&store, &root, MANY, "Fixture share");
+    let doc: Value = serde_json::from_slice(&doc).unwrap();
+    let reviewed: Vec<&str> = preview.pages.iter().map(|p| p.path.as_str()).collect();
+    assert!(reviewed.len() > 3 && reviewed.windows(2).all(|w| w[0] < w[1]));
+    for key in ["pages", "entries"] {
+        let shared: Vec<&str> = doc["snapshot"][key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p["path"].as_str())
+            .filter(|path| !path.is_empty())
+            .collect();
+        assert_eq!(shared, reviewed, "{key}");
+    }
+}
+
 /// Runtime block ids are fresh per parse; a golden compares them by position.
 fn normalize(doc: &mut Value) {
     fn collect(v: &Value, ids: &mut HashMap<String, String>) {
@@ -319,6 +344,37 @@ fn normalize(doc: &mut Value) {
     replace(doc, &ids);
 }
 
+/// Put the page-ordered parts of a document in path order, so a document
+/// written before the writer listed pages by path (the frozen fixtures came
+/// out in the writing machine's directory order) compares with one written
+/// today. Only order is canonicalized: every page, entry, query and home link
+/// must still be equal, and `writer.json` (below) stays an exact byte golden.
+fn canonical_page_order(doc: &mut Value) {
+    fn path(v: &Value) -> String {
+        v["path"].as_str().unwrap_or_default().to_owned()
+    }
+    let snapshot = &mut doc["snapshot"];
+    for key in ["pages", "entries"] {
+        if let Some(items) = snapshot[key].as_array_mut() {
+            items.sort_by_key(path);
+        }
+    }
+    if let Some(queries) = snapshot["queries"].as_array_mut() {
+        queries.sort_by_key(|q| q["host"].as_str().unwrap_or_default().to_owned());
+    }
+    // The home page lists the pages in order, each link numbered by position.
+    if let Some(pages) = snapshot["pages"].as_array_mut() {
+        for page in pages.iter_mut().filter(|p| p["path"] == "") {
+            if let Some(blocks) = page["blocks"].as_array_mut() {
+                blocks.sort_by_key(|b| b["raw"].as_str().unwrap_or_default().to_owned());
+                for (index, block) in blocks.iter_mut().enumerate() {
+                    block["id"] = Value::String(format!("published-page:{index}"));
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn quick_share_generation_1_fixtures_stay_readable() {
     let _integration_guard = crate::integration_lock();
@@ -332,6 +388,7 @@ fn quick_share_generation_1_fixtures_stay_readable() {
     ] {
         let (_, doc) = document(&store, &root, argument, name);
         let mut fresh: Value = serde_json::from_slice(&doc).unwrap();
+        let mut fresh_canonical = fresh.clone();
         normalize(&mut fresh);
         let case_dir = dir.join(case);
         let bin = case_dir.join("tine-share.bin");
@@ -367,14 +424,17 @@ fn quick_share_generation_1_fixtures_stay_readable() {
             fs::write(&golden, &fresh_text).unwrap();
         }
         let mut frozen: Value = serde_json::from_slice(&frozen_doc).unwrap();
+        canonical_page_order(&mut frozen);
+        canonical_page_order(&mut fresh_canonical);
         normalize(&mut frozen);
+        normalize(&mut fresh_canonical);
         assert_eq!(
             fs::read_to_string(&golden).unwrap(),
             fresh_text,
             "{case}: writer drifted"
         );
         assert_eq!(
-            frozen, fresh,
+            frozen, fresh_canonical,
             "{case}: writer no longer writes the frozen document"
         );
     }

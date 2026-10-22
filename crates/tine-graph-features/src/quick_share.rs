@@ -387,7 +387,13 @@ pub fn prepare(
         let private_graph = private
             .whole_graph()
             .map_err(|error| io::Error::other(format!("{error:?}")))?;
-        let corpus = private_graph.corpus();
+        let mut corpus = private_graph.corpus();
+        // The private store lists its pages in directory order, which differs
+        // by filesystem (hash order on ext4, name order on NTFS). The share
+        // lists them in the order the review showed: by path, as the plan.
+        corpus
+            .pages
+            .sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
         let wanted: BTreeSet<_> = selected.pages.iter().map(|p| p.id.as_str()).collect();
         let got: BTreeSet<_> = corpus.pages.iter().map(|p| p.id.as_str()).collect();
         if wanted != got {
