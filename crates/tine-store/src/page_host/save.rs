@@ -410,11 +410,18 @@ impl<F: HostIo> Host<F> {
         }
     }
 
-    /// A creating save's alternate-extension twin (STEP3 §3.2); a save that
-    /// replaces a file or deletes one has none to check.
+    /// A creating save's physical twin or logical/unreadable owner (audit
+    /// L8-02). Replacements and deletions have no creation slot to check.
     pub(super) fn creation_twin(&mut self, job: &SaveJob) -> Result<Option<String>, IoFailure> {
         if job.base == Base::Known(None) && job.bytes.is_some() {
-            self.fs.page_twin(&job.page)
+            if let Some(twin) = self.fs.page_twin(&job.page)? {
+                return Ok(Some(twin));
+            }
+            let source = self
+                .order
+                .partner(&job.page)
+                .map(|key| self.fs.spelling(key));
+            self.fs.page_owner(&job.page, &job.bytes, source.as_deref())
         } else {
             Ok(None)
         }

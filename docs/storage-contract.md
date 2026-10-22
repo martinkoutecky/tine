@@ -78,6 +78,43 @@ graph-relative locations, and its caller tells the user which files need
 inspection. Page saves are the page host's single-file renames (STEP3 §3.2),
 which have no multi-file rollback; a failed one keeps the input in custody.
 
+The page host revalidates each graph path at the actual I/O boundary, using
+the store's bounded ancestor containment check: before reads, directory and
+temporary-file creation, and again immediately before publication or trash.
+Trash destinations and directory syncs use the same boundary. Recovered draft
+registration checks containment before resolving a disk spelling; an unsafe or
+uncheckable target keeps its logical key and draft, and its I/O fails untouched.
+An honest folder move followed by a symlink replacement (audit L8-01) therefore
+cannot redirect queued input or a recovered draft outside the graph. Uncheckable
+paths fail for retry; paths proved outside refuse access. Path identity remains
+an assumption between the final check and the OS call: the accepted R1 window
+also includes a folder retarget in those microseconds.
+
+At an absent-to-present save only, the host checks the latest published logical
+claimants and the transaction's bounded unreadable-owner predicate, as well as
+the physical alternate-extension twin (audit L8-02). The logical slot is the
+filename name; unreadable-owner checks also take a structured save's proposed
+preamble name. Raw creates keep their filename-only rule, and a move exempts
+its own source. An admitted operation carries those original preconditions in
+memory through save retries, keyed by its proposed bytes; newer input revokes
+them and successful publication retires them. An arriving title
+claimant or possible unreadable owner prevents publication, names that file in
+the save notice, and leaves the proposed text in host/draft custody. Unrelated
+unreadable files permit creation. Ordinary edits do no owner lookup. As with
+transaction creation, external arrivals not yet published and arrivals after
+the final check remain outside the admission witness.
+
+I-25 (audit L8-01/L8-02): added persisted bytes per edit = 0 (1-block and
+60-block pages), added files per edit = 0, transport bytes = 0. Counting the
+shared containment API's metadata operations during an ordinary native save
+gives 7 root resolutions, 7 ancestor `lstat` calls and 7 ancestor resolutions
+for either page size (21 metadata API calls; platform-internal syscalls are
+not counted). The existing one-temp write remains 8 and 480 bytes in that
+fixture. Proof: `page_host/production_guard_tests.rs` `l8_01_metadata_cost_is_independent_of_page_size`.
+Missing ancestors or transient inspection errors add bounded per-path probes;
+only a creating save also pays the published name lookups and the existing
+bounded unreadable-owner probe. No per-keystroke graph scan is added.
+
 A held `WholeGraph` view does not wait for later writers. Acquiring the first
 view with `whole_graph()` can wait for the initial parse; with a launch
 checkpoint (ADR 0070) it answers from the checkpoint until the launch diff ends.
@@ -800,11 +837,12 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | Key | Count | In-scope scenario and required response |
 |---|---:|---|
 | `transaction.rs::refuse_marker_rewrite::ReadOnly` | 1 | R-VCS-MARKERS for reference rewrites and moves that rewrite references (og 21a, master a8fd4230d): an external VCS merge or a sync service left a referrer mid-conflict; rewriting `[[Old]]` inside it would edit sides of a merge the user has not adjudicated. The rename skips such referrers (byte-identical, a moved one moves verbatim) and reports them; this refuses any other caller's rewrite. A rewrite that changes nothing passes. |
-| `transaction.rs::path::InvalidTarget` | 3 | A sync update changes a path into a symlink or invalid area while an operation resolves it; refuse access outside the approved graph root. Only a target proved outside is refused. One that cannot be inspected now (Windows refuses to open a page for a moment while a save replaces it) is re-probed for under 50 ms (in `canonical_existing_ancestor`, so the submit's OS-path check and the write-target check both do), an ordinary entry resolving through its folder; a link that does not resolve is refused at once. A target still uninspectable fails as that I/O error: the submit answers `failed` and the window keeps the text unsaved, rather than refusing it as outside (REG-WIN-WRITE-TARGET-TRANSIENT, proof `crates/tine-store/src/model.rs` `write_target_probe_tests`). |
+| `transaction.rs::path::InvalidTarget` | 3 | A sync update changes a path into a symlink or invalid area while an operation resolves it; refuse access outside the approved graph root. Only a target proved outside is refused. One that cannot be inspected now (Windows refuses to open a page for a moment while a save replaces it) is re-probed for under 50 ms (in `canonical_existing_ancestor`, so the submit's OS-path check and the write-target check both do), an ordinary entry resolving through its folder; a link that does not resolve is refused at once. A target still uninspectable fails as that I/O error: the submit answers `failed` and the window keeps the text unsaved, rather than refusing it as outside (REG-WIN-WRITE-TARGET-TRANSIENT, proof `crates/tine-store/src/model/write_target.rs` `write_target_probe_tests`). |
 | `transaction.rs::twin::Twin` | 2 | Sync introduces an alternate-extension or indexed second physical file for the same page name or journal day; refuse a write that could choose the wrong one. The disk check also catches a twin delivered since the index, and exempts a move's own source. |
 | `transaction.rs::preflight::InvalidTarget` | 10 | A legitimate caller supplies a malformed path or unsupported operation (including moving config), or an external rename changes target shape; refuse before any step changes disk. Config moves require live config publication. |
 | `transaction.rs::page_save_target::InvalidTarget` | 3 | A page save names a non-page path or unsafe page nesting, or a caller attempts to save a virtual Guide DTO; refuse before any step changes disk. Guide content needs an explicit graph copy. |
 | `transaction.rs::page_create_checks::Twin` | 1 | A sync-created same-name page appears between page creation and commit; refuse the ambiguous create. |
+| `transaction.rs::creating_save_owner::Twin` | 1 | Audit L8-02: sync or an external editor delivers a title claimant or a possible unreadable owner after an absent page opens. Its creating save rechecks the published name slot and bounded unreadable-owner predicate; refuse publication, name the claimant in the save notice, and retain the proposed bytes in host/draft custody. A move exempts its source; unrelated unreadable files do not refuse creation. |
 | `transaction.rs::page_open_checks::InvalidTarget` | 1 | A page host open (STEP3 §2) names a non-page path, as a malformed link or an external rename leaves it; refuse before the page is registered or anything changes disk. |
 | `transaction.rs::serialize_page::ReadOnly` | 2 | An Org page no longer round-trips after an external edit; keep its bytes and the unsaved editor proposal. R-VCS-MARKERS: a VCS merge by an external writer left unresolved markers; a rewrite would re-indent them and silently lose a side. Only `SaveBase::ResolvingMarkers` (the Concord resolver) passes, and it first stages the old bytes in `logseq/.tine-trash/conflicts/`. |
 | `transaction.rs::unreadable_owner::UnreadableOwner` | 1 | R-CREATE-UNREADABLE-OWNER (master 69e0a885ddf9 + 69525c055f0b, GH #543): sync delivery, an interrupted external write or malformed imported Markdown/Org leaves a page file Tine cannot read (not UTF-8 where its name lives, an oversized preamble, a permission error) or a directory it cannot list, so the file's page name is unknown; creating a page of a name it could carry would give that name two files once the bad file is repaired. Refuse a name-only creation (`CreateNew` save, `create`, `create_unique` of an ordinary page) only for a name that entry could be (`Graph::unreadable_page_could_own`: its file-name name; its preamble name when that still decodes; otherwise a name its bytes, folded as page names are, contain; any name for an unlistable directory or a file unreadable now; nothing for a FIFO, socket, device, journal or vanished entry), and name the entry. Every other creation, save, move and the watcher proceed. |

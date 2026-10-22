@@ -64,6 +64,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A page being deleted stops accepting typing, paste, property and sheet edits until the delete answers. If deletion fails or is not confirmed, the page becomes editable again with its text intact; input can no longer slip past unsaved-text tracking during deletion (audit L9-06).
 - A draft whose name is an alias is added to its owner only once even when the owner's save is not confirmed. A later edit replaces the landed copy instead of appending a second copy, and a refused landing keeps the draft recoverable (audit L9-05).
 - Settings → unused assets now keeps images referenced only by a duplicate journal file for the same day, including references in its page properties. Moving an asset to trash checks those files too, and refuses if one cannot be read or analyzed (audit L8-03).
+- Refuse page-host I/O through a folder moved outside the graph and replaced by
+  a symlink, retaining queued and recovered text (audit L8-01).
+- Refuse a creating save when a new title claimant or possible unreadable owner
+  arrives while the absent page is open; retain the text and name the claimant
+  (audit L8-02).
+
 - Reference sections, tagged pages and block referrers refresh after related edits without refetching on unrelated saves, including while collapsed (GH #746; development 0.9).
 - References, embeds, favorite blocks, journal sections and page icons stay live after target edits without fetching unrelated targets again on every save (GH #746).
 
