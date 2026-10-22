@@ -160,14 +160,14 @@ The chain is: prose spec → Quint model (checked) → Lean model (proved: compl
    logical claimant or possible unreadable owner at a creating save, audit L8-02); each has a predicate,
    a no-change check and a planted spurious refusal that the tests catch.
 
-The model also assumes the filesystem properties listed above, and takes reference discovery and rewriting
-as given.
-Path identity is another assumption of the model: it does not represent a folder
-moved and replaced by a symlink (audit L8-01). Production guards every host graph
-I/O and recovered-draft registration with the store's bounded containment check;
-the microsecond race between its final check and the OS call remains accepted,
-like R1. These guards and L8-02's extra production refusal change no Quint or
-Lean model and add no stronger formal claim.
+The filesystem/process assumptions, their existing guards and tests, and the
+remaining gaps are recorded in [ASSUMPTIONS.md](ASSUMPTIONS.md). The assumption
+meta-test checks those references and the existing model/replay hash (G8).
+The i01 mutation census walks production source and checks the classified
+`crates/tine-store/tests/write_sites.toml` ledger. These are static review
+ratchets, not a stronger formal claim. In particular, root identity remains
+unguarded and the final containment-check-to-OS-call race remains accepted,
+like R1; environment-fault schedules beyond today's conformance are pending.
 
 ## How to check it yourself
 
