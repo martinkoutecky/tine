@@ -59,6 +59,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Refuse page-host I/O through a folder moved outside the graph and replaced by
+  a symlink, retaining queued and recovered text (audit L8-01).
+- Refuse a creating save when a new title claimant or possible unreadable owner
+  arrives while the absent page is open; retain the text and name the claimant
+  (audit L8-02).
+
 - Reference sections, tagged pages and block referrers refresh after related edits without refetching on unrelated saves, including while collapsed (GH #746; development 0.9).
 - References, embeds, favorite blocks, journal sections and page icons stay live after target edits without fetching unrelated targets again on every save (GH #746).
 

@@ -3,6 +3,9 @@
 use super::super::apply::{ApplyRefusal, Effect, Expected, HostOp};
 use super::*;
 
+#[path = "binding_l8_tests.rs"]
+mod l8_tests;
+
 #[test]
 fn review_binding_reports_unsaved_for_settled_dirty_input() {
     let live = Live::new(&[("pages/a.md", "- one\n")]);
