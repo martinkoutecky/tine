@@ -407,6 +407,36 @@ impl Transaction<'_> {
         self.unreadable_owner(file, &[name])
     }
 
+    /// The creating host save's logical slot, after its physical absence/twin
+    /// guard. Only creation pays: published lookup and bounded unreadable probes.
+    /// A running move's source may still claim the receiver's name.
+    pub(crate) fn creating_save_owner(
+        &self,
+        file: &FileId,
+        name: Option<&str>,
+        source: Option<&FileId>,
+    ) -> Result<(), Why> {
+        let path = self.path(file)?;
+        let graph = &self.store.graph;
+        let filename = graph.entry_for_path_in(&path, Some(""));
+        for entry in filename.iter() {
+            if let Some(existing) = self.store.move_claimant(&entry.name, entry.kind) {
+                if existing.path != path
+                    && source.is_none_or(|source| graph.root.join(source.as_str()) != existing.path)
+                {
+                    return Err(Why::Refused(Refusal::Twin {
+                        existing: PageId::from(graph.rel_path(&existing.path)),
+                    }));
+                }
+            }
+        }
+        if source.is_none() {
+            let names: Vec<_> = name.into_iter().collect();
+            self.unreadable_owner(file, &names)?;
+        }
+        Ok(())
+    }
+
     /// The page host's open of `file` (STEP3 §2): an eligible page target;
     /// with no file there, the page is being created, so the create-only
     /// checks run, as they run for a `CreateNew` save. A file that appears
