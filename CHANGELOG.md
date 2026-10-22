@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- A page being deleted stops accepting typing, paste, property and sheet edits until the delete answers. If deletion fails or is not confirmed, the page becomes editable again with its text intact; input can no longer slip past unsaved-text tracking during deletion (audit L9-06).
+- A draft whose name is an alias is added to its owner only once even when the owner's save is not confirmed. A later edit replaces the landed copy instead of appending a second copy, and a refused landing keeps the draft recoverable (audit L9-05).
+
+## [0.8.0-beta.9] - 2026-10-22
 ### Added
 
 - **Automatic git commits** (queue cards hBpCy4/hBpb2k, ADR 0078 slice 1): a graph in a git repository can commit its changes automatically (Settings → Graph → Commit changes to git; desktop, off by default). Tine commits after a minute without edits, at most once per interval, on quit, and around renames, merges, deletes and backup restores; it never pushes or pulls 
