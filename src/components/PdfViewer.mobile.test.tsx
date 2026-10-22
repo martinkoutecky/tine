@@ -169,7 +169,7 @@ describe("mobile PDF pane transient ownership", () => {
         }),
         removeAllRanges: vi.fn(),
       } as unknown as Selection);
-      span.dispatchEvent(new Event("touchend", { bubbles: true }));
+      span.dispatchEvent(new TouchEvent("touchend", { bubbles: true, touches: [] }));
       await flush();
       expect(host.querySelectorAll(".pdf-color-swatch")).toHaveLength(5);
     } finally { dispose(); }

@@ -796,6 +796,72 @@ async function uploadOnCurrentPage(source, stored, expectedMarkup, receiptKey) {
   });
 }
 
+// WebKitGTK's desktop driver supplies mouse actions. DOM touch events exercise
+// the real viewer/layout/queue, but do not claim to prove OS gesture arbitration.
+async function provePdfTouchPinch() {
+  const measurement = await browser.execute(async () => {
+    const scroll = document.querySelector(".pdf-scroll");
+    const page = document.querySelector(".pdf-page");
+    const view = scroll.getBoundingClientRect(), rect = page.getBoundingClientRect();
+    const x = (Math.max(view.left, rect.left) + Math.min(view.right, rect.right)) / 2;
+    const y = (Math.max(view.top, rect.top) + Math.min(view.bottom, rect.bottom)) / 2;
+    const fx = (x - rect.left) / rect.width, fy = (y - rect.top) / rect.height;
+    const baseScale = Number(scroll.style.getPropertyValue("--scale-factor"));
+    const viewportScale = window.visualViewport?.scale;
+    const events = [];
+    const previousProbe = globalThis.__tinePdfProbe;
+    globalThis.__tinePdfProbe = (event) => events.push(event);
+    const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    const touch = (type, distance) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", { value: distance == null ? [] : [
+        { identifier: 1, clientX: x - distance / 2, clientY: y },
+        { identifier: 2, clientX: x + distance / 2, clientY: y },
+      ] });
+      scroll.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    try {
+      const claimed = touch("touchstart", 80);
+      touch("touchmove", 100);
+      await frame();
+      const preview = { transform: page.style.transform,
+        scale: Number(scroll.style.getPropertyValue("--scale-factor")),
+        rasters: events.filter((event) => event.type === "render-start").length };
+      const release = performance.now();
+      touch("touchend", null);
+      await frame();
+      const after = page.getBoundingClientRect();
+      const result = {
+        input: "synthetic DOM touches in native WebKitGTK", claimed, preview, baseScale,
+        committedScale: Number(scroll.style.getPropertyValue("--scale-factor")),
+        firstFrameMs: performance.now() - release,
+        anchorDriftPx: Math.hypot(after.left + fx * after.width - x, after.top + fy * after.height - y),
+        zoomCommits: events.filter((event) => event.type === "zoom-input").length,
+        canvasVisible: !!page.querySelector("canvas") && after.width > 0,
+        selectionMenu: !!document.querySelector(".pdf-color-menu"),
+        viewportScaleBefore: viewportScale, viewportScaleAfter: window.visualViewport?.scale,
+      };
+      // Restore the fixture's scale so the existing navigation proofs retain
+      // their domain preconditions. This second gesture is measured separately.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      touch("touchstart", 100);
+      touch("touchmove", 80);
+      touch("touchend", null);
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      return result;
+    } finally { globalThis.__tinePdfProbe = previousProbe; }
+  });
+  fs.writeFileSync(path.join(ARTIFACTS, "pdf-pinch-measurement.json"), `${JSON.stringify(measurement, null, 2)}\n`);
+  if (!measurement.claimed || !measurement.preview.transform || measurement.preview.scale !== measurement.baseScale
+    || measurement.preview.rasters !== 0 || measurement.committedScale <= measurement.baseScale
+    || measurement.zoomCommits !== 1 || !measurement.canvasVisible || measurement.selectionMenu
+    || measurement.viewportScaleBefore !== measurement.viewportScaleAfter || !Number.isFinite(measurement.anchorDriftPx)) {
+    throw new Error(`PDF touch pinch did not preserve its content anchor and commit once: ${JSON.stringify(measurement)}`);
+  }
+  console.log(`PDF pinch: ${JSON.stringify(measurement)}`);
+}
+
 async function proveNativeUploadsThemesAndHighlights() {
   // Exercise the deterministic outline before GTK creates any transient dialog
   // surfaces. It is a normal graph asset, not a backend shortcut.
@@ -1244,6 +1310,10 @@ try {
   await browser.$(".pdf-hl").waitForExist({ timeout: 10_000 });
   const restoredZoom = await browser.$(".pdf-zoom-level").getText();
   if (restoredZoom !== "175%") throw new Error(`PDF scale was not restored from :extra: ${restoredZoom}`);
+  await provePdfTouchPinch();
+  if (process.env.TINE_PDF_PINCH_ONLY === "1") {
+    console.log("PASS: PDF pinch preview, single zoom commit and native layout measurements (synthetic touches)");
+  } else {
   if (fs.readFileSync(sidecar, "utf8") !== originalSidecar) {
     throw new Error("opening the PDF rewrote an existing Logseq sidecar before a user change");
   }
@@ -1745,6 +1815,18 @@ try {
   // running this additional native desktop workflow only on Linux.
   if (process.platform === "linux") await proveNativeUploadsThemesAndHighlights();
   console.log(`PASS: Logseq PDFs keep asset identity separate from exact highlight navigation, with bounded resources, restored view state, OG-compatible notes, correct geometry, and compatible write-back on ${process.platform}`);
+  }
+} catch (error) {
+  const capsule = { app: APP, appSha256: literalReceipt.appSha256,
+    journey: process.env.TINE_PDF_PINCH_ONLY === "1" ? "PDF touchscreen pinch" : "PDF compatibility",
+    expected: "fixture PDF opens and user actions update the reader", error: String(error) };
+  try {
+    capsule.observed = await browser.execute(() => ({ href: location.href,
+      text: document.body.innerText.slice(0, 4000) }));
+    await browser.saveScreenshot(path.join(ARTIFACTS, "pdf-failure.png"));
+  } catch {}
+  fs.writeFileSync(path.join(ARTIFACTS, "pdf-failure.json"), `${JSON.stringify(capsule, null, 2)}\n`);
+  throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
   killDriverTree();
