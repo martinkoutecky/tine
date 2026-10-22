@@ -70,7 +70,7 @@ jobs:
           node scripts/generate-realistic-graph.mjs ${{ runner.temp }}/g13k 11404 1555 746
       # Follow-up run (Martin's 1 s vs 3 s cadence hypothesis): the edited page has in-degree 899,
       # both reference sections expanded, embeds and queries (PROBE_HEAVY). TINE_PROBE_READ_SPIN_MS is
-      # an ARTIFICIAL, probe-only CPU cost added to each refresh read so that one refresh round costs
+      # an ARTIFICIAL, probe-only CPU work (N uncontended ms) added to each refresh read so that one round costs
       # more than 1 s but less than 3 s; 0 = natural cost. Each variant gets a fresh app session.
       - name: Probe follow-up variants
         shell: bash
@@ -87,7 +87,7 @@ jobs:
           PROBE_SETTLE_MS: "60000"
         run: |
           port=4612
-          for spin in 0 600; do
+          for spin in 0 400 800; do
             for v in $PROBE_VARIANTS; do
               port=$((port + 2))
               E2E_DRIVER_PORT=$port E2E_NATIVE_PORT=$((port + 1)) E2E_WEBVIEW_USER_DATA_ROOT="${RUNNER_TEMP}\\wv2-$v-$spin" \
