@@ -115,6 +115,40 @@ fn a_title_read_panic_makes_one_host_rename_unwritable() {
     live.host.stop();
 }
 
+#[test]
+fn audit_l3_02_host_rename_preserves_complete_tag_targets() {
+    let live = Live::new(&[
+        ("pages/foo.md", "- source\n"),
+        (
+            "pages/r.md",
+            "- [[foo]] and #foo+bar #foo🎉 #foo.bar #foo. #foo... #foo, #foo\n- `#foo.`\n```\n#foo.\n```\n",
+        ),
+        (
+            "pages/r.org",
+            "* [[foo]] and #foo+bar #foo🎉 #foo.bar #foo. #foo... #foo, #foo\n* =#foo.=\n#+BEGIN_SRC\n#foo.\n#+END_SRC\n",
+        ),
+    ]);
+    let renamed = rename(
+        &live,
+        &PageId::from("pages/foo.md"),
+        &PageId::from("pages/New.md"),
+        &[PageId::from("pages/r.md"), PageId::from("pages/r.org")],
+        &map("foo", "New"),
+    );
+    assert!(renamed.is_ok(), "{renamed:?}");
+    assert_eq!(live.disk("pages/New.md"), "- source\n");
+    assert!(!live.root.join("pages/foo.md").exists());
+    assert_eq!(
+        live.disk("pages/r.md"),
+        "- [[New]] and #foo+bar #foo🎉 #foo.bar #New. #New... #New, #New\n- `#foo.`\n```\n#foo.\n```\n"
+    );
+    assert_eq!(
+        live.disk("pages/r.org"),
+        "* [[New]] and #foo+bar #foo🎉 #foo.bar #New. #New... #New, #New\n* =#foo.=\n#+BEGIN_SRC\n#foo.\n#+END_SRC\n"
+    );
+    live.host.stop();
+}
+
 /// OG-RULES Rule 8 (A-K1): a host operation declares its edit kind. Every
 /// page a host rename writes publishes with `RenamePage`, and a host
 /// delete's page with `DeletePage`, through the per-page kinds a submit
