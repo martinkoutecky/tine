@@ -287,8 +287,8 @@ pub struct MailNotice {
     /// watcher change or a retained writer's release; the driver keeps
     /// retrying, and the notice clears once a read succeeds (§5, §7).
     pub observe_error: bool,
-    /// Another page file claims this page's name (the alternate-extension
-    /// twin, §3.2, Q9): it failed the page's creation, or appeared beside
+    /// Another page file claims this page's name or could own it unreadably
+    /// (the creating save's owner checks, §3.2, Q9): it failed creation, or appeared beside
     /// it. Cleared once a later save publishes.
     pub twin: Option<String>,
 }

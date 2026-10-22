@@ -466,6 +466,8 @@ impl<F: ConformanceIo> Driver<F> {
                 }
             }
             "check" => {
+                let owner = self.creating_owner_predicate();
+                let before = owner.as_ref().map(|_| self.untouched());
                 let twin = self.host.job.as_ref().is_some_and(|job| {
                     job.base == Base::Known(None)
                         && job.bytes.is_some()
@@ -478,14 +480,19 @@ impl<F: ConformanceIo> Driver<F> {
                         && self.claims().contains(&index(&job.page))
                 });
                 self.host.advance_save();
-                if twin && self.host.job.is_none() {
+                if (twin || owner.is_some()) && self.host.job.is_none() {
                     assert!(
                         self.oracle.next("saveFail", &[]).is_some(),
                         "twin failure must be an enabled model step"
                     );
                     self.register_versions("saveFail", &[], old_inc);
                     self.finish("saveFail", &[]);
-                    self.twin_failures += 1;
+                    if let Some(before) = before {
+                        self.assert_creating_refusal(&before);
+                        self.owner_failures += 1;
+                    } else {
+                        self.twin_failures += 1;
+                    }
                     self.twin_suffix = true;
                     return true;
                 }

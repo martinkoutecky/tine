@@ -155,12 +155,19 @@ The chain is: prose spec → Quint model (checked) → Lean model (proved: compl
    simulated filesystem that drops unsynced data at a power cut, compare the code's state with the model's
    after every step, and run deliberately broken variants that must be caught. The production host runs the
    same steps (on the simulated filesystem and on real files), and each observed state must be a successor
-   the model allows. Production may refuse more than the model in three listed cases (a twin file at a
-   creating save, a create over an occupied name, a page whose input is still queued); each has a predicate,
+   the model allows. Production may refuse more than the model in four listed cases (a twin file at a
+   creating save, a create over an occupied name, a page whose input is still queued, and an arriving
+   logical claimant or possible unreadable owner at a creating save, audit L8-02); each has a predicate,
    a no-change check and a planted spurious refusal that the tests catch.
 
 The model also assumes the filesystem properties listed above, and takes reference discovery and rewriting
 as given.
+Path identity is another assumption of the model: it does not represent a folder
+moved and replaced by a symlink (audit L8-01). Production guards every host graph
+I/O and recovered-draft registration with the store's bounded containment check;
+the microsecond race between its final check and the OS call remains accepted,
+like R1. These guards and L8-02's extra production refusal change no Quint or
+Lean model and add no stronger formal claim.
 
 ## How to check it yourself
 
