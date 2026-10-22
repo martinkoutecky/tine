@@ -29,6 +29,23 @@ import { resultTicket, resultsTicketCurrent } from "../queryResultsEpoch";
 // integer increment per real prune.
 export const __livRefGroupInternals = { pruneRuns: 0 };
 
+// GH #746: a refresh answers with new objects even for unchanged blocks, and
+// rows keyed by object would remount and render their text again after every
+// save. Keep the previous object while its content is the same. Query rows
+// carry their answer's results ticket on the object, so they are left as is.
+const contentOf = new WeakMap<object, string>();
+const content = (value: object) => {
+  let text = contentOf.get(value);
+  if (text === undefined) contentOf.set(value, text = JSON.stringify(value));
+  return text;
+};
+function keepUnchanged<T extends object>(previous: Map<string, T> | undefined, entries: [string, T][]): Map<string, T> {
+  return new Map(entries.map(([id, next]) => {
+    const old = previous?.get(id);
+    return [id, old && content(old) === content(next) ? old : next];
+  }));
+}
+
 // Renders result/backlink/embed blocks as LIVE editable <Block>s, but LAZILY:
 // the group is a reserved-height placeholder until it scrolls within ~1.2 screens
 // of the viewport (IntersectionObserver), at which point its source page is
@@ -127,8 +144,10 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
 
   // O(1) id → dto. The prior `props.blocks.find` inside the per-row <For> was
   // O(N) per row → O(N²) per group (250k iterations on a 500-block hub group).
-  const byId = createMemo(() => new Map(props.blocks.map((b) => [b.id, b] as const)));
-  const evidenceById = createMemo(() => new Map((props.evidence ?? []).map((item) => [item.block_id, item])));
+  const byId = createMemo<Map<string, BlockDto>>((previous) =>
+    keepUnchanged(props.surface === "query" ? undefined : previous, props.blocks.map((b) => [b.id, b])));
+  const evidenceById = createMemo<Map<string, ReferenceBlockEvidence>>((previous) =>
+    keepUnchanged(previous, (props.evidence ?? []).map((item) => [item.block_id, item])));
   const dtoById = (id: string) => byId().get(id);
   const queryReady = createMemo(() => props.surface !== "query"
     || props.blocks.every(block => block.page_property ? resultsTicketCurrent(resultTicket(block)) : !!liveNode(block.id)));
