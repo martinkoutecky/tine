@@ -2154,10 +2154,23 @@ mod i2_guide_sentence_tests {
     }
 
     #[test]
-    fn embed_root_bullet_drag_versus_click_is_documented() {
+    fn embed_host_and_source_bullet_ownership_is_documented() {
         let page = include_str!("templates/pages-links-references-search.md");
-        assert!(page.contains("drag its visible root bullet to move the embed on the host page"));
-        assert!(page.contains("clicking that bullet still zooms into the source block"));
+        for outcome in [
+            "Block and page embeds have their own host bullet",
+            "dragging that bullet act on the block containing `{{embed ...}}`",
+            "Every bullet inside the embed, including the source root, acts on its source block",
+            "Cutting and pasting inside an embed really moves the source block",
+            "Deleting inside an embed deletes the source",
+            "**Undo** restores these changes",
+            "Clicking a source bullet zooms into the source block",
+            "extending it across the host/source boundary is refused",
+        ] {
+            assert!(
+                page.contains(outcome),
+                "embed onboarding must explain {outcome}"
+            );
+        }
     }
 
     #[test]

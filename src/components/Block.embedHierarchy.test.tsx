@@ -76,14 +76,15 @@ function mouseDownAndUp(element: Element): void {
 }
 
 describe("block embed hierarchy", () => {
-  it("uses only the embedded root's interactive bullet", async () => {
+  it("gives the host and embedded source separate interactive bullets", async () => {
     const targetId = "embed-hierarchy-root";
     const { root, dispose, hostId } = renderFixture(targetId);
 
     try {
       const host = root.querySelector<HTMLElement>(`[data-block-id="${hostId}"]`);
       expect(host).not.toBeNull();
-      await vi.waitFor(() => expect(host?.querySelectorAll(".bullet-container")).toHaveLength(3));
+      await vi.waitFor(() => expect(host?.querySelectorAll(".bullet-container")).toHaveLength(4));
+      expect(host?.querySelector(":scope > .block-main > .block-controls .bullet-container")).not.toBeNull();
       expect(host?.classList.contains("block-embed-host")).toBe(true);
       expect(host?.querySelector(".embed-block .bullet-container")).not.toBeNull();
     } finally {
@@ -107,9 +108,7 @@ describe("block embed hierarchy", () => {
     }
   });
 
-  // Master GH #514: a whole-block embed shows the source root's bullet where the
-  // host's own would be, so dragging it moves the OCCURRENCE (the host). Nested
-  // rows inside the embed are the source's own outline and drag themselves.
+  // GH #726 supersedes GH #514: each visible bullet drags its own block.
   function dragFrom(element: Element): string | null {
     // jsdom has no elementFromPoint; the drag hit-test only needs "nothing there".
     Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => null });
@@ -121,7 +120,7 @@ describe("block embed hierarchy", () => {
     return dragging;
   }
 
-  it("dragging the embedded root's bullet moves the host occurrence, not the source block", async () => {
+  it("dragging the embedded root's bullet moves the source block", async () => {
     const targetId = "embed-drag-root";
     const { root, dispose, hostId } = renderFixture(targetId);
     try {
@@ -130,7 +129,10 @@ describe("block embed hierarchy", () => {
         expect(el).not.toBeNull();
         return el!;
       });
-      expect(dragFrom(rootBullet)).toBe(hostId);
+      expect(dragFrom(rootBullet)).toBe(targetId);
+      const hostBullet = root.querySelector(`[data-block-id="${hostId}"] > .block-main > .block-controls .bullet-container`);
+      expect(hostBullet).not.toBeNull();
+      expect(dragFrom(hostBullet!)).toBe(hostId);
     } finally {
       dispose();
     }

@@ -59,6 +59,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Soft Settings hierarchy** (GH #649, thanks @EllisMorrow): labels, descriptions and author/version/build details have distinct emphasis in light and dark mode, with quieter dividers and hover/selection borders; every text role keeps at least 4.5:1 contrast.
+- **Touchscreen pinch zooms the PDF around the midpoint between your fingers**, keeping the drawn pages visible while you pinch and sharpening them after release. One-finger scrolling and text selection remain available (GH #742).
+- Block and page embeds keep their own bullet; Copy, Cut, Delete and drag on it act on the embed block, while every bullet inside acts on its source block. Cutting and pasting a source really moves it, and Undo restores it. This retires GH #514's source-root drag redirection to the host (GH #726).
 - Diagnostic reports now include bounded, memory-only renderer stalls while typing, with bundled script attribution where the WebView supports it (GH #746).
 
 - **Holding a key on a large graph no longer makes typing stall more and more.** While you type, Tine saves the page about once a second, and after each save it refreshes the linked and unlinked references, page icons, block references and queries. When one refresh took longer than a second, the next one started before it finished, the refreshes piled up and competed with your typing. Now a refresh waits for the previous one to finish, and the saves made meanwhile are covered by one refresh afterwards, so the views still end up showing your latest text. Related to GH #746 (UI-GH746-REFRESH-ROUNDS-DO-NOT-PILE-UP).

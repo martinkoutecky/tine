@@ -63,6 +63,16 @@
   opacity: 0.4;
 }
 
+.pdf-scroll {
+  /* Keep native one-finger panning, but reserve two-finger zoom for the PDF.
+     The app viewport meta is deliberately unchanged outside this surface. */
+  touch-action: pan-x pan-y;
+}
+.pdf-scroll.pdf-pinching, .pdf-scroll.pdf-pinching * {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 .pdf-viewer {
   --pdf-container-bg: #fff;
   --pdf-toolbar-bg: #fff;

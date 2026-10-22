@@ -55,11 +55,3 @@ export function ownsBlockContextMenu(target: EventTarget | null, row: Element | 
   const element = isElementNode(target) ? target : null;
   return !!element && element.closest(BLOCK_MENU_OWNER) === row;
 }
-
-/** The block a row's menu acts on. The root row of a transparent whole-block
- * embed is the occurrence's only handle: its menu keeps acting on the embed,
- * as its drag does (GH #514). Every other row acts on its own block. */
-export function blockMenuOwner(row: Element | undefined, id: string, dragHostId: string | undefined): string {
-  const host = row?.closest<HTMLElement>(".block-embed-host");
-  return dragHostId && host?.dataset.blockId === dragHostId ? dragHostId : id;
-}

@@ -291,11 +291,11 @@ describe("block embeds (GH #726 sweep)", () => {
     } finally { dispose(); }
   });
 
-  it("the transparent embed's root row stays the occurrence's handle (master GH #514), as before", async () => {
+  it("the embedded root's menu belongs to the source (GH #726 supersedes GH #514)", async () => {
     const { root, dispose } = mount(() => <For each={pageByName("HostPage")!.roots}>{(id) => <Block id={id} />}</For>);
     try {
       rightClick(await embedded(root, "target"));
-      expect(contextMenu()).toMatchObject({ kind: "block", blockId: "host" });
+      expect(contextMenu()).toMatchObject({ kind: "block", blockId: "target" });
     } finally { dispose(); }
   });
 });

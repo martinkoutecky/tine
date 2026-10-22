@@ -21,7 +21,7 @@ function block(css: string, mode: "light" | "dark"): Map<string, string> {
 function resolve(vars: Map<string, string>, name: string, seen = new Set<string>()): string {
   const value = vars.get(name);
   if (value === undefined || seen.has(name)) throw new Error(`${name} is not defined`);
-  const alias = value.match(/^var\((--[a-z0-9-]+)\)$/);
+  const alias = value.match(/^var\((--[a-z0-9-]+)(?:,\s*[^)]+)?\)$/);
   return alias ? resolve(vars, alias[1], new Set(seen).add(name)) : value;
 }
 
@@ -106,6 +106,25 @@ describe("Soft palette (GH #649)", () => {
   for (const mode of ["light", "dark"] as const) {
     const vars = block(soft, mode);
     const at = (name: string) => parse(resolve(vars, name)).rgb;
+
+    it(`${mode}: Settings titles, muted text, descriptions and metadata form a readable hierarchy`, () => {
+      // Resolve Tine aliases without masking missing palette overrides in the
+      // separate whole-surface coverage test below.
+      const settingsVars = new Map([...block(shim, mode), ...vars]);
+      const roleColor = (name: string) => parse(resolve(settingsVars, name)).rgb;
+      const modal = at("--ls-primary-background-color");
+      const tertiary = at("--ls-tertiary-background-color");
+      const hover = modal.map((c, i) => c * 0.55 + tertiary[i] * 0.45) as Rgb;
+      const roles = ["--soft-settings-title", "--text-muted", "--soft-settings-description", "--soft-settings-meta"];
+      const surfaces = { modal, hover, selected: modal, "selected-hover": hover, "nav-footer": at("--ls-secondary-background-color") };
+      for (const [surface, bg] of Object.entries(surfaces)) {
+        const contrasts = roles.map((role) => ratio(roleColor(role), bg));
+        for (let i = 0; i < roles.length; i++) {
+          expect(contrasts[i], `${roles[i]} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+          if (i > 0) expect(contrasts[i - 1], `${roles[i - 1]} > ${roles[i]} on ${surface}`).toBeGreaterThan(contrasts[i]);
+        }
+      }
+    });
 
     it(`${mode}: every text role is at least 4.5:1 on the surfaces it sits on`, () => {
       const failures: string[] = [];
