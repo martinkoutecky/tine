@@ -93,6 +93,7 @@ jobs:
           E2E_WEBVIEW_USER_DATA_ROOT: ${{ runner.temp }}\wv2-13k-b
           PROBE_GRAPH: ${{ runner.temp }}/g13k
           PROBE_LABEL: g13k-b
+          PROBE_RESOLVE_REFS: "1"
           PROBE_SETTLE_MS: "60000"
           E2E_DRIVER_PORT: "4622"
           E2E_NATIVE_PORT: "4623"

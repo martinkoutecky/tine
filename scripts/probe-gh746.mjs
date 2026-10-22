@@ -70,6 +70,20 @@ for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`,
     const line = i < 40 ? `- mention ${i} of [[GH746 typing]] here\n` : `- plain mention ${i} of GH746 typing here\n`;
     fs.writeFileSync(file, text + (text.endsWith("\n") || text === "" ? "" : "\n") + line);
   });
+  // PROBE_RESOLVE_REFS=1: give every ((uuid)) the page references but does not define a target
+  // block elsewhere (as in the reporter's real graph), each with a small subtree.
+  if (process.env.PROBE_RESOLVE_REFS === "1") {
+    const md = fs.readFileSync(TARGET_MD, "utf8");
+    const defined = new Set([...md.matchAll(/id:: ([0-9a-f-]{36})/g)].map((m) => m[1]));
+    const wanted = [...new Set([...md.matchAll(/\(\(([0-9a-f-]{36})\)\)/g)].map((m) => m[1]))].filter((u) => !defined.has(u));
+    let out = "";
+    wanted.forEach((u, i) => {
+      out += `- target block ${i} with a [[link ${i}]] and #tag${i % 5} text text text\n  id:: ${u}\n`;
+      for (let c = 0; c < 12; c++) out += `\t- child ${c} of target ${i}, see [[GH746 typing]] and **bold** \`code\`\n\t\t- grandchild ${c}\n`;
+    });
+    fs.writeFileSync(path.join(GRAPH, "pages", "GH746 targets.md"), out);
+    console.log(`resolve refs: ${wanted.length} targets`);
+  }
 }
 
 const env = { ...process.env, TINE_GRAPH: GRAPH, XDG_DATA_HOME: `${TMP}/xdg/data`, XDG_CONFIG_HOME: `${TMP}/xdg/config`, XDG_CACHE_HOME: `${TMP}/xdg/cache`,
