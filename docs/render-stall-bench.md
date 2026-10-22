@@ -51,3 +51,13 @@ recorded. The snapshot covers the app window and its workspace windows, stays
 in memory, and is cleared with
 **Clear recorded events**; restarting discards it. Copy and Save use the existing
 diagnostic export path.
+
+## Load sensitivity
+
+The budget only means something on an otherwise idle machine. On the Linux
+development host, the same fixed build measured 11–35 ms/s at load average
+below 1.5, but 90–133 ms/s at load 3.4 (a parallel build running). Run the
+bench with nothing else compiling or testing, and A/B two builds alternately
+in one session rather than comparing against numbers from another time. It is
+therefore not part of the integration gate; it is a release-candidate and
+investigation tool.
