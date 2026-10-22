@@ -1414,9 +1414,11 @@ impl Store {
     /// base revision, so a save made over a file a refresh found changed is
     /// refused like any other stale save.
     ///
-    /// Config changes enumerate and reparse O(P + B) pages/blocks under the
-    /// writer before publication. Recovery from a failed initial load parses
-    /// the whole graph synchronously before reconciliation, at every depth
+    /// Config changes enumerate names (reading page preambles) and rebuild
+    /// in-memory indexes under the writer before publication; only changes
+    /// to the build config key also re-read and reparse O(P + B) pages/blocks.
+    /// Recovery from a failed initial load parses the whole graph synchronously
+    /// before reconciliation, at every depth
     /// (already a cold build). A concurrent edit can make that recovery parse
     /// fail; retry with another explicit call after edits settle. A
     /// previously unreadable subtree is retried on this full scan; newly

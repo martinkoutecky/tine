@@ -59,6 +59,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Changing favorites, the journal template or display settings no longer re-reads and re-parses every graph page (audit L1-04).
+- In-page find stays responsive when a large block contains thousands of matches, using constant-time span deduplication per hit (audit L2-13).
+
 - Reference sections, tagged pages and block referrers refresh after related edits without refetching on unrelated saves, including while collapsed (GH #746; development 0.9).
 - References, embeds, favorite blocks, journal sections and page icons stay live after target edits without fetching unrelated targets again on every save (GH #746).
 
