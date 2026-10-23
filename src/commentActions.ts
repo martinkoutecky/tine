@@ -5,7 +5,7 @@
 // undo step: no new write path.
 
 import { blockWritable, formatForBlock, insertEmptyChildBlock, node as docNode, setRaw, withUndoUnit } from "./document";
-import { startEditing } from "./editorController";
+import { editingId, endEdit, startEditing } from "./editorController";
 import { focusedEditorCommandBridge } from "./editorCommandBridge";
 import { graphScopedSignal, refuseStaleWrite } from "./binding";
 import { commentRaw, replyRaw, normalizeQuoteText, normalizeWithMap, occurrences, quoteSelectorFor, quoteSelectorOf } from "./comments";
@@ -18,6 +18,8 @@ import { msg, t } from "./i18n";
 import { commentsWritten } from "./margin";
 import { commentAuthorName } from "./commentIdentity";
 import { selectionOf } from "./windowRealm";
+import { threadRootOf } from "./margin";
+import { deleteBlock } from "./document";
 
 /** Append a comment on [start, end) of `editorText` (the parent editor's
  * text) under `parentId` and return its id, or null when the parent cannot be
@@ -51,6 +53,32 @@ export function commentFromEditor(id: string, ref: HTMLTextAreaElement, commit: 
   if (!commentAndEdit(id, value, selectionStart, selectionEnd, surface)) pushToast(msg("comment-block-cannot-take"), "warn");
 }
 
+/** Reply to this exact comment/reply, as an ordinary last child in its thread.
+ * No quote is needed for the visible Reply action. */
+export function replyAndEdit(commentId: string, surface: string | null = null): string | null {
+  const comment = docNode(commentId);
+  if (!comment || !blockWritable(commentId) || threadRootOf(commentId, formatForBlock(commentId)) === null) return null;
+  let id: string | null = null;
+  withUndoUnit("comment:reply", [comment.page], () => {
+    id = insertEmptyChildBlock(commentId, comment.children.length);
+    const author = commentAuthorName();
+    if (id && author) setRaw(id, replyRaw(formatForBlock(commentId), author), { timetracking: false });
+  });
+  if (id) startEditing(id, 0, null, surface);
+  return id;
+}
+
+/** The document door removes the complete subtree and owns its single undo
+ * step. End an editor within that subtree before its nodes disappear. */
+export function deleteComment(commentId: string): void {
+  if (!blockWritable(commentId)) return;
+  if (threadRootOf(commentId, formatForBlock(commentId)) === null) return;
+  for (let id = editingId(); id !== null; id = docNode(id)?.parent ?? null) {
+    if (id === commentId) { endEdit("delete-block"); break; }
+  }
+  deleteBlock(commentId);
+}
+
 /** Enter in a comment's text, before its property lines, starts a reply: a new
  * last child (thread order = document order), and the caret moves there. A split
  * would carry the `quote::` lines into the new block and turn the comment into
@@ -64,18 +92,8 @@ export function replyOnEnter(commentId: string, editorText: string, caret: numbe
   const format = formatForBlock(commentId);
   if (quoteSelectorOf(facetsOf(comment.raw, format).properties) === null) return false;
   const lines = blockRegions(editorText, format).properties.map((p) => p.line[0]);
-  if (lines.length === 0 || utf8ByteLength(editorText.slice(0, caret)) > Math.min(...lines)) return false;
-  const author = commentAuthorName();
-  let id: string | null = null;
-  // With a name set the reply carries `author::`, in the same undo step as its insert.
-  if (author) {
-    withUndoUnit("comment:reply", [comment.page], () => {
-      id = insertEmptyChildBlock(commentId, comment.children.length);
-      if (id) setRaw(id, replyRaw(format, author), { timetracking: false });
-    });
-  } else id = insertEmptyChildBlock(commentId, comment.children.length);
-  if (id) startEditing(id, 0, null, surface);
-  return true;
+  if (lines.length > 0 && utf8ByteLength(editorText.slice(0, caret)) > Math.min(...lines)) return false;
+  return replyAndEdit(commentId, surface) !== null;
 }
 
 // The palette closes the editor before its command runs (opening it blurs the

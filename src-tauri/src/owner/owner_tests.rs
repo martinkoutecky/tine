@@ -1017,8 +1017,38 @@ fn add_places_forests_and_attributes_every_created_block_only() {
         )
         .unwrap();
         let bytes = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+        // An ordinary block's author is editor text, as on OG; replacing that
+        // buffer removes it. A comment's hidden author is covered separately.
         assert_eq!(bytes.matches("author::").count(), 2);
         assert!(!bytes.contains("author:: agent"));
+    }
+}
+
+#[test]
+fn block_edit_preserves_comment_metadata_but_replaces_ordinary_author_text() {
+    for (content, expected) in [
+        ("ordinary\nauthor:: Ada", "edited"),
+        (
+            "comment\nquote:: one\nquote-prefix:: before\nquote-suffix:: after\nauthor:: Ada",
+            "edited\nquote:: one\nquote-prefix:: before\nquote-suffix:: after\nauthor:: Ada",
+        ),
+    ] {
+        let graph = Graph::new();
+        let slot = graph.slot();
+        let added = verb(
+            &slot,
+            "block.add",
+            json!({"page": "a", "content": content, "author": "Ada"}),
+        )
+        .unwrap();
+        verb(
+            &slot,
+            "block.edit",
+            json!({"handle": added["blocks"][0], "text": "edited"}),
+        )
+        .unwrap();
+        let doc = graph.store.page(&PageId::from("pages/a.md")).unwrap().doc;
+        assert_eq!(doc.blocks.last().unwrap().raw, expected);
     }
 }
 

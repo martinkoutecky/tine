@@ -478,6 +478,53 @@ const NATIVE_REFINEMENTS: &[&str] = &[
     "all/ownSlotClaimAfterAdmission:twin-saveFail-refinement",
 ];
 
+/// F8: native API/file ordering at each existing temp/rename/sync fault seam.
+/// This proves retry and readable whole bytes against ModelFs's independent
+/// physical ledger. It makes no claim about losing the machine's page cache.
+#[test]
+fn native_temp_rename_sync_faults_preserve_whole_bytes_and_retry() {
+    for phase in [Phase::PageTemp, Phase::PageRename, Phase::PageSync] {
+        let mut fs = NativeFs::fresh("base", 3);
+        let page = key(0);
+        let old = fs.read_page(&page).unwrap();
+        let new = text(3);
+        fs.ledger.inject(phase, [Fault::Before]);
+        let result = match phase {
+            Phase::PageTemp => fs.page_temp(&page, &new),
+            Phase::PageRename => {
+                fs.page_temp(&page, &new).unwrap();
+                fs.page_rename(&page)
+            }
+            Phase::PageSync => {
+                fs.page_temp(&page, &new).unwrap();
+                fs.page_rename(&page).unwrap();
+                fs.page_sync(&page).map(|_| ())
+            }
+            _ => unreachable!(),
+        };
+        assert!(
+            result.is_err(),
+            "native phase {phase:?} must report its injected failure"
+        );
+        assert_eq!(
+            fs.read_page(&page).unwrap(),
+            if phase == Phase::PageSync {
+                new.clone()
+            } else {
+                old
+            }
+        );
+        // Repeating from preparation is safe after any of the three errors.
+        fs.page_temp(&page, &new).unwrap();
+        fs.page_rename(&page).unwrap();
+        fs.page_sync(&page).unwrap();
+        fs.page_finish(&page);
+        fs.crash(); // adapter reattach, explicitly not an OS process kill
+        assert_eq!(fs.read_page(&page).unwrap(), new);
+    }
+    eprintln!("F8 native faults: temp=1 rename=1 sync=1, retry=3");
+}
+
 #[test]
 fn s35_native_creation_positive_control() {
     let mut driver = Driver::<NativeFs>::new_with_io("base", 3);

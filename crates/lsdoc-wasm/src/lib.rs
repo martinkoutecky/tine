@@ -492,8 +492,19 @@ pub fn editor_text_join(visible: &str, hidden: &str, is_org: bool, visible_regio
 
 /// Whether hide `policy` hides property `key` (`HidePolicy::hides`).
 #[wasm_bindgen]
-pub fn hide_policy_hides(policy: &str, key: &str) -> Result<bool, JsValue> {
-    Ok(hide_policy(policy)?.hides(key))
+pub fn hide_policy_hides(policy: &str, key: &str, properties: &str) -> Result<bool, JsValue> {
+    let properties: Vec<(String, String)> = serde_json::from_str(properties)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    Ok(hide_policy(policy)?.hides_properties(key, properties.iter().map(|(k, v)| (k.as_str(), v.as_str()))))
+}
+
+/// The same own-property discriminator that editor_text uses to hide comment metadata.
+#[wasm_bindgen]
+pub fn comment_quote(properties: &str) -> Result<Option<String>, JsValue> {
+    let properties: Vec<(String, String)> = serde_json::from_str(properties)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    Ok(editor_text::comment_quote(properties.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        .map(str::to_owned))
 }
 
 /// The kernel's outline depth cap (twin 4).

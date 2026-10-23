@@ -47,6 +47,20 @@ Decisions on the surface: D-20261017-MD1 (integrate into og for 0.9) and the
 - Surfaces: Ctrl/Cmd+R in the block editor (consumed, so the webview never
   reloads), the palette command **Comment on selection**, and the block menu's
   **Comment on selection** for words selected in a block's rendered text.
+  The editor selection toolbar also offers **Comment**. Within a thread this
+  creates a child reply whose selection is a compact quote inside that thread.
+  Each comment and reply offers **Reply** without requiring a selection, and a
+  delete control removes that block and its replies as one document undo step
+  (provisional margin-polish rule, 2026-10-23).
+- The ordinary editor-hidden property projection also hides `quote`,
+  `quote-prefix`, `quote-suffix` and `author` **only when the block's own primary
+  properties include `quote`** (including an empty value). The kernel owns this
+  discriminator, shared with `src/comments.ts`; a parent is additionally needed
+  for card presentation. The existing split/reattach mechanism preserves the
+  hidden lines on text edits. Handwritten `quote` stays typeable until edit exit
+  and hides on reentry. `author` belongs here because the comment card presents
+  it as a chip. Ordinary blocks keep these properties in their editor buffer,
+  as on OG. Page-level property editing retains its own projection.
 - **Presentation** (`render only`): a comment draws as a tinted card with the
   quote above it, and the quoted words are marked in the parent. On a wide main
   pane (scroller at least 960 px, not split) a page that holds comments draws the
@@ -70,5 +84,7 @@ Decisions on the surface: D-20261017-MD1 (integrate into og for 0.9) and the
   comment (shown as stale), by design.
 - A block edited by hand into (or out of) a comment while the page stays open is
   noticed by the margin at the next structural change or reload, not immediately.
-- Hiding the `author` property row applies to every block that has a block id; a
-  page-level `author::` still shows.
+- The rendered author chip can replace an `author` property row on any block;
+  editor hiding is scoped to blocks with their own primary `quote` property.
+  An ordinary quotation's `author::` remains visible and editable in its buffer;
+  a page-level `author::` still shows.

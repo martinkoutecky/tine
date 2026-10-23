@@ -256,6 +256,7 @@ export interface MessageArgs {
   "comment-author-you": {};
   "comment-block-cannot-take": {};
   "comment-block-changed": {};
+  "comment-delete": {};
   "comment-margin-count": { "count": number };
   "comment-margin-label": {};
   "comment-name-hint": {};
@@ -263,8 +264,10 @@ export interface MessageArgs {
   "comment-name-placeholder": {};
   "comment-on-whole-block": {};
   "comment-quote-changed": {};
+  "comment-reply": {};
   "comment-select-first": {};
   "comment-stale-write-what": {};
+  "comment-toolbar": {};
   "comment-written-by": { "author": string | number };
   "comment-written-by-you": {};
   "config-query-details": {};

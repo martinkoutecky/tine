@@ -62,6 +62,402 @@ fn recovery_dir(root: &Path) -> PathBuf {
         .unwrap()
 }
 
+/// F3's generated restore domain is deliberately separate from the page-host
+/// state machine: journal -> page -> sidecar -> config, with unlisted extras.
+pub(super) struct GeneratedRestore {
+    pub(super) live: std::collections::BTreeMap<String, Vec<u8>>,
+    pub(super) inputs: Vec<(Area, String, Vec<u8>)>,
+}
+
+impl GeneratedRestore {
+    fn assert_queries(&self, store: &Store, completed: usize, detached: Option<usize>, at: &str) {
+        for (i, (area, rel, _)) in self.inputs.iter().enumerate() {
+            if *area == Area::Pages {
+                let name = Path::new(rel).file_stem().unwrap().to_str().unwrap();
+                crate::conformance_f3::assert_ref_query(
+                    store,
+                    "Before",
+                    name,
+                    i >= completed && detached != Some(i),
+                    at,
+                );
+                crate::conformance_f3::assert_ref_query(store, "After", name, i < completed, at);
+            }
+        }
+    }
+
+    pub(super) fn assert_custody(&self, root: &Path, recovery: &[PathBuf], at: &str) {
+        for (rel, bytes) in &self.live {
+            crate::conformance_f3::conserved(root, bytes, std::slice::from_ref(rel), recovery, at);
+        }
+    }
+
+    pub(super) fn assert_live_set(&self, root: &Path) {
+        let expected: std::collections::BTreeMap<_, _> = self
+            .inputs
+            .iter()
+            .map(|(area, rel, bytes)| (Self::path(*area, rel), bytes.clone()))
+            .collect();
+        let actual: std::collections::BTreeMap<_, _> = crate::conformance_f3::collect(root)
+            .into_iter()
+            .filter(|(rel, _)| {
+                !rel.contains("/.")
+                    && (rel.starts_with("pages/")
+                        || rel.starts_with("journals/")
+                        || rel.starts_with("assets/")
+                        || rel == "logseq/config.edn")
+            })
+            .collect();
+        assert_eq!(
+            actual, expected,
+            "successful restore must retire all extras"
+        );
+    }
+
+    pub(super) fn backup(&self, root: &Path) {
+        for (area, rel, bytes) in &self.inputs {
+            let path = root.join(Self::path(*area, rel));
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+    }
+
+    pub(super) fn backup_intact(&self, root: &Path) {
+        for (area, rel, bytes) in &self.inputs {
+            assert_eq!(&fs::read(root.join(Self::path(*area, rel))).unwrap(), bytes);
+        }
+    }
+
+    pub(super) fn files(&self) -> Vec<RestoreFile> {
+        self.inputs
+            .iter()
+            .map(|(area, rel, bytes)| RestoreFile {
+                area: *area,
+                rel: rel.clone(),
+                bytes: bytes.clone(),
+            })
+            .collect()
+    }
+
+    pub(super) fn path(area: Area, rel: &str) -> String {
+        format!(
+            "{}/{rel}",
+            match area {
+                Area::Pages => "pages",
+                Area::Journals => "journals",
+                Area::Assets => "assets",
+                Area::Meta => "logseq",
+                _ => unreachable!(),
+            }
+        )
+    }
+}
+
+pub(super) fn generated_case(seed: usize) -> GeneratedRestore {
+    use crate::conformance_f3::Rng;
+    use std::collections::BTreeMap;
+    let mut rng = Rng(0x7265_20261023 ^ seed as u64);
+    let ext = if rng.below(2) == 0 { "md" } else { "org" };
+    let bullet = if ext == "md" { "-" } else { "*" };
+    let mut inputs = vec![
+        (Area::Journals, format!("2026_10_23.{ext}")),
+        (Area::Assets, "nested/paper.edn".to_owned()),
+        (Area::Meta, "config.edn".to_owned()),
+    ];
+    let mut names: Vec<_> = (0..2 + rng.below(3))
+        .map(|n| (Area::Pages, format!("Page{seed}-{n}.{ext}")))
+        .collect();
+    rng.shuffle(&mut names);
+    inputs.extend(names);
+    // The real protocol groups areas and preserves caller order inside each.
+    inputs.sort_by_key(|(area, _)| match area {
+        Area::Journals => 0,
+        Area::Pages => 1,
+        Area::Assets => 2,
+        _ => 3,
+    });
+    let mut live = BTreeMap::new();
+    let inputs = inputs
+        .into_iter()
+        .enumerate()
+        .map(|(i, (area, rel))| {
+            let old = match area {
+                Area::Assets => format!("{{:payload \"old-{seed}-{i}\"}}\n"),
+                Area::Meta => format!("{{:start-of-week {} :old {seed}}}\n", rng.below(7)),
+                _ => format!("{bullet} old-{seed}-{i} [[Before]]\n"),
+            };
+            let new = match area {
+                Area::Assets => format!("{{:payload \"new-{seed}-{i}\"}}\n"),
+                Area::Meta => format!("{{:start-of-week {} :new {seed}}}\n", rng.below(7)),
+                _ => format!("{bullet} new-{seed}-{i} [[After]]\n"),
+            };
+            live.insert(GeneratedRestore::path(area, &rel), old.into_bytes());
+            (area, rel, new.into_bytes())
+        })
+        .collect();
+    for (rel, bytes) in [
+        (
+            format!("pages/Extra.{ext}"),
+            format!("{bullet} extra-page-{seed}\n"),
+        ),
+        (
+            format!("journals/2026_10_22.{ext}"),
+            format!("{bullet} extra-day-{seed}\n"),
+        ),
+        ("assets/extra.edn".into(), format!("{{:extra {seed}}}\n")),
+    ] {
+        live.insert(rel, bytes.into_bytes());
+    }
+    GeneratedRestore { live, inputs }
+}
+
+/// A process-local OS write limit makes copy_new fail during the selected
+/// input's temp write, without a new hook in restore or ProductionIo. Earlier
+/// inputs are below the limit; the selected input alone is padded past it.
+#[cfg(unix)]
+#[test]
+fn generated_restore_copy_error_worker() {
+    use crate::conformance_f3::{fresh, restore_recovery};
+    let _guard = crate::integration_lock();
+    let Ok(seed) = std::env::var("TINE_F3_COPY_SEED") else {
+        return;
+    };
+    let boundary: usize = std::env::var("TINE_F3_COPY_BOUNDARY")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let root = PathBuf::from(std::env::var("TINE_CRASH_ROOT").unwrap());
+    let mut case = generated_case(seed.parse().unwrap());
+    case.inputs[boundary]
+        .2
+        .extend(std::iter::repeat_n(b' ', 8192));
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    fresh(&store, &root, &["Before", "After"], "before copy error");
+    case.assert_queries(&store, 0, None, "before copy error");
+    // Only this disposable child changes its signal/resource state.
+    unsafe {
+        assert_ne!(libc::signal(libc::SIGXFSZ, libc::SIG_IGN), libc::SIG_ERR);
+        assert_eq!(
+            libc::setrlimit(
+                libc::RLIMIT_FSIZE,
+                &libc::rlimit {
+                    rlim_cur: 4096,
+                    rlim_max: 4096
+                }
+            ),
+            0
+        );
+    }
+    let error = store
+        .restore(tine_store::EditKind::ReplacePage, case.files(), None)
+        .unwrap_err();
+    assert_eq!(
+        error.cause.kind,
+        std::io::ErrorKind::FileTooLarge,
+        "{error:?}"
+    );
+    assert_eq!(error.done.restored as usize, boundary, "{error:?}");
+    assert_eq!(error.done.recovery.len(), 2, "{error:?}");
+    let recovery = restore_recovery(&root, &error.done.recovery);
+    case.assert_custody(&root, &recovery, "failed copy temp write");
+    // The failed input was detached before its temp write failed. Its original
+    // bytes must be in a reported recovery root, and no partial temp is live.
+    let (area, rel, _) = &case.inputs[boundary];
+    assert!(!root.join(GeneratedRestore::path(*area, rel)).exists());
+    let old = &case.live[&GeneratedRestore::path(*area, rel)];
+    assert!(
+        error
+            .done
+            .recovery
+            .iter()
+            .any(|dir| crate::conformance_f3::collect(dir)
+                .values()
+                .any(|bytes| bytes == old)),
+        "{error:?}"
+    );
+    fresh(&store, &root, &["Before", "After"], "after copy error");
+    case.assert_queries(&store, boundary, Some(boundary), "after copy error");
+    store.close();
+    eprintln!("F3 copy error reported at input {boundary}");
+}
+
+#[cfg(unix)]
+#[test]
+fn generated_restore_copy_errors_conserve_payloads_at_each_input() {
+    use crate::conformance_f3::{discover_restore_recovery, fresh, seeds, Graph};
+    let _guard = crate::integration_lock();
+    let mut failures = 0;
+    for seed in 1..=seeds() {
+        let mut case = generated_case(seed);
+        for boundary in 0..case.inputs.len() {
+            let graph = Graph::new(&case.live);
+            let backup = graph.dir.path().join("backup");
+            let original = case.inputs[boundary].2.clone();
+            case.inputs[boundary]
+                .2
+                .extend(std::iter::repeat_n(b' ', 8192));
+            case.backup(&backup);
+            graph.store.close();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "restore::generated_restore_copy_error_worker",
+                    "--nocapture",
+                ])
+                .env("TINE_F3_COPY_SEED", seed.to_string())
+                .env("TINE_F3_COPY_BOUNDARY", boundary.to_string())
+                .env("TINE_CRASH_ROOT", &graph.root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "copy error seed {seed} boundary {boundary}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("F3 copy error reported at input")
+            );
+            case.backup_intact(&backup);
+            let recovery = discover_restore_recovery(&graph.root);
+            case.assert_custody(&graph.root, &recovery, "before copy failure reopen");
+            let reopened = Store::open(&graph.root, Default::default()).unwrap().0;
+            case.assert_custody(&graph.root, &recovery, "post copy failure reopen");
+            fresh(
+                &reopened,
+                &graph.root,
+                &["Before", "After"],
+                "copy failure reopen",
+            );
+            reopened.close();
+            case.inputs[boundary].2 = original;
+            failures += 1;
+        }
+    }
+    eprintln!(
+        "F3 restore copy errors: failures={failures}, image_checks={}",
+        failures * 3
+    );
+}
+
+#[cfg(feature = "test-faults")]
+#[test]
+fn generated_restore_step_errors_conserve_live_recovery_and_indexes() {
+    use crate::conformance_f3::{conserved, fresh, restore_recovery, seeds, Graph};
+    let _guard = crate::integration_lock();
+    let mut failures = 0;
+    let mut successes = 0;
+    for seed in 1..=seeds() {
+        let case = generated_case(seed);
+        // One healthy control and an external recovery-name collision at each
+        // input's retirement step, using restore's existing bound-handle pause.
+        for boundary in 0..=case.inputs.len() {
+            let graph = Graph::new(&case.live);
+            let backup = graph.dir.path().join("backup");
+            case.backup(&backup);
+            let at = format!("restore seed {seed} boundary {boundary}");
+            fresh(&graph.store, &graph.root, &["Before", "After"], &at);
+            case.assert_queries(&graph.store, 0, None, &at);
+            let fail = boundary < case.inputs.len();
+            if fail {
+                fs::write(graph.root.join(".tine-restore-test-pause"), b"pause").unwrap();
+            }
+            let result = std::thread::scope(|scope| {
+                let task = scope.spawn(|| {
+                    graph
+                        .store
+                        .restore(tine_store::EditKind::ReplacePage, case.files(), None)
+                });
+                if fail {
+                    wait_paused(&graph.root);
+                    let (area, rel, _) = &case.inputs[boundary];
+                    let root = if *area == Area::Assets {
+                        fs::read_dir(graph.root.join("assets/.tine-restore-recovery"))
+                            .unwrap()
+                            .next()
+                            .unwrap()
+                            .unwrap()
+                            .path()
+                    } else {
+                        recovery_dir(&graph.root)
+                    };
+                    let rel = if *area == Area::Assets {
+                        rel.clone()
+                    } else {
+                        GeneratedRestore::path(*area, rel)
+                    };
+                    let path = root.join(rel);
+                    fs::create_dir_all(path.parent().unwrap()).unwrap();
+                    fs::write(path, format!("external-recovery-{seed}-{boundary}")).unwrap();
+                    fs::write(graph.root.join(".tine-restore-test-resume"), b"go").unwrap();
+                }
+                task.join().unwrap()
+            });
+            let report = if fail {
+                let error = result.unwrap_err();
+                assert_eq!(
+                    error.cause.kind,
+                    std::io::ErrorKind::AlreadyExists,
+                    "{at}: {error:?}"
+                );
+                assert_eq!(error.done.restored as usize, boundary, "{at}: {error:?}");
+                assert!(
+                    error.done.kept_external.is_empty(),
+                    "recovery collision is not a live copy collision: {at}"
+                );
+                failures += 1;
+                error.done
+            } else {
+                let report = result.unwrap();
+                assert_eq!(report.restored as usize, case.inputs.len());
+                case.assert_live_set(&graph.root);
+                successes += 1;
+                report
+            };
+            assert_eq!(report.recovery.len(), 2, "{at}");
+            let recovery = restore_recovery(&graph.root, &report.recovery);
+            case.backup_intact(&backup);
+            // Every displaced payload must be in its original live path or
+            // one of this operation's validated reported recovery roots.
+            let check = || {
+                case.assert_custody(&graph.root, &recovery, &at);
+                if fail {
+                    conserved(
+                        &graph.root,
+                        format!("external-recovery-{seed}-{boundary}").as_bytes(),
+                        &[],
+                        &recovery,
+                        &at,
+                    );
+                }
+            };
+            check();
+            for (i, (area, rel, bytes)) in case.inputs.iter().enumerate() {
+                if i < boundary {
+                    assert_eq!(
+                        &fs::read(graph.root.join(GeneratedRestore::path(*area, rel))).unwrap(),
+                        bytes,
+                        "{at}"
+                    );
+                }
+            }
+            fresh(&graph.store, &graph.root, &["Before", "After"], &at);
+            case.assert_queries(&graph.store, boundary, None, &at);
+            graph.store.close();
+            let reopened = Store::open(&graph.root, Default::default()).unwrap().0;
+            check();
+            fresh(&reopened, &graph.root, &["Before", "After"], &at);
+            case.assert_queries(&reopened, boundary, None, &at);
+            reopened.close();
+        }
+    }
+    assert_eq!(successes, seeds());
+    eprintln!(
+        "F3 restore: failures={failures}, successes={successes}, image_checks={}",
+        (failures + successes) * 3
+    );
+}
+
 #[test]
 fn restore_recovery_roots_live_on_the_filesystems_they_detach_from() {
     let _integration_guard = crate::integration_lock();

@@ -17,7 +17,7 @@ const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
 const TD = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(process.env.CARGO_HOME, "bin", "tauri-driver") : "tauri-driver");
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4520);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4521);
-const TMP = "/tmp/tine-margin-column-e2e";
+const TMP = process.env.E2E_MARGIN_TMP || "/tmp/tine-margin-column-e2e";
 const GRAPH = `${TMP}/graph`;
 const PAGE_NAME = "Margin Column Test";
 const PAGE_FILE = `${GRAPH}/pages/${PAGE_NAME}.md`;
@@ -26,7 +26,9 @@ const PHRASE = "a phrase worth disputing";
 const COMMENT = "Is this right";
 const REPLY = "Yes, it holds";
 
-fs.rmSync(TMP, { recursive: true, force: true });
+if (process.env.E2E_MARGIN_TMP) {
+  if (fs.existsSync(TMP)) throw new Error("E2E_MARGIN_TMP must be a fresh fixture directory");
+} else fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
@@ -73,11 +75,11 @@ try {
   await browser.keys(["Control", "r"]);
 
   // The new comment opens for editing in the margin column, not in the outline.
-  await browser.waitUntil(() => browser.execute((phrase) => {
+  await browser.waitUntil(() => browser.execute(() => {
     const ta = document.querySelector(".margin-column .margin-thread textarea.block-editor");
-    return !!ta && ta.value.includes(`quote:: ${phrase}`) && document.activeElement === ta
+    return !!ta && ta.value === "" && document.activeElement === ta
       && !document.querySelector(".page-blocks .ls-block.comment-card");
-  }, PHRASE), { timeout: 5_000, timeoutMsg: "Ctrl+R did not open the new comment in the margin column" });
+  }), { timeout: 5_000, timeoutMsg: "Ctrl+R did not open the new comment in the margin column" });
   await browser.keys(COMMENT);
   await browser.keys(["Escape"]);
   await browser.keys(["Escape"]);

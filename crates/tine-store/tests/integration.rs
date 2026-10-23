@@ -86,6 +86,9 @@ mod cold_search_cost;
 #[path = "config_live_reload.rs"]
 mod config_live_reload;
 
+#[path = "conformance_f3.rs"]
+mod conformance_f3;
+
 #[path = "directory_durability_guard.rs"]
 mod directory_durability_guard;
 
