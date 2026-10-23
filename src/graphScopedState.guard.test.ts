@@ -137,6 +137,7 @@ const COLLECTION_RULE = "I-21: module Map/Set state must end with its graph or h
   + "exemplar src/lazyObserve.ts renderedBlocks and src/binding.ts clearOnBindingInvalidated. "
   + "The existing collection baseline may only shrink";
 const BOUNDED_COLLECTIONS: Record<string, string> = {
+  "src/editorController.ts#editEntryGuards": "one guard per mounted native property input; FieldCell registers on mount and its Solid cleanup removes it on commit, cancel or unmount; captureResultDraft still guards the write's binding",
   "src/assetCache.ts#cache": "MAX_CACHE_ENTRIES=128 / MAX_CACHE_BYTES=128MiB retained LRU, plus pending mounted reads",
   "src/assetCache.ts#liveEntries": "active asset leases only; last release deletes the evicted entry; clearAssetBlobCache ends graph reuse",
   "src/render/parse.ts#cache": "CACHE_MAX=8000 LRU",
