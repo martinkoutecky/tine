@@ -352,9 +352,9 @@
       "stability":"burn-in"
     },
     "scripts/e2e-gh741-doing-clockin.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Typing DOING with real key events keeps the rest of the typed text on the task line and clocks in once, and a page whose block holds a CLOCK line outside a complete :LOGBOOK: drawer (text or a backtick after :END:) still renders its blocks instead of 'This page could not be displayed' (GH 741).","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Typing DOING clocks in once with LOGBOOK hidden from the editor; editing the task and pressing Enter at its visible end retains its exact clock history on the original block. Handwritten drawers remain visible during composition and save literally in Markdown and Org. A page whose block holds a CLOCK line outside a complete drawer still renders its blocks (GH 741).","blocking":true}],
       "acceptableVariations":["Focus, styling and save latency may vary while the typed text, the single clock-in and the rendered page are right."],
-      "nonRequirements":["Hiding the logbook from the edit buffer (OG does; Tine still shows it)","platforms other than Linux WebKitGTK"],
+      "nonRequirements":["platforms other than Linux WebKitGTK"],
       "stability":"burn-in"
     },
     "scripts/e2e-template-collapse.mjs": {

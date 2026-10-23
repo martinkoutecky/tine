@@ -9,7 +9,7 @@ import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
 import { markDirty, noteTitleIdentityIntent, pageFrozen } from "../host/wiring";
-import { canonicalPageHeaderDraft, withoutLeadingBlankLines, isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, pageHeaderBadLine, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
+import { canonicalPageHeaderDraft, withoutLeadingBlankLines, isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, pageHeaderBadLine, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty, isEditorEmpty } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
@@ -413,7 +413,7 @@ export function toggleOwnNumberedList(id: string): boolean {
  * `src/main/frontend/handler/editor.cljs:2498-2502` (6e7afa8eb). */
 export function stopOwnNumberedListOnEmptyEnter(id: string, visibleText: string): boolean {
   const node = doc.byId[id];
-  if (!node || visibleText.trim() !== "" || !isOrdered(id) || isOrdered(node.parent)) return false;
+  if (!node || visibleText.trim() !== "" || !isEditorEmpty(node.raw, BUILTIN_HIDE, formatForBlock(id)) || !isOrdered(id) || isOrdered(node.parent)) return false;
   return removeOwnNumberedList(id);
 }
 /** The ordered-list label for a block whose `logseq.order-list-type` is `number`

@@ -4,7 +4,7 @@ import { msg, render } from "../i18n";
 
 import { displayMathOpenAfter, closesDisplayMath, fenceExitTrim } from "./fences";
 import type { Format } from "../render/ast";
-import { blockRegions, editorOffsetOfRaw, editorText, editorTextJoin, hidePolicyHides, parserReady, rawByteOfEditor, parseBlock } from "../render/parse";
+import { blockRegions, editorOffsetOfRaw, editorText, editorTextJoin, mayHaveLogbook, hidePolicyHides, parserReady, rawByteOfEditor, parseBlock } from "../render/parse";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import { rebulletedSourceByteToRawByte } from "../render/spans";
 import { reportUiFailure } from "../uiFailure";
@@ -211,9 +211,41 @@ export function splitPagePreamble(raw: string | null | undefined): {
 export type HidePolicy =
   | { readonly kind: "builtin" | "sheet_cell" | "all" }
   | { readonly kind: "keys"; readonly keys: readonly string[]; readonly norm?: boolean };
-/** A normal block editor: identity, fold and list type; comment context and
+/** A normal block editor: LOGBOOK, identity, fold and list type; comment context and
  *  author only when its own primary properties include quote. */
 export const BUILTIN_HIDE: HidePolicy = Object.freeze({ kind: "builtin" });
+/** Hidden clocks still count as content for deletion and trailing-block reuse. */
+export function hasLogbookDrawer(raw: string, format: Format = "md"): boolean {
+  // Negative-only prefilter: accepted ownership still comes from the parser.
+  // Ordinary property-only buffers must keep their existing parse budget.
+  if (!mayHaveLogbook(raw)) return false;
+  return blockRegions(raw, format).drawers.some(d => d.name.toLowerCase() === "logbook");
+}
+/** Opaque accepted history, separate from property syntax for rich transfers
+ * and active authoring. Hidden Org transport rows have no PROPERTIES wrapper;
+ * use Markdown ownership for that transport, as the kernel join does. */
+export function splitLogbook(raw: string, format: Format): { text: string; drawers: string } {
+  if (!mayHaveLogbook(raw)) return { text: raw, drawers: "" };
+  const regions = blockRegions(raw, format);
+  if (regions.quarantined) throw new Error("Drawer transfer refused: block parsing is quarantined");
+  const bytes = new TextEncoder().encode(raw);
+  const decoder = new TextDecoder();
+  let start = 0;
+  const text: string[] = [];
+  const drawers: string[] = [];
+  for (const drawer of regions.drawers.filter(d => d.name.toLowerCase() === "logbook")) {
+    text.push(decoder.decode(bytes.subarray(start, drawer.range[0])));
+    drawers.push(decoder.decode(bytes.subarray(drawer.range[0], drawer.range[1])).replace(/[\r\n]+$/, ""));
+    start = drawer.range[1];
+  }
+  text.push(decoder.decode(bytes.subarray(start)));
+  return { text: text.join("").replace(/[\r\n]+$/, ""), drawers: drawers.join("\n") };
+}
+
+/** A destructive empty-host decision must account for opaque history too. */
+export function isEditorEmpty(raw: string, hide: HidePolicy, format: Format): boolean {
+  return !hasLogbookDrawer(raw, format) && splitProps(raw, hide, format).visible.trim() === "";
+}
 /** A sheet cell: the built-ins plus every `tine.*` key. */
 export const SHEET_CELL_HIDE: HidePolicy = Object.freeze({ kind: "sheet_cell" });
 /** Every property (annotation blocks edit only their text). */
@@ -304,7 +336,9 @@ export function visibleOffsetToRawByte(raw: string, visibleOffset: number, hide:
  *  {@link splitProps}. Markdown appends them below the body; Org folds them back
  *  into a `:PROPERTIES:` drawer at OG's canonical spot. A metadata-only block
  *  (empty visible) is just its hidden lines. */
-export function joinProps(visible: string, hidden: string, format: PropFormat = "md"): string {
+export function joinProps(visible: string, hidden: string, format: PropFormat = "md", source?: string): string {
+  if (source && hasLogbookDrawer(source, format)) return editorTextJoin(visible, hidden, format, source);
+  if (hidden && hasLogbookDrawer(hidden, "md")) return editorTextJoin(visible, hidden, format);
   // OG property/insert-property prepends metadata to a titleless quote. A
   // trailing unquoted line is a lazy continuation of its quoted paragraph.
   // A title above the quote keeps its properties between title and quote.

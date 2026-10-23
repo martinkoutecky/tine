@@ -14,9 +14,10 @@
 use crate::block_regions::{self, BlockRegions};
 use serde::{Deserialize, Serialize};
 
-/// Properties kept in the file but projected out of the block editor. OG hides
-/// id/collapsed/list-type. Comment context and author are hidden only on blocks
-/// whose own primary properties include `quote` (see [`comment_quote`]).
+/// Properties kept in the file but projected out of the block editor. OG also
+/// hides other built-ins outside Tine's current policy. Comment context and
+/// author are hidden only on blocks whose own primary properties include
+/// `quote` (see [`comment_quote`]).
 /// Use this same projection for all editor and kernel text mutations.
 pub const BUILTIN_HIDDEN: [&str; 3] = ["id", "collapsed", "logseq.order-list-type"];
 const COMMENT_HIDDEN: [&str; 4] = ["quote", "quote-prefix", "quote-suffix", "author"];
@@ -34,7 +35,7 @@ pub fn comment_quote<'a>(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HidePolicy {
-    /// An ordinary block editor: [`BUILTIN_HIDDEN`], plus comment metadata on comments.
+    /// An ordinary block editor: LOGBOOK, [`BUILTIN_HIDDEN`], and comment metadata on comments.
     Builtin,
     /// A sheet cell: the built-ins plus every `tine.*` key.
     SheetCell,
@@ -153,6 +154,16 @@ fn classify(raw: &str, is_org: bool, regions: &BlockRegions, hide: &HidePolicy) 
             class[line_at(p.line.0)] = Line::Hidden;
         }
     }
+    if !matches!(hide, HidePolicy::Keys { .. }) {
+        for drawer in regions
+            .drawers
+            .iter()
+            .filter(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+        {
+            class[line_at(drawer.range.0)..=line_at(drawer.range.1.saturating_sub(1))]
+                .fill(Line::Hidden);
+        }
+    }
     if is_org {
         for (index, range) in regions.property_regions.iter().enumerate() {
             let mut entries = own().filter(|p| p.region == index).peekable();
@@ -254,10 +265,62 @@ pub fn visible_to_raw_with(
     last_end.unwrap_or(0)
 }
 
-/// Reattach hidden property lines to editor text: the inverse of [`split`].
-/// Markdown appends them below the body; Org folds them into the property
-/// drawer at its canonical place. A quarantined Org parse refuses.
+/// Reattach hidden metadata to editor text. Properties retain their established
+/// placement; LOGBOOK goes after title, planning and head properties. A supplied
+/// LOGBOOK replaces the retained one. A quarantined Org parse refuses.
 pub fn join(visible: &str, hidden: &str, is_org: bool) -> Result<String, String> {
+    if hidden.is_empty() {
+        return Ok(visible.to_string());
+    }
+    let regions = block_regions::parse(visible, is_org);
+    join_with(visible, hidden, is_org, &regions)
+}
+
+/// Extract only real LOGBOOK drawers, leaving property lines for their existing
+/// join. Keys-only policies (notably block copy's HIDE_ID) keep drawers visible.
+pub fn logbook_hidden(raw: &str, is_org: bool) -> String {
+    logbook_parts(raw, is_org).1.join("\n")
+}
+
+fn logbook_parts(raw: &str, is_org: bool) -> (String, Vec<String>) {
+    let regions = block_regions::parse(raw, is_org);
+    let drawers: Vec<_> = regions
+        .drawers
+        .iter()
+        .filter(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+        .collect();
+    let mut at = 0;
+    let properties = raw
+        .split('\n')
+        .filter(|line| {
+            let start = at;
+            at += line.len() + 1;
+            !drawers
+                .iter()
+                .any(|d| d.range.0 <= start && start < d.range.1)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    (
+        properties,
+        drawers
+            .iter()
+            .map(|d| {
+                d.range
+                    .slice(raw)
+                    .trim_end_matches(['\r', '\n'])
+                    .to_string()
+            })
+            .collect(),
+    )
+}
+
+fn join_properties(
+    visible: &str,
+    hidden: &str,
+    is_org: bool,
+    regions: &BlockRegions,
+) -> Result<String, String> {
     if hidden.is_empty() {
         return Ok(visible.to_string());
     }
@@ -272,12 +335,40 @@ pub fn join(visible: &str, hidden: &str, is_org: bool) -> Result<String, String>
                 &visible[start..]
             ));
         }
-        return join_with(visible, hidden, is_org, &BlockRegions::default());
+        return Ok(if visible.is_empty() {
+            hidden.to_string()
+        } else {
+            format!("{visible}\n{hidden}")
+        });
     }
-    join_with(visible, hidden, true, &block_regions::parse(visible, true))
+    regions.reattach_org_properties(visible, hidden)
 }
 
-/// [`join`], given the regions parsed from exactly `visible` (read for Org only).
+/// Restore property rows independently before restoring history. Every group
+/// (including rows originally after LOGBOOK) must retain parser ownership.
+fn join_properties_preserving(
+    visible: &str,
+    hidden: &str,
+    is_org: bool,
+    regions: &BlockRegions,
+) -> Result<String, String> {
+    let joined = join_properties(visible, hidden, is_org, regions)?;
+    if hidden.is_empty() {
+        return Ok(joined);
+    }
+    let payload = if is_org {
+        format!(":PROPERTIES:\n{hidden}\n:END:")
+    } else {
+        hidden.to_string()
+    };
+    if regions.insertion_preserves_metadata(visible, is_org, &payload, &joined) {
+        return Ok(joined);
+    }
+    // A lazy container can swallow the usual property position too.
+    regions.insert_drawer(visible, is_org, &payload)
+}
+
+/// [`join`], given the regions parsed from exactly `visible`.
 pub fn join_with(
     visible: &str,
     hidden: &str,
@@ -287,14 +378,77 @@ pub fn join_with(
     if hidden.is_empty() {
         return Ok(visible.to_string());
     }
-    if !is_org {
-        return Ok(if visible.is_empty() {
-            hidden.to_string()
-        } else {
-            format!("{visible}\n{hidden}")
-        });
+    // A negative-only fast path; accepted drawer ownership below is always
+    // parser-owned. Avoid parsing ordinary hidden property payloads as drawers.
+    if !block_regions::may_have_logbook(hidden) {
+        // A newly authored/supplied drawer needs the same ownership guard even
+        // when there was no prior history. Org's title heuristic otherwise
+        // inserts the retained ID inside a titleless supplied drawer.
+        if visible_regions
+            .drawers
+            .iter()
+            .any(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+        {
+            return join_properties_preserving(visible, hidden, is_org, visible_regions);
+        }
+        return join_properties(visible, hidden, is_org, visible_regions);
     }
-    visible_regions.reattach_org_properties(visible, hidden)
+    // Hidden Org property entries have no PROPERTIES wrapper. Parse this
+    // transport as Markdown so a standalone :id: cannot own the next drawer.
+    let (properties, drawers) = logbook_parts(hidden, false);
+    if !drawers.is_empty()
+        && visible_regions
+            .drawers
+            .iter()
+            .any(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+    {
+        let (text, supplied) = logbook_parts(visible, is_org);
+        let retained = [properties, supplied.join("\n")]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        return join_with(
+            &text,
+            &retained,
+            is_org,
+            &block_regions::parse(&text, is_org),
+        );
+    }
+    // Markdown metadata that preceded the hidden drawer stays in the head;
+    // trailing metadata keeps the established trailing-property convention.
+    let hidden_regions = block_regions::parse(hidden, false);
+    let first_drawer = hidden_regions
+        .drawers
+        .iter()
+        .find(|d| d.name.eq_ignore_ascii_case("LOGBOOK"));
+    let raw = if !is_org && first_drawer.is_some_and(|d| d.range.0 > 0) {
+        let at = first_drawer.unwrap().range.0;
+        let head = hidden[..at].trim_end_matches(['\r', '\n']);
+        let (tail, _) = logbook_parts(&hidden[at..], false);
+        let base = join_properties_preserving(visible, &tail, false, visible_regions)?;
+        block_regions::parse(&base, false).insert_drawer(&base, false, head)?
+    } else if !drawers.is_empty() {
+        join_properties_preserving(visible, &properties, is_org, visible_regions)?
+    } else {
+        join_properties(visible, &properties, is_org, visible_regions)?
+    };
+    if drawers.is_empty() {
+        return Ok(raw);
+    }
+    // Merge preserves both histories in one drawer: survivor rows first, then
+    // absorbed rows, without trimming/reformatting clock or other drawer lines.
+    let mut drawer = drawers[0].clone();
+    for extra in &drawers[1..] {
+        let first_regions = block_regions::parse(&drawer, is_org);
+        let extra_regions = block_regions::parse(extra, is_org);
+        let first = &first_regions.drawers[0];
+        let other = &extra_regions.drawers[0];
+        let body = extra.find('\n').map_or(other.close, |at| at + 1);
+        drawer.insert_str(first.close, &extra[body..other.close]);
+    }
+    let regions = block_regions::parse(&raw, is_org);
+    regions.insert_drawer(&raw, is_org, &drawer)
 }
 
 /// Set a block's text as typing `text` into its editor would (Spec §2.4
@@ -306,7 +460,87 @@ pub fn join_with(
 /// with hidden lines refuses.
 pub fn set_text(raw: &str, is_org: bool, text: &str) -> Result<String, String> {
     let current = split(raw, is_org, &HidePolicy::Builtin);
-    join(text, &current.hidden, is_org)
+    join_preserving(text, &current.hidden, is_org, raw)
+}
+
+/// Text-only edits can retain the exact metadata layout of the source buffer.
+/// The projection's two strings alone cannot recover whether a hidden property
+/// preceded a visible planning line. Splice a contiguous visible edit through
+/// the same offset map when it touches no hidden bytes; structural replacements
+/// and explicit drawer content use the canonical join above.
+pub fn join_preserving(
+    visible: &str,
+    hidden: &str,
+    is_org: bool,
+    source: &str,
+) -> Result<String, String> {
+    let regions = block_regions::parse(source, is_org);
+    if regions
+        .drawers
+        .iter()
+        .any(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+    {
+        let policy = HidePolicy::Builtin;
+        let previous = split_with(source, is_org, &regions, &policy);
+        if previous.hidden == hidden
+            && !block_regions::parse(visible, is_org)
+                .drawers
+                .iter()
+                .any(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+        {
+            if previous.visible == visible {
+                return Ok(source.to_string());
+            }
+            if previous.visible.is_empty() {
+                return join(visible, hidden, is_org);
+            }
+            let prefix = previous
+                .visible
+                .bytes()
+                .zip(visible.bytes())
+                .take_while(|(a, b)| a == b)
+                .count();
+            let start = floor_boundary(&previous.visible, prefix);
+            let suffix = previous.visible[start..]
+                .bytes()
+                .rev()
+                .zip(visible[start..].bytes().rev())
+                .take_while(|(a, b)| a == b)
+                .count();
+            let old_end = ceil_boundary(&previous.visible, previous.visible.len() - suffix);
+            let new_end = ceil_boundary(visible, visible.len() - suffix);
+            let from = visible_to_raw_with(source, is_org, &regions, &policy, start);
+            let to = visible_to_raw_with(source, is_org, &regions, &policy, old_end);
+            let c = classify(source, is_org, &regions, &policy);
+            if !c
+                .lines
+                .iter()
+                .zip(c.class)
+                .any(|(&(s, e), class)| class != Line::Visible && s < to && e >= from)
+            {
+                let edited = format!(
+                    "{}{}{}",
+                    &source[..from],
+                    &visible[start..new_end],
+                    &source[to..]
+                );
+                // A syntax edit (for example a new quote opener) can swallow
+                // otherwise untouched hidden bytes. Retain their ownership,
+                // not only their spelling, or use canonical placement below.
+                if split(&edited, is_org, &policy).hidden == hidden {
+                    return Ok(edited);
+                }
+            }
+        }
+    }
+    join(visible, hidden, is_org)
+}
+
+fn ceil_boundary(s: &str, mut at: usize) -> usize {
+    while !s.is_char_boundary(at) {
+        at += 1;
+    }
+    at
 }
 
 fn floor_boundary(s: &str, mut at: usize) -> usize {
@@ -357,6 +591,241 @@ pub fn js_blank(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gh741_logbook_property_key_casing_matrix() {
+        let id = "11111111-1111-4111-8111-111111111111";
+        let drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+        let mut failures = Vec::new();
+        for org in [false, true] {
+            let wrap = |key: &str, value: &str| {
+                if org {
+                    format!(":PROPERTIES:\n:{key}: {value}\n:END:")
+                } else {
+                    format!("{key}:: {value}")
+                }
+            };
+            for key in [
+                "id",
+                "collapsed",
+                "logseq.order-list-type",
+                "quote",
+                "author",
+            ] {
+                let old = if key == "id" { id } else { "old" };
+                let new = if key == "id" { id } else { "new" };
+                let raw = format!("plain\n{}\n{drawer}", wrap(key, old));
+                let parts = split(&raw, org, &HidePolicy::All);
+                for spelling in [key.to_string(), key.to_ascii_uppercase()] {
+                    for title in ["plain\n", ""] {
+                        let visible = format!("{title}{}", wrap(&spelling, new));
+                        match join(&visible, &parts.hidden, org) {
+                            Ok(out) => {
+                                let parsed = block_regions::parse(&out, org);
+                                let mut values: Vec<_> = parsed
+                                    .properties
+                                    .iter()
+                                    .filter(|p| p.primary && p.key.eq_ignore_ascii_case(key))
+                                    .map(|p| p.value.as_str())
+                                    .collect();
+                                values.sort();
+                                let mut expected = vec![new, old];
+                                expected.sort();
+                                assert_eq!(
+                                    values, expected,
+                                    "{org}/{key}/{spelling}/{title}: {out}"
+                                );
+                                assert_eq!(logbook_hidden(&out, org), drawer);
+                                if key == "id" {
+                                    assert_eq!(parsed.id.unwrap().value, id);
+                                }
+                            }
+                            Err(error) => {
+                                failures.push(format!("{org}/{key}/{spelling}/{title:?}: {error}"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "{} false refusals: {failures:#?}",
+            failures.len()
+        );
+    }
+
+    #[test]
+    fn gh741_logbook_canonical_restoration_preserves_ownership() {
+        let drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]  \nopaque row\n:END:";
+        let id = "11111111-1111-4111-8111-111111111111";
+        for org in [false, true] {
+            let props = if org {
+                format!(":PROPERTIES:\n:owner: Ada\n:id: {id}\n:END:")
+            } else {
+                format!("owner:: Ada\nid:: {id}")
+            };
+            let raw = format!("DOING x\n{props}\n{drawer}\nBody");
+            for text in [
+                "",
+                "> quoted",
+                "> quoted\n> more",
+                "- list",
+                "1. list",
+                "| a | b |",
+                "```\nunclosed",
+                "#+BEGIN_QUOTE\nunclosed",
+            ] {
+                let out = set_text(&raw, org, text).unwrap();
+                let parsed = block_regions::parse(&out, org);
+                assert_eq!(
+                    parsed.id.as_ref().map(|p| p.value.as_str()),
+                    Some(id),
+                    "{org}/{text}: {out}"
+                );
+                assert_eq!(logbook_hidden(&out, org), drawer, "{org}/{text}: {out}");
+                assert_eq!(
+                    split(&out, org, &HidePolicy::Builtin).visible,
+                    text,
+                    "{org}/{text}: {out}"
+                );
+                // A second edit must still find the retained history.
+                assert_eq!(
+                    logbook_hidden(&set_text(&out, org, "new").unwrap(), org),
+                    drawer
+                );
+            }
+            // An ordinary property remains independently parser-owned too.
+            let out = set_text(&raw, org, &format!("{props}\n> quoted")).unwrap();
+            let parsed = block_regions::parse(&out, org);
+            assert!(
+                parsed
+                    .properties
+                    .iter()
+                    .any(|p| p.primary && p.key == "owner" && p.value == "Ada"),
+                "{out}"
+            );
+            assert_eq!(logbook_hidden(&out, org), drawer);
+        }
+    }
+
+    #[test]
+    fn gh741_logbook_canonical_restoration_checks_both_property_groups() {
+        let drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+        let raw = format!("DOING x\nquote:: selected words\n{drawer}\nauthor:: Ada");
+        let out = set_text(&raw, false, "> quoted").unwrap();
+        let parsed = block_regions::parse(&out, false);
+        for (key, value) in [("quote", "selected words"), ("author", "Ada")] {
+            assert!(
+                parsed
+                    .properties
+                    .iter()
+                    .any(|p| p.primary && p.key == key && p.value == value),
+                "{key}: {out}"
+            );
+        }
+        assert_eq!(logbook_hidden(&out, false), drawer);
+    }
+
+    #[test]
+    fn gh741_logbook_supplied_titleless_drawer_keeps_hidden_identity() {
+        let id = "11111111-1111-4111-8111-111111111111";
+        let drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+        for org in [false, true] {
+            let props = if org {
+                format!(":PROPERTIES:\n:id: {id}\n:END:")
+            } else {
+                format!("id:: {id}")
+            };
+            let out = set_text(&format!("plain\n{props}"), org, drawer).unwrap();
+            assert_eq!(block_regions::parse(&out, org).id.unwrap().value, id);
+            assert_eq!(logbook_hidden(&out, org), drawer);
+        }
+    }
+
+    #[test]
+    fn gh741_logbook_hidden_roundtrip_and_content_wins() {
+        let drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]  \n:END:";
+        for org in [false, true] {
+            for raw in [drawer.to_string(), format!("DOING x\n{drawer}\nBody")] {
+                let t = split(&raw, org, &HidePolicy::Builtin);
+                assert!(!t.visible.contains(":LOGBOOK:"));
+                assert_eq!(join(&t.visible, &t.hidden, org).unwrap(), raw);
+                assert_eq!(
+                    set_text(&raw, org, &t.visible.replace("x", "new")).unwrap(),
+                    raw.replace("x", "new")
+                );
+                let replacement = "DOING new\n:LOGBOOK:\nCLOCK: [2026-10-22 Thu 09:00:00]\n:END:";
+                assert_eq!(set_text(&raw, org, replacement).unwrap(), replacement);
+                let pasted = "DOING new\nBody\n:LOGBOOK:\nCLOCK: [2026-10-22 Thu 09:00:00]\n:END:";
+                assert_eq!(
+                    set_text(&raw, org, pasted).unwrap(),
+                    format!("{replacement}\nBody")
+                );
+            }
+            let fence = if org {
+                "#+BEGIN_SRC text\n:LOGBOOK:\nCLOCK: literal\n:END:\n#+END_SRC"
+            } else {
+                "```\n:LOGBOOK:\nCLOCK: literal\n:END:\n```"
+            };
+            assert_eq!(split(fence, org, &HidePolicy::Builtin).visible, fence);
+        }
+    }
+
+    #[test]
+    fn gh741_logbook_planning_properties_and_crlf_keep_bytes() {
+        for (org, raw) in [
+            (false, "DOING x\nSCHEDULED: <2026-10-21 Wed>\nowner:: Ada\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]  \n:END:\nBody"),
+            (false, "DOING x\nid:: 6512bd43-d9ca-4c95-b0b4-1c2d3e4f5a6b\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:\nBody"),
+            (true, "DOING x\n:PROPERTIES:\n:owner: Ada\n:id: 6512bd43-d9ca-4c95-b0b4-1c2d3e4f5a6b\n:END:\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:\nBody"),
+            (false, "DOING x\r\n:LOGBOOK:\r\nCLOCK: [2026-10-21 Wed 08:54:45]  \r\n:END:\r\nBody"),
+            (false, "DOING x\ncollapsed:: true\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:\nDEADLINE: <2026-10-22 Thu>"),
+        ] {
+            let text = split(raw, org, &HidePolicy::Builtin).visible.replace("x", "new");
+            assert_eq!(set_text(raw, org, &text).unwrap(), raw.replacen("x", "new", 1));
+        }
+    }
+
+    #[test]
+    fn gh741_logbook_titleless_and_unicode_edits() {
+        for org in [false, true] {
+            let drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+            assert_eq!(
+                set_text(drawer, org, "new").unwrap(),
+                format!("new\n{drawer}")
+            );
+            for (before, after) in [("é🙂", "ô🙂"), ("é🙂", "é🙃"), ("plain", "é🙂")]
+            {
+                let raw = format!("DOING {before}\n{drawer}\nBody");
+                assert_eq!(
+                    set_text(&raw, org, &format!("DOING {after}\nBody")).unwrap(),
+                    format!("DOING {after}\n{drawer}\nBody")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn gh741_logbook_survives_replacing_text_with_literal_containers() {
+        for org in [false, true] {
+            let raw = "DOING x\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+            let text = if org {
+                "#+BEGIN_SRC text\n:LOGBOOK:\nCLOCK: literal\n:END:\n#+END_SRC"
+            } else {
+                "```\n:LOGBOOK:\nCLOCK: literal\n:END:\n```"
+            };
+            let edited = set_text(raw, org, text).unwrap();
+            assert!(crate::logbook::has_logbook_drawer(&edited, org));
+            assert_eq!(split(&edited, org, &HidePolicy::Builtin).visible, text);
+        }
+        let raw = "DOING x\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+        let edited = set_text(raw, false, "> quoted\n> continuation").unwrap();
+        assert!(crate::logbook::has_logbook_drawer(&edited, false));
+        assert_eq!(
+            split(&edited, false, &HidePolicy::Builtin).visible,
+            "> quoted\n> continuation"
+        );
+    }
 
     fn roundtrip(raw: &str, is_org: bool) {
         let t = split(raw, is_org, &HidePolicy::Builtin);

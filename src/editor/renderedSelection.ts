@@ -91,7 +91,7 @@ export function applyRenderedSelectionAction(target: RenderedSelectionTarget, ac
   const { visible, hidden } = splitProps(node.raw, BUILTIN_HIDE, target.format);
   const edit = action.apply(visible, target.start, target.end, target.format, target.direction);
   if (edit.text === visible) return null;
-  const next = joinProps(edit.text, hidden, target.format);
+  const next = joinProps(edit.text, hidden, target.format, node.raw);
   if (next === node.raw) return null;
   setRaw(target.blockId, next);
   return edit;

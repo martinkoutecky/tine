@@ -22,6 +22,8 @@ use lsdoc::ast::{Block, Inline, ListItem, Span};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+mod preservation;
+
 /// OG linkable-property member separator, shared by native references and wasm.
 /// `graph_parser/text.cljs::sep-by-comma` at Logseq c67b8b5fa splits both commas.
 pub fn is_linkable_property_separator(ch: char) -> bool {
@@ -768,6 +770,15 @@ pub enum Edit {
     },
 }
 
+/// Negative-only prefilter for the editor's LOGBOOK projection. A true result
+/// still requires parsed drawer ownership. Kept at the structural boundary so
+/// callers can avoid an ownership parse for ordinary property-only buffers.
+pub fn may_have_logbook(raw: &str) -> bool {
+    raw.as_bytes()
+        .windows(b":LOGBOOK:".len())
+        .any(|word| word.eq_ignore_ascii_case(b":LOGBOOK:"))
+}
+
 fn splice(raw: &str, mut edits: Vec<(Range, String)>) -> String {
     edits.sort_by_key(|(r, _)| r.0);
     let mut merged: Vec<(Range, String)> = Vec::new();
@@ -918,6 +929,36 @@ impl BlockRegions {
             vec![(Range(at, at), format!("{prefix}{text}{suffix}"))],
         )
     }
+
+    /// Reinsert an opaque, parser-owned drawer at the same head position used
+    /// by clock-in. Preserve its bytes rather than rebuilding its clock rows.
+    pub fn insert_drawer(&self, raw: &str, org: bool, drawer: &str) -> Result<String, String> {
+        if self.quarantined {
+            return Err("Drawer reattachment refused: block parsing is quarantined".into());
+        }
+        let mut at = self.head_end(raw, org);
+        // A titleless Org PROPERTIES drawer starts on the first line. The
+        // title heuristic points inside it; never insert between its rows.
+        if let Some(r) = self.property_regions.iter().find(|r| r.0 <= at && at < r.1) {
+            at = r.1;
+        }
+        // Verify ownership, not spelling: lazy quotes/lists and other parser
+        // containers can consume an otherwise byte-perfect restored drawer.
+        // Also retain every existing property (including primary ownership and
+        // id) and drawer. This runs in release as well as debug builds.
+        let canonical = self.inserted(raw, at, drawer);
+        if self.insertion_preserves_metadata(raw, org, drawer, &canonical) {
+            return Ok(canonical);
+        }
+        // A drawer before a container cannot be its lazy continuation. Try this
+        // parser-verified layout without maintaining a syntax allowlist.
+        let before = self.inserted(raw, 0, drawer);
+        if self.insertion_preserves_metadata(raw, org, drawer, &before) {
+            return Ok(before);
+        }
+        Err("Drawer reattachment refused: metadata ownership would change".into())
+    }
+
     fn remove_properties(
         &self,
         raw: &str,
@@ -1119,7 +1160,7 @@ impl BlockRegions {
         self.add_properties(raw, true, &payload, false, Vec::new())
     }
     /// Apply an operation using these regions from EXACTLY this raw source.
-    /// O(block bytes); zero parses in release, one preservation reparse in debug.
+    /// Reuses regions except drawer restoration's ownership reparse; debug also checks literals.
     pub fn apply(&self, raw: &str, org: bool, edit: Edit) -> Result<String, String> {
         if self.quarantined {
             return Err("Structural edit refused: block parsing is quarantined".into());
@@ -1257,15 +1298,11 @@ impl BlockRegions {
                 {
                     self.inserted(raw, d.close, &value)
                 } else {
-                    let mut at = self.head_end(raw, org);
-                    if let Some(r) = self.property_regions.iter().find(|r| r.0 == at) {
-                        at = r.1;
-                    }
-                    self.inserted(
+                    self.insert_drawer(
                         raw,
-                        at,
+                        org,
                         &format!(":{name}:{}{value}{}:END:", newline(raw), newline(raw)),
-                    )
+                    )?
                 }
             }
             Edit::ClockOut { value } => {

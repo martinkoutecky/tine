@@ -105,12 +105,12 @@ export function planBlockReplacement(
   // Refusal (in-scope scenario: malformed or hand-edited imported Markdown/Org
   // whose property lines are not where the editor puts them): rejoining would
   // rewrite bytes the user never touched, so the block is left as it is.
-  if (joinProps(visible, hidden, format) !== raw) return unchanged(targets.length);
+  if (joinProps(visible, hidden, format, raw) !== raw) return unchanged(targets.length);
   const sentinel = (i: number) => String.fromCharCode(SENTINEL_BASE + i);
   for (let i = 0; i < targets.length; i++) if (raw.includes(sentinel(i))) return unchanged(targets.length);
 
   const proves = (spans: readonly Span[], matchIndexes: readonly number[]): boolean => {
-    const candidate = joinProps(splice(visible, spans, sentinel), hidden, format);
+    const candidate = joinProps(splice(visible, spans, sentinel), hidden, format, raw);
     const expected = splice(renderedText, matchIndexes.map((m) => shown[m]), sentinel);
     return inPageFindRenderedText(candidate, format) === expected;
   };
@@ -134,7 +134,7 @@ export function planBlockReplacement(
     if (accepted.length && !proves(accepted.map((a) => a.span), accepted.map((a) => a.target))) accepted = [];
   }
   if (!accepted.length) return unchanged(targets.length);
-  const next = joinProps(splice(visible, accepted.map((a) => a.span), () => replacement), hidden, format);
+  const next = joinProps(splice(visible, accepted.map((a) => a.span), () => replacement), hidden, format, raw);
   return { raw: next, replaced: accepted.length, skipped: targets.length - accepted.length };
 }
 

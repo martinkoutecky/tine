@@ -237,10 +237,11 @@ describe("org :PROPERTIES: drawer hiding (GH #37)", () => {
     expect(hidden).toBe("");
   });
 
-  it("leaves a :LOGBOOK: drawer visible (not a property drawer)", () => {
+  it("hides a :LOGBOOK: drawer and rejoins it outside the property drawer (GH #741)", () => {
     const raw = "DONE Ship\n:LOGBOOK:\nCLOCK: [2026-07-07 Tue 09:00]\n:END:";
-    const { visible } = splitProps(raw, BUILTIN_HIDE, "org");
-    expect(visible).toBe(raw);
+    const { visible, hidden } = splitProps(raw, BUILTIN_HIDE, "org");
+    expect(visible).toBe("DONE Ship");
+    expect(joinProps(visible, hidden, "org")).toBe(raw);
   });
 });
 

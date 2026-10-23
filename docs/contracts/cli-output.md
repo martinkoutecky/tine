@@ -241,7 +241,14 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
   and `logseq.order-list-type::` lines and the children are kept. On a block whose own primary properties
   include `quote`, the four comment lines (`quote::`, `quote-prefix::`, `quote-suffix::`, `author::`) are also
   kept. On an ordinary block, `author::` and quote-context lines belong to the replaced editor text, as on OG.
-  A marker change writes the logbook as the app does.
+  The hidden LOGBOOK drawer is kept, at its canonical position after the title, planning and head properties.
+  If the supplied text contains a parsed LOGBOOK drawer, that drawer replaces the retained one; fence lookalikes
+  remain ordinary text. A marker change writes the logbook as the app does.
+  Clients supplying LOGBOOK content must pass `--rev` from the read that supplied it. A clock-only change does
+  not change an editor-text fingerprint: without that revision, an old full buffer can replace newer history.
+  Plain visible-text edits retain the current history, including clock changes since the client's read.
+  The CLI currently permits explicit history replacement without `--rev`; the revision requirement is a client
+  concurrency obligation, not an enforced refusal.
 - **`block.move`**: the block and its children go under (last child), after or before a target on the same page.
   A move to another page is refused `cross-page` in this version.
 - **`--run RUN`** (optional, every write; or `TINE_RUN`): commit the write to the graph's git repository as

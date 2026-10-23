@@ -14,7 +14,7 @@
 // initialization is pending, deferring structural identity reads until ready.
 
 import { createSignal } from "solid-js";
-import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, editor_text_join, hide_policy_hides, outline_apply_json, outline_reads_json, outline_max_depth, removal_refs_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
+import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, editor_text_join, block_may_have_logbook, hide_policy_hides, outline_apply_json, outline_reads_json, outline_max_depth, removal_refs_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
 import type { Block, MacroInline, Inline } from "./ast";
 import { ParseRetention } from "./parseRetention";
@@ -219,14 +219,17 @@ export function rawByteOfEditor(raw: string, format: "md" | "org", policy: strin
   return raw_byte_of_editor(raw, format === "org", blockRegions(raw, format), policy, Math.max(0, editorUtf16));
 }
 /** Editor text plus its hidden lines back to raw (`editor_text::join_with`). */
-export function editorTextJoin(visible: string, hidden: string, format: "md" | "org"): string {
+export function mayHaveLogbook(raw: string): boolean {
+  return parserReady() && block_may_have_logbook(raw);
+}
+export function editorTextJoin(visible: string, hidden: string, format: "md" | "org", source?: string): string {
   // Nothing hidden is the only case before the parser is ready (splitProps
   // hides nothing then), and joining it is the identity.
   if (!hidden) return visible;
-  if (format !== "org") return editor_text_join(visible, hidden, false, null);
+  if (format !== "org" && !mayHaveLogbook(hidden)) return editor_text_join(visible, hidden, false, null, source);
   const regions = blockRegions(visible, format);
   if (regions.quarantined) throw new Error("Structural edit refused: block parsing is quarantined");
-  return editor_text_join(visible, hidden, true, regions);
+  return editor_text_join(visible, hidden, format === "org", regions, source);
 }
 /** Whether kernel hide `policy` (JSON) hides property `key`. */
 export function hidePolicyHides(policy: string, key: string, properties: readonly (readonly [string, string])[]): boolean {
