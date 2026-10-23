@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-ref-body-bench.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A large linked-reference panel settles with its nested rows present and native typing remains focused while the panel is visible.","blocking":false,"authority":"M-19 Wave 4 measure-first; provisional GH #746 stall budget 100 ms/s"}],
+      "acceptableVariations": ["Expansion latency, frame timing and memory vary with the host; compare repeated baseline and prototype samples."],
+      "nonRequirements": ["Exact pixels or DOM shape; unsupported WebKit performance APIs; final release acceptance or burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-feed-retirement.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Scrolling a long Journals feed down and back releases offscreen documents, preserves the visible scroll position on retirement/reload, saves edits in a reloaded day with sibling content intact, and Find reports retired days while searching loaded documents only.","blocking":true,"authority":"L10-03; D-20261022-JN/JE"}],
       "acceptableVariations": ["Read and render latency; a few pixels of layout rounding; additional loaded days held by editing, selection, routes or nearby viewports."],

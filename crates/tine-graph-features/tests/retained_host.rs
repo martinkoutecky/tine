@@ -452,12 +452,16 @@ fn waits_for_a_reservation(
     std::thread::scope(|scope| {
         let (done, finished) = mpsc::channel();
         let (store, host, write) = (&store, &host, &write);
-        scope.spawn(move || {
-            done.send(write(store, host).map_err(|error| error.to_string()))
-                .unwrap();
+        let writer = scope.spawn(move || {
+            let result = write(store, host);
+            let _ = done.send(());
+            result
         });
         assert!(
-            finished.recv_timeout(Duration::from_millis(500)).is_err(),
+            matches!(
+                finished.recv_timeout(Duration::from_millis(500)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ),
             "R6: {label} wrote while another reservation holds {page}"
         );
         assert_eq!(
@@ -466,10 +470,11 @@ fn waits_for_a_reservation(
             "{label}: wrote under a held reservation"
         );
         drop(held);
-        finished
-            .recv_timeout(Duration::from_secs(20))
-            .expect("the writer runs once the page is released")
-            .unwrap();
+        // Join the actual completion event. Copying the Guide runs a host
+        // operation for every page plus an asset transaction; its total I/O
+        // time is not the reservation contract. Each host operation retains
+        // its own bounded admission/publication wait and returns any failure.
+        writer.join().expect("the writer panicked").unwrap();
     });
     assert!(written(&dir), "{label}: the writer's write is missing");
     drop(host);
