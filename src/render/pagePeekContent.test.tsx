@@ -4,6 +4,8 @@ import { backend } from "../backend";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { clearTransientLayersForTest } from "../transientLayers";
+import { bumpDataRev } from "../dataRevision";
+import { ensurePageLoaded, node, resetStore } from "../document";
 
 // GH #735: the hover popup shows the page the way the page itself renders:
 // fenced code, admonitions, quotes and existing folds, not flattened text lines.
@@ -12,6 +14,7 @@ const OPEN_MS = 1000;
 beforeAll(async () => { await initParser(); });
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => {
+  resetStore();
   clearTransientLayersForTest();
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -32,9 +35,9 @@ async function waitFor(fn: () => boolean, timeout = 1000): Promise<boolean> {
 }
 const popup = () => document.body.querySelector<HTMLElement>(".peek-popup");
 
-async function openPeek(blocks: unknown[]): Promise<{ card: HTMLElement; dispose: () => void }> {
+async function openPeek(blocks: unknown[], source: object = {}): Promise<{ card: HTMLElement; dispose: () => void }> {
   vi.spyOn(backend(), "getPage").mockResolvedValue({
-    id: "pages/Probe.md", name: "Probe", title: "Probe", kind: "page", format: "md", pre_block: "", blocks,
+    id: "pages/Probe.md", name: "Probe", title: "Probe", kind: "page", format: "md", pre_block: "", blocks, ...source,
   } as never);
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -71,7 +74,7 @@ describe("GH #735: hover popup renders block content like the page", () => {
       expect(card.textContent).not.toContain("BEGIN_QUOTE");
     } finally { dispose(); }
   });
-  it("a collapsed block folds its children, with a local-only toggle that never edits the source", async () => {
+  it("a collapsed block shows its source fold and can be opened", async () => {
     const { card, dispose } = await openPeek([
       blk("f1", "Folded parent\ncollapsed:: true", { collapsed: true, children: [blk("f2", "hidden child")] }),
       blk("o1", "Open parent", { children: [blk("o2", "visible child")] }),
@@ -86,6 +89,33 @@ describe("GH #735: hover popup renders block content like the page", () => {
       expect(card.textContent).toContain("hidden child");
     } finally { dispose(); }
   });
+});
+
+it("an open page preview refreshes its DTO folds when source data changes", async () => {
+  const parent = blk("refresh-parent", "Parent", { children: [blk("refresh-child", "Child")] });
+  const { card, dispose } = await openPeek([parent]);
+  try {
+    expect(card.textContent).toContain("Child");
+    vi.mocked(backend().getPage).mockResolvedValue({
+      id: "pages/Probe.md", name: "Probe", title: "Probe", kind: "page", format: "md", pre_block: null,
+      blocks: [{ ...parent, collapsed: true }],
+    });
+    bumpDataRev();
+    expect(await waitFor(() => !card.textContent?.includes("Child"))).toBe(true);
+  } finally { dispose(); }
+});
+
+it("a page-link preview folds the answered source kind, including an alias of a journal", async () => {
+  const blocks = [blk("journal-parent", "Parent", { children: [blk("journal-child", "Child")] })];
+  const source = { id: "journals/2026_10_23.md", name: "Oct 23rd, 2026", title: "Oct 23rd, 2026",
+    kind: "journal" as const, format: "md" as const, pre_block: null, blocks };
+  ensurePageLoaded(source);
+  const { card, dispose } = await openPeek(blocks, source);
+  try {
+    card.querySelector<HTMLElement>(".collapse-toggle")!.click();
+    expect(await waitFor(() => node("journal-parent")?.collapsed === true)).toBe(true);
+    expect(node("journal-parent")?.raw).toContain("collapsed:: true");
+  } finally { dispose(); }
 });
 
 describe("GH #735: block-reference popup and live content", () => {
@@ -107,6 +137,14 @@ describe("GH #735: block-reference popup and live content", () => {
       expect(await waitFor(() => !!popup()?.querySelector(".ls-block"))).toBe(true);
       expect(popup()!.querySelector("pre.code-block")).not.toBeNull();
       expect(popup()!.textContent).not.toContain("tucked away");
+      vi.mocked(backend().previewBlock).mockResolvedValue({
+        truncated: 0,
+        group: { page: "Probe", kind: "page", blocks: [
+          blk("r1", "Root", { children: [blk("r2", "tucked away")] }),
+        ] },
+      });
+      bumpDataRev();
+      expect(await waitFor(() => !!popup()?.textContent?.includes("tucked away"))).toBe(true);
     } finally { dispose(); host.remove(); }
   });
   it("a #+BEGIN_QUERY block in a popup is not executed as a live query", async () => {

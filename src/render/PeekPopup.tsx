@@ -82,6 +82,7 @@ export function PeekPopup(props: {
   blocks: () => BlockDto[];
   page?: string;
   pageKind?: "journal" | "page";
+  path?: string;
   blockId?: string;
   properties?: [string, string][];
   format?: "md" | "org";
@@ -216,7 +217,7 @@ export function PeekPopup(props: {
               <For each={props.properties}>{([key, value]) => <div><span class="prop-key">{key}</span>{" "}<PagePropertyValue propertyKey={key} value={value} format={props.format ?? "md"} /></div>}</For>
             </div>
           </Show>
-          <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} readOnly pageBody onOpenBlock={openSource} />
+          <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} path={props.path} readOnly pageBody onOpenBlock={openSource} />
         </PeekContext.Provider>
         <Show when={(props.truncatedCount?.() ?? 0) > 0}>
           <div class="peek-popup-more">{props.truncatedCount!() > MAX_PEEK_COUNT ? t("render-more-blocks", { count: MAX_PEEK_COUNT }) : t("render-more-blocks-exact", { count: props.truncatedCount!() })}</div>
