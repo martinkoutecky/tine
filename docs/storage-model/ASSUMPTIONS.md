@@ -85,3 +85,26 @@ not cover transactions, restore, publish, purge or git (environment writes).
 M2–M4 environment faults and richer ModelFs are pending; none are added here.
 
 Per-edit cost: zero bytes, files, syscalls and transport bytes; tests/docs only.
+
+Real-window conformance coverage (F1/F6):
+`src/document/host/nativeConformance.test.ts` drives the actual TS wiring/client
+against `binding_window_tests.rs#native_window_peer`, a test-only native
+Store/PageHost transport. A bounded open/edit/send/receive/publication prefix
+uses the existing Quint-derived oracle. Further seeded lifecycle and publication
+journeys check custody, serialization, newer input, session isolation and
+live frontend mirrors against independent cold native answers. See README's
+trust-gap scope for the exact boundary: no literal Tauri IPC or full random
+Quint/application lockstep is claimed. A-OPAQUE-TEXT remains assumed outside
+the proof; this adds bounded serialization evidence without changing any
+assumption status, production write site or per-edit cost.
+
+Physical conformance coverage (F3a/F7):
+`crates/tine-store/src/page_host/scheduler_retirement_tests.rs#whole_vehicle_retirement_every_physical_fault_and_recovery_cut`
+checks production grouped retirement against individual model removals at
+physical barriers and crash/power recovery cuts.
+`crates/tine-store/src/page_host/scheduler_random_tests.rs#scheduler_random_walks_with_faults_and_disabled_actions`
+counts grouped retirement, current/stale-plan apply with absent/present effects,
+claimant arrival/removal, switch completion/refusal, external deletion and all
+three-page power survivor subsets (including actual keep/revert differences).
+These tests strengthen the existing ModelFs link; they do not change any
+assumption's status, add native power-cut evidence, or establish A-PROGRESS.

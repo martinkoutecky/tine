@@ -15,6 +15,7 @@ The frozen release candidate receives the exhaustive pass.
 | Manual `ci`, scope `full` | Linux contracts/tests, Windows compile/tests, Android core compile, same-runner performance A/B | Required exact-SHA release-candidate evidence. |
 | Manual `ci`, focused scope | Only `windows`, `android`, or `performance` | Platform/performance proof while developing relevant changes. A focused run never satisfies the release gate. |
 | Manual `ui-e2e` | Complete or scenario-focused Linux/Windows real-app proof | UI/harness debugging between releases without starting ordinary full CI. |
+| Manual `Android SafeBack ownership` | One Android instrumented test on a hosted x86_64 API-35 emulator | Focused native Back ownership/delivery proof; independent of the blocking release matrix. |
 | Manual `Flatpak build test` | Real offline Flatpak build (`identity` input: `release` or `experiment`, which must match the identity the tree ships) | Focused packaging proof. The release workflow calls the same workflow as a hard gate under the Beta identity and publishes its bundle. |
 | Manual/tagged `release` | Exact-SHA CI evidence check, release preflight, real Flatpak, desktop/Android packages, release E2E, assembly/publish | Expensive release proof. It fails before packaging if the exact candidate lacks successful full CI evidence. |
 
@@ -61,5 +62,13 @@ fail-closed contract under deterministic fixtures.
 - Dispatch manual `ci` with `scope=windows`, `scope=android`, or
   `scope=performance` when that platform boundary is the thing being changed.
 - Dispatch the Flatpak workflow for offline packaging changes.
+- Dispatch `android-safeback.yml` on the candidate branch (no inputs) for Android
+  Back ownership changes. It builds debug app/test APKs with compileSdk 36 and
+  NDK 26.3.11579264, then runs only `SafeBackOwnershipTest`. A pass requires one
+  successful test with WebView history present: Back reaches Tine's owner and
+  is delivered to its frontend listener. Missing tests, crashes and assertions
+  fail the job. The `android-safeback-<sha>-<attempt>` artifact retains the exact
+  APK pair, hashes, candidate SHA, instrumentation output and device logs on
+  success or failure. This does not prove physical gesture delivery or root exit.
 - Do not dispatch `scope=full` as a routine completion ritual. It is the frozen
   release gate.

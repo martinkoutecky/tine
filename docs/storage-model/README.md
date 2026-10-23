@@ -143,6 +143,58 @@ above, finding every referrer and computing its rewrite, and the one-designated-
 
 ## The trust gaps
 
+The real window has a bounded native conformance harness in
+`src/document/host/nativeConformance.test.ts`. It runs the actual
+`wiring.ts`, `HostClient`, planner drain and settle barrier through a controlled
+JSON-lines transport to `binding_window_tests.rs` (an ignored lib-test peer,
+never linked into the application). A one-page, three-text prefix follows the
+existing Quint-derived Rust oracle through open, typing, sends, typing during
+a send, answers and publication; it compares window acquisition, outstanding
+work and full authored text at semantic boundaries, then the native buffer's
+version and serialized text. Admission checks inspect actual queued/applying
+requests before returning the native command reply. The model's `wSend`
+abstracts synchronous request capture; command refusal is a stutter outside
+that prefix. This does not claim whole application/model state equality.
+
+The same seeded journeys check both reply/mail orders, newer input under a
+real coalesced answer, stale-session admission and mail, two declared admission
+refusals and retry, title rekeys with newer input, same-name replacement refusal,
+close with publication debt, and saved-stop/relaunch around restore. After each
+settled edit batch, reversed or ordered native `Change` publications update the
+mounted count mirror, including reversed publications of different counts for
+the same target. Initial count replies arrive either before or behind the deltas;
+real query-cache results and working-set names/text are compared with a separate
+Store reopened on copied files and a new document assembled from its DTOs.
+Cold query evaluation uses the production IR entry. Runtime block ids and
+file revisions are incidental; authored raws, outline shape, full query result
+fields and count multiplicities are checked. A new count epoch is checked to
+clear the prior graph's counts. Late query replies across an epoch are exercised,
+but old and new calls use different scope-prefixed cache keys, so this checks key
+isolation only: it does not certify the cache's retired-generation write guard
+(removing that guard still passes). Declared branch counters are required, and
+the seed count can be extended with `TINE_WINDOW_SEEDS=200` (default six). The
+suite builds the native peer with cargo, so it runs as its own command,
+`npm run test:storage-conformance`, after the Rust tests in CI's Linux jobs and
+in the batch gate; the default `npm test` does not run it.
+
+This transport calls the same PageHost methods as the thin `page_*` commands;
+it excludes Tauri context/slot resolution, task dispatch, invoke argument
+marshalling and window event routing. The existing `scripts/e2e-host-saves.mjs`
+drives real app editing, conflict resolution and crash/relaunch through that
+slice, but does not enumerate the controlled delivery schedules. The test does
+not run Store's multi-file restore protocol, ModelFs faults, native power cuts,
+all admission refusal variants, arbitrary random Quint traces through the real
+window, mounted query-component invalidation/key construction, Org fixtures,
+or controlled-clock liveness. The cache harness supplies a native-revision key.
+Those limits remain outside its claim.
+
+The lane also reproduced a lifecycle gap: releasing an acquisition made before
+client rebind leaves the reopened page held. The same test file retains an
+opt-in failing native repro (`TINE_WINDOW_REBIND_REPRO=1`, test name starting
+`known bug:`), cataloged as `REG-HOST-REBIND-ACQUISITION-RELEASE`; its production
+correction is deferred. Default green runs skip that repro and retire the
+binding during cleanup; they do not certify release across rebind.
+
 The chain is: prose spec → Quint model (checked) → Lean model (proved: complete for s2, s3, s3.1 and s3.5, partial for s3.2 to s3.4) → Rust code
 (tested against the model, not proved). Two links are evidence rather than proof:
 
@@ -159,6 +211,26 @@ The chain is: prose spec → Quint model (checked) → Lean model (proved: compl
    creating save, a create over an occupied name, a page whose input is still queued, and an arriving
    logical claimant or possible unreadable owner at a creating save, audit L8-02); each has a predicate,
    a no-change check and a planted spurious refusal that the tests catch.
+
+The test-only physical scheduler also calls production `begin_draft_retiring`:
+whole-operation retirement refines a sequence of enabled single-page
+`draftSync` removals. It checks every physical barrier, the terminal's virtual
+single-page cuts (including ghosts), busy custody/publication debt, and
+crash/power recovery. The ordinary H/N per-page adapter remains unchanged.
+Seeded walks interleave that worker with `opApply` (current and older captured
+plans, present and absent effects), logical claimant arrival/removal, switch
+completion, external deletion, and all eight three-page graph survivor sets.
+Plan inputs come from host buffers/files; the oracle checks their outcomes.
+Required branch/disposition counters fail if any declared branch is missing;
+power counters also require both keeping and reverting changed graph bytes.
+Apply's existing occupied-name/queued-input refusals are checked no-change
+stutters; physical worker/allocator custody returns Busy, stale plans return
+Changed (or an earlier documented Unsaved/Busy refusal), and switch completion
+waits while work/input/drafts prevent it. Environment no-ops and writes in a
+forbidden R1 window are disabled choices, not invented host actions. Directed
+retirement tests inject before/after unlink/sync faults and restart at every
+worker cut. This is ModelFs safety evidence, not native power-loss or real
+Progress/driver liveness coverage.
 
 The filesystem/process assumptions, their existing guards and tests, and the
 remaining gaps are recorded in [ASSUMPTIONS.md](ASSUMPTIONS.md). The assumption

@@ -124,6 +124,7 @@ struct Driver<F: ConformanceIo = ModelFs> {
     stepped: bool,
     prepare_operations: bool,
     effect: Option<(String, Vec<Value>, u64, u64)>,
+    whole_retires: usize,
     /// Trash keys whose custody a save escaped (R-STORAGE-ERROR).
     escaped: BTreeMap<String, i64>,
     /// The next saveFail lands after this many system calls of its HostIo
@@ -195,6 +196,7 @@ impl<F: ConformanceIo> Driver<F> {
             stepped: false,
             prepare_operations: false,
             effect: None,
+            whole_retires: 0,
             escaped: BTreeMap::new(),
             cut: None,
         }
@@ -268,6 +270,7 @@ impl<F: ConformanceIo> Driver<F> {
             stepped: self.stepped,
             prepare_operations: self.prepare_operations,
             effect: self.effect.clone(),
+            whole_retires: self.whole_retires,
             escaped: self.escaped.clone(),
             cut: self.cut,
         })
@@ -632,6 +635,10 @@ impl<F: ConformanceIo> Driver<F> {
 
     fn compare(&mut self, context: &str) {
         let actual = self.abstract_state();
+        self.compare_projection(&actual, context);
+    }
+
+    fn compare_projection(&mut self, actual: &Value, context: &str) {
         let expected = self.oracle.state();
         for (name, value) in actual.as_object().unwrap() {
             if matches!(name.as_str(), "trash" | "trashStable") {
@@ -799,9 +806,17 @@ impl<F: ConformanceIo> Driver<F> {
         }
         let root = tempfile::tempdir().unwrap();
         native_conformance::write_pages(self.host.fs.physical(), &root.path().join("pages"));
-        let store = crate::Store::open(root.path(), Default::default())
-            .unwrap()
-            .0;
+        // This immutable projection needs the initial load and real binding
+        // predicate, with no notification watcher or its shutdown wait.
+        let store = crate::Store::open(
+            root.path(),
+            crate::OpenOptions {
+                watch: crate::WatchMode::Poll,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0;
         let refusal = binding::creation_refusal(&store, &creations);
         store.close();
         refusal
