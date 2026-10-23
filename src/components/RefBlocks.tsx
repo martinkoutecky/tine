@@ -94,8 +94,9 @@ function RefBlock(props: {
   queryResult?: boolean;
 }): JSX.Element {
   // Header facts stay on the DTO's shipped fields (audit P3): no facet parse.
-  // M-19 prototype: the body shares AstBody with Block. Keep this change gated
-  // on the large-panel measurements in RECEIPT-m19-wave4.md.
+  // M-19: the body shares AstBody with Block, so fences and dates match the
+  // live row. Measured: no slower on the normal path; slower only while a
+  // source page cannot be read (D-20261023-VC, tine-agents evidence/m19-wave4).
   const facets = createMemo(() => facetsFromDto(props.block));
   const headingLevel = createMemo(() => effectiveHeadingLevel(facets(), props.depth));
   const format = createMemo(() => formatForPage(props.page));
