@@ -65,7 +65,7 @@ describe("comment blocks have no bullet", () => {
         expect(ownControls(row(root, id)), id).toBeNull();
         expect(row(root, id).querySelector(":scope > .block-main .bullet-container"), id).toBeNull();
         // Still a rendered block with its text and its author chip as the handle.
-        expect(row(root, id).querySelector(":scope > .block-main .author-chip.comment-handle"), id).not.toBeNull();
+        expect(row(root, id).querySelector(":scope > .comment-quote .author-chip.comment-handle, :scope > .block-main .author-chip.comment-handle"), id).not.toBeNull();
       }
       expect(row(root, "r2").textContent).toContain("Fair enough.");
     } finally {
@@ -90,18 +90,18 @@ describe("comment blocks have no bullet", () => {
 });
 
 describe("the author chip is the comment's handle", () => {
-  const chip = (root: HTMLElement, id: string) => row(root, id).querySelector(":scope > .block-main .comment-handle") as HTMLElement;
+  const chip = (root: HTMLElement, id: string) => row(root, id).querySelector(":scope > .comment-quote .comment-handle, :scope > .block-main .comment-handle") as HTMLElement;
 
-  it("starts the block drag, as the bullet does, without entering the editor", () => {
+  it.each(["c1", "r1"])("starts the %s block drag, as the bullet does, without entering the editor", (id) => {
     const { root, dispose } = fixture();
     try {
-      const handle = chip(root, "r1");
+      const handle = chip(root, id);
       // jsdom has no layout: the drag's hit test finds nothing, which is enough to start it.
       (document as { elementFromPoint: unknown }).elementFromPoint = () => null;
       handle.dispatchEvent(new MouseEvent("mousedown", { button: 0, clientX: 10, clientY: 10, bubbles: true, cancelable: true }));
       expect(editingId()).toBeNull();
       document.dispatchEvent(new MouseEvent("mousemove", { clientX: 40, clientY: 10, bubbles: true }));
-      expect(dragId()).toBe("r1");
+      expect(dragId()).toBe(id);
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
       delete (document as { elementFromPoint?: unknown }).elementFromPoint;
     } finally {

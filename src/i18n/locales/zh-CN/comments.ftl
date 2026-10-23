@@ -12,7 +12,9 @@ comment-margin-count = 边栏中有 { NUMBER($count, useGrouping: 0) } { $count 
     }
 comment-margin-label = 评论
 comment-toolbar = 评论
+comment-toolbar-shortcut = 评论 (Ctrl/Cmd+R)
 comment-reply = 回复
+comment-reply-placeholder = 回复…
 comment-delete = 删除评论及其回复
 comment-select-first = 请先在块中选中文字，再选择“评论所选内容”（或在编辑时按 Ctrl+R）
 comment-block-changed = 选中文字后该块已发生更改，请重新选中后再评论

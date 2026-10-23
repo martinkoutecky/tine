@@ -8,12 +8,13 @@ import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
 import zlib from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tine-gh745-"));
+const artifactRoot = path.resolve("artifacts/gh745-outdent");
+fs.mkdirSync(artifactRoot, { recursive: true });
+const tmp = fs.mkdtempSync(path.join(artifactRoot, "structural-native-"));
 const graph = `${tmp}/graph`;
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(`${graph}/${dir}`, { recursive: true });
 
@@ -132,6 +133,8 @@ try {
     { name: "backspace-into-image", row: 118, place: "start", keys: ["Backspace"] },
     { name: "delete-merge", row: 104, place: "end", keys: ["Delete"] },
     { name: "tab-then-shift-tab", row: 110, place: "mid", keys: ["Tab", "Shift+Tab"] },
+    // NESTED=1 crosses the page's top-level window list, the reopened Beta 9 path.
+    ...(nested ? [{ name: "shift-tab-then-tab-level-2-1-2", row: 114, place: "mid", keys: ["Shift+Tab", "Tab"] }] : []),
     { name: "paste-multi-block", row: 100, place: "end", paste: "pasted one\npasted two\npasted three" },
   ].filter((v) => !process.env.ONLY || process.env.ONLY.split(",").includes(v.name));
 

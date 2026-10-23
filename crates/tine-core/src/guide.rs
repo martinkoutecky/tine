@@ -851,6 +851,9 @@ mod rename_guide_tests {
         assert!(tips.contains("**Alt-click** opens the other pane"));
         assert!(tips.contains("an outline bullet's dot"));
         assert!(tips.contains("a pane's only tab still has a close button"));
+        assert!(tips.contains("opens a graph without a saved session"));
+        assert!(tips.contains("restores every tab's last page, order and pin state"));
+        assert!(tips.contains("the same active tab"));
         let refs = include_str!("templates/pages-links-references-search.md");
         assert!(refs.contains("follows its source's fold state live"));
     }
