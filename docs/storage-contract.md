@@ -1239,16 +1239,26 @@ stamp is reread on the next poll as for every other file.
 The watcher's re-reads of an operation's own writes (the racy re-read,
 storage spec §5.4, and on Windows also the echo event's path-scoped diff)
 are an accepted cost, on the watcher thread after publication: once the
-watcher settles they are at most the files the operation wrote plus a small
-constant (measured on 31 written pages: one read each on Linux when one
+watcher settles they are at most twice the files the operation wrote plus a
+small constant (measured on 31 written pages: one read each on Linux when one
 watcher cycle takes all their echoes, two on Windows; two on Linux too when
 the echoes straddle two cycles, as under host load: the echo's cycle, then
 the one full diff the operation's own directory event forces while the
 own-write stamps are still racy). They are linear in the files written and do not grow with the
 graph (D-10). An echo of a page the host still holds is forwarded to the
 host, which re-reads it as an owed observation (§5); that read has the same
-cause and the same bound, whatever thread makes it. The rename cost tests
-measure through an acknowledged drain (`PageHost::quiesce_for_tests`,
+cause and the same bound, whatever thread makes it. The exact publication
+comparison (`rename_io::rename_publication_reopens_no_referrer`) stops and
+joins the background watcher before measurement. A forwarded removal echo
+can make the host's unchanged-observation publication stamp the absent
+source again (`Bridge::index` → `note_own_observed`): it has no successful
+whole-file read to bill as `observation_reads`, and its stamp is not made
+on the watcher thread, so `stamps_by_path` alone does not isolate publication.
+The one-stamp-per-written-referrer bound is unchanged. The separate live
+echo check (`rename_io::rename_watcher_echo_cost_is_linear_in_written_files`)
+retains 60/600-page graphs and the same watcher read/stamp bounds.
+The live-watcher rename cost tests measure through an acknowledged drain
+(`PageHost::quiesce_for_tests`,
 `watch/test_drain.rs`; REVIEW-3b-P2b-2 N3, REVIEW-3b-P2b-3), not through quiet
 counters: each drain request writes its own sentinel, named by the request's
 id, after the operation's writes; it reaches the watcher behind their
