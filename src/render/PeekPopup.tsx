@@ -94,6 +94,8 @@ export function PeekPopup(props: {
   onPointerEnter: () => void;
   onPointerLeave: () => void;
   onDismiss: () => void;
+  /** The popup's editor holds the caret: the opener must not close it on a timer. */
+  onHold?: (held: boolean) => void;
 }): JSX.Element {
   let popupEl: HTMLDivElement | undefined;
   const ownerWindow = useOwnerWindow();
@@ -103,9 +105,13 @@ export function PeekPopup(props: {
   // While its editor holds the caret the popup stays put: pointer exit, page
   // scroll and viewport resize (a soft keyboard) do not close it, and the first
   // Escape ends the edit instead of closing the popup.
-  const surfaceKey = `preview:${layerId}`;
+  // A secondary "ref:" surface, like references and embeds: unscoped edits and
+  // arrow navigation do not mount a second editor here, and margin comments
+  // render inline.
+  const surfaceKey = `ref:peek-${layerId}`;
   const [editorFocused, setEditorFocused] = createSignal(false);
   const editingInside = () => editingId() !== null && editorFocused();
+  createEffect(() => props.onHold?.(editingInside()));
   // Page menus live outside the preview DOM. Identify this preview's menu by
   // its exact opener, so unrelated menus retain normal outside dismissal.
   const ownsMenu = () => {
@@ -182,7 +188,10 @@ export function PeekPopup(props: {
     });
     onCleanup(unregister);
   });
-  dismissOnOutsidePointer({ open: () => !ownsMenu(), inside: () => [popupEl, props.anchor()], dismiss: props.onDismiss });
+  // While editing, an outside press only blurs (commits) the editor, and the
+  // popup closes after the usual grace period. The editor's own portals
+  // (autocomplete) live outside the popup and must stay clickable.
+  dismissOnOutsidePointer({ open: () => !ownsMenu() && !editingInside(), inside: () => [popupEl, props.anchor()], dismiss: props.onDismiss });
 
   onMount(() => {
     const anchor = props.anchor();

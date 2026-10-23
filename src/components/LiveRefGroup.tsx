@@ -2,8 +2,9 @@ import { For, Show, createEffect, createMemo, createResource, createSignal, crea
 import { nearestAncestors } from "../render/blockTrail";
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
-import { beginPageHeaderEdit, blockProperty, blockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, setBlockProperty, node as docNode } from "../document";
+import { beginPageHeaderEdit, blockProperty, blockRef, blockWritable, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, setBlockProperty, node as docNode } from "../document";
 import { loadSourcePage } from "../sourcePage";
+import { blockDtoExternalId } from "../blockIdentity";
 import { Block, BulletOpenContext, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { observeNear, unobserveNear } from "../lazyObserve";
@@ -140,6 +141,15 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   // A source page that failed to load leaves the group on its DTO path below,
   // which is the same path it uses before the page is near the viewport.
   const liveNode = (id: string) => {
+    if (props.surface === "preview") {
+      const dto = dtoById(id);
+      if (!dto) return docNode(id); // a live descendant, rendered by its live parent
+      // Resolve the row through its own page, like the preview's fold (GH #748):
+      // a duplicate `id::` remapped on another loaded page, a page/journal twin
+      // or a read-only source stays on the read-only copy (its folds local).
+      const source = resolveBlockRef({ uuid: blockDtoExternalId(dto), page: props.page, pageKind: props.kind, ...(props.path ? { path: props.path } : {}) });
+      return source === id && blockWritable(id) ? docNode(id) : undefined;
+    }
     if (props.surface !== "query") return docNode(id);
     const dto = dtoById(id);
     if (!dto) return docNode(id); // a live ancestor/descendant, not a result locator
@@ -448,7 +458,9 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
             navOnly keeps structural mutations (merges/indents/moves) on page order. */}
         <OutlineScopeContext.Provider value={{
           get roots() { return groupedIds(); },
-          collapsed: (id, stored) => contextRootIds().has(id) ? false : collapseSurface.collapsed(id, stored),
+          // A preview shows source folds, so it navigates through them too.
+          collapsed: (id, stored) => props.surface === "preview" ? stored
+            : contextRootIds().has(id) ? false : collapseSurface.collapsed(id, stored),
           navOnly: true,
         }}>
         <LinkDepthContext.Provider value={linkDepth + 1}>

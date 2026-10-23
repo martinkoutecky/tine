@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
+import { pageByName } from "../document";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { installKeybindings } from "../keybindings";
@@ -75,14 +76,18 @@ describe("page hover-peek (GH #40)", () => {
     const ids = () => [...document.querySelectorAll("[data-page-action-id]")].map(el => el.getAttribute("data-page-action-id"));
     try {
       const link = root.querySelector("a.page-ref")!;
+      fireEnter(link);
+      await advance(PEEK_OPEN_MS);
+      expect(await waitFor(() => !!popup())).toBe(true);
+      // The editable preview (D-20261023-VQ) loads its source page; compare
+      // with a right-click made in that same state.
+      expect(await waitFor(() => !!pageByName("Tine"))).toBe(true);
       link.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
       const expected = ids();
       expect(expected).toContain("open-sidebar");
       expect(contextMenu()).toMatchObject({ name: "Tine", fileActions: false });
       closeContextMenu();
-      fireEnter(link);
-      await advance(PEEK_OPEN_MS);
-      expect(await waitFor(() => !!popup())).toBe(true);
+      expect(popup()).not.toBeNull();
       popup()!.querySelector<HTMLButtonElement>('[aria-label="Page actions"]')!.click();
       expect(ids()).toEqual(expected);
       expect(contextMenu()).toMatchObject({ name: "Tine", fileActions: false });

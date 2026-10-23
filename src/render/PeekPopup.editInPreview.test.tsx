@@ -4,7 +4,8 @@ import { backend } from "../backend";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
-import { node, resetStore } from "../document";
+import { ensurePageLoaded, node, pageByName, resetStore } from "../document";
+import { route, tabs } from "../router";
 import { editingId, endEdit, startEditing } from "../editorController";
 
 // D-20261023-VQ: a hover preview shows the live source blocks, editable in
@@ -37,10 +38,12 @@ async function waitFor(fn: () => boolean, timeout = 1000): Promise<boolean> {
 const popup = () => document.body.querySelector<HTMLElement>(".peek-popup");
 const editor = () => popup()?.querySelector<HTMLTextAreaElement>("textarea.block-editor") ?? null;
 
-async function openPeek(): Promise<{ card: HTMLElement; dispose: () => void }> {
+const blk = (id: string, raw: string, children: unknown[] = [], extra: object = {}) => ({ id, raw, collapsed: false, children, ...extra });
+const defaultBlocks = [blk("e1", "Editable text", [blk("e2", "Child")])];
+
+async function openPeek(blocks: unknown[] = defaultBlocks, source: object = {}, live = true): Promise<{ card: HTMLElement; link: Element; dispose: () => void }> {
   const dto = {
-    id: "pages/Probe.md", name: "Probe", title: "Probe", kind: "page", format: "md", pre_block: "",
-    blocks: [{ id: "e1", raw: "Editable text", collapsed: false, children: [{ id: "e2", raw: "Child", collapsed: false, children: [] }] }],
+    id: "pages/Probe.md", name: "Probe", title: "Probe", kind: "page", format: "md", pre_block: "", blocks, ...source,
   };
   vi.spyOn(backend(), "getPage").mockImplementation(async () => structuredClone(dto) as never);
   vi.spyOn(backend(), "getPageByPath").mockImplementation(async () => structuredClone(dto) as never);
@@ -51,13 +54,17 @@ async function openPeek(): Promise<{ card: HTMLElement; dispose: () => void }> {
   link.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false, pointerType: "mouse", isPrimary: true }));
   link.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
   await advance(OPEN_MS);
-  expect(await waitFor(() => !!popup()?.querySelector(".ls-block") && !!node("e1"))).toBe(true);
-  return { card: popup()!, dispose: () => { dispose(); host.remove(); } };
+  expect(await waitFor(() => !!popup()?.querySelector(".ls-block") && !!pageByName("Probe"))).toBe(true);
+  if (live) expect(await waitFor(() => !!popup()?.querySelector(".ls-block:not(.ref-block)"))).toBe(true);
+  return { card: popup()!, link, dispose: () => { dispose(); host.remove(); } };
 }
 
-async function editInPopup(card: HTMLElement) {
+async function editInPopup(card: HTMLElement, id = "e1") {
   card.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
-  startEditing("e1", 0);
+  const content = card.querySelector<HTMLElement>(`.ls-block:not(.ref-block)[data-block-id="${id}"] .block-content`)!;
+  content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+  content.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+  content.click(); // the user's own gesture, scoped to this rendered instance
   expect(await waitFor(() => !!editor())).toBe(true);
   editor()!.focus();
   await advance(0);
@@ -109,11 +116,13 @@ describe("D-20261023-VQ: editable hover preview", () => {
   it("a plain bullet click opens the block from the preview instead of zooming the pane behind it", async () => {
     const { card, dispose } = await openPeek();
     try {
-      const route = location.hash;
-      card.querySelector<HTMLElement>(".ls-block:not(.ref-block) .bullet-container")!.click();
+      const before = tabs().length;
+      card.querySelector<HTMLElement>('.ls-block:not(.ref-block)[data-block-id="e1"] .bullet-container')!.click();
       await advance(0);
       expect(popup()).toBeNull(); // the preview's open-source action dismissed it
-      expect(location.hash).toBe(route);
+      expect(tabs().length).toBe(before + 1);
+      // Opened in the foreground, on the source block.
+      expect(route()).toMatchObject({ kind: "page", name: "Probe", block: "e1" });
     } finally {
       dispose();
     }
@@ -143,6 +152,92 @@ describe("D-20261023-VQ: editable hover preview", () => {
       expect(dismissTopTransient("escape")).toBe(true);
       await advance(0);
       expect(popup()).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+  it("a row whose id another loaded page owns stays read-only and never edits that page (duplicate id::)", async () => {
+    const U = "58900000-0000-4000-8000-0000000000d1";
+    ensurePageLoaded({ id: "pages/Orig.md", name: "Orig", title: "Orig", kind: "page", format: "md", pre_block: "",
+      blocks: [blk(U, `Original\nid:: ${U}`, [], { properties: [["id", U]] })] } as never);
+    const { card, dispose } = await openPeek([blk(U, `Copied\nid:: ${U}`, [], { properties: [["id", U]] })], {}, false);
+    try {
+      await advance(100);
+      expect(card.textContent).toContain("Copied");
+      expect(card.querySelector(".ls-block:not(.ref-block)")).toBeNull();
+      expect(card.querySelector("textarea")).toBeNull();
+      expect(node(U)!.page).toBe("Orig");
+      expect(node(U)!.raw).toBe(`Original\nid:: ${U}`);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("a read-only source keeps the read-only copy with a local fold", async () => {
+    const { card, dispose } = await openPeek(defaultBlocks, { read_only: true }, false);
+    try {
+      await advance(100);
+      expect(card.querySelector(".ls-block:not(.ref-block)")).toBeNull();
+      expect(card.textContent).toContain("Child");
+      card.querySelector<HTMLElement>(".collapse-toggle")!.click();
+      await vi.waitFor(() => expect(popup()!.textContent).not.toContain("Child"));
+      expect(node("e1")!.collapsed).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("an outside press while editing commits through blur instead of tearing the popup down", async () => {
+    const { card, dispose } = await openPeek();
+    try {
+      await editInPopup(card);
+      const outside = document.createElement("div");
+      document.body.appendChild(outside);
+      outside.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      outside.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      await advance(0);
+      expect(popup()).not.toBeNull();
+      expect(editor()).not.toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("re-crossing the link while editing does not close the popup on the link's timer", async () => {
+    const { card, link, dispose } = await openPeek();
+    try {
+      await editInPopup(card);
+      card.dispatchEvent(new MouseEvent("mouseleave", { bubbles: false }));
+      link.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false, pointerType: "mouse", isPrimary: true }));
+      link.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false, pointerType: "mouse", isPrimary: true }));
+      await advance(3000);
+      expect(popup()).not.toBeNull();
+      expect(editor()).not.toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("ArrowDown navigates through the source folds the preview shows", async () => {
+    const { card, dispose } = await openPeek([blk("r", "Root", [blk("c", "Child", [blk("g", "Grandchild")])]), blk("s", "Sibling")]);
+    try {
+      expect(card.textContent).toContain("Grandchild");
+      await editInPopup(card, "c");
+      const textarea = editor()!;
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+      await advance(0);
+      expect(editingId()).toBe("g");
+    } finally {
+      dispose();
+    }
+  });
+  it("an unscoped edit elsewhere does not mount a second editor in the preview", async () => {
+    const { dispose } = await openPeek();
+    try {
+      startEditing("e1", 0); // keyboard navigation or a split on the source page
+      await advance(0);
+      expect(editor()).toBeNull();
     } finally {
       dispose();
     }
