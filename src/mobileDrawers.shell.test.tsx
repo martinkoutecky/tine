@@ -80,9 +80,10 @@ function installHarness(initialMatches = true) {
         </Show>
       </DrawerBackground>
       <MobileDrawerController />
-      <DrawerBackground class="test-mobile-toolbar-region" blockedBy="any">
+      {/* The shared editing dock serves the focused drawer too (GH #751). */}
+      <div class="test-mobile-toolbar-region">
         <button class="test-mobile-toolbar-action">Mobile editor action</button>
-      </DrawerBackground>
+      </div>
       <DrawerBackground class="test-toast-region" blockedBy="any">
         <button class="test-toast-dismiss">Dismiss notification</button>
       </DrawerBackground>
@@ -175,7 +176,7 @@ describe("GH #161 mounted responsive drawer shell", () => {
     expect(left.getAttribute("aria-label")).toBe("Navigation sidebar");
     expect(isInert(left)).toBe(false);
     expect(isInert(main)).toBe(true);
-    expect(isInert(harness.root.querySelector<HTMLElement>(".test-mobile-toolbar-region")!)).toBe(true);
+    expect(isInert(harness.root.querySelector<HTMLElement>(".test-mobile-toolbar-region")!)).toBe(false);
     expect(isInert(harness.root.querySelector<HTMLElement>(".test-toast-region")!)).toBe(true);
     expect(harness.root.querySelectorAll("[data-mobile-drawer-scrim]")).toHaveLength(1);
     expect(left.contains(document.activeElement)).toBe(true);
@@ -295,7 +296,7 @@ describe("GH #161 mounted responsive drawer shell", () => {
     expect(isInert(harness.root.querySelector<HTMLElement>(".top-region")!)).toBe(true);
     expect(isInert(harness.root.querySelector<HTMLElement>(".drawer-workspace")!)).toBe(true);
     expect(isInert(harness.root.querySelector<HTMLElement>(".main-container")!)).toBe(false);
-    expect(isInert(harness.root.querySelector<HTMLElement>(".test-mobile-toolbar-region")!)).toBe(true);
+    expect(isInert(harness.root.querySelector<HTMLElement>(".test-mobile-toolbar-region")!)).toBe(false);
     expect(isInert(harness.root.querySelector<HTMLElement>(".test-toast-region")!)).toBe(true);
     harness.root.querySelector<HTMLButtonElement>(".right-first")!.click();
     await settle();

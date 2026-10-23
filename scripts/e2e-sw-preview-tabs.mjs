@@ -6,6 +6,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { remote } from "webdriverio";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -15,9 +16,12 @@ const graph = path.join(run, "graph");
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(run, dir));
 const uuid = "57000000-0000-4000-8000-000000000001";
-const source = `- Source block\n  id:: ${uuid}\n- Sibling context\n`;
+const source = `- Source block\n  id:: ${uuid}\n  - Preview child\n- Sibling context\n`;
+const orgUuid = "57000000-0000-4000-8000-000000000002";
+const orgSource = `* Org source block\n:PROPERTIES:\n:id: ${orgUuid}\n:END:\n** Preview child\n* Sibling context\n`;
 fs.writeFileSync(path.join(graph, "pages/Preview Source.md"), source);
-fs.writeFileSync(path.join(graph, "pages/Preview Home.md"), `- [[Preview Source]]\n- ((${uuid}))\n`);
+fs.writeFileSync(path.join(graph, "pages/Preview Org.org"), orgSource);
+fs.writeFileSync(path.join(graph, "pages/Preview Home.md"), `- [[Preview Source]]\n- ((${uuid}))\n- [[Preview Org]]\n- ((${orgUuid}))\n`);
 const app = process.env.TINE_APP || path.join(root, "target/debug/tine");
 const port = Number(process.env.E2E_DRIVER_PORT || 4792);
 const nativePort = port + 1;
@@ -37,6 +41,35 @@ try {
   await ensureMainWindow(browser);
   await browser.setWindowSize(1280, 900);
   await browser.$(".app-container").waitForExist({ timeout: 30000 });
+  // GH #748: both popup entrances fold the actual file, including an unopened
+  // source, through ordinary document undo. No editor or test-only mutation.
+  for (const [name, id, file, original, property] of [
+    ["Preview Source", uuid, "pages/Preview Source.md", source, "collapsed:: true"],
+    ["Preview Org", orgUuid, "pages/Preview Org.org", orgSource, ":collapsed: true"],
+  ]) {
+    for (const anchor of [`//a[contains(@class,'page-ref') and contains(.,'${name}')]`, `.page-section .block-ref[data-block-ref="${id}"]`]) {
+      stage = `${file} ${anchor} preview fold persists and undo restores`;
+      await openPageByName(browser, "Preview Home");
+      await browser.$(anchor).moveTo();
+      const previewRow = await browser.$(".peek-popup .block-content");
+      await previewRow.waitForDisplayed({ timeout: 10000 });
+      await previewRow.moveTo(); // disclosure arrows appear on row hover
+      const arrow = await browser.$(".peek-popup .collapse-toggle.has-children");
+      await arrow.waitForDisplayed({ timeout: 10000 });
+      await arrow.click();
+      await waitForFileText(path.join(graph, file), text => text.toLowerCase().includes(property));
+      await browser.waitUntil(() => browser.execute(() => {
+        const popup = document.querySelector(".peek-popup");
+        return !!popup && !popup.textContent.includes("Preview child");
+      }), { timeout: 10000, timeoutMsg: stage });
+      await browser.keys(["Control", "z"]);
+      await waitForFileText(path.join(graph, file), text => text === original);
+      await browser.waitUntil(() => browser.execute(() => document.querySelector(".peek-popup")?.textContent.includes("Preview child")), { timeout: 10000 });
+      await browser.$(".page-title").moveTo();
+      await browser.waitUntil(async () => !(await browser.$(".peek-popup").isExisting()), { timeout: 5000 });
+      console.log(`PASS: ${stage}`);
+    }
+  }
   for (const anchor of [".page-ref", ".block-ref"]) {
     for (const action of [".peek-source-title", ".peek-open-source", ".bullet-container"]) {
       stage = `${anchor} preview ${action} activates source`;
@@ -82,12 +115,13 @@ try {
     console.log(`PASS: ${stage} and resumes dismissal`);
   }
   if (fs.readFileSync(path.join(graph, "pages/Preview Source.md"), "utf8") !== source) throw new Error("preview navigation wrote source content");
+  if (fs.readFileSync(path.join(graph, "pages/Preview Org.org"), "utf8") !== orgSource) throw new Error("preview fold undo changed Org content");
   fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ outcome: "pass", testedBase: base, delta: "sw-preview-tabs worktree diff", graph }, null, 2));
-  console.log("PASS: page and block previews activate source tabs, survive page actions, confirm background tabs and resume dismissal");
+  console.log("PASS: page and block preview folds persist in Markdown/Org and undo; source tabs, menus and dismissal work");
 } catch (error) {
   await browser?.saveScreenshot(path.join(run, "failure.png")).catch(() => {});
   fs.writeFileSync(path.join(run, "failure.json"), JSON.stringify({ testedBase: base, journey: stage,
-    expected: "foreground source navigation; preview retained with menu; background tab confirmation", observed: String(error), classification: "ambiguous" }, null, 2));
+    expected: "preview fold persists as collapsed in Markdown/Org; undo restores bytes; foreground source navigation; preview retained with menu; background tab confirmation", observed: String(error), classification: "ambiguous" }, null, 2));
   throw error;
 } finally {
   await browser?.deleteSession().catch(() => {});

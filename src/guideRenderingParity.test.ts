@@ -1,5 +1,9 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+it("the Guide explains preview placement and reachable source actions (GH #750, GH #752)", () => {
+  const guide = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
+  for (const outcome of ["space above or below the link", "stays in place as its content changes", "title and **Open source** stay visible while you scroll"]) expect(guide).toContain(outcome);
+});
 it("the Guide teaches time tracking for selected task cycling", () => {
   const guide = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
   for (const outcome of ["**Time tracking** on", "DOING / NOW records a clock-in", "into DONE records a clock-out", "Ctrl/Cmd+Enter cycles several selected blocks, in one Undo step"]) expect(guide).toContain(outcome);

@@ -265,9 +265,11 @@ export interface MessageArgs {
   "comment-on-whole-block": {};
   "comment-quote-changed": {};
   "comment-reply": {};
+  "comment-reply-placeholder": {};
   "comment-select-first": {};
   "comment-stale-write-what": {};
   "comment-toolbar": {};
+  "comment-toolbar-shortcut": {};
   "comment-written-by": { "author": string | number };
   "comment-written-by-you": {};
   "config-query-details": {};

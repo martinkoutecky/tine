@@ -8,8 +8,9 @@ import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { bulletlessFacts, checkBulletless } from "./lib/margin-bulletless.mjs";
+import { marginFirstLineProblems } from "./lib/margin-first-line.mjs";
 
-const PORT = 5218;
+const PORT = Number(process.env.MARGIN_SHOT_PORT || 5218);
 const OUT = process.argv[2] ?? "scratch/margin-s2";
 const SIZES = [{ width: 1440, height: 900 }, { width: 1100, height: 800 }];
 const MODES = ["light", "dark"];
@@ -18,7 +19,7 @@ const PAGES = [
   { slug: "stacking", name: "Margin stacking regression", wait: "Name the norm.", threads: 6 },
   { slug: "plain", name: "Tine", wait: null, threads: 0 },
 ];
-const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+const server = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore", cwd: process.env.MARGIN_SHOT_ROOT });
 let browser;
 let failed = false;
 
@@ -106,8 +107,39 @@ try {
     console.log(JSON.stringify({ case: name, paneWidth: f.paneWidth, margin: f.column, markers: f.markers, threads: f.threads.map((t) => [t.id.slice(0, 6), Math.round(t.top), t.anchor === null ? null : Math.round(t.anchor)]) }));
     check(name, page, f);
     checkBulletless(name, await tab.evaluate(bulletlessFacts), { expectCards: page.threads });
+    const problems = await tab.evaluate(marginFirstLineProblems);
+    if (problems.length) throw new Error(`${name}: ${problems.join("; ")}`);
     if (errors.length) throw new Error(`${name}: browser errors:\n${errors.join("\n")}`);
     await tab.screenshot({ path: `${OUT}/${name}.png`, fullPage: false });
+    if (page.slug === "comments") {
+      const card = tab.locator(".comment-card").first();
+      await card.hover();
+      await tab.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+      await tab.screenshot({ path: `${OUT}/${name}-reply-collapsed.png` });
+      const draft = card.locator(":scope > .comment-composer textarea");
+      await draft.focus();
+      await tab.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+      check(`${name}-expanded`, page, await tab.evaluate(facts));
+      await tab.screenshot({ path: `${OUT}/${name}-reply-expanded.png` });
+      await draft.press("Escape");
+      // Long quotes in a narrow margin must leave both the chip and delete
+      // reachable. Check actual layout, without imposing incidental pixels.
+      const overlap = await tab.evaluate(marginFirstLineProblems);
+      if (overlap.length) throw new Error(`${name}: ${overlap.join("; ")}`);
+      await card.locator(":scope > .block-main .block-content").click();
+      const editor = card.locator("textarea.block-editor");
+      await editor.evaluate(ta => { ta.focus(); ta.setSelectionRange(0, 4); ta.dispatchEvent(new Event("select", { bubbles: true })); });
+      await tab.locator('[data-selection-action="comment"]').waitFor();
+      await tab.screenshot({ path: `${OUT}/${name}-toolbar.png` });
+      await editor.press("Escape");
+      if (f.column) {
+        await tab.evaluate(() => document.documentElement.style.setProperty("--margin-column-width", "220px"));
+        await tab.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+        await tab.screenshot({ path: `${OUT}/${name}-narrow-margin.png` });
+        const narrowProblems = await tab.evaluate(marginFirstLineProblems);
+        if (narrowProblems.length) throw new Error(`${name}: narrow margin ${narrowProblems.join("; ")}`);
+      }
+    }
     if (page.slug === "stacking" && f.column) {
       // Hover the fourth thread: it and its passage are emphasised.
       await tab.locator(".margin-thread").nth(3).hover();
@@ -118,6 +150,26 @@ try {
       if (emphasised.thread !== 1 || emphasised.mark !== 1) throw new Error(`${name}: hover emphasis ${JSON.stringify(emphasised)}`);
       await tab.screenshot({ path: `${OUT}/${name}-hover.png`, fullPage: false });
     }
+    await tab.close();
+  }
+  for (const mode of MODES) {
+    const tab = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    await tab.goto(`http://localhost:${PORT}/?regressions`);
+    await tab.waitForSelector(".ls-block");
+    await tab.evaluate(m => document.documentElement.setAttribute("data-theme", m), mode);
+    await tab.keyboard.press("Control+k");
+    await tab.locator(".switcher-input").fill("Margin comments regression");
+    await tab.locator(".switcher-row").first().click();
+    const card = tab.locator(".comment-card").first();
+    const touchProblems = await tab.evaluate(marginFirstLineProblems);
+    if (touchProblems.length) throw new Error(`touch-${mode}: ${touchProblems.join("; ")}`);
+    await card.locator(":scope > .block-main .block-content").click();
+    await card.locator("textarea.block-editor").evaluate(ta => { ta.focus(); ta.setSelectionRange(0, 4); ta.dispatchEvent(new Event("select", { bubbles: true })); });
+    await tab.locator("[data-mobile-selection-toolbar]").waitFor();
+    const icon = tab.locator('[data-selection-action="comment"]');
+    await icon.scrollIntoViewIfNeeded();
+    await tab.screenshot({ path: `${OUT}/touch-${mode}-toolbar.png` });
+    if (!await icon.isVisible()) throw new Error("Touch toolbar hides Comment");
     await tab.close();
   }
   console.log(`screenshots in ${OUT}`);

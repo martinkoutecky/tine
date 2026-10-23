@@ -7,7 +7,7 @@ import { FloatingPortal } from "../components/FloatingPortal";
 import { RefBlocks } from "../components/RefBlocks";
 import type { BlockDto } from "../types";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
-import { newResizeObserver, useOwnerWindow, viewportOf } from "../windowRealm";
+import { useOwnerWindow, viewportOf } from "../windowRealm";
 
 export const PeekContext = createContext(false);
 
@@ -82,6 +82,7 @@ export function PeekPopup(props: {
   blocks: () => BlockDto[];
   page?: string;
   pageKind?: "journal" | "page";
+  path?: string;
   blockId?: string;
   properties?: [string, string][];
   format?: "md" | "org";
@@ -129,23 +130,24 @@ export function PeekPopup(props: {
       popupEl?.offsetWidth || POPUP_FALLBACK_WIDTH,
       Math.max(0, viewportWidth - POPUP_MARGIN * 2),
     );
-    const maxHeight = peekMaxHeight(viewportHeight);
-    const height = Math.min(popupEl?.offsetHeight || POPUP_FALLBACK_HEIGHT, maxHeight);
+    const naturalHeight = Math.min(popupEl?.offsetHeight || POPUP_FALLBACK_HEIGHT, peekMaxHeight(viewportHeight));
     const maxLeft = Math.max(POPUP_MARGIN, viewportWidth - width - POPUP_MARGIN);
     const left = Math.min(Math.max(rect.left, POPUP_MARGIN), maxLeft);
-    const openAbove = rect.bottom + POPUP_OFFSET + height > viewportHeight - POPUP_MARGIN && rect.top > height;
-
-    const desiredTop = openAbove ? rect.top - POPUP_OFFSET - height : rect.bottom + POPUP_OFFSET;
-    const top = Math.max(POPUP_MARGIN, Math.min(desiredTop, viewportHeight - height - POPUP_MARGIN));
-    setStyle({ left: `${left}px`, top: `${top}px`, "max-height": `${maxHeight}px` });
+    const below = Math.max(0, viewportHeight - POPUP_MARGIN - rect.bottom - POPUP_OFFSET);
+    const above = Math.max(0, rect.top - POPUP_OFFSET - POPUP_MARGIN);
+    // Prefer below, then above. If neither fits, use the larger side: never
+    // clamp the popup back across its reference (GH #750).
+    const openAbove = naturalHeight > below && (naturalHeight <= above || above > below);
+    const room = openAbove ? above : below;
+    // Pin the edge next to the reference and reserve the room on that side:
+    // later growth (images, embeds, folds) extends away from the link and
+    // scrolls inside the popup, never across it. Even a tiny viewport must
+    // respect the available room.
+    const maxHeight = `${Math.min(peekMaxHeight(viewportHeight), room)}px`;
+    setStyle(openAbove
+      ? { left: `${left}px`, bottom: `${viewportHeight - rect.top + POPUP_OFFSET}px`, "max-height": maxHeight }
+      : { left: `${left}px`, top: `${rect.bottom + POPUP_OFFSET}px`, "max-height": maxHeight });
   };
-
-  createEffect(() => {
-    props.anchor();
-    props.blocks();
-    updatePosition();
-    queueMicrotask(updatePosition);
-  });
 
   createEffect(() => {
     const unregister = registerTransientLayer({
@@ -158,6 +160,11 @@ export function PeekPopup(props: {
   dismissOnOutsidePointer({ open: () => !ownsMenu(), inside: () => [popupEl, props.anchor()], dismiss: props.onDismiss });
 
   onMount(() => {
+    const anchor = props.anchor();
+    if (anchor) setStyle({ "max-height": `${peekMaxHeight(viewportOf(anchor).height)}px` });
+    // Measure once after the initial children mount. Later folds, live refreshes
+    // and future editing must not move the popup underneath the pointer.
+    queueMicrotask(updatePosition);
     const close = () => props.onDismiss();
     // Dismiss when the PAGE BEHIND scrolls, but NOT when the user scrolls the
     // popup's own overflow body (or drags its scrollbar) — capture-phase scroll
@@ -170,12 +177,7 @@ export function PeekPopup(props: {
     };
     ownerWindow.addEventListener("scroll", onScroll, true);
     ownerWindow.addEventListener("resize", close);
-    // The body renders lazily and a fold can open, so the popup's height settles
-    // after the first placement; re-place it so it never ends up below the window edge.
-    const sizeObserver = popupEl ? newResizeObserver(popupEl, () => updatePosition()) : null;
-    if (popupEl) sizeObserver?.observe(popupEl);
     onCleanup(() => {
-      sizeObserver?.disconnect();
       ownerWindow.removeEventListener("scroll", onScroll, true);
       ownerWindow.removeEventListener("resize", close);
     });
@@ -216,7 +218,7 @@ export function PeekPopup(props: {
               <For each={props.properties}>{([key, value]) => <div><span class="prop-key">{key}</span>{" "}<PagePropertyValue propertyKey={key} value={value} format={props.format ?? "md"} /></div>}</For>
             </div>
           </Show>
-          <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} readOnly pageBody onOpenBlock={openSource} />
+          <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} path={props.path} readOnly pageBody onOpenBlock={openSource} />
         </PeekContext.Provider>
         <Show when={(props.truncatedCount?.() ?? 0) > 0}>
           <div class="peek-popup-more">{props.truncatedCount!() > MAX_PEEK_COUNT ? t("render-more-blocks", { count: MAX_PEEK_COUNT }) : t("render-more-blocks-exact", { count: props.truncatedCount!() })}</div>

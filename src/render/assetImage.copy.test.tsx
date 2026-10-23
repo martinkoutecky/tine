@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { onMount } from "solid-js";
 import { InlineText } from "./inline";
 import { AstBody } from "./body";
 import { Lightbox } from "../components/Toasts";
@@ -7,7 +8,7 @@ import { setLightbox } from "../ui";
 import { setToasts, toasts } from "../toasts";
 import { backend } from "../backend";
 import { invalidateBinding } from "../binding";
-import { assetNameForBlobUrl, clearAssetBlobCache, refreshAsset } from "../assetCache";
+import { assetNameForBlobUrl, clearAssetBlobCache, refreshAsset, seedAssetBlob } from "../assetCache";
 
 afterEach(() => {
   clearAssetBlobCache();
@@ -54,6 +55,30 @@ it("loaded image macros offer copy without unsupported resize or removal", async
     expect(host.querySelector('button[title="Copy image"]')).not.toBeNull();
     expect(host.querySelector(".img-resize-grip")).toBeNull();
     expect(host.querySelector(".asset-action-trash")).toBeNull();
+  } finally { dispose(); }
+});
+
+it.each([false, true])("GH #745: a remounted loaded image has its source before focus (evicted=%s)", async (evicted) => {
+  let next = 0;
+  vi.stubGlobal("URL", { createObjectURL: () => next++ === 0 ? "blob:loaded" : `blob:other-${next}`, revokeObjectURL: vi.fn() });
+  const read = vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1, 2, 3]));
+  const host = document.createElement("div"); document.body.append(host);
+  let dispose = render(() => <InlineText text="![photo](../assets/photo.jpg)" />, host);
+  try {
+    await vi.waitFor(() => expect(host.querySelector("img")?.getAttribute("src")).toBe("blob:loaded"));
+    if (evicted) for (let i = 0; i < 128; i++) seedAssetBlob(`other-${i}.jpg`, new Uint8Array([1]));
+    dispose();
+    let srcAtMount: string | null | undefined;
+    const EditorSibling = () => {
+      onMount(() => { srcAtMount = host.querySelector("img")?.getAttribute("src"); });
+      return <textarea />;
+    };
+    dispose = render(() => <><InlineText text="![photo](../assets/photo.jpg)" /><EditorSibling /></>, host);
+    // No promise/microtask: editor onMount focuses during this same turn.
+    expect(host.querySelector("img")?.getAttribute("src")).toBe("blob:loaded");
+    expect(srcAtMount).toBe("blob:loaded");
+    expect(host.querySelector(".inline-image-missing")).toBeNull();
+    expect(read).toHaveBeenCalledTimes(1);
   } finally { dispose(); }
 });
 

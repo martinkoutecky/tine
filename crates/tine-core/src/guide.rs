@@ -379,6 +379,9 @@ mod journal_guide_tests {
             "opens after a one-second pause",
             "It stops at 600 pixels or half the window, whichever is taller",
             "shows code blocks, callouts, quotes and folds the way the page does",
+            "Its arrow folds or unfolds the source block",
+            "Undo restores both",
+            "the fold stays local to the preview",
             "**Open source**",
             "source page's title and page properties",
             "These actions switch to the new tab",
@@ -848,6 +851,9 @@ mod rename_guide_tests {
         assert!(tips.contains("**Alt-click** opens the other pane"));
         assert!(tips.contains("an outline bullet's dot"));
         assert!(tips.contains("a pane's only tab still has a close button"));
+        assert!(tips.contains("opens a graph without a saved session"));
+        assert!(tips.contains("restores every tab's last page, order and pin state"));
+        assert!(tips.contains("the same active tab"));
         let refs = include_str!("templates/pages-links-references-search.md");
         assert!(refs.contains("follows its source's fold state live"));
     }
