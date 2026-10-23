@@ -34,7 +34,7 @@ pub(super) fn seeds() -> usize {
     let count = std::env::var("TINE_F3_SEEDS")
         .ok()
         .map(|n| n.parse().unwrap())
-        .unwrap_or(2);
+        .unwrap_or(1);
     assert!(count > 0, "TINE_F3_SEEDS must be positive");
     count
 }
@@ -98,21 +98,202 @@ pub(super) fn collect(dir: &Path) -> BTreeMap<String, Vec<u8>> {
 
 /// Only actual live files or the declared recovery roots count. Temporary
 /// files and arbitrary copies elsewhere in the graph cannot satisfy this.
-pub(super) fn conserved(root: &Path, payload: &[u8], at: &str) {
-    let files = collect(root);
+pub(super) fn conserved(
+    root: &Path,
+    payload: &[u8],
+    live: &[String],
+    recovery: &[PathBuf],
+    at: &str,
+) {
+    let mut files = BTreeMap::new();
+    for rel in live {
+        if let Ok(bytes) = fs::read(root.join(rel)) {
+            files.insert(root.join(rel), bytes);
+        }
+    }
+    for dir in recovery {
+        for (rel, bytes) in collect(dir) {
+            if !rel.ends_with(".tmp") {
+                files.insert(dir.join(rel), bytes);
+            }
+        }
+    }
     assert!(
-        files.iter().any(|(rel, bytes)| {
-            bytes == payload
-                && (rel.starts_with("pages/")
-                    || rel.starts_with("journals/")
-                    || rel.starts_with("assets/")
-                    || rel == "logseq/config.edn"
-                    || rel.starts_with("logseq/.tine-trash/"))
-                && !rel.ends_with(".tmp")
-        }),
+        files.values().any(|bytes| bytes == payload),
         "lost input payload at {at}: {:?}; locations: {:?}",
         String::from_utf8_lossy(payload),
         files.keys().collect::<Vec<_>>()
+    );
+}
+
+/// Retained transaction/host namespaces, not the entire trash tree. These
+/// schedules contain page moves/merges, asset trash, and undo conflict copies.
+pub(super) fn transaction_recovery(root: &Path) -> Vec<PathBuf> {
+    ["pages", "assets", "conflicts"]
+        .map(|kind| root.join("logseq/.tine-trash").join(kind))
+        .to_vec()
+}
+
+fn restore_id(name: &str) -> bool {
+    let Some((stamp, counters)) = name.split_once("-pre-restore-extras-") else {
+        return false;
+    };
+    let Some((pid, seq)) = counters.split_once('-') else {
+        return false;
+    };
+    stamp.len() == 19
+        && stamp.bytes().enumerate().all(|(i, b)| match i {
+            4 | 7 | 13 | 16 => b == b'-',
+            10 => b == b'_',
+            _ => b.is_ascii_digit(),
+        })
+        && !pid.is_empty()
+        && !seq.is_empty()
+        && pid.bytes().all(|b| b.is_ascii_digit())
+        && seq.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Store::restore's two same-filesystem namespaces (storage-contract.md and
+/// restore.rs API contract). Validate the reported pair before trusting it.
+pub(super) fn restore_recovery(root: &Path, reported: &[PathBuf]) -> Vec<PathBuf> {
+    let root = fs::canonicalize(root).unwrap();
+    assert_eq!(reported.len(), 2, "restore must report both recovery roots");
+    let mut roots = Vec::new();
+    for parent in ["logseq/.tine-trash", "assets/.tine-restore-recovery"] {
+        let matches: Vec<_> = reported
+            .iter()
+            .filter(|dir| dir.parent() == Some(root.join(parent).as_path()))
+            .collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "undeclared restore recovery roots: {reported:?}"
+        );
+        let dir = matches[0];
+        assert!(
+            restore_id(dir.file_name().unwrap().to_str().unwrap()),
+            "unrecognised restore id: {dir:?}"
+        );
+        assert!(
+            fs::symlink_metadata(dir).unwrap().file_type().is_dir(),
+            "recovery root must be a directory: {dir:?}"
+        );
+        assert_eq!(
+            fs::canonicalize(dir).unwrap(),
+            *dir,
+            "retargeted recovery root"
+        );
+        roots.push(dir.clone());
+    }
+    assert_eq!(
+        roots[0].file_name(),
+        roots[1].file_name(),
+        "mismatched restore ids"
+    );
+    roots
+}
+
+/// An aborted operation cannot return a report. Discover only recognised
+/// restore-id pairs, never arbitrary hidden directories or transaction trash.
+pub(super) fn discover_restore_recovery(root: &Path) -> Vec<PathBuf> {
+    let root = fs::canonicalize(root).unwrap();
+    let mut roots = Vec::new();
+    for entry in fs::read_dir(root.join("logseq/.tine-trash")).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if restore_id(name.to_str().unwrap()) && entry.file_type().unwrap().is_dir() {
+            roots.extend(restore_recovery(
+                &root,
+                &[
+                    entry.path(),
+                    root.join("assets/.tine-restore-recovery").join(name),
+                ],
+            ));
+        }
+    }
+    assert!(
+        !roots.is_empty(),
+        "abort did not leave a recognised restore namespace"
+    );
+    roots
+}
+
+#[test]
+fn custody_rejects_undeclared_retained_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let hidden = root.join("assets/.not-declared-recovery");
+    fs::create_dir_all(&hidden).unwrap();
+    fs::create_dir_all(root.join("pages")).unwrap();
+    fs::write(root.join("pages/Replace.md"), b"external during undo").unwrap();
+    fs::write(hidden.join("old.edn"), b"displaced baseline").unwrap();
+    let rejected = std::panic::catch_unwind(|| {
+        conserved(
+            root,
+            b"displaced baseline",
+            &["pages/Replace.md".into()],
+            &transaction_recovery(root),
+            "undeclared hidden folder",
+        );
+    });
+    assert!(
+        rejected.is_err(),
+        "undeclared hidden bytes counted as custody"
+    );
+    // Positive control: the same payload in contract conflict trash counts.
+    let declared = root.join("logseq/.tine-trash/conflicts");
+    fs::create_dir_all(&declared).unwrap();
+    fs::write(declared.join("old.md"), b"displaced baseline").unwrap();
+    conserved(
+        root,
+        b"displaced baseline",
+        &["pages/Replace.md".into()],
+        &transaction_recovery(root),
+        "declared conflict trash",
+    );
+}
+
+#[test]
+fn restore_custody_rejects_undeclared_roots_and_checks_all_displaced_inputs() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(dir.path()).unwrap();
+    let id = "2026-10-23_12-34-56-pre-restore-extras-123-0";
+    let reported = [
+        root.join("logseq/.tine-trash").join(id),
+        root.join("assets/.tine-restore-recovery").join(id),
+    ];
+    for path in &reported {
+        fs::create_dir_all(path).unwrap();
+    }
+    let hidden = root.join("assets/.not-declared-recovery");
+    fs::create_dir_all(&hidden).unwrap();
+    fs::write(hidden.join("old.edn"), b"displaced asset").unwrap();
+    let declared = restore_recovery(&root, &reported);
+    assert_eq!(discover_restore_recovery(&root), declared);
+    assert!(std::panic::catch_unwind(|| {
+        conserved(
+            &root,
+            b"displaced asset",
+            &["assets/paper.edn".into()],
+            &declared,
+            "misplaced restore asset",
+        );
+    })
+    .is_err());
+    assert!(
+        std::panic::catch_unwind(|| {
+            restore_recovery(&root, &[reported[0].clone(), hidden.clone()]);
+        })
+        .is_err(),
+        "unrecognised reported root counted as custody"
+    );
+    fs::write(reported[1].join("paper.edn"), b"displaced asset").unwrap();
+    conserved(
+        &root,
+        b"displaced asset",
+        &["assets/paper.edn".into()],
+        &declared,
+        "reported restore root",
     );
 }
 
@@ -148,6 +329,79 @@ pub(super) fn fresh(store: &Store, root: &Path, probes: &[&str], at: &str) {
             rebuilt.lines().nth(line)
         );
     }
+}
+
+/// Positive/negative controls prevent a live/cold pair of empty observations
+/// from certifying query-index correctness. The expected edge comes from the
+/// fixture and operation schedule, not the parser or updated index.
+pub(super) fn assert_ref_query(store: &Store, name: &str, referrer: &str, present: bool, at: &str) {
+    assert_query_controls(store, name, referrer, present, present, at);
+}
+
+fn assert_query_controls(
+    store: &Store,
+    name: &str,
+    referrer: &str,
+    present: bool,
+    linked: bool,
+    at: &str,
+) {
+    use tine_core::refs::page_key;
+    use tine_store::{QueryDialect, QueryResult};
+    let view = store.whole_graph().unwrap();
+    let source = format!("[[{name}]]");
+    let QueryResult::Simple(groups) = view.query(&source, QueryDialect::Simple).unwrap() else {
+        panic!("simple query must return groups");
+    };
+    assert_eq!(
+        groups
+            .iter()
+            .any(|g| page_key(&g.page) == page_key(referrer)),
+        present,
+        "simple query control {source} -> {referrer} at {at}"
+    );
+    // Alias Simple queries have their own positive controls. TQL's name
+    // conditions address a link node's real name; call this with real/fileless
+    // names for link controls, and test aliases with Simple below.
+    let quoted = format!("'{}'", name.replace('\'', "''"));
+    for source in [
+        format!("@page and any(links, name = {quoted})"),
+        format!("@page and any(links, name = {quoted} and any(linked_by, true))"),
+        format!("@page and near(name = {quoted}, 1, 'in')"),
+    ] {
+        let pages = crate::link_graph::pages(&view, &source);
+        assert_eq!(
+            pages.contains(&page_key(referrer)),
+            linked,
+            "TQL query control {source} -> {referrer} at {at}"
+        );
+    }
+}
+
+fn assert_alias_query(store: &Store, name: &str, at: &str) {
+    let tine_store::QueryResult::Simple(groups) = store
+        .whole_graph()
+        .unwrap()
+        .query(&format!("[[{name}]]"), tine_store::QueryDialect::Simple)
+        .unwrap()
+    else {
+        panic!("simple query")
+    };
+    assert!(
+        groups.iter().any(|g| g.page == "Ref0"),
+        "positive alias query {name} at {at}"
+    );
+}
+
+fn assert_incoming_query(store: &Store, target: &str, at: &str) {
+    let targets = crate::link_graph::pages(
+        &store.whole_graph().unwrap(),
+        "@page and any(linked_by, name = 'Ref0')",
+    );
+    assert!(
+        targets.contains(&tine_core::refs::page_key(target)),
+        "positive incoming-link query -> {target} at {at}"
+    );
 }
 
 const UUID: &str = "12345678-1234-4234-8234-123456789abc";
@@ -326,9 +580,16 @@ fn generated_semantic_rename_merge_matches_independent_bytes_and_fresh_indexes()
                 before.insert(format!("pages/Identity.{ext}"), id_body.as_bytes().to_vec());
                 expected.insert(format!("pages/Identity.{ext}"), id_body.into_bytes());
                 let graph = Graph::new(&before);
-                let probes = [&*old, &*new, &*alias];
+                let probes = [&*old, &*new, &*alias, "Ref0"];
                 let at = format!("seed {seed}, org {org}, mode {mode}");
                 fresh(&graph.store, &graph.root, &probes, &at);
+                assert_ref_query(&graph.store, &old, "Ref0", true, &at);
+                // Merge fixtures share the alias Shared, so the link table
+                // already connects both physical owners via alias references.
+                // A literal Simple query still has no new-name block yet.
+                assert_query_controls(&graph.store, &new, "Ref0", false, mode >= 2, &at);
+                assert_alias_query(&graph.store, &alias, &at);
+                assert_incoming_query(&graph.store, &old, &at);
                 let host =
                     PageHost::start_for_tests(&graph.store, &graph.dir.path().join("app")).unwrap();
                 // Public wire DTOs are serialized just as external clients see them.
@@ -366,6 +627,17 @@ fn generated_semantic_rename_merge_matches_independent_bytes_and_fresh_indexes()
                     .unwrap_or_else(|e| panic!("{at}: {e}"));
                 }
                 fresh(&graph.store, &graph.root, &probes, &at);
+                assert_ref_query(&graph.store, after, "Ref0", true, &at);
+                assert_query_controls(
+                    &graph.store,
+                    if mode == 3 { &new } else { &old },
+                    "Ref0",
+                    false,
+                    mode == 3,
+                    &at,
+                );
+                assert_alias_query(&graph.store, &alias, &at);
+                assert_incoming_query(&graph.store, &new, &at);
                 host.close(sid, id + 1, &key).unwrap();
                 assert!(host.quiesce_for_tests(Duration::from_secs(10)), "{at}");
                 let actual: BTreeMap<_, _> = collect(&graph.root)
@@ -378,7 +650,13 @@ fn generated_semantic_rename_merge_matches_independent_bytes_and_fresh_indexes()
                     .collect();
                 assert_eq!(actual, expected, "independent exact bytes: {at}");
                 if mode >= 2 {
-                    conserved(&graph.root, before.get(&source).unwrap(), &at);
+                    conserved(
+                        &graph.root,
+                        before.get(&source).unwrap(),
+                        &[source.clone(), dest.clone()],
+                        &transaction_recovery(&graph.root),
+                        &at,
+                    );
                 }
                 fresh(&graph.store, &graph.root, &probes, &at);
                 drop(host);

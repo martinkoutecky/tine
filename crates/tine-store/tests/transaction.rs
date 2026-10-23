@@ -123,7 +123,7 @@ fn refused(outcome: TxOutcome) -> (Why, tine_store::Rollback) {
 #[cfg(feature = "test-faults")]
 #[test]
 fn generated_transaction_step_failures_conserve_inputs_and_fresh_indexes() {
-    use crate::conformance_f3::{conserved, fresh, seeds, Graph, Rng};
+    use crate::conformance_f3::{conserved, fresh, seeds, transaction_recovery, Graph, Rng};
     use std::collections::BTreeMap;
     use tine_store::{EditKind, FaultPoint, TrashIf};
     let _guard = crate::integration_lock();
@@ -165,6 +165,16 @@ fn generated_transaction_step_failures_conserve_inputs_and_fresh_indexes() {
                     continue;
                 }
                 let graph = Graph::new(&old);
+                let live = vec![
+                    created.clone(),
+                    replace.clone(),
+                    moved.clone(),
+                    dest.clone(),
+                    trash.clone(),
+                ];
+                let recovery = transaction_recovery(&graph.root);
+                let check =
+                    |bytes: &[u8], at: &str| conserved(&graph.root, bytes, &live, &recovery, at);
                 let at = format!(
                     "tx seed {seed} order {order:?} boundary {boundary} fault {fault_kind}"
                 );
@@ -229,8 +239,7 @@ fn generated_transaction_step_failures_conserve_inputs_and_fresh_indexes() {
                 assert!(rollback.undo_failed.is_empty(), "{at}: {rollback:?}");
                 if fault_kind == 1 {
                     assert!(matches!(why, Why::Conflict { .. }), "{at}: {why:?}");
-                    conserved(
-                        &graph.root,
+                    check(
                         if collision {
                             b"external collision"
                         } else {
@@ -246,12 +255,20 @@ fn generated_transaction_step_failures_conserve_inputs_and_fresh_indexes() {
                 } else {
                     assert!(matches!(why, Why::Failed(_)), "{at}: {why:?}");
                     if race {
-                        conserved(&graph.root, b"external during undo", &at);
+                        check(b"external during undo", &at);
                         assert!(!rollback.kept_external.is_empty(), "{at}: {rollback:?}");
                     }
                 }
                 for (file, recovery) in &rollback.kept_external {
                     let location = recovery.as_ref().unwrap_or(file);
+                    let path = graph.root.join(location.as_str());
+                    assert!(
+                        live.iter().any(|rel| path == graph.root.join(rel))
+                            || transaction_recovery(&graph.root)
+                                .iter()
+                                .any(|dir| path.starts_with(dir)),
+                        "unrecognised rollback custody: {location:?} at {at}"
+                    );
                     let bytes = fs::read(graph.root.join(location.as_str())).unwrap();
                     assert!(
                         bytes == b"external stage-2" || bytes == b"external during undo",
@@ -260,7 +277,7 @@ fn generated_transaction_step_failures_conserve_inputs_and_fresh_indexes() {
                 }
                 for (rel, bytes) in &old {
                     if fault_kind != 1 || names[order[boundary]] != rel {
-                        conserved(&graph.root, bytes, &at);
+                        check(bytes, &at);
                     }
                 }
                 if fault_kind == 0 {
@@ -288,6 +305,23 @@ fn generated_transaction_step_failures_conserve_inputs_and_fresh_indexes() {
                 for _ in 0..2 {
                     let cold = Store::open(&graph.root, Default::default()).unwrap().0;
                     fresh(&cold, &graph.root, &["Shared"], &at);
+                    for (rel, bytes) in &old {
+                        if fault_kind != 1 || names[order[boundary]] != rel {
+                            check(bytes, &format!("post-reopen {at}"));
+                        }
+                    }
+                    if fault_kind == 1 {
+                        check(
+                            if collision {
+                                b"external collision"
+                            } else {
+                                b"external stage-2"
+                            },
+                            &at,
+                        );
+                    } else if race {
+                        check(b"external during undo", &at);
+                    }
                     cold.close();
                 }
                 cases += 1;

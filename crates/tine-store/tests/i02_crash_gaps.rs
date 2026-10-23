@@ -451,7 +451,9 @@ fn generated_restore_crash_worker() {
 
 #[test]
 fn generated_restore_abort_every_cut_conserves_payloads_and_external_arrivals() {
-    use crate::conformance_f3::{conserved, fresh, seeds, Graph};
+    use crate::conformance_f3::{
+        conserved, discover_restore_recovery, fresh, restore_recovery, seeds, Graph,
+    };
     use crate::restore::{generated_case, GeneratedRestore};
     let _guard = crate::integration_lock();
     let mut cuts = 0;
@@ -488,9 +490,8 @@ fn generated_restore_abort_every_cut_conserves_payloads_and_external_arrivals() 
             }
             #[cfg(not(unix))]
             assert!(!output.status.success(), "{at}");
-            for bytes in case.live.values() {
-                conserved(&graph.root, bytes, &at);
-            }
+            let mut recovery = discover_restore_recovery(&graph.root);
+            case.assert_custody(&graph.root, &recovery, &at);
             case.backup_intact(&backup);
             // Every published backup payload must be whole. Unpublished input
             // still belongs to the caller/backup; restore has not admitted it.
@@ -504,6 +505,7 @@ fn generated_restore_abort_every_cut_conserves_payloads_and_external_arrivals() 
                 }
             }
             let reopened = open(&graph.root);
+            case.assert_custody(&graph.root, &recovery, &format!("post-reopen {at}"));
             fresh(&reopened, &graph.root, &["Before", "After"], &at);
             reopened.close();
             drop(reopened);
@@ -519,18 +521,24 @@ fn generated_restore_abort_every_cut_conserves_payloads_and_external_arrivals() 
             }
             let target = target.unwrap_or_else(|| "pages/Arrived.md".into());
             let external = format!("- external-at-{seed}-{boundary}\n").into_bytes();
-            fs::write(graph.root.join(target), &external).unwrap();
+            fs::write(graph.root.join(&target), &external).unwrap();
             let retry = open(&graph.root);
             fresh(&retry, &graph.root, &["Before", "After"], &at);
             let report = retry
                 .restore(tine_store::EditKind::ReplacePage, case.files(), None)
                 .unwrap();
             assert_eq!(report.restored as usize, case.inputs.len(), "{at}");
+            let retry_recovery = restore_recovery(&graph.root, &report.recovery);
+            recovery.extend(retry_recovery.iter().cloned());
             case.assert_live_set(&graph.root);
-            for bytes in case.live.values() {
-                conserved(&graph.root, bytes, &at);
-            }
-            conserved(&graph.root, &external, &at);
+            case.assert_custody(&graph.root, &recovery, &at);
+            conserved(
+                &graph.root,
+                &external,
+                std::slice::from_ref(&target),
+                &retry_recovery,
+                &at,
+            );
             case.backup_intact(&backup);
             for (area, rel, bytes) in &case.inputs {
                 assert_eq!(
@@ -541,6 +549,16 @@ fn generated_restore_abort_every_cut_conserves_payloads_and_external_arrivals() 
             }
             fresh(&retry, &graph.root, &["Before", "After"], &at);
             retry.close();
+            let reopened = open(&graph.root);
+            case.assert_custody(&graph.root, &recovery, &format!("post-retry reopen {at}"));
+            conserved(
+                &graph.root,
+                &external,
+                std::slice::from_ref(&target),
+                &retry_recovery,
+                &at,
+            );
+            reopened.close();
             cuts += 1;
         }
     }

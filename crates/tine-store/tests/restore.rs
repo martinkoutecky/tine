@@ -70,6 +70,28 @@ pub(super) struct GeneratedRestore {
 }
 
 impl GeneratedRestore {
+    fn assert_queries(&self, store: &Store, completed: usize, detached: Option<usize>, at: &str) {
+        for (i, (area, rel, _)) in self.inputs.iter().enumerate() {
+            if *area == Area::Pages {
+                let name = Path::new(rel).file_stem().unwrap().to_str().unwrap();
+                crate::conformance_f3::assert_ref_query(
+                    store,
+                    "Before",
+                    name,
+                    i >= completed && detached != Some(i),
+                    at,
+                );
+                crate::conformance_f3::assert_ref_query(store, "After", name, i < completed, at);
+            }
+        }
+    }
+
+    pub(super) fn assert_custody(&self, root: &Path, recovery: &[PathBuf], at: &str) {
+        for (rel, bytes) in &self.live {
+            crate::conformance_f3::conserved(root, bytes, std::slice::from_ref(rel), recovery, at);
+        }
+    }
+
     pub(super) fn assert_live_set(&self, root: &Path) {
         let expected: std::collections::BTreeMap<_, _> = self
             .inputs
@@ -195,7 +217,7 @@ pub(super) fn generated_case(seed: usize) -> GeneratedRestore {
 #[cfg(unix)]
 #[test]
 fn generated_restore_copy_error_worker() {
-    use crate::conformance_f3::{conserved, fresh};
+    use crate::conformance_f3::{fresh, restore_recovery};
     let _guard = crate::integration_lock();
     let Ok(seed) = std::env::var("TINE_F3_COPY_SEED") else {
         return;
@@ -211,6 +233,7 @@ fn generated_restore_copy_error_worker() {
         .extend(std::iter::repeat_n(b' ', 8192));
     let store = Store::open(&root, Default::default()).unwrap().0;
     fresh(&store, &root, &["Before", "After"], "before copy error");
+    case.assert_queries(&store, 0, None, "before copy error");
     // Only this disposable child changes its signal/resource state.
     unsafe {
         assert_ne!(libc::signal(libc::SIGXFSZ, libc::SIG_IGN), libc::SIG_ERR);
@@ -235,9 +258,8 @@ fn generated_restore_copy_error_worker() {
     );
     assert_eq!(error.done.restored as usize, boundary, "{error:?}");
     assert_eq!(error.done.recovery.len(), 2, "{error:?}");
-    for bytes in case.live.values() {
-        conserved(&root, bytes, "failed copy temp write");
-    }
+    let recovery = restore_recovery(&root, &error.done.recovery);
+    case.assert_custody(&root, &recovery, "failed copy temp write");
     // The failed input was detached before its temp write failed. Its original
     // bytes must be in a reported recovery root, and no partial temp is live.
     let (area, rel, _) = &case.inputs[boundary];
@@ -254,6 +276,7 @@ fn generated_restore_copy_error_worker() {
         "{error:?}"
     );
     fresh(&store, &root, &["Before", "After"], "after copy error");
+    case.assert_queries(&store, boundary, Some(boundary), "after copy error");
     store.close();
     eprintln!("F3 copy error reported at input {boundary}");
 }
@@ -261,7 +284,7 @@ fn generated_restore_copy_error_worker() {
 #[cfg(unix)]
 #[test]
 fn generated_restore_copy_errors_conserve_payloads_at_each_input() {
-    use crate::conformance_f3::{conserved, fresh, seeds, Graph};
+    use crate::conformance_f3::{discover_restore_recovery, fresh, seeds, Graph};
     let _guard = crate::integration_lock();
     let mut failures = 0;
     for seed in 1..=seeds() {
@@ -296,10 +319,10 @@ fn generated_restore_copy_errors_conserve_payloads_at_each_input() {
                 String::from_utf8_lossy(&output.stderr).contains("F3 copy error reported at input")
             );
             case.backup_intact(&backup);
-            for bytes in case.live.values() {
-                conserved(&graph.root, bytes, "copy failure reopen");
-            }
+            let recovery = discover_restore_recovery(&graph.root);
+            case.assert_custody(&graph.root, &recovery, "before copy failure reopen");
             let reopened = Store::open(&graph.root, Default::default()).unwrap().0;
+            case.assert_custody(&graph.root, &recovery, "post copy failure reopen");
             fresh(
                 &reopened,
                 &graph.root,
@@ -320,7 +343,7 @@ fn generated_restore_copy_errors_conserve_payloads_at_each_input() {
 #[cfg(feature = "test-faults")]
 #[test]
 fn generated_restore_step_errors_conserve_live_recovery_and_indexes() {
-    use crate::conformance_f3::{collect, conserved, fresh, seeds, Graph};
+    use crate::conformance_f3::{conserved, fresh, restore_recovery, seeds, Graph};
     let _guard = crate::integration_lock();
     let mut failures = 0;
     let mut successes = 0;
@@ -334,6 +357,7 @@ fn generated_restore_step_errors_conserve_live_recovery_and_indexes() {
             case.backup(&backup);
             let at = format!("restore seed {seed} boundary {boundary}");
             fresh(&graph.store, &graph.root, &["Before", "After"], &at);
+            case.assert_queries(&graph.store, 0, None, &at);
             let fail = boundary < case.inputs.len();
             if fail {
                 fs::write(graph.root.join(".tine-restore-test-pause"), b"pause").unwrap();
@@ -381,11 +405,6 @@ fn generated_restore_step_errors_conserve_live_recovery_and_indexes() {
                     error.done.kept_external.is_empty(),
                     "recovery collision is not a live copy collision: {at}"
                 );
-                conserved(
-                    &graph.root,
-                    format!("external-recovery-{seed}-{boundary}").as_bytes(),
-                    &at,
-                );
                 failures += 1;
                 error.done
             } else {
@@ -396,19 +415,23 @@ fn generated_restore_step_errors_conserve_live_recovery_and_indexes() {
                 report
             };
             assert_eq!(report.recovery.len(), 2, "{at}");
+            let recovery = restore_recovery(&graph.root, &report.recovery);
             case.backup_intact(&backup);
-            // No old payload may hide in an unreported recovery directory.
-            for (rel, bytes) in &case.live {
-                let live = fs::read(graph.root.join(rel)).ok();
-                assert!(
-                    live.as_ref() == Some(bytes)
-                        || report
-                            .recovery
-                            .iter()
-                            .any(|root| collect(root).values().any(|b| b == bytes)),
-                    "unreported/lost recovery {rel} at {at}"
-                );
-            }
+            // Every displaced payload must be in its original live path or
+            // one of this operation's validated reported recovery roots.
+            let check = || {
+                case.assert_custody(&graph.root, &recovery, &at);
+                if fail {
+                    conserved(
+                        &graph.root,
+                        format!("external-recovery-{seed}-{boundary}").as_bytes(),
+                        &[],
+                        &recovery,
+                        &at,
+                    );
+                }
+            };
+            check();
             for (i, (area, rel, bytes)) in case.inputs.iter().enumerate() {
                 if i < boundary {
                     assert_eq!(
@@ -419,9 +442,12 @@ fn generated_restore_step_errors_conserve_live_recovery_and_indexes() {
                 }
             }
             fresh(&graph.store, &graph.root, &["Before", "After"], &at);
+            case.assert_queries(&graph.store, boundary, None, &at);
             graph.store.close();
             let reopened = Store::open(&graph.root, Default::default()).unwrap().0;
+            check();
             fresh(&reopened, &graph.root, &["Before", "After"], &at);
+            case.assert_queries(&reopened, boundary, None, &at);
             reopened.close();
         }
     }

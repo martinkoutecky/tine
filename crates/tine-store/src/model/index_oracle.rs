@@ -208,6 +208,60 @@ fn lazy_lines(
             groups(snapshot.run_query_bounded(query, rows, bytes))
         ));
     }
+    if !include_layout {
+        // F3 observes the names the operation actually changes, before and
+        // after publication. Keep the original F2/F5 layout oracle unchanged.
+        for name in probes {
+            let query = format!("[[{name}]]");
+            out.push_str(&format!(
+                "probe simple {query:?} {}\n",
+                groups(snapshot.run_query_bounded(&query, rows, bytes))
+            ));
+            let quoted = format!("'{}'", name.replace('\'', "''"));
+            for source in [
+                format!("@block and [[{name}]]"),
+                format!("@page and any(links, name = {quoted})"),
+                format!("@page and any(linked_by, name = {quoted})"),
+                // Fileless Before/After can be link elements and seeds, but
+                // cannot be returned @page rows. Observe their incoming edges
+                // inside links as well as physical targets' direct linked_by.
+                format!("@page and any(links, name = {quoted} and any(linked_by, true))"),
+                format!("@page and near(name = {quoted}, 1, 'in')"),
+                format!("@page and near(name = {quoted}, 1, 'out')"),
+                format!("@page and near(name = {quoted}, 1)"),
+            ] {
+                use tine_core::query::ir::ExecutionContext;
+                use tine_core::query::registry::Registry;
+                use tine_core::query::{parse_query_input, QueryInput};
+                let (query, view) = parse_query_input(
+                    &source,
+                    QueryInput::Tql,
+                    tine_core::date::JournalDate::today(),
+                    Registry::none(),
+                );
+                assert!(!query.is_invalid(), "{source}: {:?}", query.diagnostics);
+                let crate::IrAnswer::Result(result) = crate::query::exec::query_ir(
+                    snapshot,
+                    crate::IrRequest::Run {
+                        query: &query,
+                        view: &view,
+                        context: &ExecutionContext::default(),
+                    },
+                    &|| false,
+                )
+                .unwrap()
+                .expect("never cancelled") else {
+                    panic!("Run must return rows");
+                };
+                assert!(!result.exceeded, "{source}");
+                out.push_str(&format!(
+                    "probe tql {source:?} {} {}\n",
+                    result.total,
+                    serde_json::to_string(&result.rows).unwrap()
+                ));
+            }
+        }
+    }
     let targets = probes.iter().map(|name| (*name).to_owned()).chain(
         pages
             .iter()
