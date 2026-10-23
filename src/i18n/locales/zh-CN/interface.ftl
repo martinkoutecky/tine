@@ -73,6 +73,8 @@ graph-publish-export-html-and-read-only-app = 导出 HTML 和只读应用…
 graph-publish-choose-a-destination-outside-the-graph-the-export = 请选择图谱外的位置。导出内容会保留在本设备上，直到你分享。
 
 in-page-find-find-in-page = 在页面中查找
+in-page-find-retired-days = 未搜索 { $count } 个较早日期
+in-page-find-search-journals = 搜索所有日志
 
 in-page-find-find-and-replace = 查找和替换
 

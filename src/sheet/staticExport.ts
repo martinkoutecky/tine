@@ -9,6 +9,7 @@ import { t } from "../i18n";
 import { appNow } from "../journal";
 import { facetsFromDto } from "../render/facets";
 import { visibleBody } from "../render/block";
+import { formatForPage } from "../document";
 import { blockBackgroundColor } from "../blockColors";
 import type { BlockDto, QueryPublicationRequest } from "../types";
 import { aggregate, AGGREGATE_LABELS, collectAggregateColumns } from "./aggregate";
@@ -174,7 +175,7 @@ function gridBody(input: SheetInput, cfg: ReturnType<typeof sheetConfig>): Sheet
   const body = input.rows.map((row, r) => ({
     cellIds: row.children.map((cell, c) => {
       const id = `${r}.${c}`;
-      raws.set(id, visibleBody(cell.raw).join(" "));
+      raws.set(id, visibleBody(cell.raw, formatForPage(input.page)).join(" "));
       return id;
     }),
   }));

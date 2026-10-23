@@ -630,10 +630,8 @@ impl<'a> Transaction<'a> {
             None => RewriteEffect::Changes,
             Some(text) => {
                 let name_format = self.store.config().file_name_format;
-                let is_org = Path::new(file.as_str())
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    == Some("org");
+                let is_org = tine_core::model::Format::from_path(Path::new(file.as_str()))
+                    == tine_core::model::Format::Org;
                 let new = tine_core::refs::rename_rewrite(text, is_org, &renames.0, name_format);
                 if new == text {
                     RewriteEffect::Unchanged

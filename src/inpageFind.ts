@@ -1,6 +1,6 @@
 import { revealOutlineBlock } from "./outlineViewport";
 import { batch, createMemo, createRoot, createSignal } from "solid-js";
-import { mainPages, pageByName, revealNode, resolveBlockRef, node as docNode } from "./document";
+import { mainPages, pageByName, feedNames, revealNode, resolveBlockRef, node as docNode } from "./document";
 import { renderedBlockText, type RenderedTextOptions } from "./render/renderedText";
 import { renderedBlocks } from "./lazyObserve";
 import type { Format } from "./types";
@@ -115,13 +115,20 @@ export const inPageFindActiveIndex = state.activeIndex;
 export const inPageFindFocusRequest = state.focusRequest;
 export const inPageFindPaneId = state.paneId;
 
+/** Count shared retired days once, even when several visible panes show Journals.
+ * Find walks loaded roots only and never reads an unloaded day. */
+export function inPageFindRetiredDays(): number {
+  if (!layoutPaneIds(visibleLayoutNode()).some(id => paneRouter(id).route().kind === "journals")) return 0;
+  return feedNames().reduce((count, name) => count + (pageByName(name) ? 0 : 1), 0);
+}
+
 export function inPageFindPreservesEditorBlur(): boolean {
   return state.preserveEditorBlur();
 }
 
 /** Non-overlapping original UTF-16 ranges using the caller's graph fold policy.
- * Empty query has no matches. The mapped substring scan costs O(text × query)
- * plus deduplication across candidate spans. */
+ * Empty query has no matches. The mapped substring scan costs O(text × query),
+ * with constant-time deduplication per candidate span. */
 export function findTextOccurrences(text: string, query: string, removeAccents: boolean): { start: number; end: number }[] {
   if (!query) return [];
   const out: { start: number; end: number }[] = [];

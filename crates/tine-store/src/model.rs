@@ -2412,13 +2412,20 @@ impl Graph {
 
     pub(crate) fn reload_config(&self, config: Config) -> io::Result<()> {
         self.validate_config_layout(&config)?;
+        // The checkpoint key covers exactly the settings the page build and
+        // indexes read. Other settings still install and publish live state,
+        // but cannot make the cached pages or their disk observations stale.
+        let rebuild = crate::store::checkpoint::config_key(&self.current_config())
+            != crate::store::checkpoint::config_key(&config);
         let format = JournalFormat::new(
             config.journal_file_name_format.as_deref(),
             config.journal_page_title_format.as_deref(),
         );
         *self.live_config.write().unwrap() = Some(Arc::new(config));
         *self.live_journal_format.write().unwrap() = Some(Arc::new(format));
-        self.invalidate_cache();
+        if rebuild {
+            self.invalidate_cache();
+        }
         Ok(())
     }
 

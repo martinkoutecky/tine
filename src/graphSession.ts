@@ -32,7 +32,8 @@ let confirmedTemplate: { root: string; value: string | null } | null = null;
  *  meta so the UI reflects it immediately. Writes run one at a time in call
  *  order; a failure always shows a sticky error, and reverts the UI to the last
  *  persisted value only when it belongs to the newest choice in the same graph.
- *  Cost: one config write per call. */
+ *  Cost: one guarded config write per call, retaining parsed pages. Native
+ *  publication may still read page preambles and rebuild in-memory indexes. */
 export function setJournalTemplate(name: string | null) {
   const binding = captureBinding();
   const m = graphMeta();

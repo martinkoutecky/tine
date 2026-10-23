@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{self, Seek, SeekFrom};
 use std::path::Path;
+use tine_core::model::Format;
 
 use super::io_helpers::{content_refusal, failed};
 use super::{Content, FileId, Refusal, RenameMap, Store, Why};
@@ -14,7 +15,7 @@ pub(crate) fn rewrite(
     #[cfg(feature = "test-faults")]
     crate::cost_counters::transaction_rewrite();
     let text = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
-    let is_org = path.extension().and_then(|ext| ext.to_str()) == Some("org");
+    let is_org = Format::from_path(path) == Format::Org;
     let rewritten = tine_core::refs::rename_rewrite(text, is_org, &map.0, name_format);
     refuse_read_only_org(text.as_bytes(), rewritten.as_bytes(), is_org)?;
     Ok(rewritten.into_bytes())
@@ -23,7 +24,7 @@ pub(crate) fn rewrite(
 /// [`rewrite`]'s result `new`, which the rename planner computed from exactly
 /// `old` (GH #623): only the Org round-trip refusal is decided again.
 pub(crate) fn prepared(old: &[u8], new: Vec<u8>, path: &Path) -> Result<Vec<u8>, Why> {
-    let is_org = path.extension().and_then(|ext| ext.to_str()) == Some("org");
+    let is_org = Format::from_path(path) == Format::Org;
     refuse_read_only_org(old, &new, is_org)?;
     Ok(new)
 }

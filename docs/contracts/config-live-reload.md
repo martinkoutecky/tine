@@ -38,14 +38,19 @@ offload or a sync tool's delete-and-replace must not switch the graph to the
 defaults, whose `:file/name-format` is `:legacy`. Only a graph that never had a
 config.edn runs on the defaults; one whose config.edn is an undownloaded iCloud
 placeholder (`logseq/.config.edn.icloud`) opens read-only, its settings
-unknown. A real change reloads the configuration, discards
-parsed pages (the pages directory or name format may have moved) and publishes
-an External change naming `logseq/config.edn`. The desktop shell turns that
-into `graph-config-changed` with the fresh `GraphMeta`.
+unknown. A real change reloads the live configuration and journal format,
+and publishes an External change naming `logseq/config.edn`. The desktop
+shell turns that into `graph-config-changed` with the fresh `GraphMeta`.
 
-Master 0.6.985 also avoided re-indexing on a settings-only change. That half is
-X-class (SQLite index); og has no index to spare, and the byte-identity gate
-plus "reload only when the bytes changed" is its replacement.
+Own and outside config writes retain parsed pages and their observations
+when `checkpoint::config_key` is unchanged. That key covers the fields read
+by the page build and indexes (including file eligibility, names, journal
+formats and search folding), enforced by its scanning test. A changed key
+still discards parsed pages and rebuilds them before publication. Favorites,
+journal templates and display settings therefore cause no full-page reads or
+document parses; publication can still enumerate names (reading page
+preambles) and rebuild in-memory indexes.
+Config publications and frontend updates do not depend on cache invalidation.
 
 ## 3. Writing it
 
@@ -98,6 +103,9 @@ risk.
 - crates/tine-store/tests/config_live_reload.rs::an_outside_config_edit_is_taken_in_by_the_notify_watcher
 - crates/tine-store/tests/config_live_reload.rs::an_outside_config_edit_is_taken_in_by_the_poll_watcher
 - crates/tine-store/tests/config_live_reload.rs::an_identical_config_rewrite_publishes_nothing
+- crates/tine-store/tests/config_live_reload.rs::settings_only_writes_keep_parsed_pages
+- crates/tine-store/tests/config_live_reload.rs::outside_settings_keep_parsed_pages_but_build_config_reparses
+- crates/tine-store/tests/config_live_reload.rs::own_build_config_change_still_reparses_pages
 - crates/tine-store/tests/config_live_reload.rs::an_unsafe_delivered_config_keeps_the_served_one_and_pages_stay_observed
 - crates/tine-store/tests/config_live_reload.rs::a_removed_config_keeps_its_settings_until_it_returns
 - crates/tine-store/tests/config_live_reload.rs::an_undownloaded_icloud_config_opens_the_graph_read_only

@@ -58,6 +58,7 @@ import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useO
 import { captureReadingViewport } from "./readingViewportAnchor";
 import { createMarginSurface } from "./MarginColumn";
 import { MarginContext } from "./marginContext";
+import { JournalFeedDays } from "./JournalFeedDays";
 
 installPageIdentityNavigation((from, to) => {
   // Rewrite both pinned and formerly pathless routes to the exact file owner.
@@ -745,6 +746,13 @@ export function PageView(): JSX.Element {
     const r = loadedRoute();
     return !!r && ready() && sameRoute(r, currentRoute()) && (r.kind !== "journals" || isLoaded() || !!feedRefusal());
   };
+  const renderDay = (p: FeedPage) => <PageSection page={p}>
+    {/* OG page/today-queries and journal: queries precede agenda. */}
+    <Show when={p.kind === "journal" && p.name === journalTitle(localDateFromDayKey(currentDayKey()))}>
+      <TodaySections today={p.name} upcoming={<UpcomingSection feed={currentRoute().kind === "journals"} />} />
+    </Show>
+    <Show when={currentRoute().kind === "journals"}><JournalLinkedReferences name={p.name} /></Show>
+  </PageSection>;
 
   return (
     <Show when={!loadError()} fallback={
@@ -763,19 +771,11 @@ export function PageView(): JSX.Element {
     }>
       <Show when={zoomValid()} fallback={
         <div class="page" ref={feedRoot}>
-          <For each={pagesToRender()}>
-            {(p) => (
-              <PageSection page={p}>
-                {/* OG page/today-queries and journal: queries precede agenda. */}
-                <Show when={p.kind === "journal" && p.name === journalTitle(localDateFromDayKey(currentDayKey()))}>
-                  <TodaySections today={p.name} upcoming={<UpcomingSection feed={currentRoute().kind === "journals"} />} />
-                </Show>
-                <Show when={currentRoute().kind === "journals"}>
-                  <JournalLinkedReferences name={p.name} />
-                </Show>
-              </PageSection>
-            )}
-          </For>
+          <Show when={currentRoute().kind === "journals"} fallback={
+            <For each={pagesToRender()}>{renderDay}</For>
+          }>
+          <JournalFeedDays>{renderDay}</JournalFeedDays>
+          </Show>
           <Show when={currentRoute().kind === "journals" && feedRefusal()}>
             {(why) => <div class="page-load-error" role="status">{why()}</div>}
           </Show>
@@ -893,7 +893,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
     const owner = pageByName(pageName());
     return owner ? pageTargetFromFeedPage(owner) : { name: pageName(), pageKind: pageKind() };
   };
-  const crumb = (id: string) => visibleBody(docNode(id).raw)[0] || "…";
+  const crumb = (id: string) => visibleBody(docNode(id).raw, formatForBlock(id))[0] || "…";
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   const focusTrailing = () => {
     const root = docNode(props.id);
