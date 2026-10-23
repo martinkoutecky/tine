@@ -484,6 +484,10 @@ pub(super) fn write_page_from_bytes(
     create: bool,
     mut compute: impl FnMut(&PageDto, &PageId, &[u8]) -> Result<Planned, ErrorBody>,
 ) -> Result<Value, ErrorBody> {
+    #[cfg(desktop)]
+    if RUN.with(|r| r.borrow().is_some()) {
+        super::git_run::check_page(slot, page)?;
+    }
     let flush = || {
         crate::page_commands::with_host(slot, |host| host.flush_input(std::slice::from_ref(page)))
             .map_err(host_failed)?

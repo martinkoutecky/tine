@@ -1,6 +1,6 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
 import { activatePageInstance, pageInstanceGeneration, pageInstanceGenerations, retirePageInstance } from "./instance";
-import { baseRevFor, deletePageOnDisk, forgetSaveState, hostBlocksReload, hostHolds, isConflicted, rekeyPage, releaseHolds, resolveConflict, setBaseRev, unsettledPages, untombstone } from "./host/wiring";
+import { baseRevFor, deletePageOnDisk, forgetSaveState, hostBlocksReload, hostHolds, isConflicted, pageFrozen, rekeyPage, releaseHolds, resolveConflict, setBaseRev, unsettledPages, untombstone } from "./host/wiring";
 import { clearCollapseEpochs, doc, hydrateWorkingSet, setDoc, FeedPage, pageByName } from "./model";
 import { batch } from "solid-js";
 import { produce } from "solid-js/store";
@@ -29,6 +29,7 @@ import { resetReferenceSectionState } from "../referenceSectionState";
 import { dbg } from "../debug";
 import { reportUiFailure } from "../uiFailure";
 import { msg, type UiText } from "../i18n";
+import { selectedIds } from "./edits/selection";
 
 let publishIdentityNavigation: ((from: PageTarget, to: PageTarget) => void) | null = null;
 /** The UI installs the exact-path route, tab, Recent and sidebar rewrite. */
@@ -416,8 +417,8 @@ export function draftPinned(name: string): boolean {
   for (const draft of draftPins) if (draft() === name) return true;
   return false;
 }
-function pinnedPages(): Set<string> {
-  const pin = new Set<string>(doc.feed);
+function pinnedPages(includeFeed = true): Set<string> {
+  const pin = new Set<string>(includeFeed ? doc.feed : []);
   for (const draft of draftPins) { const name = draft(); if (name) pin.add(name); }
   for (const r of paneRouteProvider()) {
     if (r.kind === "page") pin.add(r.name);
@@ -428,7 +429,39 @@ function pinnedPages(): Set<string> {
   for (const name of unsettledPages()) pin.add(name);
   const ed = editingId();
   if (ed && doc.byId[ed]) pin.add(doc.byId[ed].page);
+  for (const id of selectedIds()) if (doc.byId[id]) pin.add(doc.byId[id].page);
   return pin;
+}
+
+/** L10-03: the feed surfaces nominate only measured days away from EVERY
+ * viewport. Keep feed order but release document text and undo. No disk IO.
+ * Safety/near-viewport pins may exceed the 12-day retention bound. */
+export function retireFeedPages(offscreen: readonly string[]): string[] {
+  if (graphRewriteFrozen() || isBlockMoving()) return [];
+  const feed = new Set(doc.feed);
+  let count = doc.pages.filter(page => feed.has(page.name)).length;
+  if (count <= 12) return [];
+  const pins = pinnedPages(false);
+  const retired: string[] = [];
+  hydrateWorkingSet(() => setDoc(produce(state => {
+    for (const name of offscreen) {
+      if (count <= 12) break;
+      if (!feed.has(name) || pins.has(name) || pageFrozen(name) || reloadDisposition(name) !== "reload") continue;
+      const i = state.pages.findIndex(page => page.name === name);
+      if (i < 0) continue;
+      purgePageNodes(state, name);
+      state.pages.splice(i, 1);
+      retired.push(name);
+      count--;
+    }
+  })));
+  for (const name of retired) {
+    forgetSaveState(name);
+    invalidateUndoForPage(name);
+    retirePageInstance(name);
+  }
+  if (retired.length) invalidateAllMatrixDimensions();
+  return retired;
 }
 
 /** Replace a page in the working set from a fresh DTO (e.g. resolving a conflict

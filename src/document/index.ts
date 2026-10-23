@@ -110,4 +110,5 @@ export { clearSelection, cycleSelectionTasks, deleteSelection, expandBlockSelect
 export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlocksRelative, moveBlockFeed, moveItem, moveSelectionItems, nextVisibleOrExtend, setFeedExtender, withBlockMoving } from "./edits/moves";
 export { installPageIdentityNavigation, rekeyPageIdentityByPath } from "./workingSet";
 export { pageInstanceGeneration } from "./instance";
+export { retireFeedPages } from "./workingSet";
 export { carryUnfinished } from "./edits/carry";
