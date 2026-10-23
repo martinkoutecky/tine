@@ -37,8 +37,14 @@
       "nonRequirements": ["Exact pixels or DOM arrangement; private graphs; automatic hosted runs on push."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh745-windows-probe.mjs": {
+      "contracts":[{"class":"core-operation","userOutcome":"On a long page with loaded images above the caret, outdenting a level-two block to level one and indenting it back keeps the block visible without a large viewport jump (GH #745, reopened on Beta 9).","blocking":true}],
+      "acceptableVariations":["Small adjustments to show the caret and platform-dependent line geometry are allowed; an already-visible caret must not be thrown outside the viewport."],
+      "nonRequirements":["Exact pixels, timing, display scaling, and certification on the reporter's Windows 10/WebView2 153 device."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh745-structural-edit-viewport.mjs": {
-      "contracts":[{"class":"core-operation","userOutcome":"On a long windowed page with images above, after a block is scrolled from the bottom of the viewport to the top with the wheel and then edited structurally (Enter at the start or middle, Backspace merging into an image block, Delete merge, Tab and Shift+Tab, a multi-block paste), the caret is still on screen and the view has moved only as far as showing the caret needs (GH #745).","blocking":true}],
+      "contracts":[{"class":"core-operation","userOutcome":"On a long windowed page with images above, after a block is scrolled from the bottom of the viewport to the top with the wheel and then edited structurally (Enter at the start or middle, Backspace merging into an image block, Delete merge, Tab and Shift+Tab including level 2 to 1 and back with NESTED=1, a multi-block paste), the caret is still on screen and the view has moved only as far as showing the caret needs (GH #745).","blocking":true}],
       "acceptableVariations":["Exactly where in the viewport the caret row lands, a few lines of extra scroll for a merged block that grew, and animation or settle timing may vary while the caret row is visible and the view did not jump by most of a screen."],
       "nonRequirements":["WebView2 (Chromium) focus centring, covered by the unit test of the reveal rule rather than by this journey; mobile and the right sidebar."],
       "stability":"burn-in"
