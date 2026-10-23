@@ -21,7 +21,9 @@ const orgUuid = "57000000-0000-4000-8000-000000000002";
 const orgSource = `* Org source block\n:PROPERTIES:\n:id: ${orgUuid}\n:END:\n** Preview child\n* Sibling context\n`;
 fs.writeFileSync(path.join(graph, "pages/Preview Source.md"), source);
 fs.writeFileSync(path.join(graph, "pages/Preview Org.org"), orgSource);
-fs.writeFileSync(path.join(graph, "pages/Preview Home.md"), `- [[Preview Source]]\n- ((${uuid}))\n- [[Preview Org]]\n- ((${orgUuid}))\n`);
+const editSource = "- Edit me\n- Second row\n";
+fs.writeFileSync(path.join(graph, "pages/Preview Edit.md"), editSource);
+fs.writeFileSync(path.join(graph, "pages/Preview Home.md"), `- [[Preview Source]]\n- ((${uuid}))\n- [[Preview Org]]\n- ((${orgUuid}))\n- [[Preview Edit]]\n`);
 const app = process.env.TINE_APP || path.join(root, "target/debug/tine");
 const port = Number(process.env.E2E_DRIVER_PORT || 4792);
 const nativePort = port + 1;
@@ -116,8 +118,30 @@ try {
   }
   if (fs.readFileSync(path.join(graph, "pages/Preview Source.md"), "utf8") !== source) throw new Error("preview navigation wrote source content");
   if (fs.readFileSync(path.join(graph, "pages/Preview Org.org"), "utf8") !== orgSource) throw new Error("preview fold undo changed Org content");
+  // D-20261023-VQ: the preview's blocks are live. A click edits in place, the
+  // popup holds while its editor has the caret, the first Escape ends the edit.
+  stage = "preview edits its live source block in place";
+  await openPageByName(browser, "Preview Home");
+  await browser.$("//a[contains(@class,'page-ref') and contains(.,'Preview Edit')]").moveTo();
+  const editRow = await browser.$("//div[contains(@class,'peek-popup')]//div[contains(@class,'block-content') and contains(.,'Edit me')]");
+  await editRow.waitForDisplayed({ timeout: 10000 });
+  await editRow.click();
+  const previewEditor = await browser.$(".peek-popup textarea.block-editor");
+  await previewEditor.waitForDisplayed({ timeout: 10000, timeoutMsg: `${stage}: no editor in the preview` });
+  await browser.keys(["End"]);
+  await browser.keys(" now");
+  await browser.$(".page-title").moveTo();
+  await sleep(1000); // well past the hover grace period
+  if (!(await browser.$(".peek-popup").isDisplayed())) throw new Error("preview closed while its editor held the caret");
+  await browser.keys(["Escape"]);
+  await browser.waitUntil(async () => !(await browser.$(".peek-popup textarea.block-editor").isExisting()), { timeout: 5000, timeoutMsg: `${stage}: Escape did not end the edit` });
+  if (!(await browser.$(".peek-popup").isExisting())) throw new Error("the first Escape closed the preview instead of ending the edit");
+  await waitForFileText(path.join(graph, "pages/Preview Edit.md"), text => text === "- Edit me now\n- Second row\n");
+  await browser.keys(["Escape"]);
+  await browser.waitUntil(async () => !(await browser.$(".peek-popup").isExisting()), { timeout: 5000, timeoutMsg: `${stage}: second Escape kept the preview` });
+  console.log(`PASS: ${stage}`);
   fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ outcome: "pass", testedBase: base, delta: "sw-preview-tabs worktree diff", graph }, null, 2));
-  console.log("PASS: page and block preview folds persist in Markdown/Org and undo; source tabs, menus and dismissal work");
+  console.log("PASS: page and block preview folds persist in Markdown/Org and undo; source tabs, menus and dismissal work; previews edit in place");
 } catch (error) {
   await browser?.saveScreenshot(path.join(run, "failure.png")).catch(() => {});
   fs.writeFileSync(path.join(run, "failure.json"), JSON.stringify({ testedBase: base, journey: stage,
