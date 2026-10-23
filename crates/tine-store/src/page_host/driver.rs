@@ -78,6 +78,10 @@ pub(super) struct State<F: HostIo, C: Clock> {
     /// is a physical resource, so its retry runs on the monotonic clock, not
     /// on the host's logical one.
     contended: BTreeMap<PageKey, (u32, Instant)>,
+    /// The instant the last step judged `contended` at: a retry after it
+    /// was a held key for that step and must still wake the driver, even
+    /// once it has passed by the time the driver plans its sleep.
+    stepped: Instant,
     /// The binding's bookkeeping beside the host (handoffs, notices sent).
     pub book: Book,
     #[cfg(test)]
@@ -101,6 +105,7 @@ impl<F: HostIo, C: Clock> State<F, C> {
         let now = self.progress.clock.now_ms();
         // A miss not retried for a second is history: its step went away.
         let at = Instant::now();
+        self.stepped = at;
         let stale = at.checked_sub(Duration::from_secs(1));
         self.contended
             .retain(|_, (_, retry)| stale.is_none_or(|stale| *retry > stale));
@@ -128,13 +133,14 @@ impl<F: HostIo, C: Clock> State<F, C> {
         waiting.map(|(key, _)| key.clone())
     }
 
-    /// The earliest path-lock retry still ahead.
+    /// The earliest path-lock retry the last step waited for: one already
+    /// past is due now (a zero sleep), never dropped.
     fn retry(&self) -> Option<Instant> {
-        let now = Instant::now();
+        let stepped = self.stepped;
         self.contended
             .values()
             .map(|(_, retry)| *retry)
-            .filter(|r| *r > now)
+            .filter(|r| *r > stepped)
             .min()
     }
 
@@ -304,6 +310,10 @@ pub(super) struct Shared<F: HostIo, C: Clock> {
     /// (tests: an admission's dispatch, observed).
     #[cfg(test)]
     pub deferred: std::sync::atomic::AtomicUsize,
+    /// Tests: milliseconds the driver pauses, holding nothing, between an
+    /// idle step chain and planning its sleep (a preempted driver thread).
+    #[cfg(test)]
+    pub plan_pause: std::sync::atomic::AtomicU64,
 }
 
 impl<F: HostIo + 'static, C: Clock + 'static> Shared<F, C> {
@@ -642,6 +652,7 @@ where
                 wake_seq: 0,
                 observe: BTreeMap::new(),
                 contended: BTreeMap::new(),
+                stepped: Instant::now(),
                 book: Book::default(),
                 #[cfg(test)]
                 polls: 0,
@@ -654,6 +665,8 @@ where
             flush_pause: Mutex::new(None),
             #[cfg(test)]
             deferred: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            plan_pause: std::sync::atomic::AtomicU64::new(0),
         });
         let thread = {
             let shared = shared.clone();
@@ -989,6 +1002,15 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
             true => (writer_retry * 2).min(WRITER_RETRY.1),
             false => WRITER_RETRY.0,
         };
+        #[cfg(test)]
+        {
+            let pause = shared.plan_pause.load(Ordering::SeqCst);
+            if pause > 0 && idle && state.wake_seq == seq {
+                drop(state);
+                std::thread::sleep(Duration::from_millis(pause));
+                state = shared.state.lock().unwrap();
+            }
+        }
         if idle && state.wake_seq == seq {
             // Sleep until a command arrives, or until the earliest timed
             // work, waiting request or writer retry is due.

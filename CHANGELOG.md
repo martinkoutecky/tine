@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A save no longer stalls, and renames or moves no longer report Busy, when another writer releases a page at the moment Tine's page host goes to sleep: the host's path-lock retry could be dropped, leaving it waiting for an unrelated wake (internal: page-host driver lost wakeup).
 - Renaming a page preserves longer tags such as `#foo+bar`, `#c++`, `#R&D` and `#foo🎉` when only their prefix matches, and updates complete tags before trailing punctuation such as `#foo.`. Renaming `c++` also updates `#c++` (audit L3-02).
 
 ## [0.8.0-beta.9] - 2026-10-22
