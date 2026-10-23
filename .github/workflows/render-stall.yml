@@ -1,5 +1,7 @@
 name: Renderer typing stall bench
 on:
+  push:
+    branches: ['probe/gh746-bench-*']
   workflow_dispatch:
     inputs:
       blocking_budget:
@@ -39,7 +41,7 @@ jobs:
           TAURI_DRIVER: msedgedriver.exe
           E2E_WEBVIEW_USER_DATA_ROOT: '${{ runner.temp }}\render-stall-profile'
           STALL_OUT: artifacts/render-stall/windows
-          STALL_BUDGET_MS_PER_SECOND: '${{ inputs.blocking_budget }}'
+          STALL_BUDGET_MS_PER_SECOND: ''
       - uses: actions/upload-artifact@v4
         if: always()
         with:
