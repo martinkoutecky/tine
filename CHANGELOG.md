@@ -59,6 +59,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- After a restore from backup, a page that was being edited when the restore began closes normally once editing ends, instead of staying open for the rest of the session. A component draft open across the restore (for example a table cell) no longer keeps holding back newer file content from that page after it closes (internal: REG-HOST-REBIND-ACQUISITION-RELEASE).
 - Editing a sheet row reuses other rows' formula results and table/board filter answers, reducing pauses in large sheets (audit L10-05; development only).
 - Saving a page with many reference targets avoids quadratic candidate-index diff work while preserving the same reference owners (audit L10-07; development only).
 - Wide tables in query results sit inside the page again instead of being shifted to the right and cut off (GH #749).
