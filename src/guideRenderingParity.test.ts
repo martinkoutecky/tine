@@ -1,5 +1,9 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+it("the Guide teaches time tracking for selected task cycling", () => {
+  const guide = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
+  for (const outcome of ["**Time tracking** on", "DOING / NOW records a clock-in", "into DONE records a clock-out", "Ctrl/Cmd+Enter cycles several selected blocks, in one Undo step"]) expect(guide).toContain(outcome);
+});
 it("the Guide teaches result-scoped columns and retained saved choices", () => {
   const guide = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
   for (const outcome of ["only columns found in the current results", "saved column choice stays intact", "checkbox returns when the column appears again"]) expect(guide).toContain(outcome);

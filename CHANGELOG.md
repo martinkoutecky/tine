@@ -59,8 +59,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Cycling selected task blocks with Ctrl/Cmd+Enter now opens clocks on DOING/NOW and closes them on DONE when time tracking is enabled, in one Undo step (internal UI-TASK-CYCLE-TIMETRACKING).
 - A save no longer stalls, and renames or moves no longer report Busy, when another writer releases a page at the moment Tine's page host goes to sleep: the host's path-lock retry could be dropped, leaving it waiting for an unrelated wake (internal: page-host driver lost wakeup).
 - A page file replaced by something larger than 64 MiB while open is now refused like every other read instead of being loaded whole into memory; unsaved typing stays (audit L6-02).
+- CLI run edits refuse pages with Git content filters or encoding conversion before saving or creating raw Git objects, including in nested graph roots (L7s5-01). A concurrent branch checkout now leaves both branches and the checked-out index untouched by the commit, with an explicit saved-but-uncommitted warning (L7s5-02).
 - **Logseq query answers and export notices** (audits L7s1-02, L7s1-03, L7s2-03): advanced property-map queries and self-page joins now visibly refuse instead of answering a guessed page relationship; quoted operands decode EDN escapes as Logseq does. Printed and published queries retain refusal explanations, including legacy scheduled/deadline conversion guidance, rather than claiming there are no matches.
 - **EDN characters in graph settings** (audit L7s1-01): character literals such as `\}` and `\]` no longer hide later `:hidden` exclusions or corrupt config.edn when Favorites are saved. Unrelated settings and comments keep their bytes.
 - Renaming a page preserves longer tags such as `#foo+bar`, `#c++`, `#R&D` and `#foo🎉` when only their prefix matches, and updates complete tags before trailing punctuation such as `#foo.`. Renaming `c++` also updates `#c++` (audit L3-02).
