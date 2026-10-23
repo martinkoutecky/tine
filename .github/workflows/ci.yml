@@ -40,9 +40,9 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -95,16 +95,21 @@ jobs:
       - name: Rust core tests
         run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
 
+      # Real TS HostClient against a real native PageHost (builds the tine-store
+      # lib-test peer, reusing this job's target). Mandatory: it must not skip.
+      - name: Storage conformance (client vs native host)
+        run: npm run test:storage-conformance
+
   test:
     name: Full CI / Linux tests and release contracts
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -182,6 +187,11 @@ jobs:
       - name: Rust core tests
         run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
 
+      # Real TS HostClient against a real native PageHost (builds the tine-store
+      # lib-test peer, reusing this job's target). Mandatory: it must not skip.
+      - name: Storage conformance (client vs native host)
+        run: npm run test:storage-conformance
+
       # The app crate's own tests (commands, query wiring, IPC guards) ran
       # nowhere until GH #628 broke one unnoticed; they need the WebKitGTK headers.
       - name: App crate native dependencies
@@ -220,8 +230,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'windows')
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -284,8 +294,8 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -309,7 +319,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'android')
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
           targets: aarch64-linux-android
@@ -339,8 +349,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -393,7 +403,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'performance')
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -411,17 +421,17 @@ jobs:
           echo "immutable=$(node -p "require('./scripts/bench-policy.json').immutableBaseline.ref")" >> "$GITHUB_OUTPUT"
           echo "previous=$(node -p "require('./scripts/bench-policy.json').previousRelease.ref")" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ steps.perf-policy.outputs.immutable }}
           path: .bench/immutable
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ steps.perf-policy.outputs.previous }}
           path: .bench/previous
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -485,7 +495,7 @@ jobs:
     continue-on-error: true
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
@@ -548,8 +558,8 @@ jobs:
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
