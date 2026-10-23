@@ -6,10 +6,23 @@ use crate::owner::terminal::{error_json, error_text, exit_code, render};
 fn rn_f_cli_edit_preserves_one_running_clock_and_closes_it() {
     for org in [false, true] {
         for seconds in [false, true] {
-            for (marker, text) in [("DOING", "DOING work"), ("DOING", "DONE work"), ("NOW", "NOW work"), ("NOW", "DONE work")] {
+            for (marker, text) in [
+                ("DOING", "DOING work"),
+                ("DOING", "DONE work"),
+                ("NOW", "NOW work"),
+                ("NOW", "DONE work"),
+            ] {
                 let graph = Graph::new();
-                let rel = if org { "pages/task.org" } else { "pages/task.md" };
-                let start = if seconds { "2026-01-01 Thu 09:00:00" } else { "2026-01-01 Thu 09:00" };
+                let rel = if org {
+                    "pages/task.org"
+                } else {
+                    "pages/task.md"
+                };
+                let start = if seconds {
+                    "2026-01-01 Thu 09:00:00"
+                } else {
+                    "2026-01-01 Thu 09:00"
+                };
                 let source = if org {
                     format!("* {marker}\n:PROPERTIES:\n:id: {UUID}\n:END:\n:LOGBOOK:\nCLOCK: [{start}]\n:END:\n")
                 } else {
@@ -26,8 +39,16 @@ fn rn_f_cli_edit_preserves_one_running_clock_and_closes_it() {
                 let edited = format!("{text}\n:LOGBOOK:\nCLOCK: [{start}]\n:END:");
                 verb(&slot, "block.edit", json!({"handle": UUID, "text": edited})).unwrap();
                 let written = std::fs::read_to_string(graph.root.join(rel)).unwrap();
-                assert_eq!(written.matches("CLOCK:").count(), 1, "{org}/{seconds}/{text}: {written}");
-                assert_eq!(written.contains("]--["), text == "DONE work", "{org}/{seconds}/{text}: {written}");
+                assert_eq!(
+                    written.matches("CLOCK:").count(),
+                    1,
+                    "{org}/{seconds}/{text}: {written}"
+                );
+                assert_eq!(
+                    written.contains("]--["),
+                    text == "DONE work",
+                    "{org}/{seconds}/{text}: {written}"
+                );
             }
         }
     }

@@ -112,7 +112,7 @@ impl Store {
         self.page_read(id, doc)
     }
 
-    /// Stage a byte-exact copy of `old`, the bytes of marker-bearing page file
+    /// Stage a byte-exact copy of `old`, the bytes of a conflicted page file
     /// `file`, under `logseq/.tine-trash/conflicts/<stamp>__markers__<name>`
     /// (no-replace, fsync'd), before a host operation resolves them (DESIGN
     /// §3.4 pre): a crash leaves the old file plus its copy, or the resolved

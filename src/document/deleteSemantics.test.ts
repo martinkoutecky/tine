@@ -24,6 +24,28 @@ afterEach(() => {
 });
 
 describe("delete semantics (master 695527da9)", () => {
+  it.each(["refused", "waiting", "pending", "uncertain", "superseded", "throw"])("L2-04: a %s delete retains conflicted input", async (outcome) => {
+    loadSingle({ name: "Clash", kind: "page", title: "Clash", pre_block: null, id: "pages/Clash.md", rev: "r1",
+      blocks: [{ id: "c1", raw: "base", collapsed: false, children: [] }] });
+    const admitted: Array<{ id: number; key: string }> = [];
+    vi.spyOn(backend(), "pageSubmit").mockImplementation(async (_session, id, key) => { admitted.push({ id, key }); return null; });
+    setRaw("c1", "my irreplaceable draft");
+    void flushPage("Clash");
+    await vi.waitFor(() => expect(admitted).toHaveLength(1));
+    host.deliver({ key: admitted[0].key, answer: { id: admitted[0].id, version: 9, took: true, outcome: { kind: "applied" } },
+      notice: { conflictReported: true },
+      page: { version: 9, conflict: true, risk: false, disk: { kind: "file", rev: "external" }, text: { kind: "unchanged" } } });
+    const discard = vi.spyOn(backend(), "pageDiscard");
+    vi.spyOn(backend(), "pageDelete").mockImplementation(async () => {
+      if (outcome === "throw") throw new Error("disk error");
+      return outcome as "refused";
+    });
+    expect(await deletePage("Clash", "page", "pages/Clash.md")).toBe(false);
+    expect(discard).not.toHaveBeenCalled();
+    expect(isConflicted("Clash")).toBe(true);
+    const { doc } = await import("./model");
+    expect(doc.byId.c1.raw).toBe("my irreplaceable draft");
+  });
   it("deletes a page that is not loaded, by name", async () => {
     const remove = vi.spyOn(backend(), "pageDelete");
     const save = vi.spyOn(backend(), "pageSubmit");

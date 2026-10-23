@@ -59,9 +59,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Cycling selected task blocks with Ctrl/Cmd+Enter now opens clocks on DOING/NOW and closes them on DONE when time tracking is enabled, in one Undo step (internal UI-TASK-CYCLE-TIMETRACKING).
 - A save no longer stalls, and renames or moves no longer report Busy, when another writer releases a page at the moment Tine's page host goes to sleep: the host's path-lock retry could be dropped, leaving it waiting for an unrelated wake (internal: page-host driver lost wakeup).
 - A page file replaced by something larger than 64 MiB while open is now refused like every other read instead of being loaded whole into memory; unsaved typing stays (audit L6-02).
 - CLI run edits refuse pages with Git content filters or encoding conversion before saving or creating raw Git objects, including in nested graph roots (L7s5-01). A concurrent branch checkout now leaves both branches and the checked-out index untouched by the commit, with an explicit saved-but-uncommitted warning (L7s5-02).
+- **Logseq query answers and export notices** (audits L7s1-02, L7s1-03, L7s2-03): advanced property-map queries and self-page joins now visibly refuse instead of answering a guessed page relationship; quoted operands decode EDN escapes as Logseq does. Printed and published queries retain refusal explanations, including legacy scheduled/deadline conversion guidance, rather than claiming there are no matches.
+- **EDN characters in graph settings** (audit L7s1-01): character literals such as `\}` and `\]` no longer hide later `:hidden` exclusions or corrupt config.edn when Favorites are saved. Unrelated settings and comments keep their bytes.
+- Retrying Quick Capture after a save delay or acknowledgement timeout saves the same insertion instead of appending it twice (audit L9-08).
+- Moving blocks between pages refuses invalid page-header drafts and retains the blocks at their source instead of saving only one endpoint (audit L9-07).
+- Live conflict resolutions retain the reviewed external file in conflict trash before publication. Omitted merge choices keep both sides, and an unsuccessful conflicted-page delete retains local input (audits L9-04, L9-03, L2-04).
 - Slow asset, local-image, CSV, journal and conflict-diff reads now run off the UI thread (audit L7s4-03). Oversized iOS and Android share envelopes are refused before publication instead of reporting a share that cannot be ingested (L7s4-02). Macro rendering and Copy/Export check cumulative substitution size before allocating output (L7s8-02, macro half). Closing a PDF during loading now retires its loading worker, also on owner cancellation or failure (L7s6-01).
 
 - Renaming a page preserves longer tags such as `#foo+bar`, `#c++`, `#R&D` and `#foo🎉` when only their prefix matches, and updates complete tags before trailing punctuation such as `#foo.`. Renaming `c++` also updates `#c++` (audit L3-02).
@@ -70,7 +76,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Org body text such as `Note:: see [[Foo]]` remains visible in references, breadcrumbs and export (audit L3-04, RN-C). Renaming pages recognizes `.ORG` and `.Org` referrers as Org, preserving inline code and updating Org file links (audit L7s4-01).
 - CLI edits of an already running bare task use the editor's previous-marker rule, avoiding duplicate open clocks and closing the existing clock on completion when the replacement buffer retains its logbook (audit L3-07, RN-F).
 - **Long journal feeds retain fewer documents** (L10-03, development): offscreen days retire behind measured-height placeholders and reload when approached. Editing, unsaved and selected content stays loaded. Find searches loaded days and offers “search all journals” with the same query for older retired days.
-
 - Settings → unused assets now keeps images referenced only by a duplicate journal file for the same day, including references in its page properties. Moving an asset to trash checks those files too, and refuses if one cannot be read or analyzed (audit L8-03).
 - Refuse page-host I/O through a folder moved outside the graph and replaced by
   a symlink, retaining queued and recovered text (audit L8-01).

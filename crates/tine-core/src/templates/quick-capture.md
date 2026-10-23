@@ -11,6 +11,7 @@ icon:: ⚡
 		- **Other desktops** — add a custom keyboard shortcut that runs `tine --capture`. Use the binary's full path if it isn't on your `PATH`.
 	- Now press your shortcut from anywhere — the box appears, you type, and it's saved.
 - ## Where your capture goes
+	- If saving takes too long, your text stays in the capture box. Retry **File capture** to finish the same capture without adding it twice. Edits made while it was saving stay in the box after that capture finishes.
 	- **Leave the title empty** → the text is appended to **today's journal**. This is the fast path: hotkey, type, done.
 	- **Type a page title** (the field at the top of the window) → it's filed to that **page** instead, created if it doesn't exist yet. Perfect for "add this to my Reading notes" without leaving what you're doing.
 	- It's the real editor in there: `[[` page links, `#` tags, `/` slash commands, and nested bullets all work.

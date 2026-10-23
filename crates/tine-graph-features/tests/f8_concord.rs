@@ -596,19 +596,18 @@ fn marker_resolution_is_guarded_and_never_leaves_the_file_writable() {
         DIFF3
     );
     // And the resolved page is now an ordinary, savable page.
+    assert!(host.quiesce_for_tests(std::time::Duration::from_secs(10)));
     let id = PageId::from("pages/Merged.md");
     let read = store.page(&id).unwrap();
     let mut edited = read.doc.clone();
     edited.blocks[0].raw = "edited after resolving".into();
-    assert!(matches!(
-        store.save(
-            EditKind::ReplacePage,
-            &id,
-            SaveBase::Existing(read.rev),
-            &edited
-        ),
-        SaveOutcome::Saved(_)
-    ));
+    let outcome = store.save(
+        EditKind::ReplacePage,
+        &id,
+        SaveBase::Existing(read.rev),
+        &edited,
+    );
+    assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
     drop(host);
     let _ = fs::remove_dir_all(&root);
 }

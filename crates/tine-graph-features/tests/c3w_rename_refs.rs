@@ -13,8 +13,12 @@ use tine_store::Store;
 fn rn_c_rename_keeps_org_inline_literals_and_updates_file_links() {
     let _integration_guard = crate::integration_lock();
     for (ext, held, namespace) in [
-        ("org", false, false), ("ORG", false, false), ("Org", false, false),
-        ("ORG", true, false), ("Org", true, false), ("ORG", false, true),
+        ("org", false, false),
+        ("ORG", false, false),
+        ("Org", false, false),
+        ("ORG", true, false),
+        ("Org", true, false),
+        ("ORG", false, true),
     ] {
         let rel = format!("pages/Notes.{ext}");
         let (root, store) = fixture(&[
@@ -28,12 +32,20 @@ fn rn_c_rename_keeps_org_inline_literals_and_updates_file_links() {
         hosted(&store, |host| {
             if held {
                 let window = serde_json::to_value(host.window_reloaded()).unwrap();
-                host.open(window["session"].as_u64().unwrap(), window["nextId"].as_u64().unwrap(),
-                    &tine_store::PageId::from(rel.as_str()), "Notes").unwrap();
+                host.open(
+                    window["session"].as_u64().unwrap(),
+                    window["nextId"].as_u64().unwrap(),
+                    &tine_store::PageId::from(rel.as_str()),
+                    "Notes",
+                )
+                .unwrap();
             }
             pages::rename_or_merge_page(&store, host, "Target", "Renamed", None, None, &[])
-        }).unwrap();
-        if namespace { assert!(root.join("pages/Renamed___child.md").exists()); }
+        })
+        .unwrap();
+        if namespace {
+            assert!(root.join("pages/Renamed___child.md").exists());
+        }
         assert_eq!(fs::read_to_string(root.join(&rel)).unwrap(),
             "* [[Renamed]] and =[[Target]]= and ~[[Target]]~\n* [[file:./Renamed.org][target file]]\n", "{ext}");
     }

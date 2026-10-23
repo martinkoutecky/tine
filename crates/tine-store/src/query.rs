@@ -2822,12 +2822,14 @@ mod tests {
 
     #[test]
     fn content_terms_unescape_and_match_canonical_unicode() {
-        // `\"`/`\\` inside a quoted term are unescaped; any other backslash is
-        // literal, so `"C:\tmp"` stays `C:\tmp`.
+        // Quoted terms are EDN strings: `\"`/`\\` unescape, and so do EDN's other
+        // escapes such as `\t`.
         assert!(selects("\"foo \\\"bar\\\"\"", "note: foo \"bar\" baz"));
         assert!(!selects("\"foo \\\"bar\\\"\"", "note: foo bar baz"));
         assert!(selects("\"a\\\\b\"", "x a\\b y"));
-        assert!(selects("\"C:\\tmp\"", "open C:\\tmp now"));
+        // EDN (OG's cljs reader): `\t` is TAB, so `"C:\tmp"` is `C:<TAB>mp` (audit RN-B).
+        assert!(selects("\"C:\\tmp\"", "open C:\tmp now"));
+        assert!(!selects("\"C:\\tmp\"", "open C:\\tmp now"));
         assert!(selects("\"quick brown\"", "the quick brown fox"));
         assert!(!selects("\"slow\"", "the quick brown fox"));
         // D4 (2026-10-04): canonical composition only; no accent or case fold.
@@ -2907,28 +2909,20 @@ mod tests {
     }
 
     #[test]
-    fn advanced_exact_page_property_pair_matches_page_property_predicate() {
+    fn advanced_own_entity_property_map_pair_refuses_visibly() {
         let source = r#"[:find (pull ?p [*])
                          :where
                          [?p :block/properties ?props]
                          [(get ?props :class)]]"#;
         let with = one_page("Classy", None, "class:: yes\n\n- body\n");
         let without = one_page("Plain", None, "other:: yes\n\n- body\n");
-        let result = run_advanced_query(&with, source);
-        assert!(result.supported, "{:?}", result.ignored);
-        assert_eq!(
-            result
-                .groups
-                .iter()
-                .map(|g| g.page.as_str())
-                .collect::<Vec<_>>(),
-            run_query(&with, "(page-property :class)")
-                .iter()
-                .map(|g| g.page.as_str())
-                .collect::<Vec<_>>()
-        );
-        assert!(!result.groups.is_empty());
-        assert!(run_advanced_query(&without, source).groups.is_empty());
+        // Audit RN-B (L7s1-02, D-18): OG also matches the property block itself, so
+        // the old page-only lowering was a guessed answer; it is now refused visibly.
+        for graph in [&with, &without] {
+            let result = run_advanced_query(graph, source);
+            assert!(!result.supported);
+            assert!(result.groups.is_empty());
+        }
     }
 
     #[test]

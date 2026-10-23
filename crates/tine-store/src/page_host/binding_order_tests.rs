@@ -235,8 +235,11 @@ fn an_operation_over_a_running_order_is_busy_until_the_order_ends() {
         })
     });
     assert_eq!(
-        live.host
-            .delete(live.host.session(), &PageId::from(NEW), b"- old\n"),
+        live.host.delete(
+            live.host.session(),
+            &PageId::from(NEW),
+            Some(&b"- old\n"[..])
+        ),
         PageOperation::Waiting
     );
     let started = Instant::now();
@@ -275,8 +278,11 @@ fn a_deletion_wait_ends_uncertain_when_the_session_changes() {
     let started = Instant::now();
     let deleted = std::thread::scope(|scope| {
         let caller = scope.spawn(|| {
-            live.host
-                .delete(session, &PageId::from("pages/gone.md"), b"- gone\n")
+            live.host.delete(
+                session,
+                &PageId::from("pages/gone.md"),
+                Some(&b"- gone\n"[..]),
+            )
         });
         until("the deletion is admitted", || {
             live.host
@@ -317,8 +323,11 @@ fn a_caller_on_a_poisoned_host_hears_uncertain_and_leaves_cleanly() {
     let (deleted, poisoned) = std::thread::scope(|scope| {
         let caller = scope.spawn(|| {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                live.host
-                    .delete(session, &PageId::from("pages/gone.md"), b"- gone\n")
+                live.host.delete(
+                    session,
+                    &PageId::from("pages/gone.md"),
+                    Some(&b"- gone\n"[..]),
+                )
             }))
         });
         let poisoner = std::thread::spawn(move || {
@@ -604,7 +613,7 @@ fn the_writer_bound_covers_full_and_references_only_renames_not_a_deletion() {
         "references only"
     );
     let deleted = |host: &PageHost, _: &Store| {
-        let _ = host.delete(host.session(), &PageId::from(OLD), b"- old\n");
+        let _ = host.delete(host.session(), &PageId::from(OLD), Some(&b"- old\n"[..]));
     };
     assert!(!observe(&[(OLD, "- old\n")], &deleted), "a deletion");
 }

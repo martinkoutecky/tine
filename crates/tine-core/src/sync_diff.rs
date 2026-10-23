@@ -801,9 +801,8 @@ fn nodes_to_rows(nodes: &[Node]) -> Vec<DiffRow> {
 
 // --- merge (the resolve side; symmetric with the diff via the same nodes) -----
 
-/// A user's per-row choice in the merge UI. Any row the UI didn't send defaults
-/// to `Mine` (keep the winner) — the safe default, since the conflict copy is
-/// trashed-recoverable so nothing is lost.
+/// Missing or unrecognized choices keep both sides (L9-03), including on live
+/// conflicts: never silently drop a side the user did not choose to discard.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Decision {
     Mine,
@@ -821,7 +820,8 @@ fn decision_for(decisions: &std::collections::HashMap<String, String>, id: &str)
         Some("theirs") => Decision::Theirs,
         Some("both") => Decision::Both,
         Some("merged") => Decision::Merged,
-        _ => Decision::Mine,
+        Some("mine") => Decision::Mine,
+        _ => Decision::Both,
     }
 }
 

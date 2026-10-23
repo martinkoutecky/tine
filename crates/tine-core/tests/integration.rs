@@ -1,5 +1,8 @@
 //! One integration executable; module names retain each source suite in test filters.
 
+#[path = "audit_rn_b.rs"]
+mod audit_rn_b;
+
 #[path = "block_region_ratchet.rs"]
 mod block_region_ratchet;
 

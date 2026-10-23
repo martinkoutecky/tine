@@ -318,11 +318,7 @@ function Capture() {
     }
   };
 
-  // Editor shortcuts (incl. the configurable `editor/quick-capture-file` that
-  // files the capture) are merged from config.edn + the user's Settings
-  // overrides, which live in the MAIN window's localStorage — unreadable here.
-  // Ask the main window for the merged map and re-install our keybindings with
-  // it, so a remapped shortcut is honored in the capture window too.
+  // Ask the graph window for its merged config/device shortcut map.
   let disposeKeys: () => void = () => {};
   const requestShortcuts = async () => {
     const owner = latestOwner(captureScope, "shortcuts-request", () => captureAlive);
@@ -341,15 +337,20 @@ function Capture() {
   onCleanup(() => { submitAlive = false; });
   const scratchMarkdown = () => roots().map((r) => blockSubtreeMarkdown(r)).join("\n");
   let scratchRevision = 0;
+  // An unacknowledged insertion owns its snapshot across manual retries too.
+  let retry: { id: string; scratch: string; title: string; revision: number; generation: number; target?: string } | undefined;
   const submit = () => {
     if (pendingCapture) return;
     const submitOwner = latestOwner(submitScope, "capture", () => submitAlive);
-    const submittedScratch = scratchMarkdown(), submittedTitle = title();
-    const submittedRevision = scratchRevision;
-    const bindingGeneration = backend().graphBindingGeneration();
+    retry ??= { id: createQuickCaptureRequestId(), scratch: scratchMarkdown(), title: title(), revision: scratchRevision, generation: backend().graphBindingGeneration() };
+    const snapshot = retry;
+    const submittedScratch = snapshot.scratch, submittedTitle = snapshot.title;
+    const submittedRevision = snapshot.revision;
+    const bindingGeneration = snapshot.generation;
     const md = submittedScratch.trim(), pageTitle = submittedTitle.trim();
     void (async () => {
       if (!md) {
+        retry = undefined;
         setCaptureStatus("idle");
         setCaptureMessage("");
         clearScratch();
@@ -357,14 +358,15 @@ function Capture() {
         await hideWindow();
         return;
       }
-      const id = createQuickCaptureRequestId();
+      const id = snapshot.id;
       let target: string;
       try {
         const result = await readOwned(submitOwner, backend().captureTarget());
         if (result.kind === "stale") return;
-        target = result.value;
+        target = snapshot.target ??= result.value;
       } catch {
         if (submitOwner()) {
+          if (!snapshot.target) retry = undefined;
           setCaptureStatus("error");
           setCaptureMessage("No graph window is ready — text kept");
           scheduleFit();
@@ -381,10 +383,10 @@ function Capture() {
         if (pendingCapture !== pending) return;
         disposePendingCapture();
         if (ok) {
+          retry = undefined;
           setCaptureStatus("idle");
           setCaptureMessage("");
-          // The ack owns the submitted snapshot, not edits made while transport
-          // or save awaited. Input revisions also cover DOM-local IME text.
+          // Input revisions also cover DOM-local IME text.
           if (scratchRevision !== submittedRevision || scratchMarkdown() !== submittedScratch || title() !== submittedTitle) {
             setCaptureMessage("Submitted capture saved — newer edits kept");
             scheduleFit();
@@ -445,7 +447,9 @@ function Capture() {
       };
       try {
         const unlisten = await listen<QuickCaptureAck>("quick-capture-ack", (e) => {
-          if (quickCaptureAckMatches(pending.id, e.payload)) void finish(e.payload.ok);
+          if (!quickCaptureAckMatches(pending.id, e.payload)) return;
+          if (!e.payload.ok && !e.payload.landed) retry = undefined;
+          void finish(e.payload.ok);
         });
         if (pendingCapture !== pending) {
           unlisten();
@@ -461,6 +465,7 @@ function Capture() {
   };
 
   const cancel = () => {
+    retry = undefined;
     latestOwner(submitScope, "capture");
     disposePendingCapture();
     setCaptureStatus("idle");
@@ -478,10 +483,7 @@ function Capture() {
     quickSwitch: (query, limit) => backend().captureQuickSwitch(query, limit, pinyinMatchingEnabled()),
   };
 
-  // Grow/shrink the window whenever the rendered content changes: new/removed
-  // blocks and popups (childList), or a textarea autosizing (inline `style`).
-  // Plus the date-picker signal, which a MutationObserver on the DOM also catches
-  // but the effect makes the dependency explicit.
+  // Refit after content, editor autosizing, popup or status changes.
   createEffect(() => {
     datePicker();
     captureMessage();
@@ -525,10 +527,8 @@ function Capture() {
           disposeKeys = installKeybindings(e.payload ?? {});
           setShortcuts(e.payload ?? {}); // keep the hint's submit shortcut current
         });
-        // Rust emits this every time it shows the window — the reliable re-fit
-        // trigger (the focus event isn't guaranteed for a `focus:false` frameless
-        // window). Also refresh the pref/theme/shortcuts that may have changed
-        // while we were hidden.
+        // Rust's show event refits even without a focus event and refreshes
+        // preferences, theme and shortcuts changed while hidden.
         const unShown = await listen("capture-shown", () => {
           void initPinyinMatchingSetting();
           loadPref();

@@ -7,6 +7,7 @@
 
 import { createEffect, createRoot, createSignal, on, untrack } from "solid-js";
 import { backend } from "../../backend";
+import { captureTransferRollback } from "../history";
 import { benchEvent } from "../../benchEvents";
 import { captureBinding, clearOnBindingInvalidated } from "../../binding";
 import type { ClipboardSourcePage } from "../../clipboard";
@@ -25,13 +26,14 @@ import { openUnsavedRecovery } from "../../unsavedRecovery";
 import { assetWritesStarted, pendingAssetWrites } from "../assetWrites";
 import { aliasDraftBlocks, appendAliasDraft, emptyPage, pageToDto, replaceLandedAliasDraft } from "../convert";
 import { isBlockMoving } from "../edits/moves";
-import { adoptFoldedPageHeader, pageWritable } from "../edits/properties";
+import { adoptFoldedPageHeader, pageWritable, reportInvalidPageHeaderOnExit } from "../edits/properties";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { pageInstanceGeneration, rekeyPageInstance } from "../instance";
 import { doc, pageByName, setPageId } from "../model";
 import { draftPinned, ensurePageLoaded, forgetPage, installPageContent, rekeyPageIdentityByPath, reportPageLoadRefusal } from "../workingSet";
 import { HostClient, reviewedDiskToken, type BaselineRev, type DocumentPort, type HostCutSource } from "./client";
-import { runSequence, type SequenceStep } from "./planner";
+import { runSequence } from "./planner";
+import { planSteps } from "./transferPlan";
 import type { DiskToken, HostPort, MailNotice, PageMail, PageOperation, PageRefusal } from "./protocol";
 import { settle, unpublishedAfterDrain } from "./settle";
 import { beginResultsChange, installResultsPendingGate, resetResultsEpoch } from "../../queryResultsEpoch";
@@ -609,10 +611,18 @@ export function pageFrozen(name: string): boolean {
 }
 
 export function refuseConflictedMove(pages: Iterable<string>): boolean {
-  const blocked = [...pages].find(isConflicted);
-  if (!blocked) return false;
-  pushToast(msg("document-wiring-resolve-the-conflict-on-first", { value1: blocked }), "error");
-  return true;
+  for (const name of pages) {
+    if (isConflicted(name)) {
+      pushToast(msg("document-wiring-resolve-the-conflict-on-first", { value1: name }), "error");
+      return true;
+    }
+    if (host() && !pageToDto(name)) {
+      const header = pageByName(name)?.roots[0];
+      if (header) reportInvalidPageHeaderOnExit(header);
+      return true;
+    }
+  }
+  return false;
 }
 
 // ------------------------------------------------------------------ barriers
@@ -787,15 +797,16 @@ export function isCreateConflict(error: unknown): boolean {
 
 // ------------------------------------------------------------------ deletion (§12, D4)
 
-/** Delete the page's file through the host: its own input is sent and
- * published first (the host refuses a delete over unsaved input). The host
+/** Delete through the host: ordinary input is published first; conflicted
+ * input stays until Applied, with a native recovery copy before admission. The host
  * waits for the deletion to publish (Finding B), so only `applied` means the
  * file is gone; `pending`, `uncertain` and `superseded` keep the page and say
  * why. The backend's identity checks reject a twin or a stale `path`; the
  * rejection reaches the caller, which logs it and can report it (I-9). */
 export async function deletePageOnDisk(name: string, kind: PageKind, path?: string, reportFailure?: (reason: UiText) => void): Promise<boolean> {
   const c = host();
-  if (!c || !await settle(c, [name], { noConflict: true })) {
+  const conflicted = !!c?.conflicted(name);
+  if (!c || (!conflicted && !await settle(c, [name], { noConflict: true }))) {
     const reason = c ? msg("delete-reason-unsaved", { name }) : msg("delete-reason-no-host");
     if (reportFailure) reportFailure(reason);
     else if (c && host() === c) pushToast(reason, "error");
@@ -817,7 +828,10 @@ export async function deletePageOnDisk(name: string, kind: PageKind, path?: stri
     if (host() === c) untombstone(name);
     throw error;
   } finally { finish(); }
-  if (operation === "applied") return true;
+  if (operation === "applied") {
+    if (conflicted && host() === c) await c.discard(name);
+    return true;
+  }
   if (host() === c) untombstone(name);
   const why = {
     waiting: msg("delete-reason-waiting", { name }),
@@ -834,11 +848,14 @@ export async function deletePageOnDisk(name: string, kind: PageKind, path?: stri
 // ------------------------------------------------------------------ transfers (§8)
 
 type TransferEdge = readonly [source: string, destination: string];
+const transferRollbacks = new WeakMap<ReadonlyMap<string, PageDto>, () => void>();
 
 /** The texts of `names` right before a multi-page edit (next to its undo snapshot). */
 export function capturePages(names: Iterable<string>): Map<string, PageDto> {
   const before = new Map<string, PageDto>();
-  for (const name of new Set(names)) {
+  const pages = [...new Set(names)];
+  transferRollbacks.set(before, captureTransferRollback(pages));
+  for (const name of pages) {
     const dto = pageToDto(name);
     if (dto) before.set(name, dto);
   }
@@ -863,7 +880,13 @@ export function persistTransfer(before: ReadonlyMap<string, PageDto>, kinds: Edi
   const endpoints = [...new Set(moves.flat())];
   const after = new Map(endpoints.map((name) => [name, pageToDto(name)] as const));
   const c = host();
-  const plain = !c || [...after.values()].some((dto) => !dto);
+  if (c && (edges.some(([a, b]) => !before.has(a) || !before.has(b)) || [...after.values()].some(dto => !dto))) {
+    const rollback = transferRollbacks.get(before);
+    if (rollback) rollback();
+    else for (const [name, dto] of before) installPageContent(name, dto);
+    return Promise.resolve(false);
+  }
+  const plain = !c;
   for (const name of before.keys()) if (plain || !after.has(name)) markDirty(name, kinds);
   if (plain || !endpoints.length) return Promise.resolve(true);
   const list: EditKinds = typeof kinds === "string" ? [kinds] : kinds;
@@ -911,54 +934,6 @@ async function transfer(c: HostClient, endpoints: string[], before: ReadonlyMap<
 function sameText(a: PageDto, b: PageDto): boolean {
   const shape = (blocks: BlockDto[]): unknown => blocks.map((block) => [block.id, block.raw, block.collapsed, shape(block.children)]);
   return a.pre_block === b.pre_block && JSON.stringify(shape(a.blocks)) === JSON.stringify(shape(b.blocks));
-}
-
-function idsOf(blocks: readonly BlockDto[], into = new Set<string>()): Set<string> {
-  for (const block of blocks) {
-    into.add(block.id);
-    idsOf(block.children, into);
-  }
-  return into;
-}
-
-/** The maximal subtrees of `blocks` whose root came from `from`. */
-function unitsFrom(blocks: readonly BlockDto[], from: Set<string>, into: BlockDto[] = []): BlockDto[] {
-  for (const block of blocks) {
-    if (from.has(block.id)) into.push(block);
-    else unitsFrom(block.children, from, into);
-  }
-  return into;
-}
-
-function without(blocks: readonly BlockDto[], ids: Set<string>): BlockDto[] {
-  return blocks.filter((block) => !ids.has(block.id))
-    .map((block) => ({ ...block, children: without(block.children, ids) }));
-}
-
-/** Step i moves its edge's blocks: every page's text is the edit's result minus
- * the blocks later steps bring in, plus the blocks later steps take out
- * (appended at the end: a transitional state a crash between steps can leave).
- * Null when the edges do not partition the moved blocks (nothing is sent). */
-function planSteps(endpoints: string[], before: ReadonlyMap<string, PageDto>, after: ReadonlyMap<string, PageDto>,
-  moves: readonly TransferEdge[]): SequenceStep[] | null {
-  const units = moves.map(([source, destination]) => unitsFrom(after.get(destination)!.blocks, idsOf(before.get(source)!.blocks)));
-  const textAt = (name: string, done: number): PageDto => {
-    const arriving = new Set<string>();
-    const leaving: BlockDto[] = [];
-    moves.forEach(([source, destination], j) => {
-      if (j < done) return;
-      if (destination === name) for (const unit of units[j]) arriving.add(unit.id);
-      if (source === name) leaving.push(...units[j]);
-    });
-    const dto = after.get(name)!;
-    return { ...dto, blocks: [...without(dto.blocks, arriving), ...leaving] };
-  };
-  const census = (done: number) => endpoints.flatMap((name) => [...idsOf(textAt(name, done).blocks)]).sort().join("\u0000");
-  const whole = census(moves.length);
-  for (let done = 0; done < moves.length; done += 1) if (census(done) !== whole) return null;
-  return moves.map(([source, destination], i) => ({
-    source, receiver: destination, sourceDto: textAt(source, i + 1), receiverDto: textAt(destination, i + 1),
-  }));
 }
 
 // ------------------------------------------------------------------ alias drafts (§8)

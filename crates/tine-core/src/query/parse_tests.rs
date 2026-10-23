@@ -286,19 +286,16 @@ fn advanced_datalog_is_unsupported() {
 }
 
 #[test]
-fn advanced_exact_page_property_pair_matches_page_property_predicate() {
+fn advanced_entity_property_pair_refuses_instead_of_inventing_a_page_hop() {
     let source = r#"[:find (pull ?p [*])
                          :where
                          [?p :block/properties ?props]
                          [(get ?props :class)]]"#;
     let (lowered, ran, ignored) = advanced_pred(source, None, TODAY);
 
-    assert_eq!(
-        lowered.map(|query| query.filter),
-        Some(pred("(page-property :class)"))
-    );
-    assert_eq!(ran, vec!["page-property"]);
-    assert!(ignored.is_empty());
+    assert!(lowered.is_none());
+    assert!(ran.is_empty());
+    assert!(!ignored.is_empty());
 }
 
 #[test]
