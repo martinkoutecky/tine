@@ -1,0 +1,50 @@
+name: Renderer typing stall bench
+on:
+  push:
+    branches: ['probe/gh746-bench-*']
+  workflow_dispatch:
+    inputs:
+      blocking_budget:
+        description: 'Blocking ms/s budget (leave blank for calibration)'
+        required: false
+        default: '100'
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+      - run: npm ci
+      - run: npm run build
+      - run: cargo build --release --features custom-protocol -p tine
+      - name: Install matching EdgeDriver
+        shell: pwsh
+        run: |
+          $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          $version = (Get-Item $edge).VersionInfo.ProductVersion
+          $directory = "$env:RUNNER_TEMP\edgedriver"
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile "$env:RUNNER_TEMP\edgedriver.zip"
+          Expand-Archive "$env:RUNNER_TEMP\edgedriver.zip" -DestinationPath $directory
+          $directory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Hold a key with expanded heavy references
+        run: node scripts/e2e-render-stall.mjs
+        env:
+          TINE_APP: target/release/tine.exe
+          TAURI_DRIVER: msedgedriver.exe
+          E2E_WEBVIEW_USER_DATA_ROOT: '${{ runner.temp }}\render-stall-profile'
+          STALL_OUT: artifacts/render-stall/windows
+          STALL_BUDGET_MS_PER_SECOND: ''
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: render-stall-windows-${{ github.sha }}
+          path: artifacts/render-stall
+          retention-days: 14
