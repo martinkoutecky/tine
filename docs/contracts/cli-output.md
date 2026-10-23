@@ -237,8 +237,8 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
   page's format (Markdown `- ` or Org outline). Every created block gets `author::` (from `--author`, else
   `TINE_AUTHOR`, else `agent`); edits never add one. An anchor without `id::` gets one in the same write. A
   `((uuid))` that names no block is refused `broken-ref`.
-- **`block.edit`**: the text replaces the block's editor text, as typing it would: hidden `id::`, `collapsed::`
-  and `logseq.order-list-type::` lines and the children are kept; a marker change writes the logbook as the app
+- **`block.edit`**: the text replaces the block's editor text, as typing it would: hidden `id::`, `collapsed::`,
+  `logseq.order-list-type::`, `quote::`, `quote-prefix::`, `quote-suffix::` and `author::` lines and the children are kept; a marker change writes the logbook as the app
   does.
 - **`block.move`**: the block and its children go under (last child), after or before a target on the same page.
   A move to another page is refused `cross-page` in this version.
@@ -369,7 +369,7 @@ One block per line, indented two spaces per level:
 ```
 # a
 id pages/a.md rev 9e8b1eedbf3d8ef0
-1~eea65l [author:: claude] one
+1~diekug [author:: claude] one
          id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f
   1.1~3as2k7 under one
 2~hl6h22 TODO two
@@ -377,7 +377,8 @@ id pages/a.md rev 9e8b1eedbf3d8ef0
 
 - The address of a page read is the block's **handle**, `POS~FP`: its outline position (`1`, `1.2`,
   PROTOCOL §10) and a 6-character fingerprint of its editor text (lowercase base32 of FNV-1a 64 over
-  the text a block editor shows; hidden `id::`, `collapsed::` and `logseq.order-list-type::` lines
+  the text a block editor shows; hidden `id::`, `collapsed::`, `logseq.order-list-type::`,
+  `quote::`, `quote-prefix::`, `quote-suffix::` and `author::` lines
   are left out). A write names a block as `PAGE/POS~FP` or by its `id::` UUID; the fingerprint
   resolves only when exactly one block on the page has it, else `stale`. The `--json` page carries the
   same string as each block's `handle`. Continuation lines align under the first line's text.

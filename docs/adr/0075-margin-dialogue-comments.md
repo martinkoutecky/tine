@@ -47,6 +47,16 @@ Decisions on the surface: D-20261017-MD1 (integrate into og for 0.9) and the
 - Surfaces: Ctrl/Cmd+R in the block editor (consumed, so the webview never
   reloads), the palette command **Comment on selection**, and the block menu's
   **Comment on selection** for words selected in a block's rendered text.
+  The editor selection toolbar also offers **Comment**. Within a thread this
+  creates a child reply whose selection is a compact quote inside that thread.
+  Each comment and reply offers **Reply** without requiring a selection, and a
+  delete control removes that block and its replies as one document undo step
+  (provisional margin-polish rule, 2026-10-23).
+- The ordinary editor-hidden property projection also hides `quote`,
+  `quote-prefix`, `quote-suffix` and `author`. The existing split/reattach
+  mechanism preserves their lines on text edits; handwritten properties remain
+  accepted. `author` belongs here because the rendered block already presents
+  it as a chip. Page-level property editing retains its own projection.
 - **Presentation** (`render only`): a comment draws as a tinted card with the
   quote above it, and the quoted words are marked in the parent. On a wide main
   pane (scroller at least 960 px, not split) a page that holds comments draws the

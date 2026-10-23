@@ -1017,7 +1017,8 @@ fn add_places_forests_and_attributes_every_created_block_only() {
         )
         .unwrap();
         let bytes = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
-        assert_eq!(bytes.matches("author::").count(), 2);
+        // Editing the body keeps its existing hidden author as the app does.
+        assert_eq!(bytes.matches("author::").count(), 3);
         assert!(!bytes.contains("author:: agent"));
     }
 }

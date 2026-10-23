@@ -14,9 +14,18 @@
 use crate::block_regions::{self, BlockRegions};
 use serde::{Deserialize, Serialize};
 
-/// The built-in properties every block editor hides (OG hides the same three):
-/// they persist in the file but never appear in the edit buffer.
-pub const BUILTIN_HIDDEN: [&str; 3] = ["id", "collapsed", "logseq.order-list-type"];
+/// Properties kept in the file but projected out of the block editor. OG hides
+/// id/collapsed/list-type; Tine also presents comment context and author as UI.
+/// Use this same projection for all editor and kernel text mutations.
+pub const BUILTIN_HIDDEN: [&str; 7] = [
+    "id",
+    "collapsed",
+    "logseq.order-list-type",
+    "quote",
+    "quote-prefix",
+    "quote-suffix",
+    "author",
+];
 
 /// Which accepted primary properties the editor hides.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -377,6 +386,43 @@ mod tests {
             "{set:?}"
         );
         assert_eq!(set_text("plain", false, "other").unwrap(), "other");
+    }
+
+    #[test]
+    fn comment_metadata_is_hidden_and_survives_body_edits_byte_exact() {
+        for (is_org, raw, hidden) in [
+            (false, "My view\nQuOtE:: selected words  \nquote-prefix:: before\nquote-suffix:: after\nauthor:: Ada Test\ncollapsed:: false", "QuOtE:: selected words  \nquote-prefix:: before\nquote-suffix:: after\nauthor:: Ada Test\ncollapsed:: false"),
+            (true, "My view\n:PROPERTIES:\n:QuOtE: selected words  \n:quote-prefix: before\n:quote-suffix: after\n:author: Ada Test\n:collapsed: false\n:END:", ":QuOtE: selected words  \n:quote-prefix: before\n:quote-suffix: after\n:author: Ada Test\n:collapsed: false"),
+        ] {
+            let t = split(raw, is_org, &HidePolicy::Builtin);
+            assert_eq!(t.visible, "My view", "{raw:?}");
+            assert_eq!(t.hidden, hidden);
+            let edited = set_text(raw, is_org, "My revised view").unwrap();
+            assert_eq!(split(&edited, is_org, &HidePolicy::Builtin).hidden, hidden);
+            assert_eq!(edited, raw.replacen("My view", "My revised view", 1));
+        }
+    }
+
+    #[test]
+    fn handwritten_comment_properties_remain_accepted_content_on_save() {
+        for (is_org, typed) in [
+            (false, "My view\nquote:: selected words\nauthor:: Ada"),
+            (
+                true,
+                "My view\n:PROPERTIES:\n:quote: selected words\n:author: Ada\n:END:",
+            ),
+        ] {
+            // Typing metadata by hand saves the entered bytes, just as before;
+            // the next editor session projects those accepted properties out.
+            assert_eq!(set_text("old", is_org, typed).unwrap(), typed);
+            let regions = block_regions::parse(typed, is_org);
+            assert!(regions
+                .properties
+                .iter()
+                .any(|p| p.key == "quote" && p.value == "selected words"));
+        }
+        let fenced = "```\nquote:: literal words\nauthor:: example\n```";
+        assert_eq!(split(fenced, false, &HidePolicy::Builtin).visible, fenced);
     }
 
     #[test]

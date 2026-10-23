@@ -1,4 +1,4 @@
-// One edited Org buffer owns its parsed facts. Keep the visible projection and
+// One edited buffer owns its parsed facts. Keep the visible projection and
 // facets together until raw/format changes; never seed a fabricated render AST.
 // O(block bytes), one visible-buffer parse when extending an accepted drawer.
 // Other mutations, other surfaces and rendering after edit exit read raw normally.
@@ -10,6 +10,7 @@ import { hides, joinProps, splitProps, type HidePolicy, type PropFormat } from "
 export function propertyEditorSession() {
   let edited: { raw: string; format: PropFormat; hide: HidePolicy; hiddenFacts: [string, string][]; parts: ReturnType<typeof splitProps>; facets: Facets; identity: BlockIdentityFacts } | undefined;
   return {
+    begin() { edited = undefined; },
     identity(raw: string, format: PropFormat): BlockIdentityFacts {
       return edited?.raw === raw && edited.format === format ? edited.identity
         : { raw, format, value: existingBlockId(raw, format) };
@@ -22,7 +23,21 @@ export function propertyEditorSession() {
     },
     join(visible: string, hidden: string, previous: string, hide: HidePolicy, format: PropFormat) {
       const raw = joinProps(visible, hidden, format);
-      if (format === "org" && hidden && blockRegions(visible, format).properties.some((p) => p.primary)) {
+      const typedHidden = visible.includes(format === "org" ? ":" : "::")
+        && blockRegions(visible, format).properties.some((p) => p.primary && hides(hide, p.key));
+      if (typedHidden) {
+        // A property typed by hand must finish in this active buffer. Stripping
+        // `quote:: ` as soon as the parser accepts it would put the remaining
+        // keystrokes in the body. Reentry uses the ordinary split and hides it.
+        const previousHidden = edited?.raw === previous && edited.format === format && edited.hide === hide
+          ? edited.hiddenFacts : blockRegions(previous, format).properties
+            .filter((p) => p.primary && hides(hide, p.key)).map((p): [string, string] => [p.key, p.value]);
+        const facts = facetsOf(visible, format);
+        const ownCount = blockRegions(visible, format).properties.filter((p) => p.primary).length;
+        edited = { raw, format, hide, hiddenFacts: previousHidden, parts: { visible, hidden },
+          identity: { raw, format, value: existingBlockId(raw, format) },
+          facets: format === "org" ? { ...facts, properties: [...facts.properties.slice(0, ownCount), ...previousHidden, ...facts.properties.slice(ownCount)] } : facetsOf(raw, format) };
+      } else if (format === "org" && hidden && blockRegions(visible, format).properties.some((p) => p.primary)) {
         const previousHidden = edited?.raw === previous && edited.format === format && edited.hide === hide
           ? edited.hiddenFacts : blockRegions(previous, format).properties
             .filter((p) => p.primary && hides(hide, p.key)).map((p): [string, string] => [p.key, p.value]);

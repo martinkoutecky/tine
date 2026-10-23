@@ -3,7 +3,9 @@ import { Node, FeedPage, DocState, doc, freshId } from "./model";
 import { facetsFromDto } from "../render/facets";
 import { acquireSeededFacets } from "../render/seededFacets";
 import { trimBlockTrailingSpace } from "../editor/format";
-import { BLOCK_SCOPED_PROPERTY_KEYS, canonicalPageHeaderDraft, isPropertiesOnly } from "../editor/properties";
+import { BLOCK_SCOPED_PROPERTY_KEYS, BUILTIN_HIDE, canonicalPageHeaderDraft, hides, isPropertiesOnly } from "../editor/properties";
+import { blockRegions } from "../render/parse";
+import { utf8ByteLength } from "../render/spans";
 import { journalTitle, appNow } from "../journal";
 import { pageHeaderDraftProblem, rawWithCollapsed } from "./edits/properties";
 import { existingBlockId, orgRawWithProperty } from "./edits/identity";
@@ -211,7 +213,15 @@ function toDto(id: string): BlockDto {
   const n = doc.byId[id];
   // Only an edited block gets OG's trailing-space trim. Loaded siblings must
   // retain their exact raw bytes when another block on the page is saved.
-  const raw = n.loadedRaw === n.raw ? n.raw : trimBlockTrailingSpace(n.raw);
+  let raw = n.loadedRaw === n.raw ? n.raw : trimBlockTrailingSpace(n.raw);
+  if (raw !== n.raw) {
+    // Convenience spaces belong to editor text. A final hidden property line
+    // is preserved user data, including its trailing bytes. Ask the same
+    // parser and hide policy as the editor, only when trimming changed bytes.
+    const end = utf8ByteLength(n.raw);
+    const format = doc.pages.find((page) => page.name === n.page)?.format ?? "md";
+    if (blockRegions(n.raw, format).properties.some((p) => p.primary && p.line[1] === end && hides(BUILTIN_HIDE, p.key))) raw = n.raw;
+  }
   return { id: n.id, raw, collapsed: n.collapsed, children: n.children.map(toDto) };
 }
 

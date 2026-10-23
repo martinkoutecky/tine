@@ -20,7 +20,7 @@ const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
 const TD = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(process.env.CARGO_HOME, "bin", "tauri-driver") : "tauri-driver");
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4518);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4519);
-const TMP = "/tmp/tine-margin-comment-e2e";
+const TMP = process.env.E2E_MARGIN_TMP || "/tmp/tine-margin-comment-e2e";
 const GRAPH = `${TMP}/graph`;
 const PAGE_NAME = "Margin Test";
 const PAGE_FILE = `${GRAPH}/pages/${PAGE_NAME}.md`;
@@ -31,7 +31,9 @@ const REPLY_2 = "A reply from me";
 const MY_NAME = "Ada Test";
 const SETTINGS = `${TMP}/xdg/data/${APP_ID}/tine-settings.json`;
 
-fs.rmSync(TMP, { recursive: true, force: true });
+if (process.env.E2E_MARGIN_TMP) {
+  if (fs.existsSync(TMP)) throw new Error("E2E_MARGIN_TMP must be a fresh fixture directory");
+} else fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
@@ -101,10 +103,10 @@ try {
   await browser.keys(["Control", "r"]);
 
   // The caret moves into the new comment's empty body line.
-  await browser.waitUntil(() => browser.execute((phrase) => {
+  await browser.waitUntil(() => browser.execute(() => {
     const ta = document.querySelector(".page-blocks textarea.block-editor");
-    return !!ta && ta.value.includes(`quote:: ${phrase}`) && ta.selectionStart === 0 && document.activeElement === ta;
-  }, PHRASE), { timeout: 5_000, timeoutMsg: "Ctrl+R did not open an editor on a new comment quoting the selection" });
+    return !!ta && ta.closest(".comment-in-thread") && ta.value === "" && ta.selectionStart === 0 && document.activeElement === ta;
+  }), { timeout: 5_000, timeoutMsg: "Ctrl+R did not open an empty body editor on the new comment" });
   if ((await browser.execute(() => window.__marginE2E)) !== "alive") throw new Error("Ctrl+R reloaded the webview");
 
   await browser.keys(REPLY);

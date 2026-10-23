@@ -430,6 +430,12 @@
       "nonRequirements": ["An end-user journey by itself."],
       "stability": "stable"
     },
+    "scripts/e2e-margin-polish.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Comments created from an editor selection with the toolbar or Ctrl+R persist on routed pages and journals; editing hides metadata, visible Reply and Delete actions operate on the same thread, quoted replies remain readable, deleting a thread is undoable, narrow and split panes show inline threads, stale quotes stay visible, and reload preserves file bytes.", "blocking": true }],
+      "acceptableVariations": ["Selection may be set programmatically in the focused editor.", "Card styling, controls and layout may vary while quotes and bodies remain readable and do not overlap."],
+      "nonRequirements": ["Exact pixels or colours.", "Certification outside Linux WebKitGTK."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-margin-comment.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "On a routed named page in a window too narrow for the margin column, with a name set in Settings > Editor > Your name, selecting words in a block, pressing Ctrl+R and typing a reply saves the reply as a child bullet carrying quote:: with the selected words and author:: with that name, Enter in it adds a nested reply that also carries the name, leaves the commented block unchanged on disk, does not reload the app, and renders the reply as a comment card with the passage marked.", "blocking": true }],
       "acceptableVariations": ["How the selection is made (mouse, Shift+arrows or a programmatic textarea selection) as long as the editor holds it when Ctrl+R is pressed.", "Card colours, chip and header layout, and save latency, which is awaited by polling the page file."],

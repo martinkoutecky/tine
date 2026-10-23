@@ -211,8 +211,8 @@ export function splitPagePreamble(raw: string | null | undefined): {
 export type HidePolicy =
   | { readonly kind: "builtin" | "sheet_cell" | "all" }
   | { readonly kind: "keys"; readonly keys: readonly string[]; readonly norm?: boolean };
-/** A normal block editor: the built-in `id::`, `collapsed::` and
- *  `logseq.order-list-type::`, kept in the file but never in the textarea (as OG). */
+/** A normal block editor: identity, fold, list type, comment context and author
+ *  metadata stay in the file through the kernel's shared hidden projection. */
 export const BUILTIN_HIDE: HidePolicy = Object.freeze({ kind: "builtin" });
 /** A sheet cell: the built-ins plus every `tine.*` key. */
 export const SHEET_CELL_HIDE: HidePolicy = Object.freeze({ kind: "sheet_cell" });
