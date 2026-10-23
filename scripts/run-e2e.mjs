@@ -139,6 +139,8 @@ const suites = {
     ["host-saves", "scripts/e2e-host-saves.mjs", {}],
   ],
   "windows-smoke": [
+    // GH #745 reopened: opt-in hosted WebView2 proof, outside the default fan-out.
+    ["gh745-outdent", "scripts/e2e-gh745-windows-probe.mjs", { GH745_STRICT: "1" }],
     // og-parity-references is a HARD gate on Linux (linux-release + og-parity-pilot
     // suites), where adaptive page completion is byte-exact with OG. It is dropped
     // from the advisory Windows suite only: on WebView2 the completion yields a
@@ -456,7 +458,7 @@ async function runScenario([id, script, extraEnv], contractEntry) {
         if (process.platform === "win32") child.kill("SIGKILL");
         else process.kill(-child.pid, "SIGKILL");
       } catch {}
-    }, timeoutMs);
+    }, id === "gh745-outdent" ? Math.max(timeoutMs, 900_000) : timeoutMs);
     const result = await new Promise((resolve) => {
       child.once("error", (error) => resolve({ code: 1, error: String(error) }));
       child.once("exit", (code, signal) => resolve({ code: code ?? 1, signal }));
