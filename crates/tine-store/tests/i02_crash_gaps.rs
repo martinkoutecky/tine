@@ -437,6 +437,136 @@ fn restore_kill_reopen_keeps_live_or_recovery_bytes() {
 }
 
 #[test]
+fn generated_restore_crash_worker() {
+    let _guard = crate::integration_lock();
+    let Ok(seed) = std::env::var("TINE_F3_CRASH_SEED") else {
+        return;
+    };
+    let root = PathBuf::from(std::env::var("TINE_CRASH_ROOT").unwrap());
+    let case = crate::restore::generated_case(seed.parse().unwrap());
+    let store = open(&root);
+    let _ = store.restore(tine_store::EditKind::ReplacePage, case.files(), None);
+    panic!("generated restore missed the requested durable cut");
+}
+
+#[test]
+fn generated_restore_abort_every_cut_conserves_payloads_and_external_arrivals() {
+    use crate::conformance_f3::{
+        conserved, discover_restore_recovery, fresh, restore_recovery, seeds, Graph,
+    };
+    use crate::restore::{generated_case, GeneratedRestore};
+    let _guard = crate::integration_lock();
+    let mut cuts = 0;
+    let mut detached_arrivals = 0;
+    for seed in 1..=seeds() {
+        let case = generated_case(seed);
+        // A move and a copy per input, plus each of the three extras' moves.
+        for boundary in 0..case.inputs.len() * 2 + 3 {
+            let graph = Graph::new(&case.live);
+            let backup = graph.dir.path().join("backup");
+            case.backup(&backup);
+            graph.store.close();
+            let at = format!("restore abort seed {seed} cut {boundary}");
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "i02_crash_gaps::generated_restore_crash_worker",
+                    "--nocapture",
+                ])
+                .env("TINE_F3_CRASH_SEED", seed.to_string())
+                .env("TINE_CRASH_ROOT", &graph.root)
+                .env("TINE_RESTORE_ABORT_BOUNDARY", boundary.to_string())
+                .output()
+                .unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::ExitStatusExt;
+                assert_eq!(
+                    output.status.signal(),
+                    Some(6),
+                    "{at}: child must SIGABRT, not panic/error: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            #[cfg(not(unix))]
+            assert!(!output.status.success(), "{at}");
+            let mut recovery = discover_restore_recovery(&graph.root);
+            case.assert_custody(&graph.root, &recovery, &at);
+            case.backup_intact(&backup);
+            // Every published backup payload must be whole. Unpublished input
+            // still belongs to the caller/backup; restore has not admitted it.
+            for (area, rel, new) in &case.inputs {
+                let path = GeneratedRestore::path(*area, rel);
+                if let Ok(bytes) = fs::read(graph.root.join(&path)) {
+                    assert!(
+                        bytes == *new || bytes == case.live[&path],
+                        "torn input at {at}: {path}"
+                    );
+                }
+            }
+            let reopened = open(&graph.root);
+            case.assert_custody(&graph.root, &recovery, &format!("post-reopen {at}"));
+            fresh(&reopened, &graph.root, &["Before", "After"], &at);
+            reopened.close();
+            drop(reopened);
+            // Honest external arrival exactly at this interrupted protocol
+            // step, preferentially taking the just-detached input's live name.
+            let target = case
+                .inputs
+                .iter()
+                .map(|(area, rel, _)| GeneratedRestore::path(*area, rel))
+                .find(|rel| !graph.root.join(rel).exists());
+            if target.is_some() {
+                detached_arrivals += 1;
+            }
+            let target = target.unwrap_or_else(|| "pages/Arrived.md".into());
+            let external = format!("- external-at-{seed}-{boundary}\n").into_bytes();
+            fs::write(graph.root.join(&target), &external).unwrap();
+            let retry = open(&graph.root);
+            fresh(&retry, &graph.root, &["Before", "After"], &at);
+            let report = retry
+                .restore(tine_store::EditKind::ReplacePage, case.files(), None)
+                .unwrap();
+            assert_eq!(report.restored as usize, case.inputs.len(), "{at}");
+            let retry_recovery = restore_recovery(&graph.root, &report.recovery);
+            recovery.extend(retry_recovery.iter().cloned());
+            case.assert_live_set(&graph.root);
+            case.assert_custody(&graph.root, &recovery, &at);
+            conserved(
+                &graph.root,
+                &external,
+                std::slice::from_ref(&target),
+                &retry_recovery,
+                &at,
+            );
+            case.backup_intact(&backup);
+            for (area, rel, bytes) in &case.inputs {
+                assert_eq!(
+                    &fs::read(graph.root.join(GeneratedRestore::path(*area, rel))).unwrap(),
+                    bytes,
+                    "{at}"
+                );
+            }
+            fresh(&retry, &graph.root, &["Before", "After"], &at);
+            retry.close();
+            let reopened = open(&graph.root);
+            case.assert_custody(&graph.root, &recovery, &format!("post-retry reopen {at}"));
+            conserved(
+                &graph.root,
+                &external,
+                std::slice::from_ref(&target),
+                &retry_recovery,
+                &at,
+            );
+            reopened.close();
+            cuts += 1;
+        }
+    }
+    assert!(detached_arrivals >= seeds() * 5);
+    eprintln!("F3 process restore: cuts={cuts}, detached_target_arrivals={detached_arrivals}, image_checks={}", cuts*3);
+}
+
+#[test]
 fn crash_graph_restore_worker() {
     let _integration_guard = crate::integration_lock();
     if std::env::var("TINE_CRASH_KIND").as_deref() != Ok("graph-restore") {

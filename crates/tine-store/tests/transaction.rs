@@ -117,6 +117,221 @@ fn refused(outcome: TxOutcome) -> (Why, tine_store::Rollback) {
     }
 }
 
+/// F3: different step orders and payloads at every existing apply/second-guard
+/// seam. Baselines displaced by us must survive; a baseline overwritten by the
+/// external actor itself is superseded (not a promise to archive external edits).
+#[cfg(feature = "test-faults")]
+#[test]
+fn generated_transaction_step_failures_conserve_inputs_and_fresh_indexes() {
+    use crate::conformance_f3::{conserved, fresh, seeds, transaction_recovery, Graph, Rng};
+    use std::collections::BTreeMap;
+    use tine_store::{EditKind, FaultPoint, TrashIf};
+    let _guard = crate::integration_lock();
+    let mut cases = 0;
+    let mut undo_races = 0;
+    for seed in 1..=seeds() {
+        let mut rng = Rng(0x7478_20261023 ^ seed as u64);
+        let mut order = vec![0, 1, 2, 3];
+        rng.shuffle(&mut order);
+        let ext = if rng.below(2) == 0 { "md" } else { "org" };
+        let bullet = if ext == "md" { "-" } else { "*" };
+        let replace = format!("pages/Replace.{ext}");
+        let moved = format!("pages/Move.{ext}");
+        let dest = format!("pages/Destination.{ext}");
+        let created = format!("pages/Create.{ext}");
+        let trash = "assets/retired.edn".to_owned();
+        let old = BTreeMap::from([
+            (
+                replace.clone(),
+                format!("{bullet} old replace-{seed}\n").into_bytes(),
+            ),
+            (
+                moved.clone(),
+                format!("{bullet} move-{seed}\n").into_bytes(),
+            ),
+            (
+                trash.clone(),
+                format!("{{:payload \"trash-{seed}\"}}").into_bytes(),
+            ),
+        ]);
+        let new = format!("{bullet} new-{seed} [[Shared]]\n").into_bytes();
+        let names = [&created, &replace, &moved, &trash];
+        for boundary in 0..4 {
+            // I/O after publication, revision mismatch before publication,
+            // plus a writer racing undo (only when a prior create/replace ran).
+            for fault_kind in 0..3 {
+                let race = fault_kind == 2 && order[..=boundary].iter().any(|i| *i <= 1);
+                if fault_kind == 2 && !race {
+                    continue;
+                }
+                let graph = Graph::new(&old);
+                let live = vec![
+                    created.clone(),
+                    replace.clone(),
+                    moved.clone(),
+                    dest.clone(),
+                    trash.clone(),
+                ];
+                let recovery = transaction_recovery(&graph.root);
+                let check =
+                    |bytes: &[u8], at: &str| conserved(&graph.root, bytes, &live, &recovery, at);
+                let at = format!(
+                    "tx seed {seed} order {order:?} boundary {boundary} fault {fault_kind}"
+                );
+                fresh(&graph.store, &graph.root, &["Shared"], &at);
+                let mut tx = graph.store.transaction(Some(EditKind::ReplacePage));
+                for kind in &order {
+                    let file = FileId::from(names[*kind].to_owned());
+                    let rev = || graph.store.read(&file, None).unwrap().1;
+                    match kind {
+                        0 => {
+                            tx.create(&file, Content::Bytes(new.clone()));
+                        }
+                        1 => {
+                            let mut dto = doc("Replace", &format!("new-{seed} [[Shared]]"));
+                            dto.format = if ext == "md" { Format::Md } else { Format::Org };
+                            tx.save_page(
+                                &[EditKind::ReplacePage],
+                                &PageId::from(replace.clone()),
+                                SaveBase::Existing(rev()),
+                                &dto,
+                            );
+                        }
+                        2 => {
+                            tx.move_file(&file, rev(), &FileId::from(dest.clone()), None);
+                        }
+                        3 => {
+                            tx.trash(&file, rev(), TrashIf::Any);
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                let collision = fault_kind == 1 && order[boundary] == 0;
+                let preflight_image =
+                    collision.then(|| graph.store.conformance_image_for_tests(&["Shared"]));
+                if collision {
+                    // Create has no indexed stage-2 hook: an occupied name
+                    // refuses in prepare. NoReplaceCollision is global and
+                    // could hit an earlier move, so do not mislabel that seam.
+                    fs::write(graph.root.join(&created), b"external collision").unwrap();
+                } else {
+                    graph.store.inject_fault(if fault_kind == 1 {
+                        FaultPoint::Stage2MismatchAt(boundary)
+                    } else {
+                        FaultPoint::MidStepIoAt(boundary)
+                    });
+                }
+                if race {
+                    graph.store.inject_fault(FaultPoint::UndoLiveWrite);
+                    undo_races += 1;
+                }
+                let outcome = tx.commit();
+                let TxOutcome::NotCommitted {
+                    step,
+                    why,
+                    rollback,
+                    ..
+                } = outcome
+                else {
+                    panic!("expected step failure at {at}: {outcome:?}");
+                };
+                assert_eq!(step, boundary, "{at}");
+                assert!(rollback.undo_failed.is_empty(), "{at}: {rollback:?}");
+                if fault_kind == 1 {
+                    assert!(matches!(why, Why::Conflict { .. }), "{at}: {why:?}");
+                    check(
+                        if collision {
+                            b"external collision"
+                        } else {
+                            b"external stage-2"
+                        },
+                        &at,
+                    );
+                    assert_eq!(
+                        rollback.kept_external.is_empty(),
+                        collision,
+                        "{at}: {rollback:?}"
+                    );
+                } else {
+                    assert!(matches!(why, Why::Failed(_)), "{at}: {why:?}");
+                    if race {
+                        check(b"external during undo", &at);
+                        assert!(!rollback.kept_external.is_empty(), "{at}: {rollback:?}");
+                    }
+                }
+                for (file, recovery) in &rollback.kept_external {
+                    let location = recovery.as_ref().unwrap_or(file);
+                    let path = graph.root.join(location.as_str());
+                    assert!(
+                        live.iter().any(|rel| path == graph.root.join(rel))
+                            || transaction_recovery(&graph.root)
+                                .iter()
+                                .any(|dir| path.starts_with(dir)),
+                        "unrecognised rollback custody: {location:?} at {at}"
+                    );
+                    let bytes = fs::read(graph.root.join(location.as_str())).unwrap();
+                    assert!(
+                        bytes == b"external stage-2" || bytes == b"external during undo",
+                        "wrong reported custody at {at}: {rollback:?}"
+                    );
+                }
+                for (rel, bytes) in &old {
+                    if fault_kind != 1 || names[order[boundary]] != rel {
+                        check(bytes, &at);
+                    }
+                }
+                if fault_kind == 0 {
+                    for (rel, bytes) in &old {
+                        assert_eq!(&fs::read(graph.root.join(rel)).unwrap(), bytes, "{at}");
+                    }
+                    assert!(!graph.root.join(&created).exists(), "{at}");
+                    assert!(!graph.root.join(&dest).exists(), "{at}");
+                }
+                // Check immediately after each injected failure, before reopen
+                // can hide a publication defect; then reopen twice.
+                if let Some(before) = preflight_image {
+                    // commit's documented prepare refusal publishes no external
+                    // bytes. Check that stutter, then explicitly observe the
+                    // external creation before asking the disk equality oracle.
+                    assert_eq!(
+                        before,
+                        graph.store.conformance_image_for_tests(&["Shared"]),
+                        "{at}"
+                    );
+                    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+                }
+                fresh(&graph.store, &graph.root, &["Shared"], &at);
+                graph.store.close();
+                for _ in 0..2 {
+                    let cold = Store::open(&graph.root, Default::default()).unwrap().0;
+                    fresh(&cold, &graph.root, &["Shared"], &at);
+                    for (rel, bytes) in &old {
+                        if fault_kind != 1 || names[order[boundary]] != rel {
+                            check(bytes, &format!("post-reopen {at}"));
+                        }
+                    }
+                    if fault_kind == 1 {
+                        check(
+                            if collision {
+                                b"external collision"
+                            } else {
+                                b"external stage-2"
+                            },
+                            &at,
+                        );
+                    } else if race {
+                        check(b"external during undo", &at);
+                    }
+                    cold.close();
+                }
+                cases += 1;
+            }
+        }
+    }
+    assert!(cases >= seeds() * 8 && undo_races >= seeds());
+    eprintln!("F3 transactions: cases={cases}, undo_races={undo_races}, step_boundaries={}, image_checks={}", seeds()*4, cases*4);
+}
+
 #[test]
 fn read_only_expectation_passes_without_touching_file() {
     let _integration_guard = crate::integration_lock();

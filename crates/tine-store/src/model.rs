@@ -14,6 +14,8 @@ mod launch_patch;
 mod layout_retention;
 pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};
+#[cfg(any(test, feature = "test-faults"))]
+pub(crate) mod index_oracle;
 #[cfg(test)]
 pub(crate) mod index_oracle_tests;
 mod line_endings;

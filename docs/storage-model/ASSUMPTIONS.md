@@ -38,6 +38,17 @@ does not establish check ordering or root identity.
 The unguarded items are tracked as follow-ups of the existing L9 audit work
 (model-to-code link, milestone M2 onward):
 
+F3 strengthens the test evidence around A-REFS-GIVEN and A-OPAQUE-TEXT:
+`crates/tine-store/tests/conformance_f3.rs` compares generated real
+Markdown/Org rename/merge bytes to an independent fixture renderer and live
+indexes to a cold build. These remain assumptions of the formal host proof;
+bounded semantic tests do not change their status. Generated retained commit
+and restore conservation journeys live in `tests/transaction.rs`,
+`tests/restore.rs` and `tests/i02_crash_gaps.rs` in the same crate. The latter's
+OS aborts and the native adapter's pre-phase faults are separate from model
+power cuts; the four evidence classes and their limits are listed in
+[README.md](README.md#evidence-classes-and-semantic-conformance).
+
 - A-ROOT-BOUND follow-up: L9-02, RootBinding and bounded creation.
 - A-DRAFT-NAMESPACE follow-up: L9-01, stable draft/backup namespace.
 - A-ONE-HOST follow-up: L9-12, arbitration on the other three platforms.

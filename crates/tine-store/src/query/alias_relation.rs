@@ -321,7 +321,7 @@ impl AliasRelation {
 
     /// A canonical text of the whole relation, for equality tests: equal
     /// exactly when a delta-maintained relation matches a rebuilt one.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn image(&self) -> String {
         let mut out = String::new();
         for (path, row) in self.rows.iter() {

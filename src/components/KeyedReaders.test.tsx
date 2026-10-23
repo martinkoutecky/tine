@@ -87,7 +87,7 @@ it("an open block peek reloads its subtree, full and gaps, without preview_block
   preview.mockClear();
   publish({ blocks: ["unrelated"] }); await tick();
   expect(preview).not.toHaveBeenCalled();
-  for (const fields of [{ blocks: [id] }, { full: true }, { gap: true }]) {
+  for (const fields of [{ blocks: [id] }, { pages: ["source"] }, { full: true }, { gap: true }]) {
     text += " changed";
     if ("gap" in fields) rev += 2;
     publish(fields);
@@ -108,4 +108,23 @@ it("a page embed answered under another name refreshes when that page changes", 
   text += " changed";
   publish({ pages: ["target"] });
   await vi.waitFor(() => expect(root.textContent).toContain(text));
+});
+
+it.each(["Source", "An alias"])("an open %s page peek follows canonical source changes without reading unrelated pages", async name => {
+  let folded = false;
+  const read = vi.spyOn(backend(), "getPage").mockImplementation(async () => ({
+    id: "pages/Source.md", name: "Source", title: "Source", kind: "page", pre_block: null,
+    blocks: [{ ...block("Parent"), collapsed: folded, children: [{ ...block("Peek child"), id: "child" }] }],
+  }));
+  const root = document.createElement("div"); document.body.append(root);
+  dispose = render(() => <InlineText text={`[[${name}]]`} />, root);
+  root.querySelector(".page-ref")!.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse", isPrimary: true }));
+  await vi.waitFor(() => expect(document.querySelector(".peek-popup")?.textContent).toContain("Peek child"), { timeout: 2000 });
+  read.mockClear();
+  publish({ pages: ["unrelated"] }); await tick();
+  expect(read).not.toHaveBeenCalled();
+  folded = true;
+  publish({ pages: ["source"] });
+  await vi.waitFor(() => expect(document.querySelector(".peek-popup")?.textContent).not.toContain("Peek child"));
+  expect(read).toHaveBeenCalled();
 });
