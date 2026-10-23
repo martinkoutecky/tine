@@ -10,12 +10,80 @@ impl Driver {
         d
     }
 
+    fn draft_retiring(&mut self, p: usize) {
+        self.register(p);
+        assert!(self.oracle.next("draftSync", &[json!(p)]).is_some());
+        assert_eq!(
+            self.host.begin_draft_retiring(&key(p)),
+            Disposition::Pending
+        );
+        if matches!(
+            self.host.worker.as_ref().unwrap().application,
+            Some(Application::Retire)
+        ) {
+            self.whole_retires += 1;
+        }
+        self.compare("production draft entry pending");
+        self.drain(
+            "draftSync",
+            &[json!(p)],
+            self.host.incarnation,
+            self.host.version,
+        );
+    }
+
+    fn retirement_custody(&mut self) {
+        let Some(worker) = self
+            .host
+            .worker
+            .as_ref()
+            .filter(|w| matches!(w.application, Some(Application::Retire)))
+        else {
+            return;
+        };
+        let pages = worker.pages.clone();
+        assert_eq!(pages, worker.before.keys().cloned().collect());
+        for op in self.host.live_ops.values() {
+            let expected: BTreeSet<_> = op
+                .versions
+                .iter()
+                .filter(|(k, v)| {
+                    let page = &self.oracle.state()["s"]["pages"][index(k)];
+                    page["risk"] == true
+                        && page["conflict"] == false
+                        && page["ver"] == self.version(**v)
+                })
+                .map(|(k, _)| k.clone())
+                .collect();
+            assert_eq!(op.owed, expected, "whole retirement publication debt");
+        }
+        let before = self.untouched();
+        for page in pages {
+            assert!(
+                self.host.busy(&page),
+                "whole retirement lost custody of {page}"
+            );
+            assert_eq!(self.host.observe(&page), Disposition::Waiting);
+            assert_eq!(
+                self.host.reserve(&BTreeSet::from([page])),
+                Disposition::Waiting
+            );
+        }
+        self.assert_untouched(&before, "whole retirement busy probes");
+    }
+
     fn tick_draft(&mut self) {
+        self.retirement_custody();
         let worker = self.host.worker.as_ref().unwrap();
         let application = !matches!(worker.application, Some(Application::Representation))
             && super::applies_next(worker);
         let present = worker.task.stage == Stage::Present;
-        let removal = matches!(worker.application, Some(Application::Removal));
+        let removal = matches!(
+            worker.application,
+            Some(Application::Removal | Application::Retire)
+        );
+        let retired =
+            matches!(worker.application, Some(Application::Retire)).then(|| worker.pages.clone());
         let inc = self.host.incarnation;
         self.host.advance_draft();
         let stutter = |d: &mut Self, context: &str| {
@@ -30,7 +98,29 @@ impl Driver {
                     args[0] = json!(present);
                 }
                 self.register_versions(&name, &args, inc);
-                self.finish(&name, &args);
+                if let Some(pages) = retired {
+                    assert_eq!(name, "draftSync");
+                    // This terminal is atomic physically. Its virtual cuts
+                    // remove exactly one record at a time; all other fields
+                    // already have their observed terminal values. Check each
+                    // against an enabled model step, including its ghosts.
+                    let terminal = self.abstract_state();
+                    let mut projected = terminal.clone();
+                    projected["drafts"] = self.observed["s"]["drafts"].clone();
+                    for page in pages {
+                        let p = index(&page);
+                        assert_eq!(self.oracle.state()["s"]["pages"][p]["risk"], false);
+                        projected["drafts"][p] = terminal["drafts"][p].clone();
+                        self.finish_projection("draftSync", &[json!(p)], projected.clone());
+                    }
+                    assert_eq!(
+                        projected, terminal,
+                        "whole retirement changed only its records"
+                    );
+                    self.compare("whole retirement physical terminal");
+                } else {
+                    self.finish(&name, &args);
+                }
             } else {
                 stutter(self, "failed fresh install stutters");
             }
@@ -40,9 +130,14 @@ impl Driver {
     }
 
     fn fault(&mut self, power: bool, keep_drafts: bool) {
+        self.fault_keeping(power, keep_drafts, &BTreeSet::new());
+    }
+
+    fn fault_keeping(&mut self, power: bool, keep_drafts: bool, kept: &BTreeSet<usize>) {
+        let keep = kept.iter().copied().map(key).collect();
         let mut survivor = self.host.fs.clone();
         if power {
-            survivor.power(&BTreeSet::new(), keep_drafts);
+            survivor.power(&keep, keep_drafts);
         } else {
             survivor.crash();
         }
@@ -52,7 +147,7 @@ impl Driver {
                 .files
                 .contains_key(&format!("draft/{}", worker.task.name));
             let removal = match &worker.application {
-                Some(Application::Removal) => {
+                Some(Application::Removal | Application::Retire) => {
                     let logical = drafts::scan(survivor.draft_files(false)).logical;
                     !worker.pages.iter().any(|p| logical.contains_key(p))
                 }
@@ -86,30 +181,28 @@ impl Driver {
                 if removal {
                     worker.remaining.clear();
                 }
+                // The survivor projection changed the durable census. Keep
+                // the host's existing index in step before observing it; no
+                // I/O is retried and no production phase is advanced here.
+                self.host.sync_drafts();
                 self.tick_draft();
                 self.host.fs = physical;
             } else {
                 self.effect = None;
             }
         }
-        // Apply the selected physical directory outcome; graph keep=false.
+        // Apply the selected physical graph and draft directory outcomes.
         if power {
-            let expected = self.oracle.next("power", &[json!(false), json!(false)]);
-            self.refine_power_cuts(&BTreeSet::new(), &expected.unwrap().state()["s"]["trash"]);
+            let expected = self.oracle.next("powerK", &[json!(kept)]);
+            self.refine_power_cuts(&keep, &expected.unwrap().state()["s"]["trash"]);
         }
         self.host.fs = survivor;
         self.host.stop();
         self.fresh_binding();
         self.windows.fill(Window::default());
         self.pending_ids.fill(None);
-        self.finish(
-            if power { "power" } else { "crash" },
-            if power {
-                &[json!(false), json!(false)]
-            } else {
-                &[]
-            },
-        );
+        let args = if power { vec![json!(kept)] } else { vec![] };
+        self.finish(if power { "powerK" } else { "crash" }, &args);
     }
 
     // Dispositions are fixed by the host contract, not chosen from the oracle.
@@ -143,15 +236,21 @@ impl Driver {
                 .is_some_and(|j| self.host.worker.as_ref().is_some_and(|w| w.pages.contains(&j.page))
                     || name == "check" && j.phase == SavePhase::Check && self.host.allocator_busy()
                     && j.base != Base::Known(self.host.fs.files.get(&format!("graph/{}", j.page)).cloned())),
-            "draftSync" | "opRename" => self.host.worker.is_some(),
-            "opDelete" => self.host.worker.is_some() || self.host.busy(&key(p)),
+            "draftSync" => self.host.worker.is_some(),
+            "opRename" => self.host.worker.is_some() || self.host.allocator_busy(),
+            "opApply" => self.host.worker.is_some() || self.host.allocator_busy(),
+            "opDelete" => self.host.worker.is_some() || self.host.busy(&key(p))
+                || self.host.allocator_busy() || self.host.order.touches(&BTreeSet::from([key(p)])),
             "switchReq" => self.host.worker.is_some(),
             "switchFin" => self.host.worker.is_some() || self.host.applying.is_some()
                 || !self.host.queue.is_empty() || self.host.job.is_some()
-                || self.host.outbox.values().any(|m| m.answer.is_some()),
+                || self.host.outbox.values().any(|m| m.answer.is_some())
+                || self.windows.iter().any(|w| w.pend || w.sent),
             _ => false,
         };
         if blocked {
+            let before = matches!(name, "opApply" | "switchFin").then(|| self.untouched());
+            let confirmation = (self.host.admission_open, self.host.switch_confirmation);
             match name {
                 "deliverUp" => {
                     if self.host.applying.is_some() {
@@ -172,6 +271,22 @@ impl Driver {
                 }
                 "draftSync" => assert_eq!(self.host.begin_draft(&key(p)), Disposition::Waiting),
                 "opDelete" => assert_eq!(self.host.delete(&key(p)), Disposition::Waiting),
+                "opRename" => assert_eq!(self.rename_operation(name, args), Disposition::Waiting),
+                "opApply" => {
+                    let (eff, plan, dst, src) = apply_args(name, args);
+                    let effects = eff
+                        .iter()
+                        .map(|(&p, &t)| (key(p), (text(t), text(plan[&p]))))
+                        .collect();
+                    let ends = (dst != NONE).then(|| (key(dst as usize), key(src as usize)));
+                    assert_eq!(
+                        self.host.apply(
+                            &effects,
+                            ends.as_ref().map(|(d, s)| (d.as_str(), s.as_str()))
+                        ),
+                        Disposition::Waiting
+                    );
+                }
                 "switchReq" => assert_eq!(self.host.switch_request(), Disposition::Waiting),
                 "switchFin" => assert_eq!(self.host.switch_finish(), Disposition::Waiting),
                 "check" | "rename" | "dirSync" | "saveFail" => {
@@ -179,8 +294,24 @@ impl Driver {
                 }
                 _ => {}
             }
+            if let Some(before) = before {
+                self.assert_untouched(&before, "blocked action no-mutation disposition");
+                assert_eq!(
+                    (self.host.admission_open, self.host.switch_confirmation),
+                    confirmation
+                );
+            }
             self.compare("blocked action retains custody");
             return false;
+        }
+        if name == "opApply" {
+            // This adapter loads named pages and probes Changed/Unsaved/Busy
+            // even when the oracle disables the operation. Its existing
+            // occupied-name and queued-input stutters retain exact snapshots.
+            let refusals = self.occupied_refusals + self.queued_refusals;
+            let taken = self.step(name, args);
+            self.compare("physical scheduler apply disposition");
+            return taken && refusals == self.occupied_refusals + self.queued_refusals;
         }
         if self.oracle.next(name, args).is_none() {
             match name {
@@ -191,6 +322,7 @@ impl Driver {
                     assert_eq!(self.host.delete_loaded(&key(p)), Disposition::Refused);
                 }
                 "opRename" if self.host.pages.len() == self.host.keys.len() => {
+                    let before = self.untouched();
                     let q = args[1].as_u64().unwrap() as usize;
                     let refs: BTreeSet<usize> = serde_json::from_value(args[2].clone()).unwrap();
                     let refkeys = refs.iter().map(|&r| key(r)).collect();
@@ -205,7 +337,7 @@ impl Driver {
                             )
                         })
                         .collect();
-                    assert_eq!(
+                    let result =
                         self.host
                             .rename_with(&key(p), &key(q), &refkeys, |bytes, k, moving| {
                                 let r = k.trim_end_matches(".md").parse::<usize>().unwrap();
@@ -214,11 +346,30 @@ impl Driver {
                                 } else {
                                     bytes.clone()
                                 })
-                            }),
-                        Disposition::Refused
+                            });
+                    let keys = named(name, args).into_iter().map(key).collect();
+                    assert!(
+                        result == Disposition::Refused
+                            || result == Disposition::Waiting
+                                && (self.host.order.touches(&keys)
+                                    || keys.iter().any(|key| self.host.busy(key))),
+                        "disabled rename without a refusal or physical busy predicate: {result:?}"
                     );
+                    self.assert_untouched(&before, "disabled rename");
                 }
-                "switchFin" => assert_eq!(self.host.switch_finish(), Disposition::Waiting),
+                "switchFin" => {
+                    let before = self.untouched();
+                    let confirmation = (self.host.admission_open, self.host.switch_confirmation);
+                    if self.host.switch_ready(self.host.last_admitted) == Disposition::Applied {
+                        assert_eq!(self.host.switch_finish(), Disposition::Waiting);
+                        self.host.switch_abort();
+                    }
+                    assert_eq!(
+                        (self.host.admission_open, self.host.switch_confirmation),
+                        confirmation
+                    );
+                    self.assert_untouched(&before, "disabled switch retains custody");
+                }
                 "observe" => assert_eq!(self.host.observe(&key(p)), Disposition::Disabled),
                 "load" => assert_eq!(self.host.load(&key(p)), Disposition::Disabled),
                 _ => return false, // Client actions have no backend call.
@@ -248,8 +399,18 @@ impl Driver {
             self.compare("trash directory sync barrier");
             return true;
         }
-        if matches!(name, "crash" | "power") {
-            self.fault(name == "power", false);
+        if name == "draftSync" {
+            self.draft_retiring(p);
+            true
+        } else if name == "powerK" {
+            let keep = serde_json::from_value(args[0].clone()).unwrap();
+            self.fault_keeping(true, false, &keep);
+            true
+        } else if matches!(name, "crash" | "power") {
+            let keep = (0..2)
+                .filter(|&p| args.get(p).is_some_and(|v| v == true))
+                .collect();
+            self.fault_keeping(name == "power", false, &keep);
             true
         } else {
             self.step(name, args)
@@ -905,118 +1066,12 @@ fn switch_waits_for_unread_final_answer_and_busy_dispositions() {
     assert!(!d.attempt("opDelete", &[json!(0)]));
 }
 
-#[test]
-#[cfg(test)]
-fn scheduler_random_walks_with_faults_and_disabled_actions() {
-    let mut steps = 0;
-    let mut physical = 0;
-    let mut disabled = 0;
-    for profile in ["base", "R1", "weak", "all"] {
-        for seed in 1u64..=12 {
-            let mut rng = seed;
-            let mut d = Driver::stepped(profile);
-            for turn in 0..800 {
-                rng ^= rng << 13;
-                rng ^= rng >> 7;
-                rng ^= rng << 17;
-                if !d.host.alive {
-                    d.step("launch", &[]);
-                    steps += 1;
-                    continue;
-                }
-                if rng % 5 == 0
-                    && d.host.applying.is_none()
-                    && !d.host.queue.is_empty()
-                    && d.host.dequeue() == Disposition::Pending
-                {
-                    // Dequeue preserves abstract queue custody. Admission,
-                    // window crash and external writes can interleave before
-                    // the later deliverUp application.
-                    d.compare("dequeued request barrier");
-                    physical += 1;
-                    continue;
-                }
-                if d.host.worker.is_some() && rng % 3 != 0 {
-                    if rng % 19 == 0 {
-                        let w = d.host.worker.as_ref().unwrap();
-                        let phase = match w.task.stage {
-                            Stage::Temp => Some(Phase::DraftTemp),
-                            Stage::Rename => Some(Phase::DraftRename),
-                            Stage::Unlink | Stage::CleanupUnlink => Some(Phase::DraftUnlink),
-                            Stage::Sync | Stage::UnlinkSync | Stage::CleanupSync => {
-                                Some(Phase::DraftSync)
-                            }
-                            _ => None,
-                        };
-                        if let Some(phase) = phase {
-                            d.host.fs.inject(
-                                phase,
-                                [if rng % 2 == 0 {
-                                    Fault::After
-                                } else {
-                                    Fault::Before
-                                }],
-                            );
-                        }
-                    }
-                    let result =
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| d.tick_draft()));
-                    if let Err(e) = result {
-                        eprintln!("failure capsule: HEAD 4469437e + lane diff; {profile}/seed {seed}/turn {turn}/draft barrier; {steps} actions / {physical} physical / {disabled} disabled before failure; expected observed lockstep; frozen design/model mismatch");
-                        std::panic::resume_unwind(e);
-                    }
-                    physical += 1;
-                    continue;
-                }
-                let p = (rng as usize / 7) % 3;
-                let t = 1 + (rng as i64 / 31).rem_euclid(3);
-                let (name, args) = match (rng / 13) % 25 {
-                    0 => ("wOpen", json!([p])),
-                    1 => ("wEdit", json!([p, t])),
-                    2 => ("wSend", json!([p])),
-                    3 => ("wRecv", json!([p])),
-                    4 => ("deliverUp", json!([true])),
-                    5 => ("observe", json!([p])),
-                    6 => ("flush", json!([p])),
-                    7 => ("flushDel", json!([p])),
-                    8 => ("check", json!([])),
-                    9 => ("rename", json!([])),
-                    10 => ("dirSync", json!([rng % 2 == 0])),
-                    11 => ("saveFail", json!([])),
-                    12 => ("draftSync", json!([p])),
-                    13 => ("opDelete", json!([p])),
-                    14 => ("extWriteD", json!([p, t, rng % 2 == 0])),
-                    15 => ("windowCrash", json!([])),
-                    16 => ("switchReq", json!([])),
-                    17 => ("wDiscard", json!([p])),
-                    18 => ("wClose", json!([p])),
-                    19 => ("crash", json!([])),
-                    20 => ("power", json!([false, false])),
-                    21 => ("wOpTo", json!([p, (p + 1) % 3, t, 1 + t % 3])),
-                    22 => ("load", json!([p])),
-                    23 => ("wResolve", json!([p, t])),
-                    _ => (
-                        "opRename",
-                        json!([p, (p + 1) % 3, [(p + 2) % 3], [[(p + 2) % 3, t]]]),
-                    ),
-                };
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    d.attempt(name, args.as_array().unwrap())
-                }));
-                match result {
-                    Ok(true) => steps += 1,
-                    Ok(false) => disabled += 1,
-                    Err(e) => {
-                        eprintln!("failure capsule: HEAD 4469437e + lane diff; {profile}/seed {seed}/turn {turn}/{name}/{args}; expected observed lockstep; product or harness mismatch");
-                        std::panic::resume_unwind(e);
-                    }
-                }
-            }
-            d.settle();
-        }
-    }
-    eprintln!("scheduler 48 walks x 800 choices; seeds 1..12 per profile; {steps} actions / {physical} physical / {disabled} disabled");
-}
+#[path = "scheduler_retirement_tests.rs"]
+mod retirement;
+use retirement::published_group;
+
+#[path = "scheduler_random_tests.rs"]
+mod random;
 
 // Former counterexamples now pass through the authorized s3.1 load boundary.
 #[test]
