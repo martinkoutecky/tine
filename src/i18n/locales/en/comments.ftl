@@ -12,7 +12,9 @@ comment-margin-count = { NUMBER($count, useGrouping: 0) } { $count ->
     } in the margin
 comment-margin-label = Comments
 comment-toolbar = Comment
+comment-toolbar-shortcut = Comment (Ctrl/Cmd+R)
 comment-reply = Reply
+comment-reply-placeholder = Reply…
 comment-delete = Delete comment and replies
 comment-select-first = Select text in a block first, then choose Comment on selection (or press Ctrl+R while editing)
 comment-block-changed = The block changed after you selected text; select it again to comment

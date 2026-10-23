@@ -49,8 +49,12 @@ Decisions on the surface: D-20261017-MD1 (integrate into og for 0.9) and the
   **Comment on selection** for words selected in a block's rendered text.
   The editor selection toolbar also offers **Comment**. Within a thread this
   creates a child reply whose selection is a compact quote inside that thread.
-  Each comment and reply offers **Reply** without requiring a selection, and a
-  delete control removes that block and its replies as one document undo step
+  Each thread offers a local **Reply…** draft at its bottom on hover or focus
+  (also while active in the margin). Focus expands it; Enter submits, Shift+Enter
+  adds a line, Escape/Cancel discards. No block or save exists until a nonempty
+  draft is submitted. The selection toolbar's speech bubble is rightmost on
+  desktop and touch. A top-right delete control on each comment/reply removes
+  that block and its replies as one document undo step
   (provisional margin-polish rule, 2026-10-23).
 - The ordinary editor-hidden property projection also hides `quote`,
   `quote-prefix`, `quote-suffix` and `author` **only when the block's own primary
