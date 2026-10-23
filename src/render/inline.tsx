@@ -452,8 +452,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           truncatedCount={() => capped().truncated}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
-          onDismiss={peek.dismiss}
-          onHold={peek.setHeld}
+          onDismiss={peek.dismiss} onHold={peek.setHeld}
         />
       </Show>
     </>
@@ -1493,8 +1492,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           </Show>}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
-          onDismiss={peek.dismiss}
-          onHold={peek.setHeld}
+          onDismiss={peek.dismiss} onHold={peek.setHeld}
         />
       </Show>
     </>
