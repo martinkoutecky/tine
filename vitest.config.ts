@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
 // Store/editor-logic tests are pure TS (no DOM). Use the node environment and
@@ -21,6 +21,9 @@ export default defineConfig({
     testTimeout: 60_000,
     hookTimeout: 60_000,
     include: ["src/**/*.test.ts"],
+    // Builds and drives the native tine-store peer: its own mandatory gate,
+    // `npm run test:storage-conformance` (vitest.storage.config.ts), after Rust tests.
+    exclude: [...configDefaults.exclude, "src/document/host/nativeConformance.test.ts"],
     setupFiles: ["./src/testSetup.parser.ts"],
     server: { deps: { inline: ["solid-js"] } },
   },
