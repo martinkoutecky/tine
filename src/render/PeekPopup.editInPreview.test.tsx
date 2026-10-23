@@ -4,8 +4,9 @@ import { backend } from "../backend";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
-import { ensurePageLoaded, node, pageByName, resetStore } from "../document";
+import { deleteSelection, ensurePageLoaded, isSelected, selectedIds, node, pageByName, resetStore } from "../document";
 import { route, tabs } from "../router";
+import { installKeybindings } from "../keybindings";
 import { editingId, endEdit, startEditing } from "../editorController";
 
 // D-20261023-VQ: a hover preview shows the live source blocks, editable in
@@ -187,7 +188,7 @@ describe("D-20261023-VQ: editable hover preview", () => {
     }
   });
 
-  it("an outside press while editing commits through blur instead of tearing the popup down", async () => {
+  it("an outside press while editing leaves the popup and its editor mounted", async () => {
     const { card, dispose } = await openPeek();
     try {
       await editInPopup(card);
@@ -240,6 +241,31 @@ describe("D-20261023-VQ: editable hover preview", () => {
       expect(editor()).toBeNull();
     } finally {
       dispose();
+    }
+  });
+  it("selecting past an editable row never reaches another page's block behind a read-only duplicate row", async () => {
+    const U = "58900000-0000-4000-8000-0000000000d2";
+    ensurePageLoaded({ id: "pages/Orig.md", name: "Orig", title: "Orig", kind: "page", format: "md", pre_block: "",
+      blocks: [blk(U, `Original\nid:: ${U}`, [], { properties: [["id", U]] })] } as never);
+    const uninstall = installKeybindings(); // Shift+Down is a configured editor command
+    const { card, dispose } = await openPeek([blk("e1", "Editable"), blk(U, `Copied\nid:: ${U}`, [], { properties: [["id", U]] })]);
+    try {
+      await editInPopup(card, "e1");
+      const textarea = editor()!;
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", shiftKey: true, bubbles: true, cancelable: true }));
+      await advance(0);
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", shiftKey: true, bubbles: true, cancelable: true }));
+      await advance(0);
+      expect(selectedIds()).toContain("e1"); // the block selection started
+      expect(isSelected(U)).toBe(false);
+      deleteSelection();
+      await advance(0);
+      expect(node(U)?.page).toBe("Orig");
+      expect(node(U)?.raw).toBe(`Original\nid:: ${U}`);
+    } finally {
+      dispose();
+      uninstall();
     }
   });
 });

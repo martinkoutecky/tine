@@ -457,7 +457,10 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
             view and hides the caret). `roots` tracks result membership reactively;
             navOnly keeps structural mutations (merges/indents/moves) on page order. */}
         <OutlineScopeContext.Provider value={{
-          get roots() { return groupedIds(); },
+          // A preview row left on its read-only copy (not the live block of
+          // its own page) never enters navigation or selection: its id may name
+          // another page's block.
+          get roots() { return props.surface === "preview" ? groupedIds().filter((id) => ready() && !!liveNode(id)) : groupedIds(); },
           // A preview shows source folds, so it navigates through them too.
           collapsed: (id, stored) => props.surface === "preview" ? stored
             : contextRootIds().has(id) ? false : collapseSurface.collapsed(id, stored),
