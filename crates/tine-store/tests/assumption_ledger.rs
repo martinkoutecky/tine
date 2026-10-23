@@ -69,8 +69,8 @@ fn assumption_anchors_guards_tests_and_model_hash_exist() {
         }
         if *status == "unguarded" {
             assert!(
-                source.contains(&format!("[{id} follow-up](")),
-                "{id}: unguarded row needs its queue link below the table"
+                source.contains(&format!("{id} follow-up")),
+                "{id}: unguarded row needs its named follow-up below the table"
             );
         }
     }

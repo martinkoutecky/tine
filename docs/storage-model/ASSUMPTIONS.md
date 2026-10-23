@@ -35,19 +35,18 @@ does not establish check ordering or root identity.
 | A-PROGRESS | Scheduling eventually runs the host | `action draftSync` | `crates/tine-store/src/page_host/driver.rs#Shared::submit` | `crates/tine-store/src/page_host/driver_tests.rs#every_admission_wakes_a_sleeping_driver` | All five; default Progress replay (G3) pending | guarded-untested |
 | A-MUTATION-CONTAINMENT | Every graph-derived mutation has a containment guard; M1 findings below are exceptions | `disk: int -> int` | — | — | Developer export CLI, test-injection helpers, and .git path operations | unguarded |
 
-The unguarded items are tracked by the existing L9 work, linked through the
-local dossier for [JI5 queue card PVTI_lAHOAAbLVc4BhPsyzhCzqaU](/aux/koutecky/logseq/tine-agents/specs/campaigns/2026-10-r2-batch/model-link-m0-m1.md):
+The unguarded items are tracked as follow-ups of the existing L9 audit work
+(model-to-code link, milestone M2 onward):
 
-- [A-ROOT-BOUND follow-up](/aux/koutecky/logseq/tine-agents/specs/campaigns/2026-10-r2-batch/model-link-m0-m1.md): L9-02, RootBinding and bounded creation.
-- [A-DRAFT-NAMESPACE follow-up](/aux/koutecky/logseq/tine-agents/specs/campaigns/2026-10-r2-batch/model-link-m0-m1.md): L9-01, stable draft/backup namespace.
-- [A-ONE-HOST follow-up](/aux/koutecky/logseq/tine-agents/specs/campaigns/2026-10-r2-batch/model-link-m0-m1.md): L9-12, arbitration on the other three platforms.
-- [A-DIRSYNC follow-up](/aux/koutecky/logseq/tine-agents/specs/campaigns/2026-10-r2-batch/model-link-m0-m1.md): L9-13, durable withdraw trash directory creation.
+- A-ROOT-BOUND follow-up: L9-02, RootBinding and bounded creation.
+- A-DRAFT-NAMESPACE follow-up: L9-01, stable draft/backup namespace.
+- A-ONE-HOST follow-up: L9-12, arbitration on the other three platforms.
+- A-DIRSYNC follow-up: L9-13, durable withdraw trash directory creation.
 
 ## Mutation ledger
 
-[A-MUTATION-CONTAINMENT follow-up](/aux/koutecky/logseq/tine-agents/specs/campaigns/2026-10-r2-batch/model-link-m0-m1.md)
-records the M1 census findings; this is a follow-up under the same JI5 card,
-not a production fix in M0/M1:
+The A-MUTATION-CONTAINMENT follow-up records the M1 census findings; it is
+part of the same follow-up work, not a production fix in M0/M1:
 
 - `crates/tine-store/src/bin/export-block-raws.rs#main` overwrites
   `<supplied graph>/block-raws.json` directly. It has no containment or atomic
