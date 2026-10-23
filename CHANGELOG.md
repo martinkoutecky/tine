@@ -59,6 +59,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Page-property rows in Linked References keep the same appearance after editing, including other groups showing the same page (GH #753).
+
 - **Margin comments** (internal UI-MARGIN-POLISH): select words and click **Comment** in the toolbar; cards and replies now offer **Reply** and **×** (delete with replies, restored together by Undo). Blocks with their own `quote` property hide quote context and author metadata while editing and retain their saved bytes; ordinary blocks keep those properties editable. Quoted replies stay readable inside their thread.
 - **Hover previews share the source's fold** (GH #748): folding or unfolding a block in a page-link or block-reference preview now saves the source block's `collapsed::` property, with Undo. An open page and its preview follow each other's folds, and expanded blocks' arrows work too. A source that cannot be written keeps a local preview fold.
 - Changing a block between outline levels one and two on long pages with images above no longer makes the view jump; structural edits preserve loaded image and measured window geometry (GH #745).
