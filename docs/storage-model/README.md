@@ -160,6 +160,26 @@ The chain is: prose spec → Quint model (checked) → Lean model (proved: compl
    logical claimant or possible unreadable owner at a creating save, audit L8-02); each has a predicate,
    a no-change check and a planted spurious refusal that the tests catch.
 
+The test-only physical scheduler also calls production `begin_draft_retiring`:
+whole-operation retirement refines a sequence of enabled single-page
+`draftSync` removals. It checks every physical barrier, the terminal's virtual
+single-page cuts (including ghosts), busy custody/publication debt, and
+crash/power recovery. The ordinary H/N per-page adapter remains unchanged.
+Seeded walks interleave that worker with `opApply` (current and older captured
+plans, present and absent effects), logical claimant arrival/removal, switch
+completion, external deletion, and all eight three-page graph survivor sets.
+Plan inputs come from host buffers/files; the oracle checks their outcomes.
+Required branch/disposition counters fail if any declared branch is missing;
+power counters also require both keeping and reverting changed graph bytes.
+Apply's existing occupied-name/queued-input refusals are checked no-change
+stutters; physical worker/allocator custody returns Busy, stale plans return
+Changed (or an earlier documented Unsaved/Busy refusal), and switch completion
+waits while work/input/drafts prevent it. Environment no-ops and writes in a
+forbidden R1 window are disabled choices, not invented host actions. Directed
+retirement tests inject before/after unlink/sync faults and restart at every
+worker cut. This is ModelFs safety evidence, not native power-loss or real
+Progress/driver liveness coverage.
+
 The filesystem/process assumptions, their existing guards and tests, and the
 remaining gaps are recorded in [ASSUMPTIONS.md](ASSUMPTIONS.md). The assumption
 meta-test checks those references and the existing model/replay hash (G8).
