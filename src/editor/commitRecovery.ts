@@ -29,8 +29,15 @@ export function editorCommitRecovery(
     if (release && ref) report(ref.value);
     applied();
   });
-  return {
+  const recovery = {
     applied,
+    /** Runs a commit's join: success releases a held edit, a throw is refused. */
+    join<T>(run: () => T, text: string): T {
+      let value: T;
+      try { value = run(); } catch (error) { return recovery.refused(error, text); }
+      applied();
+      return value;
+    },
     refused(error: unknown, text: string): never {
       release ??= registerEditExitGuard(() => {
         const ref = editor();
@@ -44,4 +51,5 @@ export function editorCommitRecovery(
       throw error;
     },
   };
+  return recovery;
 }
