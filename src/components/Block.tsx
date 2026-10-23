@@ -3299,7 +3299,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         classList={{ [`h${editorHeadingLevel()}`]: editorHeadingLevel() != null, "code-edit": codeEditing() }}
         wrap={codeEditing() && !codeWrapping() ? "off" : "soft"}
         spellcheck={spellcheckEnabled()}
-        // A frozen page (a transfer endpoint, a rename, a graph switch) takes
+        // A frozen page (a delete, transfer, rename or graph switch) takes
         // no input at all, so nothing typed is shown and then dropped (Q-TS2).
         readOnly={!blockWritable(props.id)}
         value={textareaValue()}

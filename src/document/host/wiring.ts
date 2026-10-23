@@ -24,7 +24,7 @@ import { openUnsavedRecovery } from "../../unsavedRecovery";
 import { assetWritesStarted, pendingAssetWrites } from "../assetWrites";
 import { aliasDraftBlocks, appendAliasDraft, emptyPage, pageToDto, replaceLandedAliasDraft } from "../convert";
 import { isBlockMoving } from "../edits/moves";
-import { adoptFoldedPageHeader } from "../edits/properties";
+import { adoptFoldedPageHeader, pageWritable } from "../edits/properties";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { pageInstanceGeneration, rekeyPageInstance } from "../instance";
 import { doc, pageByName, setPageId } from "../model";
@@ -46,14 +46,14 @@ const early = new Map<string, EditKind[]>();
 /** The file revision each loaded page's text was installed from (Concord's
  * ledger base, and the document port's baseline facts). */
 const baseRev = new Map<string, string | null>();
-/** Pages deleted in this window: no edit re-opens them until they load again. */
+/** Pages being deleted or deleted here: no input until refusal or reload. */
 const deletedPages = new Set<string>();
 /** Transfer endpoints (§8): frozen, with the host's text held apart from the display. */
 const transferPages = new Set<string>();
 const speculation = new Map<string, PageDto>();
 const titleIntents = new Set<string>();
-/** Alias drafts whose copy landed in their owner while a later edit kept the
- * draft open (L13): a retry replaces that copy, never appends again. */
+/** Alias drafts handed to their owner (L13, audit L9-05): until publication
+ * and draft retirement, a retry replaces that copy, never appends again. */
 const landedAliasDrafts = new Map<string, { owner: string; blocks: BlockDto[]; generation: number | null }>();
 const landing = new Set<string>();
 let inventoryPending = false;
@@ -277,11 +277,6 @@ function watch(): void {
 export function releaseHolds(): void {
   const c = host();
   for (const name of c?.names() ?? []) c!.release(name);
-}
-
-function pageWritable(name: string): boolean {
-  const page = pageByName(name);
-  return !graphRewriteFrozen() && !!page && !page.readOnly && !page.guide;
 }
 
 // ------------------------------------------------------------------ data revision
@@ -583,7 +578,7 @@ export function baseRevFor(name: string): string | null | undefined {
 }
 
 export function untombstone(name: string): void {
-  deletedPages.delete(name);
+  if (deletedPages.delete(name)) setHostRevision((n) => n + 1);
 }
 
 /** The page's loaded text leaves the working set (eviction, forget). */
@@ -601,10 +596,10 @@ export function transferInProgress(): boolean {
   return transferPages.size > 0;
 }
 
-/** A page whose input is frozen for a transition (a transfer or a freeze). */
+/** A page whose input is frozen for a transition (a delete, transfer or freeze). */
 export function pageFrozen(name: string): boolean {
   hostRevision();
-  return transferPages.has(name) || !!client?.isFrozen(name);
+  return deletedPages.has(name) || transferPages.has(name) || !!client?.isFrozen(name);
 }
 
 export function refuseConflictedMove(pages: Iterable<string>): boolean {
@@ -755,7 +750,7 @@ export async function createPage(name: string, dto: PageDto,
   const c = host();
   if (!c) throw new CreatePageRefusal("graph-changed");
   const generation = pageInstanceGeneration(name);
-  deletedPages.delete(name);
+  untombstone(name);
   const expected: DiskToken | undefined = options.baseRev ? { kind: "file", rev: options.baseRev } : undefined;
   const finish = beginResultsChange();
   let created: Awaited<ReturnType<HostClient["createPage"]>>;
@@ -802,6 +797,7 @@ export async function deletePageOnDisk(name: string, kind: PageKind, path?: stri
   }
   const owner = bindingOwner();
   deletedPages.add(name);
+  setHostRevision((n) => n + 1);
   const finish = beginResultsChange();
   let operation: PageOperation;
   try {
@@ -812,11 +808,11 @@ export async function deletePageOnDisk(name: string, kind: PageKind, path?: stri
     // The host is still answering this page: once it is clean, once more.
     if (operation === "waiting" && await settle(c, [name])) operation = await remove();
   } catch (error) {
-    if (host() === c) deletedPages.delete(name);
+    if (host() === c) untombstone(name);
     throw error;
   } finally { finish(); }
   if (operation === "applied") return true;
-  if (host() === c) deletedPages.delete(name);
+  if (host() === c) untombstone(name);
   const why = {
     waiting: msg("delete-reason-waiting", { name }),
     pending: msg("delete-reason-pending", { name }),
@@ -1011,9 +1007,11 @@ async function landAliasDraft(c: HostClient, name: string, ownerPath: string): P
       return;
     }
     installPageContent(owner, text);
+    // The owner now holds this copy even if its submission or publication
+    // fails. Keep the draft recoverable; a retry replaces this exact copy.
+    landedAliasDrafts.set(name, { owner: ownerPath, blocks: aliasDraftBlocks(draft), generation });
     c.noteEdit(owner, ["insert-blocks"]);
     if (!await settle(c, [owner])) return;
-    landedAliasDrafts.set(name, { owner: ownerPath, blocks: aliasDraftBlocks(draft), generation });
     const now = pageToDto(name);
     if (!now || !sameLiveDraft(now, draft) || host() !== c) return;
     landedAliasDrafts.delete(name);
