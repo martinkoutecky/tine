@@ -198,7 +198,11 @@ fn guide_explains_margin_comments() {
     for workflow in [
         "selection toolbar's **Comment** button",
         "quote context and author metadata stay hidden",
-        "click **Reply** on the comment or on a reply",
+        "speech bubble at the right edge",
+        "click its **Reply…** box at the bottom",
+        "**Shift+Enter** adds a line",
+        "**Escape** or **Cancel** discards the draft",
+        "empty reply creates no block and does not save the page",
         "short quote inside that same thread",
         "deletes that comment and its replies",
         "**Ctrl/Cmd+Z** restores them together",

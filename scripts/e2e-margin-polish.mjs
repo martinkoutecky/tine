@@ -85,7 +85,7 @@ async function editText(text) {
 async function action(text, cls) {
   return browser.execute((text, cls) => {
     const row = [...document.querySelectorAll(".ls-block")].find(el => el.querySelector(":scope > .block-main .block-content")?.textContent.includes(text));
-    const button = row?.querySelector(`:scope > .comment-actions .${cls}`);
+    const button = row?.querySelector(`:scope > .comment-quote .${cls}, :scope > .block-main .${cls}`);
     if (!button) return false;
     button.click(); return true;
   }, text, cls);
@@ -139,14 +139,24 @@ try {
   await shot("04-reopened-comment");
   check(await browser.execute(() => !document.querySelector("textarea.block-editor").value.includes("quote::")), "Reopening exposes quote metadata");
   await leave();
-  const replyButton = await action(COMMENT, "comment-reply");
+  const replyId = await browser.execute((text) => {
+    const row = [...document.querySelectorAll(".block-content")].find(el => el.textContent.includes(text))?.closest(".comment-card");
+    return row?.querySelector(":scope > .comment-composer textarea") ? row.dataset.blockId : null;
+  }, COMMENT);
+  const replyButton = !!replyId;
+  if (replyId) {
+    await browser.$(`[data-block-id="${replyId}"]`).moveTo();
+    await browser.$(`[data-block-id="${replyId}"] > .comment-composer textarea`).click();
+  }
   check(replyButton, "Card has no Reply affordance");
   if (!replyButton) {
     await editText(COMMENT);
     await browser.execute((text) => { const ta = document.querySelector("textarea.block-editor"); ta.setSelectionRange(text.length, text.length); }, COMMENT);
     await browser.keys(["Enter"]);
   }
-  await type(REPLY); await leave(); await persisted(REPLY);
+  if (replyButton) { await browser.keys(REPLY); await browser.keys(["Enter"]); }
+  else { await type(REPLY); await leave(); }
+  await persisted(REPLY);
   await shot("05-reply");
   await editText(REPLY); await select("this evidence");
   await browser.execute(() => { window.__marginPolishAlive = true; });
@@ -229,7 +239,9 @@ try {
   check(bytes.equals(fs.readFileSync(FILE)), "Reload changed the page bytes");
   check(journalBytes === fs.readFileSync(JOURNAL, "utf8"), "Reload changed the journal bytes");
   if (!BASELINE) {
-    if (!await action("Keep this revised remark", "comment-reply")) throw new Error("Reply unavailable for handwritten metadata check");
+    await editText("Keep this revised remark");
+    await browser.execute(() => { const ta = document.querySelector("textarea.block-editor"); ta.setSelectionRange(ta.value.length, ta.value.length); });
+    await browser.keys(["Enter"]);
     await type("A hand note");
     await browser.keys(["Shift", "Enter"]);
     // Individual native key commands release duplicate ':' keys reliably.

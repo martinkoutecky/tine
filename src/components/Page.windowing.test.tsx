@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { createSignal } from "solid-js";
 import { CollapseSurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { backend } from "../backend";
-import { extendSelectionTo, node, pageByName, resetStore, selectedIds, selectBlock } from "../document";
+import { extendSelectionTo, node, pageByName, resetStore, selectedIds, selectBlock, outdentBlock } from "../document";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { mainPaneRouter, resetTabsToJournals } from "../router";
 import { resetNearObserverForTests } from "../lazyObserve";
@@ -129,6 +129,24 @@ it("click-to-edit retains the clicked instance when editor state changes the pag
     content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
     await vi.waitFor(() => expect(host.querySelector('[data-block-id="window-0"] textarea.block-editor')).not.toBeNull());
     expect(editingId()).toBe("window-0");
+  } finally { dispose(); }
+});
+
+it("GH #745: outdenting a distant child retains previously visited windows above it", async () => {
+  const { host, dispose } = await mount(2000, false, true);
+  try {
+    const first = host.querySelector('[data-block-id="branch-0"]')!;
+    const firstWindow = first.closest("[data-outline-window]")!;
+    // It has been measured/visited and left the viewport. A regroup below must
+    // not replace its host or discard its measured spacer.
+    WindowObserver.set(firstWindow, false);
+    const spacer = firstWindow.firstElementChild;
+    startEditing("window-1000", 4);
+    await vi.waitFor(() => expect(host.querySelector('[data-block-id="window-1000"] textarea')).not.toBeNull());
+    outdentBlock("window-1000", 4);
+    expect(node("window-1000")?.parent).toBeNull();
+    expect(firstWindow.isConnected).toBe(true);
+    expect(firstWindow.firstElementChild).toBe(spacer);
   } finally { dispose(); }
 });
 
