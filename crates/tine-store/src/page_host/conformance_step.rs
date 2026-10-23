@@ -673,8 +673,15 @@ impl<F: ConformanceIo> Driver<F> {
     }
 
     pub(super) fn finish(&mut self, name: &str, args: &[Value]) {
-        let before = self.observed.clone();
         let actual = self.abstract_state();
+        self.finish_projection(name, args, actual);
+    }
+
+    /// A grouped physical terminal may refine several model transitions.
+    /// Its caller supplies the intermediate projections and must compare the
+    /// final state to the actual host; ordinary actions always use `finish`.
+    pub(super) fn finish_projection(&mut self, name: &str, args: &[Value], actual: Value) {
+        let before = self.observed.clone();
         let mut after = json!({"s":actual,"g":before["g"]});
         let actual = after["s"].clone();
         let g = &mut after["g"];
@@ -981,7 +988,7 @@ impl<F: ConformanceIo> Driver<F> {
         after["g"] = instrumented["g"].clone();
         self.observed = after;
         self.oracle = self.oracle.next(name, args).unwrap();
-        self.compare(name);
+        self.compare_projection(&self.observed["s"].clone(), name);
         assert_eq!(
             self.observed["g"],
             self.oracle.state()["g"],
