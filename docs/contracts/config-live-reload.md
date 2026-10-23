@@ -63,6 +63,15 @@ Renaming the page `:default-home` names, or a namespace parent of it, rewrites
 `:default-home {:page …}` to the new name (OG `rename-page-aux`). A merge does
 not (OG `merge-pages!`). A case-only rename updates `:default-home :page` to the new spelling too.
 
+On graph open, a readable device-local session restores its tabs, histories,
+order, pins and active tab before any home landing. `:default-home` supplies
+the landing only without such a session, including when switching graphs.
+An explicitly saved single Journals tab also wins. The `g h` command still
+opens the configured home in place. This extends OG 0.10.9's `container.cljs`
+`main-content`/`get-default-home-if-valid` contract to Tine's multi-tab session;
+restoring a session does not request the OG `:home` route (internal card 3x4).
+Session state remains outside the graph, with no additional persisted fields.
+
 ## 4. Refusals
 
 | Situation | Behaviour | In-scope scenario |

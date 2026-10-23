@@ -100,6 +100,14 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let currentWorkspaceId: string | null = null;
 let restoredWorkspaceId: string | null = null;
 let restoredSessionPresent: boolean | null = null;
+let restoredSessionOwner: WriteOwner | null = null;
+
+/** A readable saved session owns the graph's landing, including a single
+ * Journals tab. A rebind retires this evidence; repeated startup probes do not.
+ * App/session state only, with no extra persisted fields or graph writes. */
+export function hasRestoredSession(): boolean {
+  return restoredSessionOwner?.() ?? false;
+}
 let sessionIntentRevision = 0;
 let restoreEvidence: { owner: WriteOwner; snapshot: string; intent: string; present: boolean | null; workspaceId: string | null } | null = null;
 
@@ -137,6 +145,9 @@ export function prepareWorkspaceRecovery(): (activeId: string, parked: Persisted
       const parsed = parsePersistedSession(JSON.stringify(parked));
       if (!parsed) throw new Error("The active workspace snapshot is invalid");
       applyParsedSession(parsed);
+      // A missing registry is synthesized as a fresh Journals landing. Only
+      // recovered navigation should displace home in that no-session case.
+      if (!pristineDefault()) restoredSessionOwner = bindingOwner();
       scheduleSessionSave();
     }
     return buildPersistedSession();
@@ -609,6 +620,9 @@ export async function restoreSession(): Promise<void> {
     } catch { /* invalid session is handled below */ }
     const parsed = parsePersistedSession(raw);
     if (!parsed) return;
+    // The early main.tsx probe may already have restored these tabs. They still
+    // win over :default-home when there is nothing to apply a second time.
+    restoredSessionOwner = owner;
     if (!pristineDefault()) return;
     applyParsedSession(parsed);
   } finally {

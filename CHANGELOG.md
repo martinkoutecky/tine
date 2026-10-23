@@ -18,6 +18,7 @@ Fixes for the 0.8.0 stable candidate: wide query result tables sit inside the pa
 
 ### Fixed
 
+- Restoring a saved session keeps every tab on its last page, with its order, pins and active tab, instead of replacing the active page with the graph's configured home (internal card PVTI_lAHOAAbLVc4BhPsyzhDC3x4).
 - Wide tables in query results sit inside the page again instead of being shifted to the right and cut off (GH #749).
 - The macOS app icon keeps Apple's icon-grid margin, so the Dock no longer shows Tine larger than other apps (GH #747).
 - A save no longer stalls, and renames or moves no longer report Busy, when another writer releases a page at the moment Tine's page host goes to sleep: the host's path-lock retry could be dropped, leaving it waiting for an unrelated wake (internal: page-host driver lost wakeup).
