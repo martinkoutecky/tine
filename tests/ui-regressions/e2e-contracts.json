@@ -37,6 +37,12 @@
       "nonRequirements": ["Exact pixels or DOM arrangement; private graphs; automatic hosted runs on push."],
       "stability":"burn-in"
     },
+    "scripts/e2e-tab-restore.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"With Index and Tasks pinned and Index configured as home, middle-click, Ctrl/Cmd-click, context-menu and sidebar new tabs retain their last routes, order, pins and active tab across a clean close and relaunch; external page edits between runs remain visible.","blocking":true,"authority":"Internal card PVTI_lAHOAAbLVc4BhPsyzhDC3x4"}],
+      "acceptableVariations": ["Session flush, page-load and rendering latency."],
+      "nonRequirements": ["Exact pixels or tab IDs; native certification outside Linux WebKitGTK; crash recovery or second-window lifecycle."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh745-structural-edit-viewport.mjs": {
       "contracts":[{"class":"core-operation","userOutcome":"On a long windowed page with images above, after a block is scrolled from the bottom of the viewport to the top with the wheel and then edited structurally (Enter at the start or middle, Backspace merging into an image block, Delete merge, Tab and Shift+Tab, a multi-block paste), the caret is still on screen and the view has moved only as far as showing the caret needs (GH #745).","blocking":true}],
       "acceptableVariations":["Exactly where in the viewport the caret row lands, a few lines of extra scroll for a merged block that grew, and animation or settle timing may vary while the caret row is visible and the view did not jump by most of a screen."],
