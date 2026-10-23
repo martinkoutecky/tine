@@ -993,5 +993,14 @@ mod tests {
             plain
         );
         assert_ne!(fingerprint("TODO writes", false), plain);
+        for org in [false, true] {
+            assert_eq!(
+                fingerprint(
+                    "TODO write\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:00]\n:END:",
+                    org
+                ),
+                plain
+            );
+        }
     }
 }

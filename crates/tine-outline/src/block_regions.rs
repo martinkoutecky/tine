@@ -768,6 +768,15 @@ pub enum Edit {
     },
 }
 
+/// Negative-only prefilter for the editor's LOGBOOK projection. A true result
+/// still requires parsed drawer ownership. Kept at the structural boundary so
+/// callers can avoid an ownership parse for ordinary property-only buffers.
+pub fn may_have_logbook(raw: &str) -> bool {
+    raw.as_bytes()
+        .windows(b":LOGBOOK:".len())
+        .any(|word| word.eq_ignore_ascii_case(b":LOGBOOK:"))
+}
+
 fn splice(raw: &str, mut edits: Vec<(Range, String)>) -> String {
     edits.sort_by_key(|(r, _)| r.0);
     let mut merged: Vec<(Range, String)> = Vec::new();
@@ -917,6 +926,27 @@ impl BlockRegions {
             raw,
             vec![(Range(at, at), format!("{prefix}{text}{suffix}"))],
         )
+    }
+
+    /// Reinsert an opaque, parser-owned drawer at the same head position used
+    /// by clock-in. Preserve its bytes rather than rebuilding its clock rows.
+    pub fn insert_drawer(&self, raw: &str, org: bool, drawer: &str) -> Result<String, String> {
+        if self.quarantined {
+            return Err("Drawer reattachment refused: block parsing is quarantined".into());
+        }
+        // A quote-only block has no prose title. After its first line would
+        // become a lazy quote continuation, hiding the restored history.
+        let mut at = if !org {
+            crate::swallowed_rows::quote_tail(raw)
+                .and_then(|t| t.titleless)
+                .unwrap_or_else(|| self.head_end(raw, org))
+        } else {
+            self.head_end(raw, org)
+        };
+        if let Some(r) = self.property_regions.iter().find(|r| r.0 == at) {
+            at = r.1;
+        }
+        Ok(self.inserted(raw, at, drawer))
     }
     fn remove_properties(
         &self,
@@ -1257,15 +1287,11 @@ impl BlockRegions {
                 {
                     self.inserted(raw, d.close, &value)
                 } else {
-                    let mut at = self.head_end(raw, org);
-                    if let Some(r) = self.property_regions.iter().find(|r| r.0 == at) {
-                        at = r.1;
-                    }
-                    self.inserted(
+                    self.insert_drawer(
                         raw,
-                        at,
+                        org,
                         &format!(":{name}:{}{value}{}:END:", newline(raw), newline(raw)),
-                    )
+                    )?
                 }
             }
             Edit::ClockOut { value } => {

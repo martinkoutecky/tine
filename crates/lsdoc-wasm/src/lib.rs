@@ -482,11 +482,20 @@ pub fn raw_byte_of_editor(raw: &str, is_org: bool, regions: &JsValue, policy: &s
     Ok(editor_text::visible_to_raw_with(raw, is_org, &r, &p, editor_text::utf16_to_byte(&visible, editor_utf16)))
 }
 
-/// Editor text plus hidden lines back to raw (`editor_text::join_with`); the
-/// regions are the window's cached ones for exactly `visible` (read for Org).
+/// Parser-boundary negative-only prefilter; true still needs drawer ownership.
 #[wasm_bindgen]
-pub fn editor_text_join(visible: &str, hidden: &str, is_org: bool, visible_regions: &JsValue) -> Result<String, JsValue> {
-    let r = if is_org && !hidden.is_empty() { regions_from_js(visible, visible_regions)? } else { block_regions::BlockRegions::default() };
+pub fn block_may_have_logbook(raw: &str) -> bool {
+    block_regions::may_have_logbook(raw)
+}
+
+/// Editor text plus hidden lines back to raw (`editor_text::join_with`), with
+/// optional exact source for metadata-preserving text-only edits.
+#[wasm_bindgen]
+pub fn editor_text_join(visible: &str, hidden: &str, is_org: bool, visible_regions: &JsValue, source: Option<String>) -> Result<String, JsValue> {
+    if let Some(source) = source {
+        return editor_text::join_preserving(visible, hidden, is_org, &source).map_err(|e| JsValue::from_str(&e));
+    }
+    let r = if !hidden.is_empty() && (is_org || !visible_regions.is_null()) { regions_from_js(visible, visible_regions)? } else { block_regions::BlockRegions::default() };
     editor_text::join_with(visible, hidden, is_org, &r).map_err(|e| JsValue::from_str(&e))
 }
 

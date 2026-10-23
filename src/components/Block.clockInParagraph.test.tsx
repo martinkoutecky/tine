@@ -7,6 +7,7 @@ import { initParser } from "../render/parse";
 import { pageByName, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
+import { trailingVisibleEmptyLeaf } from "../document/tree";
 import { timestampText, renderedBlockText } from "../render/renderedText";
 import { visibleBody } from "../render/block";
 import { logbookInfo } from "../logbook";
@@ -35,10 +36,10 @@ afterEach(() => {
 });
 
 let seq = 0;
-function mountPage(raw: string, editing: boolean, format: "md" | "org" = "md") {
+function mountPage(raw: string, editing: boolean, format: "md" | "org" = "md", next = false) {
   const name = `Clock${++seq}`;
   const block: BlockDto = { id: `clock-${seq}`, raw, collapsed: false, children: [] };
-  const page: PageDto = { name, kind: "page", title: name, pre_block: null, blocks: [block], format };
+  const page: PageDto = { name, kind: "page", title: name, pre_block: null, blocks: [block, ...(next ? [{id: `next-${seq}`, raw: "next", collapsed: false, children: []}] : [])], format };
   loadSingle(page);
   if (editing) startEditing(block.id, 0);
   const root = document.createElement("div");
@@ -58,6 +59,17 @@ function typeChar(ta: HTMLTextAreaElement, ch: string) {
 }
 
 const CLOCK = "CLOCK: [2026-10-21 Wed 08:54:45]";
+
+it.each(["md", "org"] as const)("Backspace preserves a titleless logbook-only first block (%s)", (format) => {
+  const raw = `:LOGBOOK:\n${CLOCK}\n:END:`;
+  const { textarea, blockId, dispose } = mountPage(raw, true, format, true);
+  try {
+    expect(textarea!.value).toBe("");
+    expect(trailingVisibleEmptyLeaf({roots: [blockId]})).toBeNull();
+    textarea!.dispatchEvent(new KeyboardEvent("keydown", {key: "Backspace", bubbles: true, cancelable: true}));
+    expect(doc.byId[blockId]?.raw).toBe(raw);
+  } finally { dispose(); }
+});
 
 describe("a CLOCK line outside a recognised drawer renders (GH #741)", () => {
   it.each([
@@ -145,7 +157,7 @@ describe("typing DOING keeps the caret on the task line (GH #741)", () => {
       for (const ch of "DOING test") typeChar(textarea!, ch);
       const raw = doc.byId[blockId].raw;
       expect(raw).toMatch(/^DOING test\n:LOGBOOK:\nCLOCK: \[\d{4}-\d\d-\d\d \w{3} \d\d:\d\d:\d\d\]\n:END:$/);
-      expect(textarea!.value).toBe(raw);
+      expect(textarea!.value).toBe("DOING test");
       expect(textarea!.selectionStart).toBe("DOING test".length);
       expect(textarea!.selectionEnd).toBe("DOING test".length);
     } finally {
@@ -194,7 +206,7 @@ describe("a command marker change keeps its clock change when you keep typing (G
       textarea!.setSelectionRange(11, 11);
       ctrlEnter(textarea!);
       await flush();
-      expect(textarea!.value).toBe(doc.byId[blockId].raw);
+      expect(textarea!.value).toBe("DONE taskA");
       typeChar(textarea!, "x");
       expect(doc.byId[blockId].raw).toMatch(/^DONE taskAx\n:LOGBOOK:\nCLOCK: \[2026-10-21 Wed 08:00:00\]--\[[^\]]+\] =>\s+\d\d:\d\d:\d\d\n:END:$/);
     } finally {

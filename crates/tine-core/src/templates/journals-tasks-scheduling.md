@@ -57,6 +57,7 @@ icon:: 📅
 - ## Time tracking and the logbook
   - With Settings → **Journals** → **Time tracking** on (the default), moving into DOING / NOW records a clock-in and moving back to TODO / LATER or into DONE records a clock-out, as OG-compatible `:LOGBOOK:` `CLOCK:` rows (seconds on by default via `:logbook/settings`). This also applies when Ctrl/Cmd+Enter cycles several selected blocks, in one Undo step. Saved to `:feature/enable-timetracking?`.
   - Blocks with clock rows show a small elapsed-time badge with a Type / Start / End / Span tooltip; the `:LOGBOOK:` drawer itself stays hidden by default, like Logseq.
+  - The logbook stays out of the text editor too. Editing the task keeps its clock history; **Enter** at the end of its text leaves the history on that task. Backspace or Delete merging two blocks keeps both histories in the surviving block's logbook.
   - Toggled off, markers change without writing log rows.
 - ## Repeating tasks
   - Put a repeater inside the timestamp, e.g. `<2026-07-07 Tue +1w>` (or pick one in the calendar popup); the units are `d`, `w`, `m`, `y` for days, weeks, months, years.

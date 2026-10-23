@@ -906,7 +906,9 @@ fn split(
         // and its separator become the new block, so the original keeps only
         // the text after the boundary.
         if offset > 0 {
-            tx.block_mut(key)?.raw = join(after, &et.hidden, format)?;
+            tx.block_mut(key)?.raw =
+                editor_text::join_preserving(after, &et.hidden, format.is_org(), &node.raw)
+                    .map_err(|_| Reason::Unparseable)?;
         }
         tx.insert(
             new_key.clone(),
@@ -932,7 +934,9 @@ fn split(
             &[EditKind::InsertBlocks]
         });
     } else {
-        tx.block_mut(key)?.raw = join(before, &et.hidden, format)?;
+        tx.block_mut(key)?.raw =
+            editor_text::join_preserving(before, &et.hidden, format.is_org(), &node.raw)
+                .map_err(|_| Reason::Unparseable)?;
         tx.insert(
             new_key.clone(),
             Block {
@@ -993,6 +997,13 @@ fn merge(cx: &mut Cx, survivor: &str, absorbed: &str) -> Result<(), Reason> {
         .id
         .map(|p| js_trim(p.line.slice(&gone.raw)).to_string());
     let mut hidden = keep.hidden.clone();
+    let clocks = editor_text::logbook_hidden(&gone.raw, format.is_org());
+    if !clocks.is_empty() {
+        if !hidden.is_empty() {
+            hidden.push('\n');
+        }
+        hidden.push_str(&clocks);
+    }
     if let (false, Some(id)) = (survivor_has_id, &absorbed_id) {
         hidden = if hidden.is_empty() {
             id.clone()
@@ -2000,6 +2011,58 @@ mod tests {
             force_child,
             children_visible: true,
             keep_start_in_scope: false,
+        }
+    }
+
+    #[test]
+    fn gh741_logbook_enter_keeps_history_on_original_block() {
+        let raw = "DOING x\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+        for format in [Format::Md, Format::Org] {
+            let mut p = page("P", &[("a", raw, &[])], &["a"]);
+            p.format = format;
+            let change = run(&[p], split_at("a", "DOING x".len(), false)).unwrap();
+            let edits = &change.pages[0].upserts;
+            assert_eq!(edits.iter().find(|b| b.key == "a").unwrap().raw, raw);
+            assert_eq!(edits.iter().find(|b| b.key != "a").unwrap().raw, "");
+        }
+    }
+
+    #[test]
+    fn gh741_logbook_merge_keeps_both_histories_in_survivor() {
+        for format in [Format::Md, Format::Org] {
+            let first = ":LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\n:END:";
+            let second = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 09:00:00]  \n:END:";
+            for keep_drawer in [false, true] {
+                let keep = if keep_drawer {
+                    format!("one\n{first}")
+                } else {
+                    "one".into()
+                };
+                let gone = format!("two\n{second}");
+                let mut p = page("P", &[("a", &keep, &[]), ("b", &gone, &[])], &["a", "b"]);
+                p.format = format;
+                let change = run(
+                    &[p],
+                    Verb::Merge {
+                        survivor: "a".into(),
+                        absorbed: "b".into(),
+                        absorbed_referenced: false,
+                    },
+                )
+                .unwrap();
+                let raw = &change.pages[0]
+                    .upserts
+                    .iter()
+                    .find(|b| b.key == "a")
+                    .unwrap()
+                    .raw;
+                let expected = if keep_drawer {
+                    "onetwo\n:LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\nCLOCK: [2026-10-21 Wed 09:00:00]  \n:END:".to_string()
+                } else {
+                    format!("onetwo\n{second}")
+                };
+                assert_eq!(raw, &expected);
+            }
         }
     }
 

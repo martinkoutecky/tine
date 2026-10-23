@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 it("the Guide teaches time tracking for selected task cycling", () => {
   const guide = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
   for (const outcome of ["**Time tracking** on", "DOING / NOW records a clock-in", "into DONE records a clock-out", "Ctrl/Cmd+Enter cycles several selected blocks, in one Undo step"]) expect(guide).toContain(outcome);
+  for (const outcome of ["logbook stays out of the text editor", "**Enter** at the end of its text leaves the history on that task", "keeps both histories in the surviving block's logbook"]) expect(guide).toContain(outcome);
 });
 it("the Guide teaches result-scoped columns and retained saved choices", () => {
   const guide = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");

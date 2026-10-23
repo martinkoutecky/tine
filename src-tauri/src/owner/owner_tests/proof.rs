@@ -35,9 +35,8 @@ fn rn_f_cli_edit_preserves_one_running_clock_and_closes_it() {
                 )).unwrap();
                 graph.store.refresh(tine_store::Depth::Bytes).unwrap();
                 let slot = graph.slot();
-                // block.edit replaces the entire editor buffer, including its logbook.
-                let edited = format!("{text}\n:LOGBOOK:\nCLOCK: [{start}]\n:END:");
-                verb(&slot, "block.edit", json!({"handle": UUID, "text": edited})).unwrap();
+                // RN-F: the CLI edits the same text as the editor, retaining clocks.
+                verb(&slot, "block.edit", json!({"handle": UUID, "text": text})).unwrap();
                 let written = std::fs::read_to_string(graph.root.join(rel)).unwrap();
                 assert_eq!(
                     written.matches("CLOCK:").count(),

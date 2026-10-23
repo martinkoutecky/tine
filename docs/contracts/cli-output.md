@@ -241,7 +241,9 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
   and `logseq.order-list-type::` lines and the children are kept. On a block whose own primary properties
   include `quote`, the four comment lines (`quote::`, `quote-prefix::`, `quote-suffix::`, `author::`) are also
   kept. On an ordinary block, `author::` and quote-context lines belong to the replaced editor text, as on OG.
-  A marker change writes the logbook as the app does.
+  The hidden LOGBOOK drawer is kept, at its canonical position after the title, planning and head properties.
+  If the supplied text contains a parsed LOGBOOK drawer, that drawer replaces the retained one; fence lookalikes
+  remain ordinary text. A marker change writes the logbook as the app does.
 - **`block.move`**: the block and its children go under (last child), after or before a target on the same page.
   A move to another page is refused `cross-page` in this version.
 - **`--run RUN`** (optional, every write; or `TINE_RUN`): commit the write to the graph's git repository as

@@ -1,6 +1,18 @@
 /* @ts-self-types="./lsdoc_wasm.d.ts" */
 
 /**
+ * Parser-boundary negative-only prefilter; true still needs drawer ownership.
+ * @param {string} raw
+ * @returns {boolean}
+ */
+function __tine_raw_block_may_have_logbook(raw) {
+    const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.block_may_have_logbook(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
  * Native group-field grammar: O(value bytes), no I/O; invalid tokens return null.
  * @param {string} value
  * @returns {string | undefined}
@@ -109,34 +121,37 @@ function __tine_raw_editor_offset_of_raw(raw, is_org, regions, policy, raw_utf16
 }
 
 /**
- * Editor text plus hidden lines back to raw (`editor_text::join_with`); the
- * regions are the window's cached ones for exactly `visible` (read for Org).
+ * Editor text plus hidden lines back to raw (`editor_text::join_with`), with
+ * optional exact source for metadata-preserving text-only edits.
  * @param {string} visible
  * @param {string} hidden
  * @param {boolean} is_org
  * @param {any} visible_regions
+ * @param {string | null} [source]
  * @returns {string}
  */
-function __tine_raw_editor_text_join(visible, hidden, is_org, visible_regions) {
-    let deferred4_0;
-    let deferred4_1;
+function __tine_raw_editor_text_join(visible, hidden, is_org, visible_regions, source) {
+    let deferred5_0;
+    let deferred5_1;
     try {
         const ptr0 = passStringToWasm0(visible, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(hidden, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.editor_text_join(ptr0, len0, ptr1, len1, is_org, visible_regions);
-        var ptr3 = ret[0];
-        var len3 = ret[1];
+        var ptr2 = isLikeNone(source) ? 0 : passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.editor_text_join(ptr0, len0, ptr1, len1, is_org, visible_regions, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
         if (ret[3]) {
-            ptr3 = 0; len3 = 0;
+            ptr4 = 0; len4 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
-        deferred4_0 = ptr3;
-        deferred4_1 = len3;
-        return getStringFromWasm0(ptr3, len3);
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
     } finally {
-        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
     }
 }
 
@@ -1106,6 +1121,10 @@ function __wbg_get_imports() {
             const ret = typeof(v) === 'boolean' ? v : undefined;
             return isLikeNone(ret) ? 0xFFFFFF : ret ? 1 : 0;
         },
+        __wbg___wbindgen_is_null_ea9085d691f535d3: function(arg0) {
+            const ret = arg0 === null;
+            return ret;
+        },
         __wbg___wbindgen_number_get_394265ed1e1b84ee: function(arg0, arg1) {
             const obj = arg1;
             const ret = typeof(obj) === 'number' ? obj : undefined;
@@ -1452,6 +1471,7 @@ function __tineGuard(name, raw) {
     }
   };
 }
+export const block_may_have_logbook = __tineGuard("block_may_have_logbook", __tine_raw_block_may_have_logbook);
 export const canonical_group_field = __tineGuard("canonical_group_field", __tine_raw_canonical_group_field);
 export const comment_quote = __tineGuard("comment_quote", __tine_raw_comment_quote);
 export const decode_page_name = __tineGuard("decode_page_name", __tine_raw_decode_page_name);

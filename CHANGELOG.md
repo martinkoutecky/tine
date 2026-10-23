@@ -59,6 +59,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- GH #741: keep LOGBOOK drawers out of the task editor, preserve clocks when pressing Enter or merging blocks, and retain clock history during CLI edits (Tine 0.9 development).
+
 - **Margin comments** (internal UI-MARGIN-POLISH): select words and click **Comment** in the toolbar; cards and replies now offer **Reply** and **×** (delete with replies, restored together by Undo). Blocks with their own `quote` property hide quote context and author metadata while editing and retain their saved bytes; ordinary blocks keep those properties editable. Quoted replies stay readable inside their thread.
 
 - After a restore from backup, a page that was being edited when the restore began closes normally once editing ends, instead of staying open for the rest of the session. A component draft open across the restore (for example a table cell) no longer keeps holding back newer file content from that page after it closes (internal: REG-HOST-REBIND-ACQUISITION-RELEASE).
