@@ -722,10 +722,7 @@ describe("block-selection commands", () => {
     resetStore();
     setWorkflow("todo");
     loadSingle({
-      name: "Tasks",
-      kind: "page",
-      title: "Tasks",
-      pre_block: null,
+      name: "Tasks", kind: "page", title: "Tasks", pre_block: null,
       blocks: [
         { id: "task-a", raw: "one", collapsed: false, children: [] },
         { id: "task-b", raw: "TODO two", collapsed: false, children: [] },
@@ -740,7 +737,7 @@ describe("block-selection commands", () => {
     fake.dispatchCaptureKeydown(pressed.event);
 
     expect(doc.byId["task-a"].raw).toBe("TODO one");
-    expect(doc.byId["task-b"].raw).toBe("DOING two");
+    expect(doc.byId["task-b"].raw).toContain("DOING two\n:LOGBOOK:\nCLOCK: [");
     expect(pressed.prevented()).toBe(true);
     dispose();
   });
