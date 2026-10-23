@@ -4168,10 +4168,11 @@ html[data-system-insets="native-viewport"] {
   background: var(--bg-tertiary);
 }
 
-/* GH #751: these body-level popups must clear both the drawer and editing dock.
-   Desktop keeps its existing layer order. Dialogs (100+), context menus (150),
-   help (118), and toast/media overlays (200+) already clear the dock. */
-html:is([data-platform="android"], [data-platform="ios"]) :is(
+/* GH #751: while the editing dock (z-index 95) is shown, these body-level
+   popups must clear it as well as the drawer. Without the dock the existing
+   layer order stands. Dialogs (100+), context menus (150), help (118), and
+   toast/media overlays (200+) already clear the dock. */
+html[data-mobile-editing-dock] :is(
   .autocomplete, .peek-popup, .dp-overlay, .pp-overlay,
   .formula-editor-overlay, .rs-actions-menu.rs-item-menu, .tab-overview
 ) {
