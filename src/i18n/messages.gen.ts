@@ -1093,6 +1093,8 @@ export interface MessageArgs {
   "in-page-find-replace-every-match-on-this-page-ctrl-cmd": {};
   "in-page-find-replace-this-match-enter": {};
   "in-page-find-replace-with": {};
+  "in-page-find-retired-days": { "count": string | number };
+  "in-page-find-search-journals": {};
   "inpage-replace-no-matches-on-this-page-to-replace": {};
   "inpage-replace-nothing-was-replaced-this-page-cannot-be-edited": {};
   "inpage-replace-replace-changes-only-the-page-you-opened-find": {};

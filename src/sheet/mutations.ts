@@ -106,7 +106,7 @@ function cellIdAt(gridId: string, row: number, col: number): string | null {
 }
 
 function cellText(blockId: string | null): string {
-  const text = blockId ? visibleBody(docNode(blockId)?.raw ?? "").join(" ") : "";
+  const text = blockId ? visibleBody(docNode(blockId)?.raw ?? "", formatForBlock(blockId)).join(" ") : "";
   // The external clipboard flavor is TSV: tabs/newlines are flattened to spaces
   // so a cell body cannot escape into extra external rows or columns.
   return text.replace(/[\t\r\n]+/g, " ");

@@ -15,7 +15,7 @@ import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 import { bindingOwner, advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
-import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
+import { blockProperty, blockWritable, formatForBlock, formatForPage, graphRewriteFrozen, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
 import { createQueryFold } from "./macroFold";
 export { EmbedMacro } from "./EmbedMacro";
 import { QueryGroups } from "./QueryGroup";
@@ -454,7 +454,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       page: group.page,
       kind: group.kind,
       block,
-      display_text: visibleBody(block.raw).join(" "),
+      display_text: visibleBody(block.raw, formatForPage(group.page)).join(" "),
       evidence: [],
     })));
   });
@@ -788,7 +788,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
           props[k] = val;
           byKey[columnKey(k)] ??= val;
         }
-        return { page: g.page, kind: g.kind, path: g.path, text: visibleBody(b.raw).join(" "), props, byKey };
+        return { page: g.page, kind: g.kind, path: g.path, text: visibleBody(b.raw, formatForPage(g.page)).join(" "), props, byKey };
       })
     )
   );

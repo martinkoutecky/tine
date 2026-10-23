@@ -78,7 +78,7 @@ export function last_panic(): string;
  */
 export function linkable_property_names(value: string, is_org: boolean): string[];
 
-export function logbook_apply_marker_transition(raw: string, is_org: boolean, old_marker: string, new_marker: string, enabled: boolean, with_seconds: boolean): string;
+export function logbook_apply_marker_transition(raw: string, is_org: boolean, old_raw: string, enabled: boolean, with_seconds: boolean): string;
 
 export function logbook_clock_in(raw: string, is_org: boolean, with_seconds: boolean): string;
 
@@ -122,6 +122,11 @@ export function outline_max_depth(): number;
  * the window can send only those (DESIGN §5.3, §8).
  */
 export function outline_reads_json(verb: string): string;
+
+/**
+ * The native file-format answer, including mixed-case Org extensions.
+ */
+export function page_file_format(path: string): string;
 
 /**
  * Markdown page header (leading accepted properties, see `block_regions::page_header`).
@@ -294,7 +299,7 @@ export interface InitOutput {
     readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number) => number;
     readonly last_panic: () => [number, number];
     readonly linkable_property_names: (a: number, b: number, c: number) => [number, number];
-    readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
+    readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
     readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_info_json: (a: number, b: number, c: number) => [number, number];
@@ -305,6 +310,7 @@ export interface InitOutput {
     readonly outline_apply_json: (a: number, b: number) => [number, number, number, number];
     readonly outline_max_depth: () => number;
     readonly outline_reads_json: (a: number, b: number) => [number, number, number, number];
+    readonly page_file_format: (a: number, b: number) => [number, number];
     readonly page_header_json: (a: number, b: number) => [number, number];
     readonly page_identity_key: (a: number, b: number) => [number, number];
     readonly page_regions_json: (a: number, b: number, c: number) => [number, number];

@@ -58,7 +58,7 @@ export function StickyAncestor(props: { id: string; raw: string }): JSX.Element 
           breadcrumb renders it (marks, links and block refs, not raw syntax). */}
       <span class="sticky-ancestor-toggle" aria-hidden="true" />
       <span class="sticky-ancestor-bullet" aria-hidden="true"><span class="sticky-ancestor-dot" /></span>
-      <span class="sticky-ancestor-label"><InlineText text={visibleBody(props.raw)[0] || "…"} format={formatForBlock(props.id)} /></span>
+      <span class="sticky-ancestor-label"><InlineText text={visibleBody(props.raw, formatForBlock(props.id))[0] || "…"} format={formatForBlock(props.id)} /></span>
     </button>
   </div>;
 }

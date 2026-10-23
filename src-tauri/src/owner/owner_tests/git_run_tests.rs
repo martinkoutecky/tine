@@ -7,6 +7,9 @@ use serde_json::{json, Value};
 
 use super::{block_handle, error_code, verb, Graph, UUID};
 
+#[path = "git_run_safety_tests.rs"]
+mod safety;
+
 /// The graph as a repository with everything committed once, as the user's.
 fn repo(graph: &Graph) -> Repository {
     let repo = Repository::init(&graph.root).unwrap();

@@ -1325,7 +1325,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   const lines = () => props.label !== undefined
     ? [props.label]
     : targetRaw()
-      ? visibleBody(targetRaw()!)
+      ? visibleBody(targetRaw()!, fmt())
       : undefined;
   // Mirror the source's state with its shared recognizer and chip styling.
   // Explicit aliases remain label-only; targetRaw keeps live and unloaded
@@ -1333,7 +1333,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   const marker = () => {
     if (props.label !== undefined) return null;
     const raw = targetRaw();
-    return raw ? leadingMarker(raw) : null;
+    return raw ? leadingMarker(raw, fmt()) : null;
   };
   // Where the checkbox writes: the same exact owner the click navigates to.
   const checkboxTarget = () => {

@@ -314,6 +314,23 @@ Each `--run` write, after its guarded save succeeds, commits only the file it wr
 ignores is not committed (`refused:git`). The file's index entry then follows the commit, unless the user had other
 content staged for it (`git.index`).
 
+Both raw-content writers (runs and autocommits) check the exact work-tree-relative path, including a nested
+graph prefix, for `filter`, `ident` and `working-tree-encoding` attributes. An attribute set to a value or true
+refuses a run write with `refused:git`, naming the path and attribute, before flushing or saving the page.
+False and unspecified attributes allow exact bytes; Tine never executes external filters. The check repeats
+before creating any snapshot or agent blob, so a conversion introduced after the save leaves the saved page
+uncommitted without storing its raw content in Git.
+
+Both writers revalidate the captured branch identity while holding `index.lock`, before moving a ref or
+changing the index. A concurrent checkout refuses the commit explicitly; a run reply reports
+`git.committed: false` and says the file was saved but its commit is missing. It never retries on the new
+branch. A same-branch concurrent commit still uses compare-and-swap retries.
+
+| Refusal | In-scope threat | Recovery |
+| --- | --- | --- |
+| `refused:git` naming a conversion attribute | repository content conversion, including git-crypt plaintext disclosure | use Git's own conversion workflow; no page, ref, index or raw object is changed by the refused run write |
+| `git.committed: false` naming a changed branch | concurrent honest terminal checkout between repository open and index locking | inspect the saved page and active branch before starting another write; neither branch nor the new branch's index is changed by the refused commit |
+
 - **`run.begin`**: kind `run`; `run` (the id, `r<hex seconds>-<8 hex>`), `branch`. Text: the id.
 - **`run.show RUN`**: kind `run-commits`; `run`, `commits` (newest first: `commit`, `agent` (boolean; `false` =
   the user's snapshot), `author`, `subject`). Text: one line per commit.

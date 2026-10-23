@@ -95,7 +95,7 @@ describe("no reader of a clock/logbook date throws on a damaged logbook (GH #741
   }
   const readers = (raw: string, format: "md" | "org") => {
     logbookInfo(raw, format);
-    visibleBody(raw);
+    visibleBody(raw, "md");
     renderedBlockText(raw, format, { typographicGlyphs: false, stripLinks: false, removeTags: false, removeProperties: false });
   };
   it("the parse-only readers never throw", () => {
