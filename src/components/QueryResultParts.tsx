@@ -15,6 +15,14 @@ import { openPagePropertiesFromRow } from "../queryPageProps";
 // statistics and the engine's Logseq-form hint. None decides membership or
 // computes an answer (I-12).
 
+/** GH #726: the results draw OTHER blocks; a right click in here never opens the
+ *  host block's menu (contextMenuPolicy reads `data-block-surface`). A real box,
+ *  not `display: contents`: TableWrap measures its parent, and a contents box has
+ *  no geometry, which pushed wide result tables off the pane (GH #749). */
+export function QueryResultsRegion(props: { children: JSX.Element }): JSX.Element {
+  return <div class="query-results-region" data-block-surface="query">{props.children}</div>;
+}
+
 export type QueryView = ViewKind;
 
 /** A page-anchored answer (K16): pages, not degenerate empty block groups.

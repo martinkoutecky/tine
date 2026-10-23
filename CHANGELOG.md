@@ -59,6 +59,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Wide tables in query results sit inside the page again instead of being shifted to the right and cut off (GH #749).
+- The macOS app icon keeps Apple's icon-grid margin, so the Dock no longer shows Tine larger than other apps (GH #747).
 - Cycling selected task blocks with Ctrl/Cmd+Enter now opens clocks on DOING/NOW and closes them on DONE when time tracking is enabled, in one Undo step (internal UI-TASK-CYCLE-TIMETRACKING).
 - A save no longer stalls, and renames or moves no longer report Busy, when another writer releases a page at the moment Tine's page host goes to sleep: the host's path-lock retry could be dropped, leaving it waiting for an unrelated wake (internal: page-host driver lost wakeup).
 - A page file replaced by something larger than 64 MiB while open is now refused like every other read instead of being loaded whole into memory; unsaved typing stays (audit L6-02).

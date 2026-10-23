@@ -1,0 +1,14 @@
+<svg width="1024" height="1024" viewBox="-31 -31 318 318" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tine">
+  <!-- macOS app icon (GH #747): docs/app-icon.svg inside Apple's icon grid, the
+       rounded square ~824 of 1024 px with a transparent margin, so the Dock
+       shows it at the size of other apps. Rendered into src-tauri/icons/icon.icns
+       by scripts/render-icon.mjs. -->
+  <rect x="0" y="0" width="256" height="256" rx="56" fill="#10b981"/>
+  <g stroke="#ffffff" stroke-width="18" stroke-linecap="round" fill="none">
+    <path d="M96 72 V128"/>
+    <path d="M128 72 V128"/>
+    <path d="M160 72 V128"/>
+    <path d="M96 128 H160"/>
+    <path d="M128 128 V188"/>
+  </g>
+</svg>
