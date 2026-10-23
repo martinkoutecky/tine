@@ -46,11 +46,10 @@ export function blockProperty(id: string, key: string): string | null {
   return null;
 }
 
-/** Whether a block lives on a read-only page (the org round-trip gate) — sheet
- *  write paths outside the block editor must consult this before mutating. */
+/** Read-only affordance for blocks and sheets, using the store's write gate. */
 export function blockPageReadOnly(id: string): boolean {
   const n = doc.byId[id];
-  return graphRewriteFrozen() || (n ? (pageByName(n.page)?.readOnly ?? false) : false);
+  return n ? !pageWritable(n.page) : graphRewriteFrozen();
 }
 
 /** Store mutation boundary. UI affordances also hide on read-only pages, but
@@ -59,8 +58,8 @@ export function blockPageReadOnly(id: string): boolean {
  * equally non-writable. */
 export function pageWritable(name: string): boolean {
   const page = pageByName(name);
-  // A transfer endpoint or a frozen page takes no input: the host holds its
-  // text apart from the display until the transfer or freeze ends (STEP3 §6, §8).
+  // A pending delete, transfer endpoint or frozen page takes no input: no
+  // mutation may precede markDirty's tombstone guard (audit L9-06).
   return !graphRewriteFrozen() && !!page && !page.readOnly && !page.guide && !pageFrozen(name);
 }
 

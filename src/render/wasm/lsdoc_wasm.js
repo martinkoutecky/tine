@@ -306,28 +306,25 @@ function __tine_raw_linkable_property_names(value, is_org) {
 /**
  * @param {string} raw
  * @param {boolean} is_org
- * @param {string} old_marker
- * @param {string} new_marker
+ * @param {string} old_raw
  * @param {boolean} enabled
  * @param {boolean} with_seconds
  * @returns {string}
  */
-function __tine_raw_logbook_apply_marker_transition(raw, is_org, old_marker, new_marker, enabled, with_seconds) {
-    let deferred4_0;
-    let deferred4_1;
+function __tine_raw_logbook_apply_marker_transition(raw, is_org, old_raw, enabled, with_seconds) {
+    let deferred3_0;
+    let deferred3_1;
     try {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(old_marker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr1 = passStringToWasm0(old_raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passStringToWasm0(new_marker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len2 = WASM_VECTOR_LEN;
-        const ret = wasm.logbook_apply_marker_transition(ptr0, len0, is_org, ptr1, len1, ptr2, len2, enabled, with_seconds);
-        deferred4_0 = ret[0];
-        deferred4_1 = ret[1];
+        const ret = wasm.logbook_apply_marker_transition(ptr0, len0, is_org, ptr1, len1, enabled, with_seconds);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
     } finally {
-        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
 }
 
@@ -525,6 +522,26 @@ function __tine_raw_outline_reads_json(verb) {
         return getStringFromWasm0(ptr2, len2);
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * The native file-format answer, including mixed-case Org extensions.
+ * @param {string} path
+ * @returns {string}
+ */
+function __tine_raw_page_file_format(path) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.page_file_format(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
     }
 }
 
@@ -1438,6 +1455,7 @@ export const ordered_list_glyph = __tineGuard("ordered_list_glyph", __tine_raw_o
 export const outline_apply_json = __tineGuard("outline_apply_json", __tine_raw_outline_apply_json);
 export const outline_max_depth = __tineGuard("outline_max_depth", __tine_raw_outline_max_depth);
 export const outline_reads_json = __tineGuard("outline_reads_json", __tine_raw_outline_reads_json);
+export const page_file_format = __tineGuard("page_file_format", __tine_raw_page_file_format);
 export const page_header_json = __tineGuard("page_header_json", __tine_raw_page_header_json);
 export const page_identity_key = __tineGuard("page_identity_key", __tine_raw_page_identity_key);
 export const page_regions_json = __tineGuard("page_regions_json", __tine_raw_page_regions_json);

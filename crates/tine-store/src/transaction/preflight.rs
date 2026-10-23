@@ -259,7 +259,7 @@ impl<'a> Transaction<'a> {
                 let new = if *rebind_title {
                     rewrite_move(&old, &path, renames, name_format)?
                 } else if let Some(new) = reused {
-                    let is_org = path.extension().and_then(|ext| ext.to_str()) == Some("org");
+                    let is_org = Format::from_path(&path) == Format::Org;
                     refuse_read_only_org(&old, &new, is_org)?;
                     new
                 } else {
@@ -405,6 +405,36 @@ impl Transaction<'_> {
         self.absent(file)?;
         self.twin(file, None)?;
         self.unreadable_owner(file, &[name])
+    }
+
+    /// The creating host save's logical slot, after its physical absence/twin
+    /// guard. Only creation pays: published lookup and bounded unreadable probes.
+    /// A running move's source may still claim the receiver's name.
+    pub(crate) fn creating_save_owner(
+        &self,
+        file: &FileId,
+        name: Option<&str>,
+        source: Option<&FileId>,
+    ) -> Result<(), Why> {
+        let path = self.path(file)?;
+        let graph = &self.store.graph;
+        let filename = graph.entry_for_path_in(&path, Some(""));
+        for entry in filename.iter() {
+            if let Some(existing) = self.store.move_claimant(&entry.name, entry.kind) {
+                if existing.path != path
+                    && source.is_none_or(|source| graph.root.join(source.as_str()) != existing.path)
+                {
+                    return Err(Why::Refused(Refusal::Twin {
+                        existing: PageId::from(graph.rel_path(&existing.path)),
+                    }));
+                }
+            }
+        }
+        if source.is_none() {
+            let names: Vec<_> = name.into_iter().collect();
+            self.unreadable_owner(file, &names)?;
+        }
+        Ok(())
     }
 
     /// The page host's open of `file` (STEP3 §2): an eligible page target;

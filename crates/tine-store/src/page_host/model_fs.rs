@@ -59,6 +59,9 @@ pub(super) struct ModelFs {
     /// Adapter memory (STEP3 §2), lost at a crash. A model entry is named by
     /// its key; a spelling only orders the driver's path locks.
     pub spellings: BTreeMap<String, String>,
+    /// Scripted production-only owner refusals; conformance independently
+    /// requires matching physical claimant bytes before accepting saveFail.
+    pub owners: BTreeMap<String, String>,
     /// Draft I/O is down (M2): every draft effect fails untouched.
     pub down: bool,
     /// The adapter's trash-chain witness: every ancestor was synced durably by
@@ -449,6 +452,15 @@ impl HostIo for ModelFs {
             .files
             .contains_key(&format!("graph/{twin}"))
             .then_some(twin))
+    }
+
+    fn page_owner(
+        &mut self,
+        page: &str,
+        _bytes: &Text,
+        _source: Option<&str>,
+    ) -> IoResult<Option<String>> {
+        Ok(self.owners.get(page).cloned())
     }
 
     fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult {

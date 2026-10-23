@@ -129,7 +129,7 @@ function resolveExportBlockRef(uuid: string, owned?: ResolvedRefs) {
   if (!block) return null;
   // Match what BlockRefView shows on screen by default: renderedText keeps the
   // first line unless the export's "resolve refs fully" option is enabled.
-  return { raw: visibleBody(block.raw).join("\n"), format: formatForPage(g.page) };
+  return { raw: visibleBody(block.raw, formatForPage(g.page)).join("\n"), format: formatForPage(g.page) };
 }
 
 function resolveExportMacro(name: string, args: string[]) {

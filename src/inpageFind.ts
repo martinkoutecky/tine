@@ -127,8 +127,8 @@ export function inPageFindPreservesEditorBlur(): boolean {
 }
 
 /** Non-overlapping original UTF-16 ranges using the caller's graph fold policy.
- * Empty query has no matches. The mapped substring scan costs O(text × query)
- * plus deduplication across candidate spans. */
+ * Empty query has no matches. The mapped substring scan costs O(text × query),
+ * with constant-time deduplication per candidate span. */
 export function findTextOccurrences(text: string, query: string, removeAccents: boolean): { start: number; end: number }[] {
   if (!query) return [];
   const out: { start: number; end: number }[] = [];
