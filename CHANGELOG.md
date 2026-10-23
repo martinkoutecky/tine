@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- After a restore from backup, a page that was being edited when the restore began closes normally once editing ends, instead of staying open for the rest of the session. A component draft open across the restore (for example a table cell) no longer keeps holding back newer file content from that page after it closes (internal: REG-HOST-REBIND-ACQUISITION-RELEASE).
+
 ## [0.8.0-beta.10] - 2026-10-23
 
 Fixes for the 0.8.0 stable candidate: wide query result tables sit inside the page again (GH #749, a regression since 0.8.0-beta.6), the macOS app icon matches other apps' size (GH #747), and data-safety fixes from the 0.8 audit. Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.

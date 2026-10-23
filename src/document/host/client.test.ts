@@ -461,6 +461,65 @@ describe("S8 session rebind", () => {
   });
 });
 
+describe("S8 rebind keeps acquisitions releasable (REG-HOST-REBIND-ACQUISITION-RELEASE)", () => {
+  async function rebound(ctx: Awaited<ReturnType<typeof setup>>, session: number, version: number, text = "a"): Promise<void> {
+    ctx.host.session = session;
+    await ctx.client.rebind();
+    await tick();
+    ctx.client.receive(mail(session, KEY, mailPage(version, { kind: "page", dto: page("P", text, `r${version}`) },
+      { disk: { kind: "file", rev: `r${version}` } }), applied(ctx.host.last("open").id, version)));
+  }
+
+  it("a release made before the rebind closes the reopened page", async () => {
+    const ctx = await setup();
+    const release = await opened(ctx, "P", 3);
+    await rebound(ctx, 8, 2);
+    expect(ctx.client.isOpen("P")).toBe(true);
+    release();
+    await tick();
+    expect([ctx.client.isOpen("P"), ctx.host.count("close"), ctx.client.names()]).toEqual([false, 1, []]);
+  });
+
+  it("across two rebinds too", async () => {
+    const ctx = await setup();
+    const release = await opened(ctx, "P", 3);
+    await rebound(ctx, 8, 2);
+    await rebound(ctx, 9, 4);
+    release();
+    await tick();
+    expect([ctx.client.isOpen("P"), ctx.host.count("close")]).toEqual([false, 1]);
+  });
+
+  it("a pin released after the rebind stops holding host content back", async () => {
+    const ctx = await setup();
+    const { host, doc, client } = ctx;
+    doc.load(page("P", "a", "r3"));
+    const unpin = client.acquire("P", { pin: true });
+    await tick();
+    client.receive(mail(host.session, KEY, mailPage(3, { kind: "page", dto: page("P", "a", "r3") }, { disk: { kind: "file", rev: "r3" } }),
+      applied(host.last("open").id, 3)));
+    await rebound(ctx, 8, 2);
+    client.receive(mail(8, KEY, mailPage(5, { kind: "page", dto: page("P", "external", "r5") }, { disk: { kind: "file", rev: "r5" } })));
+    await tick();
+    expect(doc.text("P")).not.toBe("external");
+    unpin();
+    await tick();
+    expect(doc.text("P")).toBe("external");
+  });
+
+  it("a release during the rebind is not carried onto the reopened page", async () => {
+    const ctx = await setup();
+    const { host, client } = ctx;
+    const release = await opened(ctx, "P", 3);
+    host.session = 8;
+    const rebinding = client.rebind();
+    release();
+    await rebinding;
+    await tick();
+    expect([host.count("open"), client.isOpen("P"), client.names()]).toEqual([1, false, []]);
+  });
+});
+
 describe("close and move edges", () => {
   it("mail after a close while the host keeps the page leaves a closed view (no close loop)", async () => {
     const ctx = await setup();
