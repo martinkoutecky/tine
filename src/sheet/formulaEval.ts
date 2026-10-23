@@ -1,4 +1,4 @@
-import { createMemo, type Accessor } from "solid-js";
+import { createMemo, mapArray, type Accessor } from "solid-js";
 import { dataRev } from "../graphSession";
 import { formatForBlock, type Node as StoreNode } from "../document";
 import { facetsFromDto, facetsOf } from "../render/facets";
@@ -182,6 +182,7 @@ export function computeFormulaResults(
 ): { results: Map<string, FormulaValue>; evaluations: number } {
   const names = [...formulas.keys()];
   const results = new Map<string, FormulaValue>();
+  if (!names.length) return { results, evaluations: 0 };
   let evaluations = 0;
   for (const row of rows) {
     observeFormulaRow(row);
@@ -196,14 +197,22 @@ export function computeFormulaResults(
 
 export function createFormulaResultsMemo(opts: FormulaResultsOptions): Accessor<ReadonlyMap<string, FormulaValue>> {
   let warned = false;
-  return createMemo(() => {
+  // mapArray owns one computation per current row and disposes removed rows.
+  // The evaluator can read only this row, formula definitions and time (including
+  // .relative()); formula references also resolve in this same row context.
+  // Keep provenance/hydration dependencies inside each computation as well.
+  const cells = mapArray(() => opts.formulas().size ? opts.rows() : [], row => createMemo(() => {
     dataRev();
-    const { results, evaluations } = computeFormulaResults(
-      opts.rows(),
-      opts.formulas(),
-      opts.now?.() ?? appNow(),
-      opts.onEvaluate
-    );
+    return computeFormulaResults([row], opts.formulas(), opts.now?.() ?? appNow(), opts.onEvaluate);
+  }));
+  return createMemo(() => {
+    const results = new Map<string, FormulaValue>();
+    let evaluations = 0;
+    for (const cell of cells()) {
+      const row = cell();
+      evaluations += row.evaluations;
+      for (const [key, value] of row.results) results.set(key, value);
+    }
     const threshold = opts.warnThreshold ?? DEFAULT_EVAL_WARN_THRESHOLD;
     if (evaluations > threshold && !warned) {
       warned = true;
@@ -255,9 +264,25 @@ export function filterFormulaRows<T extends FormulaEvalRow>(
 export function createFormulaFilterMemo<T extends FormulaEvalRow>(
   opts: FormulaFilterOptions<T>
 ): Accessor<FormulaFilterState<T>> {
-  return createMemo(() => {
+  const source = createMemo(() => opts.filter()?.trim() ?? "");
+  const filtered = mapArray(() => source() ? opts.rows() : [], row => createMemo(() => {
     dataRev();
-    return filterFormulaRows(opts.rows(), opts.filter(), opts.formulas(), opts.now?.() ?? appNow(), opts.ownerId);
+    return filterFormulaRows([row], source(), opts.formulas(), opts.now?.() ?? appNow(), opts.ownerId);
+  }));
+  return createMemo(() => {
+    const rows = opts.rows();
+    if (!source()) { filtered(); return { rows, error: null }; }
+    const current = filtered();
+    // Parse errors must still be reported when there are no rows.
+    const empty = filterFormulaRows([], source(), opts.formulas(), opts.now?.() ?? appNow(), opts.ownerId);
+    if (empty.error) return { rows, error: empty.error };
+    const kept: T[] = [];
+    for (const result of current) {
+      const state = result();
+      if (state.error) return { rows, error: state.error };
+      kept.push(...state.rows);
+    }
+    return { rows: kept, error: null };
   });
 }
 
