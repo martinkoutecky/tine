@@ -477,7 +477,11 @@ pub fn substring_spans(
     for at in 0..=hay.len() - needle.len() {
         if hay[at..at + needle.len()] == needle {
             let span = map[at].start..map[at + needle.len() - 1].end;
-            if !out.contains(&span) {
+            // fold_with_map emits source spans in order: expansions repeat a
+            // grapheme's span and composition unions consecutive spans. Both
+            // endpoints are nondecreasing, as are these fixed-length windows,
+            // so duplicate matches can only be adjacent.
+            if out.last() != Some(&span) {
                 out.push(span);
             }
             if out.len() == limit {
@@ -565,6 +569,49 @@ impl Matcher {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn twenty_thousand_substring_hits_have_bounded_cost() {
+        let text = "a ".repeat(20_000);
+        let started = std::time::Instant::now();
+        let spans = super::substring_spans(&text, "a", usize::MAX, true);
+        let elapsed = started.elapsed();
+        assert_eq!(spans.len(), 20_000);
+        assert!(spans
+            .iter()
+            .enumerate()
+            .all(|(i, span)| *span == (2 * i..2 * i + 1)));
+        eprintln!("20k substring hits: {elapsed:?}");
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "audit L2-13: 20k hits took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn substring_spans_keep_monotone_unique_utf16_ranges() {
+        for remove_accents in [false, true] {
+            let text = "😀ﬃ ﬃ ㄱㅏ İ e\u{301}\r\n";
+            let (_, map) = super::fold_with_map(text, remove_accents);
+            assert!(map
+                .windows(2)
+                .all(|s| s[0].start <= s[1].start && s[0].end <= s[1].end));
+            // The two folded f's in each ligature are one original match;
+            // the astral prefix makes the expected coordinates UTF-16.
+            assert_eq!(
+                super::substring_spans(text, "f", usize::MAX, remove_accents),
+                vec![2..3, 4..5]
+            );
+            assert_eq!(
+                super::substring_spans(text, "f", 1, remove_accents),
+                vec![2..3]
+            );
+            assert_eq!(
+                super::substring_spans("aaa", "aa", usize::MAX, remove_accents),
+                vec![0..2, 1..3]
+            );
+        }
+    }
+
     use super::*;
 
     #[test]

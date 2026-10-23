@@ -501,7 +501,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     return collectAggregateColumns(
       aggregateRows(),
       configured,
-      (id) => (id ? visibleBody(docNode(id)?.raw ?? "").join(" ") : ""),
+      (id) => (id ? visibleBody(docNode(id)?.raw ?? "", formatForBlock(id)).join(" ") : ""),
     );
   });
 

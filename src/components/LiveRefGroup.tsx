@@ -248,7 +248,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
     if (!trail) return null;
     // Labels are markup, rendered inline like the block itself (OG block.cljs
     // `breadcrumb`: `map-inline` over the title, no character cut); CSS caps width.
-    const tail = trail.ids.map((parent): Crumb => ({ id: parent, label: (visibleBody(docNode(parent)!.raw)[0] ?? "").trim() }));
+    const tail = trail.ids.map((parent): Crumb => ({ id: parent, label: (visibleBody(docNode(parent)!.raw, formatForBlock(parent))[0] ?? "").trim() }));
     return trail.more ? [{ label: "…" }, ...tail] : tail;
   };
   // A ref/query/embed group can render a block that ALSO lives in the main outline

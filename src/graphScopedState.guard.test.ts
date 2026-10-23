@@ -141,7 +141,9 @@ const BOUNDED_COLLECTIONS: Record<string, string> = {
   "src/inputCapability.ts#watched": "one entry per media-query string asked (pointer: coarse, any-pointer: coarse); app-lifetime, no graph state",
   "src/assetCache.ts#cache": "MAX_CACHE_ENTRIES=128 / MAX_CACHE_BYTES=128MiB retained LRU, plus pending mounted reads",
   "src/assetCache.ts#liveEntries": "active asset leases only; last release deletes the evicted entry; clearAssetBlobCache ends graph reuse",
-  "src/render/parse.ts#cache": "CACHE_MAX=8000 LRU",
+  "src/render/seededFacets.ts#seeded": "one reference-counted entry per loaded-node raw; resetStore releases owners and clears",
+  "src/render/seededFacets.ts#owners": "one observer per loaded node; releases on raw change, replacement, deletion and resetStore",
+  "src/changeKeys.ts#invalidators": "one permanent callback per importing cache module, no graph payload",
   "src/i18n/index.ts#bundles": "one Fluent bundle per shipped UI locale (the generated LOCALES registry), app-lifetime; not graph state",
   "src/i18n/index.ts#loading": "one in-flight catalog load per shipped UI locale; deleted when the load settles",
   "src/i18n/index.ts#reported": "one key per (locale, message id) that failed to format: bounded by the catalog's message count",
@@ -176,7 +178,13 @@ export function moduleCollections(sources: Sources = repoSources()): Collection[
           }
           ts.forEachChild(child, visit);
         };
-        node.arguments.forEach(visit);
+        node.arguments.forEach(argument => {
+          visit(argument);
+          if (ts.isIdentifier(argument)) {
+            const declaration = tree.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === argument.text);
+            if (declaration) visit(declaration);
+          }
+        });
       }
       ts.forEachChild(node, findClears);
     };
@@ -242,10 +250,6 @@ const LEGACY_COLLECTIONS = new Set([
   "src/referenceSectionState.ts#groups",
   "src/reloadOnFocus.ts#waiters",
   "src/reloadOnFocus.ts#applications",
-  "src/render/facets.ts#seeded",
-  "src/resolveBatch.ts#cache",
-  "src/resolveBatch.ts#resolvedCache",
-  "src/resolveBatch.ts#pending",
   "src/resourceRead.ts#recorded",
   "src/sheet/matrix.ts#dimensionEntries",
   "src/sheet/queryHydration.ts#runningHydrationItems",
@@ -258,7 +262,7 @@ const LEGACY_COLLECTIONS = new Set([
   "src/transientLayers.ts#layers",
   "src/themes/manager.ts#[revokedThemeVersions, setRevokedThemeVersions]",
 ]);
-const LEGACY_COLLECTION_COUNT = 45;
+const LEGACY_COLLECTION_COUNT = 41;
 function unownedCollections(sources: Sources): string[] {
   return moduleCollections(sources).filter((c) => !c.scoped && !c.fixed && !BOUNDED_COLLECTIONS[c.key]).map((c) => c.key);
 }
@@ -367,6 +371,8 @@ describe("graph-scoped UI state (I-20)", () => {
     const planted = new Map<string, string>([["src/planted.ts", "const state = { retained: new Map<string, string>() };\nconst seen = new Set<string>();"]]);
     expect(unownedCollections(planted)).toEqual(["src/planted.ts#state", "src/planted.ts#seen"]);
     planted.set("src/planted.ts", "const seen = new Set<string>();\nclearOnBindingInvalidated(() => { seen.clear(); });\nconst vocabulary = new Set(['a', 'b']);");
+    expect(unownedCollections(planted)).toEqual([]);
+    planted.set("src/namedCleanup.ts", "const retained = new Map<string, string>();\nfunction clear() { retained.clear(); }\nclearOnBindingInvalidated(clear);");
     expect(unownedCollections(planted)).toEqual([]);
     planted.set("src/consumer.ts", "vocabulary.add(userInput);");
     expect(unownedCollections(planted)).toEqual(["src/planted.ts#vocabulary"]);

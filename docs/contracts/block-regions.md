@@ -27,6 +27,14 @@ header, unrelated metadata/drawers/planning and literal source slices.
 
 Raw identity, logbook and repeater APIs require a format. Published anchors,
 block-reference targets and referrer links thread the document block's format.
+Visible-body labels and export projections also require that source format;
+unloaded pages use the existing inventory's physical owner and the same
+`tine-outline::page_format::Format` rule as native code, without another read.
+Markdown ATX label stripping applies only to Markdown. Rename planning and
+validation classify file extensions through `Format::from_path`, including
+mixed-case Org extensions. Clock edits take previous and next raw buffers at
+the shared logbook boundary; previous marker recognition retries the title
+line when a bare marker is followed by metadata (GH #741, L3-07).
 Main initializes the frontend parser before rendering. Capture can paint its
 seeded empty editor during initialization; Block defers durable identity and
 reference-count reads until ready. Synchronous structural calls require init.
