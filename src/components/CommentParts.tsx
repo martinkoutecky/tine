@@ -13,6 +13,8 @@ import { facetsOf } from "../render/facets";
 import { blockPageReadOnly, blockWritable, node as docNode } from "../document";
 import { commentFromReplyDraft, deleteComment, submitReply } from "../commentActions";
 import { internalLinkMouseDown } from "../linkGesture";
+import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
+import { openContextMenu } from "../ui";
 import { beginDrag } from "./blockGestures";
 import { QuoteHighlightContext, quotedSourceRanges, type QuotedRange } from "../render/quoteHighlight";
 import type { Format } from "../render/ast";
@@ -31,11 +33,11 @@ export function inCommentThread(parentId: string | null, format: Format): boolea
 
 /** The muted quote line above a comment: the quoted passage, "whole block", or
  * the quote struck through when it no longer occurs in the parent. */
-export function CommentQuoteHeader(props: { parentId: string | null; selector: QuoteSelector | null }): JSX.Element {
-  return <Show when={props.selector !== null && props.parentId !== null}><QuoteHeader parentId={props.parentId!} selector={props.selector!} /></Show>;
+export function CommentQuoteHeader(props: { parentId: string | null; selector: QuoteSelector | null; controls?: JSX.Element }): JSX.Element {
+  return <Show when={props.selector !== null && props.parentId !== null}><QuoteHeader parentId={props.parentId!} selector={props.selector!} controls={props.controls} /></Show>;
 }
 
-function QuoteHeader(props: { parentId: string; selector: QuoteSelector }): JSX.Element {
+function QuoteHeader(props: { parentId: string; selector: QuoteSelector; controls?: JSX.Element }): JSX.Element {
   const anchor = createMemo(() => {
     const parent = docNode(props.parentId);
     return parent ? anchorQuote(parent.raw, props.selector) : { kind: "stale" as const };
@@ -52,6 +54,7 @@ function QuoteHeader(props: { parentId: string; selector: QuoteSelector }): JSX.
           <span class="comment-quote-stale">{t("comment-quote-changed")}</span>
         </Show>
       </Show>
+      {props.controls}
     </div>
   );
 }
@@ -77,13 +80,19 @@ export function AuthorChip(props: { author: string | null; handleOf?: string }):
       classList={{ agent: props.author !== null, "comment-handle": props.handleOf !== undefined }}
       title={props.author !== null ? t("comment-written-by", { author: props.author }) : t("comment-written-by-you")}
       onMouseDown={onMouseDown}
+      onContextMenu={e => {
+        if (props.handleOf === undefined || !shouldOpenBlockContextMenu(e.target)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openContextMenu(e.clientX, e.clientY, props.handleOf);
+      }}
     >
       {props.author ?? t("comment-author-you")}
     </span>
   );
 }
 
-/** Each row's delete stays outside the body and quote, so it cannot place a caret. */
+/** Delete shares the first line but consumes its gesture without placing a caret. */
 export function CommentActions(props: { id: string }): JSX.Element {
   return <Show when={blockWritable(props.id)}>
     <div class="comment-actions" onMouseDown={(e) => e.stopPropagation()}>

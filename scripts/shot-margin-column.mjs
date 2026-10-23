@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { bulletlessFacts, checkBulletless } from "./lib/margin-bulletless.mjs";
+import { marginFirstLineProblems } from "./lib/margin-first-line.mjs";
 
 const PORT = Number(process.env.MARGIN_SHOT_PORT || 5218);
 const OUT = process.argv[2] ?? "scratch/margin-s2";
@@ -106,12 +107,12 @@ try {
     console.log(JSON.stringify({ case: name, paneWidth: f.paneWidth, margin: f.column, markers: f.markers, threads: f.threads.map((t) => [t.id.slice(0, 6), Math.round(t.top), t.anchor === null ? null : Math.round(t.anchor)]) }));
     check(name, page, f);
     checkBulletless(name, await tab.evaluate(bulletlessFacts), { expectCards: page.threads });
+    const problems = await tab.evaluate(marginFirstLineProblems);
+    if (problems.length) throw new Error(`${name}: ${problems.join("; ")}`);
     if (errors.length) throw new Error(`${name}: browser errors:\n${errors.join("\n")}`);
     await tab.screenshot({ path: `${OUT}/${name}.png`, fullPage: false });
     if (page.slug === "comments") {
       const card = tab.locator(".comment-card").first();
-      const deleteAbove = await card.evaluate(el => el.querySelector(":scope > .comment-actions .comment-delete").getBoundingClientRect().bottom <= el.querySelector(":scope > .comment-quote").getBoundingClientRect().top);
-      if (!deleteAbove) throw new Error(`${name}: delete is below the quote instead of at the top`);
       await card.hover();
       await tab.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
       await tab.screenshot({ path: `${OUT}/${name}-reply-collapsed.png` });
@@ -123,12 +124,8 @@ try {
       await draft.press("Escape");
       // Long quotes in a narrow margin must leave both the chip and delete
       // reachable. Check actual layout, without imposing incidental pixels.
-      const overlap = await card.evaluate(el => {
-        const del = el.querySelector(":scope > .comment-actions .comment-delete").getBoundingClientRect();
-        return [...el.querySelectorAll(":scope > .comment-quote, :scope > .block-main .author-chip")]
-          .some(n => { const r = n.getBoundingClientRect(); return r.top < del.bottom && r.bottom > del.top && r.left < del.right && r.right > del.left; });
-      });
-      if (overlap) throw new Error(`${name}: delete overlaps quote/author`);
+      const overlap = await tab.evaluate(marginFirstLineProblems);
+      if (overlap.length) throw new Error(`${name}: ${overlap.join("; ")}`);
       await card.locator(":scope > .block-main .block-content").click();
       const editor = card.locator("textarea.block-editor");
       await editor.evaluate(ta => { ta.focus(); ta.setSelectionRange(0, 4); ta.dispatchEvent(new Event("select", { bubbles: true })); });
@@ -139,13 +136,8 @@ try {
         await tab.evaluate(() => document.documentElement.style.setProperty("--margin-column-width", "220px"));
         await tab.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
         await tab.screenshot({ path: `${OUT}/${name}-narrow-margin.png` });
-        for (const c of await tab.locator(".comment-card").all()) {
-          const clear = await c.evaluate(el => {
-            const d = el.querySelector(":scope > .comment-actions .comment-delete").getBoundingClientRect();
-            return [...el.querySelectorAll(":scope > .comment-quote, :scope > .block-main .author-chip")].every(n => n.getBoundingClientRect().top >= d.bottom);
-          });
-          if (!clear) throw new Error(`${name}: narrow margin delete overlaps content`);
-        }
+        const narrowProblems = await tab.evaluate(marginFirstLineProblems);
+        if (narrowProblems.length) throw new Error(`${name}: narrow margin ${narrowProblems.join("; ")}`);
       }
     }
     if (page.slug === "stacking" && f.column) {
@@ -169,6 +161,8 @@ try {
     await tab.locator(".switcher-input").fill("Margin comments regression");
     await tab.locator(".switcher-row").first().click();
     const card = tab.locator(".comment-card").first();
+    const touchProblems = await tab.evaluate(marginFirstLineProblems);
+    if (touchProblems.length) throw new Error(`touch-${mode}: ${touchProblems.join("; ")}`);
     await card.locator(":scope > .block-main .block-content").click();
     await card.locator("textarea.block-editor").evaluate(ta => { ta.focus(); ta.setSelectionRange(0, 4); ta.dispatchEvent(new Event("select", { bubbles: true })); });
     await tab.locator("[data-mobile-selection-toolbar]").waitFor();

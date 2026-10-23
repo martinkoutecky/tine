@@ -62,6 +62,18 @@ afterEach(() => {
 });
 
 describe("Ctrl/Cmd+R creates a margin comment", () => {
+  it("places root actions and author in the quote line and reply actions in its body", () => {
+    const { root, dispose } = mount([block("p", "words", [block("c", "My view\nquote:: words", [block("r", "Evidence\nauthor:: Ada")])])]);
+    try {
+      const card = root.querySelector('[data-block-id="c"]')!;
+      expect(card.querySelector(":scope > .comment-actions")).toBeNull();
+      expect(card.querySelector(":scope > .comment-quote .comment-delete")).not.toBeNull();
+      expect(card.querySelector(":scope > .comment-quote .author-chip")?.textContent).toBe("you");
+      const reply = root.querySelector('[data-block-id="r"]')!;
+      expect(reply.querySelector(":scope > .comment-actions")).toBeNull();
+      expect(reply.querySelector(":scope > .block-main .comment-delete")).not.toBeNull();
+    } finally { dispose(); }
+  });
   it.each(["md", "org"] as const)("keeps ordinary %s author and quote-suffix properties in the edit buffer", (format) => {
     const raw = format === "md"
       ? "The obstacle is the way.\nauthor:: Marcus Aurelius\nquote-suffix:: after"
@@ -138,7 +150,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(docNode(id)!.raw).toContain("A considered reply");
       expect(docNode(id)!.parent).toBe("c");
       endEdit("page-navigation");
-      const del = row().querySelector<HTMLButtonElement>(":scope > .comment-actions .comment-delete");
+      const del = row().querySelector<HTMLButtonElement>(":scope > .comment-quote .comment-delete");
       expect(del, "a comment needs Delete").not.toBeNull();
       del!.click();
       expect(docNode("p")!.children).toHaveLength(0);
@@ -182,7 +194,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(docNode(id)!.parent).toBe("r");
       expect(docNode(id)!.raw).toContain("quote:: My");
       expect(root.querySelectorAll(".comment-card")).toHaveLength(1);
-      expect(root.querySelector('[data-block-id="r"] > .comment-quote')?.textContent).toBe("this claim");
+      expect(root.querySelector('[data-block-id="r"] > .comment-quote .comment-quote-text')?.textContent).toBe("this claim");
       expect(root.querySelector('[data-block-id="r"] > .block-main')?.textContent).toContain("My view");
     } finally { dispose(); }
   });
@@ -313,14 +325,14 @@ describe("comment rendering", () => {
   }
 
   const row = (root: HTMLElement, id: string) => root.querySelector(`.ls-block[data-block-id="${id}"]`) as HTMLElement;
-  const ownChip = (el: HTMLElement) => el.querySelector(":scope > .block-main .author-chip")?.textContent ?? null;
+  const ownChip = (el: HTMLElement) => el.querySelector(":scope > .comment-quote .author-chip, :scope > .block-main .author-chip")?.textContent ?? null;
 
   it("shows a comment as a card with its quote header and hides the quote and author rows", () => {
     const { root, dispose } = renderedFixture();
     try {
       const c1 = row(root, "c1");
       expect(c1.classList.contains("comment-card")).toBe(true);
-      expect(c1.querySelector(":scope > .comment-quote")?.textContent).toBe("converges because");
+      expect(c1.querySelector(":scope > .comment-quote .comment-quote-text")?.textContent).toBe("converges because");
       expect(ownChip(c1)).toBe("you");
       const keys = [...root.querySelectorAll(".block-property-key")].map((k) => k.textContent);
       expect(keys).not.toContain("quote");

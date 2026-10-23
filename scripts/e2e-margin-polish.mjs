@@ -85,7 +85,7 @@ async function editText(text) {
 async function action(text, cls) {
   return browser.execute((text, cls) => {
     const row = [...document.querySelectorAll(".ls-block")].find(el => el.querySelector(":scope > .block-main .block-content")?.textContent.includes(text));
-    const button = row?.querySelector(`:scope > .comment-actions .${cls}`);
+    const button = row?.querySelector(`:scope > .comment-quote .${cls}, :scope > .block-main .${cls}`);
     if (!button) return false;
     button.click(); return true;
   }, text, cls);

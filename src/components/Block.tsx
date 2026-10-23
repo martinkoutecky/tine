@@ -342,9 +342,15 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       data-sticky-parent={stickyParent() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
-      <Show when={bulletless()}><CommentActions id={props.id} /></Show>
       <Show when={stickyParent()}><StickyAncestor id={props.id} raw={node().raw} /></Show>
-      <CommentQuoteHeader parentId={node().parent} selector={commentSelector()} />
+      <CommentQuoteHeader parentId={node().parent} selector={commentSelector()} controls={
+        <Show when={bulletless()}>
+          <span class="comment-first-line-controls">
+            <Show when={showsAuthor()}><AuthorChip author={author()} handleOf={props.id} /></Show>
+            <CommentActions id={props.id} />
+          </span>
+        </Show>
+      } />
       <div
         class="block-main"
         ref={(el) => {
@@ -436,6 +442,12 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               beginEditGesture(e, props.id, docNode(props.id).raw.length, instanceId, outlineScope);
           }}
         >
+          <Show when={bulletless() && !commentSelector()}>
+            <span class="comment-first-line-controls">
+              <Show when={showsAuthor()}><AuthorChip author={author()} handleOf={props.id} /></Show>
+              <CommentActions id={props.id} />
+            </span>
+          </Show>
           <Show
             when={editing()}
             fallback={
@@ -451,7 +463,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                   outlineScope={outlineScope}
                   refCountBadge={<>
                     <BlockRefCountBadge id={props.id} hidden={props.hideRefCount} open={showRefs()} toggle={() => setShowRefs((v) => !v)} />
-                    <Show when={showsAuthor()}>
+                    <Show when={showsAuthor() && !bulletless()}>
                       <AuthorChip author={author()} handleOf={bulletless() ? props.id : undefined} />
                     </Show>
                   </>}

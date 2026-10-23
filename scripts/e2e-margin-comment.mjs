@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { APP_ID } from "./lib/app-identity.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { marginFirstLineProblems } from "./lib/margin-first-line.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -150,7 +151,7 @@ try {
 
   // Rendered: a comment card with the quote, and the phrase marked in the parent.
   await browser.waitUntil(() => browser.execute((phrase) =>
-    document.querySelector(".page-blocks .ls-block.comment-card .comment-quote")?.textContent === phrase
+    document.querySelector(".page-blocks .ls-block.comment-card .comment-quote-text")?.textContent === phrase
       && document.querySelector(".page-blocks .comment-quote-anchor")?.textContent === phrase, PHRASE), {
     timeout: 5_000, timeoutMsg: "the comment did not render as a card with its quote and a marked passage",
   });
@@ -213,16 +214,11 @@ try {
   await browser.keys(["Escape"]);
   await waitForFileText(PAGE_FILE, text => text.includes("A draft worth thought") && text.includes("A nested draft remark") && text.includes("quote:: draft"), { timeoutMs: 20_000 });
   if (await browser.execute(() => window.__marginE2E) !== "alive") throw new Error("Ctrl+R in a nonempty draft reloaded the app");
-  const positions = await browser.execute(() => {
-    const card = document.querySelector(".comment-card");
-    const del = card.querySelector(":scope > .comment-actions .comment-delete").getBoundingClientRect();
-    const quote = card.querySelector(":scope > .comment-quote").getBoundingClientRect();
-    return del.bottom <= quote.top;
-  });
-  if (!positions) throw new Error("delete is not above the quote");
+  const problems = await browser.execute(marginFirstLineProblems);
+  if (problems.length) throw new Error(problems.join("; "));
   console.log("PASS: rightmost Comment icon, Enter reply, empty draft cancellation without a save, draft submission with author, top delete, and Ctrl+R quoted reply in the wide thread");
 } catch (error) {
-  console.error(JSON.stringify({ base: "ceabfe814 + margin-r3 working diff", journey: "margin-comment", expected: "local empty draft, ordinary submitted reply, top delete, rightmost icon", observed: String(error), classification: "ambiguous; inspect log and screenshot", screenshot: `${TMP}/failure.png` }));
+  console.error(JSON.stringify({ base: "c39d28a37 + margin-r4 working diff", journey: "margin-comment", expected: "local empty draft, ordinary submitted reply, delete on first content line, rightmost icon", observed: String(error), classification: "ambiguous; inspect log and screenshot", screenshot: `${TMP}/failure.png` }));
   // External capture avoids WebKitGTK's occasionally hanging screenshot endpoint.
   const { execFileSync } = await import("node:child_process");
   try { execFileSync("import", ["-window", "root", `${TMP}/failure.png`]); } catch {}
