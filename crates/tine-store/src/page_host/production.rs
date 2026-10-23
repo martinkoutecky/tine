@@ -374,18 +374,12 @@ fn failure(error: io::Error) -> IoFailure {
 }
 
 /// Read `path` with the metadata of the read's own handle taken before the
-/// bytes, and their revision (GH #623; `transaction/publication.rs`).
+/// bytes, and their revision (GH #623; `transaction/publication.rs`). The
+/// store's bounded reader: a page over the I-22 parse cap is a read failure,
+/// never an allocation of its whole length (audit L6-02).
 fn read_observed(path: &Path) -> io::Result<(Vec<u8>, Option<crate::watch::Stamp>)> {
-    use std::io::Read;
-    let mut file = fs::File::open(path)?;
-    let stamp = file
-        .metadata()
-        .ok()
-        .and_then(|metadata| crate::watch::stamp_from_metadata(&metadata));
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
-    #[cfg(feature = "test-faults")]
-    crate::cost_counters::full_read();
+    let (bytes, metadata) = crate::model::read_parse_bytes_observed(path)?;
+    let stamp = crate::watch::stamp_from_metadata(&metadata);
     let rev = crate::FileRev::from_bytes(&bytes);
     Ok((bytes, stamp.map(|stamp| stamp.with_rev(Some(rev)))))
 }

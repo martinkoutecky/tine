@@ -766,16 +766,14 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
             let block = block_at_mut(&mut next.blocks, &path).expect("resolved path");
             let old = block.raw.clone();
             let joined = set_text(&old, org, &new_text).map_err(|e| kernel_refused(page, e))?;
-            let marker = |raw: &str| tine_core::block_regions::header_tokens(raw, org).marker;
-            block.raw = tine_core::logbook::apply_marker_transition_at(
+            block.raw = tine_core::logbook::apply_edit_transition_at(
+                &old,
                 &joined,
                 if org {
                     tine_core::logbook::LogbookFormat::Org
                 } else {
                     tine_core::logbook::LogbookFormat::Markdown
                 },
-                marker(&old).as_deref(),
-                marker(&joined).as_deref(),
                 config.enable_timetracking,
                 config.logbook.with_second_support,
                 now_parts(),

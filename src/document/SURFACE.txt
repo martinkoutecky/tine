@@ -154,6 +154,7 @@ resolveConflict  # why: one conflict resolution intent; batch03
 resolveGuideBlockRef
 resolveGuidePageDto
 restoreTodayJournalInFeed
+retireFeedPages  # why: releases measured offscreen journal documents through the shared safety gate; batch-og-l10-03
 revealNode
 sameLiveDraft  # why: a live resolution applies only to the exact draft the user reviewed (og 8e); batch21a
 sanitizeOutlineIdsForPaste  # why: prevent off-screen ID collisions in ordinary paste; batch05

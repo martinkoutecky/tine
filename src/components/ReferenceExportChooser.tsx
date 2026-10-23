@@ -68,7 +68,7 @@ export function ReferenceExportChooser(props: {
                 return <label class="ref-export-row">
                   <input type="checkbox" checked={selected().has(key)}
                     onChange={(event) => toggle(key, event.currentTarget.checked)} />
-                  <span class="ref-export-text"><EmojiText text={visibleBody(block.raw)[0] ?? ""} /></span>
+                  <span class="ref-export-text"><EmojiText text={visibleBody(block.raw, formatForPage(group.page))[0] ?? ""} /></span>
                 </label>;
               }}</For>
             </div>

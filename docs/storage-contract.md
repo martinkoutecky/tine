@@ -144,8 +144,8 @@ cache-generation move made while no cache exists is recorded with the paths it
 moved (`model/derived_cold.rs`), and the pass re-derives exactly those paths,
 and the pages a hold withheld from it, from their files before it installs
 (`model/launch_patch.rs`). A move it cannot attribute to paths (a discarded
-cache, a config change, a duplicate journal day) declines the install, and the
-Ready publication builds on demand as before. The Ready publication comes
+cache, a build-key config change, a duplicate journal day) declines the install,
+and the Ready publication builds on demand as before. The Ready publication comes
 first and its view holds each saved page once, with its last saved bytes; the
 deferred changes follow in save order under the same writer hold, and the
 Ready publication does not announce their files as outside writes. A

@@ -14,6 +14,7 @@ pub mod editor_text;
 pub mod logbook;
 pub mod lsdoc_block_parse;
 pub mod outline;
+pub mod page_format;
 pub mod page_filename;
 pub mod property_line;
 pub mod property_refs;

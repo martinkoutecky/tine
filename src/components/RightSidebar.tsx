@@ -546,7 +546,7 @@ function BlockItem(props: {
                   <span class="crumb-sep">›</span>
                   <a class="rs-crumb" onMouseDown={internalLinkMouseDown} onClick={(e) => openCrumb(aid, e)}
                     onAuxClick={(e) => internalLinkAuxClick(e, () => openCrumb(aid, e))}>
-                    <InlineText text={visibleBody(docNode(aid)?.raw ?? "")[0] || "…"} format={formatForBlock(aid)} />
+                    <InlineText text={visibleBody(docNode(aid)?.raw ?? "", formatForBlock(aid))[0] || "…"} format={formatForBlock(aid)} />
                   </a>
                 </>
               )}
