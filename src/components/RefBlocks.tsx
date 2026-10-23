@@ -4,13 +4,15 @@ import { t } from "../i18n";
 // Visits at most 64 ancestor levels per branch and shows a message below that;
 // cost is O(rendered blocks), bounded by the supplied result tree.
 
-import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import type { BlockDto } from "../types";
 import { pageProperties } from "../render/block";
 import { effectiveHeadingLevel, facetsFromDto } from "../render/facets";
 import { taskCheckboxState } from "../markers";
 import { AstBody } from "../render/body";
-import { formatForPage } from "../document";
+import { blockWritable, formatForPage, node as docNode, resolveBlockRef, setCollapsed } from "../document";
+import { loadSourcePage } from "../sourcePage";
+import { graphOwner } from "../owned";
 import { openBlockInSidebar } from "../ui";
 import { openInNewTab, type Route } from "../router";
 import { openRouteInOtherPane } from "../panes";
@@ -38,8 +40,8 @@ export function RefBlocks(props: {
   onEditPageProperties?: (event: MouseEvent) => void;
   queryResult?: boolean;
   readOnly?: boolean;
-  /** GH #735: honor `collapsed::` with a local-only fold, as the hover
-   *  preview of a page does. All DTO bodies share the page's AST renderer. */
+  /** Hover previews share the source's fold (GH #748). Unwritable or missing
+   *  sources retain a local fold. Text remains read-only. */
   pageBody?: boolean;
   onOpenBlock?: (id: string) => void;
 }): JSX.Element {
@@ -109,17 +111,44 @@ function RefBlock(props: {
   const properties = createMemo(() =>
     props.block.page_property ? pageProperties(props.block.raw, format()) : []
   );
-  // GH #735: a preview shows the page's own folds. The reader may open one, but
-  // only locally: the preview never writes `collapsed::` back to its source.
-  const [foldOpened, setFoldOpened] = createSignal(false);
+  const [localFold, setLocalFold] = createSignal<boolean>();
   const hasKids = () => props.block.children.length > 0;
-  const folded = () => !!props.pageBody && props.block.collapsed && hasKids() && !foldOpened();
   const refTarget = () => ({
     uuid: blockDtoExternalId(props.block),
     page: props.page ?? "",
     pageKind: (props.pageKind ?? "page") as "journal" | "page",
     ...(props.path ? { path: props.path } : {}),
   });
+  const sourceId = createMemo(() => props.pageBody && props.page ? resolveBlockRef(refTarget()) : null);
+  const folded = () => {
+    if (!props.pageBody || !hasKids()) return false;
+    const id = sourceId();
+    const stored = (id ? docNode(id)?.collapsed : undefined) ?? props.block.collapsed;
+    return id && blockWritable(id) ? stored : (localFold() ?? stored);
+  };
+  let alive = true;
+  let folding = false;
+  onCleanup(() => { alive = false; });
+  const toggleFold = async () => {
+    if (!hasKids() || folding) return;
+    const next = !folded();
+    const ref = refTarget();
+    const owner = graphOwner(() => alive);
+    folding = true;
+    try {
+      // Same admission and identity resolution as reference-row edits. Never
+      // load a preview DTO (which may be capped) as a whole source document.
+      const loaded = ref.page && await loadSourcePage(ref, "The source fold was not changed.");
+      if (!owner()) return;
+      const id = loaded ? resolveBlockRef(ref) : null;
+      if (id && blockWritable(id)) {
+        setLocalFold(undefined);
+        setCollapsed(id, next); // ordinary undo and guarded save path
+      } else setLocalFold(next);
+    } catch {
+      if (owner()) setLocalFold(next);
+    } finally { folding = false; }
+  };
   const openRefRoute = (open: (route: Route) => unknown): void => {
     const t = refTarget();
     open({ kind: "page", name: t.page, pageKind: t.pageKind, block: t.uuid });
@@ -137,7 +166,7 @@ function RefBlock(props: {
             <span
               class="collapse-toggle"
               classList={{ "has-children": hasKids() }}
-              onClick={(e) => { e.stopPropagation(); if (hasKids()) setFoldOpened((v) => !v); }}
+              onClick={(e) => { e.stopPropagation(); void toggleFold(); }}
             >
               <Show when={hasKids()}>
                 <svg viewBox="0 0 24 24" class="triangle"><path d="M8 5l8 7-8 7z" /></svg>
