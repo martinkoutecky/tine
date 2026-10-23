@@ -214,8 +214,8 @@ impl Core {
             {
                 current = stamp(&path);
             }
-            // Byte-identity gate: taking in a config discards every parsed
-            // page, so only a changed revision is read.
+            // Byte-identity gate: only a changed revision needs a reload
+            // and publication (build-key changes also discard parsed pages).
             let moved = previous.as_ref().and_then(|value| value.rev.as_ref())
                 != current.as_ref().and_then(|value| value.rev.as_ref());
             match moved.then(|| self.read_config(&path)) {

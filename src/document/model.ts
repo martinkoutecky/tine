@@ -3,9 +3,12 @@ import { createStore, produce } from "solid-js/store";
 import { batch, createRoot, createMemo, createSignal, untrack } from "solid-js";
 import { acceptedBlockIdentityClaims, existingBlockId } from "../blockIdentity";
 import { graphMeta } from "../graphSession";
+import { resolvedTarget } from "../pageIndex";
+import { page_file_format } from "../render/wasm/lsdoc_wasm.js";
 import { sheetConfigFromRaw } from "../sheet/config";
 import { beginResultsChange } from "../queryResultsEpoch";
 import { clearOnBindingInvalidated } from "../binding";
+import { flushFacetOwners } from "../render/seededFacets";
 
 export interface Node {
   id: string;
@@ -74,6 +77,7 @@ export const setDoc: typeof writeDoc = ((...args: unknown[]) => {
     const finish = hydrating || fieldOnly || args[0] === "feed" || args[0] === "loaded" ? null : beginResultsChange();
     try {
       (writeDoc as (...args: unknown[]) => void)(...args);
+      flushFacetOwners();
       untrack(() => {
         if (args.length === 4 && args[0] === "byId" && args[2] === "raw" && typeof args[1] === "string") {
           updateAuthoredIdentity(args[1]);
@@ -275,16 +279,15 @@ export function setPageId(name: string, id: string): void {
   if (i !== undefined) setDoc("pages", i, "id", id);
 }
 
-/** The format ("md"/"org") to parse a page's inline content with. Exact for a
- *  loaded page; for one that isn't loaded (e.g. the source of a backlink) fall back
- *  to the graph's preferred format — correct for single-format graphs, a safe guess
- *  otherwise (and far better than always assuming Markdown). Used by the inline
- *  renderers (InlineText callers) so org markup in property values / breadcrumbs /
- *  reference previews / block-refs renders as org, not literally. */
+/** Source format for a loaded page or its physical owner in the shared inventory.
+ *  Only an unknown/new page falls back to the graph's preferred format. */
 export function formatForPage(name: string | undefined): Format {
   if (name) {
     const p = pageByName(name);
     if (p?.format) return p.format;
+    const target = resolvedTarget(name) ?? resolvedTarget(name, "journal");
+    const path = target?.kind === "existing" ? target.id : target?.kind === "alias" ? target.owners[0] : undefined;
+    if (path) return page_file_format(path) as Format;
   }
   return graphMeta()?.preferred_format ?? "md";
 }

@@ -39,7 +39,7 @@ function firstVisibleLine(id: string): string {
   if (raw === state) return state;
   const priority = readField(id, "priority")?.text;
   if (priority && raw === `[#${priority}]`) return raw;
-  return (visibleBody(raw)[0] ?? "").trim();
+  return (visibleBody(raw, formatForBlock(id))[0] ?? "").trim();
 }
 
 function parseLabel(field: WritableGroupField, label: string): string | null | undefined {

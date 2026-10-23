@@ -15,6 +15,8 @@ import { parseBlock } from "./parse";
 import { propertyKeyNorm } from "./block";
 import { DONE_MARKERS } from "../markers";
 import type { Block, Format, Inline } from "./ast";
+import { facetKey as keyOf, seededFacetsOf } from "./seededFacets";
+export { seedFacets, clearSeededFacets, seededFacetCount } from "./seededFacets";
 
 export interface Facets {
   hasId?: boolean;
@@ -50,20 +52,10 @@ export function parseBody(raw: string, format: Format): Block[] {
   return parseBlock(raw, format === "org");
 }
 
-// Two tiers so a page bigger than any cap can't thrash the cache into parse-all-on-
-// load (audit P2 — a 4097-block page evicted its own seeds before they were read):
-//  - `seeded`: backend-shipped facets for the loaded blocks. NEVER LRU-evicted (so
-//    an arbitrarily large page is still all hits); cleared wholesale ONLY on graph
-//    switch / store reset (`clearSeededFacets`). Not bounded by the CURRENT working
-//    set: a raw that was edited away, removed or reloaded keeps its entry until that
-//    reset, so the map holds every distinct raw seeded since (O(distinct raws seen
-//    this graph session), each a small facet record).
-//  - `derived`: facets computed locally for a raw the backend hasn't shipped (the
-//    block being edited). Small LRU — transient.
-const seeded = new Map<string, Facets>();
+// Loaded nodes own backend seeds (seededFacets.ts); large pages keep all hits.
+// Locally derived edits have a small transient LRU.
 const derived = new Map<string, Facets>();
 const DERIVED_MAX = 1024;
-const keyOf = (raw: string, format: Format) => format + "\0" + raw;
 
 /** Build a `Facets` from a backend BlockDto's shipped fields (no parse). */
 export function facetsFromDto(d: {
@@ -116,32 +108,19 @@ export function effectiveHeadingLevel(facets: Pick<Facets, "headingLevel" | "hea
   return facets.headingAuto ? Math.min(Math.max(0, depth) + 1, 6) : null;
 }
 
-/** Seed the never-evicted tier from the backend-computed facets — no parse. An entry
- *  stays until `clearSeededFacets` (graph switch / store reset), even after its block
- *  is gone. */
-export function seedFacets(raw: string, format: Format, f: Facets): void {
-  seeded.set(keyOf(raw, format), f);
-}
-
 /** A parser-owned negative identity fact for this exact loaded raw and format.
  * O(raw bytes) key lookup, no parse. Unknown/possible identities use blockRegions.
  * Unprojected drafts stay unknown; graph resets clear these facts with facets. */
 export function knownIdentityAbsent(raw: string, format: Format): boolean {
-  return seeded.get(keyOf(raw, format))?.hasId === false;
-}
-
-/** Drop all backend-seeded facets — call on graph switch / full store reset so the
- *  previous graph's blocks don't linger (store `resetStore`). */
-export function clearSeededFacets(): void {
-  seeded.clear();
+  return seededFacetsOf(raw, format)?.hasId === false;
 }
 
 /** A block's header facets. Seeded (loaded) blocks and recently-derived edits ⇒ no
  *  parse; a never-seen raw ⇒ one wasm lsdoc parse (cached in the small `derived` LRU). */
 export function facetsOf(raw: string, format: Format): Facets {
-  const k = keyOf(raw, format);
-  const s = seeded.get(k);
+  const s = seededFacetsOf(raw, format);
   if (s) return s;
+  const k = keyOf(raw, format);
   const d = derived.get(k);
   if (d) {
     derived.delete(k); // LRU bump
@@ -370,7 +349,7 @@ export { EMPTY as EMPTY_FACETS };
  * input (cached lsdoc parse), O(AST nodes) for parsed input. No writes. */
 export function renderedProperties(raw: string | readonly Block[], format: Format): [string, string][] {
   if (typeof raw === "string") {
-    const native = seeded.get(keyOf(raw, format));
+    const native = seededFacetsOf(raw, format);
     // hasId is present on complete native projections, absent on unprojected
     // drafts. An empty native property set proves there is no display group;
     // positive sets still use the AST's earliest-group presentation policy.

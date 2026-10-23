@@ -101,16 +101,16 @@ export function normalizeImplicitPageName(value: string): string {
  *  (marker / priority / heading / scheduled / deadline / properties) are NOT
  *  derived here; they come from the one lsdoc parse via `render/facets` `facetsOf`.
  *  So there's no second facet recognizer — just one body-text extractor. */
-export function visibleBody(raw: string): string[] {
+export function visibleBody(raw: string, format: Format): string[] {
   // Recognize against the whole raw, as the source block does. Looking only at
   // line one mistakes `TODO\nbody` for a task and misses leading blank lines.
-  const { marker, priority } = headerTokens(raw);
+  const { marker, priority } = headerTokens(raw, format);
   const from = marker ? marker.end + (raw[marker.end] === " " ? 1 : 0) : 0;
   // The accepted priority token (only whitespace can precede it) is facet, not body text.
   const cut = priority && priority.start >= from
     ? { start: priority.start, end: priority.end + (/\s/.test(raw[priority.end] ?? "") ? 1 : 0) }
     : null;
-  const meta = metadataLineRanges(raw, from);
+  const meta = metadataLineRanges(raw, from, format);
   const lines: string[] = [];
   let pos = 0;
   for (const line of raw.split("\n")) {
@@ -130,7 +130,7 @@ export function visibleBody(raw: string): string[] {
   }
   if (lines.length === 0) lines.push("");
   // Strip the heading prefix from the first line (`TODO ## x` keeps its heading after the marker).
-  const heading = /^(#{1,6}) /.exec(lines[0]);
+  const heading = format === "md" ? /^(#{1,6}) /.exec(lines[0]) : null;
   if (heading) lines[0] = lines[0].slice(heading[1].length + 1);
   while (lines.length > 1 && lines[0].trim() === "") lines.shift();
   return lines;
@@ -146,9 +146,9 @@ function needsRegions(raw: string): boolean {
 /** UTF-16 `[start, end)` extents (newline included) of every metadata line lsdoc
  *  accepted in `raw` at or after UTF-16 offset `from`: properties, planning lines
  *  and drawers. Empty before the parser is ready or for a quarantined block. */
-function metadataLineRanges(raw: string, from: number): [number, number][] {
+function metadataLineRanges(raw: string, from: number, format: Format): [number, number][] {
   if (!parserReady() || !needsRegions(raw)) return [];
-  const regions = blockRegions(raw, "md");
+  const regions = blockRegions(raw, format);
   if (regions.quarantined) return [];
   const bytes = [
     ...regions.property_regions,
