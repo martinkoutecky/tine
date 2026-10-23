@@ -53,8 +53,8 @@ export function commentFromEditor(id: string, ref: HTMLTextAreaElement, commit: 
   if (!commentAndEdit(id, value, selectionStart, selectionEnd, surface)) pushToast(msg("comment-block-cannot-take"), "warn");
 }
 
-/** Reply to this exact comment/reply, as an ordinary last child in its thread.
- * No quote is needed for the visible Reply action. */
+/** Enter in a comment opens an ordinary last child in its thread. The composer
+ * uses submitReply instead, so it need not persist an empty child first. */
 export function replyAndEdit(commentId: string, surface: string | null = null): string | null {
   const comment = docNode(commentId);
   if (!comment || !blockWritable(commentId) || threadRootOf(commentId, formatForBlock(commentId)) === null) return null;
@@ -66,6 +66,37 @@ export function replyAndEdit(commentId: string, surface: string | null = null): 
   });
   if (id) startEditing(id, 0, null, surface);
   return id;
+}
+
+/** A composer draft is local UI state until it has content. Commit the child
+ * and its body together through the ordinary document door, in one undo unit. */
+export function submitReply(commentId: string, text: string): string | null {
+  const comment = docNode(commentId);
+  if (!text.trim() || !comment || !blockWritable(commentId)
+    || threadRootOf(commentId, formatForBlock(commentId)) === null) return null;
+  let id: string | null = null;
+  withUndoUnit("comment:reply", [comment.page], () => {
+    id = insertEmptyChildBlock(commentId, comment.children.length);
+    if (id) {
+      const author = commentAuthorName();
+      const metadata = author ? replyRaw(formatForBlock(commentId), author) : "";
+      setRaw(id, text + metadata, { timetracking: false });
+    }
+  });
+  return id;
+}
+
+/** Ctrl/Cmd+R in a nonempty reply draft follows the same quoted-child action
+ * as the block editor. Persist the draft and quoted child as one undo unit. */
+export function commentFromReplyDraft(commentId: string, text: string, start: number, end: number, surface: string | null): string | null {
+  const comment = docNode(commentId);
+  if (!comment || !text.trim()) return null;
+  let reply: string | null = null;
+  withUndoUnit("comment:reply", [comment.page], () => {
+    reply = submitReply(commentId, text);
+    if (reply && !commentAndEdit(reply, text, start, end, surface)) startEditing(reply, start, null, surface);
+  });
+  return reply;
 }
 
 /** The document door removes the complete subtree and owns its single undo

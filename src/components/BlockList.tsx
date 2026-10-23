@@ -37,10 +37,14 @@ export function BlockList(props: { ids: readonly string[] }): JSX.Element {
 export function blockListProps(idsOf: () => readonly string[]): { readonly each: readonly OutlineEntry[]; children: (entry: OutlineEntry) => JSX.Element } {
   onCleanup(listenForOutlinePrint());
   const collapseSurface = useContext(CollapseSurfaceContext);
-  let previous: readonly OutlineEntry[] = [];
+  const [groups, setGroups] = createSignal<readonly (readonly string[])[]>([]);
+  // Keep the list owner across structural edits. For keys windows by their id
+  // arrays, so unchanged membership must also keep its array identity (and its
+  // mounted images / measured spacer), even when a neighbouring group changes.
+  const windowed: readonly OutlineEntry[] = [{ get groups() { return groups(); } }];
   const entries = (): readonly OutlineEntry[] => {
     const ids = idsOf();
-    if (ids.length <= 1) return previous = ids;
+    if (ids.length <= 1) return ids;
     // A shallow list can still own thousands of expanded descendants. Weight
     // groups by rendered subtree size, capped at the small-list threshold.
     const size = (id: string): number => {
@@ -53,7 +57,7 @@ export function blockListProps(idsOf: () => readonly string[]): { readonly each:
       return count;
     };
     const sizes = ids.map(size);
-    if (sizes.reduce((sum, value) => sum + value, 0) <= WINDOW_AT) return previous = ids;
+    if (sizes.reduce((sum, value) => sum + value, 0) <= WINDOW_AT) return ids;
     const out: string[][] = [];
     let group: string[] = [], weight = 0;
     ids.forEach((id, i) => {
@@ -61,16 +65,18 @@ export function blockListProps(idsOf: () => readonly string[]): { readonly each:
       group.push(id); weight += sizes[i];
     });
     if (group.length) out.push(group);
-    const next: readonly OutlineEntry[] = [{ groups: out }];
-    // Retain group identities when a reactive root getter reads editor state.
-    const same = previous.length === next.length && previous.every((entry, i) => {
-      const other = next[i];
-      if (typeof entry === "string") return entry === other;
-      return typeof other !== "string" && entry.groups.length === other.groups.length
-        && entry.groups.every((ids, g) => ids.length === other.groups[g].length
-          && ids.every((id, j) => id === other.groups[g][j]));
+    const prior = untrack(groups);
+    // Typing/editor-state reads keep the same O(ids) comparison as before;
+    // only a changed grouping needs the identity lookup below.
+    if (out.length === prior.length && out.every((ids, i) => ids.length === prior[i].length
+      && ids.every((id, j) => id === prior[i][j]))) return windowed;
+    const byFirst = new Map(prior.map(ids => [ids[0], ids]));
+    const retained = out.map(ids => {
+      const old = byFirst.get(ids[0]);
+      return old && old.length === ids.length && ids.every((id, i) => id === old[i]) ? old : ids;
     });
-    return same ? previous : previous = next;
+    if (retained.length !== prior.length || retained.some((ids, i) => ids !== prior[i])) setGroups(retained);
+    return windowed;
   };
   // Use the existing For owner alone: legal deep outlines cannot gain another
   // reactive owner at every ancestor without overflowing Solid cleanup.

@@ -23,11 +23,13 @@ interface CacheEntry {
   /** The read limit this entry's IPC read was issued with. */
   maxBytes: number;
   staticIcon?: boolean;
+  url?: string;
   failure?: ErrorFamily;
   promise: Promise<string>;
   bytes: number;
   leases: number;
   evicted: boolean;
+  cleanupQueued?: boolean;
 }
 export interface BlobLease { url: string; release: () => void; failure?: ErrorFamily; staticIcon?: boolean }
 const cache = new Map<string, CacheEntry>();
@@ -155,6 +157,7 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
         return "";
       }
       const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mime_from_path(typePath) }));
+      entry.url = url;
       if (kind === "graph" && owner()) assetNamesByUrl.set(url, key);
       if (cache.get(key) === entry) {
         entry.bytes = bytes.byteLength;
@@ -173,23 +176,46 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
   return entry;
 }
 
-async function acquire(entry: CacheEntry): Promise<BlobLease> {
+function retain(entry: CacheEntry): () => void {
   entry.leases++;
   let released = false;
   const release = () => {
     if (released) return;
     released = true;
     entry.leases = Math.max(0, entry.leases - 1);
-    if (entry.evicted && entry.leases === 0) {
-      for (const [key, candidate] of liveEntries) {
-        if (candidate === entry) liveEntries.delete(key);
-      }
-      revokeEvictedUrl(entry.promise);
+    if (entry.evicted && entry.leases === 0 && !entry.cleanupQueued) {
+      // Solid can dispose the last instance immediately before remounting it
+      // in another window. Keep the live lookup through that synchronous turn;
+      // a new lease cancels cleanup without retaining idle blobs beyond it.
+      entry.cleanupQueued = true;
+      queueMicrotask(() => {
+        entry.cleanupQueued = false;
+        if (entry.leases !== 0) return;
+        for (const [key, candidate] of liveEntries) {
+          if (candidate === entry) liveEntries.delete(key);
+        }
+        revokeEvictedUrl(entry.promise);
+      });
     }
   };
+  return release;
+}
+
+async function acquire(entry: CacheEntry): Promise<BlobLease> {
+  const release = retain(entry);
   const url = await entry.promise;
   if (!url) release();
   return { url, release, staticIcon: entry.staticIcon, ...(entry.failure ? { failure: entry.failure } : {}) };
+}
+
+/** Lease an already loaded graph asset synchronously, before a remounted
+ * editor can measure/focus on a placeholder layout. O(1), no read or new URL.
+ * Acquiring a lease (rather than peeking) also protects live evicted entries. */
+export function acquireCachedAssetBlob(rel: string): BlobLease | undefined {
+  const entry = cache.get(rel) ?? liveEntries.get(rel);
+  if (!entry?.url) return;
+  if (cache.get(rel) === entry) touch(rel, entry);
+  return { url: entry.url, release: retain(entry), staticIcon: entry.staticIcon };
 }
 
 /** A blob URL for the asset at `rel` (relative to `assets/`), reading it over IPC
@@ -263,6 +289,7 @@ export function seedAssetBlob(rel: string, bytes: Uint8Array): string {
   const entry: CacheEntry = {
     maxBytes: MAX_IMAGE_BYTES,
     staticIcon: isStaticIconImage(bytes),
+    url,
     promise: Promise.resolve(url),
     bytes: bytes.byteLength,
     leases: 0,
