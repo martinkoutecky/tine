@@ -1108,6 +1108,7 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
     let runtime = [
         ("mod.rs", include_str!("mod.rs")),
         ("binding.rs", include_str!("binding.rs")),
+        ("binding_delete.rs", include_str!("binding_delete.rs")),
         ("binding_bridge.rs", include_str!("binding_bridge.rs")),
         ("binding_retained.rs", include_str!("binding_retained.rs")),
         (
@@ -1130,8 +1131,7 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
         ("production_guard.rs", include_str!("production_guard.rs")),
         ("save.rs", include_str!("save.rs")),
     ];
-    // Every runtime file is scanned: a file split out of a scanned one must
-    // join this list. Any other file here is the adapter, or a module
+    // Every runtime file joins this scan; other files are the adapter or a module
     // declared under `#[cfg(test)]` or inside such a module.
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/page_host");
     let mut test_only: BTreeSet<String> = BTreeSet::new();

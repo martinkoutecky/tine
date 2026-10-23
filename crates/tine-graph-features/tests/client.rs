@@ -543,7 +543,6 @@ fn config_invalid_utf8_error_matches_legacy() {
 #[test]
 fn conflict_clients_match_legacy_values_and_disk_bytes() {
     let _integration_guard = crate::integration_lock();
-    use std::collections::HashMap;
     let (new_root, store) = fixture("conflict-matrix-new");
     let host = crate::test_host(&store);
     let conflict_name = "Foo.sync-conflict-20260705-120000-ABCDEFG.md";
@@ -570,7 +569,11 @@ fn conflict_clients_match_legacy_values_and_disk_bytes() {
         &host,
         "pages/Foo.md",
         &conflict,
-        &HashMap::new(),
+        &new_diff
+            .rows
+            .iter()
+            .map(|row| (row.id.clone(), "mine".into()))
+            .collect(),
         &new_diff.base_rev,
         &new_diff.conflict_rev,
         None,
@@ -655,7 +658,7 @@ fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
 /// An external write lands on the sync copy at the second guard of its
 /// trash (the fold's post step, host-only-writer DESIGN §3.4): the copy
 /// keeps the external bytes and the error says the merge was saved. With
-/// no decisions the fold keeps the winner as it was.
+/// no decisions the fold keeps both sides (L9-03).
 #[test]
 fn external_write_during_resolve_keeps_external_copy() {
     let _integration_guard = crate::integration_lock();
@@ -686,7 +689,10 @@ fn external_write_during_resolve_keeps_external_copy() {
         error.to_string(),
         "The merge was saved, but the conflict copy changed on disk and was kept"
     );
-    assert_eq!(fs::read(root.join("pages/Foo.md")).unwrap(), b"- mine\n");
+    assert_eq!(
+        fs::read(root.join("pages/Foo.md")).unwrap(),
+        b"- mine\n- theirs\n"
+    );
     assert_eq!(fs::read(root.join(conflict)).unwrap(), b"external stage-2");
 }
 
@@ -1815,7 +1821,7 @@ fn page_merge_delete_and_rescue_match_legacy_bytes() {
             .unwrap();
         let page = tine_store::PageId::from("pages/delete.md");
         assert_eq!(
-            host.delete(session, &page, &stale),
+            host.delete(session, &page, Some(&stale[..])),
             tine_store::PageOperation::Refused
         );
         assert_eq!(disk_tree(&a), before_delete, "stale delete changed disk");

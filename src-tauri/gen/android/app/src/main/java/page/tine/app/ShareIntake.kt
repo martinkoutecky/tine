@@ -15,6 +15,8 @@ import java.io.InputStream
 
 /** Must match share_inbox.rs (`MAX_RESOURCES`). */
 const val MAX_SHARE_RESOURCES = 32
+/** Exact encoded item.json bytes; shared with the reader (ADR 0073). */
+const val MAX_SHARE_ITEM_BYTES = 1024 * 1024
 const val MAX_SHARE_RESOURCE_BYTES = 64L * 1024L * 1024L
 
 /** A share Tine will not save, with the message the user sees. Every refusal
@@ -285,7 +287,11 @@ class InboxWriter(private val root: File, private val files: DurableFiles) {
       if (text != null) json.append(",\"text\":").append(ShareIntake.jsonString(text))
       if (!title.isNullOrBlank()) json.append(",\"title\":").append(ShareIntake.jsonString(title))
       json.append(",\"resources\":[").append(entries.joinToString(",")).append("]}")
-      files.write(File(tmp, "item.json")) { it.write(json.toString().toByteArray(Charsets.UTF_8)) }
+      val encoded = json.toString().toByteArray(Charsets.UTF_8)
+      if (encoded.size > MAX_SHARE_ITEM_BYTES) {
+        throw ShareRefused("The shared text and file descriptions exceed 1 MiB. Nothing was saved.")
+      }
+      files.write(File(tmp, "item.json")) { it.write(encoded) }
       files.syncDir(tmp)
       files.rename(tmp, File(root, id))
     } catch (error: Exception) {

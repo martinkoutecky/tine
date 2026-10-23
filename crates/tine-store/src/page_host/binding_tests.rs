@@ -2101,7 +2101,7 @@ fn q_p2b_4_a_deletion_in_flight_is_owed_and_unpublished_until_its_file_is_gone()
     // Finding B: the delete waits for its own publication, so it runs
     // beside the barrier calls.
     std::thread::scope(|scope| {
-        let deleted = scope.spawn(|| live.host.delete(session, &page, b"- one\n"));
+        let deleted = scope.spawn(|| live.host.delete(session, &page, Some(&b"- one\n"[..])));
         let deadline = Instant::now() + Duration::from_secs(5);
         let owed = loop {
             let owed = live
@@ -2148,7 +2148,7 @@ fn q_p2b_5_a_deletion_refuses_when_the_file_changed_after_its_checks() {
     let page = PageId::from("pages/a.md");
     std::fs::write(live.root.join("pages/a.md"), "- external\n").unwrap();
     assert_eq!(
-        live.host.delete(session, &page, b"- one\n"),
+        live.host.delete(session, &page, Some(&b"- one\n"[..])),
         PageOperation::Refused
     );
     assert_eq!(

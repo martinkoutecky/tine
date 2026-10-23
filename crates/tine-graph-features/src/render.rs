@@ -1163,7 +1163,6 @@ fn expand_macro(name: &str, args: &[String], ctx: &Ctx, depth: u8) -> String {
     }
 }
 
-/// Run a `{{query …}}` against the graph and render its results as a bordered block.
 fn render_query(graph: &RenderGraph<'_>, src: &str, tql: bool, ctx: &Ctx, depth: u8) -> String {
     render_query_with_title(graph, src, None, tql, ctx, depth)
 }
@@ -1210,11 +1209,8 @@ fn render_query_with_title(
     } else {
         graph.query_bounded(src, dialect, ctx.current_page)
     };
-    if bounded.exceeded {
-        return format!(
-            "<div class=\"query query-too-large\">Query has {} matches; narrow it before publishing.</div>",
-            bounded.total
-        );
+    if let Some(html) = bounded.notice_html() {
+        return html;
     }
     // Keep query rows inside this export's physical owner-page set.
     let pre_filter_total: usize = bounded.total;

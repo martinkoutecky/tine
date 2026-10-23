@@ -7,12 +7,9 @@
 //! `build-*` helpers, `parse-property-value` (`:242-252`),
 //! `build-all-page-tags` (`:322-325`), and the `blocks?` anchor rule
 //! (`:388-393`). The serializer lives in [`super::print`]; its escaping and
-//! single-child `and` simplification were transcribed from the frontend's own
-//! `toDsl` in `src/editor/queryBuilder.ts` while that printer still existed (up
-//! to commit `52cb16fe`). It was deleted when the builder moved to the IR, so
-//! this module's [`read_string`] is now the only other definition of those
-//! bytes, and `print::tests::og_expressible_queries_round_trip_through_the_og_printer`
-//! is what holds the two together (I-12: one implementation prints a query).
+//! single-child `and` simplification were transcribed from `toDsl` in
+//! `src/editor/queryBuilder.ts` (up to `52cb16fe`). String operands use the
+//! shared EDN decoder, as OG's `parse` uses `reader/read-string` (L7s1-03).
 //!
 //! **The unknown head no longer truncates.** OG's `build-query` returns `nil`
 //! for an unrecognised head and the old Tine parser propagated that as "the
@@ -191,6 +188,7 @@ pub(crate) enum Tok {
     PageRef(String),
     Word(String),
     Str(String),
+    InvalidString,
 }
 
 #[derive(Debug, Clone)]
@@ -202,7 +200,7 @@ pub(crate) struct Spanned {
 
 /// Tokenize an OG DSL form. Recognises exactly the token classes OG's reader
 /// sees after `pre-transform`: bare and quoted `[[x]]`, `#x`, `#tag x`, quoted
-/// strings with `\"`/`\\` escapes, parentheses, and bare words.
+/// strings with EDN escapes, parentheses, and bare words.
 pub(crate) fn tokenize(src: &str) -> Vec<Spanned> {
     let bytes = src.as_bytes();
     let mut out: Vec<Spanned> = Vec::new();
@@ -258,9 +256,12 @@ pub(crate) fn tokenize(src: &str) -> Vec<Spanned> {
             // OG's `page-ref?` in `build-query` treats a STRING that is a page
             // ref as a page ref — this is exactly how pre-transform's quoting
             // survives the reader.
-            match get_page_name(&text) {
-                Some(name) => push(&mut out, Tok::PageRef(name.to_string()), i, end),
-                None => push(&mut out, Tok::Str(text), i, end),
+            match text {
+                Some(text) => match get_page_name(&text) {
+                    Some(name) => push(&mut out, Tok::PageRef(name.to_string()), i, end),
+                    None => push(&mut out, Tok::Str(text), i, end),
+                },
+                None => push(&mut out, Tok::InvalidString, i, end),
             }
             i = end;
         } else {
@@ -316,23 +317,14 @@ fn read_page_ref(src: &str, at: usize) -> (String, usize) {
     }
 }
 
-/// Escape-aware string read: ONLY `\"` and `\\` are escapes, so a hand-authored
-/// `"C:\tmp"` round-trips unchanged (this matches the frontend's `quoteStr`).
-fn read_string(src: &str, at: usize) -> (String, usize) {
-    let bytes = src.as_bytes();
-    let mut text = String::new();
-    let mut j = at + 1;
-    while j < bytes.len() && bytes[j] != b'"' {
-        if bytes[j] == b'\\' && matches!(bytes.get(j + 1), Some(b'"') | Some(b'\\')) {
-            text.push(bytes[j + 1] as char);
-            j += 2;
-        } else {
-            let c = src[j..].chars().next().expect("char boundary");
-            text.push(c);
-            j += c.len_utf8();
-        }
-    }
-    (text, (j + 1).min(src.len()))
+/// Keep authored extents while decoding values as OG's EDN reader does.
+fn read_string(src: &str, at: usize) -> (Option<String>, usize) {
+    let end = crate::query_edn::string_end(src, at).unwrap_or(src.len());
+    let text = match crate::edn::parse_strict(&src[at..end]) {
+        Some(crate::edn::Edn::Str(text)) => Some(text),
+        _ => None,
+    };
+    (text, end)
 }
 
 /// Read one Clojure collection (`[..]`, `#{..}`, `(..)`) of NAMES from `src` at
@@ -379,7 +371,7 @@ fn read_collection(src: &str, at: usize) -> Result<(Vec<String>, usize), (String
             ));
         } else if c == '"' {
             let (text, end) = read_string(src, i);
-            names.push(text);
+            names.push(text.ok_or_else(|| ("invalid EDN string in query".to_string(), end))?);
             i = end;
         } else {
             let mut j = i;
@@ -675,7 +667,7 @@ impl<'a> OgParse<'a> {
                 }
                 filter
             }
-            Tok::RParen => None,
+            Tok::RParen | Tok::InvalidString => None,
         }
     }
 
@@ -1116,12 +1108,20 @@ pub(crate) fn parse_og(text: &str, _today: JournalDate) -> (Query, ViewSettings)
     if toks.len() > 1 && matches!(toks.last().map(|t| &t.tok), Some(Tok::Word(w)) if w == "table") {
         toks.pop();
     }
+    let diagnostics = toks
+        .iter()
+        .filter(|t| t.tok == Tok::InvalidString)
+        .map(|t| {
+            Diagnostic::new(DiagnosticKind::Syntax, "invalid EDN string in query")
+                .with_span(Some(Span::from_byte_range(&form, t.start, t.end)))
+        })
+        .collect();
     let mut parse = OgParse {
         toks,
         pos: 0,
         src: &form,
         view: ViewSettings::default(),
-        diagnostics: Vec::new(),
+        diagnostics,
         blocks: false,
     };
     let mut items = Vec::new();

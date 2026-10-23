@@ -3,6 +3,8 @@
 use super::super::apply::{ApplyRefusal, Effect, Expected, HostOp};
 use super::*;
 
+#[path = "binding_delete_tests.rs"]
+mod delete_tests;
 #[path = "binding_l8_tests.rs"]
 mod l8_tests;
 

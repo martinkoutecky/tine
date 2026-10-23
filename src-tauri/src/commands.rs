@@ -14,6 +14,7 @@ use tine_core::model::{
 use tine_graph_features::journals::{self, JournalFilenameMigration};
 use tine_graph_features::{config, IncompleteTransaction as IncompleteTx};
 use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
+mod device_reads;
 mod discovery;
 mod templates;
 use discovery::{
@@ -143,15 +144,7 @@ mod device_read_tests {
 
     #[test]
     fn read_local_image_requires_a_bound_root_check_before_metadata() {
-        let source = include_str!("commands.rs");
-        let image = source
-            .rsplit("pub(crate) fn read_local_image(")
-            .next()
-            .unwrap();
-        let image = image
-            .split("pub(crate) async fn import_asset(")
-            .next()
-            .unwrap();
+        let image = include_str!("commands/device_reads.rs");
         assert!(image.contains("refuse_bound_graph_path"));
     }
 
@@ -1289,7 +1282,7 @@ pub(crate) async fn preview_block(
 }
 
 #[tauri::command]
-pub(crate) fn read_asset(
+pub(crate) async fn read_asset(
     name: String,
     max_bytes: u64,
     state: GraphContext<'_>,
@@ -1299,9 +1292,12 @@ pub(crate) fn read_asset(
     // serialized element-by-element and re-parsed on the JS side — the frontend
     // receives an ArrayBuffer directly.
     let slot = slot_for_context(&state)?;
-    tine_graph_features::assets::read_asset(&slot.store, &name, max_bytes)
-        .map(tauri::ipc::Response::new)
-        .map_err(read_asset_error)
+    crate::state::off_ui(move || {
+        tine_graph_features::assets::read_asset(&slot.store, &name, max_bytes)
+            .map(tauri::ipc::Response::new)
+            .map_err(read_asset_error)
+    })
+    .await
 }
 
 /// Wire form of a failed `read_asset`. A missing file is the exact token
@@ -1416,33 +1412,11 @@ pub(crate) fn tine_open_devtools(window: tauri::WebviewWindow) {
 /// non-regular files and files over 64 MiB fail with a string error. The
 /// bounded read also stops if a regular file grows after metadata was read.
 #[tauri::command]
-pub(crate) fn read_local_image(
+pub(crate) async fn read_local_image(
     path: String,
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
 ) -> Result<tauri::ipc::Response, String> {
-    // Read an image from an ABSOLUTE path OUTSIDE the graph, for raw-HTML `<img>`
-    // srcs the user has explicitly opted into (Settings → "Load local-file images").
-    // OFF by default; gated here too (defense in depth — the frontend also checks),
-    // restricted to image extensions + a size cap so an allowed note can't slurp an
-    // arbitrary file. Returns RAW bytes like `read_asset`. See ADR 0019.
-    if !crate::settings::device_bool(&app, "allow_local_file_images", false) {
-        return Err("local-file images are disabled".into());
-    }
-    let p = std::path::Path::new(&path);
-    let ext_ok = matches!(
-        p.extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_ascii_lowercase())
-            .as_deref(),
-        Some("png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico" | "avif" | "apng")
-    );
-    if !ext_ok {
-        return Err("not an image file".into());
-    }
-    let p = refuse_bound_graph_path(p, &state)?;
-    const MAX_BYTES: u64 = 64 * 1024 * 1024;
-    crate::device_io::read_regular_file_bounded(&p, MAX_BYTES).map(tauri::ipc::Response::new)
+    crate::state::off_ui(move || device_reads::read_local_image(&path, &app)).await
 }
 
 #[tauri::command]
@@ -1557,8 +1531,12 @@ pub(crate) async fn import_native_capture(
 /// Deliberately narrow: this caller-chosen path is restricted to the drop
 /// feature's delimited text types. `read_local_image` has a separate image gate.
 #[tauri::command]
-pub(crate) fn read_text_file(path: String, state: State<'_, AppState>) -> Result<String, String> {
-    read_text_file_from_path(std::path::Path::new(&path), &state)
+pub(crate) async fn read_text_file(path: String, app: tauri::AppHandle) -> Result<String, String> {
+    crate::state::off_ui(move || {
+        use tauri::Manager;
+        read_text_file_from_path(std::path::Path::new(&path), &app.state::<AppState>())
+    })
+    .await
 }
 
 fn read_text_file_from_path(p: &std::path::Path, state: &AppState) -> Result<String, String> {
@@ -2186,9 +2164,16 @@ pub(crate) async fn trash_journal_file(
 /// Raw contents of one journal file (by exact filename) — for inspecting a
 /// duplicate day's files before reconciling.
 #[tauri::command]
-pub(crate) fn read_journal_file(name: String, state: GraphContext<'_>) -> Result<String, String> {
+pub(crate) async fn read_journal_file(
+    name: String,
+    state: GraphContext<'_>,
+) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::journals::read_journal_file(&slot.store, &name).map_err(|e| e.to_string())
+    crate::state::off_ui(move || {
+        tine_graph_features::journals::read_journal_file(&slot.store, &name)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Load a page from a SPECIFIC file by its graph-root-relative path — lets the UI

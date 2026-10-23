@@ -87,6 +87,22 @@ class ShareIntakeTest {
   private fun resource(name: String, bytes: ByteArray) = ShareResource(name, "image/png") { ByteArrayInputStream(bytes) }
 
   @Test
+  fun encodedEnvelopeLimitIsInclusiveAndRefusesBeforePublication() {
+    val root = File(temp.root, "share-inbox")
+    val writer = InboxWriter(root, Recorder().files)
+    val empty = "{\"version\":1,\"source\":\"android\",\"created\":7,\"text\":\"\",\"resources\":[]}".toByteArray(Charsets.UTF_8).size
+    val exact = "a".repeat(MAX_SHARE_ITEM_BYTES - empty)
+    writer.publish("exact", 7, exact, null, emptyList(), "text")
+    assertEquals(MAX_SHARE_ITEM_BYTES.toLong(), File(root, "exact/item.json").length())
+    for ((id, text) in listOf("over" to exact + "a", "utf8" to "é".repeat(MAX_SHARE_ITEM_BYTES / 2), "escaped" to "\n".repeat(MAX_SHARE_ITEM_BYTES / 2))) {
+      assertTrue(refused { writer.publish(id, 7, text, null, emptyList(), "text") }.contains("Nothing was saved"))
+      assertFalse(File(root, id).exists())
+      assertFalse(File(root, ".tmp-$id").exists())
+      assertFalse(File(root, ".receiving-$id").exists())
+    }
+  }
+
+  @Test
   fun anItemIsSyncedBeforeAndAfterItsPublishingRename() {
     val recorder = Recorder()
     val root = File(temp.root, "share-inbox")

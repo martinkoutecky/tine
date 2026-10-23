@@ -1,0 +1,7 @@
+{
+  "maxItemBytes": 1048576,
+  "envelopes": [
+    {"version":1,"source":"ios","created":7,"text":"é😀\n\"\\","title":"Shared\ttext","resources":[]},
+    {"version":1,"source":"android","created":7,"text":"é😀\n\"\\","title":"Shared\ttext","resources":[{"file":"photo.png","name":"é😀\"photo.png","type":"image/png"}]}
+  ]
+}

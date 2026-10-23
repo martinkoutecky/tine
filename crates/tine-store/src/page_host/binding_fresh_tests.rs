@@ -592,7 +592,7 @@ impl Run<'_> {
                     let outcome = live.host.delete(
                         live.host.session(),
                         &PageId::from(rel.as_str()),
-                        &checked,
+                        Some(&checked[..]),
                     );
                     if outcome != PageOperation::Waiting || Instant::now() > deadline {
                         break outcome;

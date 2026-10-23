@@ -633,22 +633,18 @@ describe("cycle tasks across a block selection (GH #136)", () => {
     cycleSelectionTasks();
     expect(shape()).toEqual([
       ["TODO write docs"],
-      ["DOING test it"],
+      [expect.stringContaining("DOING test it\n:LOGBOOK:\nCLOCK: [")],
       ["DONE ship it"],
       ["   "],
     ]);
     expect(selectedIds()).toEqual(dto.blocks.map((block) => block.id));
+    const cycled = shape();
 
     undo();
     expect(shape()).toEqual([["write docs"], ["TODO test it"], ["DOING ship it"], ["   "]]);
     expect(selectedIds()).toEqual(dto.blocks.map((block) => block.id));
     redo();
-    expect(shape()).toEqual([
-      ["TODO write docs"],
-      ["DOING test it"],
-      ["DONE ship it"],
-      ["   "],
-    ]);
+    expect(shape()).toEqual(cycled);
   });
 
   it("is atomic when any selected non-empty block is read-only", () => {

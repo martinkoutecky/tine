@@ -13,7 +13,7 @@ import { formatForBlock } from "../model";
 import { pushUndo } from "../history";
 import { produce } from "solid-js/store";
 import { cycleMarkerSmart } from "../../editor/repeat";
-import { workflow } from "../../ui";
+import { workflow, timetrackingEnabled, logbookWithSecondSupport } from "../../ui";
 import { markDirty } from "../host/wiring";
 import { copyStripCollapsed, copyIncludeSubtree } from "../../copySettings";
 import { blockSubtreeMarkdown } from "./serialize";
@@ -217,9 +217,12 @@ export function cycleSelectionTasks(): boolean {
       for (const id of ids) {
         const node = state.byId[id];
         if (!node) continue;
-        // Match the existing editor command exactly: marker cycling handles
-        // repeaters, while checkbox/marker-chip transitions own time tracking.
-        node.raw = cycleMarkerSmart(node.raw, workflow(), formatForBlock(id)).raw;
+        // OG cycle-todos! saves through with-timetracking. Reuse the shared
+        // old/new-raw transition without adding per-block undo or save work.
+        const format = formatForBlock(id);
+        node.raw = cycleMarkerSmart(node.raw, workflow(), format, {
+          format, enabled: timetrackingEnabled(), withSeconds: logbookWithSecondSupport(),
+        }).raw;
       }
     })
   );

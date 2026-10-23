@@ -168,7 +168,7 @@ describe("PdfViewer resource safety", () => {
 
   it("shows an error and creates no page wrappers when pdf.js rejects the document", async () => {
     vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1, 2, 3]));
-    getDocumentMock.mockReturnValue({ promise: Promise.reject(new Error("invalid pdf")) });
+    getDocumentMock.mockReturnValue({ promise: Promise.reject(new Error("invalid pdf")), destroy: vi.fn().mockResolvedValue(undefined) });
 
     const host = document.createElement("div");
     document.body.appendChild(host);
@@ -1635,8 +1635,9 @@ describe("PdfViewer OG state and reference behavior", () => {
     const current = documentWithPages([page(612, 792)]);
     let resolveStale!: (document: typeof stale) => void;
     const staleLoad = new Promise<typeof stale>((resolve) => { resolveStale = resolve; });
+    const destroyLoadingTask = vi.fn(async () => { await staleLoad; await stale.destroy(); });
     getDocumentMock
-      .mockReturnValueOnce({ promise: staleLoad })
+      .mockReturnValueOnce({ promise: staleLoad, destroy: destroyLoadingTask })
       .mockReturnValueOnce({ promise: Promise.resolve(current) });
     const [target, setTarget] = createSignal({ filename: "a.pdf", label: "A" });
 
@@ -1647,6 +1648,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       await flush();
       setTarget({ filename: "b.pdf", label: "B" });
       await flush();
+      expect(destroyLoadingTask).toHaveBeenCalledOnce();
       resolveStale(stale);
       await flush();
 

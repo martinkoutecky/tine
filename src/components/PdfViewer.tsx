@@ -23,6 +23,7 @@ import { touchCapable } from "../inputCapability";
 import { pdfTakesOverPane } from "../viewportClass";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { createPdfHighlightState } from "./pdfHighlightState";
+import { createPdfLoadingTask } from "./pdfLoadingTask";
 import { pdfTextSelection, type PdfTextSelection } from "./pdfSelection";
 import { createPdfFind } from "./pdfFind";
 import { createPdfTiles, PDF_TILE_PIXEL_BUDGET } from "./pdfTiles";
@@ -118,6 +119,7 @@ export function PdfViewer(props: {
   let pending: PdfTextSelection | null = null;
   let pendingArea: PendingArea | null = null;
   let pdfDoc: pdfjs.PDFDocumentProxy | null = null;
+  const loadingTask = createPdfLoadingTask();
   let disposed = false;
   let activeHighlightId: string | undefined;
 
@@ -353,6 +355,7 @@ export function PdfViewer(props: {
   };
 
   function failPdf(message: string) {
+    loadingTask.cancel();
     if (loadError()) return;
     io?.disconnect();
     io = null;
@@ -1058,6 +1061,7 @@ export function PdfViewer(props: {
 
   function cancelOwnedWork() {
     disposed = true;
+    loadingTask.cancel();
     pinch.cancel();
     pdfTiles.reset();
     latestOwner(viewerRequests, "navigation");
@@ -1118,12 +1122,8 @@ export function PdfViewer(props: {
       return;
     }
     try {
-      const loaded = await pdfjs.getDocument({ data: bytes }).promise;
-      if (disposed) {
-        discardPdfDocument(loaded);
-        return;
-      }
-      pdfDoc = loaded;
+      await loadingTask.load(pdfjs.getDocument({ data: bytes }), loadOwner, doc => { pdfDoc = doc; });
+      if (!loadOwner() || !pdfDoc) return;
     } catch (err) {
       failPdf(errorMessage("Couldn't load this PDF", err));
       return;

@@ -64,10 +64,8 @@ it.each(["A", "B"])("P1: a move the host took but cannot save refuses deletion o
   expect(toasts().some((toast) => toast.message === `Couldn't save “${name}”; the page was not deleted.`)).toBe(true);
 });
 
-// Restated for Q-TS3 (master parity, 695527da9; relaxation ledger): Delete on
-// a conflicted page takes disk (`page_discard`) and then deletes; the unsaved
-// buffer is never saved over the file first (the confirmation says it goes).
-it("P1: a conflicted page's deletion takes disk first, saves nothing, then deletes", async () => {
+// D-20261022-JJ6 supersedes Q-TS3: consume input only after Applied (L2-04).
+it("P1: a conflicted page deletes before discarding and never saves over disk", async () => {
   const { host, remove, submit } = await setup(true);
   host.notice("pages/A.md", { conflictReported: true }, { version: 9, conflict: true });
   await vi.waitFor(() => expect(isConflicted("A")).toBe(true));
@@ -78,6 +76,6 @@ it("P1: a conflicted page's deletion takes disk first, saves nothing, then delet
   expect(discard).toHaveBeenCalledOnce();
   expect(discard.mock.calls[0][2]).toBe("pages/A.md");
   expect(remove).toHaveBeenCalledOnce();
-  expect(discard.mock.invocationCallOrder[0]).toBeLessThan(remove.mock.invocationCallOrder[0]);
+  expect(discard.mock.invocationCallOrder[0]).toBeGreaterThan(remove.mock.invocationCallOrder[0]);
   expect(pageByName("A")).toBeUndefined();
 });
