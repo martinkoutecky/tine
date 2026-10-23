@@ -189,11 +189,9 @@ or controlled-clock liveness. The cache harness supplies a native-revision key.
 Those limits remain outside its claim.
 
 The lane also reproduced a lifecycle gap: releasing an acquisition made before
-client rebind leaves the reopened page held. The same test file retains an
-opt-in failing native repro (`TINE_WINDOW_REBIND_REPRO=1`, test name starting
-`known bug:`), cataloged as `REG-HOST-REBIND-ACQUISITION-RELEASE`; its production
-correction is deferred. Default green runs skip that repro and retire the
-binding during cleanup; they do not certify release across rebind.
+client rebind left the reopened page held (`REG-HOST-REBIND-ACQUISITION-RELEASE`).
+The client fix moves each acquisition onto its reopened page; the same test file
+checks against the native host that the final release after rebind closes it.
 
 The chain is: prose spec → Quint model (checked) → Lean model (proved: complete for s2, s3, s3.1 and s3.5, partial for s3.2 to s3.4) → Rust code
 (tested against the model, not proved). Two links are evidence rather than proof:

@@ -5,11 +5,13 @@
 // render time: nothing is persisted beyond the ordinary outline, and no offset is
 // ever stored (the quote is re-anchored against the parent's text on each render).
 //
-// Format constants live only here, so renaming a key is a one-line change.
+// Authoring keys live here; the kernel owns the comment discriminator used by
+// both quoteSelectorOf and the editor's hidden-property projection.
 
 import { editBlock } from "./render/parse";
 import { propertyKeyNorm } from "./propertyKey";
 import type { Format } from "./render/ast";
+import { comment_quote } from "./render/wasm/lsdoc_wasm.js";
 
 export const COMMENT_QUOTE_KEY = "quote";
 export const COMMENT_QUOTE_PREFIX_KEY = "quote-prefix";
@@ -189,10 +191,10 @@ function propertyValue(properties: readonly (readonly [string, string])[], key: 
 
 /** The selector a block's properties carry, or null when it has no `quote::`. */
 export function quoteSelectorOf(properties: readonly (readonly [string, string])[]): QuoteSelector | null {
-  const quote = propertyValue(properties, COMMENT_QUOTE_KEY);
-  if (quote === null) return null;
+  const quote = comment_quote(JSON.stringify(properties));
+  if (quote == null) return null;
   return {
-    quote,
+    quote: quote.trim(),
     prefix: propertyValue(properties, COMMENT_QUOTE_PREFIX_KEY) || null,
     suffix: propertyValue(properties, COMMENT_QUOTE_SUFFIX_KEY) || null,
   };

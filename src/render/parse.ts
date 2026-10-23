@@ -229,8 +229,8 @@ export function editorTextJoin(visible: string, hidden: string, format: "md" | "
   return editor_text_join(visible, hidden, true, regions);
 }
 /** Whether kernel hide `policy` (JSON) hides property `key`. */
-export function hidePolicyHides(policy: string, key: string): boolean {
-  return hide_policy_hides(policy, key);
+export function hidePolicyHides(policy: string, key: string, properties: readonly (readonly [string, string])[]): boolean {
+  return hide_policy_hides(policy, key, JSON.stringify(properties));
 }
 /** One outline-kernel verb (`outline::apply`); see `document/kernel.ts`. */
 export function outlineApply(request: string): string {

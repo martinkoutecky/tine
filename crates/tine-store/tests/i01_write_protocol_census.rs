@@ -367,6 +367,12 @@ fn ledger(source: &str) -> Vec<Row> {
     rows
 }
 
+fn ledger_path(relative: &Path) -> String {
+    // Ledger keys use repository slashes, including the Swift scan below.
+    // read_dir appends native separators even to a slash-spelled scan root.
+    relative.to_str().unwrap().replace('\\', "/")
+}
+
 fn inventory() -> BTreeMap<(String, String), Owner> {
     let root = repo();
     let mut result = BTreeMap::new();
@@ -454,10 +460,7 @@ fn inventory() -> BTreeMap<(String, String), Owner> {
             for (name, owner) in scan.owners {
                 if !owner.operations.is_empty() {
                     result.insert(
-                        (
-                            file.strip_prefix(&root).unwrap().to_str().unwrap().into(),
-                            name,
-                        ),
+                        (ledger_path(file.strip_prefix(&root).unwrap()), name),
                         owner,
                     );
                 }
@@ -489,7 +492,7 @@ fn inventory() -> BTreeMap<(String, String), Owner> {
             if !owner.operations.is_empty() {
                 result.insert(
                     (
-                        file.strip_prefix(&root).unwrap().to_str().unwrap().into(),
+                        ledger_path(file.strip_prefix(&root).unwrap()),
                         capture[1].into(),
                     ),
                     owner,
@@ -657,6 +660,48 @@ fn every_content_mutation_has_a_reviewed_owner() {
         "I-1: review write_sites.toml; {}",
         errors.join("\n")
     );
+}
+
+#[test]
+fn ledger_paths_are_portable_without_hiding_stale_or_changed_sites() {
+    let _integration_guard = crate::integration_lock();
+    // read_dir can append native separators to a slash-spelled scan root.
+    // Exercise both Rust and Swift spellings even on a Unix test host.
+    for (portable, native) in [
+        (
+            "crates/tine-store/src/page_host/production.rs",
+            r"crates/tine-store/src\page_host\production.rs",
+        ),
+        (
+            "src-tauri/ios-app/Shared/ShareInbox.swift",
+            r"src-tauri\ios-app\Shared\ShareInbox.swift",
+        ),
+    ] {
+        for path in [portable, native] {
+            let file = ledger_path(Path::new(path));
+            assert_eq!(file, portable);
+            let found = BTreeMap::from([(
+                (file, "writer".into()),
+                Owner {
+                    operations: BTreeMap::from([("fs::write".into(), 1)]),
+                    ..Owner::default()
+                },
+            )]);
+            let row = Row::from([
+                ("file".into(), portable.into()),
+                ("fn".into(), "writer".into()),
+                ("mutations".into(), "fs::write=1".into()),
+            ]);
+            assert!(scope_errors(&found, &[row.clone()]).is_empty());
+            assert!(scope_errors(&found, &[])[0].contains("new mutation site outside the ledger"));
+            let mut stale = row.clone();
+            stale.insert("fn".into(), "removed_writer".into());
+            assert!(scope_errors(&found, &[stale])[0].contains("stale row"));
+            let mut changed = row;
+            changed.insert("mutations".into(), "fs::write=2".into());
+            assert!(scope_errors(&found, &[changed])[0].contains("changed mutations"));
+        }
+    }
 }
 
 #[test]

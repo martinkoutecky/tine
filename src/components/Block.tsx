@@ -164,7 +164,7 @@ import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
 import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
 import { commentFromEditor, replyOnEnter } from "../commentActions";
-import { AuthorChip, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
+import { AuthorChip, CommentActions, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, onEachWindow, requestFrame, viewportOf, windowOf } from "../windowRealm";
@@ -320,7 +320,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const macro = createMemo(() => detectMacro(node().raw, fmt())); // shared with `Rendered`
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
   const { commentSelector, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt);
-  const stickyParent = () => stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !macro(); // a macro host's first line IS the live macro: a pin would mount a 2nd copy (GH #619)
+  const stickyParent = () => stickyParents() && !bulletless() && hasChildren() && (props.forceExpanded || !collapsed()) && !macro(); // Thread rows have no bullet pins; the spacer would pull the body over its quote.
   let mainEl: HTMLDivElement | undefined;
 
   return (
@@ -463,6 +463,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         </div>
         <MarginMarker parentId={props.id} comments={marginComments()} />
       </div>
+      <Show when={bulletless()}><CommentActions id={props.id} surface={surfaceKey} /></Show>
 
       <Show when={showRefs()}>
         <div class="block-references">
@@ -578,6 +579,7 @@ function isBlockEmbedMacro(m: ReturnType<typeof detectMacro>): boolean {
 
 export function Editor(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
   const propertySession = props.propertySession ?? propertyEditorSession();
+  propertySession.begin();
   // Non-null only inside the quick-capture window (see CaptureCtx).
   const cap = useContext(CaptureCtx);
   const sheetCell = useContext(SheetCellContext);
@@ -3330,6 +3332,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       </Show>
       <Show when={hasSel()}>
         <div class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined} onMouseDown={(e) => e.preventDefault()}>
+          <Show when={!cap}>
+            <button type="button" data-selection-action="comment" title={translate("command-comment-on-selection")} aria-label={translate("command-comment-on-selection")}
+              onClick={() => commentFromEditor(props.id, ref, commit, editSurface())}>{translate("comment-toolbar")}</button>
+          </Show>
           <For each={essentialSelectionActions}>{(action) => (
             <button
               classList={{ "sel-action-page-link": action.id === "page-link" }}

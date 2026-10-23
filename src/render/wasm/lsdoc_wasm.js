@@ -18,6 +18,26 @@ function __tine_raw_canonical_group_field(value) {
 }
 
 /**
+ * The same own-property discriminator that editor_text uses to hide comment metadata.
+ * @param {string} properties
+ * @returns {string | undefined}
+ */
+function __tine_raw_comment_quote(properties) {
+    const ptr0 = passStringToWasm0(properties, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.comment_quote(ptr0, len0);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    let v2;
+    if (ret[0] !== 0) {
+        v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
+    return v2;
+}
+
+/**
  * Decode a Logseq page stem in legacy or triple-lowbar (legacy = false) format.
  * O(stem bytes), no I/O; malformed percent escapes are preserved.
  * @param {string} stem
@@ -224,14 +244,17 @@ function __tine_raw_header_tokens_json(raw, is_org) {
  * Whether hide `policy` hides property `key` (`HidePolicy::hides`).
  * @param {string} policy
  * @param {string} key
+ * @param {string} properties
  * @returns {boolean}
  */
-function __tine_raw_hide_policy_hides(policy, key) {
+function __tine_raw_hide_policy_hides(policy, key, properties) {
     const ptr0 = passStringToWasm0(policy, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.hide_policy_hides(ptr0, len0, ptr1, len1);
+    const ptr2 = passStringToWasm0(properties, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.hide_policy_hides(ptr0, len0, ptr1, len1, ptr2, len2);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -1430,6 +1453,7 @@ function __tineGuard(name, raw) {
   };
 }
 export const canonical_group_field = __tineGuard("canonical_group_field", __tine_raw_canonical_group_field);
+export const comment_quote = __tineGuard("comment_quote", __tine_raw_comment_quote);
 export const decode_page_name = __tineGuard("decode_page_name", __tine_raw_decode_page_name);
 export const edit_block_regions_json = __tineGuard("edit_block_regions_json", __tine_raw_edit_block_regions_json);
 export const editor_offset_of_raw = __tineGuard("editor_offset_of_raw", __tine_raw_editor_offset_of_raw);

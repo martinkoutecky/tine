@@ -7,6 +7,11 @@
 export function canonical_group_field(value: string): string | undefined;
 
 /**
+ * The same own-property discriminator that editor_text uses to hide comment metadata.
+ */
+export function comment_quote(properties: string): string | undefined;
+
+/**
  * Decode a Logseq page stem in legacy or triple-lowbar (legacy = false) format.
  * O(stem bytes), no I/O; malformed percent escapes are preserved.
  */
@@ -52,7 +57,7 @@ export function header_tokens_json(raw: string, is_org: boolean): string;
 /**
  * Whether hide `policy` hides property `key` (`HidePolicy::hides`).
  */
-export function hide_policy_hides(policy: string, key: string): boolean;
+export function hide_policy_hides(policy: string, key: string, properties: string): boolean;
 
 export function install_panic_hook(): void;
 
@@ -285,6 +290,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly canonical_group_field: (a: number, b: number) => [number, number];
+    readonly comment_quote: (a: number, b: number) => [number, number, number, number];
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];
     readonly edit_block_regions_json: (a: number, b: number, c: number, d: any, e: any) => [number, number, number, number];
     readonly editor_offset_of_raw: (a: number, b: number, c: number, d: any, e: number, f: number, g: number) => [number, number, number];
@@ -293,7 +299,7 @@ export interface InitOutput {
     readonly encode_page_name: (a: number, b: number, c: number) => [number, number];
     readonly format_journal_date: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly header_tokens_json: (a: number, b: number, c: number) => [number, number];
-    readonly hide_policy_hides: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly hide_policy_hides: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly install_panic_hook: () => void;
     readonly is_query_macro_name: (a: number, b: number) => number;
     readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number) => number;

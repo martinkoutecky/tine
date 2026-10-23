@@ -877,6 +877,12 @@ describe("property splitting is fence-aware", () => {
 });
 
 describe("trailing space: kept in the editor buffer, trimmed only on save", () => {
+  it("editing a comment body leaves the final hidden metadata line byte-exact on save", () => {
+    const hidden = "quote:: selected words\nauthor:: Ada Test  \t";
+    const dto = load([blk(`My view\n${hidden}`)]);
+    setRaw(dto.blocks[0].id, `My revised view\n${hidden}`);
+    expect(pageToDto("Test")!.blocks[0].raw).toBe(`My revised view\n${hidden}`);
+  });
   // Regression for the "backspace eats the preceding space" bug: the live buffer
   // (doc.byId[].raw — what the reactive textarea mirrors) must KEEP a trailing
   // space the user left, so deleting a word back to "this is a " doesn't pull the

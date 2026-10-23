@@ -100,9 +100,9 @@ beforeAll(async () => {
   installPageIdentityNavigation(() => {});
 }, 600_000);
 
-// REG-HOST-REBIND-ACQUISITION-RELEASE: production fixes are outside this lane.
-// Opt in to the ignored native repro with TINE_WINDOW_REBIND_REPRO=1 and -t.
-it.skipIf(process.env.TINE_WINDOW_REBIND_REPRO !== "1")("known bug: releasing the last acquisition after rebind closes the native page", async () => {
+// REG-HOST-REBIND-ACQUISITION-RELEASE: an acquisition made before rebind still
+// releases the reopened native page.
+it("releasing the last acquisition after rebind closes the native page", async () => {
   resetStore(); queued = []; holdCounts = false;
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const initial = await peer.rpc<NativeImage>({ op: "reset" });

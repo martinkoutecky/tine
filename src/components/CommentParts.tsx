@@ -9,7 +9,8 @@ import { MarginContext } from "./marginContext";
 import { t } from "../i18n";
 import { anchorQuote, quoteSelectorOf, type QuoteSelector } from "../comments";
 import { facetsOf } from "../render/facets";
-import { blockPageReadOnly, node as docNode } from "../document";
+import { blockPageReadOnly, blockWritable, node as docNode } from "../document";
+import { deleteComment, replyAndEdit } from "../commentActions";
 import { internalLinkMouseDown } from "../linkGesture";
 import { beginDrag } from "./blockGestures";
 import { QuoteHighlightContext, quotedSourceRanges, type QuotedRange } from "../render/quoteHighlight";
@@ -79,6 +80,23 @@ export function AuthorChip(props: { author: string | null; handleOf?: string }):
       {props.author ?? t("comment-author-you")}
     </span>
   );
+}
+
+/** Every row in a thread, including an unquoted reply, has the same actions.
+ * Keep them outside the editable body so pointer presses cannot place a caret. */
+export function CommentActions(props: { id: string; surface: string }): JSX.Element {
+  return <Show when={blockWritable(props.id)}>
+    <div class="comment-actions" onMouseDown={(e) => e.stopPropagation()}>
+      <button type="button" class="comment-reply" onClick={(e) => {
+        e.stopPropagation();
+        replyAndEdit(props.id, props.surface);
+      }}>{t("comment-reply")}</button>
+      <button type="button" class="comment-delete" title={t("comment-delete")} aria-label={t("comment-delete")} onClick={(e) => {
+        e.stopPropagation();
+        deleteComment(props.id);
+      }}>×</button>
+    </div>
+  </Show>;
 }
 
 function sameRanges(a: readonly QuotedRange[], b: readonly QuotedRange[]): boolean {

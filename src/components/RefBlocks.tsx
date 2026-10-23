@@ -6,10 +6,9 @@ import { t } from "../i18n";
 
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import type { BlockDto } from "../types";
-import { pageProperties, visibleBody } from "../render/block";
+import { pageProperties } from "../render/block";
 import { effectiveHeadingLevel, facetsFromDto } from "../render/facets";
 import { taskCheckboxState } from "../markers";
-import { InlineText } from "../render/inline";
 import { AstBody } from "../render/body";
 import { formatForPage } from "../document";
 import { openBlockInSidebar } from "../ui";
@@ -21,6 +20,7 @@ import { BeginQuery, inspectBeginQuery } from "./BeginQuery";
 import { blockDtoExternalId } from "../blockIdentity";
 import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
 import { isElementNode } from "../windowRealm";
+import { CalGlyph } from "./blockParts";
 
 const MAX_REF_BLOCK_DEPTH = 64;
 
@@ -38,9 +38,8 @@ export function RefBlocks(props: {
   onEditPageProperties?: (event: MouseEvent) => void;
   queryResult?: boolean;
   readOnly?: boolean;
-  /** GH #735: render each block body through the page renderer (code fences,
-   *  callouts, quotes) and honor `collapsed::` with a local-only fold, as the hover
-   *  preview of a page does. Absent: the flat line rendering of reference panels. */
+  /** GH #735: honor `collapsed::` with a local-only fold, as the hover
+   *  preview of a page does. All DTO bodies share the page's AST renderer. */
   pageBody?: boolean;
   onOpenBlock?: (id: string) => void;
 }): JSX.Element {
@@ -94,19 +93,14 @@ function RefBlock(props: {
   treeDepth: number;
   queryResult?: boolean;
 }): JSX.Element {
-  // Header facts (marker/done) off the one lsdoc parse (cache hit if the panel's
-  // DTOs were seeded); the visible body lines via the shared body-text extractor.
-  // Memoized — read several times in the markup, and the ref panels render hundreds
-  // of rows.
-  // Off the DTO's shipped facet fields — NO frontend parse (the backend already
-  // computed these). Ref/linked/unlinked panels render hundreds of rows; parsing each
-  // was a real hot-path cost and churned the facet cache (audit P3).
+  // Header facts stay on the DTO's shipped fields (audit P3): no facet parse.
+  // M-19: the body shares AstBody with Block, so fences and dates match the
+  // live row. Measured: no slower on the normal path; slower only while a
+  // source page cannot be read (D-20261023-VC, tine-agents evidence/m19-wave4).
   const facets = createMemo(() => facetsFromDto(props.block));
   const headingLevel = createMemo(() => effectiveHeadingLevel(facets(), props.depth));
   const format = createMemo(() => formatForPage(props.page));
-  const lines = createMemo(() => visibleBody(props.block.raw, format()));
-  // Keep the DTO hot path parse-free for ordinary references. Only an exact
-  // whole-block candidate pays for lsdoc confirmation before execution.
+  // Only an exact whole-block candidate needs query confirmation here.
   const beginQuery = createMemo(() =>
     !props.readOnly && /^\s*#\+BEGIN_QUERY\b/i.test(props.block.raw)
       ? inspectBeginQuery(props.block.raw, format())
@@ -216,25 +210,7 @@ function RefBlock(props: {
                 <Show
                   when={beginQuery()}
                   fallback={
-                    <Show when={!props.pageBody} fallback={<AstBody raw={props.block.raw} format={format()} headingLevel={headingLevel()} />}>
-                    <For each={lines()}>
-                      {(line, i) => (
-                        <>
-                          <Show when={i() > 0}>
-                            <br />
-                          </Show>
-                          <Show
-                            when={i() === 0 && headingLevel() != null}
-                            fallback={<InlineText text={line} format={format()} />}
-                          >
-                            <span class={`heading-text h${headingLevel()}`}>
-                              <InlineText text={line} format={format()} />
-                            </span>
-                          </Show>
-                        </>
-                      )}
-                    </For>
-                    </Show>
+                    <AstBody raw={props.block.raw} format={format()} headingLevel={headingLevel()} />
                   }
                 >
                   {(match) => <BeginQuery match={match()} currentPage={props.page} />}
@@ -256,6 +232,12 @@ function RefBlock(props: {
                   </>
                 )}
               </For>
+            </Show>
+            <Show when={facets().scheduled}>
+              <span class="date-chip scheduled"><CalGlyph /> {facets().scheduled}</span>
+            </Show>
+            <Show when={facets().deadline}>
+              <span class="date-chip deadline"><CalGlyph /> {facets().deadline}</span>
             </Show>
           </div>
         </div>

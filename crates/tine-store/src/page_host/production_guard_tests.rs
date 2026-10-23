@@ -3,6 +3,9 @@ use super::*;
 #[test]
 fn l8_02_raw_creation_rules_survive_failure_and_new_input_revokes_them() {
     let mut f = Fixture::new();
+    // An equivalent noncanonical spelling exposes the fixture mismatch on
+    // Unix too; on Windows canonicalization also introduces a verbatim prefix.
+    f.graph = f.graph.join("..").join("graph");
     fs::write(
         f.graph.join("Other.md"),
         b"title:: Hidden\nbroken:: \xff\n\n- imported\n",
@@ -10,6 +13,9 @@ fn l8_02_raw_creation_rules_survive_failure_and_new_input_revokes_them() {
     .unwrap();
     let store = Arc::new(crate::Store::open(&f.graph, Default::default()).unwrap().0);
     store.whole_graph_reconciled().unwrap();
+    // Match PageHost::launch: its physical adapter uses the Store's root,
+    // so lexical page eligibility and the inventory share one spelling.
+    f.host.fs = ProductionIo::attach(&store.graph.root, &f.app, "test-graph", &f.trash);
     f.host.fs.store = Arc::downgrade(&store);
     let raw = text("title:: Hidden\n\n- raw\n");
     f.host.fs.note_creation("c.md", raw.clone(), None, None);

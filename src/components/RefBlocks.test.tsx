@@ -61,6 +61,28 @@ const dto = (over: Partial<BlockDto>): BlockDto => ({
   ...over,
 });
 
+describe("reference fallback body (M-19)", () => {
+  it("renders a fenced code body without showing the fence delimiters", () => {
+    const out = html(() => RefBlocks({ blocks: [dto({
+      raw: "Example\n```javascript\nconst answer = 42;\n```",
+    })] }));
+    const host = document.createElement("div"); host.innerHTML = out.html;
+    expect(host.querySelector("pre code")?.textContent).toContain("const answer = 42;");
+    expect(out.text).not.toContain("```");
+  });
+
+  it("retains both planning dates beside the body, including nested DTO rows", () => {
+    const child = dto({ id: "child", raw: "TODO Plan\nSCHEDULED: <2026-11-12 Thu>\nDEADLINE: <2026-11-13 Fri>",
+      marker: "TODO", scheduled: "2026-11-12 Thu", deadline: "2026-11-13 Fri" });
+    const out = html(() => RefBlocks({ blocks: [dto({ raw: "Parent", children: [child] })] }));
+    const host = document.createElement("div"); host.innerHTML = out.html;
+    expect(host.querySelector(".date-chip.scheduled")?.textContent).toContain("2026-11-12");
+    expect(host.querySelector(".date-chip.deadline")?.textContent).toContain("2026-11-13");
+    expect(out.text).toContain("Plan");
+    expect(out.text).not.toContain("SCHEDULED:");
+  });
+});
+
 describe("RefBlocks priority chip", () => {
   it("renders the backend's maximum 512-level DTO without overflowing", () => {
     let block = dto({ id: "leaf", raw: "leaf" });

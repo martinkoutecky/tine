@@ -30,8 +30,8 @@ function page(blocks: BlockDto[]): PageDto {
   return { name: PAGE, kind: "page", title: PAGE, pre_block: null, blocks };
 }
 
-function mount(blocks: BlockDto[], edit?: string): { root: HTMLDivElement; dispose: () => void } {
-  loadSingle(page(blocks));
+function mount(blocks: BlockDto[], edit?: string, format: "md" | "org" = "md"): { root: HTMLDivElement; dispose: () => void } {
+  loadSingle({ ...page(blocks), format });
   if (edit) startEditing(edit, 0);
   const root = document.createElement("div");
   document.body.appendChild(root);
@@ -62,6 +62,100 @@ afterEach(() => {
 });
 
 describe("Ctrl/Cmd+R creates a margin comment", () => {
+  it.each(["md", "org"] as const)("keeps ordinary %s author and quote-suffix properties in the edit buffer", (format) => {
+    const raw = format === "md"
+      ? "The obstacle is the way.\nauthor:: Marcus Aurelius\nquote-suffix:: after"
+      : "The obstacle is the way.\n:PROPERTIES:\n:author: Marcus Aurelius\n:quote-suffix: after\n:END:";
+    const { root, dispose } = mount([block("p", "Literature", [block("ordinary", raw)])], "ordinary", format);
+    try {
+      expect(editor(root).value).toBe(raw);
+    } finally { dispose(); }
+  });
+
+  it.each(["md", "org"] as const)("lets handwritten %s quote metadata finish before hiding it on the next edit session", (format) => {
+    const metadata = format === "md" ? "\nquote:: selected words" : "\n:PROPERTIES:\n:quote: selected words\n:END:";
+    const { root, dispose } = mount([block("p", "selected words", [block("c", "My view")])], "c", format);
+    try {
+      const ta = editor(root);
+      for (const character of metadata) {
+        ta.value += character;
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+        ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: character }));
+      }
+      endEdit("page-navigation");
+      expect(docNode("c")!.raw).toBe(`My view${metadata}`);
+      startEditing("c", 0);
+      expect(editor(root).value).toBe("My view");
+    } finally { dispose(); }
+  });
+
+  it("offers Comment in the selection toolbar and uses the selected words", () => {
+    const { root, dispose } = mount([block("p", "Discuss these words here")], "p");
+    try {
+      const ta = editor(root);
+      ta.setSelectionRange(8, 19);
+      ta.dispatchEvent(new Event("select", { bubbles: true }));
+      const button = root.querySelector<HTMLButtonElement>('[data-selection-action="comment"]');
+      expect(button, "the selection toolbar needs Comment").not.toBeNull();
+      button!.click();
+      const id = docNode("p")!.children[0];
+      expect(docNode(id)!.raw).toContain("quote:: these words");
+      expect(editingId()).toBe(id);
+    } finally { dispose(); }
+  });
+
+  it.each(["md", "org"] as const)("hides %s comment metadata when editing and preserves every hidden line when typing", (format) => {
+    const hidden = format === "md"
+      ? "quote:: these words  \nquote-prefix:: Discuss\nquote-suffix:: here\nauthor:: claude\ncollapsed:: false"
+      : ":PROPERTIES:\n:quote: these words  \n:quote-prefix: Discuss\n:quote-suffix: here\n:author: claude\n:collapsed: false\n:END:";
+    const { root, dispose } = mount([block("p", "Discuss these words here", [block("c", `My view\n${hidden}`)])], "c", format);
+    try {
+      const ta = editor(root);
+      expect(ta.value).toBe("My view");
+      ta.value = "My revised view";
+      ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+      endEdit("page-navigation");
+      expect(docNode("c")!.raw).toBe(`My revised view\n${hidden}`);
+    } finally { dispose(); }
+  });
+
+  it("offers Reply without a selection and Delete removes a subtree as one undo step", () => {
+    const { root, dispose } = mount([block("p", "Discuss these words", [block("c", "My view\nquote:: words", [block("r", "Evidence", [block("nested", "More")])])])]);
+    try {
+      const row = () => root.querySelector('[data-block-id="c"]')!;
+      const reply = row().querySelector<HTMLButtonElement>(":scope > .comment-actions .comment-reply");
+      expect(reply, "a comment needs Reply").not.toBeNull();
+      reply!.click();
+      const id = docNode("c")!.children.at(-1)!;
+      expect(editingId()).toBe(id);
+      expect(docNode(id)!.parent).toBe("c");
+      endEdit("page-navigation");
+      const del = row().querySelector<HTMLButtonElement>(":scope > .comment-actions .comment-delete");
+      expect(del, "a comment needs Delete").not.toBeNull();
+      del!.click();
+      expect(docNode("p")!.children).toHaveLength(0);
+      expect(docNode("r")).toBeUndefined();
+      undo();
+      expect(docNode("p")!.children).toEqual(["c"]);
+      expect(docNode("r")!.children).toEqual(["nested"]);
+    } finally { dispose(); }
+  });
+
+  it("quoted replies stay inside their thread with a single quoted passage and readable body", () => {
+    const { root, dispose } = mount([block("p", "words", [block("c", "Discuss this claim\nquote:: words", [block("r", "My view\nquote:: this claim", [block("n", "Evidence")])])])], "r");
+    try {
+      const ta = editor(root);
+      ta.setSelectionRange(0, 2);
+      ctrlR(ta);
+      const id = docNode("r")!.children.at(-1)!;
+      expect(docNode(id)!.parent).toBe("r");
+      expect(docNode(id)!.raw).toContain("quote:: My");
+      expect(root.querySelectorAll(".comment-card")).toHaveLength(1);
+      expect(root.querySelector('[data-block-id="r"] > .comment-quote')?.textContent).toBe("this claim");
+      expect(root.querySelector('[data-block-id="r"] > .block-main')?.textContent).toContain("My view");
+    } finally { dispose(); }
+  });
+
   it("appends a child after the existing children with quote:: and puts the caret in its empty body", async () => {
     const { root, dispose } = mount([
       block("p", "An agent wrote a phrase worth disputing here.", [block("old", "an earlier child")]),

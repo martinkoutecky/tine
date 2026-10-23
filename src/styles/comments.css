@@ -100,6 +100,38 @@
   cursor: grab;
 }
 
+.comment-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 2px;
+}
+.comment-actions button {
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  min-height: 24px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.comment-actions button:hover,
+.comment-actions button:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+/* The selection toolbar normally holds icon-width formatting actions. */
+.sel-toolbar [data-selection-action="comment"] {
+  width: auto;
+  min-width: max-content;
+  padding: 0 6px;
+  flex-shrink: 0;
+}
+
 /* The passage a comment quotes, inside the parent's text. */
 .comment-quote-anchor {
   background: color-mix(in srgb, var(--accent) 14%, transparent);

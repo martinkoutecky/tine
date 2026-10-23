@@ -1,0 +1,239 @@
+{
+  "schemaVersion": 1,
+  "version": "0.8.0-beta.10",
+  "baseTag": "v0.8.0-beta.9",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "Wide tables in query results sit inside the page again instead of being shifted to the right and cut off (GH #749).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH749-QUERY-TABLE-IN-PANE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH749-QUERY-TABLE-IN-PANE. Fail-before: proven. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "scripts/shot-table-bleed.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "The macOS app icon keeps Apple's icon-grid margin, so the Dock no longer shows Tine larger than other apps (GH #747).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH747-MACOS-ICON-GRID-MARGIN"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH747-MACOS-ICON-GRID-MARGIN. Fail-before: proven. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "src/macosAppIcon.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A save no longer stalls, and renames or moves no longer report Busy, when another writer releases a page at the moment Tine's page host goes to sleep: the host's path-lock retry could be dropped, leaving it waiting for an unrelated wake (internal: page-host driver lost wakeup).",
+      "userVisible": true,
+      "regressions": [
+        "REG-HOST-DRIVER-LOST-WAKEUP"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-HOST-DRIVER-LOST-WAKEUP. Fail-before: proven on release/0.8 15462c3ee with the test hook and the old retry(): the new test fails (driver_tests.rs:649, save never resumed); the original flake failed 5/200 standalone. After: 0/300 and 0/30.. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "crates/tine-store/src/page_host/driver_tests.rs",
+          "crates/tine-store/src/page_host/driver_tests.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Settings → unused assets now keeps images referenced only by a duplicate journal file for the same day, including references in its page properties. Moving an asset to trash checks those files too, and refuses if one cannot be read or analyzed (audit L8-03).",
+      "userVisible": true,
+      "regressions": [
+        "REG-AUDIT-L8-03-STRAY-ASSET"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-AUDIT-L8-03-STRAY-ASSET. Fail-before: proven: on release/0.8 15462c3ee the block and preamble stray cases both list photo.png and trash_asset returns Trashed; keeper control passes. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "crates/tine-graph-features/tests/l8_03_duplicate_day_asset.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A page being deleted stops accepting typing, paste, property and sheet edits until the delete answers. If deletion fails or is not confirmed, the page becomes editable again with its text intact; input can no longer slip past unsaved-text tracking during deletion (audit L9-06).",
+      "userVisible": true,
+      "regressions": [
+        "REG-AUDIT-L9-06-DELETE-INPUT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-AUDIT-L9-06-DELETE-INPUT. Fail-before: Proven on release/0.8 15462c3ee: five supplied audit L9-06 cases failed with untracked input or lost text; the normal-typing control passed. See RECEIPT-fix-l9-input.md.. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "src/document/deleteInput.test.ts",
+          "src/components/Block.deleteInput.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A draft whose name is an alias is added to its owner only once even when the owner's save is not confirmed. A later edit replaces the landed copy instead of appending a second copy, and a refused landing keeps the draft recoverable (audit L9-05).",
+      "userVisible": true,
+      "regressions": [
+        "REG-AUDIT-L9-05-ALIAS-LANDING"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-AUDIT-L9-05-ALIAS-LANDING. Fail-before: Proven on release/0.8 15462c3ee: supplied audit L9-05 case produced [owner,a1,a2] instead of [owner,a2]. See RECEIPT-fix-l9-input.md.. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "src/document/save/aliasDraftRetry.test.ts",
+          "src/document/save/aliasDraft.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Renaming a page preserves longer tags such as `#foo+bar`, `#c++`, `#R&D` and `#foo🎉` when only their prefix matches, and updates complete tags before trailing punctuation such as `#foo.`. Renaming `c++` also updates `#c++` (audit L3-02).",
+      "userVisible": true,
+      "regressions": [
+        "REG-AUDIT-L3-02"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-AUDIT-L3-02. Fail-before: proven: core fixtures and persisted host rename fail on 15462c3ee824d5095d2eeb60f1532378f991a58f. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "crates/tine-core/src/refs.rs",
+          "crates/tine-store/src/page_host/binding_rename_tests.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}

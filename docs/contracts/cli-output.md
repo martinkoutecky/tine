@@ -238,8 +238,10 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
   `TINE_AUTHOR`, else `agent`); edits never add one. An anchor without `id::` gets one in the same write. A
   `((uuid))` that names no block is refused `broken-ref`.
 - **`block.edit`**: the text replaces the block's editor text, as typing it would: hidden `id::`, `collapsed::`
-  and `logseq.order-list-type::` lines and the children are kept; a marker change writes the logbook as the app
-  does.
+  and `logseq.order-list-type::` lines and the children are kept. On a block whose own primary properties
+  include `quote`, the four comment lines (`quote::`, `quote-prefix::`, `quote-suffix::`, `author::`) are also
+  kept. On an ordinary block, `author::` and quote-context lines belong to the replaced editor text, as on OG.
+  A marker change writes the logbook as the app does.
 - **`block.move`**: the block and its children go under (last child), after or before a target on the same page.
   A move to another page is refused `cross-page` in this version.
 - **`--run RUN`** (optional, every write; or `TINE_RUN`): commit the write to the graph's git repository as
@@ -378,7 +380,9 @@ id pages/a.md rev 9e8b1eedbf3d8ef0
 - The address of a page read is the block's **handle**, `POS~FP`: its outline position (`1`, `1.2`,
   PROTOCOL §10) and a 6-character fingerprint of its editor text (lowercase base32 of FNV-1a 64 over
   the text a block editor shows; hidden `id::`, `collapsed::` and `logseq.order-list-type::` lines
-  are left out). A write names a block as `PAGE/POS~FP` or by its `id::` UUID; the fingerprint
+  are left out, as are `quote::`, `quote-prefix::`, `quote-suffix::` and `author::` only when the block's own
+  primary properties include `quote`). Ordinary author/context properties contribute to the fingerprint.
+  A write names a block as `PAGE/POS~FP` or by its `id::` UUID; the fingerprint
   resolves only when exactly one block on the page has it, else `stale`. The `--json` page carries the
   same string as each block's `handle`. Continuation lines align under the first line's text.
   A block preview (`block show`) prints the same handles: page-absolute positions (a block at `3.1`
