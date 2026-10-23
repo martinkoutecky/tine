@@ -18,8 +18,12 @@ Asset trash rechecks references in the latest published graph under the Store
 writer lock, including external/sync arrivals already published by the watcher.
 An incomplete graph view cannot prove orphan-ness and refuses trash. External
 arrivals not yet published, and changes after the final check by another process,
-remain a window the Store writer cannot exclude. Duplicate-day stray reference
-completeness remains a separate recorded finding.
+remain a window the Store writer cannot exclude. Both the unused-asset inventory
+and the trash guard include block and preamble references from physical page
+files set aside by duplicate-day journal presentation. These files use the same
+bounded parser and asset-reference collector as indexed pages; a failed read or
+analysis refuses the inventory and trash, naming the file. Only set-aside files
+are read and parsed again; they are not added to backlinks or query indexes.
 
 `Store::read_is_current` compares a streaming descriptor with a fresh validated
 open using the existing cross-platform file-identity primitive, O(1). Verification
@@ -68,7 +72,7 @@ checkpoint (ADR 0070) it answers from the checkpoint until the launch diff ends.
 `whole_graph_reconciled()` never serves the checkpoint: it waits for the launch
 diff, for graph-wide destructive operations and for a one-shot lookup that
 missed in the checkpoint (a cold-start `tine://` link, GH #181). The public operation
-surface is 46 operations: the methods of `Store` and `Transaction` plus every
+surface is 47 operations: the methods of `Store` and `Transaction` plus every
 public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
 The graph-command boundary guard lives at `crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is

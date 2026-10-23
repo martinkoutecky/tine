@@ -65,12 +65,11 @@ impl Transaction<'_> {
                     .into(),
             )
         })?;
-        if !view.unreadable_files().is_empty() {
-            return Err(Why::Failed(
-                io::Error::other("asset reference inventory is partial").into(),
-            ));
-        }
-        if view.referenced_assets().contains(name) {
+        let referenced = self
+            .store
+            .referenced_assets_in(&view)
+            .map_err(|error| Why::Failed(error.into()))?;
+        if referenced.contains(name) {
             return Err(Why::Refused(Refusal::AssetReferenced));
         }
         Ok(())

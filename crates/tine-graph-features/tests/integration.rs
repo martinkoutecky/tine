@@ -104,6 +104,9 @@ mod identity_switch_guide;
 #[path = "journal_migrations.rs"]
 mod journal_migrations;
 
+#[path = "l8_03_duplicate_day_asset.rs"]
+mod l8_03_duplicate_day_asset;
+
 #[path = "legacy_config.rs"]
 mod legacy_config;
 
