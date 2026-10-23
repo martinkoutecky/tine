@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Board cards drag between columns even when an editor outside the board has focus, without selecting text during the drag (GH #756).
 - Changing a block between outline levels one and two on long pages with images above no longer makes the view jump; structural edits preserve loaded image and measured window geometry (GH #745).
 
 - After a restore from backup, a page that was being edited when the restore began closes normally once editing ends, instead of staying open for the rest of the session. A component draft open across the restore (for example a table cell) no longer keeps holding back newer file content from that page after it closes (internal: REG-HOST-REBIND-ACQUISITION-RELEASE).
