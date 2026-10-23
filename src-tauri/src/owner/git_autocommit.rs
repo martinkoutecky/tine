@@ -32,7 +32,11 @@ use std::time::{Duration, Instant};
 use git2::{Oid, Repository, Status, StatusOptions};
 use serde::Serialize;
 
-use super::git_run::{open_repo_at, IndexLock, LockRefusal, Repo, CAS_ATTEMPTS, RUN_LOCK};
+#[cfg(test)]
+use super::git_run::IndexLock;
+use super::git_run::{
+    open_repo_at, raw_content_conversion as converting, LockRefusal, Repo, CAS_ATTEMPTS, RUN_LOCK,
+};
 use crate::state::GraphSlot;
 
 /// No publication for this long before a timed autocommit (G9).
@@ -193,28 +197,9 @@ fn lock_refused(refusal: LockRefusal) -> Unusable {
         LockRefusal::Held => Unusable::Busy,
         LockRefusal::Conflicted => Unusable::Conflicted,
         missing @ LockRefusal::Missing => Unusable::Repository(missing.message()),
+        changed @ LockRefusal::BranchChanged => Unusable::Repository(changed.message()),
         LockRefusal::Failed(m) => Unusable::Failed(m),
     }
-}
-
-/// The attributes that make a file's committed bytes differ from its work
-/// tree bytes in a way a raw commit would bypass (`.gitattributes`).
-const CONVERTING: [&str; 3] = ["filter", "ident", "working-tree-encoding"];
-
-/// The first converting attribute set for `path` (work-tree relative).
-fn converting(repo: &Repository, path: &Path) -> Result<Option<&'static str>, Unusable> {
-    for attr in CONVERTING {
-        let value = repo
-            .get_attr(path, attr, git2::AttrCheckFlags::FILE_THEN_INDEX)
-            .map_err(failed)?;
-        if !matches!(
-            git2::AttrValue::from_string(value),
-            git2::AttrValue::Unspecified | git2::AttrValue::False
-        ) {
-            return Ok(Some(attr));
-        }
-    }
-    Ok(None)
 }
 
 /// Open and check the repository holding `root` for autocommits.
@@ -251,7 +236,7 @@ fn check_config(repo: &Repo) -> Result<(), Unusable> {
         "logseq/config.edn",
         "assets/a.png",
     ] {
-        if let Some(attr) = converting(&repo.repo, &repo.prefix.join(sample))? {
+        if let Some(attr) = converting(&repo.repo, &repo.prefix.join(sample)).map_err(failed)? {
             return Err(Unusable::Conversion(format!("{attr} for {sample}")));
         }
     }
@@ -324,20 +309,13 @@ pub(crate) fn commit_now(root: &Path, message: &str) -> Result<Outcome, Unusable
 
 /// [`commit_now`] for a caller that already holds [`RUN_LOCK`].
 fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
+    let repo = open_checked(root)?;
+    let prefix = prefix_of(&repo);
     for _ in 0..CAS_ATTEMPTS {
         if EXITING.load(Ordering::Acquire) {
             return Err(Unusable::Quitting);
         }
-        let repo = open_checked(root)?;
-        let prefix = prefix_of(&repo);
-        let mut lock = IndexLock::acquire(&repo.repo).map_err(lock_refused)?;
-        // A checkout between the open and the lock: the index is now the
-        // other branch's (review F3).
-        let head = repo.repo.find_reference("HEAD").map_err(failed)?;
-        if head.symbolic_target_bytes() != Some(repo.branch.as_bytes()) {
-            continue;
-        }
-        drop(head);
+        let mut lock = repo.lock_index(false).map_err(lock_refused)?;
         if has_skip_worktree(&lock.index, &prefix) {
             return Err(Unusable::Sparse);
         }
@@ -446,7 +424,7 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
             Err(e) => return Err(Unusable::Failed(format!("{path}: {e}"))),
             Ok(meta) if !meta.is_file() => {}
             Ok(meta) => {
-                if let Some(attr) = converting(&repo.repo, Path::new(path))? {
+                if let Some(attr) = converting(&repo.repo, Path::new(path)).map_err(failed)? {
                     return Err(Unusable::Conversion(format!("{attr} for {path}")));
                 }
                 let io = |e: std::io::Error| Unusable::Failed(format!("{path}: {e}"));

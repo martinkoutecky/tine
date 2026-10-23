@@ -104,7 +104,7 @@ function RefBlock(props: {
   const facets = createMemo(() => facetsFromDto(props.block));
   const headingLevel = createMemo(() => effectiveHeadingLevel(facets(), props.depth));
   const format = createMemo(() => formatForPage(props.page));
-  const lines = createMemo(() => visibleBody(props.block.raw));
+  const lines = createMemo(() => visibleBody(props.block.raw, format()));
   // Keep the DTO hot path parse-free for ordinary references. Only an exact
   // whole-block candidate pays for lsdoc confirmation before execution.
   const beginQuery = createMemo(() =>

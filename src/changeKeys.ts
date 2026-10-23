@@ -1,7 +1,8 @@
 /** Transport-only invalidation. Staging never starts a read: own publications
  * drain at the existing post-publication/refresh-hold bump. Summary-only events
  * in a window without local publication debt use the same trailing/idle gates. */
-import { batch, createSignal, untrack, type Signal } from "solid-js";
+import { batch, createSignal, untrack } from "solid-js";
+import { ChangeKeyRegistry } from "./changeKeyRegistry";
 import { clearOnBindingInvalidated } from "./binding";
 import type { ChangeSummary } from "./backendTypes";
 import { graphEpoch } from "./graphSession";
@@ -11,7 +12,12 @@ import { installDataRevisionRefresh } from "./dataRevision";
 
 export const [refreshEverything, setRefreshEverything] = createSignal(false);
 const [fullRevision, setFullRevision] = createSignal(0);
-const keys = new Map<string, Signal<number>>();
+const keys = new ChangeKeyRegistry();
+export const changeKeyCount = () => keys.size;
+const invalidators = new Set<(affected: ReadonlySet<string> | null) => void>();
+export const changeKeyHasConsumers = (key: string) => keys.hasConsumers(key);
+export const onChangeKeyReleased = (callback: () => void) => keys.onRelease(callback);
+export const onChangeKeysFlushed = (callback: (affected: ReadonlySet<string> | null) => void) => { invalidators.add(callback); };
 let epoch = -1;
 let pending = new Set<string>();
 let pendingFull = false;
@@ -41,9 +47,11 @@ function ensureEpoch(): number {
 }
 
 /** Reactive revision for exactly one dependency. Unknown key kinds receive full
- * invalidations only. Keys/caches are bounded to the current graph lifetime. */
+ * invalidations only. Reactive consumers own keys; imperative history is bounded. */
 export function changed(key: string): string {
-  return changedAny([key]);
+  const current = ensureEpoch();
+  const { instance, revision } = keys.read(key);
+  return `${current}:${fullRevision()}:${instance}:${revision}`;
 }
 
 /** One token for a dynamic set of dependencies. Adding a freshly shown member
@@ -52,9 +60,7 @@ export function changedAny(dependencies: readonly string[]): string {
   const current = ensureEpoch();
   let revision = 0;
   for (const key of dependencies) {
-    let signal = keys.get(key);
-    if (!signal) { signal = createSignal(0); keys.set(key, signal); }
-    revision += signal[0]();
+    revision += keys.read(key).revision;
   }
   return `${current}:${fullRevision()}:${revision}`;
 }
@@ -109,8 +115,9 @@ export function flushChangeKeys(hasSummary = false): void {
   timer = undefined;
   serial++;
   batch(() => {
+    for (const invalidate of invalidators) invalidate(full ? null : affected);
     if (full) setFullRevision(n => n + 1);
-    else for (const key of affected) keys.get(key)?.[1](n => n + 1);
+    else for (const key of affected) keys.advance(key);
   });
 }
 installDataRevisionRefresh(flushChangeKeys);

@@ -146,7 +146,7 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
                 <For each={(embedded()!.blocks[0]?.breadcrumb ?? []).slice(-3)}>{(label) => <><span class="ref-crumb-sep">›</span><span class="ref-crumb"><InlineText text={label} /></span></>}</For>
               }>
                 <For each={sourceTrail()!.ids}>{(id) => <><span class="ref-crumb-sep">›</span>
-                  <span class="ref-crumb"><InlineText text={visibleBody(docNode(id)?.raw ?? "")[0] || "…"} format={formatForBlock(id)} /></span></>}</For>
+                  <span class="ref-crumb"><InlineText text={visibleBody(docNode(id)?.raw ?? "", formatForBlock(id))[0] || "…"} format={formatForBlock(id)} /></span></>}</For>
               </Show>
             </div>
           </Show>

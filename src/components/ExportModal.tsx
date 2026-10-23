@@ -121,13 +121,15 @@ type WarmedMacro =
   | { kind: "text"; text: string }
   | { kind: "nodes"; nodes: ExportNode[]; emptyText?: string; note?: string; truncation?: string };
 
-function resolveExportBlockRef(uuid: string) {
-  const g = resolvedBlockRefSync(uuid);
+type ResolvedRefs = Map<string, RefGroup | null | undefined>;
+
+function resolveExportBlockRef(uuid: string, owned?: ResolvedRefs) {
+  const g = owned?.has(uuid) ? owned.get(uuid) : resolvedBlockRefSync(uuid);
   const block = g?.blocks[0];
   if (!block) return null;
   // Match what BlockRefView shows on screen by default: renderedText keeps the
   // first line unless the export's "resolve refs fully" option is enabled.
-  return { raw: visibleBody(block.raw).join("\n"), format: formatForPage(g.page) };
+  return { raw: visibleBody(block.raw, formatForPage(g.page)).join("\n"), format: formatForPage(g.page) };
 }
 
 function resolveExportMacro(name: string, args: string[]) {
@@ -374,7 +376,7 @@ export function warmExportResolutions(nodes: ExportNode[], warmed: Map<string, W
   return warmExportResolutionsOwned(nodes, warmed, graphOwner());
 }
 
-async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<string, WarmedMacro>, owner: Owner): Promise<void> {
+async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<string, WarmedMacro>, owner: Owner, refsOwned: ResolvedRefs = new Map()): Promise<void> {
   const targets: WarmTargets = { refs: new Set(), macros: new Map() };
   const pages: PageReadCache = new Map();
   const seenRefs = new Set<string>(), seenMacros = new Set<string>();
@@ -386,13 +388,16 @@ async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<strin
       const refs = [...targets.refs].filter(uuid => !seenRefs.has(uuid)).slice(0, 2000 - seenRefs.size);
       if (!refs.length) break;
       refs.forEach(uuid => seenRefs.add(uuid));
-      await Promise.all(refs.map(uuid => readOwned(owner, resolveBlockBatched(uuid).catch((error) => {
-        if (owner()) reportUiFailure("export-preview", error);
-        return null;
-      }))));
+      await Promise.all(refs.map(async uuid => {
+        const answer = await readOwned(owner, resolveBlockBatched(uuid).catch((error) => {
+          if (owner()) reportUiFailure("export-preview", error);
+          return null;
+        }));
+        if (owner() && answer.kind === "current" && answer.value) refsOwned.set(uuid, answer.value);
+      }));
       if (!owner()) return;
       for (const uuid of refs) {
-        const resolved = resolveExportBlockRef(uuid);
+        const resolved = resolveExportBlockRef(uuid, refsOwned);
         if (resolved) collectRawTargets(resolved.raw, resolved.format, targets);
       }
     }
@@ -435,6 +440,9 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   const [warmRev, setWarmRev] = createSignal(0);
   const [warming, setWarming] = createSignal(false);
   const warmedMacros = new Map<string, WarmedMacro>();
+  // This preview owns its answers through Copy/close, beyond inactive-cache caps.
+  const warmedRefs: ResolvedRefs = new Map();
+  const resolveBlockRef = (uuid: string) => resolveExportBlockRef(uuid, warmedRefs);
   const update = optionsUpdater(opts, setOpts, saveOptions);
 
   // Build the node forest once (the selection is fixed while the modal is open);
@@ -468,7 +476,7 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
           content: "rendered",
           indent: "spaces",
           typographicGlyphs: typographyMode() === "render",
-          resolveBlockRef: resolveExportBlockRef,
+          resolveBlockRef,
           resolveMacro,
         });
         const lines = [body || warmed.emptyText, warmed.note, warmed.truncation].filter((s): s is string => !!s);
@@ -481,7 +489,7 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
     warmRev();
     expansions = 0;
     const markupOptions = {
-      ...opts(), resolveBlockRef: resolveExportBlockRef,
+      ...opts(), resolveBlockRef,
       resolveEmbed: (name: string, args: string[]) => {
         const result = warmedMacros.get(macroKey(name, args));
         return result?.kind === "nodes" ? [
@@ -495,7 +503,7 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
     return exportOutline(nodes, {
       ...markupOptions,
       typographicGlyphs: typographyMode() === "render",
-      resolveBlockRef: resolveExportBlockRef,
+      resolveBlockRef,
       resolveMacro,
     });
   });
@@ -511,11 +519,12 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   let disposed = false;
   onCleanup(() => {
     disposed = true;
+    warmedRefs.clear();
   });
 
   onMount(() => {
     setWarming(true);
-    void warmExportResolutionsOwned(nodes, warmedMacros, graphOwner(() => !disposed)).finally(() => {
+    void warmExportResolutionsOwned(nodes, warmedMacros, graphOwner(() => !disposed), warmedRefs).finally(() => {
       if (disposed) return;
       setWarmRev(warmRev() + 1);
       setWarming(false);

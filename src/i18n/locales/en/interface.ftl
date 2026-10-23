@@ -75,6 +75,8 @@ graph-publish-export-html-and-read-only-app = Export HTML and read-only app…
 graph-publish-choose-a-destination-outside-the-graph-the-export = Choose a destination outside the graph. The export stays on your device until you share it.
 
 in-page-find-find-in-page = Find in page
+in-page-find-retired-days = { $count } older days not searched
+in-page-find-search-journals = search all journals
 
 in-page-find-find-and-replace = Find and replace
 

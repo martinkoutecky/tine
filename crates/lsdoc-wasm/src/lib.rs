@@ -68,6 +68,12 @@ pub fn canonical_group_field(value: &str) -> Option<String> {
 
 use tine_outline::page_filename;
 
+/// The native file-format answer, including mixed-case Org extensions.
+#[wasm_bindgen]
+pub fn page_file_format(path: &str) -> String {
+    tine_outline::page_format::Format::from_path(std::path::Path::new(path)).ext().to_string()
+}
+
 /// Encode a Windows-safe Logseq page stem; legacy selects percent-encoded
 /// namespaces, false selects triple-lowbar. O(title bytes), no I/O or failure.
 #[wasm_bindgen]
@@ -235,18 +241,14 @@ pub fn logbook_clock_out(raw: &str, is_org: bool, with_seconds: bool) -> String 
 pub fn logbook_apply_marker_transition(
     raw: &str,
     is_org: bool,
-    old_marker: &str,
-    new_marker: &str,
+    old_raw: &str,
     enabled: bool,
     with_seconds: bool,
 ) -> String {
-    let old = (!old_marker.is_empty()).then_some(old_marker);
-    let new = (!new_marker.is_empty()).then_some(new_marker);
-    logbook::apply_marker_transition_at(
+    logbook::apply_edit_transition_at(
+        old_raw,
         raw,
         logbook_format(is_org),
-        old,
-        new,
         enabled,
         with_seconds,
         now_parts(),

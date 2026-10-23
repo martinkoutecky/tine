@@ -6,6 +6,8 @@
 //! Reconstruct this adapter after a process crash to enumerate actual survivors.
 use super::io::{DraftStatus, ErrorKind, HostIo, IoFailure, IoResult, MoveResult, Phase, Witness};
 use super::Text;
+#[path = "production_guard.rs"]
+mod guard;
 use crate::atomic_file::PreparedWrite;
 use crate::directory_durability::{self as durability, DirectoryWitness};
 use std::collections::BTreeMap;
@@ -14,6 +16,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 pub(super) struct ProductionIo {
+    pub(super) store: std::sync::Weak<crate::Store>,
+    creation_rules: BTreeMap<String, guard::Creation>,
     graph: PathBuf,
     drafts: PathBuf,
     trash: PathBuf,
@@ -87,6 +91,8 @@ impl ProductionIo {
         let drafts = app_data.join("drafts-v2").join(graph_id);
         let listing = list(&drafts);
         let mut io = Self {
+            store: Default::default(),
+            creation_rules: BTreeMap::new(),
             graph: graph.to_path_buf(),
             drafts,
             trash: trash.to_path_buf(),
@@ -175,6 +181,7 @@ impl ProductionIo {
 
     fn graph_sync(&mut self, phase: super::io::Phase, dir: &Path) -> IoResult<Witness> {
         self.before(phase)?;
+        self.check_path(dir)?;
         #[cfg(feature = "test-faults")]
         crate::cost_counters::fsync();
         durability::sync_directory_witness(dir)
@@ -214,6 +221,7 @@ impl ProductionIo {
     }
 
     fn graph_directory(&mut self, dir: &Path) -> IoResult<()> {
+        self.check_path(dir)?;
         self.directories
             .entry(dir.to_path_buf())
             .or_insert_with(|| durability::DirectoryCreation::new(dir))
@@ -366,18 +374,12 @@ fn failure(error: io::Error) -> IoFailure {
 }
 
 /// Read `path` with the metadata of the read's own handle taken before the
-/// bytes, and their revision (GH #623; `transaction/publication.rs`).
+/// bytes, and their revision (GH #623; `transaction/publication.rs`). The
+/// store's bounded reader: a page over the I-22 parse cap is a read failure,
+/// never an allocation of its whole length (audit L6-02).
 fn read_observed(path: &Path) -> io::Result<(Vec<u8>, Option<crate::watch::Stamp>)> {
-    use std::io::Read;
-    let mut file = fs::File::open(path)?;
-    let stamp = file
-        .metadata()
-        .ok()
-        .and_then(|metadata| crate::watch::stamp_from_metadata(&metadata));
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
-    #[cfg(feature = "test-faults")]
-    crate::cost_counters::full_read();
+    let (bytes, metadata) = crate::model::read_parse_bytes_observed(path)?;
+    let stamp = crate::watch::stamp_from_metadata(&metadata);
     let rev = crate::FileRev::from_bytes(&bytes);
     Ok((bytes, stamp.map(|stamp| stamp.with_rev(Some(rev)))))
 }
@@ -512,6 +514,9 @@ impl HostIo for ProductionIo {
         let mut directories = std::collections::BTreeSet::from([self.graph.clone()]);
         for page in pages {
             let path = self.page_path(page);
+            if self.check_path(&path).is_err() {
+                continue;
+            }
             directories.extend(chain(&self.graph, path.parent().unwrap()).map(Path::to_path_buf));
         }
         directories.extend(
@@ -521,6 +526,9 @@ impl HostIo for ProductionIo {
         );
         self.launch_warnings.clear();
         for directory in directories {
+            if self.check_path(&directory).is_err() {
+                continue;
+            }
             if let Err(error) = durability::sync_directory_witness(&directory) {
                 self.launch_warnings.push((directory, error.kind()));
             }
@@ -534,6 +542,7 @@ impl HostIo for ProductionIo {
 
     fn read_page(&mut self, page: &str) -> IoResult<Text> {
         self.before(super::io::Phase::Read)?;
+        self.check_path(&self.page_path(page))?;
         match read_observed(&self.page_path(page)) {
             Ok((bytes, stamp)) => {
                 self.creates.insert(page.into(), false);
@@ -550,8 +559,10 @@ impl HostIo for ProductionIo {
 
     fn page_temp(&mut self, page: &str, bytes: &Text) -> IoResult<()> {
         self.before(super::io::Phase::PageTemp)?;
+        self.creation_input(page, bytes);
         let target = self.page_path(page);
         self.graph_directory(target.parent().unwrap())?;
+        self.check_path(&target)?;
         let bytes = bytes.as_deref().ok_or(IoFailure {
             kind: ErrorKind::Io,
             completed: false,
@@ -568,6 +579,7 @@ impl HostIo for ProductionIo {
 
     fn page_rename(&mut self, page: &str) -> IoResult<()> {
         self.before(super::io::Phase::PageRename)?;
+        self.check_path(&self.page_path(page))?;
         let prepared = self.page_temps.remove(page).ok_or(IoFailure {
             kind: ErrorKind::Io,
             completed: false,
@@ -580,8 +592,11 @@ impl HostIo for ProductionIo {
         // The publication read (GH #623): the bytes now at the path with
         // their handle's stamp, instead of the watcher's open and hash. A
         // failed read leaves the watcher its own stamp.
-        let stamp = read_observed(&self.page_path(page))
+        let path = self.page_path(page);
+        let stamp = self
+            .check_path(&path)
             .ok()
+            .and_then(|_| read_observed(&path).ok())
             .and_then(|(_, s)| s);
         self.stamp(page, stamp);
         Ok(())
@@ -593,10 +608,16 @@ impl HostIo for ProductionIo {
 
     fn page_sync(&mut self, page: &str) -> IoResult<Witness> {
         let path = self.page_path(page);
-        self.graph_sync(super::io::Phase::PageSync, path.parent().unwrap())
+        self.check_path(&path)?;
+        let result = self.graph_sync(super::io::Phase::PageSync, path.parent().unwrap());
+        if result.is_ok() {
+            self.creation_rules.remove(page);
+        }
+        result
     }
 
     fn page_twin(&mut self, page: &str) -> IoResult<Option<String>> {
+        self.check_path(&self.page_path(page))?;
         let twin =
             crate::transaction::alternate_extension_twin(&self.page_path(page)).map_err(failure)?;
         Ok(twin.map(|path| {
@@ -609,10 +630,20 @@ impl HostIo for ProductionIo {
         }))
     }
 
+    fn page_owner(
+        &mut self,
+        page: &str,
+        bytes: &Text,
+        source: Option<&str>,
+    ) -> IoResult<Option<String>> {
+        self.creating_owner(page, bytes, source)
+    }
+
     fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult {
         let result = (|| {
             self.before(super::io::Phase::TrashMove)?;
             let source = self.page_path(page);
+            self.check_path(&source)?;
             if !source.try_exists().map_err(failure)? {
                 return Ok(None);
             }
@@ -621,6 +652,8 @@ impl HostIo for ProductionIo {
                 graph.transaction_note_delete(&source);
             }
             let target = self.trash.join(payload);
+            self.check_path(&source)?;
+            self.check_path(&target)?;
             crate::no_replace::move_file_noreplace(&source, &target).map_err(|error| {
                 let collision = error.kind() == io::ErrorKind::AlreadyExists;
                 IoFailure {
@@ -657,6 +690,7 @@ impl HostIo for ProductionIo {
 
     fn trash_sync(&mut self, _page: &str, payload: &str) -> IoResult<Witness> {
         self.before(super::io::Phase::TrashSync)?;
+        self.check_path(&self.trash.join(payload))?;
         // The recorded basename locates the payload; the trash is never listed.
         // RO3 (a) (Martin 2026-10-11): the payload's data is not synced. Tine's
         // own saves synced it already; another program's unflushed bytes are
@@ -675,6 +709,7 @@ impl HostIo for ProductionIo {
             chain(&self.graph, &self.trash).collect()
         };
         let result = dirs.into_iter().try_fold(Witness::Durable, |result, dir| {
+            self.check_path(dir)?;
             #[cfg(feature = "test-faults")]
             crate::cost_counters::fsync();
             let synced = durability::sync_directory_witness(dir).map_err(sync_failure)?;

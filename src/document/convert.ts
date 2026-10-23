@@ -1,6 +1,7 @@
 import { type BlockDto, type Format, type PageDto, type RefGroup } from "../types";
 import { Node, FeedPage, DocState, doc, freshId } from "./model";
-import { seedFacets, facetsFromDto } from "../render/facets";
+import { facetsFromDto } from "../render/facets";
+import { acquireSeededFacets } from "../render/seededFacets";
 import { trimBlockTrailingSpace } from "../editor/format";
 import { BLOCK_SCOPED_PROPERTY_KEYS, canonicalPageHeaderDraft, isPropertiesOnly } from "../editor/properties";
 import { journalTitle, appNow } from "../journal";
@@ -145,7 +146,6 @@ function flatten(
   return dtos.map((d) => {
     // Seed the header-facet cache from the backend (one Rust lsdoc parse, shipped) so
     // the rendered chip reads off the DTO — zero frontend parse on load (M1 / P1).
-    seedFacets(d.raw, format, facetsFromDto(d));
     // Cross-page id:: collision guard: if another LOADED page already owns this
     // id (two files share a persisted `id::` — copy-pasted raw, or a sync hiccup),
     // give this block a fresh store key instead of overwriting the other page's
@@ -158,6 +158,7 @@ function flatten(
     // they would all collapse into one node.
     const existing = d.id ? byId[d.id] : undefined;
     const key = !d.id ? freshId() : existing && existing.page !== pageName ? `dup~${crypto.randomUUID()}` : d.id;
+    acquireSeededFacets(d.raw, format, facetsFromDto(d), () => doc.byId[key]);
     const childIds = flatten(d.children, key, pageName, byId, format);
     byId[key] = {
       id: key,

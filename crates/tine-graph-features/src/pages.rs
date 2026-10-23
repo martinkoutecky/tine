@@ -540,12 +540,10 @@ impl RenamePlan {
             let (content, rev) = read_text(store, &file)
                 .map_err(|e| error(e.kind(), &format!("{}: {e}", file.as_str())))?;
             // As `commit_rename` decides: a referrer is written when the
-            // transaction's rewrite (Org by its exact `.org` extension)
+            // transaction's rewrite (using the page's source format)
             // changes it and it carries no VCS conflict markers.
-            let org = std::path::Path::new(file.as_str())
-                .extension()
-                .is_some_and(|ext| ext == "org");
             let syntax = Format::from_path(id.as_str().as_ref());
+            let org = syntax == Format::Org;
             let rewritten = refs::rename_rewrite(&content, org, &self.map.0, format);
             let changed = rewritten != content;
             let marked =

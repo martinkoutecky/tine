@@ -7,6 +7,8 @@ use io::Phase;
 use model_fs::{Fault, ModelFs};
 use serde_json::{json, Value};
 
+#[path = "conformance_creation.rs"]
+mod creation;
 #[path = "native_conformance_tests.rs"]
 mod native_conformance;
 
@@ -105,6 +107,7 @@ struct Driver<F: ConformanceIo = ModelFs> {
     barriers: usize,
     actions: usize,
     twin_failures: usize,
+    owner_failures: usize,
     occupied_refusals: usize,
     queued_refusals: usize,
     effective_renames: usize,
@@ -179,6 +182,7 @@ impl<F: ConformanceIo> Driver<F> {
             barriers: 0,
             actions: 0,
             twin_failures: 0,
+            owner_failures: 0,
             occupied_refusals: 0,
             queued_refusals: 0,
             effective_renames: 0,
@@ -251,6 +255,7 @@ impl<F: ConformanceIo> Driver<F> {
             barriers: self.barriers,
             actions: self.actions,
             twin_failures: self.twin_failures,
+            owner_failures: self.owner_failures,
             occupied_refusals: self.occupied_refusals,
             queued_refusals: self.queued_refusals,
             effective_renames: self.effective_renames,
@@ -543,7 +548,7 @@ impl<F: ConformanceIo> Driver<F> {
             None
         } else if self.queued_refusals > 0 || self.occupied_refusals > 0 {
             Some("refusal-continuation")
-        } else if self.twin_failures > 0 {
+        } else if self.twin_failures > 0 || self.owner_failures > 0 {
             Some("twin-continuation")
         } else {
             None

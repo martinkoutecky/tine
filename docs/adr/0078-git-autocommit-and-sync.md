@@ -76,6 +76,13 @@ committed), commit, move the branch by compare-and-swap, then rename the copy ov
 committer: the repository's identity, else "Your name" with `user@tine.invalid` (`git_run.rs`'s fallback, which
 seen's "me" matches). Message `Tine: autosave`; no trailers (G3: generic). Nothing to commit → no commit.
 
+The conversion check is shared with CLI run commits and applies to each exact repository-relative path,
+including nested graph roots. Runs refuse before flushing or saving an affected page and check again before
+creating raw Git objects; neither writer executes external filters (L7s5-01). Both writers use the same
+branch-bound index-lock helper: once locked, `HEAD` must still name the captured branch before any ref move
+or index change. A checkout mismatch refuses explicitly, with no retry on the new branch; a run's saved
+write is reported uncommitted (L7s5-02). Concurrent commits on the same branch retain compare-and-swap retries.
+
 ### 3. When
 Per G9: when no page has saved for 60 s and the interval (default 10 min) has passed since the last autocommit;
 at once when the last window closes or the app goes to the background, before every pull, and around a

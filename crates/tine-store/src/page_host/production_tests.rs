@@ -10,6 +10,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+#[path = "production_guard_tests.rs"]
+mod guard_tests;
+
 struct Fixture {
     root: tempfile::TempDir,
     graph: PathBuf,
@@ -154,6 +157,34 @@ fn real_page_read_error_is_not_absence_and_cannot_publish_over_it() {
     assert!(!f.host.pages.contains_key("c.md"));
     assert!(f.graph.join("c.md").is_dir());
     assert_eq!(f.host.start_save("c.md"), Disposition::Disabled);
+}
+
+/// Audit L6-02: the host reads pages through the store's 64 MiB parse cap.
+/// An external replacement past it fails the read (the save cannot publish
+/// over it) instead of allocating the whole file; the typed text stays.
+#[test]
+fn a_page_replaced_past_the_parse_cap_is_a_read_failure_and_keeps_the_typing() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    let huge = fs::OpenOptions::new()
+        .write(true)
+        .open(f.graph.join("a.md"))
+        .unwrap();
+    huge.set_len(crate::PARSE_INPUT_MAX_BYTES + 1).unwrap();
+    drop(huge);
+    assert!(f.host.fs.read_page("a.md").is_err());
+    assert_ne!(f.save("a.md"), Outcome::Published);
+    assert_eq!(
+        fs::metadata(f.graph.join("a.md")).unwrap().len(),
+        crate::PARSE_INPUT_MAX_BYTES + 1
+    );
+    let page = &f.host.pages["a.md"];
+    assert_eq!(page.buf.as_deref(), Some(&b"mine"[..]));
+    assert!(page
+        .obs
+        .as_ref()
+        .and_then(|obs| obs.as_ref())
+        .is_none_or(|obs| obs.len() as u64 <= crate::PARSE_INPUT_MAX_BYTES));
 }
 
 #[test]
