@@ -50,7 +50,7 @@ import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
 import { QueryResultSections } from "./QueryResultSections";
-import { QueryOgHint, QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
+import { QueryOgHint, QueryPageRows, QueryResultsRegion, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
 import type { QueryHit, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
 import { bothFamilies } from "../queryTwin";
@@ -1055,9 +1055,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
             </Show>
             <Show when={emptyDraft()}><div class="query-empty">{t("query-calm-condition")}</div></Show>
             <Show when={!collapsed() && !emptyDraft()}>
-              {/* GH #726: the results draw OTHER blocks; a right click in here
-                  never opens this host block's menu (contextMenuPolicy). */}
-              <div class="query-results-region" style={{ display: "contents" }} data-block-surface="query">
+              <QueryResultsRegion>
               <Show when={displayed()?.statistics}>
                 {(statistics) => <QueryStatisticsSummary statistics={statistics()} />}
               </Show>
@@ -1237,7 +1235,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                   </Show>
                 </Match>
               </Switch>
-              </div>
+              </QueryResultsRegion>
             </Show>
           </Match>
         </Switch>
