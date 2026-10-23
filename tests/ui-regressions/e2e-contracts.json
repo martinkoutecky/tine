@@ -144,7 +144,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-sw-preview-tabs.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Page and block preview title, bullet and Open source clicks activate their destination tab. A preview remains visible while its page actions menu is open; Open in new tab confirms a new background tab, and closing the menu resumes hover dismissal.","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Hovering a page link and a block reference lets the preview arrow fold the source in Markdown and Org; collapsed is saved to the file and Undo restores its original bytes and the open preview. Page and block preview title, bullet and Open source clicks activate their destination tab. A preview remains visible while its page actions menu is open; Open in new tab confirms a new background tab, and closing the menu resumes hover dismissal.","blocking":true,"authority":"GH #748; D-20261023-VC VB3; GH #363/#705"}],
       "acceptableVariations":["Tab placement, preview placement, styling and navigation latency may vary while the active destination and preview/menu state remain correct."],
       "nonRequirements":["Exact pixels, in-preview editing, new block-reference menu entries or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
