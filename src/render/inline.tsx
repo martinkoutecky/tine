@@ -18,7 +18,7 @@ import { editOccurrence, occurrenceEditable, removeOccurrence, createShownOccurr
 import { isJournalTitle } from "../journal";
 import { openPageInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
 import { graphEpoch, graphMeta } from "../graphSession";
-import { changed } from "../changeKeys";
+import { changed, changedAny, pageChangeKey } from "../changeKeys";
 import { pushToast } from "../toasts";
 import { openOutboundLink, reportLinkOpenFailure } from "../components/ExternalLink";
 import { copyImageFromSrc } from "../copyImage";
@@ -376,9 +376,19 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // right-click and touch on desktop still use the page context menu.
   const longPress = createLongPress(() => anchorEl);
   onCleanup(longPress.dispose);
+  const [previewPage, setPreviewPage] = createSignal<string>();
   const [previewResource] = createResource(
-    () => (peek.open() && !isGuidePageName(targetName()) ? `${targetName()}\0${graphEpoch()}` : null),
-    () => backend().getPage(targetName(), kind()),
+    // Source-page revisions include descendant folds and dataRev full refreshes.
+    // An alias also follows the canonical page the backend answered with.
+    () => (peek.open() && !isGuidePageName(targetName()) ? `${targetName()}\0${changedAny([
+      ...new Set([pageChangeKey(targetName()), pageChangeKey(previewPage() ?? targetName())]),
+    ])}` : null),
+    async () => {
+      const result = await readOwned(graphOwner(), backend().getPage(targetName(), kind()));
+      if (result.kind === "stale") return null;
+      setPreviewPage(result.value?.name);
+      return result.value;
+    },
   );
   // A hover preview that cannot be fetched shows no popup; a rejection used to
   // throw out of this read and cost the whole page region.
@@ -431,7 +441,8 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           title={<span class="peek-popup-title-name"><EmojiText text={preview()!.title || preview()!.name} /></span>}
           blocks={() => capped().blocks}
           page={preview()!.name}
-          pageKind={kind()}
+          path={preview()!.id}
+          pageKind={preview()!.kind}
           properties={pageHeaderProperties(preview()!)}
           format={preview()!.format}
           truncatedCount={() => capped().truncated}
@@ -1355,7 +1366,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   // descendant tree only after the hover dwell, through a backend operation
   // that applies the cap before DTO allocation and IPC serialization.
   const [previewResource] = createResource(
-    () => (peek.open() && grp() ? `${props.id}\0${changed(`block:${props.id}`)}` : null),
+    () => (peek.open() && grp() ? `${props.id}\0${changedAny([`block:${props.id}`, pageChangeKey(grp()!.page)])}` : null),
     async () => {
       const result = await readOwned(graphOwner(), backend().previewBlock(props.id, PEEK_BLOCK_CAP));
       return result.kind === "current" ? result.value : null;
@@ -1463,6 +1474,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           title={<span class="peek-popup-title-name">{preview()!.group.page}</span>}
           blocks={() => capped().blocks}
           page={preview()!.group.page}
+          path={preview()!.group.path}
           pageKind={preview()!.group.kind}
           blockId={props.id}
           truncatedCount={previewTruncated}
