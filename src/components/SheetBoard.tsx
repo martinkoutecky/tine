@@ -1,4 +1,5 @@
 import { focusOnMount } from "../focusOnMount";
+import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
 import { t, msg } from "../i18n";
 import { sheetSourceRows } from "../sheet/sheetRows";
 import { QueryResultTask, openQueryResult } from "./QueryResultTask";
@@ -691,6 +692,7 @@ function BoardCard(props: {
       props.setDrag(dragState());
     };
     const cleanup = () => {
+      if (moved) setDragSelectionSuppressed(false, card);
       ghost?.remove();
       ghost = null;
       if (!dragWindow.document.body.querySelector(".sheet-board-drag-ghost")) {
@@ -702,7 +704,7 @@ function BoardCard(props: {
       dragWindow.removeEventListener("pointermove", onMove, true);
       dragWindow.removeEventListener("pointerup", onUp, true);
       dragWindow.removeEventListener("pointercancel", onPointerCancel, true);
-      dragWindow.removeEventListener("blur", onCancel, true);
+      dragWindow.removeEventListener("blur", onCancel);
       card.removeEventListener("lostpointercapture", onLostPointerCapture, true);
     };
     const onMove = (ev: PointerEvent) => {
@@ -710,9 +712,11 @@ function BoardCard(props: {
       if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
       if (!moved) {
         moved = true;
+        setDragSelectionSuppressed(true, card);
         suppressDragClick = true;
         createGhost(ev);
       } else updateGhost(ev);
+      dropSelection(card);
       const target = props.dragCoordinator.targetAtPoint(ev.clientX, ev.clientY);
       const nextOverCol = target?.col ?? null;
       const nextTargetColumnId = target?.columnId ?? null;
@@ -780,7 +784,9 @@ function BoardCard(props: {
     dragWindow.addEventListener("pointermove", onMove, true);
     dragWindow.addEventListener("pointerup", onUp, true);
     dragWindow.addEventListener("pointercancel", onPointerCancel, true);
-    dragWindow.addEventListener("blur", onCancel, true);
+    // Element blur follows a press outside an editor. Only leaving this window
+    // cancels the gesture; blur does not bubble, so listen without capture.
+    dragWindow.addEventListener("blur", onCancel);
     card.addEventListener("lostpointercapture", onLostPointerCapture, true);
     cancelActiveDrag = onCancel;
   };
