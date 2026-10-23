@@ -67,7 +67,13 @@ type Phase =
 
 export interface Answered { took: boolean; refusal: PageRefusal | string | null }
 
-interface Acquisition { pin: boolean; commit?: () => Promise<boolean> | boolean }
+interface Acquisition {
+  pin: boolean;
+  commit?: () => Promise<boolean> | boolean;
+  /** The page that holds it. `rebind` moves it onto the reopened page, so a
+   * release made before the rebind still frees what it acquired. */
+  page: Page;
+}
 
 interface Page {
   name: string;
@@ -182,8 +188,9 @@ export class HostClient {
       const early = this.rebinding;
       this.rebinding = null;
       for (const [name, refs] of acquired) {
+        if (!refs.size) continue; // every acquisition was released while binding
         const page = this.state(name);
-        for (const ref of refs) page.refs.add(ref);
+        for (const ref of refs) { page.refs.add(ref); ref.page = page; }
         this.open(page);
       }
       for (const mail of early) this.receive(mail);
@@ -199,14 +206,16 @@ export class HostClient {
    * freeze awaits before it counts the pin's input (a failed commit fails it). */
   acquire(name: string, options: { pin?: boolean; commit?: () => Promise<boolean> | boolean } = {}): () => void {
     const page = this.state(name);
-    const ref: Acquisition = { pin: !!options.pin, commit: options.commit };
+    const ref: Acquisition = { pin: !!options.pin, commit: options.commit, page };
     page.refs.add(ref);
     this.open(page);
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      // The page object, not its name: a title rename (`rekey`) keeps it.
+      // The page object, not its name: a title rename (`rekey`) keeps it, and
+      // a rebind moves the acquisition (a release during one is not carried over).
+      const page = ref.page;
       if (!page.refs.delete(ref) || this.pages.get(page.name) !== page) return;
       if (ref.pin) this.reevaluate(page);
       this.maybeClose(page);
