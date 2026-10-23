@@ -1845,6 +1845,16 @@ struct SnapshotExplicitIndex {
     shards: Vec<Arc<SharedMap<String, Arc<SharedMap<PathBuf, ()>>>>>,
 }
 
+fn names_absent_from<'a, T: Eq + std::hash::Hash>(
+    names: &'a [T],
+    other: &'a [T],
+) -> impl Iterator<Item = &'a T> {
+    // Borrow keys once instead of rescanning the opposite vector for each name.
+    // Filter the original input so duplicate absent names keep their semantics.
+    let other: HashSet<_> = other.iter().collect();
+    names.iter().filter(move |name| !other.contains(name))
+}
+
 impl SnapshotExplicitIndex {
     const SHARDS: usize = 64;
 
@@ -1853,7 +1863,7 @@ impl SnapshotExplicitIndex {
     }
 
     fn update(&mut self, path: &Path, old: &[String], new: &[String]) {
-        for name in old.iter().filter(|name| !new.contains(name)) {
+        for name in names_absent_from(old, new) {
             let shard = Arc::make_mut(&mut self.shards[Self::shard(name)]);
             if let Some(paths) = shard.get_mut(name) {
                 Arc::make_mut(paths).remove(path);
@@ -1862,7 +1872,7 @@ impl SnapshotExplicitIndex {
                 }
             }
         }
-        for name in new.iter().filter(|name| !old.contains(name)) {
+        for name in names_absent_from(new, old) {
             let shard = Arc::make_mut(&mut self.shards[Self::shard(name)]);
             if !shard.contains_key(name) {
                 shard.insert(name.clone(), Arc::new(SharedMap::new()));
@@ -4963,6 +4973,161 @@ pub(crate) fn atomic_copy_file_new(
         let _ = fs::remove_file(&tmp);
     }
     res
+}
+
+#[cfg(test)]
+mod explicit_index_diff_tests {
+    use super::*;
+
+    fn empty_index() -> SnapshotExplicitIndex {
+        SnapshotExplicitIndex {
+            shards: (0..SnapshotExplicitIndex::SHARDS)
+                .map(|_| Arc::new(SharedMap::new()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn name_diff_matches_vector_membership_including_duplicates() {
+        // Exhaust every pair of length 0..3, including repeats, order changes,
+        // empty names and spellings the diff must not normalize itself.
+        let alphabet = ["", "Target", "target", "咖啡"];
+        let mut vectors = vec![Vec::new()];
+        for _ in 0..3 {
+            let longer: Vec<_> = vectors
+                .iter()
+                .flat_map(|v| {
+                    alphabet.iter().map(move |name| {
+                        let mut v = v.clone();
+                        v.push(name.to_string());
+                        v
+                    })
+                })
+                .collect();
+            vectors.extend(longer);
+        }
+        vectors.sort();
+        vectors.dedup();
+        for old in &vectors {
+            for new in &vectors {
+                let expected: Vec<_> = old.iter().filter(|name| !new.contains(name)).collect();
+                assert_eq!(names_absent_from(old, new).collect::<Vec<_>>(), expected);
+                // The same primitive supplies both removals and additions.
+                let expected: Vec<_> = new.iter().filter(|name| !old.contains(name)).collect();
+                assert_eq!(names_absent_from(new, old).collect::<Vec<_>>(), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_postings_preserve_other_owners_and_remove_empty_entries() {
+        let strings = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let old = strings(&["removed", "removed", "shared", "kept", "kept", "Target"]);
+        let new = strings(&["added", "kept", "added", "target", ""]);
+        let path = Path::new("pages/Dense.md");
+        let other_path = Path::new("pages/Other.md");
+        let mut index = empty_index();
+        index.update(path, &[], &old);
+        index.update(other_path, &[], &strings(&["shared", "other"]));
+        let previous = index.clone();
+        index.update(path, &old, &new);
+        let rows = |index: &SnapshotExplicitIndex| {
+            index
+                .shards
+                .iter()
+                .flat_map(|shard| shard.iter())
+                .map(|(name, paths)| {
+                    assert!(!paths.is_empty(), "empty posting for {name:?}");
+                    (
+                        name.clone(),
+                        paths
+                            .iter()
+                            .map(|(path, _)| path.clone())
+                            .collect::<std::collections::BTreeSet<_>>(),
+                    )
+                })
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let expected = new
+            .iter()
+            .map(|name| (name.clone(), [path.to_path_buf()].into_iter().collect()))
+            .chain(["shared", "other"].map(|name| {
+                (
+                    name.to_string(),
+                    [other_path.to_path_buf()].into_iter().collect(),
+                )
+            }))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(rows(&index), expected);
+        assert_eq!(
+            previous.candidates(&strings(&["removed"])),
+            [path.to_path_buf()].into_iter().collect()
+        );
+        let unchanged = rows(&index);
+        index.update(path, &new, &new);
+        assert_eq!(rows(&index), unchanged);
+        index.update(path, &new, &[]);
+        assert_eq!(
+            rows(&index).keys().cloned().collect::<Vec<_>>(),
+            strings(&["other", "shared"])
+        );
+    }
+
+    #[test]
+    fn dense_name_diff_work_is_linear() {
+        use std::cell::Cell;
+        use std::hash::{Hash, Hasher};
+
+        struct Counted<'a>(usize, &'a Cell<usize>);
+        impl PartialEq for Counted<'_> {
+            fn eq(&self, other: &Self) -> bool {
+                self.1.set(self.1.get() + 1);
+                self.0 == other.0
+            }
+        }
+        impl Eq for Counted<'_> {}
+        impl Hash for Counted<'_> {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                self.1.set(self.1.get() + 1);
+                self.0.hash(state);
+            }
+        }
+        for k in [1000, 10_000] {
+            let work = Cell::new(0);
+            let old: Vec<_> = (0..k).map(|i| Counted(i, &work)).collect();
+            let new: Vec<_> = (0..k).map(|i| Counted(i, &work)).collect();
+            assert_eq!(names_absent_from(&old, &new).count(), 0);
+            assert_eq!(names_absent_from(&new, &old).count(), 0);
+            assert!(
+                work.get() < 32 * k,
+                "K={k}: {} hash/equality operations",
+                work.get()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "release-only L10-07 primitive timing probe; no timing assertion"]
+    fn dense_explicit_index_timing_probe() {
+        assert!(!cfg!(debug_assertions), "run with --release");
+        for k in [100, 1000, 3000, 10_000] {
+            let names: Vec<String> = (0..k).map(|i| format!("target-{i:05}")).collect();
+            let path = Path::new("pages/Dense.md");
+            let mut index = empty_index();
+            index.update(path, &[], &names);
+            let mut samples = Vec::new();
+            for _ in 0..11 {
+                let start = std::time::Instant::now();
+                index.update(
+                    path,
+                    std::hint::black_box(&names),
+                    std::hint::black_box(&names),
+                );
+                samples.push(start.elapsed().as_secs_f64() * 1000.0);
+            }
+            println!("{}", serde_json::json!({"k": k, "samplesMs": samples}));
+        }
+    }
 }
 
 #[cfg(test)]

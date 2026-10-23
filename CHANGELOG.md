@@ -59,6 +59,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Editing a sheet row reuses other rows' formula results and table/board filter answers, reducing pauses in large sheets (audit L10-05; development only).
+- Saving a page with many reference targets avoids quadratic candidate-index diff work while preserving the same reference owners (audit L10-07; development only).
 - Wide tables in query results sit inside the page again instead of being shifted to the right and cut off (GH #749).
 - The macOS app icon keeps Apple's icon-grid margin, so the Dock no longer shows Tine larger than other apps (GH #747).
 - Cycling selected task blocks with Ctrl/Cmd+Enter now opens clocks on DOING/NOW and closes them on DONE when time tracking is enabled, in one Undo step (internal UI-TASK-CYCLE-TIMETRACKING).
