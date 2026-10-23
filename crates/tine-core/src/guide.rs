@@ -374,7 +374,10 @@ mod journal_guide_tests {
         }
         let previews = include_str!("templates/pages-links-references-search.md");
         for detail in [
-            "read-only preview",
+            "a preview of its blocks",
+            // D-20261023-VQ: the preview's blocks are live and editable in place.
+            "click a block's text to edit it right there",
+            "the first **Esc** ends the edit and the next one closes the preview",
             // GH #735: Logseq's hover delay and height cap, and page-faithful content.
             "opens after a one-second pause",
             "It stops at 600 pixels or half the window, whichever is taller",

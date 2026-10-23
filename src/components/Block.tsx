@@ -220,6 +220,9 @@ export const OutlineScopeContext = createContext<OutlineScope | null>(null);
 // block preceding the embed on the host page (OG leaves the embed upward instead
 // of trapping the caret).
 export const EmbedNavExitContext = createContext<{ hostBlockId: string; firstRoot: () => string | undefined } | null>(null);
+/** A plain bullet click opens the block here instead of zooming the pane (a
+ *  hover preview opens it in a new tab, D-20261023-VQ). */
+export const BulletOpenContext = createContext<((id: string) => void) | null>(null);
 export interface CollapseSurfaceApi {
   collapsed: (id: string, stored: boolean) => boolean;
   toggle: (id: string, current: boolean) => void;
@@ -248,6 +251,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const surfaceKey = useContext(SurfaceContext);
   const outlineScope = useContext(OutlineScopeContext);
   const collapseSurface = useContext(CollapseSurfaceContext);
+  const bulletOpen = useContext(BulletOpenContext);
   const editing = () => {
     if (editingId() !== props.id) return false;
     const owner = editingOwner();
@@ -409,7 +413,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                 case "sidebar": openDurableBlock(props.id, "sidebar"); break;
                 case "background": openDurableBlock(props.id, "tab"); break;
                 case "pane": openDurableBlock(props.id, "pane"); break;
-                default: zoomInto(props.id);
+                default: if (bulletOpen) bulletOpen(props.id); else zoomInto(props.id);
               }
             }}
             onAuxClick={(e) => {

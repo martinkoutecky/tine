@@ -5,9 +5,11 @@ import { contextMenu, openPageContextMenu } from "../ui";
 import { PagePropertyValue } from "../components/PagePropertyValue";
 import { FloatingPortal } from "../components/FloatingPortal";
 import { RefBlocks } from "../components/RefBlocks";
+import { LiveRefGroup } from "../components/LiveRefGroup";
+import { editingId, endEdit } from "../editorController";
 import type { BlockDto } from "../types";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
-import { useOwnerWindow, viewportOf } from "../windowRealm";
+import { isHTMLElementNode, isNodeValue, useOwnerWindow, viewportOf } from "../windowRealm";
 
 export const PeekContext = createContext(false);
 
@@ -97,6 +99,13 @@ export function PeekPopup(props: {
   const ownerWindow = useOwnerWindow();
   const layerId = `peek-popup-${createUniqueId()}`;
   const [style, setStyle] = createSignal<Record<string, string>>({});
+  // D-20261023-VQ: the preview shows the live source blocks, editable in place.
+  // While its editor holds the caret the popup stays put: pointer exit, page
+  // scroll and viewport resize (a soft keyboard) do not close it, and the first
+  // Escape ends the edit instead of closing the popup.
+  const surfaceKey = `preview:${layerId}`;
+  const [editorFocused, setEditorFocused] = createSignal(false);
+  const editingInside = () => editingId() !== null && editorFocused();
   // Page menus live outside the preview DOM. Identify this preview's menu by
   // its exact opener, so unrelated menus retain normal outside dismissal.
   const ownsMenu = () => {
@@ -105,6 +114,12 @@ export function PeekPopup(props: {
   };
   let menuWasOpen = false;
   let pointerInside = false;
+  let leftWhileEditing = false;
+  createEffect(() => {
+    if (editingInside() || !leftWhileEditing) return;
+    leftWhileEditing = false;
+    if (!pointerInside && !ownsMenu()) props.onPointerLeave(); // the ordinary grace period, now
+  });
   createEffect(() => {
     const open = ownsMenu();
     if (open) props.onPointerEnter(); // cancel any pending hover-close timer
@@ -153,7 +168,17 @@ export function PeekPopup(props: {
     const unregister = registerTransientLayer({
       id: layerId,
       root: () => popupEl ?? null,
-      dismiss: () => { props.onDismiss(); return true; },
+      dismiss: () => {
+        if (editingInside()) {
+          const active = popupEl?.ownerDocument.activeElement;
+          if (isHTMLElementNode(active) && popupEl?.contains(active)) active.blur(); // commits
+          endEdit("blur");
+          popupEl?.focus();
+          return true;
+        }
+        props.onDismiss();
+        return true;
+      },
     });
     onCleanup(unregister);
   });
@@ -165,7 +190,7 @@ export function PeekPopup(props: {
     // Measure once after the initial children mount. Later folds, live refreshes
     // and future editing must not move the popup underneath the pointer.
     queueMicrotask(updatePosition);
-    const close = () => props.onDismiss();
+    const close = () => { if (!editingInside()) props.onDismiss(); };
     // Dismiss when the PAGE BEHIND scrolls, but NOT when the user scrolls the
     // popup's own overflow body (or drags its scrollbar) — capture-phase scroll
     // fires for every scroller, so filter out events originating inside the popup.
@@ -193,7 +218,16 @@ export function PeekPopup(props: {
         data-lenis-prevent
         style={style()}
         onMouseEnter={() => { pointerInside = true; props.onPointerEnter(); }}
-        onMouseLeave={() => { pointerInside = false; if (!ownsMenu()) props.onPointerLeave(); }}
+        onMouseLeave={() => {
+          pointerInside = false;
+          if (editingInside()) leftWhileEditing = true;
+          else if (!ownsMenu()) props.onPointerLeave();
+        }}
+        onFocusIn={(e) => { if (isHTMLElementNode(e.target) && e.target.tagName === "TEXTAREA") { setEditorFocused(true); props.onPointerEnter(); } }}
+        onFocusOut={(e) => {
+          const next = e.relatedTarget;
+          if (!(isNodeValue(next) && popupEl?.contains(next))) setEditorFocused(false);
+        }}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <Show when={props.title}>
@@ -218,7 +252,12 @@ export function PeekPopup(props: {
               <For each={props.properties}>{([key, value]) => <div><span class="prop-key">{key}</span>{" "}<PagePropertyValue propertyKey={key} value={value} format={props.format ?? "md"} /></div>}</For>
             </div>
           </Show>
-          <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} path={props.path} readOnly pageBody onOpenBlock={openSource} />
+          <Show when={props.page} fallback={
+            <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} path={props.path} readOnly pageBody onOpenBlock={openSource} />
+          }>
+            {(page) => <LiveRefGroup page={page()} kind={props.pageKind ?? "page"} path={props.path} blocks={props.blocks()}
+              surface="preview" surfaceKey={surfaceKey} eager onOpenBlock={openSource} />}
+          </Show>
         </PeekContext.Provider>
         <Show when={(props.truncatedCount?.() ?? 0) > 0}>
           <div class="peek-popup-more">{props.truncatedCount!() > MAX_PEEK_COUNT ? t("render-more-blocks", { count: MAX_PEEK_COUNT }) : t("render-more-blocks-exact", { count: props.truncatedCount!() })}</div>

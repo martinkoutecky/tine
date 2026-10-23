@@ -4,7 +4,7 @@ import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { beginPageHeaderEdit, blockProperty, blockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, setBlockProperty, node as docNode } from "../document";
 import { loadSourcePage } from "../sourcePage";
-import { Block, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
+import { Block, BulletOpenContext, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
@@ -65,7 +65,13 @@ interface LiveRefGroupProps {
   /** The block whose `{{embed}}` macro renders this group (embed surface only). */
   hostBlockId?: string;
   showBreadcrumb?: boolean;
-  surface: "ref" | "query" | "embed";
+  /** "preview": a hover preview (D-20261023-VQ). Folds are the source's own
+   *  (GH #748), so no local collapse surface; no breadcrumbs. */
+  surface: "ref" | "query" | "embed" | "preview";
+  /** Preview only: the stable surface key the popup watches for an active editor. */
+  surfaceKey?: string;
+  /** Preview only: a plain bullet click opens the source (the popup's choice). */
+  onOpenBlock?: (id: string) => void;
   evidence?: ReferenceBlockEvidence[];
   /** Unlinked mentions retain their bounded excerpt UI until context is pulled in. */
   excerpt?: boolean;
@@ -258,7 +264,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   // otherwise both instances (same "main" surface) call focus() and the off-screen
   // copy wins, stealing the caret and scrolling the viewport to it. Same mechanism
   // as the right sidebar (see startEditing / focusSurfaceFor). One key per group.
-  const surface = `${props.surface === "embed" ? "embed" : "ref"}:` + createUniqueId();
+  const surface = props.surfaceKey ?? `${props.surface === "embed" ? "embed" : "ref"}:` + createUniqueId();
   const resultRootIds = createMemo(() => new Set(groupedIds()));
   const initialCollapsed = new Map<string, boolean>();
   // Local fold rows. The embedded ROOT has a durable occurrence-owned override on
@@ -404,7 +410,8 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   });
   onCleanup(() => initialCollapsed.clear());
   return (
-        <CollapseSurfaceContext.Provider value={collapseSurface}>
+        <BulletOpenContext.Provider value={props.surface === "preview" ? props.onOpenBlock ?? null : null}>
+        <CollapseSurfaceContext.Provider value={props.surface === "preview" ? null : collapseSurface}>
         <SurfaceContext.Provider value={surface}>
         <ResultWriteTargetContext.Provider value={(id) => {
           if (props.surface !== "query") return undefined;
@@ -484,9 +491,14 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
                     <Show when={dtoById(id)}>
                       {(d) => props.excerpt
                         ? <ReferenceExcerptBlocks blocks={[d()]} evidence={evidenceById().has(id) ? [evidenceById().get(id)!] : []} page={props.page} kind={props.kind} path={props.path} />
-                        : <RefBlocks blocks={[d()]} page={props.page} pageKind={props.kind} path={props.path}
-                            queryResult={props.surface === "query"}
-                            onEditPageProperties={(event) => { void editPageProperties(event); }} />}
+                        : props.surface === "preview"
+                          // Until the source page is loaded the preview shows its
+                          // capped copy; edits only ever reach the live block.
+                          ? <RefBlocks blocks={[d()]} page={props.page} pageKind={props.kind} path={props.path}
+                              readOnly pageBody onOpenBlock={props.onOpenBlock} />
+                          : <RefBlocks blocks={[d()]} page={props.page} pageKind={props.kind} path={props.path}
+                              queryResult={props.surface === "query"}
+                              onEditPageProperties={(event) => { void editPageProperties(event); }} />}
                     </Show>
                   }
                 >
@@ -517,5 +529,6 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
         </ResultWriteTargetContext.Provider>
         </SurfaceContext.Provider>
         </CollapseSurfaceContext.Provider>
+        </BulletOpenContext.Provider>
   );
 }
