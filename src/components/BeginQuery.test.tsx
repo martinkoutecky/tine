@@ -196,10 +196,14 @@ describe("terminated whole-block BEGIN_QUERY", () => {
 
   it("leaves non-query custom blocks on the generic renderer", () => {
     const ordinary = dto("ordinary", "#+BEGIN_WIDGET\nwidget body\n#+END_WIDGET");
+    const runAdvanced = vi.spyOn(backend(), "queryRun");
     const { root, dispose } = mount(() => <RefBlocks blocks={[ordinary]} page="Source" pageKind="page" />);
     try {
-      expect(root.textContent).toContain("BEGIN_WIDGET");
+      // M-19: the generic renderer is AstBody, just as on the source page.
+      // Its custom-block delimiters are syntax; the body must remain visible
+      // without being mistaken for an executable query.
       expect(root.textContent).toContain("widget body");
+      expect(runAdvanced).not.toHaveBeenCalled();
     } finally {
       dispose();
     }
