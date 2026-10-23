@@ -1301,12 +1301,16 @@ export function App(): JSX.Element {
       <WindowOverlays
         windowId={MAIN_WINDOW_ID}
         deepLink={<FailureBoundary region="The graph chooser"><DeepLinkGraphChoice /></FailureBoundary>}
-        keyboardToolbar={<DrawerBackground class="drawer-floating-background" blockedBy="any">
-          {/* "Navigation buttons at the bottom" on: the keyboard hides that row, so the
-              editing toolbar carries the same group at its leading end (GH #598). */}
+        keyboardToolbar={<>
+          {/* GH #751: the editing dock stays usable above an open drawer, so it is not
+              drawer-background; the rendered-selection toolbar still is. "Navigation
+              buttons at the bottom" on: the keyboard hides that row, so the editing
+              toolbar carries the same group at its leading end (GH #598). */}
           <FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar navigation={navigationAtBottom() ? NavigationActions : undefined} /></FailureBoundary>
-          <FailureBoundary region="The selection toolbar"><RenderedSelectionToolbar /></FailureBoundary>
-        </DrawerBackground>}
+          <DrawerBackground class="drawer-floating-background" blockedBy="any">
+            <FailureBoundary region="The selection toolbar"><RenderedSelectionToolbar /></FailureBoundary>
+          </DrawerBackground>
+        </>}
         recovery={<FailureBoundary region="Unsaved recovery"><UnsavedRecovery /></FailureBoundary>}
         // First-run onboarding covers the (empty) app when no graph is configured;
         // it renders before Toasts so a "couldn't create graph" toast shows on top.
