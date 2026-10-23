@@ -142,9 +142,21 @@ pub fn apply_edit_transition_at(
     }
     let org = format == LogbookFormat::Org;
     let marker = |text: &str| crate::block_regions::header_tokens(text, org).marker;
-    let old = marker(old_raw).or_else(|| old_raw.split_once('\n').and_then(|(title, _)| marker(title)));
+    let old = marker(old_raw).or_else(|| {
+        old_raw
+            .split_once('\n')
+            .and_then(|(title, _)| marker(title))
+    });
     let new = marker(raw);
-    apply_marker_transition_at(raw, format, old.as_deref(), new.as_deref(), enabled, with_seconds, now)
+    apply_marker_transition_at(
+        raw,
+        format,
+        old.as_deref(),
+        new.as_deref(),
+        enabled,
+        with_seconds,
+        now,
+    )
 }
 
 pub fn apply_marker_transition_at(

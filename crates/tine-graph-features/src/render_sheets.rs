@@ -441,7 +441,7 @@ fn query_rows(
     };
     let host = owner.properties();
     let (parsed, bounded) = graph.query_parsed(argument, dialect, &host, current_page)?;
-    if bounded.exceeded || !bounded.pages.is_empty() {
+    if !bounded.diagnostics.is_empty() || bounded.exceeded || !bounded.pages.is_empty() {
         return None;
     }
     let mut pages = Vec::new();
