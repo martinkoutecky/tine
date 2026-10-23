@@ -213,7 +213,7 @@ describe("GH #735: hover popup size and delay match Logseq", () => {
       expect(parseFloat(popup()!.style.maxHeight)).toBe(cap);
     } finally { dispose(); Object.defineProperty(window, "innerHeight", { configurable: true, value: old }); }
   });
-  it("re-places itself when its content settles to a different height", async () => {
+  it("GH #750: keeps its placement when its content settles to a different height", async () => {
     const old = window.innerHeight;
     const callbacks: Array<() => void> = [];
     class FakeResizeObserver { constructor(cb: () => void) { callbacks.push(cb); } observe() {} disconnect() {} }
@@ -228,13 +228,16 @@ describe("GH #735: hover popup size and delay match Logseq", () => {
       enter(link);
       await advance(OPEN_MS);
       expect(await waitFor(() => !!popup())).toBe(true);
-      const before = parseFloat(popup()!.style.top);
+      const before = popup()!.style.cssText;
       height = 500;
       callbacks.forEach((cb) => cb());
       await advance(0);
-      const after = parseFloat(popup()!.style.top);
-      expect(before).toBe(1000 - 6 - 320); // fallback height until measured
-      expect(after).toBe(1000 - 6 - 500); // opens above and grows upward, staying inside the window
+      // Above the link: the edge next to the link is pinned and the room above
+      // is reserved, so later growth extends upward and never moves the popup
+      // onto the link or shrinks it to the first measured height.
+      expect(parseFloat(popup()!.style.bottom)).toBe(1100 - 1000 + 6);
+      expect(parseFloat(popup()!.style.maxHeight)).toBe(600);
+      expect(popup()!.style.cssText).toBe(before);
     } finally {
       heightSpy.mockRestore();
       dispose();

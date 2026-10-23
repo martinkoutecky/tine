@@ -4619,8 +4619,12 @@ mark {
   color: var(--text-primary);
 }
 .peek-popup-title {
-  padding: 2px 4px 7px;
-  margin-bottom: 2px;
+  position: sticky;
+  top: -8px;
+  z-index: 1;
+  background: var(--bg-primary);
+  padding: 10px 12px 7px;
+  margin: -8px -8px 2px;
   border-bottom: 1px solid var(--border-color);
 }
 .peek-popup-title-name {
