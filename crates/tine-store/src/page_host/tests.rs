@@ -1127,6 +1127,7 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
         ("operations.rs", include_str!("operations.rs")),
         ("order.rs", include_str!("order.rs")),
         ("progress.rs", include_str!("progress.rs")),
+        ("production_guard.rs", include_str!("production_guard.rs")),
         ("save.rs", include_str!("save.rs")),
     ];
     // Every runtime file is scanned: a file split out of a scanned one must

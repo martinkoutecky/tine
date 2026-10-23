@@ -600,3 +600,56 @@ fn an_unadmitted_ask_across_the_deadline_is_withdrawn_not_late() {
 fn an_answer_given_across_the_deadline_reaches_the_caller() {
     assert_eq!(ask_across_the_deadline(|| Wait::Ready(7)), Ok(7));
 }
+
+#[test]
+fn a_lock_retry_that_passes_while_the_driver_plans_its_sleep_still_wakes_it() {
+    let mut h = host();
+    h.test.submits_wait = true;
+    open(&mut h, "a.md");
+    let lock_a = h.locks["a.md"].clone();
+    let (d, clock, _receive) = spawn(h);
+    let version = d.shared.state_for_tests().progress.host.pages["a.md"].version;
+    let id = admit(
+        &d,
+        "a.md",
+        RequestKind::Submit {
+            bytes: text("mine"),
+            version,
+            resolve: None,
+        },
+    );
+    let applied = Instant::now() + Duration::from_secs(5);
+    while d.shared.state_for_tests().progress.host.last_applied < id {
+        assert!(Instant::now() < applied, "the edit was never applied");
+        std::thread::yield_now();
+    }
+    // The driver thread is preempted after each idle step for longer than
+    // the first path-lock backoff (10 ms): the retry instant its step waited
+    // for has passed by the time it plans its sleep.
+    d.shared.plan_pause.store(30, Ordering::SeqCst);
+    let other = lock_a.lock().unwrap();
+    let started = Instant::now() + Duration::from_secs(5);
+    while d.shared.state_for_tests().progress.host.job.is_none() {
+        assert!(Instant::now() < started, "the save never started");
+        clock.0.fetch_add(2_000, Ordering::SeqCst);
+        d.shared.with_state_for_tests(|_| {});
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    // Nothing else wakes the driver from here: only its own lock retry.
+    std::thread::sleep(Duration::from_millis(200));
+    drop(other);
+    let saved = Instant::now() + Duration::from_secs(3);
+    loop {
+        let state = d.shared.state_for_tests();
+        let host = &state.progress.host;
+        if host.job.is_none() && host.fs.files["graph/a.md"].as_ref() == b"mine" {
+            break;
+        }
+        drop(state);
+        assert!(
+            Instant::now() < saved,
+            "the lock retry was lost: the save never resumed"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}

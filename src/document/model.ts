@@ -8,6 +8,7 @@ import { page_file_format } from "../render/wasm/lsdoc_wasm.js";
 import { sheetConfigFromRaw } from "../sheet/config";
 import { beginResultsChange } from "../queryResultsEpoch";
 import { clearOnBindingInvalidated } from "../binding";
+import { flushFacetOwners } from "../render/seededFacets";
 
 export interface Node {
   id: string;
@@ -76,6 +77,7 @@ export const setDoc: typeof writeDoc = ((...args: unknown[]) => {
     const finish = hydrating || fieldOnly || args[0] === "feed" || args[0] === "loaded" ? null : beginResultsChange();
     try {
       (writeDoc as (...args: unknown[]) => void)(...args);
+      flushFacetOwners();
       untrack(() => {
         if (args.length === 4 && args[0] === "byId" && args[2] === "raw" && typeof args[1] === "string") {
           updateAuthoredIdentity(args[1]);

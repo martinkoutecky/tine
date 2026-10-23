@@ -17,6 +17,7 @@ import { createSignal } from "solid-js";
 import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, editor_text_join, hide_policy_hides, outline_apply_json, outline_reads_json, outline_max_depth, removal_refs_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
 import type { Block, MacroInline, Inline } from "./ast";
+import { ParseRetention } from "./parseRetention";
 
 // `ready` is a Solid signal so components (AstBody) reactively render once the
 // parser is loaded. In the normal flow init is awaited before mount, so it's
@@ -73,12 +74,10 @@ export function parserFailed(): boolean {
   return failed();
 }
 
-// Pure parse cache: text+format fully determine the AST (independent of graph
-// state), so a plain bounded LRU suffices — no epoch invalidation needed. Bounded
-// by insertion-order eviction (NOT a wholesale clear), so a working set larger
-// than the cap degrades to partial hits instead of dropping to a 0% hit rate.
-const cache = new Map<string, Block[]>();
-const CACHE_MAX = 8000;
+// Byte-bounded history; weak reuse keeps current ASTs warm without owning text.
+const cache = new ParseRetention();
+export const parseCacheStats = () => cache.stats();
+export const clearParseCache = () => cache.clear();
 const quarantined = new WeakSet<Block[]>();
 export type ByteRange = [number, number];
 export interface RegionProperty {
@@ -113,19 +112,13 @@ const soleMacroCache = new WeakMap<Block[], MacroInline | null>();
 const regionCache = new WeakMap<Block[], BlockRegions>();
 
 
-function remember(key: string, blocks: Block[]): Block[] {
-  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
-  cache.set(key, blocks);
-  return blocks;
-}
-
 function quarantine(key: string, text: string): Block[] {
   const blocks: Block[] = [{ kind: "paragraph", inline: [{ k: "plain", text }] }];
   quarantined.add(blocks);
   regionCache.set(blocks, { header: { marker: null, priority: null, heading: null, marker_range: null, priority_range: null },
     literals: [[0, new TextEncoder().encode(text).length]], property_regions: [], properties: [],
     planning: [], drawers: [], id: null, quarantined: true, literal_blocks: [], open_fence: null });
-  return remember(key, blocks);
+  return cache.remember(key, blocks, text.length * 2 + 512);
 }
 
 export function isQuarantined(blocks: Block[]): boolean {
@@ -163,9 +156,6 @@ export function parseBlock(text: string, isOrg: boolean): Block[] {
   const hit = cache.get(key);
   if (hit !== undefined) {
     if (statsEnabled()) bumpParseStats(true);
-    // Refresh recency: re-insert so hot entries survive eviction.
-    cache.delete(key);
-    cache.set(key, hit);
     return hit;
   }
   if (statsEnabled()) bumpParseStats(false);
@@ -184,7 +174,7 @@ export function parseBlock(text: string, isOrg: boolean): Block[] {
   const bundle = JSON.parse(json) as { blocks: Block[]; regions: BlockRegions; sole_macro: MacroInline | null };
   soleMacroCache.set(bundle.blocks, bundle.sole_macro);
   regionCache.set(bundle.blocks, bundle.regions);
-  return remember(key, bundle.blocks);
+  return cache.remember(key, bundle.blocks, json.length);
 }
 
 /** Raw UTF-8 regions from the render cache: O(block bytes) on a cold miss,

@@ -67,3 +67,13 @@ frame.
   measurement.
 - A dev-only `window.__tineParseStats` counter (stripped from production) makes the
   parse-saved measurable; `scripts/shot-virtualize.mjs` is the regression harness.
+
+## 2026-10-22 amendment: cache ownership
+
+L10 measured historical facet seeds, large parse versions, and completed block
+answers outliving their consumers. Backend seeds now follow loaded-node ownership;
+historical parses and inactive block answers have explicit byte/admission limits,
+and resets clear graph text eagerly. Weak parse reuse and live reference consumers
+keep current content warm. See [frontend memory contract](../contracts/frontend-memory.md).
+The render-once-keep decision still applies. Journal-day retirement (L10-03) is a
+separate decision because of its Find/Replace and scroll-geometry consequences.
