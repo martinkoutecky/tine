@@ -200,15 +200,17 @@ fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
     let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // REVIEW-3b-P2b R4(a): the path from submit to publication (save, index
     // publication, the waiter) reads and stamps the edited page only, on an
-    // aged graph and on one a sync tool just delivered (every file racy, so
-    // the watcher rehashes them; that is its own thread's work, §5.4).
+    // aged graph and on one a sync tool just delivered. Stop the watcher:
+    // these exact process-global counts must exclude its racy rehashes and
+    // forwarded save echoes, whichever cycle host load puts them in (§5.4).
+    // racy_delivery_cost measures the live watcher's work separately.
     for aged in [true, false] {
         let [small, large] = [60, 600].map(|unrelated| {
             let graph = Graph {
                 unrelated,
                 aged,
                 held: 0,
-                no_watcher: false,
+                no_watcher: true,
             };
             let (counts, _) = edit(1, 1, graph);
             eprintln!("R4(a) aged={aged} unrelated={unrelated}: {counts:?}");

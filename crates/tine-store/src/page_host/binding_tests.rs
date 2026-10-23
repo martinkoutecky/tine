@@ -1682,6 +1682,9 @@ mod order;
 #[path = "binding_fresh_tests.rs"]
 mod fresh;
 
+#[path = "binding_window_tests.rs"]
+mod window;
+
 /// REVIEW-3a V4, amendment A-V4: while a host holds a page, its publication
 /// consumer is the page's only index writer. The reviewer's schedule: the
 /// host has not observed disk B yet (another transaction holds the page's
