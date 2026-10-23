@@ -1359,9 +1359,7 @@ export function App(): JSX.Element {
       <WindowOverlays
         windowId={MAIN_WINDOW_ID}
         deepLink={<FailureBoundary region="The graph chooser"><DeepLinkGraphChoice /></FailureBoundary>}
-        keyboardToolbar={<DrawerBackground class="drawer-floating-background" blockedBy="any">
-          <FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar /></FailureBoundary>
-        </DrawerBackground>}
+        keyboardToolbar={<FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar /></FailureBoundary>}
         recovery={<FailureBoundary region="Unsaved recovery"><UnsavedRecovery /></FailureBoundary>}
         // First-run onboarding covers the (empty) app when no graph is configured;
         // it renders before Toasts so a "couldn't create graph" toast shows on top.

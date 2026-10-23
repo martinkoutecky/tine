@@ -4034,7 +4034,8 @@ html[data-system-insets="native-viewport"] {
   position: fixed;
   left: var(--system-inset-left);
   right: var(--system-inset-right);
-  z-index: 80;
+  /* Above mobile drawers (90), below their portaled popups (96) and dialogs. */
+  z-index: 95;
   transform: translateY(-100%);
   display: flex;
   align-items: stretch;
@@ -4045,6 +4046,23 @@ html[data-system-insets="native-viewport"] {
   border-bottom: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
   box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.18);
   pointer-events: auto;
+}
+
+/* GH #751: these body-level popups must clear both the drawer and editing dock.
+   Desktop keeps its existing layer order. Dialogs (100+), context menus (150),
+   help (118), and toast/media overlays (200+) already clear the dock. */
+html:is([data-platform="android"], [data-platform="ios"]) :is(
+  .autocomplete, .peek-popup, .dp-overlay, .pp-overlay,
+  .formula-editor-overlay, .rs-actions-menu.rs-item-menu, .tab-overview
+) {
+  z-index: 96;
+}
+
+/* Give the drawer's last editor enough scroll range above keyboard + dock.
+   The lift is measured from the real dock top, for both resized and overlay
+   viewports; scroll-padding alone would not create this missing scroll range. */
+html[data-mobile-editing-dock] .app-container[data-mobile-drawer-mode="true"] :is(.right-sidebar, .left-sidebar-scroll) {
+  padding-bottom: var(--mobile-kb-toolbar-lift, 0px);
 }
 
 .mobile-keyboard-toolbar-strip {
