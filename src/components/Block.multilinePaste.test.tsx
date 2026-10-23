@@ -38,6 +38,19 @@ function keydown(textarea: HTMLTextAreaElement, init: KeyboardEventInit) {
 }
 
 describe("multiline paste into editor-visible empty blocks", () => {
+  it.each(["md", "org"] as const)("review pastes siblings beside a clock-only block (%s)", format => {
+    const raw = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+    const block: BlockDto = { id: "clock-only", raw, collapsed: false, children: [] };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block], format });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => <For each={pageByName("Paste")?.roots ?? []}>{id => <Block id={id} />}</For>);
+    try {
+      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      expect(textarea.value).toBe("");
+      paste(textarea, format === "org" ? "* first\n* second" : "- first\n- second");
+      expect(pageByName("Paste")!.roots.map(id => doc.byId[id].raw)).toEqual([raw, "first", "second"]);
+    } finally { dispose(); }
+  });
   it("I-22: refuses pasted outlines deeper than the UI render limit", () => {
     const block: BlockDto = { id: "aaaa1111-1111-4111-8111-111111111111", raw: "", collapsed: false, children: [] };
     loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });

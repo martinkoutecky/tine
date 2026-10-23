@@ -3,6 +3,55 @@ use super::*;
 use crate::owner::terminal::{error_json, error_text, exit_code, render};
 
 #[test]
+fn rn_f_cli_supplied_history_uses_revision() {
+    for org in [false, true] {
+        for supplied in [false, true] {
+            let history_a = ":LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\n:END:";
+            let history_b = history_a.replace("20 Tue", "21 Wed");
+            let block = format!("DOING old\n{history_a}");
+            let serialize = |raw: &str| {
+                if org {
+                    format!("* {raw}\n")
+                } else {
+                    format!("- {}\n", raw.replace('\n', "\n  "))
+                }
+            };
+            let (graph, slot, path) = fixture(&serialize(&block), org);
+            let read = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
+            let handle = format!("proof/{}", block_handle(&read, 0));
+            let current = serialize(&format!("DOING old\n{history_b}"));
+            std::fs::write(&path, &current).unwrap();
+            graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+            let text = if supplied {
+                format!("DOING new\n{history_a}")
+            } else {
+                "DOING new".into()
+            };
+            // Both kinds detect a concurrent history-only change with --rev.
+            let (code, _) = error_code(verb(
+                &slot,
+                "block.edit",
+                json!({"handle": handle, "text": text, "rev": read["rev"]}),
+            ));
+            assert_eq!(code, "stale");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), current);
+            // Without --rev the visible fingerprint still resolves. Plain text
+            // keeps B; an explicitly supplied drawer intentionally replaces B
+            // with A, which is why full-buffer clients must supply the revision.
+            verb(&slot, "block.edit", json!({"handle": handle, "text": text})).unwrap();
+            let written = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(
+                written,
+                serialize(&format!(
+                    "DOING new\n{}",
+                    if supplied { history_a } else { &history_b }
+                ))
+            );
+        }
+    }
+}
+
+#[test]
 fn rn_f_cli_edit_preserves_one_running_clock_and_closes_it() {
     for org in [false, true] {
         for seconds in [false, true] {

@@ -344,6 +344,30 @@ fn join_properties(
     regions.reattach_org_properties(visible, hidden)
 }
 
+/// Restore property rows independently before restoring history. Every group
+/// (including rows originally after LOGBOOK) must retain parser ownership.
+fn join_properties_preserving(
+    visible: &str,
+    hidden: &str,
+    is_org: bool,
+    regions: &BlockRegions,
+) -> Result<String, String> {
+    let joined = join_properties(visible, hidden, is_org, regions)?;
+    if hidden.is_empty() {
+        return Ok(joined);
+    }
+    let payload = if is_org {
+        format!(":PROPERTIES:\n{hidden}\n:END:")
+    } else {
+        hidden.to_string()
+    };
+    if regions.insertion_preserves_metadata(visible, is_org, &payload, &joined) {
+        return Ok(joined);
+    }
+    // A lazy container can swallow the usual property position too.
+    regions.insert_drawer(visible, is_org, &payload)
+}
+
 /// [`join`], given the regions parsed from exactly `visible`.
 pub fn join_with(
     visible: &str,
@@ -357,6 +381,16 @@ pub fn join_with(
     // A negative-only fast path; accepted drawer ownership below is always
     // parser-owned. Avoid parsing ordinary hidden property payloads as drawers.
     if !block_regions::may_have_logbook(hidden) {
+        // A newly authored/supplied drawer needs the same ownership guard even
+        // when there was no prior history. Org's title heuristic otherwise
+        // inserts the retained ID inside a titleless supplied drawer.
+        if visible_regions
+            .drawers
+            .iter()
+            .any(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+        {
+            return join_properties_preserving(visible, hidden, is_org, visible_regions);
+        }
         return join_properties(visible, hidden, is_org, visible_regions);
     }
     // Hidden Org property entries have no PROPERTIES wrapper. Parse this
@@ -392,8 +426,10 @@ pub fn join_with(
         let at = first_drawer.unwrap().range.0;
         let head = hidden[..at].trim_end_matches(['\r', '\n']);
         let (tail, _) = logbook_parts(&hidden[at..], false);
-        let base = join_properties(visible, &tail, false, visible_regions)?;
+        let base = join_properties_preserving(visible, &tail, false, visible_regions)?;
         block_regions::parse(&base, false).insert_drawer(&base, false, head)?
+    } else if !drawers.is_empty() {
+        join_properties_preserving(visible, &properties, is_org, visible_regions)?
     } else {
         join_properties(visible, &properties, is_org, visible_regions)?
     };
@@ -555,6 +591,94 @@ pub fn js_blank(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gh741_logbook_canonical_restoration_preserves_ownership() {
+        let drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]  \nopaque row\n:END:";
+        let id = "11111111-1111-4111-8111-111111111111";
+        for org in [false, true] {
+            let props = if org {
+                format!(":PROPERTIES:\n:owner: Ada\n:id: {id}\n:END:")
+            } else {
+                format!("owner:: Ada\nid:: {id}")
+            };
+            let raw = format!("DOING x\n{props}\n{drawer}\nBody");
+            for text in [
+                "",
+                "> quoted",
+                "> quoted\n> more",
+                "- list",
+                "1. list",
+                "| a | b |",
+                "```\nunclosed",
+                "#+BEGIN_QUOTE\nunclosed",
+            ] {
+                let out = set_text(&raw, org, text).unwrap();
+                let parsed = block_regions::parse(&out, org);
+                assert_eq!(
+                    parsed.id.as_ref().map(|p| p.value.as_str()),
+                    Some(id),
+                    "{org}/{text}: {out}"
+                );
+                assert_eq!(logbook_hidden(&out, org), drawer, "{org}/{text}: {out}");
+                assert_eq!(
+                    split(&out, org, &HidePolicy::Builtin).visible,
+                    text,
+                    "{org}/{text}: {out}"
+                );
+                // A second edit must still find the retained history.
+                assert_eq!(
+                    logbook_hidden(&set_text(&out, org, "new").unwrap(), org),
+                    drawer
+                );
+            }
+            // An ordinary property remains independently parser-owned too.
+            let out = set_text(&raw, org, &format!("{props}\n> quoted")).unwrap();
+            let parsed = block_regions::parse(&out, org);
+            assert!(
+                parsed
+                    .properties
+                    .iter()
+                    .any(|p| p.primary && p.key == "owner" && p.value == "Ada"),
+                "{out}"
+            );
+            assert_eq!(logbook_hidden(&out, org), drawer);
+        }
+    }
+
+    #[test]
+    fn gh741_logbook_canonical_restoration_checks_both_property_groups() {
+        let drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+        let raw = format!("DOING x\nquote:: selected words\n{drawer}\nauthor:: Ada");
+        let out = set_text(&raw, false, "> quoted").unwrap();
+        let parsed = block_regions::parse(&out, false);
+        for (key, value) in [("quote", "selected words"), ("author", "Ada")] {
+            assert!(
+                parsed
+                    .properties
+                    .iter()
+                    .any(|p| p.primary && p.key == key && p.value == value),
+                "{key}: {out}"
+            );
+        }
+        assert_eq!(logbook_hidden(&out, false), drawer);
+    }
+
+    #[test]
+    fn gh741_logbook_supplied_titleless_drawer_keeps_hidden_identity() {
+        let id = "11111111-1111-4111-8111-111111111111";
+        let drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+        for org in [false, true] {
+            let props = if org {
+                format!(":PROPERTIES:\n:id: {id}\n:END:")
+            } else {
+                format!("id:: {id}")
+            };
+            let out = set_text(&format!("plain\n{props}"), org, drawer).unwrap();
+            assert_eq!(block_regions::parse(&out, org).id.unwrap().value, id);
+            assert_eq!(logbook_hidden(&out, org), drawer);
+        }
+    }
 
     #[test]
     fn gh741_logbook_hidden_roundtrip_and_content_wins() {

@@ -221,6 +221,31 @@ export function hasLogbookDrawer(raw: string, format: Format = "md"): boolean {
   if (!mayHaveLogbook(raw)) return false;
   return blockRegions(raw, format).drawers.some(d => d.name.toLowerCase() === "logbook");
 }
+/** Opaque accepted history, separate from property syntax for rich transfers
+ * and active authoring. Hidden Org transport rows have no PROPERTIES wrapper;
+ * use Markdown ownership for that transport, as the kernel join does. */
+export function splitLogbook(raw: string, format: Format): { text: string; drawers: string } {
+  if (!mayHaveLogbook(raw)) return { text: raw, drawers: "" };
+  const regions = blockRegions(raw, format);
+  if (regions.quarantined) throw new Error("Drawer transfer refused: block parsing is quarantined");
+  const bytes = new TextEncoder().encode(raw);
+  const decoder = new TextDecoder();
+  let start = 0;
+  const text: string[] = [];
+  const drawers: string[] = [];
+  for (const drawer of regions.drawers.filter(d => d.name.toLowerCase() === "logbook")) {
+    text.push(decoder.decode(bytes.subarray(start, drawer.range[0])));
+    drawers.push(decoder.decode(bytes.subarray(drawer.range[0], drawer.range[1])).replace(/[\r\n]+$/, ""));
+    start = drawer.range[1];
+  }
+  text.push(decoder.decode(bytes.subarray(start)));
+  return { text: text.join("").replace(/[\r\n]+$/, ""), drawers: drawers.join("\n") };
+}
+
+/** A destructive empty-host decision must account for opaque history too. */
+export function isEditorEmpty(raw: string, hide: HidePolicy, format: Format): boolean {
+  return !hasLogbookDrawer(raw, format) && splitProps(raw, hide, format).visible.trim() === "";
+}
 /** A sheet cell: the built-ins plus every `tine.*` key. */
 export const SHEET_CELL_HIDE: HidePolicy = Object.freeze({ kind: "sheet_cell" });
 /** Every property (annotation blocks edit only their text). */

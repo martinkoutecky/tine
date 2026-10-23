@@ -1,6 +1,6 @@
 import { doc, blockIsOpaqueSheetView, mainPages, formatForBlock } from "./model";
 import { createRoot, createMemo } from "solid-js";
-import { splitProps, BUILTIN_HIDE, hasLogbookDrawer } from "../editor/properties";
+import { isEditorEmpty, BUILTIN_HIDE } from "../editor/properties";
 import { outlineMaxDepth } from "../editor/outline";
 
 // ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ export function trailingVisibleEmptyLeaf(scope: OutlineScope): string | null {
   const node = doc.byId[id];
   if (!node || node.children.length !== 0) return null;
   const format = formatForBlock(id);
-  return !hasLogbookDrawer(node.raw, format) && splitProps(node.raw, BUILTIN_HIDE, format).visible.trim() === "" ? id : null;
+  return isEditorEmpty(node.raw, BUILTIN_HIDE, format) ? id : null;
 }
 
 export function prevVisible(id: string, scope: OutlineScope | null = null): string | null {

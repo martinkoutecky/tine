@@ -340,7 +340,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-gh741-doing-clockin.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Typing DOING clocks in once with LOGBOOK hidden from the editor; editing the task and pressing Enter at its visible end retains its exact clock history on the original block. A page whose block holds a CLOCK line outside a complete drawer still renders its blocks (GH 741).","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Typing DOING clocks in once with LOGBOOK hidden from the editor; editing the task and pressing Enter at its visible end retains its exact clock history on the original block. Handwritten drawers remain visible during composition and save literally in Markdown and Org. A page whose block holds a CLOCK line outside a complete drawer still renders its blocks (GH 741).","blocking":true}],
       "acceptableVariations":["Focus, styling and save latency may vary while the typed text, the single clock-in and the rendered page are right."],
       "nonRequirements":["platforms other than Linux WebKitGTK"],
       "stability":"burn-in"

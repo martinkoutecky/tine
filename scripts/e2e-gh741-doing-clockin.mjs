@@ -21,6 +21,8 @@ for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, dir))
 const clock = "CLOCK: [2026-10-21 Wed 08:54:45]";
 // The two literal samples of the report, as a user's file would hold them.
 fs.writeFileSync(path.join(GRAPH, "pages/Typing.md"), "- seed\n");
+fs.writeFileSync(path.join(GRAPH, "pages/Manual.md"), "- plain\n");
+fs.writeFileSync(path.join(GRAPH, "pages/ManualOrg.org"), "* plain\n");
 fs.writeFileSync(path.join(GRAPH, "pages/AfterEnd.md"), `- DOING\n  :LOGBOOK:\n  ${clock}\n  :END:  test\n- sibling one\n`);
 fs.writeFileSync(path.join(GRAPH, "pages/Backtick.md"), `- \`DOING\n  :LOGBOOK:\n  ${clock}\n  :END:  \`\n- sibling two\n`);
 const env = { ...process.env, TINE_GRAPH: GRAPH,
@@ -96,6 +98,30 @@ try {
   const expected = saved.replace("DOING test", "DOING revised") + "- next block\n";
   const split = await waitForFileText(typing, text => text === expected);
   if (split !== expected) throw new Error("Enter moved or changed the task's clock history");
+
+  for (const [name, filename, bullet, indent] of [["Manual", "Manual.md", "- ", "  "], ["ManualOrg", "ManualOrg.org", "* ", ""]]) {
+    stage = `compose a drawer by hand on ${name}`;
+    await openPageByName(browser, name);
+    await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'plain']").click();
+    await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
+    await browser.keys(["End"]);
+    const lines = [":LOGBOOK:", clock, ":END:"];
+    for (const line of lines) {
+      await browser.keys(["Shift", "Enter"]);
+      await browser.keys(["Shift"]);
+      // Send complete key transactions one character at a time, as the native
+      // host-save/reference journeys do. A bulk keys array can coalesce repeated
+      // characters or spaces before the controlled editor has committed them.
+      for (const character of line) await browser.keys([character]);
+    }
+    const literal = `plain\n${lines.join("\n")}`;
+    const value = await browser.$("textarea.block-editor").getValue();
+    if (value !== literal) throw new Error(`active handwritten buffer differs: ${JSON.stringify(value)}`);
+    for (const character of " suffix") await browser.keys([character]);
+    await browser.keys(["Escape"]);
+    const expectedManual = bullet + (literal + " suffix").replaceAll("\n", `\n${indent}`) + "\n";
+    await waitForFileText(path.join(GRAPH, "pages", filename), text => text === expectedManual);
+  }
   } catch (error) { problems.push(`typing: ${error.message.split("\n")[0].slice(0, 300)}`); }
   }
   if (problems.length) throw new Error(problems.join("\n"));
@@ -105,7 +131,7 @@ try {
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(TMP, "failure.png")); } catch {}
   try { fs.writeFileSync(path.join(TMP, "failure-dom.html"), await browser.getPageSource()); } catch {}
-  fs.writeFileSync(path.join(TMP, "failure.txt"), `Tested: ${testedBase}\nJourney: GH741 typing, edit, Enter\nExpected: hidden LOGBOOK, one persisted clock on original task after Enter; damaged pages render.\nStage: ${stage}. Observed: ${error.stack}\nClassification: ambiguous (inspect screenshot and driver.log)\n`);
+  fs.writeFileSync(path.join(TMP, "failure.txt"), `Tested: ${testedBase}\nJourney: GH741 typing, edit, Enter, manual drawer composition\nExpected: hidden saved LOGBOOK, one persisted clock on original task after Enter; handwritten drawers stay visible and save literally; damaged pages render.\nStage: ${stage}. Observed: ${error.stack}\nClassification: ambiguous (inspect screenshot and driver.log)\n`);
   throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}

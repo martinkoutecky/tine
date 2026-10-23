@@ -60,6 +60,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - GH #741: keep LOGBOOK drawers out of the task editor, preserve clocks when pressing Enter or merging blocks, and retain clock history during CLI edits (Tine 0.9 development).
+- GH #741: retain opaque clocks during rich copy/cut and sheet transfers, protect clock-only paste targets, keep restored Org identities parser-owned, and let handwritten drawers finish in the active editor.
 
 - **Margin comments** (internal UI-MARGIN-POLISH): select words and click **Comment** in the toolbar; cards and replies now offer **Reply** and **×** (delete with replies, restored together by Undo). Blocks with their own `quote` property hide quote context and author metadata while editing and retain their saved bytes; ordinary blocks keep those properties editable. Quoted replies stay readable inside their thread.
 

@@ -127,7 +127,7 @@ import {
   textareaCaretLineRect,
 } from "../editor/caretRows";
 import { revealCaretColumn, revealCaretSettled } from "../editor/caretReveal";
-import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, hasLogbookDrawer, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
+import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, isEditorEmpty, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
 import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
@@ -2875,7 +2875,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         }
         const n = docNode(props.id);
         const next = nextVisible(props.id, structuralScope);
-        if (n && !hasLogbookDrawer(n.raw, pageFmt()) && splitProps(n.raw, hideFn(), pageFmt()).visible.trim() === "" && n.children.length === 0 && next && docNode(next)?.page === n.page) {
+        if (n && isEditorEmpty(n.raw, hideFn(), pageFmt()) && n.children.length === 0 && next && docNode(next)?.page === n.page) {
           e.preventDefault();
           deleteBlock(props.id);
           startEditing(next, 0, null, editSurface());
@@ -3260,9 +3260,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         if (!inserted) pushToast(msg("editor-block-pasted-outline-was-refused"), "error");
         return;
       }
-      const wasEmpty = rawAtPaste.trim() === "" && docNode(props.id).children.length === 0;
       const lastId = withUndoUnit(tag, [pageAtPaste], () => {
         commit(rawAtPaste);
+        const host = docNode(props.id);
+        const wasEmpty = rawAtPaste.trim() === "" && isEditorEmpty(host.raw, hideFn(), pageFmt()) && host.children.length === 0;
         return (wasEmpty
           ? replaceEmptyBlockWithOutline(props.id, prepared)
           : insertOutlineAfter(props.id, prepared)) ?? false;

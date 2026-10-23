@@ -1,6 +1,6 @@
 import { msg } from "../../i18n";
 import { type Format } from "../../types";
-import { splitProps, HIDE_ALL, HIDE_ID, joinProps, BUILTIN_HIDE } from "../../editor/properties";
+import { splitProps, HIDE_ALL, HIDE_ID, joinProps, BUILTIN_HIDE, splitLogbook, isEditorEmpty } from "../../editor/properties";
 import { type ClipboardBlock, type ClipboardPayloadSlot, consumeCutGrant } from "../../clipboard";
 import { doc, Node, formatForPage, freshId, setDoc, hasLoadedIdentityCollision, loadedIdentityCollisions } from "../model";
 import { graphTransitioning } from "../../ui";
@@ -114,13 +114,14 @@ function clipboardRawForTarget(
   // splitProps/joinProps classify metadata but deliberately do not translate
   // syntax. Map the ordered key/value stream explicitly so every property keeps
   // its relative order across Markdown `key:: value` and Org drawer forms.
-  const visible = splitProps(block.raw, HIDE_ALL, block.sourceFormat).visible;
+  const parts = splitProps(block.raw, HIDE_ALL, block.sourceFormat);
+  const drawers = splitLogbook(parts.hidden, "md").drawers;
   const properties = clipboardProperties(block.raw, block.sourceFormat)
     .filter((property) => preserveIds || property.key.toLowerCase() !== "id");
   const translated = properties.map(({ key, value }) =>
     targetFormat === "org" ? `:${key}: ${value}` : `${key}:: ${value}`
   ).join("\n");
-  return joinProps(visible, translated, targetFormat);
+  return joinProps(parts.visible, [translated, drawers].filter(Boolean).join("\n"), targetFormat);
 }
 
 function clipboardCollapsed(block: ClipboardBlock): boolean {
@@ -208,9 +209,8 @@ function insertClipboardBlocksSync(
       children: block.children.map(prepare),
     };
   });
-  const visible = splitProps(target.raw, BUILTIN_HIDE, targetFormat).visible;
   const replaceHost = target.children.length === 0
-    && visible.trim() === ""
+    && isEditorEmpty(target.raw, BUILTIN_HIDE, targetFormat)
     && existingBlockId(target.raw, targetFormat) === null
     && !liveDocReferences(targetId);
   const parent = target.parent;

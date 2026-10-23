@@ -60,6 +60,17 @@ function typeChar(ta: HTMLTextAreaElement, ch: string) {
 
 const CLOCK = "CLOCK: [2026-10-21 Wed 08:54:45]";
 
+it.each(['md','org'] as const)('review manual drawer typing preserves subsequent text (%s)', format => {
+  const { textarea, blockId, dispose } = mountPage('plain', true, format);
+  try {
+    textarea!.setSelectionRange(5,5);
+    const typed = `\n:LOGBOOK:\n${CLOCK}\n:END: suffix`;
+    for (const ch of typed) typeChar(textarea!,ch);
+    expect(doc.byId[blockId].raw).toBe('plain'+typed);
+    expect(textarea!.value).toBe('plain'+typed);
+  } finally {dispose();}
+});
+
 it.each(["md", "org"] as const)("Backspace preserves a titleless logbook-only first block (%s)", (format) => {
   const raw = `:LOGBOOK:\n${CLOCK}\n:END:`;
   const { textarea, blockId, dispose } = mountPage(raw, true, format, true);

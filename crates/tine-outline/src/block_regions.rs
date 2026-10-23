@@ -22,6 +22,8 @@ use lsdoc::ast::{Block, Inline, ListItem, Span};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+mod preservation;
+
 /// OG linkable-property member separator, shared by native references and wasm.
 /// `graph_parser/text.cljs::sep-by-comma` at Logseq c67b8b5fa splits both commas.
 pub fn is_linkable_property_separator(ch: char) -> bool {
@@ -934,20 +936,29 @@ impl BlockRegions {
         if self.quarantined {
             return Err("Drawer reattachment refused: block parsing is quarantined".into());
         }
-        // A quote-only block has no prose title. After its first line would
-        // become a lazy quote continuation, hiding the restored history.
-        let mut at = if !org {
-            crate::swallowed_rows::quote_tail(raw)
-                .and_then(|t| t.titleless)
-                .unwrap_or_else(|| self.head_end(raw, org))
-        } else {
-            self.head_end(raw, org)
-        };
-        if let Some(r) = self.property_regions.iter().find(|r| r.0 == at) {
+        let mut at = self.head_end(raw, org);
+        // A titleless Org PROPERTIES drawer starts on the first line. The
+        // title heuristic points inside it; never insert between its rows.
+        if let Some(r) = self.property_regions.iter().find(|r| r.0 <= at && at < r.1) {
             at = r.1;
         }
-        Ok(self.inserted(raw, at, drawer))
+        // Verify ownership, not spelling: lazy quotes/lists and other parser
+        // containers can consume an otherwise byte-perfect restored drawer.
+        // Also retain every existing property (including primary ownership and
+        // id) and drawer. This runs in release as well as debug builds.
+        let canonical = self.inserted(raw, at, drawer);
+        if self.insertion_preserves_metadata(raw, org, drawer, &canonical) {
+            return Ok(canonical);
+        }
+        // A drawer before a container cannot be its lazy continuation. Try this
+        // parser-verified layout without maintaining a syntax allowlist.
+        let before = self.inserted(raw, 0, drawer);
+        if self.insertion_preserves_metadata(raw, org, drawer, &before) {
+            return Ok(before);
+        }
+        Err("Drawer reattachment refused: metadata ownership would change".into())
     }
+
     fn remove_properties(
         &self,
         raw: &str,
@@ -1149,7 +1160,7 @@ impl BlockRegions {
         self.add_properties(raw, true, &payload, false, Vec::new())
     }
     /// Apply an operation using these regions from EXACTLY this raw source.
-    /// O(block bytes); zero parses in release, one preservation reparse in debug.
+    /// Reuses regions except drawer restoration's ownership reparse; debug also checks literals.
     pub fn apply(&self, raw: &str, org: bool, edit: Edit) -> Result<String, String> {
         if self.quarantined {
             return Err("Structural edit refused: block parsing is quarantined".into());

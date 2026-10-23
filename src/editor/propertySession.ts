@@ -5,7 +5,7 @@
 import { blockRegions, type BlockIdentityFacts } from "../render/parse";
 import { facetsOf, type Facets } from "../render/facets";
 import { existingBlockId } from "../document";
-import { hasLogbookDrawer, hides, joinProps, splitProps, type HidePolicy, type PropFormat } from "./properties";
+import { hasLogbookDrawer, splitLogbook, hides, joinProps, splitProps, type HidePolicy, type PropFormat } from "./properties";
 
 export function propertyEditorSession() {
   let edited: { raw: string; format: PropFormat; hide: HidePolicy; hiddenFacts: [string, string][]; parts: ReturnType<typeof splitProps>; facets: Facets; identity: BlockIdentityFacts } | undefined;
@@ -22,12 +22,13 @@ export function propertyEditorSession() {
       return edited?.raw === raw && edited.format === format && edited.hide === hide ? edited.parts : splitProps(raw, hide, format);
     },
     join(visible: string, hidden: string, previous: string, hide: HidePolicy, format: PropFormat) {
-      const raw = joinProps(visible, hidden, format, previous);
-      if (hidden && hasLogbookDrawer(visible, format)) {
-        // Content wins. Never cache the old drawer beside a newly supplied one.
-        edited = undefined;
-        return raw;
-      }
+      // Like handwritten hidden properties, a supplied drawer belongs to this
+      // active buffer until exit. Remove the previous history from the join and
+      // cached transport so subsequent keystrokes cannot resurrect it. Keep the
+      // literal typed layout, including text after :END:.
+      const typedDrawer = hasLogbookDrawer(visible, format);
+      if (typedDrawer) hidden = splitLogbook(hidden, "md").text;
+      const raw = joinProps(visible, hidden, format, typedDrawer ? undefined : previous);
       const own = visible.includes(format === "org" ? ":" : "::")
         ? blockRegions(visible, format).properties.filter((p) => p.primary) : [];
       const previousHidden = () => {
@@ -40,7 +41,7 @@ export function propertyEditorSession() {
       // of the rejoined Org buffer on every keystroke.
       const properties = own.length ? [...own.map((p): [string, string] => [p.key, p.value]), ...previousHidden()] : [];
       const typedHidden = own.some((p) => hides(hide, p.key, properties));
-      if (typedHidden) {
+      if (typedHidden || typedDrawer) {
         // A property typed by hand must finish in this active buffer. Stripping
         // `quote:: ` as soon as the parser accepts it would put the remaining
         // keystrokes in the body. Reentry uses the ordinary split and hides it.
