@@ -1283,7 +1283,11 @@ pins four opens per delivered file plus a constant, the same count on 60 and
 600 pages, and none once settled. A delivery that leaves the whole graph fresh
 (a first sync) rehashes each of its files once. An edit's publication reads and
 stamps the edited page only, on aged and freshly delivered graphs of 60 and 600
-pages alike (`host_edit_cost.rs`, R4(a)).
+pages alike (`host_edit_cost.rs`, R4(a)). That exact publication-path
+comparison stops the background watcher before measurement: process-global
+counts must not include its racy rehashes or forwarded save echoes at a
+load-dependent point in the window. The live watcher's cost remains measured
+separately by `racy_delivery_cost.rs` through its acknowledged drain.
 
 Unit cost: unchanged bytes, files and syncs per edit (22/1,320 bytes on the
 1-/60-block fixtures, one temporary file and two syncs per referrer); per
