@@ -62,6 +62,16 @@ afterEach(() => {
 });
 
 describe("Ctrl/Cmd+R creates a margin comment", () => {
+  it.each(["md", "org"] as const)("keeps ordinary %s author and quote-suffix properties in the edit buffer", (format) => {
+    const raw = format === "md"
+      ? "The obstacle is the way.\nauthor:: Marcus Aurelius\nquote-suffix:: after"
+      : "The obstacle is the way.\n:PROPERTIES:\n:author: Marcus Aurelius\n:quote-suffix: after\n:END:";
+    const { root, dispose } = mount([block("p", "Literature", [block("ordinary", raw)])], "ordinary", format);
+    try {
+      expect(editor(root).value).toBe(raw);
+    } finally { dispose(); }
+  });
+
   it.each(["md", "org"] as const)("lets handwritten %s quote metadata finish before hiding it on the next edit session", (format) => {
     const metadata = format === "md" ? "\nquote:: selected words" : "\n:PROPERTIES:\n:quote: selected words\n:END:";
     const { root, dispose } = mount([block("p", "selected words", [block("c", "My view")])], "c", format);

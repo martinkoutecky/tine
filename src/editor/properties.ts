@@ -211,8 +211,8 @@ export function splitPagePreamble(raw: string | null | undefined): {
 export type HidePolicy =
   | { readonly kind: "builtin" | "sheet_cell" | "all" }
   | { readonly kind: "keys"; readonly keys: readonly string[]; readonly norm?: boolean };
-/** A normal block editor: identity, fold, list type, comment context and author
- *  metadata stay in the file through the kernel's shared hidden projection. */
+/** A normal block editor: identity, fold and list type; comment context and
+ *  author only when its own primary properties include quote. */
 export const BUILTIN_HIDE: HidePolicy = Object.freeze({ kind: "builtin" });
 /** A sheet cell: the built-ins plus every `tine.*` key. */
 export const SHEET_CELL_HIDE: HidePolicy = Object.freeze({ kind: "sheet_cell" });
@@ -228,9 +228,9 @@ function policyText(policy: HidePolicy): string {
   if (json === undefined) policyJson.set(policy, (json = JSON.stringify(policy)));
   return json;
 }
-/** Whether `policy` hides property `key` (as the parser spelled it). */
-export function hides(policy: HidePolicy, key: string): boolean {
-  return hidePolicyHides(policyText(policy), key);
+/** Whether `policy` hides `key`, given this block's parsed own primary properties. */
+export function hides(policy: HidePolicy, key: string, properties: readonly (readonly [string, string])[]): boolean {
+  return hidePolicyHides(policyText(policy), key, properties);
 }
 
 /** For a multi-line editor that normally keeps Enter inside it, return the text

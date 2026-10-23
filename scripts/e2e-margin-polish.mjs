@@ -114,6 +114,8 @@ try {
   await browser.setWindowSize(1600, 1000);
   await openPageByName(browser, PAGE);
   await editText(PHRASE);
+  await shot("00-ordinary-author-editor");
+  check(await browser.execute(() => document.querySelector("textarea.block-editor").value.includes("author:: claude")), "An ordinary block's author property is missing from the editor");
   await select(PHRASE);
   await shot("01-selection-toolbar");
   const toolbar = await browser.$('[data-selection-action="comment"]').isExisting();
@@ -233,6 +235,7 @@ try {
     // Individual native key commands release duplicate ':' keys reliably.
     for (const character of "quote:: revised remark") await browser.keys(character);
     await shot("15-handwritten-quote-draft");
+    check(await browser.execute(() => document.querySelector("textarea.block-editor").value === "A hand note\nquote:: revised remark"), "Handwritten quote was hidden before the active edit session finished");
     await leave(); await persisted("A hand note", "quote:: revised remark");
     await editText("A hand note");
     check(await browser.execute(() => document.querySelector("textarea.block-editor").value === "A hand note"), "Handwritten quote did not save its value and reopen hidden");
@@ -244,7 +247,7 @@ try {
   console.error(`Failure in ${step}: ${String(error)}`);
   if (browser) { try { console.error(await browser.execute(() => document.body?.innerText.slice(0, 3000))); } catch {} }
   if (browser) { try { await shot(`failure-${step}`); } catch {} }
-  fs.writeFileSync(path.join(OUT, "failure.json"), JSON.stringify({ commit: "3d21fc343fa546bb3578f141ab8f3e5a2ebd380f + working diff", journey: step, expected: "durable visible comment thread workflow", observed: String(error), classification: "ambiguous", defects }, null, 2));
+  fs.writeFileSync(path.join(OUT, "failure.json"), JSON.stringify({ commit: "5de3d7c9c + Round 2 working diff", journey: step, expected: "durable visible comment thread workflow", observed: String(error), classification: "ambiguous", defects }, null, 2));
   throw error;
 } finally {
   fs.writeFileSync(path.join(OUT, "defects.json"), JSON.stringify(defects, null, 2));

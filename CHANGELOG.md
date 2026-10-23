@@ -59,7 +59,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- **Margin comments** (internal UI-MARGIN-POLISH): select words and click **Comment** in the toolbar; cards and replies now offer **Reply** and **×** (delete with replies, restored together by Undo). Quote context and author metadata stay hidden while editing and retain their saved bytes, and quoted replies stay readable inside their thread.
+- **Margin comments** (internal UI-MARGIN-POLISH): select words and click **Comment** in the toolbar; cards and replies now offer **Reply** and **×** (delete with replies, restored together by Undo). Blocks with their own `quote` property hide quote context and author metadata while editing and retain their saved bytes; ordinary blocks keep those properties editable. Quoted replies stay readable inside their thread.
 
 - After a restore from backup, a page that was being edited when the restore began closes normally once editing ends, instead of staying open for the rest of the session. A component draft open across the restore (for example a table cell) no longer keeps holding back newer file content from that page after it closes (internal: REG-HOST-REBIND-ACQUISITION-RELEASE).
 - Editing a sheet row reuses other rows' formula results and table/board filter answers, reducing pauses in large sheets (audit L10-05; development only).

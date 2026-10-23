@@ -220,7 +220,9 @@ function toDto(id: string): BlockDto {
     // parser and hide policy as the editor, only when trimming changed bytes.
     const end = utf8ByteLength(n.raw);
     const format = doc.pages.find((page) => page.name === n.page)?.format ?? "md";
-    if (blockRegions(n.raw, format).properties.some((p) => p.primary && p.line[1] === end && hides(BUILTIN_HIDE, p.key))) raw = n.raw;
+    const own = blockRegions(n.raw, format).properties.filter((p) => p.primary);
+    const properties = own.map((p): [string, string] => [p.key, p.value]);
+    if (own.some((p) => p.line[1] === end && hides(BUILTIN_HIDE, p.key, properties))) raw = n.raw;
   }
   return { id: n.id, raw, collapsed: n.collapsed, children: n.children.map(toDto) };
 }

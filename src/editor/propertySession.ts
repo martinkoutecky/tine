@@ -23,33 +23,38 @@ export function propertyEditorSession() {
     },
     join(visible: string, hidden: string, previous: string, hide: HidePolicy, format: PropFormat) {
       const raw = joinProps(visible, hidden, format);
-      const typedHidden = visible.includes(format === "org" ? ":" : "::")
-        && blockRegions(visible, format).properties.some((p) => p.primary && hides(hide, p.key));
+      const own = visible.includes(format === "org" ? ":" : "::")
+        ? blockRegions(visible, format).properties.filter((p) => p.primary) : [];
+      const previousHidden = () => {
+        if (edited?.raw === previous && edited.format === format && edited.hide === hide) return edited.hiddenFacts;
+        const prior = blockRegions(previous, format).properties.filter((p) => p.primary).map((p): [string, string] => [p.key, p.value]);
+        return prior.filter(([key]) => hides(hide, key, prior));
+      };
+      // joinProps reattaches these accepted hidden facts to the parsed visible
+      // primary properties. Supply that complete context without a second parse
+      // of the rejoined Org buffer on every keystroke.
+      const properties = own.length ? [...own.map((p): [string, string] => [p.key, p.value]), ...previousHidden()] : [];
+      const typedHidden = own.some((p) => hides(hide, p.key, properties));
       if (typedHidden) {
         // A property typed by hand must finish in this active buffer. Stripping
         // `quote:: ` as soon as the parser accepts it would put the remaining
         // keystrokes in the body. Reentry uses the ordinary split and hides it.
-        const previousHidden = edited?.raw === previous && edited.format === format && edited.hide === hide
-          ? edited.hiddenFacts : blockRegions(previous, format).properties
-            .filter((p) => p.primary && hides(hide, p.key)).map((p): [string, string] => [p.key, p.value]);
+        const retained = previousHidden();
         const facts = facetsOf(visible, format);
         const ownCount = blockRegions(visible, format).properties.filter((p) => p.primary).length;
-        edited = { raw, format, hide, hiddenFacts: previousHidden, parts: { visible, hidden },
+        edited = { raw, format, hide, hiddenFacts: retained, parts: { visible, hidden },
           identity: { raw, format, value: existingBlockId(raw, format) },
-          facets: format === "org" ? { ...facts, properties: [...facts.properties.slice(0, ownCount), ...previousHidden, ...facts.properties.slice(ownCount)] } : facetsOf(raw, format) };
-      } else if (format === "org" && hidden && blockRegions(visible, format).properties.some((p) => p.primary)) {
-        const previousHidden = edited?.raw === previous && edited.format === format && edited.hide === hide
-          ? edited.hiddenFacts : blockRegions(previous, format).properties
-            .filter((p) => p.primary && hides(hide, p.key)).map((p): [string, string] => [p.key, p.value]);
+          facets: format === "org" ? { ...facts, properties: [...facts.properties.slice(0, ownCount), ...retained, ...facts.properties.slice(ownCount)] } : facetsOf(raw, format) };
+      } else if (format === "org" && hidden && own.length) {
+        const retained = previousHidden();
         const priorIdentity = this.identity(previous, format).value;
         const facts = facetsOf(visible, format);
-        const own = blockRegions(visible, format).properties.filter((p) => p.primary);
         const ownCount = own.length;
-        const hiddenFacts = own.filter((p) => hides(hide, p.key)).map((p): [string, string] => [p.key, p.value]);
+        const hiddenFacts = own.filter((p) => hides(hide, p.key, properties)).map((p): [string, string] => [p.key, p.value]);
         const parts = splitProps(visible, hide, format);
-        edited = { raw, format, hide, hiddenFacts: [...hiddenFacts, ...previousHidden], identity: { raw, format, value: blockRegions(visible, format).id?.value ?? priorIdentity },
+        edited = { raw, format, hide, hiddenFacts: [...hiddenFacts, ...retained], identity: { raw, format, value: blockRegions(visible, format).id?.value ?? priorIdentity },
           parts: { visible: parts.visible, hidden: [parts.hidden, hidden].filter(Boolean).join("\n") },
-          facets: { ...facts, properties: [...facts.properties.slice(0, ownCount), ...previousHidden, ...facts.properties.slice(ownCount)] } };
+          facets: { ...facts, properties: [...facts.properties.slice(0, ownCount), ...retained, ...facts.properties.slice(ownCount)] } };
       } else edited = undefined;
       return raw;
     },
