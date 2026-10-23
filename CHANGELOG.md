@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.8.0-beta.10] - 2026-10-23
+
+Fixes for the 0.8.0 stable candidate: wide query result tables sit inside the page again (GH #749, a regression since 0.8.0-beta.6), the macOS app icon matches other apps' size (GH #747), and data-safety fixes from the 0.8 audit. Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
+
 ### Fixed
 
 - Wide tables in query results sit inside the page again instead of being shifted to the right and cut off (GH #749).
