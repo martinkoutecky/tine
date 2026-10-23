@@ -5,6 +5,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { remote } from "webdriverio";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 const out = path.resolve(process.env.STALL_OUT || "artifacts/render-stall/run");
@@ -46,6 +47,9 @@ try {
   }
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 0,
     connectionRetryTimeout: 120000, capabilities: tauriCapabilities(app, "render-stall", process.platform, target.debuggerAddress) });
+  // Windows attaches to whichever WebView the driver finds first (often the hidden Quick Capture).
+  await browser.waitUntil(async () => (await browser.getWindowHandles()).length >= 1, { timeout: 30000 });
+  await ensureMainWindow(browser, { what: "the Tine main window" });
   await browser.$(".page-title").waitForExist({ timeout: 60000 });
   await openPageByName(browser, "Render stall");
   for (const section of ["linked", "unlinked"]) {
