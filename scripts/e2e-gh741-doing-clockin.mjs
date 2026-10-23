@@ -23,6 +23,7 @@ const clock = "CLOCK: [2026-10-21 Wed 08:54:45]";
 fs.writeFileSync(path.join(GRAPH, "pages/Typing.md"), "- seed\n");
 fs.writeFileSync(path.join(GRAPH, "pages/Manual.md"), "- plain\n");
 fs.writeFileSync(path.join(GRAPH, "pages/ManualOrg.org"), "* plain\n");
+fs.writeFileSync(path.join(GRAPH, "pages/PropertyCase.org"), `* plain\n:PROPERTIES:\n:collapsed: false\n:END:\n:LOGBOOK:\n${clock}\n:END:\n* next\n`);
 fs.writeFileSync(path.join(GRAPH, "pages/AfterEnd.md"), `- DOING\n  :LOGBOOK:\n  ${clock}\n  :END:  test\n- sibling one\n`);
 fs.writeFileSync(path.join(GRAPH, "pages/Backtick.md"), `- \`DOING\n  :LOGBOOK:\n  ${clock}\n  :END:  \`\n- sibling two\n`);
 const env = { ...process.env, TINE_GRAPH: GRAPH,
@@ -122,6 +123,24 @@ try {
     const expectedManual = bullet + (literal + " suffix").replaceAll("\n", `\n${indent}`) + "\n";
     await waitForFileText(path.join(GRAPH, "pages", filename), text => text === expectedManual);
   }
+  stage = "case-equivalent Org properties survive switch and reopen";
+  await openPageByName(browser, "PropertyCase");
+  await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'plain']").click();
+  await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
+  const typed = "plain\n:PROPERTIES:\n:COLLAPSED: true\n:END:\nmy newly typed text";
+  await browser.execute(value => {
+    const textarea = document.querySelector("textarea.block-editor");
+    textarea.value = value;
+    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromPaste" }));
+  }, typed);
+  await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'next']").click();
+  await browser.$("//div[contains(@class, 'block-content') and contains(., 'my newly typed text')]").click();
+  const reopened = await browser.$("textarea.block-editor").getValue();
+  if (!reopened.includes("my newly typed text")) throw new Error(`lost typed text after switching: ${JSON.stringify(reopened)}`);
+  const propertyFile = path.join(GRAPH, "pages/PropertyCase.org");
+  await waitForFileText(propertyFile, text => text.includes("my newly typed text") && text.includes(`:LOGBOOK:\n${clock}\n:END:`));
+  if (await browser.$(".toast-error").isExisting()) throw new Error("safe case-equivalent edit showed an error toast");
+  await browser.keys(["Escape"]);
   } catch (error) { problems.push(`typing: ${error.message.split("\n")[0].slice(0, 300)}`); }
   }
   if (problems.length) throw new Error(problems.join("\n"));

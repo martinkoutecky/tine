@@ -1,7 +1,7 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
-import { startEditing, endEdit } from "../editorController";
+import { startEditing, endEdit, editingId } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { initParser } from "../render/parse";
 import { pageByName, resetStore } from "../document";
@@ -11,6 +11,8 @@ import { trailingVisibleEmptyLeaf } from "../document/tree";
 import { timestampText, renderedBlockText } from "../render/renderedText";
 import { visibleBody } from "../render/block";
 import { logbookInfo } from "../logbook";
+import { toasts, setToasts, dismissToast } from "../toasts";
+import * as properties from "../editor/properties";
 import type { TimestampInline } from "../render/ast";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
@@ -59,6 +61,99 @@ function typeChar(ta: HTMLTextAreaElement, ch: string) {
 }
 
 const CLOCK = "CLOCK: [2026-10-21 Wed 08:54:45]";
+
+it('review r2 refused Org edit survives switching blocks', () => {
+  const raw = `plain\n:PROPERTIES:\n:collapsed: false\n:END:\n:LOGBOOK:\n${CLOCK}\n:END:`;
+  const {root, textarea, blockId, dispose} = mountPage(raw,true,'org',true);
+  const errors:unknown[]=[];
+  const onError=(e:ErrorEvent)=>{errors.push(e.error);e.preventDefault();};
+  window.addEventListener('error',onError);
+  try {
+    setToasts([]);
+    const typed = 'plain\n:PROPERTIES:\n:COLLAPSED: true\n:END:\nmy newly typed text';
+    textarea!.value=typed;
+    textarea!.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertFromPaste'}));
+    textarea!.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));
+    const next = root.querySelector(`[data-block-id="next-${seq}"] .block-content-wrapper`)!;
+    next.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0,cancelable:true}));
+    document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0}));
+    startEditing(blockId,0);
+    expect(root.querySelector<HTMLTextAreaElement>('textarea.block-editor')?.value).toContain('my newly typed text');
+    expect(errors).toEqual([]);
+    expect(toasts()).toEqual([]);
+    expect(logbookInfo(doc.byId[blockId].raw, 'org').rows).toHaveLength(1);
+  } finally {window.removeEventListener('error',onError);dispose();}
+});
+
+it.each(['md', 'org'] as const)('review r2 refused genuine join keeps the buffer and reports recovery (%s)', format => {
+  const raw = `plain\n:LOGBOOK:\n${CLOCK}\n:END:`;
+  const { root, textarea, blockId, dispose } = mountPage(raw, true, format, true);
+  // Exercise a release-kernel refusal independently of the casing correction.
+  const join = vi.spyOn(properties, 'joinProps').mockImplementation(() => {
+    throw new Error('Drawer reattachment refused: metadata ownership would change');
+  });
+  const onError = (e: ErrorEvent) => e.preventDefault();
+  let disposed = false;
+  window.addEventListener('error', onError);
+  try {
+    setToasts([]);
+    const typed = 'my newly typed text';
+    textarea!.value = typed;
+    textarea!.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }));
+    expect(doc.byId[blockId].raw).toBe(raw);
+    expect(toasts()).toHaveLength(1);
+    expect(toasts()[0]).toMatchObject({ kind: 'error', sticky: true, copyText: typed });
+    expect(toasts()[0].message).toContain('Copy');
+    const next = root.querySelector(`[data-block-id="next-${seq}"] .block-content-wrapper`)!;
+    next.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, cancelable: true }));
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
+    endEdit('blur');
+    startEditing(blockId, 0);
+    expect(editingId()).toBe(blockId);
+    expect(textarea!.isConnected).toBe(true);
+    expect(textarea!.value).toBe(typed);
+    expect(doc.byId[blockId].raw).toBe(raw);
+    // Correcting the buffer releases the edit hold; ordinary navigation works.
+    join.mockRestore();
+    textarea!.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
+    expect(doc.byId[blockId].raw).toContain(typed);
+    expect(logbookInfo(doc.byId[blockId].raw, format).rows).toHaveLength(1);
+    startEditing(`next-${seq}`, 0);
+    expect(root.querySelector<HTMLTextAreaElement>('textarea.block-editor')?.value).toBe('next');
+    startEditing(blockId, 0);
+    expect(root.querySelector<HTMLTextAreaElement>('textarea.block-editor')?.value).toBe(typed);
+    // Dismissing an error then closing the surface still retains its last
+    // refused buffer through the ordinary error toast's Copy recovery.
+    const refusedAgain = vi.spyOn(properties, 'joinProps').mockImplementation(() => {
+      throw new Error('metadata ownership would change');
+    });
+    try {
+      const reopened = root.querySelector<HTMLTextAreaElement>('textarea.block-editor')!;
+      const finalText = typed + ' before closing';
+      reopened.value = finalText;
+      reopened.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }));
+      for (const toast of toasts()) dismissToast(toast.id);
+      dispose();
+      disposed = true;
+      expect(toasts()).toHaveLength(1);
+      expect(toasts()[0]).toMatchObject({ kind: 'error', sticky: true, copyText: finalText });
+      expect(doc.byId[blockId].raw).not.toContain('before closing');
+      expect(logbookInfo(doc.byId[blockId].raw, format).rows).toHaveLength(1);
+      // Identical errors in another editor must retain both recovery copies.
+      const other = mountPage(raw, true, format);
+      try {
+        other.textarea!.value = 'another refused draft';
+        other.textarea!.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }));
+      } finally { other.dispose(); }
+      expect(toasts().map(toast => toast.copyText)).toEqual([finalText, 'another refused draft']);
+    } finally { refusedAgain.mockRestore(); }
+  } finally {
+    join.mockRestore();
+    window.removeEventListener('error', onError);
+    if (!disposed) dispose();
+    setToasts([]);
+  }
+});
 
 it.each(['md','org'] as const)('review manual drawer typing preserves subsequent text (%s)', format => {
   const { textarea, blockId, dispose } = mountPage('plain', true, format);

@@ -59,6 +59,7 @@ icon:: 📅
   - Blocks with clock rows show a small elapsed-time badge with a Type / Start / End / Span tooltip; the `:LOGBOOK:` drawer itself stays hidden by default, like Logseq.
   - The logbook stays out of the text editor too. Editing the task keeps its clock history; **Enter** at the end of its text leaves the history on that task. Backspace or Delete merging two blocks keeps both histories in the surviving block's logbook.
   - A `:LOGBOOK:` drawer you type by hand stays visible until you leave the editor, so you can finish it. Copying or cutting whole blocks carries their clock history, including between Markdown and Org pages.
+  - If an edit cannot safely retain hidden history, the editor stays open with your typed text and shows a red error. Correct the text to continue, or use **Copy** on that message to keep the exact typed text, even if the page later closes. The error stays until you dismiss it.
   - Toggled off, markers change without writing log rows.
 - ## Repeating tasks
   - Put a repeater inside the timestamp, e.g. `<2026-07-07 Tue +1w>` (or pick one in the calendar popup); the units are `d`, `w`, `m`, `y` for days, weeks, months, years.

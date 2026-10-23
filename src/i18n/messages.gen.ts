@@ -641,6 +641,7 @@ export interface MessageArgs {
   "editor-block-create": { "name": string | number };
   "editor-block-create-tag": { "name": string | number };
   "editor-block-desktop-recording-save-error": { "error": string | number };
+  "editor-block-edit-refused": { "detail": string | number };
   "editor-block-inserted-file": { "count": number };
   "editor-block-more-formatting": {};
   "editor-block-open-block-references-shift-click-sidebar": {};

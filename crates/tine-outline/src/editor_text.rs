@@ -593,6 +593,69 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gh741_logbook_property_key_casing_matrix() {
+        let id = "11111111-1111-4111-8111-111111111111";
+        let drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+        let mut failures = Vec::new();
+        for org in [false, true] {
+            let wrap = |key: &str, value: &str| {
+                if org {
+                    format!(":PROPERTIES:\n:{key}: {value}\n:END:")
+                } else {
+                    format!("{key}:: {value}")
+                }
+            };
+            for key in [
+                "id",
+                "collapsed",
+                "logseq.order-list-type",
+                "quote",
+                "author",
+            ] {
+                let old = if key == "id" { id } else { "old" };
+                let new = if key == "id" { id } else { "new" };
+                let raw = format!("plain\n{}\n{drawer}", wrap(key, old));
+                let parts = split(&raw, org, &HidePolicy::All);
+                for spelling in [key.to_string(), key.to_ascii_uppercase()] {
+                    for title in ["plain\n", ""] {
+                        let visible = format!("{title}{}", wrap(&spelling, new));
+                        match join(&visible, &parts.hidden, org) {
+                            Ok(out) => {
+                                let parsed = block_regions::parse(&out, org);
+                                let mut values: Vec<_> = parsed
+                                    .properties
+                                    .iter()
+                                    .filter(|p| p.primary && p.key.eq_ignore_ascii_case(key))
+                                    .map(|p| p.value.as_str())
+                                    .collect();
+                                values.sort();
+                                let mut expected = vec![new, old];
+                                expected.sort();
+                                assert_eq!(
+                                    values, expected,
+                                    "{org}/{key}/{spelling}/{title}: {out}"
+                                );
+                                assert_eq!(logbook_hidden(&out, org), drawer);
+                                if key == "id" {
+                                    assert_eq!(parsed.id.unwrap().value, id);
+                                }
+                            }
+                            Err(error) => {
+                                failures.push(format!("{org}/{key}/{spelling}/{title:?}: {error}"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "{} false refusals: {failures:#?}",
+            failures.len()
+        );
+    }
+
+    #[test]
     fn gh741_logbook_canonical_restoration_preserves_ownership() {
         let drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]  \nopaque row\n:END:";
         let id = "11111111-1111-4111-8111-111111111111";

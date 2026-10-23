@@ -23,7 +23,10 @@ impl BlockRegions {
             let mut values: Vec<_> = r
                 .properties
                 .iter()
-                .map(|p| (p.key.clone(), p.value.clone(), p.primary))
+                // The parser folds duplicate keys without case and gives all
+                // entries the first spelling in a folded property region.
+                // Compare that same identity; values and ownership stay exact.
+                .map(|p| (p.key.to_ascii_lowercase(), p.value.clone(), p.primary))
                 .collect();
             values.sort();
             values
@@ -51,5 +54,29 @@ impl BlockRegions {
         let mut actual_drawers = drawers(&parsed, candidate);
         actual_drawers.sort();
         properties(&parsed) == expected && actual_drawers == expected_drawers
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gh741_ownership_guard_still_refuses_swallowed_metadata() {
+        let id = "11111111-1111-4111-8111-111111111111";
+        let properties = format!(":PROPERTIES:\n:id: {id}\n:END:");
+        let drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+        let bad = format!(":PROPERTIES:\n{drawer}\n:id: {id}\n:END:");
+        assert!(!parse(&properties, true).insertion_preserves_metadata(
+            &properties,
+            true,
+            drawer,
+            &bad
+        ));
+        for org in [false, true] {
+            let quote = "> quoted";
+            let bad = format!("{quote}\n{drawer}");
+            assert!(!parse(quote, org).insertion_preserves_metadata(quote, org, drawer, &bad));
+        }
     }
 }

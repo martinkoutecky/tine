@@ -4,6 +4,7 @@ import { batch, createSignal } from "solid-js";
 import { renderedBlocks } from "./lazyObserve";
 import { notifyClearOutlineSelection, notifyEditingStarted } from "./modeHooks";
 import { requestFrame } from "./windowRealm";
+import { clearOnBindingInvalidated } from "./binding";
 
 // Where to put the caret when a block starts editing. Either a concrete offset
 // (clicks, splits, most callers) OR a column descriptor for cross-block Up/Down
@@ -55,6 +56,16 @@ const [caretTarget, setCaretTarget] = createSignal<{ id: string; offset: CaretPo
 // click) only ever mount one instance, so they need no stamp.
 const [activeSurface, setActiveSurface] = createSignal<string | null>(null);
 const pendingFocusSurface = new Map<string, string>();
+
+// A refused editor commit must be resolved before a mode change can unmount
+// its only live buffer. The mounted editor owns and releases its guard.
+const editExitGuards = new Set<() => boolean>();
+clearOnBindingInvalidated(() => editExitGuards.clear());
+export function registerEditExitGuard(guard: () => boolean): () => void {
+  editExitGuards.add(guard);
+  return () => editExitGuards.delete(guard);
+}
+const canExitEdit = () => [...editExitGuards].every(guard => guard());
 
 export interface HistoryEditorContext {
   blockId: string;
@@ -211,6 +222,7 @@ export function startEditing(
   surface: string | null = null,
   preserveHistoryRestore = false,
 ) {
+  if (!canExitEdit()) return;
   revealOutlineBlock(id);
   if (!preserveHistoryRestore) setPendingHistoryEditorRestore(null);
   notifyEditingStarted(id, owner);
@@ -250,6 +262,7 @@ export function startEditing(
 }
 
 export function endEdit(_reason: EndEditReason) {
+  if (!canExitEdit()) return;
   batch(() => {
     setPendingHistoryEditorRestore(null);
     setEditingId(null);

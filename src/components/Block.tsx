@@ -129,6 +129,7 @@ import {
 import { revealCaretColumn, revealCaretSettled } from "../editor/caretReveal";
 import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, isEditorEmpty, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
+import { editorCommitRecovery } from "../editor/commitRecovery";
 import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
@@ -690,6 +691,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
   onCleanup(releaseCompletionLease);
   let rawBeforeLastCommit = node().raw;
+  const commitRecovery = editorCommitRecovery(() => ref, () => node() === shownNode);
   const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => {
     // A disposed editor whose block was replaced never writes (see shownNode).
     if (replacedUnderEditor()) return;
@@ -706,11 +708,17 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // unchanged, don't rewrite. Needed for org, where reattaching the hidden
     // drawer canonicalizes its position — so `next === raw` alone wouldn't catch
     // a block whose drawer wasn't already canonical, and would churn the file.
-    if (!commitAsCalc && !codeShown() && text === editorValue()) return;
+    if (!commitAsCalc && !codeShown() && text === editorValue()) { commitRecovery.applied(); return; }
     // For a code wrapper `text` is the payload body: re-attach the exact wrapper
     // bytes (GH #412/#413: the body-only projection is reversible).
     const visible = commitAsCalc ? serializeCalcExitCommit(text, editorValue()) : text;
-    const next = (!commitAsCalc ? codeWrapCommit(text) : null) ?? propertySession.join(visible, editorParts().hidden, node().raw, hideFn(), pageFmt());
+    let next: string;
+    try {
+      next = (!commitAsCalc ? codeWrapCommit(text) : null) ?? propertySession.join(visible, editorParts().hidden, node().raw, hideFn(), pageFmt());
+    } catch (error) {
+      return commitRecovery.refused(error, text);
+    }
+    commitRecovery.applied();
     if (next === node().raw) return;
     const setRawOpts = opts && "timetracking" in opts ? { timetracking: opts.timetracking } : undefined;
     // GH #515: capture once for the autosize frame, before live mirrors above react.
