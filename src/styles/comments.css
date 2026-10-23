@@ -107,6 +107,29 @@
   gap: 6px;
   padding: 0 0 2px;
 }
+.comment-in-thread > .comment-actions { min-height: 24px; }
+.comment-in-thread > .comment-actions .comment-delete { flex: 0 0 24px; }
+.comment-composer { display: none; margin: 8px 0 2px; }
+.comment-card:hover > .comment-composer,
+.comment-card:focus-within > .comment-composer,
+.margin-thread.active > .comment-card > .comment-composer,
+.comment-composer.expanded { display: block; }
+.comment-reply-draft {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+}
+.comment-composer-footer { margin-top: 6px; }
+.comment-composer-footer button { font: inherit; font-size: 12px; cursor: pointer; }
 .comment-actions button {
   border: 0;
   border-radius: 4px;
@@ -125,12 +148,7 @@
 }
 
 /* The selection toolbar normally holds icon-width formatting actions. */
-.sel-toolbar [data-selection-action="comment"] {
-  width: auto;
-  min-width: max-content;
-  padding: 0 6px;
-  flex-shrink: 0;
-}
+.sel-toolbar [data-selection-action="comment"] { flex-shrink: 0; }
 
 /* The passage a comment quotes, inside the parent's text. */
 .comment-quote-anchor {

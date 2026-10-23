@@ -164,7 +164,7 @@ import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
 import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
 import { commentFromEditor, replyOnEnter } from "../commentActions";
-import { AuthorChip, CommentActions, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
+import { AuthorChip, CommentActions, CommentComposer, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, onEachWindow, requestFrame, viewportOf, windowOf } from "../windowRealm";
@@ -342,6 +342,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       data-sticky-parent={stickyParent() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
+      <Show when={bulletless()}><CommentActions id={props.id} /></Show>
       <Show when={stickyParent()}><StickyAncestor id={props.id} raw={node().raw} /></Show>
       <CommentQuoteHeader parentId={node().parent} selector={commentSelector()} />
       <div
@@ -463,7 +464,6 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         </div>
         <MarginMarker parentId={props.id} comments={marginComments()} />
       </div>
-      <Show when={bulletless()}><CommentActions id={props.id} surface={surfaceKey} /></Show>
 
       <Show when={showRefs()}>
         <div class="block-references">
@@ -498,6 +498,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           </Match>
         </Switch>
       </Show>
+      <Show when={commentClasses()["comment-card"]}><CommentComposer id={props.id} surface={surfaceKey} /></Show>
     </div>
   );
 }
@@ -3332,10 +3333,6 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       </Show>
       <Show when={hasSel()}>
         <div class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined} onMouseDown={(e) => e.preventDefault()}>
-          <Show when={!cap}>
-            <button type="button" data-selection-action="comment" title={translate("command-comment-on-selection")} aria-label={translate("command-comment-on-selection")}
-              onClick={() => commentFromEditor(props.id, ref, commit, editSurface())}>{translate("comment-toolbar")}</button>
-          </Show>
           <For each={essentialSelectionActions}>{(action) => (
             <button
               classList={{ "sel-action-page-link": action.id === "page-link" }}
@@ -3363,6 +3360,12 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
             aria-expanded={selectionOverflowOpen()}
             onClick={() => setSelectionOverflowOpen((open) => !open)}
           >…</button>
+          <Show when={!cap}>
+            <button type="button" data-selection-action="comment" title={translate("comment-toolbar-shortcut")} aria-label={translate("comment-toolbar")}
+              onClick={() => commentFromEditor(props.id, ref, commit, editSurface())}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-3 3V11.5a10 10 0 0 1 20 0Z" /></svg>
+            </button>
+          </Show>
           <Show when={selectionOverflowOpen()}>
             <div ref={selectionOverflowRef} class="sel-toolbar-overflow" role="menu" aria-label={translate("editor-block-more-formatting")}>
               <For each={secondarySelectionActions}>{(action) => (

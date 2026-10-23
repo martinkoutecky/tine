@@ -21,8 +21,8 @@ import { Block } from "./Block";
 const PAGE = "MarginComments";
 
 // As the backend ships them: header facets (here the properties) ride on the DTO.
-function block(id: string, raw: string, children: BlockDto[] = []): BlockDto {
-  const properties = blockRegions(raw, "md").properties.filter((p) => p.primary).map((p): [string, string] => [p.key, p.value]);
+function block(id: string, raw: string, children: BlockDto[] = [], format: "md" | "org" = "md"): BlockDto {
+  const properties = blockRegions(raw, format).properties.filter((p) => p.primary).map((p): [string, string] => [p.key, p.value]);
   return { id, raw, collapsed: false, children, ...(properties.length ? { properties } : {}) };
 }
 
@@ -97,6 +97,8 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       ta.dispatchEvent(new Event("select", { bubbles: true }));
       const button = root.querySelector<HTMLButtonElement>('[data-selection-action="comment"]');
       expect(button, "the selection toolbar needs Comment").not.toBeNull();
+      expect(button!.querySelector("svg")).not.toBeNull();
+      expect(button!.closest(".sel-toolbar")!.querySelector(":scope > button:last-of-type")).toBe(button);
       button!.click();
       const id = docNode("p")!.children[0];
       expect(docNode(id)!.raw).toContain("quote:: these words");
@@ -123,11 +125,17 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
     const { root, dispose } = mount([block("p", "Discuss these words", [block("c", "My view\nquote:: words", [block("r", "Evidence", [block("nested", "More")])])])]);
     try {
       const row = () => root.querySelector('[data-block-id="c"]')!;
-      const reply = row().querySelector<HTMLButtonElement>(":scope > .comment-actions .comment-reply");
-      expect(reply, "a comment needs Reply").not.toBeNull();
-      reply!.click();
+      const draft = row().querySelector<HTMLTextAreaElement>(":scope > .comment-composer textarea");
+      expect(draft, "a comment needs a reply draft").not.toBeNull();
+      draft!.focus();
+      expect(docNode("c")!.children).toEqual(["r"]);
+      draft!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(docNode("c")!.children).toEqual(["r"]);
+      draft!.value = "A considered reply";
+      draft!.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      draft!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
       const id = docNode("c")!.children.at(-1)!;
-      expect(editingId()).toBe(id);
+      expect(docNode(id)!.raw).toContain("A considered reply");
       expect(docNode(id)!.parent).toBe("c");
       endEdit("page-navigation");
       const del = row().querySelector<HTMLButtonElement>(":scope > .comment-actions .comment-delete");
@@ -138,6 +146,29 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       undo();
       expect(docNode("p")!.children).toEqual(["c"]);
       expect(docNode("r")!.children).toEqual(["nested"]);
+    } finally { dispose(); }
+  });
+
+  it.each(["md", "org"] as const)("Ctrl+R in a %s reply draft quotes its selection without reloading or losing its body", format => {
+    const quote = format === "md" ? "quote:: words" : ":PROPERTIES:\n:quote: words\n:END:";
+    const { root, dispose } = mount([block("p", "words", [block("c", `My view\n${quote}`, [], format)])], undefined, format);
+    try {
+      const draft = root.querySelector<HTMLTextAreaElement>(".comment-composer textarea")!;
+      draft.focus();
+      expect(ctrlR(draft).defaultPrevented).toBe(true);
+      expect(docNode("c")!.children).toHaveLength(0);
+      draft.value = "This deserves thought";
+      draft.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      draft.setSelectionRange(5, 13);
+      expect(ctrlR(draft).defaultPrevented).toBe(true);
+      const reply = docNode(docNode("c")!.children[0])!;
+      expect(reply.raw).toBe("This deserves thought");
+      const child = docNode(reply.children[0])!;
+      expect(blockRegions(child.raw, format).properties.find(p => p.key === "quote")?.value).toBe("deserves");
+      expect(editingId()).toBe(child.id);
+      endEdit("page-navigation");
+      undo();
+      expect(docNode("c")!.children).toHaveLength(0);
     } finally { dispose(); }
   });
 

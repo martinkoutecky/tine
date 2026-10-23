@@ -1,5 +1,5 @@
 // Real-app journey for margin dialogue slice 1 (vision 2026-10 §3.7): on a
-// routed named page, select words in a block, press Ctrl+R, type a reply, and
+// routed named page, select words in a block, click Comment, type a reply, and
 // the page file on disk holds a child bullet with the reply and `quote::`. The
 // app must not reload on Ctrl+R (the webview's default for that chord). The
 // window is narrow, so the comment renders inline (the margin column is
@@ -77,6 +77,7 @@ try {
     capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
   });
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
+  console.log("app bundle:", await browser.execute(() => document.querySelector('link[rel="modulepreload"][href*="app-"]')?.getAttribute("href")));
   // A window too narrow for the margin column (slice 2): comments stay inline.
   await browser.setWindowSize(1000, 820);
   await setMyName(browser);
@@ -100,7 +101,14 @@ try {
     return ta.value.slice(ta.selectionStart, ta.selectionEnd);
   }, PHRASE);
   if (selected !== PHRASE) throw new Error(`selection was ${JSON.stringify(selected)}`);
-  await browser.keys(["Control", "r"]);
+  await browser.execute(() => document.querySelector("textarea.block-editor").dispatchEvent(new Event("select", { bubbles: true })));
+  const toolbar = await browser.execute(() => {
+    const button = document.querySelector('[data-selection-action="comment"]');
+    return !!button?.querySelector("svg") && button === button.closest(".sel-toolbar").querySelector(":scope > button:last-of-type")
+      && button.title.includes("Ctrl/Cmd+R");
+  });
+  if (!toolbar) throw new Error("Comment must be the rightmost toolbar icon with its shortcut");
+  await browser.$('[data-selection-action="comment"]').click();
 
   // The caret moves into the new comment's empty body line.
   await browser.waitUntil(() => browser.execute(() => {
@@ -150,7 +158,75 @@ try {
   const chips = await browser.execute(() => [...document.querySelectorAll(".page-blocks .ls-block.comment-in-thread .author-chip")]
     .map((el) => ({ text: el.textContent, agent: el.classList.contains("agent") })));
   if (!chips.length || chips.some((chip) => chip.text !== "you" || chip.agent)) throw new Error(`own comments are not shown as you: ${JSON.stringify(chips)}`);
-  console.log("PASS: Ctrl+R on a selection saves a child comment with quote:: and author:: (Your name), renders it as a card, and a reply nests under it");
+  const beforeDraft = fs.statSync(PAGE_FILE).mtimeMs;
+  await browser.execute(() => document.querySelector(".comment-card").dispatchEvent(new MouseEvent("mouseenter")));
+  // Focus via the native pointer after hovering the inline thread.
+  await browser.$(".comment-card").moveTo();
+  const draft = await browser.$(".comment-card > .comment-composer textarea");
+  await draft.click();
+  if (await draft.getAttribute("rows") !== "3") throw new Error("reply draft did not expand");
+  await browser.keys(["Control", "r"]);
+  if (await browser.execute(() => window.__marginE2E) !== "alive") throw new Error("Ctrl+R in an empty draft reloaded the app");
+  await browser.execute(() => document.activeElement.blur());
+  if (await browser.$(".comment-composer.expanded").isExisting()) throw new Error("empty reply did not collapse on blur");
+  await draft.click();
+  await browser.keys(["Escape"]);
+  // Moving focus and cancelling again must not insert a block or save the page.
+  await browser.$(".comment-card").moveTo();
+  await draft.click();
+  await browser.$(".comment-composer-footer .dialog-actions-main button:first-child").click();
+  if (fs.readFileSync(PAGE_FILE, "utf8") !== saved || fs.statSync(PAGE_FILE).mtimeMs !== beforeDraft) {
+    throw new Error("abandoned empty reply changed or saved the page");
+  }
+  await browser.$(".comment-card").moveTo();
+  await draft.click();
+  await browser.keys("A draft reply");
+  await browser.keys(["Enter"]);
+  const drafted = await waitForFileText(PAGE_FILE, text => text.includes("A draft reply"), { timeoutMs: 20_000 });
+  const draftLines = drafted.split("\n");
+  const draftAt = draftLines.findIndex(line => line.trim() === "- A draft reply");
+  if (draftAt < 0 || draftLines[draftAt + 1]?.trim() !== `author:: ${MY_NAME}`) throw new Error("draft submission lost the configured author");
+  await browser.setWindowSize(1600, 1000);
+  await browser.$(".margin-thread .comment-card").waitForExist({ timeout: 5000 });
+  const content = await browser.$(".comment-card > .block-main .block-content");
+  await content.click();
+  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+  await browser.execute(() => {
+    const ta = document.querySelector("textarea.block-editor");
+    ta.focus(); ta.setSelectionRange(0, 1);
+  });
+  await browser.keys(["Control", "r"]);
+  await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("textarea.block-editor") && document.activeElement.value === ""), { timeout: 5000 });
+  await browser.keys("A quoted child");
+  await browser.keys(["Escape"]);
+  await waitForFileText(PAGE_FILE, text => text.includes("A quoted child") && text.includes("quote:: I"), { timeoutMs: 20_000 });
+  if ((await browser.$$(".margin-thread")).length !== 1) throw new Error("Ctrl+R in a comment created a separate thread");
+  if (await browser.execute(() => window.__marginE2E) !== "alive") throw new Error("Ctrl+R in a comment reloaded the app");
+  await browser.$(".comment-card").moveTo();
+  const wideDraft = await browser.$(".comment-card > .comment-composer textarea");
+  await wideDraft.click();
+  await browser.keys("A draft worth thought");
+  await browser.execute(() => document.querySelector(".comment-reply-draft").setSelectionRange(2, 7));
+  await browser.keys(["Control", "r"]);
+  await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("textarea.block-editor") && document.activeElement.value === ""), { timeout: 5000 });
+  await browser.keys("A nested draft remark");
+  await browser.keys(["Escape"]);
+  await waitForFileText(PAGE_FILE, text => text.includes("A draft worth thought") && text.includes("A nested draft remark") && text.includes("quote:: draft"), { timeoutMs: 20_000 });
+  if (await browser.execute(() => window.__marginE2E) !== "alive") throw new Error("Ctrl+R in a nonempty draft reloaded the app");
+  const positions = await browser.execute(() => {
+    const card = document.querySelector(".comment-card");
+    const del = card.querySelector(":scope > .comment-actions .comment-delete").getBoundingClientRect();
+    const quote = card.querySelector(":scope > .comment-quote").getBoundingClientRect();
+    return del.bottom <= quote.top;
+  });
+  if (!positions) throw new Error("delete is not above the quote");
+  console.log("PASS: rightmost Comment icon, Enter reply, empty draft cancellation without a save, draft submission with author, top delete, and Ctrl+R quoted reply in the wide thread");
+} catch (error) {
+  console.error(JSON.stringify({ base: "ceabfe814 + margin-r3 working diff", journey: "margin-comment", expected: "local empty draft, ordinary submitted reply, top delete, rightmost icon", observed: String(error), classification: "ambiguous; inspect log and screenshot", screenshot: `${TMP}/failure.png` }));
+  // External capture avoids WebKitGTK's occasionally hanging screenshot endpoint.
+  const { execFileSync } = await import("node:child_process");
+  try { execFileSync("import", ["-window", "root", `${TMP}/failure.png`]); } catch {}
+  throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}

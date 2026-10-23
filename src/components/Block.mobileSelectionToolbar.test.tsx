@@ -61,6 +61,15 @@ async function mountSelectedEditor(mobile: boolean) {
 }
 
 describe("selected-text toolbar platform ownership (GH #375)", () => {
+  it.each([true, false])("keeps Comment at the right edge as an icon (touch=%s)", async mobile => {
+    const mounted = await mountSelectedEditor(mobile);
+    try {
+      const button = mounted.toolbar.querySelector('[data-selection-action="comment"]')!;
+      expect(button.querySelector("svg")).not.toBeNull();
+      expect(mounted.toolbar.querySelector(":scope > button:last-of-type")).toBe(button);
+      expect(button.getAttribute("title")).toContain("Ctrl/Cmd+R");
+    } finally { mounted.dispose(); }
+  });
   // A selection in another RENDERED block no longer hands off to that block's
   // editor (D-20261018-LP2): RenderedSelectionToolbar.test.tsx owns that path.
   it("tracks native selectionchange without a select or mouseup event", async () => {

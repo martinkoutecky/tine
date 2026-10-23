@@ -4,13 +4,14 @@
 // All of it is derived at render time from ordinary block properties. Slice 2
 // adds the main column's marker for comments drawn in the margin.
 
-import { createEffect, createMemo, onCleanup, onMount, Show, useContext, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show, useContext, type JSX } from "solid-js";
 import { MarginContext } from "./marginContext";
+import { DialogActions } from "./DialogActions";
 import { t } from "../i18n";
 import { anchorQuote, quoteSelectorOf, type QuoteSelector } from "../comments";
 import { facetsOf } from "../render/facets";
 import { blockPageReadOnly, blockWritable, node as docNode } from "../document";
-import { deleteComment, replyAndEdit } from "../commentActions";
+import { commentFromReplyDraft, deleteComment, submitReply } from "../commentActions";
 import { internalLinkMouseDown } from "../linkGesture";
 import { beginDrag } from "./blockGestures";
 import { QuoteHighlightContext, quotedSourceRanges, type QuotedRange } from "../render/quoteHighlight";
@@ -82,19 +83,46 @@ export function AuthorChip(props: { author: string | null; handleOf?: string }):
   );
 }
 
-/** Every row in a thread, including an unquoted reply, has the same actions.
- * Keep them outside the editable body so pointer presses cannot place a caret. */
-export function CommentActions(props: { id: string; surface: string }): JSX.Element {
+/** Each row's delete stays outside the body and quote, so it cannot place a caret. */
+export function CommentActions(props: { id: string }): JSX.Element {
   return <Show when={blockWritable(props.id)}>
     <div class="comment-actions" onMouseDown={(e) => e.stopPropagation()}>
-      <button type="button" class="comment-reply" onClick={(e) => {
-        e.stopPropagation();
-        replyAndEdit(props.id, props.surface);
-      }}>{t("comment-reply")}</button>
       <button type="button" class="comment-delete" title={t("comment-delete")} aria-label={t("comment-delete")} onClick={(e) => {
         e.stopPropagation();
         deleteComment(props.id);
       }}>×</button>
+    </div>
+  </Show>;
+}
+
+/** No document node exists while composing: abandoning an empty draft costs
+ * zero writes. Once submitted it is an ordinary editable child block. */
+export function CommentComposer(props: { id: string; surface: string }): JSX.Element {
+  const [draft, setDraft] = createSignal("");
+  const [expanded, setExpanded] = createSignal(false);
+  let input!: HTMLTextAreaElement;
+  const cancel = () => { setDraft(""); setExpanded(false); input.blur(); };
+  const submit = () => { if (submitReply(props.id, draft())) cancel(); };
+  return <Show when={blockWritable(props.id)}>
+    <div class="comment-composer" classList={{ expanded: expanded() }} onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
+      <textarea ref={input} class="comment-reply-draft" rows={expanded() ? 3 : 1}
+        placeholder={t("comment-reply-placeholder")} aria-label={t("comment-reply-placeholder")}
+        value={draft()} onInput={e => setDraft(e.currentTarget.value)}
+        onFocus={() => setExpanded(true)}
+        onBlur={e => { if (!draft().trim() && !e.currentTarget.parentElement?.contains(e.relatedTarget as Node | null)) setExpanded(false); }}
+        onKeyDown={e => {
+          e.stopPropagation();
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r") {
+            e.preventDefault();
+            if (commentFromReplyDraft(props.id, draft(), input.selectionStart, input.selectionEnd, props.surface)) cancel();
+          }
+          else if (e.key === "Escape") { e.preventDefault(); cancel(); }
+          else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
+        }} />
+      <Show when={expanded()}><DialogActions class="comment-composer-footer"
+        cancel={<button type="button" onClick={cancel}>{t("confirm-cancel")}</button>}
+        primary={<button type="button" class="comment-reply" disabled={!draft().trim()} onClick={submit}>{t("comment-reply")}</button>}
+      /></Show>
     </div>
   </Show>;
 }
