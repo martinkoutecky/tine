@@ -280,6 +280,49 @@ describe("PDF highlight state", () => {
       release();
     });
 
+    it("keeps a queued edit that restores the earlier color when the merge result lands behind it", async () => {
+      const { first: { state, release } } = lease();
+      state.loadInitial([sized("a", "yellow")]);
+      const external = sized("external");
+      let finish!: () => void;
+      const write = vi.spyOn(backend(), "writeHighlights")
+        .mockImplementationOnce((_pdf, _label, items) => new Promise((resolve) => { finish = () => resolve([...items, external]); }))
+        .mockImplementation(async (_pdf, _label, items) => items);
+      state.edit([sized("a", "green")]);
+      const first = state.persist();
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      state.edit([sized("a", "yellow")]); // the other view puts it back
+      const second = state.persist();
+      finish();
+      await Promise.all([first, second]);
+      const submitted = write.mock.calls[1][2];
+      expect(submitted.map((h) => [h.id, h.color])).toEqual([["a", "yellow"], ["external", "yellow"]]);
+      expect(state.highlights().find((h) => h.id === "a")!.color).toBe("yellow");
+      release();
+    });
+
+    it("holds the session for an area highlight whose image is still saving after the last view closed", async () => {
+      const { options, first } = lease();
+      let imageSaved!: () => void;
+      const conflict = vi.spyOn(backend(), "writeHighlights").mockRejectedValueOnce(new Error("conflict"));
+      const area = first.state.hold(async () => {
+        await new Promise<void>((resolve) => { imageSaved = resolve; });
+        first.state.addCrop("area", { page: 1, stamp: 7 });
+        first.state.edit([sized("area")]);
+        return first.state.persistInsideMutation(first.state.newIntent());
+      });
+      first.release();
+      const reopened = createRoot(() => acquirePdfHighlightState(options));
+      expect(reopened.state).toBe(first.state);
+      reopened.release();
+      imageSaved();
+      expect(await area).toBe(false);
+      expect(conflict).toHaveBeenCalledTimes(1);
+      expect(first.state.conflict()).toBe(true);
+      expect(pdfHighlightSessionCount()).toBe(1); // unresolved: kept for the drain and the next view
+      expect(await drainPdfWork()).toBe(false);
+    });
+
     it("lets a sibling's successful read seed the session after a failed first read", () => {
       const { options, first } = lease();
       const second = createRoot(() => acquirePdfHighlightState(options));

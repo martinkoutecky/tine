@@ -180,18 +180,19 @@ export function createPdfHighlightState(options: PdfHighlightStateOptions) {
       if (!graphCurrent()) return false;
     }
     try {
-      const persisted = await prepare(highlights());
+      const submitted = highlights();
+      const persisted = await prepare(submitted);
       if (!graphCurrent()) return false;
       const result = await writeOwned(graphCurrent, trackAssetWrite(
         backend().writeHighlights(filename, label, persisted, committed, "replace-page", backendGeneration)
       ));
       if (result.kind === "stale") return false;
-      const base = committed;
       committed = result.value;
-      // A newer edit is queued behind this write: keep it, but on the merged
-      // result, so a highlight the merge added (another device, OG) is not
-      // sent back as a deletion and its merged fields are not overwritten.
-      if (!landingOwner()) setHighlights(rebasePdfHighlights(base, highlights(), result.value));
+      // A newer edit is queued behind this write: replay what changed since
+      // this write's snapshot onto the merged result, so a highlight the merge
+      // added (another device, OG) is not sent back as a deletion, and an edit
+      // that restores an earlier value still counts as an edit.
+      if (!landingOwner()) setHighlights(rebasePdfHighlights(submitted, highlights(), result.value));
       for (const [id, crop] of pendingCrops) {
         if (result.value.some((h) => h.id === id && h.image === crop.stamp)) pendingCrops.delete(id);
       }
@@ -229,6 +230,7 @@ export function createPdfHighlightState(options: PdfHighlightStateOptions) {
   };
 
   const settle = () => options.onSettle?.();
+  // Work counted here keeps the state from being dropped with its last view.
   const counted = async <T>(work: () => Promise<T>): Promise<T> => {
     running++;
     try { return await work(); } finally { running--; settle(); }
@@ -336,7 +338,7 @@ export function createPdfHighlightState(options: PdfHighlightStateOptions) {
 
   return { highlights, unsaved, conflict, decisionBusy, cleanupPending, graphCurrent, load, loadInitial, edit, addCrop,
     editBlocked, drainBlocked, persist, persistInsideMutation, useDiskVersion, keepMine, discardMine, retryCleanup, newIntent,
-    attachPrepare, flush, idle };
+    attachPrepare, flush, idle, hold: counted };
 }
 
 export type PdfHighlightState = ReturnType<typeof createPdfHighlightState>;

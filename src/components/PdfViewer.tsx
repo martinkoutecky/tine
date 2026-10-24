@@ -1580,7 +1580,9 @@ export function PdfViewer(props: {
 
   const createAreaHighlight = async (color: string) => {
     try {
-      await trackPdfMutation(owner, () => createAreaHighlightOwned(color));
+      // Held from the crop on: closing the last view while the image saves
+      // must not drop the session its highlight is about to join.
+      await highlightState.hold(() => trackPdfMutation(owner, () => createAreaHighlightOwned(color)));
     } catch {
       // Ownership retirement cancels a not-yet-started area mutation.  It must
       // not be retried after another graph is bound.
