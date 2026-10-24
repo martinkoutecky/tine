@@ -14,12 +14,7 @@
 use crate::block_regions::{self, BlockRegions};
 use serde::{Deserialize, Serialize};
 
-/// Properties kept in the file but projected out of the block editor. OG also
-/// hides other built-ins outside Tine's current policy. Comment context and
-/// author are hidden only on blocks whose own primary properties include
-/// `quote` (see [`comment_quote`]).
-/// Use this same projection for all editor and kernel text mutations.
-pub const BUILTIN_HIDDEN: [&str; 3] = ["id", "collapsed", "logseq.order-list-type"];
+pub use crate::property_visibility::BUILTIN_HIDDEN;
 const COMMENT_HIDDEN: [&str; 4] = ["quote", "quote-prefix", "quote-suffix", "author"];
 
 /// The shared comment discriminator, also used by the window's `quoteSelectorOf`.
@@ -39,6 +34,18 @@ pub enum HidePolicy {
     Builtin,
     /// A sheet cell: the built-ins plus every `tine.*` key.
     SheetCell,
+    /// The normal editor plus the current graph's :block-hidden-properties.
+    Configured {
+        keys: Vec<String>,
+        #[serde(default)]
+        sheet_cell: bool,
+    },
+    /// Dedicated-control keys excluded from the properties form. This is not
+    /// the textarea policy: newly hidden metadata must remain editable there.
+    FormManaged,
+    /// Identity/fold/list and conditional comment chrome, without graph config.
+    /// Other metadata still counts as authored data when deciding emptiness.
+    Structural,
     /// An annotation (PDF highlight) block edits only its text.
     All,
     /// Exactly these keys, lower-cased; with `norm`, compared after
@@ -67,22 +74,33 @@ impl HidePolicy {
         self.hides_for_comment(key, comment_quote(properties).is_some())
     }
 
-    fn hides_for_comment(&self, key: &str, comment: bool) -> bool {
-        let lower = key.to_lowercase();
+    pub(crate) fn hides_for_comment(&self, key: &str, comment: bool) -> bool {
+        let lower = property_key_norm(key);
         let builtin = || {
             BUILTIN_HIDDEN.contains(&lower.as_str())
                 || (COMMENT_HIDDEN.contains(&property_key_norm(key).as_str()) && comment)
         };
+        let structural = || {
+            crate::property_visibility::FORM_MANAGED.contains(&lower.as_str())
+                || (COMMENT_HIDDEN.contains(&lower.as_str()) && comment)
+        };
         match self {
             HidePolicy::Builtin => builtin(),
             HidePolicy::SheetCell => builtin() || lower.starts_with("tine."),
+            HidePolicy::Configured { keys, sheet_cell } => {
+                builtin()
+                    || (*sheet_cell && lower.starts_with("tine."))
+                    || keys.iter().any(|k| property_key_norm(k) == lower)
+            }
+            HidePolicy::FormManaged => structural() || lower.starts_with("tine."),
+            HidePolicy::Structural => structural(),
             HidePolicy::All => true,
             HidePolicy::Keys { keys, norm: true } => {
                 let norm = property_key_norm(key);
                 keys.iter().any(|k| property_key_norm(k) == norm)
             }
             HidePolicy::Keys { keys, norm: false } => {
-                keys.iter().any(|k| k.to_lowercase() == lower)
+                keys.iter().any(|k| k.to_lowercase() == key.to_lowercase())
             }
         }
     }
@@ -102,14 +120,7 @@ fn has_comment_quote(regions: &BlockRegions) -> bool {
 /// The window's `propertyKeyNorm` (`src/propertyKey.ts:7`): trimmed, ASCII
 /// upper case lowered, spaces and underscores as hyphens.
 pub fn property_key_norm(key: &str) -> String {
-    key.trim()
-        .chars()
-        .map(|c| match c {
-            'A'..='Z' => c.to_ascii_lowercase(),
-            ' ' | '_' => '-',
-            c => c,
-        })
-        .collect()
+    crate::property_visibility::normalize(key)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -149,6 +160,9 @@ fn classify(raw: &str, is_org: bool, regions: &BlockRegions, hide: &HidePolicy) 
     let line_at = |byte: usize| lines.partition_point(|&(s, _)| s <= byte).saturating_sub(1);
     let own = || regions.properties.iter().filter(|p| p.primary);
     let comment = has_comment_quote(regions);
+    // Unlike OG remove-built-in-properties' first-match line scan, hide every
+    // accepted duplicate and never strip fenced examples. Carry original bytes
+    // through the join instead of rebuilding OG's normalized property strings.
     for p in own() {
         if hide.hides_for_comment(&p.key, comment) {
             class[line_at(p.line.0)] = Line::Hidden;
@@ -459,7 +473,17 @@ pub fn join_with(
 /// cannot disagree on which lines the text owns. A quarantined Org block
 /// with hidden lines refuses.
 pub fn set_text(raw: &str, is_org: bool, text: &str) -> Result<String, String> {
-    let current = split(raw, is_org, &HidePolicy::Builtin);
+    set_text_with_policy(raw, is_org, text, &HidePolicy::Builtin)
+}
+
+/// Hosts with a graph apply the same configured projection as the window.
+pub fn set_text_with_policy(
+    raw: &str,
+    is_org: bool,
+    text: &str,
+    hide: &HidePolicy,
+) -> Result<String, String> {
+    let current = split(raw, is_org, hide);
     join_preserving(text, &current.hidden, is_org, raw)
 }
 

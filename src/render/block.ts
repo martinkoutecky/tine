@@ -24,14 +24,16 @@ export { propertyKeyNorm };
 // body.tsx's renderProps and the static export: crates/tine-core/src/render_facets.rs,
 // reached through the WASM bridge (I-12, no TS twin of the key list).
 //
-// Deliberately SEPARATE (different concepts — do not merge): editor/properties.ts
-// BUILTIN_HIDDEN (hide from the edit textarea), query.rs INTERNAL_PROPS (don't
-// offer as a query filter), components/Page.tsx PAGE_PROPS_HIDDEN (page-prop area).
+// The editor and both rendered surfaces share Rust's built-ins. Each rendered
+// surface adds OG's editable-property exceptions; query filters are separate.
 
 /** Whether a property key is hidden from the rendered chips: a built-in internal
  *  key (case-insensitive) OR one the user listed in `:block-hidden-properties`. */
 export function isRenderHiddenProp(key: string, userHidden: readonly string[] = []): boolean {
-  return isRenderHiddenPropNative(key, userHidden as string[]);
+  return isRenderHiddenPropNative(key, userHidden as string[], false);
+}
+export function isRenderHiddenPageProp(key: string, userHidden: readonly string[] = []): boolean {
+  return isRenderHiddenPropNative(key, userHidden as string[], true);
 }
 
 export function isPropertyLine(line: string): boolean {

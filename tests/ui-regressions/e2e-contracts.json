@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-prop-hiding.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"On routed Markdown and Org pages, the block editor hides heading, SRS and configured secret properties, keeps an ordinary owner key visible, and saves a visible text edit with every hidden line unchanged on disk.","blocking":true,"authority":"D-20261023-VT3; internal card PVTI_lAHOAAbLVc4BhPsyzhDCwFo"}],
+      "acceptableVariations": ["Property placement and save/render latency."],
+      "nonRequirements": ["Exact pixels or DOM nesting; native platforms other than Linux; boundary cases covered by Rust and component tests; burn-in belongs to the manager."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-tab-restore.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"With Index and Tasks pinned and Index configured as home, middle-click, Ctrl/Cmd-click, context-menu and sidebar new tabs retain their last routes, order, pins and active tab across a clean close and relaunch; external page edits between runs remain visible.","blocking":true,"authority":"Internal card PVTI_lAHOAAbLVc4BhPsyzhDC3x4"}],
       "acceptableVariations": ["Session flush, page-load and rendering latency."],

@@ -272,6 +272,19 @@ describe("sheet structural mutations", () => {
     expect(pageToDto("Sheet")).toEqual(before);
   });
 
+  it("fills and clears cells without dropping newly hidden metadata", () => {
+    const gridId = loadGrid();
+    const source = cellId(gridId, 0, 1)!;
+    setDoc("byId", source, "raw", "B\nheading:: true  \ncard-last-score:: 5");
+    fillSheetSelection({ kind: "range", gridId, anchor: { row: 0, col: 1 }, focus: { row: 1, col: 1 } }, "down");
+    const target = cellId(gridId, 1, 1)!;
+    expect(doc.byId[target].raw).toContain("heading:: true  ");
+    expect(doc.byId[target].raw).toContain("card-last-score:: 5");
+    clearSheetSelection({ kind: "cell", gridId, row: 1, col: 1 });
+    expect(doc.byId[target].raw).toContain("heading:: true  ");
+    expect(doc.byId[target].raw).toContain("card-last-score:: 5");
+  });
+
   it("pastes TSV from the anchor, grows rows/trailing cells, round-trips, and undoes fully", () => {
     const gridId = loadGrid();
     const before = pageToDto("Sheet");

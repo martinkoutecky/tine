@@ -75,7 +75,7 @@ export function is_query_macro_name(name: string): boolean;
  * Whether a block property key is hidden from rendered chips (I-12: the one
  * answerer the static export also asks). O(key bytes + hidden keys), no I/O.
  */
-export function is_render_hidden_prop(key: string, user_hidden: string[]): boolean;
+export function is_render_hidden_prop(key: string, user_hidden: string[], pre_block: boolean): boolean;
 
 /**
  * The message of the most recent panic in this instance ("" if none). A trapped
@@ -308,7 +308,7 @@ export interface InitOutput {
     readonly hide_policy_hides: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly install_panic_hook: () => void;
     readonly is_query_macro_name: (a: number, b: number) => number;
-    readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number) => number;
+    readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly last_panic: () => [number, number];
     readonly linkable_property_names: (a: number, b: number, c: number) => [number, number];
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];

@@ -123,7 +123,6 @@ fn export_hides_the_property_chips_the_app_hides() {
     );
     let html = &files["props.html"];
     for hidden in [
-        "SHOWN_TITLE_TOKEN",
         "HLCOLOR_TOKEN",
         "TINEVIEW_TOKEN",
         "TABLEVER_TOKEN",
@@ -135,7 +134,7 @@ fn export_hides_the_property_chips_the_app_hides() {
             "{hidden} is hidden in the app: {html}"
         );
     }
-    for shown in ["CUSTOM_VISIBLE_TOKEN", "VISIBLE_TOKEN"] {
+    for shown in ["SHOWN_TITLE_TOKEN", "CUSTOM_VISIBLE_TOKEN", "VISIBLE_TOKEN"] {
         assert!(
             html.contains(shown),
             "{shown} is a visible chip in the app: {html}"

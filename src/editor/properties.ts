@@ -1,6 +1,6 @@
 import { msg, render } from "../i18n";
-// Pure helpers for reading/editing `key:: value` property lines — a block's
-// continuation lines or a page's pre-block. No store/DOM, so unit-testable.
+// Parser helpers for reading/editing a block's properties or a page pre-block.
+// Standard editor policies additionally read the current graph's hidden keys.
 
 import { displayMathOpenAfter, closesDisplayMath, fenceExitTrim } from "./fences";
 import type { Format } from "../render/ast";
@@ -8,6 +8,7 @@ import { blockRegions, editorOffsetOfRaw, editorText, editorTextJoin, mayHaveLog
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import { rebulletedSourceByteToRawByte } from "../render/spans";
 import { reportUiFailure } from "../uiFailure";
+import { graphMeta } from "../graphSession";
 
 import { property_line_json, page_regions_json, page_header_json } from "../render/wasm/lsdoc_wasm.js";
 import type { RegionProperty } from "../render/parse";
@@ -209,11 +210,15 @@ export function splitPagePreamble(raw: string | null | undefined): {
 /** Which accepted primary properties an editor hides: the outline kernel's
  *  `editor_text::HidePolicy` (twin 13). The kernel owns the key lists. */
 export type HidePolicy =
-  | { readonly kind: "builtin" | "sheet_cell" | "all" }
+  | { readonly kind: "builtin" | "sheet_cell" | "all" | "form_managed" | "structural" }
+  | { readonly kind: "configured"; readonly keys: readonly string[]; readonly sheet_cell?: boolean }
   | { readonly kind: "keys"; readonly keys: readonly string[]; readonly norm?: boolean };
-/** A normal block editor: LOGBOOK, identity, fold and list type; comment context and
+/** A normal block editor: LOGBOOK and OG hidden built-ins; comment context and
  *  author only when its own primary properties include quote. */
 export const BUILTIN_HIDE: HidePolicy = Object.freeze({ kind: "builtin" });
+/** Properties with dedicated controls; other metadata remains editable in the form. */
+export const FORM_MANAGED: HidePolicy = Object.freeze({ kind: "form_managed" });
+const STRUCTURAL_HIDE: HidePolicy = Object.freeze({ kind: "structural" });
 /** Hidden clocks still count as content for deletion and trailing-block reuse. */
 export function hasLogbookDrawer(raw: string, format: Format = "md"): boolean {
   // Negative-only prefilter: accepted ownership still comes from the parser.
@@ -244,7 +249,11 @@ export function splitLogbook(raw: string, format: Format): { text: string; drawe
 
 /** A destructive empty-host decision must account for opaque history too. */
 export function isEditorEmpty(raw: string, hide: HidePolicy, format: Format): boolean {
-  return !hasLogbookDrawer(raw, format) && splitProps(raw, hide, format).visible.trim() === "";
+  // Newly hidden values are still authored data. A metadata-only block cannot
+  // become a disposable trailing block or paste host merely because it hides
+  // more lines now. Identity/fold/list metadata retain their previous behavior.
+  return !hasLogbookDrawer(raw, format) && splitProps(raw, hide, format).visible.trim() === ""
+    && splitProps(raw, STRUCTURAL_HIDE, format).visible.trim() === "";
 }
 /** A sheet cell: the built-ins plus every `tine.*` key. */
 export const SHEET_CELL_HIDE: HidePolicy = Object.freeze({ kind: "sheet_cell" });
@@ -255,7 +264,20 @@ export const HIDE_ID: HidePolicy = Object.freeze({ kind: "keys", keys: ["id"] })
 /** Exactly `keys` (lower-cased); `norm` compares through `propertyKeyNorm`. */
 export const hideKeys = (keys: readonly string[], norm = false): HidePolicy => Object.freeze({ kind: "keys", keys, norm });
 const policyJson = new WeakMap<HidePolicy, string>();
+let configured: { signature: string; policy: HidePolicy } | undefined;
+/** Snapshot current graph config for projections, session caches and kernel verbs.
+ * Config is read reactively, including when an editor is already mounted. */
+export function editorHidePolicy(policy: HidePolicy = BUILTIN_HIDE): HidePolicy {
+  if (policy.kind !== "builtin" && policy.kind !== "sheet_cell") return policy;
+  const keys = graphMeta()?.block_hidden_properties ?? [];
+  if (!keys.length) return policy;
+  const signature = JSON.stringify([policy.kind, keys]);
+  if (configured?.signature !== signature) configured = { signature,
+    policy: Object.freeze({ kind: "configured", keys: [...keys], sheet_cell: policy.kind === "sheet_cell" }) };
+  return configured.policy;
+}
 function policyText(policy: HidePolicy): string {
+  policy = editorHidePolicy(policy);
   let json = policyJson.get(policy);
   if (json === undefined) policyJson.set(policy, (json = JSON.stringify(policy)));
   return json;

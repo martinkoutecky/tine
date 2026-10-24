@@ -297,14 +297,15 @@ function __tine_raw_is_query_macro_name(name) {
  * answerer the static export also asks). O(key bytes + hidden keys), no I/O.
  * @param {string} key
  * @param {string[]} user_hidden
+ * @param {boolean} pre_block
  * @returns {boolean}
  */
-function __tine_raw_is_render_hidden_prop(key, user_hidden) {
+function __tine_raw_is_render_hidden_prop(key, user_hidden, pre_block) {
     const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passArrayJsValueToWasm0(user_hidden, wasm.__wbindgen_malloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.is_render_hidden_prop(ptr0, len0, ptr1, len1);
+    const ret = wasm.is_render_hidden_prop(ptr0, len0, ptr1, len1, pre_block);
     return ret !== 0;
 }
 
@@ -1454,8 +1455,7 @@ export function __tineReinstantiate() {
   return __wbg_finalize_init(instance, wasmModule);
 }
 
-// Tine trap isolation: see scripts/build-wasm.mjs. One guarded export per wasm-bindgen export.
-function __tineGuard(name, raw) {
+function __tineGuard(name, raw) { // Tine trap isolation: one guarded export per wasm-bindgen export.
   return function (...args) {
     try {
       return raw.apply(this, args);

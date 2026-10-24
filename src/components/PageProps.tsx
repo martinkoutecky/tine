@@ -5,7 +5,7 @@ import {
   blockPageReadOnly, blockProperty, formatForBlock, node, pageByName,
   readPageProperties, readPageProperty, setBlockProperty, setPageProperty,
 } from "../document";
-import { PAGE_PROP_SPECS, isEditablePropertyKey, SHEET_CELL_HIDE, hides, type PagePropSpec } from "../editor/properties";
+import { PAGE_PROP_SPECS, isEditablePropertyKey, FORM_MANAGED, hides, type PagePropSpec } from "../editor/properties";
 import { facetsOf } from "../render/facets";
 import { blockRegions } from "../render/parse";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
@@ -29,13 +29,13 @@ export function PageProps(): JSX.Element {
 }
 
 // Machine-managed keys (`id`, `collapsed`, `logseq.order-list-type`, `tine.*`)
-// keep their own surfaces. Same question as the sheet-cell editor asks, so it
-// delegates rather than minting a second hidden set.
+// keep their own surfaces. Other hidden editor keys remain editable here.
+// The Rust policy owns this list independently of textarea visibility.
 function machineManaged(scope: PropsPanelScope, key: string): boolean {
   const raw = scope.kind === "block" ? node(scope.id)?.raw ?? "" : pageByName(scope.name)?.preBlock ?? "";
   const format = scope.kind === "block" ? formatForBlock(scope.id) : pageByName(scope.name)?.format ?? "md";
   const own = blockRegions(raw, format).properties.filter((p) => p.primary).map((p): [string, string] => [p.key, p.value]);
-  return hides(SHEET_CELL_HIDE, key, own);
+  return hides(FORM_MANAGED, key, own);
 }
 
 function existingProperties(scope: PropsPanelScope): [string, string][] {

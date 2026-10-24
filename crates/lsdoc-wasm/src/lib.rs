@@ -109,8 +109,12 @@ mod render_facets;
 /// Whether a block property key is hidden from rendered chips (I-12: the one
 /// answerer the static export also asks). O(key bytes + hidden keys), no I/O.
 #[wasm_bindgen]
-pub fn is_render_hidden_prop(key: &str, user_hidden: Vec<String>) -> bool {
-    render_facets::is_render_hidden_prop(key, &user_hidden)
+pub fn is_render_hidden_prop(key: &str, user_hidden: Vec<String>, pre_block: bool) -> bool {
+    if pre_block {
+        render_facets::is_render_hidden_page_prop(key, &user_hidden)
+    } else {
+        render_facets::is_render_hidden_prop(key, &user_hidden)
+    }
 }
 
 /// The checkbox a task marker draws: true checked, false empty, undefined none.
@@ -537,9 +541,12 @@ pub fn outline_apply_json(request: &str) -> Result<String, JsValue> {
         pages: Vec<outline::OutlinePage>,
         verb: outline::Verb,
         keys: outline::KeySource,
+        #[serde(default)]
+        hide: Option<editor_text::HidePolicy>,
     }
     let req: Request = outline_request(request)?;
-    Ok(match outline::apply(&req.pages, &req.verb, &req.keys) {
+    let hide = req.hide.unwrap_or(editor_text::HidePolicy::Builtin);
+    Ok(match outline::apply_with_policy(&req.pages, &req.verb, &req.keys, &hide) {
         Err(reason) => serde_json::json!({ "refused": reason }).to_string(),
         Ok(change) => {
             let editor_offset = change.focus.as_ref().and_then(|f| {
@@ -559,10 +566,9 @@ pub fn outline_apply_json(request: &str) -> Result<String, JsValue> {
                     })?;
                 let org = format.is_org();
                 let r = block_regions::parse(raw, org);
-                let p = editor_text::HidePolicy::Builtin;
-                let at = editor_text::raw_to_visible_with(raw, org, &r, &p, offset);
+                let at = editor_text::raw_to_visible_with(raw, org, &r, &hide, offset);
                 Some(editor_text::byte_to_utf16(
-                    &editor_text::split_with(raw, org, &r, &p).visible,
+                    &editor_text::split_with(raw, org, &r, &hide).visible,
                     at,
                 ))
             });

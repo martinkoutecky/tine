@@ -3,6 +3,53 @@ use super::*;
 use crate::owner::terminal::{error_json, error_text, exit_code, render};
 
 #[test]
+fn cli_edit_keeps_builtin_srs_and_configured_hidden_lines() {
+    for org in [false, true] {
+        let graph = Graph::new();
+        let rel = if org {
+            "pages/task.org"
+        } else {
+            "pages/task.md"
+        };
+        let lines = if org {
+            format!("* Body\n:PROPERTIES:\n:id: {UUID}\n:heading: true  \n:card-last-score: 5\n:secret: opaque  \n:END:\n")
+        } else {
+            format!("- Body\n  id:: {UUID}\n  heading:: true  \n  card-last-score:: 5\n  secret:: opaque  \n")
+        };
+        std::fs::write(graph.root.join("pages/a.md"), "- other\n").unwrap();
+        std::fs::write(graph.root.join(rel), &lines).unwrap();
+        std::fs::write(
+            graph.root.join("logseq/config.edn"),
+            "{:block-hidden-properties #{:secret}}\n",
+        )
+        .unwrap();
+        graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+        let slot = graph.slot();
+        let hidden = |file: &str| {
+            let parsed = if org {
+                tine_core::org::parse_org(file)
+            } else {
+                tine_core::doc::parse(file)
+            };
+            let hide = tine_core::editor_text::HidePolicy::Configured {
+                keys: vec!["secret".into()],
+                sheet_cell: false,
+            };
+            tine_core::editor_text::split(parsed.roots[0].raw(), org, &hide).hidden
+        };
+        let expected = hidden(&lines);
+        for text in ["Revised", ""] {
+            verb(&slot, "block.edit", json!({"handle": UUID, "text": text})).unwrap();
+            let written = std::fs::read_to_string(graph.root.join(rel)).unwrap();
+            // Clearing text puts the first retained Markdown property on the
+            // bullet line, just like id:: today. Compare parser-owned raw bytes,
+            // excluding that structural bullet/continuation indentation.
+            assert_eq!(hidden(&written), expected, "{org}/{text}");
+        }
+    }
+}
+
+#[test]
 fn rn_f_cli_supplied_history_uses_revision() {
     for org in [false, true] {
         for supplied in [false, true] {

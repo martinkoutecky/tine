@@ -1063,6 +1063,7 @@ impl BlockRegions {
                 add.iter().any(|(key, _)| {
                     matches!(key.as_str(), "id" | "collapsed" | "logseq.order-list-type")
                 }),
+                newline(raw),
                 edits,
             );
         }
@@ -1075,6 +1076,7 @@ impl BlockRegions {
         org: bool,
         lines: &str,
         trailer: bool,
+        row_end: &str,
         mut edits: Vec<(Range, String)>,
     ) -> Result<String, String> {
         let own = self.own_org_region(raw);
@@ -1088,7 +1090,7 @@ impl BlockRegions {
                 (close.0, lines.to_string())
             } else {
                 let at = self.head_end(raw, org);
-                let text = format!(":PROPERTIES:{}{lines}{}:END:", newline(raw), newline(raw));
+                let text = format!(":PROPERTIES:{}{lines}{row_end}:END:", newline(raw));
                 // OG places accepted planning above a new drawer even when
                 // authored below body content. Literal lookalikes are absent.
                 if self
@@ -1135,7 +1137,15 @@ impl BlockRegions {
         } else {
             ""
         };
-        let suffix = if at < raw.len() { newline(raw) } else { "" };
+        let suffix = if at < raw.len() {
+            if org && own.is_some() {
+                row_end
+            } else {
+                newline(raw)
+            }
+        } else {
+            ""
+        };
         if !text.is_empty() {
             edits.push((Range(at, at), format!("{prefix}{text}{suffix}")));
         }
@@ -1151,13 +1161,15 @@ impl BlockRegions {
         let payload = hidden
             .split('\n')
             .filter(|line| !line.trim().is_empty())
-            .map(|line| line.trim_end_matches('\r'))
             .collect::<Vec<_>>()
-            .join(newline(raw));
+            .join("\n");
         if payload.is_empty() {
             return Ok(raw.to_string());
         }
-        self.add_properties(raw, true, &payload, false, Vec::new())
+        // These rows already carry their original CR bytes. Add only LF at a
+        // row boundary, even when the textarea and retained rows use different
+        // line endings; normal property edits still use newline(raw).
+        self.add_properties(raw, true, &payload, false, "\n", Vec::new())
     }
     /// Apply an operation using these regions from EXACTLY this raw source.
     /// Reuses regions except drawer restoration's ownership reparse; debug also checks literals.

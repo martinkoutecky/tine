@@ -7,7 +7,7 @@
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tine_core::editor_text::{set_text, split, HidePolicy};
+use tine_core::editor_text::{set_text_with_policy, split, HidePolicy};
 use tine_core::model::{BlockDto, Format, PageDto};
 use tine_store::{
     ApplyRefusal, EditKind, HostExpected, HostReadError, Input, PageId, SaveBase, StoreError, Why,
@@ -765,7 +765,12 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
             let mut next = doc.clone();
             let block = block_at_mut(&mut next.blocks, &path).expect("resolved path");
             let old = block.raw.clone();
-            let joined = set_text(&old, org, &new_text).map_err(|e| kernel_refused(page, e))?;
+            let hide = HidePolicy::Configured {
+                keys: config.block_hidden_properties.clone(),
+                sheet_cell: false,
+            };
+            let joined = set_text_with_policy(&old, org, &new_text, &hide)
+                .map_err(|e| kernel_refused(page, e))?;
             block.raw = tine_core::logbook::apply_edit_transition_at(
                 &old,
                 &joined,
