@@ -81,6 +81,10 @@ are four independent arbitrary booleans.
 **What is not modelled:** progress (how soon text is saved; the implementation's obligation is about one
 second), torn or in-place writes, document-provider semantics, finding every page that refers to a renamed
 page and computing the right rewrite (the model takes both as arbitrary inputs), and anything about the UI.
+The binding-level conflicted-delete recovery copy is also outside the model:
+an existing file uses a clean disk-based plan, while an already absent file
+answers Applied after staging and checking recovery, without `delete_checked`
+(see SPEC-s3's D4 exception).
 
 ## Version lineage
 

@@ -9,8 +9,10 @@ export interface QuickCaptureRequest {
 export interface QuickCaptureAck {
   id: string;
   ok: boolean;
-  /** The insertion is in the graph window; retry only its save. */
+  /** An insertion landed or cannot be ruled out; retain the same retry identity. */
   landed?: boolean;
+  /** The receiver cannot prove this insertion after reload/rebinding. */
+  closedGraph?: boolean;
 }
 
 export const QUICK_CAPTURE_ACK_TIMEOUT_MS = 5000;

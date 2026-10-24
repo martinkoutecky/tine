@@ -103,7 +103,13 @@ export interface MessageArgs {
   "calendar-jump-previous-month": {};
   "calendar-jump-today": {};
   "capture-file-capture": {};
+  "capture-new-request": {};
   "capture-page-title-optional-if-empty-appended-to-today": {};
+  "capture-previous-graph": {};
+  "capture-retry-unconfirmed": {};
+  "capture-snapshot-saved": {};
+  "capture-start-new": {};
+  "capture-title-needs-text": {};
   "carry-carry-couldn-t-be-saved-resolve-the-conflict": {};
   "carry-could-not-carry-tasks": { "error": string | number };
   "carry-could-not-read-journal-days-for-carry": { "error": string | number };
@@ -605,6 +611,7 @@ export interface MessageArgs {
   "document-save-retrying": { "name": string | number; "step": string | number };
   "document-save-twin": { "existing": string | number; "name": string | number };
   "document-save-undecodable": { "name": string | number };
+  "document-transfer-rolled-back": {};
   "document-wiring-changed-meanwhile-choose-again": { "value1": string | number };
   "document-wiring-changed-since-was-added-to-it-copy-the-rest-of": { "value1": string | number; "value2": string | number; "value3": string | number };
   "document-wiring-couldn-t-overwrite": { "value1": string | number };

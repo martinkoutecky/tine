@@ -1,6 +1,6 @@
 import { backend } from "./backend";
 import { appendToTodayJournal, captureToPage, flushPage } from "./document";
-import { bindingOwner, ownedWhen, readOwnedResource, writeOwned, type WriteOwner } from "./owned";
+import { bindingOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type WriteOwner } from "./owned";
 import { pushToast } from "./toasts";
 import { msg } from "./i18n";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
@@ -18,6 +18,24 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
   const inFlight = new Map<string, Promise<boolean>>();
   // Pending insertions are retained independently of the completed-id cap.
   const landed = new Map<string, { name: string; owner: WriteOwner }>();
+  const uncertain = new Set<string>();
+  // A failed receipt lookup proves neither insertion nor non-insertion. Keep
+  // the retry identity, but offer only a plain retry until custody is known.
+  const unconfirmed = new Set<string>();
+  const receiptStatus = async (id: string) => {
+    try {
+      // The listener surface owns this read, deliberately across graph bindings.
+      const result = await readOwned(owner, backend().captureReceipt(id, "status", backend().graphBindingGeneration()));
+      if (result.kind === "stale") { unconfirmed.add(id); return "unknown"; }
+      const status = result.value;
+      unconfirmed.delete(id);
+      if (status === "pending") uncertain.add(id);
+      return status;
+    } catch {
+      unconfirmed.add(id);
+      return "unknown";
+    }
+  };
   const completed = new Map<string, boolean>();
   const completedOrder: string[] = [];
   const rememberCompleted = (id: string, ok: boolean) => {
@@ -32,7 +50,10 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
   const windowLabel = getCurrentWindow().label;
   const ack = (id: string | undefined, ok: boolean) => {
-    if (id) void emitTo("capture", "quick-capture-ack", { id, ok, ...(!ok && landed.has(id) ? { landed: true } : {}) } satisfies QuickCaptureAck);
+    if (id) void emitTo("capture", "quick-capture-ack", { id, ok,
+      ...(!ok && (landed.has(id) || uncertain.has(id) || unconfirmed.has(id)) ? { landed: true } : {}),
+      ...(!ok && uncertain.has(id) ? { closedGraph: true } : {}),
+    } satisfies QuickCaptureAck);
   };
   if (!owner()) return () => {};
   const registration = await readOwnedResource(owner, listen<QuickCaptureRequest & { bindingGeneration: number }>("quick-capture", async (e) => {
@@ -52,7 +73,8 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
     }
     if (!Number.isSafeInteger(e.payload.bindingGeneration) || e.payload.bindingGeneration <= 0
         || e.payload.bindingGeneration !== backend().graphBindingGeneration()) {
-      ack(id, false);
+      const status = id ? await receiptStatus(id) : "missing";
+      ack(id, status === "saved");
       return;
     }
     const saveOwner = bindingOwner(owner);
@@ -67,13 +89,34 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
       let ok = false;
       try {
         const prior = id ? landed.get(id) : undefined;
+        // Native process memory outlives this listener/WebView. A claim precedes
+        // insertion, so a reload at any await cannot authorize a second insert.
+        // Legacy idless deliveries are one-shot inserts, as before; they have
+        // no acknowledgement/retry protocol to claim.
+        if (id) {
+          const claimed = await writeOwned(saveOwner, backend().captureReceipt(id, "claim", e.payload.bindingGeneration));
+          if (claimed.kind === "stale") return await receiptStatus(id) === "saved";
+          const receipt = claimed.value;
+          if (receipt === "saved") return true;
+          if (!saveOwner() || receipt === "missing" || (receipt === "pending" && !prior) || (prior && !prior.owner())) {
+            if (receipt === "new" || receipt === "pending") uncertain.add(id);
+            return false;
+          }
+        }
         const inserted = (name: string) => { if (id) landed.set(id, { name, owner: saveOwner }); };
         const result = await writeOwned(saveOwner, prior
           ? (prior.owner() ? flushPage(prior.name) : Promise.resolve(false))
           : title ? captureToPage(title, text, inserted) : appendToTodayJournal(text, inserted));
         ok = result.kind === "current" && result.value;
+        if (ok && id) {
+          const remembered = await writeOwned(saveOwner, backend().captureReceipt(id, "saved", e.payload.bindingGeneration));
+          if (remembered.kind === "stale") ok = await receiptStatus(id) === "saved";
+        } else if (id && !landed.has(id) && saveOwner()) {
+          await writeOwned(saveOwner, backend().captureReceipt(id, "release", e.payload.bindingGeneration));
+        }
       } catch {
         ok = false;
+        if (id) ok = await receiptStatus(id) === "saved";
       }
       if (saveOwner()) {
         if (!ok) pushToast(msg("app-capture-couldn-t-be-saved-its-text"), "error");

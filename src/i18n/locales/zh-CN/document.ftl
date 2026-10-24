@@ -60,3 +60,4 @@ document-wiring-couldn-t-read-the-page-is-an-alias-of-its = 无法读取 { $valu
 document-wiring-changed-since-was-added-to-it-copy-the-rest-of = 将“{ $value2 }”添加到“{ $value1 }”后，后者又发生了更改。请手动复制“{ $value3 }”的剩余内容。
 
 document-wiring-moved-into-its-alias-owner = 已将“{ $value1 }”移入其别名所属页面“{ $value2 }”。
+document-transfer-rolled-back = 无法保存这次移动。已还原块和页面输入。

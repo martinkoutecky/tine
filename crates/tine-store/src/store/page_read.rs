@@ -119,6 +119,8 @@ impl Store {
     /// file plus the copy, never a lost side. A refused operation leaves the
     /// copy in trash. One write + fsync of `old`.
     pub fn stage_marker_copy(&self, file: &FileId, old: &[u8]) -> Result<FileId, crate::Why> {
+        #[cfg(test)]
+        super::pause_at_hook(&self.marker_copy_pause);
         self.transaction(None).stage_marker_file(file, old)
     }
 

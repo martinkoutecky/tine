@@ -101,6 +101,10 @@ it.each(["text", "title", "IME"])("acknowledges only the submitted snapshot, ret
   expect(h.deleted).toEqual([]);
   expect(title.value).toBe(change === "title" ? "Later title" : "Destination");
   expect(h.hide).not.toHaveBeenCalled();
+  if (change === "IME") {
+    document.querySelector(".capture-shell")!.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    await Promise.resolve();
+  }
 });
 
 it("clears and hides after a successful acknowledgement when the snapshot is unchanged", async () => {
@@ -127,7 +131,7 @@ it("L9-08: a timeout retry retains the original payload while later edits stay i
     await vi.waitFor(() => expect(h.emitted.filter(e => e.event === "quick-capture").length).toBeGreaterThan(before));
     const request = h.emitted.filter(e => e.event === "quick-capture").at(-1)!.payload as { id: string; text: string };
     await vi.advanceTimersByTimeAsync(15_001);
-    expect(document.body.textContent).toContain("try again");
+    expect(document.body.textContent).toContain("Retry File capture");
     h.markdown = "- later edit";
     h.captureApi!.submit();
     await vi.waitFor(() => expect(h.emitted.filter(e => e.event === "quick-capture")).toHaveLength(before + 4));

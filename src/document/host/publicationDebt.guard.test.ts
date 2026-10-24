@@ -43,6 +43,7 @@ const NOT_LET_GO: Record<string, string> = {
   isSaving: "the unanswered-request state a view shows",
   hostHolds: "routes a page's disk changes to host mail; a page in debt stays open",
   landAliasDraft: "a precondition for writing into the alias owner",
+  deletePageOnDisk: "busy only guards the native delete handoff; ordinary input is settled, and conflicted input is consumed only after native Applied with durable recovery (JJ6)",
 };
 
 /** Client calls that drop a page, each for a reason that ends the debt. */

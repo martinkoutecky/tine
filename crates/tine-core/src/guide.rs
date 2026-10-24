@@ -2253,6 +2253,22 @@ mod external_link_guide_tests {
 mod asset_manifest_tests {
     use super::*;
 
+    #[test]
+    fn capture_guide_explains_snapshot_remainders_and_unconfirmed_exit() {
+        let guide = GUIDE_TEMPLATES
+            .iter()
+            .find(|page| page.title == "Features/Quick capture")
+            .unwrap()
+            .markdown;
+        assert!(guide.contains("additions stay for your next capture"));
+        assert!(guide.contains("plain retry"));
+        assert!(guide.contains("**Add text** reminder"));
+        assert!(guide.contains("never reached a graph"));
+        assert!(guide.contains("previous graph"));
+        assert!(guide.contains("without clearing its text or retry identity"));
+        assert!(guide.contains("does not survive quitting"));
+    }
+
     fn collect_guide_asset_refs(markdown: &str, into: &mut std::collections::HashSet<String>) {
         let mut rest = markdown;
         while let Some(i) = rest.find("../assets/") {
