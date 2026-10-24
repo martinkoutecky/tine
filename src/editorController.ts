@@ -66,6 +66,17 @@ export function registerEditExitGuard(guard: () => boolean): () => void {
   return () => editExitGuards.delete(guard);
 }
 const canExitEdit = () => [...editExitGuards].every(guard => guard());
+// Native property inputs hold a draft outside the document. Editor handoffs
+// must commit it before replacing/focusing another editor, even without blur.
+const editEntryGuards = new Set<() => boolean>();
+export function registerEditEntryGuard(guard: () => boolean): () => void {
+  editEntryGuards.add(guard);
+  return () => editEntryGuards.delete(guard);
+}
+export function prepareEditEntry(): boolean {
+  for (const guard of editEntryGuards) if (!guard()) return false;
+  return true;
+}
 
 export interface HistoryEditorContext {
   blockId: string;
@@ -222,7 +233,8 @@ export function startEditing(
   surface: string | null = null,
   preserveHistoryRestore = false,
 ) {
-  if (!canExitEdit()) return;
+  // Resolve a refused commit first, then commit a property input's draft.
+  if (!canExitEdit() || !prepareEditEntry()) return;
   revealOutlineBlock(id);
   if (!preserveHistoryRestore) setPendingHistoryEditorRestore(null);
   notifyEditingStarted(id, owner);

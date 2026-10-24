@@ -246,6 +246,24 @@ fn an_external_edit_that_panics_a_projection_stays_one_unreadable_page() {
             matches!(refreshed, Ok(Ok(_))),
             "{tag}: the rescan completes"
         );
+        // The explicit refresh does not consume the watcher's notifications
+        // or launch racy follow-up. A later retry of the bad projection can
+        // invalidate the cache between the whole-graph check and page open;
+        // a cold DTO read does not project page properties. Check the settled
+        // result only after those independent observations have completed.
+        assert!(
+            store.watcher_drained_for_tests(Duration::from_secs(60)),
+            "{tag}: the external edit's watcher observations never drained"
+        );
+        let view = store.whole_graph().unwrap();
+        assert_eq!(
+            view.unreadable_files()
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["pages/Filler 00.md"],
+            "{tag}: only the edited page is unreadable"
+        );
         // Filler 00's reference is gone with its parse; the rest answer.
         assert_rest_of_graph_answers(&store, tag, 2);
         let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -253,7 +271,10 @@ fn an_external_edit_that_panics_a_projection_stays_one_unreadable_page() {
         }));
         assert!(
             matches!(opened, Ok(Err(StoreError::Unparseable(_)))),
-            "{tag}: opening the edited page is a per-page error"
+            "{tag}: opening the edited page is a per-page error: {:?}",
+            opened
+                .as_ref()
+                .map(|result| result.as_ref().map(|_| "readable page"))
         );
         let good = store.page_named("Good", PageKind::Page).unwrap().unwrap();
         assert!(

@@ -13,20 +13,32 @@ use tine_graph_features::pages;
 use tine_store::cost_counters::{self, Counts};
 use tine_store::Store;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Watcher {
+    Running,
+    Drained,
+    Stopped,
+}
+
 /// Renames are the page host's (STEP3 §7): each runs through a host started
 /// for it under its own app data, as the app's graph binding runs one.
 fn hosted<T>(
     store: &std::sync::Arc<tine_store::Store>,
+    watcher: Watcher,
     run: impl FnOnce(&tine_store::PageHost) -> T,
 ) -> T {
     let app_data = tempfile::tempdir().unwrap();
     let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
     let result = run(&host);
-    // The measurement boundary (contract §5.4, REVIEW-3b-P2b-2 N3).
-    assert!(
-        host.quiesce_for_tests(Duration::from_secs(60)),
-        "the watcher or the host never settled"
-    );
+    if watcher != Watcher::Stopped {
+        // The live-watcher boundary (contract §5.4, REVIEW-3b-P2b-2 N3).
+        assert!(
+            host.quiesce_for_tests(Duration::from_secs(60)),
+            "the watcher or the host never settled"
+        );
+    }
+    // Dropping the host joins its driver and returns its held pages to the
+    // watcher synchronously, including with the background watcher stopped.
     result
 }
 
@@ -36,12 +48,12 @@ static CASE_LOCK: Mutex<()> = Mutex::new(());
 /// the target. Every file is backdated past the watcher's racy window so a
 /// fresh fixture's freshness re-hash is not counted as rename work.
 fn rename(pages_count: usize, referrers: usize) -> Counts {
-    rename_then(pages_count, referrers, false)
+    rename_then(pages_count, referrers, Watcher::Running)
 }
 
-/// As [`rename`]; with `settle`, the counts are taken only after the watcher
-/// drained once more after the host stopped, so they include its re-reads.
-fn rename_then(pages_count: usize, referrers: usize, settle: bool) -> Counts {
+/// As [`rename`]; `Drained` includes a further watcher drain after the host
+/// stops; `Stopped` isolates publication from independent watcher echoes.
+fn rename_then(pages_count: usize, referrers: usize, watcher: Watcher) -> Counts {
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let temp = tempfile::Builder::new()
         .prefix("rename-io-")
@@ -76,12 +88,15 @@ fn rename_then(pages_count: usize, referrers: usize, settle: bool) -> Counts {
     }
     let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
+    if watcher == Watcher::Stopped {
+        store.stop_watcher_for_tests();
+    }
     cost_counters::reset();
-    hosted(&store, |host| {
+    hosted(&store, watcher, |host| {
         pages::rename_page_expected(&store, host, "Target", "Renamed", None)
     })
     .unwrap();
-    if settle {
+    if watcher == Watcher::Drained {
         // After the host stopped: the watcher's re-reads of what the rename
         // wrote (contract §5.4, REVIEW-3b-P2b-2 N3).
         assert!(
@@ -153,15 +168,16 @@ fn rename_reads_each_referrer_once_per_guard() {
     }
 }
 
-/// Counted on the publishing threads only: the watcher's settle re-reads of
-/// the written files are an accepted cost off the publish path (contract
-/// §5.4), bounded separately below. On Windows they landed inside the
-/// measured window and were billed to publication.
+/// Isolate publication: a forwarded removal echo makes the host stamp the
+/// absent source in `Bridge::index`'s unchanged-observation branch. That is
+/// off the publishing path, but it is not on the watcher thread and has no
+/// successful read to bill as `observation_reads` (contract §5.4).
 #[test]
 fn rename_publication_reopens_no_referrer() {
     let _integration_guard = crate::integration_lock();
-    let few = rename_then(60, 2, true);
-    let many = rename_then(60, 30, true);
+    let few = rename_then(60, 2, Watcher::Stopped);
+    let many = rename_then(60, 30, Watcher::Stopped);
+    eprintln!("rename publication: few={few:?}; many={many:?}");
     assert_eq!(
         (many.preamble_reads + many.hash_reads) - (few.preamble_reads + few.hash_reads),
         0,
@@ -176,6 +192,14 @@ fn rename_publication_reopens_no_referrer() {
          the publication read's handle supplies the stamp it is compared with: \
          {few:?} vs {many:?}"
     );
+}
+
+/// Keep the live watcher's cost independent of the publication comparison.
+#[test]
+fn rename_watcher_echo_cost_is_linear_in_written_files() {
+    let _integration_guard = crate::integration_lock();
+    let few = rename_then(60, 2, Watcher::Drained);
+    let many = rename_then(60, 30, Watcher::Drained);
     // Linear in the files the operation wrote (`files_written`: each page
     // and its draft record), never in the graph. A written page is read at
     // most twice: by the cycle its echo lands in (path-scoped), and once
@@ -191,13 +215,13 @@ fn rename_publication_reopens_no_referrer() {
     // What the bound guards: a re-read that grows with the graph. The same
     // rename in a graph ten times larger stays inside the same bound, which
     // a single graph-wide re-read (631 pages) would exceed ninefold.
-    let large = rename_then(600, 30, true);
+    let large = rename_then(600, 30, Watcher::Drained);
     for counts in [few, many, large] {
         let bound = per_file * counts.files_written + 4;
         assert!(
             counts.watcher_reads <= bound && counts.watcher_stamps_by_path <= bound,
             "contract §5.4: once settled, the watcher's re-reads and re-stamps of what an \
-             operation wrote are at most the files it wrote plus a small constant; a \
+             operation wrote are at most twice the files it wrote plus a small constant; a \
              re-read that grows with the graph is not the accepted cost \
              (exemplar watch/reconcile.rs racy::hash_settled): {counts:?}"
         );

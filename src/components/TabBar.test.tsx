@@ -203,6 +203,29 @@ describe("TabBar pointer tab drag", () => {
     dispose();
   });
 
+  it.each([false, true])("GH #756: element blur preserves tab dragging, window blur cancels (%s)", (leaveWindow) => {
+    const { root, dispose } = renderSplit(["A", "B", "C"], ["X"]);
+    const editor = document.createElement("textarea");
+    document.body.append(editor);
+    editor.focus();
+    const third = tab(root, "main", 2);
+    setRect(third, 100, 0, 50, 24);
+    const previous = document.elementFromPoint;
+    document.elementFromPoint = () => third;
+    try {
+      tab(root, "main", 0).dispatchEvent(pointer("pointerdown", 10, 10));
+      editor.blur();
+      window.dispatchEvent(pointer("pointermove", 140, 10));
+      if (leaveWindow) window.dispatchEvent(new Event("blur"));
+      window.dispatchEvent(pointer("pointerup", 140, 10, { buttons: 0 }));
+      expect(namesForPane("main")).toEqual(leaveWindow ? ["A", "B", "C"] : ["B", "C", "A"]);
+    } finally {
+      document.elementFromPoint = previous;
+      editor.remove();
+      dispose();
+    }
+  });
+
   it("adopts a dragged tab into another strip at the hit index", () => {
     const { root, dispose } = renderSplit(["A", "B"], ["X", "Y"]);
     const dragged = tab(root, "main", 1);
