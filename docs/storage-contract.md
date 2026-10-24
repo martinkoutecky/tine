@@ -90,6 +90,24 @@ claims the same name through `title::`. Editing a title rekeys the published
 name without moving the file. New page filenames use a reversible, injective
 Windows-safe codec; existing noncanonical paths remain pinned.
 
+Several files claiming one name (including duplicate journal days) are an
+invalid graph state (D-20261019-ZY2, narrowed by AL1); alias equivalence is
+unchanged. `WholeGraph::resolve` and `inventory` retain the competing file ids
+as `Resolved::Existing::others`; journal conflicts also feed the existing
+duplicate-day resolution queue. Unrelated names remain usable. The fixed
+claimant order is shared live and fresh: a journal's configured date filename
+first; an ordinary page's matching decoded filename first; then `.md` before
+other extensions, filename, and full path lexicographically. Ordinary twins
+retain their physical content, while only a day's winning journal contributes
+query and backlink rows. A new winner displaces the old parsed journal, and
+removing it promotes the next claimant, including a held file's last published
+bytes. A promoted journal whose parse or projection panics is isolated as one
+unreadable file, just as at launch; unrelated indexed pages and later writer
+operations remain available. Each event visits only the affected day buckets,
+never a graph walk.
+Icons follow the winning ordinary claimant, including absence of an icon;
+page-slot allocation and config rebuild order cannot change the answer.
+
 Page and journal deletion is idempotent after external removal (GH #620).
 When the supplied displayed path no longer claims the requested name, deletion
 succeeds without writing only if the refreshed inventory has no file claimant
@@ -208,7 +226,9 @@ the race, `a_page_opened_and_closed_while_loading_builds_no_graph_under_the_writ
 
 `Store::refresh(Depth)` is the one refresh door. `Depth::Stamps` trusts a file
 whose modification time, length and identity are unchanged (the watcher's
-depth and the focus-return rescan's); `Depth::Bytes` hashes every graph-text
+depth and the focus-return rescan's), except that the GH #543 I/O-failure
+retry also applies at this depth. Settled invalid-content refusals still skip
+byte reads and parsing until their stamp changes; `Depth::Bytes` hashes every graph-text
 file and publishes the ones whose bytes differ as ordinary external changes
 (scenario: a sync client or restore tool rewrites a file and puts its stamp
 back; an export must not publish the stale document); `Depth::Rebuild` does
@@ -791,7 +811,16 @@ so a listed snapshot can still fail restore's verification. Proof
 `listing_shows_both_namespaces_with_ids_and_status`,
 `listing_never_reads_snapshot_payloads`.
 
-**Restore.** Under the lock, read the zip whole into memory (bounded); after
+**Restore.** The store's complete observation after restoring supersedes earlier
+watcher read uncertainty and stamp-specific refusals for paths it can read or
+confirms absent. Retiring that uncertainty publishes a fresh parse even when
+the restored files have exactly the baseline's bytes. This publication rebuilds
+names, claimants and icons from the restored rows as well as page content;
+it cannot carry the earlier last-good name or icon. Paths still unreadable
+keep their guards, and the rebuilt graph still reports invalid restored
+content. Obsolete read state cannot indefinitely refuse an orphan-asset
+inventory after a successful restore.
+Under the lock, read the zip whole into memory (bounded); after
 the lock is released, verify every entry of those bytes against the manifest
 (a concurrent prune can no longer change what is restored). Then refuse a
 zip of another graph. Whether two names are one file at their destination

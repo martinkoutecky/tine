@@ -60,8 +60,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - **Editing an alias, or renaming or deleting an aliased page, no longer re-reads every page**: once the alias index exists, it is patched for the pages the edit changed instead of being rebuilt by a walk over the whole graph. On a generated 10,000-page graph the first alias lookup after such an edit examines 1 page instead of 10,000 (D-20261018-M2c).
 
+## [0.8.0-beta.12] - 2026-10-24
+
+Fixes for the 0.8.0 stable candidate: pasting a copied link keeps its URL (GH #759), opening a PDF no longer pulls the reader back to the top of the page (GH #672), a backlink to a highlight of a PDF that was not open scrolls to it, multiline Org blocks no longer add blank lines at the end of the file (GH #741), and hidden id:: and collapsed:: lines stay in the block's property group. Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
+
 ### Fixed
 
+- A restore that clears an earlier read failure refreshes page names and icons even when the restored bytes are unchanged (GH #543).
+- Removing a duplicate journal's winning file keeps other pages usable when the promoted file cannot be parsed, reporting that file as unreadable (GH #644).
+- A duplicate journal file delivered or edited by sync contributes the same references and query results while Tine runs as after a restart; the existing duplicate-day resolver still lists both files (internal card PVTI_lAHOAAbLVc4BhPsyzhCJePk).
+- A name claimed by two page files keeps the winning file's icon after a configuration reload, including while that page is open (internal card PVTI_lAHOAAbLVc4BhPsyzhCJePk).
+- A file made readable by a permissions-only repair reappears on a regular check or focus refresh; unchanged invalid content is not repeatedly read or parsed (GH #543; existing fix now covered by the formerly ignored stamps-refresh repro).
 - Deleting a conflicted page preserves the latest typing in its recovery copy. Quick Capture keeps a title with an empty body, offers a plain retry when saving takes too long, and reports previous-graph uncertainty only after a graph window accepted the capture (GH #254 capture family; L9 review FU1/FU2/H4).
 - Quick Capture removes the saved portion before filing later additions, preserves an unconfirmed capture on Escape, and prevents retries from inserting it again after a graph-window reload (GH #254 capture family; L9 review F1–F3).
 - A block move that rolls back because of unfinished page-header input now explains why and keeps that input and the blocks (L9 review F4, card PVTI_lAHOAAbLVc4BhPsyzhC1syQ).

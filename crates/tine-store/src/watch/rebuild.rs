@@ -13,7 +13,7 @@ use std::sync::atomic::Ordering;
 
 use super::WatchHandle;
 use crate::launch_diag::DiffTrigger;
-use crate::store::{LoadError, LoadStatus};
+use crate::store::{LoadError, LoadStatus, Origin};
 
 /// Optimistic rebuild attempts that build beside concurrent saves before the
 /// build runs under the writer lock; the total bounds a graph that never settles.
@@ -75,7 +75,9 @@ impl WatchHandle {
         // poisons the writer).
         let published =
             crate::store::contain_index_publication(&self.core.graph, &self.core.load, || {
-                self.core.changes.publish_rebuilt(Vec::new())
+                self.core
+                    .changes
+                    .publish_rebuilt(Origin::External, Vec::new(), false);
             });
         drop(writer);
         if !published {

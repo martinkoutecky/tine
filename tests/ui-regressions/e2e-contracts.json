@@ -1,6 +1,14 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-store-fresh-parity.mjs": {
+      "contracts": [
+        {"class":"stateful-ux","userOutcome":"A duplicate journal delivered by an outside writer remains detectable without contributing the losing file's linked references; a held canonical page keeps its icon after config reload.","blocking":true,"authority":"D-20261019-ZY2/AL1; docs/storage-contract.md; REG-STORE-DUPLICATE-DAY-STRAY-LIVE-INDEX; REG-STORE-TWIN-ICON-CONFIG-RELOAD"}
+      ],
+      "acceptableVariations": ["Watcher and renderer arrival latency; page and reference layout."],
+      "nonRequirements": ["Exact pixels, slot order, or native certification outside Linux WebKitGTK; boundary permutations are covered by store tests."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-pdf-another-view.mjs": {
       "contracts": [
         { "class": "stateful-ux", "userOutcome": "Open another view opens the same PDF beside the first at its page and zoom; both views share created, recolored and deleted highlights while keeping their own page, zoom and scroll, and the surviving view can save and drain after its sibling closes.", "blocking": true },

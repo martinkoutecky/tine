@@ -825,6 +825,257 @@ mod tests {
     }
 
     #[test]
+    fn restore_retires_read_uncertainty_and_terminal_refusals() {
+        for terminal in [false, true] {
+            let (dir, store) = open();
+            fs::create_dir(dir.path().join("assets")).unwrap();
+            store.watch.stop_background_for_test();
+            let core = store.watch.core_for_load();
+            let path = dir.path().join("pages/P0.md");
+            fs::write(&path, b"\xff").unwrap();
+            if terminal {
+                age(&path);
+            }
+            core.reconcile(None, false, false, DiffTrigger::Test)
+                .unwrap();
+            assert!(store.referenced_assets().is_err());
+            if terminal {
+                assert!(core.read_refusals.lock().unwrap().contains_key(&path));
+            } else {
+                assert!(store.graph.unsettled_read_paths().contains(&path));
+            }
+            store
+                .restore(
+                    crate::EditKind::SaveBlock,
+                    vec![crate::RestoreFile {
+                        area: crate::Area::Pages,
+                        rel: "Restored.md".into(),
+                        bytes: b"- restored\n".to_vec(),
+                    }],
+                    None,
+                )
+                .unwrap();
+            assert!(
+                store.referenced_assets().is_ok(),
+                "restore left the inventory refused"
+            );
+            assert!(store.graph.unsettled_read_paths().is_empty());
+            assert!(core.read_refusals.lock().unwrap().is_empty());
+            core.reconcile(None, false, true, DiffTrigger::Test)
+                .unwrap();
+            assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+            store.close();
+        }
+    }
+
+    #[test]
+    fn stamps_retries_an_unchanged_denied_open_but_not_invalid_content() {
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        let core = store.watch.core_for_load();
+        let path = dir.path().join("pages/P0.md");
+        let original = stamp_metadata(&path).unwrap();
+        let paths = HashSet::from([path.clone()]);
+        let fault = OpenFailure::new(&path, std::io::ErrorKind::PermissionDenied);
+        core.reconcile(Some(&paths), false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(!store.whole_graph().unwrap().unreadable_files().is_empty());
+        drop(fault);
+        assert!(stamp_metadata(&path).unwrap().same_metadata(&original));
+        store.refresh(crate::Depth::Stamps).unwrap();
+        assert!(
+            store.whole_graph().unwrap().unreadable_files().is_empty(),
+            "stamps skipped an access repair"
+        );
+        fs::write(&path, b"\xff").unwrap();
+        age(&path);
+        store.refresh(crate::Depth::Stamps).unwrap();
+        racy::HASH_ATTEMPTS.with(|count| count.set(0));
+        for _ in 0..3 {
+            store.refresh(crate::Depth::Stamps).unwrap();
+        }
+        assert_eq!(
+            racy::HASH_ATTEMPTS.with(|count| count.get()),
+            0,
+            "stamps reread invalid content"
+        );
+        store.close();
+    }
+
+    #[test]
+    fn an_identical_restore_revalidates_content_before_retiring_uncertainty() {
+        for valid in [false, true] {
+            let (dir, store) = open();
+            fs::create_dir(dir.path().join("assets")).unwrap();
+            store.watch.stop_background_for_test();
+            let core = store.watch.core_for_load();
+            let path = dir.path().join("pages/P0.md");
+            if valid {
+                fs::write(&path, "title:: Before\nicon:: 📚\n\n- original\n").unwrap();
+                store.refresh(crate::Depth::Bytes).unwrap();
+                // Populate the previous generation's lazy icon index, too.
+                store.whole_graph().unwrap().page_icons(&["Before".into()]);
+                fs::write(
+                    &path,
+                    "title:: Delivered\nicon:: 🚀\n\n- delivered before restore\n",
+                )
+                .unwrap();
+                store
+                    .graph
+                    .fail_sync_read_once
+                    .store(true, Ordering::Release);
+            } else {
+                fs::write(&path, b"\xff").unwrap();
+            }
+            core.reconcile(None, false, false, DiffTrigger::Test)
+                .unwrap();
+            assert!(store.referenced_assets().is_err());
+            let files = (0..20)
+                .map(|n| crate::RestoreFile {
+                    area: crate::Area::Pages,
+                    rel: format!("P{n}.md"),
+                    bytes: fs::read(dir.path().join(format!("pages/P{n}.md"))).unwrap(),
+                })
+                .collect();
+            // Restore writes the exact same complete file set. The file-feed
+            // byte diff is empty, but its old read uncertainty still must be
+            // replaced by an authoritative parse, including a real refusal.
+            store
+                .restore(crate::EditKind::SaveBlock, files, None)
+                .unwrap();
+            assert!(store.graph.unsettled_read_paths().is_empty());
+            assert_eq!(store.referenced_assets().is_ok(), valid);
+            assert_eq!(
+                store.whole_graph().unwrap().unreadable_files().is_empty(),
+                valid
+            );
+            if valid {
+                let copy = tempfile::tempdir().unwrap();
+                for area in ["pages", "logseq"] {
+                    fs::create_dir(copy.path().join(area)).unwrap();
+                    for entry in fs::read_dir(dir.path().join(area)).unwrap() {
+                        let entry = entry.unwrap();
+                        if !entry.file_type().unwrap().is_file() {
+                            continue;
+                        }
+                        fs::copy(entry.path(), copy.path().join(area).join(entry.file_name()))
+                            .unwrap();
+                    }
+                }
+                let fresh = crate::Store::open(copy.path(), Default::default())
+                    .unwrap()
+                    .0;
+                let live = store.whole_graph().unwrap();
+                let cold = fresh.whole_graph_reconciled().unwrap();
+                let claim = |view: &crate::WholeGraph, name: &str| match view.resolve(name, false) {
+                    crate::Resolved::Existing { id, others } => (true, id, others),
+                    crate::Resolved::Absent { id } => (false, id, Vec::new()),
+                    crate::Resolved::Alias { .. } => panic!("unexpected alias"),
+                };
+                for name in ["Before", "Delivered", "P0"] {
+                    assert_eq!(claim(&live, name), claim(&cold, name), "resolve {name}");
+                }
+                let inventory = |view: &crate::WholeGraph| {
+                    view.inventory(crate::InventoryScope::All)
+                        .0
+                        .iter()
+                        .map(|entry| (entry.name.clone(), claim(view, &entry.name)))
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(inventory(&live), inventory(&cold));
+                let names = ["Before".into(), "Delivered".into(), "P0".into()];
+                assert_eq!(live.page_icons(&names), cold.page_icons(&names));
+                assert_eq!(live.page_icons(&names).get("Delivered").unwrap(), "🚀");
+                fresh.close();
+                assert_eq!(
+                    store.page(&PageId::from("pages/P0.md")).unwrap().doc.blocks[0].raw,
+                    "delivered before restore"
+                );
+            }
+            store.close();
+        }
+    }
+
+    #[test]
+    fn a_panicking_promoted_journal_leaves_other_pages_usable() {
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        fs::create_dir(dir.path().join("journals")).unwrap();
+        let winner = dir.path().join("journals/2026_10_02.md");
+        let loser = dir.path().join("journals/2026-10-02.md");
+        fs::write(&winner, "- winning journal [[P1]]\n").unwrap();
+        fs::write(
+            &loser,
+            format!("- {}\n", crate::model::TEST_PAGE_PARSE_PANIC_SENTINEL),
+        )
+        .unwrap();
+        store.refresh(crate::Depth::Bytes).unwrap();
+        assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+        fs::remove_file(&winner).unwrap();
+        store
+            .graph
+            .fail_sync_parse_once
+            .store(true, Ordering::Release);
+        store.refresh(crate::Depth::Bytes).unwrap();
+        assert!(!store.graph.fail_sync_parse_once.load(Ordering::Acquire));
+        let view = store.whole_graph().unwrap();
+        let unreadable: Vec<_> = view
+            .unreadable_files()
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(
+            unreadable,
+            [crate::FileId::from("journals/2026-10-02.md".to_owned())]
+        );
+        assert!(view.explicit_referrers(&["P1".into()]).is_empty());
+        assert_eq!(
+            store.page(&PageId::from("pages/P1.md")).unwrap().doc.blocks[0].raw,
+            "original"
+        );
+        // The next writer operation must remain usable, too.
+        fs::write(dir.path().join("pages/P1.md"), "- unrelated repair\n").unwrap();
+        store.refresh(crate::Depth::Bytes).unwrap();
+        assert_eq!(
+            store.page(&PageId::from("pages/P1.md")).unwrap().doc.blocks[0].raw,
+            "unrelated repair"
+        );
+        let fresh = crate::Store::open(dir.path(), Default::default())
+            .unwrap()
+            .0;
+        let cold = fresh.whole_graph_reconciled().unwrap();
+        let cold_unreadable: Vec<_> = cold
+            .unreadable_files()
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(unreadable, cold_unreadable);
+        assert!(cold.explicit_referrers(&["P1".into()]).is_empty());
+        fresh.close();
+        // Deleting the failed journal retires its record, as a fresh start has none.
+        // Both the watcher's path-hinted reconcile and a full refresh.
+        fs::remove_file(&loser).unwrap();
+        let core = store.watch.core_for_load();
+        core.reconcile(
+            Some(&HashSet::from([loser.clone()])),
+            false,
+            false,
+            DiffTrigger::Test,
+        )
+        .unwrap();
+        let view = store.whole_graph().unwrap();
+        assert!(
+            view.unreadable_files().is_empty(),
+            "{:?}",
+            view.unreadable_files()
+        );
+        assert!(store.referenced_assets().is_ok());
+        store.refresh(crate::Depth::Bytes).unwrap();
+        assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+        store.close();
+    }
+
+    #[test]
     fn gh543_r1_permission_only_repair_with_identical_stamp_recovers() {
         // Models Windows ACL/minifilter and mobile security-scope repairs:
         // availability changes while every metadata field stays identical.

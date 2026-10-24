@@ -24,6 +24,11 @@ impl Graph {
         own_rename: bool,
     ) -> Option<PageEntry> {
         let before_gen = self.cache_generation();
+        let before_name = self
+            .with_cached(path, |row| {
+                row.map(|(entry, _)| (entry.kind, entry.name.clone()))
+            })
+            .flatten();
         let mut named = None;
         match bytes {
             Some(bytes) => {
@@ -69,7 +74,15 @@ impl Graph {
                 let _ = self.forget_file_internal(path);
             }
         }
-        if file_set_changed {
+        let after_name = self
+            .with_cached(path, |row| {
+                row.map(|(entry, _)| (entry.kind, entry.name.clone()))
+            })
+            .flatten();
+        // As for publish_owned, retag only when an installed row proves
+        // that this publication kept the old name, including its spelling.
+        let renamed = before_name.is_none() || after_name != before_name;
+        if file_set_changed || renamed {
             self.forget_name_memos();
         } else {
             let after_gen = self.cache_generation();

@@ -145,7 +145,6 @@ impl Snapshot {
         graph.with_pages(|_| ());
         let config = config.read().unwrap().clone();
         let journal_format = graph.current_journal_format();
-        let cache_generation = graph.cache_generation();
         // Paths whose rows a hold or respelling retired since the last
         // capture (E105): each is renamed from what it names now.
         let mut files = files.to_vec();
@@ -303,7 +302,35 @@ impl Snapshot {
             let old = old.expect("name index from old generation");
             (Arc::clone(&old.list), Arc::clone(&old.claimants))
         };
-        let changed_paths: Vec<String> = files
+        // A file arrival can displace an indexed journal; a removal can promote
+        // a previously set-aside file. Patch only the affected day buckets,
+        // reusing the same complete claimant index that resolve() exposes.
+        let journal_keys: HashSet<_> = if config_changed || rebuild || old.is_none() {
+            claimants
+                .iter()
+                .filter(|((journal, _), entries)| *journal && entries.len() > 1)
+                .map(|(key, _)| key.clone())
+                .collect()
+        } else {
+            files
+                .iter()
+                .filter_map(|(id, _, _)| {
+                    let path = graph.root.join(id.as_str());
+                    name_by_path
+                        .get(&path)
+                        .or_else(|| old.and_then(|old| old.name_by_path.get(&path)))
+                        .filter(|(kind, _)| *kind == PageKind::Journal)
+                        .map(|(_, name)| (true, tine_core::refs::page_key(name)))
+                })
+                .collect()
+        };
+        let journal_paths: Vec<_> = journal_keys
+            .iter()
+            .filter_map(|key| claimants.get(key))
+            .flat_map(|entries| graph.reconcile_journal_claimants(entries))
+            .collect();
+        let cache_generation = graph.cache_generation();
+        let mut changed_paths: Vec<String> = files
             .iter()
             .filter(|(id, _, _)| {
                 let root = &graph.root;
@@ -315,6 +342,9 @@ impl Snapshot {
             })
             .map(|(id, _, _)| id.as_str().to_owned())
             .collect();
+        changed_paths.extend(journal_paths.iter().map(|path| graph.rel_path(path)));
+        changed_paths.sort();
+        changed_paths.dedup();
         let mut folds_only = false;
         // Share one old/new document lookup between memo carry and the wire
         // summary. Do not retain these previous documents in the new snapshot.

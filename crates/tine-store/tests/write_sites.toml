@@ -894,16 +894,6 @@ note = "Transaction target resolves through Transaction::path; move helpers use 
 mutations = "atomic_write=3, atomic_write_new=2"
 
 [[site]]
-file = "crates/tine-store/src/watch/restore.rs"
-fn = "WatchHandle::publish_restore"
-domain = "primitive"
-guard = ""
-test = ""
-oracle = false
-note = "Conservative .publish match is an in-memory watcher change-feed publication after restore, not filesystem mutation."
-mutations = ".publish=1"
-
-[[site]]
 file = "src-tauri/ios-app/Shared/ShareInbox.swift"
 fn = "publish"
 domain = "app"
