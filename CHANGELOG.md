@@ -8,18 +8,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.8.0-beta.11] - 2026-10-24
+
+Fixes for the 0.8.0 stable candidate: restoring a session keeps every tab on its last page, changing outline levels on long pages with images no longer makes the view jump (GH #745), the mobile editing toolbar works above the sidebar drawers (GH #751), page-property rows in Linked References keep their look after an edit (GH #753), switching table cells saves the previous edit (GH #754), and board cards drag even when another editor had focus (GH #756). Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
+
 ### Fixed
 
+- Restoring a saved session keeps every tab on its last page, with its order, pins and active tab, instead of replacing the active page with the graph's configured home (internal card PVTI_lAHOAAbLVc4BhPsyzhDC3x4).
 - A stopped graph owner releases its lock at once, even while a process spawned at that moment still holds an inherited copy of the lock file's handle; before, the next owner could briefly find the graph still locked (internal: REG-OWNER-LOCK-INHERITED-DESCRIPTOR).
 - Switching table cells by double-click saves the previous edit; invalid numbers keep their editor open (GH #754).
-
 - Board cards drag between columns even when an editor outside the board has focus, without selecting text during the drag (GH #756).
 - Changing a block between outline levels one and two on long pages with images above no longer makes the view jump; structural edits preserve loaded image and measured window geometry (GH #745).
-
 - Page-property rows in Linked References keep the same appearance after editing, including other groups showing the same page (GH #753).
-
 - On mobile, the bottom editing toolbar stays usable above either sidebar drawer, acts on its focused editor, and reveals the editor above the keyboard while popups remain accessible (GH #751).
-- Changing a block between outline levels one and two on long pages with images above no longer makes the view jump; structural edits preserve loaded image and measured window geometry (GH #745).
 - After a restore from backup, a page that was being edited when the restore began closes normally once editing ends, instead of staying open for the rest of the session. A component draft open across the restore (for example a table cell) no longer keeps holding back newer file content from that page after it closes (internal: REG-HOST-REBIND-ACQUISITION-RELEASE).
 
 ## [0.8.0-beta.10] - 2026-10-23
@@ -28,7 +29,6 @@ Fixes for the 0.8.0 stable candidate: wide query result tables sit inside the pa
 
 ### Fixed
 
-- Restoring a saved session keeps every tab on its last page, with its order, pins and active tab, instead of replacing the active page with the graph's configured home (internal card PVTI_lAHOAAbLVc4BhPsyzhDC3x4).
 - Wide tables in query results sit inside the page again instead of being shifted to the right and cut off (GH #749).
 - The macOS app icon keeps Apple's icon-grid margin, so the Dock no longer shows Tine larger than other apps (GH #747).
 - A save no longer stalls, and renames or moves no longer report Busy, when another writer releases a page at the moment Tine's page host goes to sleep: the host's path-lock retry could be dropped, leaving it waiting for an unrelated wake (internal: page-host driver lost wakeup).
