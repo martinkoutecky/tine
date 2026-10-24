@@ -1,0 +1,14 @@
+.cm6-spike { min-width: 0; width: 100%; }
+.cm6-spike .cm-editor { font: inherit; background: transparent; }
+.cm6-spike .cm-editor.cm-focused { outline: none; }
+.cm6-spike .cm-content { padding: 0; font: inherit; line-height: inherit; }
+.cm6-spike .cm-line { padding: 0; }
+.cm6-spike .cm-scroller { font: inherit; overflow: visible; }
+.cm6-bold { font-weight: bold; }
+.cm6-italic { font-style: italic; }
+.cm6-code { font-family: monospace; background: #8882; }
+.cm6-page { color: var(--link-color, #589bdd); }
+.cm6-task, .cm6-chip { color: var(--link-color, #589bdd); border-radius: 4px; background: #8882; }
+.cm6-chip { padding: 0 3px; cursor: text; }
+.cm6-completions { display: flex; gap: 4px; }
+.cm6-completions:empty { display: none; }
