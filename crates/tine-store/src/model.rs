@@ -7296,6 +7296,29 @@ mod tests {
     }
 
     #[test]
+    fn org_autosaved_soft_newline_does_not_become_file_trivia() {
+        let dir = scratch("org-drawer-autosave");
+        let path = dir.join("pages/ManualOrg.org");
+        fs::write(&path, "* plain\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/ManualOrg.org");
+        let mut dto = store.page(&id).unwrap().doc;
+        let mut rev = dto.rev.clone().unwrap();
+        let typed = "plain\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END: suffix";
+        for end in 6..=typed.len() {
+            dto.blocks[0].raw = typed[..end].to_string();
+            rev = saved_rev(save_on_store(&store, &dto, Some(&rev)));
+        }
+        let expected = format!("* {typed}\n");
+        assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+        drop(store);
+        let reopened = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        assert_eq!(reopened.page(&id).unwrap().doc.blocks[0].raw, typed);
+        assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn org_page_lists_loads_edits_and_round_trips() {
         let dir = scratch("org-page");
         let src = "* TODO Buy milk\nSCHEDULED: <2026-06-25 Thu>\n* second block\n";

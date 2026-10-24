@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Editing a multiline Org block no longer adds permanent blank lines at the end of the file when autosave runs just after Shift+Enter (GH #741).
+- Editing a Markdown block that has its own properties keeps the hidden `id::` and `collapsed::` lines in the same property group, as Logseq writes them. Before, they moved below the body text, where Logseq ignores them, so references to the block could break in Logseq (internal: REG-HIDDEN-PROPS-STAY-IN-THE-GROUP).
+
 ## [0.8.0-beta.11] - 2026-10-24
 
 Fixes for the 0.8.0 stable candidate: restoring a session keeps every tab on its last page, changing outline levels on long pages with images no longer makes the view jump (GH #745), the mobile editing toolbar works above the sidebar drawers (GH #751), page-property rows in Linked References keep their look after an edit (GH #753), switching table cells saves the previous edit (GH #754), and board cards drag even when another editor had focus (GH #756). Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
@@ -18,10 +23,6 @@ Fixes for the 0.8.0 stable candidate: restoring a session keeps every tab on its
 - A stopped graph owner releases its lock at once, even while a process spawned at that moment still holds an inherited copy of the lock file's handle; before, the next owner could briefly find the graph still locked (internal: REG-OWNER-LOCK-INHERITED-DESCRIPTOR).
 - Switching table cells by double-click saves the previous edit; invalid numbers keep their editor open (GH #754).
 - Board cards drag between columns even when an editor outside the board has focus, without selecting text during the drag (GH #756).
-- Editing a Markdown block that has its own properties keeps the hidden `id::` and `collapsed::` lines in the same property group, as Logseq writes them. Before, they moved below the body text, where Logseq ignores them, so references to the block could break in Logseq (internal: REG-HIDDEN-PROPS-STAY-IN-THE-GROUP).
-- Page-property rows in Linked References keep the same appearance after editing, including other groups showing the same page (GH #753).
-
-- On mobile, the bottom editing toolbar stays usable above either sidebar drawer, acts on its focused editor, and reveals the editor above the keyboard while popups remain accessible (GH #751).
 - Changing a block between outline levels one and two on long pages with images above no longer makes the view jump; structural edits preserve loaded image and measured window geometry (GH #745).
 - Page-property rows in Linked References keep the same appearance after editing, including other groups showing the same page (GH #753).
 - On mobile, the bottom editing toolbar stays usable above either sidebar drawer, acts on its focused editor, and reveals the editor above the keyboard while popups remain accessible (GH #751).
