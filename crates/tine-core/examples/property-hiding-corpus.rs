@@ -1,7 +1,7 @@
 //! Read-only acceptance probe. Reports counts, never graph content.
 use std::path::Path;
 use tine_core::{
-    doc,
+    block_regions, doc,
     editor_text::{self, HidePolicy},
 };
 
@@ -12,11 +12,25 @@ fn check(block: &doc::DocBlock, counts: &mut [usize; 3]) {
     if !parts.hidden.is_empty() {
         counts[2] += 1;
         for text in [format!("Edited {}", parts.visible), String::new()] {
-            let joined = editor_text::join_preserving(&text, &parts.hidden, org, block.raw())
-                .expect("accepted hidden metadata must survive an edit");
+            let joined = editor_text::join_preserving(
+                &text,
+                &parts.hidden,
+                org,
+                block.raw(),
+                &HidePolicy::Builtin,
+            )
+            .expect("accepted hidden metadata must survive an edit");
             assert!(
                 editor_text::split(&joined, org, &HidePolicy::Builtin).hidden == parts.hidden,
                 "hidden metadata bytes changed in corpus block {}",
+                counts[1]
+            );
+            // Review F5: the rows must stay where OG reads them. An edit may not
+            // split the block's properties into more groups (OG keeps the first).
+            let groups = |raw: &str| block_regions::parse(raw, org).property_regions.len();
+            assert!(
+                groups(&joined) <= groups(block.raw()).max(1),
+                "an edit split the property group in corpus block {}",
                 counts[1]
             );
         }

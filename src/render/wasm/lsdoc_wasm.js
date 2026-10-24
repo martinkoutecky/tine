@@ -128,11 +128,12 @@ function __tine_raw_editor_offset_of_raw(raw, is_org, regions, policy, raw_utf16
  * @param {boolean} is_org
  * @param {any} visible_regions
  * @param {string | null} [source]
+ * @param {string | null} [policy]
  * @returns {string}
  */
-function __tine_raw_editor_text_join(visible, hidden, is_org, visible_regions, source) {
-    let deferred5_0;
-    let deferred5_1;
+function __tine_raw_editor_text_join(visible, hidden, is_org, visible_regions, source, policy) {
+    let deferred6_0;
+    let deferred6_1;
     try {
         const ptr0 = passStringToWasm0(visible, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
@@ -140,18 +141,20 @@ function __tine_raw_editor_text_join(visible, hidden, is_org, visible_regions, s
         const len1 = WASM_VECTOR_LEN;
         var ptr2 = isLikeNone(source) ? 0 : passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len2 = WASM_VECTOR_LEN;
-        const ret = wasm.editor_text_join(ptr0, len0, ptr1, len1, is_org, visible_regions, ptr2, len2);
-        var ptr4 = ret[0];
-        var len4 = ret[1];
+        var ptr3 = isLikeNone(policy) ? 0 : passStringToWasm0(policy, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.editor_text_join(ptr0, len0, ptr1, len1, is_org, visible_regions, ptr2, len2, ptr3, len3);
+        var ptr5 = ret[0];
+        var len5 = ret[1];
         if (ret[3]) {
-            ptr4 = 0; len4 = 0;
+            ptr5 = 0; len5 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
-        deferred5_0 = ptr4;
-        deferred5_1 = len4;
-        return getStringFromWasm0(ptr4, len4);
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
     } finally {
-        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+        wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
     }
 }
 

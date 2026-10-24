@@ -802,7 +802,8 @@ fn split(
     let format = cx.txs[t].base.format;
     let node = cx.txs[t].block(key).ok_or(Reason::Incomplete)?.clone();
     let regions = block_regions::parse(&node.raw, format.is_org());
-    let et = editor_text::split_with(&node.raw, format.is_org(), &regions, cx.hide);
+    let hide = cx.hide;
+    let et = editor_text::split_with(&node.raw, format.is_org(), &regions, hide);
     let offset =
         editor_text::raw_to_visible_with(&node.raw, format.is_org(), &regions, cx.hide, raw_offset);
     let visible = et.visible.as_bytes();
@@ -850,7 +851,7 @@ fn split(
         // the text after the boundary.
         if offset > 0 {
             tx.block_mut(key)?.raw =
-                editor_text::join_preserving(after, &et.hidden, format.is_org(), &node.raw)
+                editor_text::join_preserving(after, &et.hidden, format.is_org(), &node.raw, hide)
                     .map_err(|_| Reason::Unparseable)?;
         }
         tx.insert(
@@ -878,7 +879,7 @@ fn split(
         });
     } else {
         tx.block_mut(key)?.raw =
-            editor_text::join_preserving(before, &et.hidden, format.is_org(), &node.raw)
+            editor_text::join_preserving(before, &et.hidden, format.is_org(), &node.raw, hide)
                 .map_err(|_| Reason::Unparseable)?;
         tx.insert(
             new_key.clone(),

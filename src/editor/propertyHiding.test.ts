@@ -2,7 +2,7 @@ import { beforeAll, afterEach, expect, it } from "vitest";
 import { initParser } from "../render/parse";
 import { setGraphMeta } from "../graphSession";
 import type { GraphMeta } from "../types";
-import { BUILTIN_HIDE, splitProps, joinProps, isEditorEmpty } from "./properties";
+import { BUILTIN_HIDE, SHEET_CELL_HIDE, editorHidePolicy, splitProps, joinProps, isEditorEmpty } from "./properties";
 import { propertyEditorSession } from "./propertySession";
 
 beforeAll(() => initParser());
@@ -70,3 +70,19 @@ it("does not discard newly hidden metadata by reusing an apparently empty block"
   expect(isEditorEmpty("tine.custom:: opaque", BUILTIN_HIDE, "md")).toBe(false);
 });
 
+
+// Review R2 (2026-10-24): a sheet-cell projection elsewhere must not replace the editor's
+// configured policy, whose identity keys the session cache (a typed configured key would
+// otherwise vanish from the textarea mid-word).
+it("the editor's configured policy survives a sheet-cell projection", () => {
+  setGraphMeta({ block_hidden_properties: ["secret"] } as GraphMeta);
+  const editor = editorHidePolicy(BUILTIN_HIDE);
+  splitProps("x\nsecret:: s", SHEET_CELL_HIDE, "md");
+  expect(editorHidePolicy(SHEET_CELL_HIDE)).not.toBe(editor);
+  expect(editorHidePolicy(BUILTIN_HIDE)).toBe(editor);
+  const session = propertyEditorSession();
+  const typed = "Body\nsecret:: tr";
+  const raw = session.join(typed, "", "Body", BUILTIN_HIDE, "md");
+  splitProps(raw, SHEET_CELL_HIDE, "md");
+  expect(session.split(raw, BUILTIN_HIDE, "md").visible).toBe(typed);
+});

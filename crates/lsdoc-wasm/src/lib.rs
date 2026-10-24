@@ -495,9 +495,11 @@ pub fn block_may_have_logbook(raw: &str) -> bool {
 /// Editor text plus hidden lines back to raw (`editor_text::join_with`), with
 /// optional exact source for metadata-preserving text-only edits.
 #[wasm_bindgen]
-pub fn editor_text_join(visible: &str, hidden: &str, is_org: bool, visible_regions: &JsValue, source: Option<String>) -> Result<String, JsValue> {
+pub fn editor_text_join(visible: &str, hidden: &str, is_org: bool, visible_regions: &JsValue, source: Option<String>, policy: Option<String>) -> Result<String, JsValue> {
     if let Some(source) = source {
-        return editor_text::join_preserving(visible, hidden, is_org, &source).map_err(|e| JsValue::from_str(&e));
+        // The policy that split `hidden` from `source` (the built-ins when absent).
+        let hide = match policy { Some(p) => hide_policy(&p)?, None => editor_text::HidePolicy::Builtin };
+        return editor_text::join_preserving(visible, hidden, is_org, &source, &hide).map_err(|e| JsValue::from_str(&e));
     }
     let r = if !hidden.is_empty() && (is_org || !visible_regions.is_null()) { regions_from_js(visible, visible_regions)? } else { block_regions::BlockRegions::default() };
     editor_text::join_with(visible, hidden, is_org, &r).map_err(|e| JsValue::from_str(&e))

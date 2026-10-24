@@ -222,14 +222,14 @@ export function rawByteOfEditor(raw: string, format: "md" | "org", policy: strin
 export function mayHaveLogbook(raw: string): boolean {
   return parserReady() && block_may_have_logbook(raw);
 }
-export function editorTextJoin(visible: string, hidden: string, format: "md" | "org", source?: string): string {
+export function editorTextJoin(visible: string, hidden: string, format: "md" | "org", source?: string, policy?: string): string {
   // Nothing hidden is the only case before the parser is ready (splitProps
   // hides nothing then), and joining it is the identity.
   if (!hidden) return visible;
-  if (format !== "org" && !mayHaveLogbook(hidden)) return editor_text_join(visible, hidden, false, null, source);
+  if (format !== "org" && !mayHaveLogbook(hidden)) return editor_text_join(visible, hidden, false, null, source, policy);
   const regions = blockRegions(visible, format);
   if (regions.quarantined) throw new Error("Structural edit refused: block parsing is quarantined");
-  return editor_text_join(visible, hidden, format === "org", regions, source);
+  return editor_text_join(visible, hidden, format === "org", regions, source, policy);
 }
 /** Whether kernel hide `policy` (JSON) hides property `key`. */
 export function hidePolicyHides(policy: string, key: string, properties: readonly (readonly [string, string])[]): boolean {

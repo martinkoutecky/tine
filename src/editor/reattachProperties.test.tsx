@@ -69,3 +69,25 @@ it("Org reattachment preserves CRLF transport and an emptied own drawer", () => 
   expect(joinProps("Title\n:PROPERTIES:\n:END:", ":id: own-id", "org"))
     .toBe("Title\n:PROPERTIES:\n:id: own-id\n:END:");
 });
+
+// REG-HIDDEN-PROPS-STAY-IN-THE-GROUP: typing in a Markdown block whose hidden id sits in its
+// property group keeps one group. Below the body it was a second group, which OG ignores.
+it("Markdown typing keeps a hidden id in the block's own property group", () => {
+  const raw = "Title\nid:: 650e8400-e29b-41d4-a716-446655440000\nowner:: Ada\nbody line";
+  loadSingle({ name: "Group", title: "Group", kind: "page", format: "md", pre_block: null,
+    blocks: [{ id: "target", raw, collapsed: false, children: [] }] });
+  startEditing("target", 0);
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <Block id="target" />, root);
+  try {
+    const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+    expect(ta.value).toBe("Title\nowner:: Ada\nbody line");
+    ta.value += "!";
+    ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "!" }));
+    // The id stays in the group (at its end, the order Tine writes), never below the body.
+    expect(doc.byId.target.raw).toBe("Title\nowner:: Ada\nid:: 650e8400-e29b-41d4-a716-446655440000\nbody line!");
+    // The same holds before a final quote, which otherwise takes the hidden rows above it.
+    expect(joinProps("Title\nowner:: Ada\nbody\n> quote", "id:: x", "md")).toBe("Title\nowner:: Ada\nid:: x\nbody\n> quote");
+    expect(joinProps("Title\n> quote", "id:: x", "md")).toBe("Title\nid:: x\n> quote");
+  } finally { dispose(); }
+});

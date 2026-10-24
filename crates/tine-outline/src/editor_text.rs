@@ -339,6 +339,9 @@ fn join_properties(
         return Ok(visible.to_string());
     }
     if !is_org {
+        if let Some(joined) = join_into_visible_group(visible, hidden) {
+            return Ok(joined);
+        }
         // Metadata appended after a final quote is its lazy continuation, so it goes
         // before the quote, as the window's `joinProps` places it (GH #684, #721 F3).
         if let Some(start) = crate::swallowed_rows::quote_tail(visible).and_then(|t| t.start) {
@@ -484,7 +487,7 @@ pub fn set_text_with_policy(
     hide: &HidePolicy,
 ) -> Result<String, String> {
     let current = split(raw, is_org, hide);
-    join_preserving(text, &current.hidden, is_org, raw)
+    join_preserving(text, &current.hidden, is_org, raw, hide)
 }
 
 /// Text-only edits can retain the exact metadata layout of the source buffer.
@@ -497,6 +500,7 @@ pub fn join_preserving(
     hidden: &str,
     is_org: bool,
     source: &str,
+    hide: &HidePolicy,
 ) -> Result<String, String> {
     let regions = block_regions::parse(source, is_org);
     if regions
@@ -504,8 +508,9 @@ pub fn join_preserving(
         .iter()
         .any(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
     {
-        let policy = HidePolicy::Builtin;
-        let previous = split_with(source, is_org, &regions, &policy);
+        // The caller's policy produced `hidden`; another would miss the splice.
+        let policy = hide;
+        let previous = split_with(source, is_org, &regions, policy);
         if previous.hidden == hidden
             && !block_regions::parse(visible, is_org)
                 .drawers
@@ -533,9 +538,9 @@ pub fn join_preserving(
                 .count();
             let old_end = ceil_boundary(&previous.visible, previous.visible.len() - suffix);
             let new_end = ceil_boundary(visible, visible.len() - suffix);
-            let from = visible_to_raw_with(source, is_org, &regions, &policy, start);
-            let to = visible_to_raw_with(source, is_org, &regions, &policy, old_end);
-            let c = classify(source, is_org, &regions, &policy);
+            let from = visible_to_raw_with(source, is_org, &regions, policy, start);
+            let to = visible_to_raw_with(source, is_org, &regions, policy, old_end);
+            let c = classify(source, is_org, &regions, policy);
             if !c
                 .lines
                 .iter()
@@ -551,7 +556,7 @@ pub fn join_preserving(
                 // A syntax edit (for example a new quote opener) can swallow
                 // otherwise untouched hidden bytes. Retain their ownership,
                 // not only their spelling, or use canonical placement below.
-                if split(&edited, is_org, &policy).hidden == hidden {
+                if split(&edited, is_org, policy).hidden == hidden {
                     return Ok(edited);
                 }
             }
@@ -565,6 +570,42 @@ fn ceil_boundary(s: &str, mut at: usize) -> usize {
         at += 1;
     }
     at
+}
+
+/// Markdown text that keeps a property group of its own takes the hidden lines
+/// at the end of that group. Appending them below the body started a second
+/// group, and OG keeps only a block's first one (`extract-blocks`,
+/// graph_parser/block.cljs): an edited `Title / id:: / owner:: / body` block lost
+/// its `id::` in OG, breaking its references there. OG itself writes built-ins
+/// at the group's head (`with-built-in-properties`, frontend/util/property.cljs);
+/// the end keeps the order Tine has always written, and both are one group.
+/// `None` when the text has no group (or its parse is quarantined).
+fn join_into_visible_group(visible: &str, hidden: &str) -> Option<String> {
+    let regions = block_regions::parse(visible, false);
+    if regions.quarantined {
+        return None;
+    }
+    let region = regions.properties.iter().find(|p| p.primary)?.region;
+    let last = regions
+        .properties
+        .iter()
+        .filter(|p| p.primary && p.region == region)
+        .map(|p| p.line.0)
+        .max()?;
+    let Some(at) = visible[last..].find('\n').map(|n| last + n) else {
+        return Some(format!("{visible}\n{hidden}"));
+    };
+    // A CRLF block keeps CRLF on the moved-in last hidden line.
+    let cr = if visible[..at].ends_with('\r') && !hidden.ends_with('\r') {
+        "\r"
+    } else {
+        ""
+    };
+    Some(format!(
+        "{}\n{hidden}{cr}{}",
+        &visible[..at],
+        &visible[at..]
+    ))
 }
 
 fn floor_boundary(s: &str, mut at: usize) -> usize {
@@ -894,6 +935,64 @@ mod tests {
                 matches!(b, lsdoc::ast::Block::Properties { props, .. }
                 if props.iter().any(|p| p.0 == "collapsed" && p.1 == "true"))
             })
+    }
+
+    /// A block with its own visible property group keeps one group: the hidden
+    /// lines join its end, never below the body
+    /// as a second group that OG ignores (REG-HIDDEN-PROPS-STAY-IN-THE-GROUP).
+    #[test]
+    fn hidden_rows_rejoin_the_visible_property_group() {
+        let id = "id:: 650e8400-e29b-41d4-a716-446655440000";
+        for (raw, edit, expected) in [
+            (
+                format!("Title\n{id}\nowner:: Ada\nbody line"),
+                ("Title", "Title X"),
+                format!("Title X\nowner:: Ada\n{id}\nbody line"),
+            ),
+            (
+                format!("Title\ncollapsed:: true\n{id}\nowner:: Ada\nbody"),
+                ("body", "body 2"),
+                format!("Title\nowner:: Ada\ncollapsed:: true\n{id}\nbody 2"),
+            ),
+            // A page-properties block: the group is the whole text.
+            (
+                format!("{id}\ntags:: a\nalias:: b"),
+                ("alias:: b", "alias:: c"),
+                format!("tags:: a\nalias:: c\n{id}"),
+            ),
+            // A group before a final quote: hidden lines stay in the group.
+            (
+                format!("Title\n{id}\nowner:: Ada\nbody\n> quote"),
+                ("body", "body 2"),
+                format!("Title\nowner:: Ada\n{id}\nbody 2\n> quote"),
+            ),
+            // CRLF: the moved-in line keeps the block's line ending.
+            (
+                format!("Title\r\nowner:: Ada\r\nbody\r\n{id}"),
+                ("body", "body 2"),
+                format!("Title\r\nowner:: Ada\r\n{id}\r\nbody 2\r"),
+            ),
+            // A block an earlier edit split into two groups is repaired to one.
+            (
+                format!("Title\nowner:: Ada\nbody\n{id}"),
+                ("body", "body 2"),
+                format!("Title\nowner:: Ada\n{id}\nbody 2"),
+            ),
+        ] {
+            let t = split(&raw, false, &HidePolicy::Builtin);
+            let visible = t.visible.replacen(edit.0, edit.1, 1);
+            let out = join(&visible, &t.hidden, false).unwrap();
+            assert_eq!(out, expected, "{raw:?}");
+            assert_eq!(
+                join_with(&visible, &t.hidden, false, &BlockRegions::default()).unwrap(),
+                out
+            );
+            let groups = crate::lsdoc_block_parse::parse_block(&out, false)
+                .iter()
+                .filter(|b| matches!(b, lsdoc::ast::Block::Properties { .. }))
+                .count();
+            assert_eq!(groups, 1, "{out:?}");
+        }
     }
 
     #[test]

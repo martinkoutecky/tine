@@ -33,7 +33,7 @@ export function editor_offset_of_raw(raw: string, is_org: boolean, regions: any,
  * Editor text plus hidden lines back to raw (`editor_text::join_with`), with
  * optional exact source for metadata-preserving text-only edits.
  */
-export function editor_text_join(visible: string, hidden: string, is_org: boolean, visible_regions: any, source?: string | null): string;
+export function editor_text_join(visible: string, hidden: string, is_org: boolean, visible_regions: any, source?: string | null, policy?: string | null): string;
 
 /**
  * The editor's view of one block (outline kernel `editor_text`, twin 13):
@@ -300,7 +300,7 @@ export interface InitOutput {
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];
     readonly edit_block_regions_json: (a: number, b: number, c: number, d: any, e: any) => [number, number, number, number];
     readonly editor_offset_of_raw: (a: number, b: number, c: number, d: any, e: number, f: number, g: number) => [number, number, number];
-    readonly editor_text_join: (a: number, b: number, c: number, d: number, e: number, f: any, g: number, h: number) => [number, number, number, number];
+    readonly editor_text_join: (a: number, b: number, c: number, d: number, e: number, f: any, g: number, h: number, i: number, j: number) => [number, number, number, number];
     readonly editor_text_json: (a: number, b: number, c: number, d: any, e: number, f: number) => [number, number, number, number];
     readonly encode_page_name: (a: number, b: number, c: number) => [number, number];
     readonly format_journal_date: (a: number, b: number, c: number, d: number, e: number) => [number, number];

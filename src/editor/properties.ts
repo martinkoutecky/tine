@@ -4,9 +4,8 @@ import { msg, render } from "../i18n";
 
 import { displayMathOpenAfter, closesDisplayMath, fenceExitTrim } from "./fences";
 import type { Format } from "../render/ast";
-import { blockRegions, editorOffsetOfRaw, editorText, editorTextJoin, mayHaveLogbook, hidePolicyHides, parserReady, rawByteOfEditor, parseBlock } from "../render/parse";
+import { blockRegions, editorOffsetOfRaw, editorText, editorTextJoin, mayHaveLogbook, hidePolicyHides, parserReady, rawByteOfEditor } from "../render/parse";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
-import { rebulletedSourceByteToRawByte } from "../render/spans";
 import { reportUiFailure } from "../uiFailure";
 import { graphMeta } from "../graphSession";
 
@@ -264,7 +263,9 @@ export const HIDE_ID: HidePolicy = Object.freeze({ kind: "keys", keys: ["id"] })
 /** Exactly `keys` (lower-cased); `norm` compares through `propertyKeyNorm`. */
 export const hideKeys = (keys: readonly string[], norm = false): HidePolicy => Object.freeze({ kind: "keys", keys, norm });
 const policyJson = new WeakMap<HidePolicy, string>();
-let configured: { signature: string; policy: HidePolicy } | undefined;
+// One slot per kind: a sheet-cell projection must not evict the editor's policy,
+// whose identity keys the property session's cache.
+const configured: Partial<Record<"builtin" | "sheet_cell", { signature: string; policy: HidePolicy }>> = {};
 /** Snapshot current graph config for projections, session caches and kernel verbs.
  * Config is read reactively, including when an editor is already mounted. */
 export function editorHidePolicy(policy: HidePolicy = BUILTIN_HIDE): HidePolicy {
@@ -272,9 +273,11 @@ export function editorHidePolicy(policy: HidePolicy = BUILTIN_HIDE): HidePolicy 
   const keys = graphMeta()?.block_hidden_properties ?? [];
   if (!keys.length) return policy;
   const signature = JSON.stringify([policy.kind, keys]);
-  if (configured?.signature !== signature) configured = { signature,
-    policy: Object.freeze({ kind: "configured", keys: [...keys], sheet_cell: policy.kind === "sheet_cell" }) };
-  return configured.policy;
+  const slot = configured[policy.kind];
+  if (slot?.signature === signature) return slot.policy;
+  const next = { signature, policy: Object.freeze({ kind: "configured", keys: [...keys], sheet_cell: policy.kind === "sheet_cell" }) as HidePolicy };
+  configured[policy.kind] = next;
+  return next.policy;
 }
 function policyText(policy: HidePolicy): string {
   policy = editorHidePolicy(policy);
@@ -358,23 +361,13 @@ export function visibleOffsetToRawByte(raw: string, visibleOffset: number, hide:
  *  {@link splitProps}. Markdown appends them below the body; Org folds them back
  *  into a `:PROPERTIES:` drawer at OG's canonical spot. A metadata-only block
  *  (empty visible) is just its hidden lines. */
-export function joinProps(visible: string, hidden: string, format: PropFormat = "md", source?: string): string {
-  if (source && hasLogbookDrawer(source, format)) return editorTextJoin(visible, hidden, format, source);
+export function joinProps(visible: string, hidden: string, format: PropFormat = "md", source?: string, hide: HidePolicy = BUILTIN_HIDE): string {
+  // `hide` is the policy that split `hidden` from `source`: the splice re-splits with it.
+  if (source && hasLogbookDrawer(source, format)) return editorTextJoin(visible, hidden, format, source, policyText(hide));
   if (hidden && hasLogbookDrawer(hidden, "md")) return editorTextJoin(visible, hidden, format);
-  // OG property/insert-property prepends metadata to a titleless quote. A
-  // trailing unquoted line is a lazy continuation of its quoted paragraph.
-  // A title above the quote keeps its properties between title and quote.
-  // Only an accepted trailing quote can consume appended metadata; inline
-  // greater-than signs and literal containers retain the normal policy.
-  if (format === "md" && hidden && visible.includes(">") && parserReady()) {
-    const last = parseBlock(visible, false).filter(b => b.kind !== "properties").at(-1);
-    if (last?.kind === "quote" && last.span) {
-      const at = utf8ToUtf16Cursor(visible)(rebulletedSourceByteToRawByte(visible, last.span[0]));
-      const lineStart = visible.lastIndexOf("\n", at - 1) + 1;
-      const payload = hidden.endsWith("\r") ? hidden.slice(0, -1) : hidden;
-      return `${visible.slice(0, lineStart)}${payload}\n${visible.slice(lineStart)}`;
-    }
-  }
+  // The kernel places the rows: at the end of the block's own property group,
+  // else before a final quote (its lazy continuation would swallow them), else
+  // below the body (REG-HIDDEN-PROPS-STAY-IN-THE-GROUP, GH #684, #721 F3).
   return editorTextJoin(visible, hidden, format);
 }
 

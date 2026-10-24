@@ -34,7 +34,8 @@ fn every_hidden_builtin_and_configured_key_keeps_bytes_after_edit_and_clear() {
             assert_eq!(parts.visible, "Body", "{raw:?}");
             assert_eq!(parts.hidden, line);
             for text in ["Revised", ""] {
-                let joined = editor_text::join_preserving(text, &parts.hidden, org, &raw).unwrap();
+                let joined =
+                    editor_text::join_preserving(text, &parts.hidden, org, &raw, &hide).unwrap();
                 assert_eq!(editor_text::split(&joined, org, &hide).hidden, line);
                 assert_eq!(editor_text::split(&joined, org, &hide).visible, text);
                 assert!(block_regions::parse(&joined, org)
@@ -151,4 +152,59 @@ fn configured_projection_keeps_metadata_on_enter_and_merge() {
             editor_text::split(&raw, org, &hide).hidden
         );
     }
+}
+
+/// Review B1 (2026-10-24): a newly hidden key in an OG-layout group (title, properties,
+/// body) stays in that one group on a text edit. Below the body it started a second
+/// group, which OG ignores (REG-HIDDEN-PROPS-STAY-IN-THE-GROUP).
+#[test]
+fn a_hidden_row_stays_in_the_block_s_own_property_group() {
+    let hide = HidePolicy::Configured {
+        keys: vec!["secret".into()],
+        sheet_cell: false,
+    };
+    for (raw, expected) in [
+        (
+            "Title\nbackground-color:: red\nowner:: Ada\nbody line",
+            "Title X\nowner:: Ada\nbackground-color:: red\nbody line",
+        ),
+        (
+            "Title #card\ncard-repeats:: 2\nowner:: me\nAnswer",
+            "Title X #card\nowner:: me\ncard-repeats:: 2\nAnswer",
+        ),
+        (
+            "Title\nsecret:: s\nowner:: Ada\nbody",
+            "Title X\nowner:: Ada\nsecret:: s\nbody",
+        ),
+        // No visible group: the hidden rows remain the block's only group.
+        (
+            "Title\nheading:: true\nbody line",
+            "Title X\nbody line\nheading:: true",
+        ),
+    ] {
+        let parts = editor_text::split(raw, false, &hide);
+        let edited = parts.visible.replacen("Title", "Title X", 1);
+        let out = editor_text::set_text_with_policy(raw, false, &edited, &hide).unwrap();
+        assert_eq!(out, expected, "{raw:?}");
+        assert_eq!(
+            block_regions::parse(&out, false).property_regions.len(),
+            1,
+            "{out:?}"
+        );
+    }
+}
+
+/// Review R1 (2026-10-24): the text-only splice re-splits the source with the caller's
+/// policy, so a configured key in a LOGBOOK block keeps its exact place.
+#[test]
+fn the_logbook_splice_uses_the_caller_s_policy() {
+    let hide = HidePolicy::Configured {
+        keys: vec!["secret".into()],
+        sheet_cell: false,
+    };
+    let raw = "TODO Title\n:LOGBOOK:\nCLOCK: [2026-01-01 Thu 10:00:00]--[2026-01-01 Thu 11:00:00] =>  01:00:00\n:END:\nsecret:: s";
+    let parts = editor_text::split(raw, false, &hide);
+    let edited = parts.visible.replacen("Title", "Title X", 1);
+    let out = editor_text::set_text_with_policy(raw, false, &edited, &hide).unwrap();
+    assert_eq!(out, raw.replacen("Title", "Title X", 1));
 }

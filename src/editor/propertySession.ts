@@ -30,7 +30,7 @@ export function propertyEditorSession() {
       // literal typed layout, including text after :END:.
       const typedDrawer = hasLogbookDrawer(visible, format);
       if (typedDrawer) hidden = splitLogbook(hidden, "md").text;
-      const raw = joinProps(visible, hidden, format, typedDrawer ? undefined : previous);
+      const raw = joinProps(visible, hidden, format, typedDrawer ? undefined : previous, hide);
       const own = visible.includes(format === "org" ? ":" : "::")
         ? blockRegions(visible, format).properties.filter((p) => p.primary) : [];
       const previousHidden = () => {
