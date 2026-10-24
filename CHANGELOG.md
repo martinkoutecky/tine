@@ -62,6 +62,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Editing a multiline Org block, including a handwritten LOGBOOK, no longer adds permanent blank lines at the end of the file when autosave runs just after Shift+Enter (GH #741).
 - Typing a property after body text keeps the editor text and caret in place while saving one property group; CLI identity checks accept the same UUID in either letter case and ignore body lookalikes (GH #684; GH #721).
 - Appending or pasting property text keeps hidden metadata in the group Logseq reads, and editing repairs earlier split groups; CLI edits refuse a supplied id that differs from the block's existing id (GH #684, GH #721).
 - Hidden properties keep their order during text edits, stay on a cleared first block, and avoid duplicate keys during sheet transfers and CLI read-then-edit; in-page replace handles these blocks again (GH #208; GH #338; internal card PVTI_lAHOAAbLVc4BhPsyzhDKQyY).

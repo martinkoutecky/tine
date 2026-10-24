@@ -7,6 +7,7 @@ import { initParser } from "../render/parse";
 import { pageByName, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
+import { pageToDto } from "../document/convert";
 import { trailingVisibleEmptyLeaf } from "../document/tree";
 import { timestampText, renderedBlockText } from "../render/renderedText";
 import { visibleBody } from "../render/block";
@@ -164,6 +165,31 @@ it.each(['md','org'] as const)('review manual drawer typing preserves subsequent
     expect(doc.byId[blockId].raw).toBe('plain'+typed);
     expect(textarea!.value).toBe('plain'+typed);
   } finally {dispose();}
+});
+
+it.each(['md', 'org'] as const)('manual drawer prefixes and Escape retain the authored save buffer (%s)', async format => {
+  const { root, textarea, blockId, dispose } = mountPage('plain', true, format);
+  const typed = `plain\n:LOGBOOK:\n${CLOCK}\n:END: suffix`;
+  try {
+    textarea!.setSelectionRange(5, 5);
+    let prefix = 'plain';
+    for (const ch of typed.slice(5)) {
+      if (ch === '\n') {
+        textarea!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true }));
+        await new Promise<void>(resolve => queueMicrotask(resolve));
+      } else typeChar(textarea!, ch);
+      prefix += ch;
+      // The textarea pairs the timestamp bracket until its closer is typed.
+      const buffer = prefix.includes('[') && !prefix.includes(']') ? prefix + ']' : prefix;
+      expect(textarea!.value).toBe(buffer);
+      expect(doc.byId[blockId].raw).toBe(buffer);
+      // Save trims convenience spaces; soft newlines still reach the host.
+      expect(pageToDto(doc.byId[blockId].page)!.blocks[0].raw).toBe(buffer.endsWith(' ') ? buffer.slice(0, -1) : buffer);
+    }
+    textarea!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(root.querySelector('textarea.block-editor')).toBeNull();
+    expect(pageToDto(doc.byId[blockId].page)!.blocks[0].raw).toBe(typed);
+  } finally { dispose(); }
 });
 
 it.each(["md", "org"] as const)("Backspace preserves a titleless logbook-only first block (%s)", (format) => {
