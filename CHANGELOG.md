@@ -62,6 +62,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Pasting a copied link keeps its URL and inserts it at the caret, preserving surrounding text. Inline HTML formatting is retained, with links in the page's Markdown or Org format (GH #759).
+- Following a backlink or block reference to a highlight of a PDF that was not open yet now scrolls to that highlight, as Logseq does, instead of opening the PDF with the highlight marked but off-screen. The scroll waits for the page to finish drawing, happens once, and is dropped if you scroll yourself first (card hCAoxs).
+- Opening a PDF no longer pulls the reader back to the top of the page about a tenth of a second later: following a backlink to a highlight of a PDF that was not open yet, or scrolling right after opening one, could be undone by a leftover zoom adjustment from opening (GH #672).
+- Editing a multiline Org block no longer adds permanent blank lines at the end of the file when autosave runs just after Shift+Enter (GH #741).
+- Editing a Markdown block that has its own properties keeps the hidden `id::` and `collapsed::` lines in the same property group, as Logseq writes them. Before, they moved below the body text, where Logseq ignores them, so references to the block could break in Logseq (internal: REG-HIDDEN-PROPS-STAY-IN-THE-GROUP).
+
+## [0.8.0-beta.11] - 2026-10-24
+
+Fixes for the 0.8.0 stable candidate: restoring a session keeps every tab on its last page, changing outline levels on long pages with images no longer makes the view jump (GH #745), the mobile editing toolbar works above the sidebar drawers (GH #751), page-property rows in Linked References keep their look after an edit (GH #753), switching table cells saves the previous edit (GH #754), and board cards drag even when another editor had focus (GH #756). Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
+
+### Fixed
+
+- Restoring a saved session keeps every tab on its last page, with its order, pins and active tab, instead of replacing the active page with the graph's configured home (internal card PVTI_lAHOAAbLVc4BhPsyzhDC3x4).
+- A stopped graph owner releases its lock at once, even while a process spawned at that moment still holds an inherited copy of the lock file's handle; before, the next owner could briefly find the graph still locked (internal: REG-OWNER-LOCK-INHERITED-DESCRIPTOR).
+- Switching table cells by double-click saves the previous edit; invalid numbers keep their editor open (GH #754).
 - Editing a multiline Org block, including a handwritten LOGBOOK, no longer adds permanent blank lines at the end of the file when autosave runs just after Shift+Enter (GH #741).
 - Files still arriving from another editor or sync service retry quietly; settled read failures avoid repeating full-graph checks, permission repairs recover without a content change, and unreadable files keep their last readable page. Saves racing an external append still report a conflict (GH #543).
 - Typing a property after body text keeps the editor text and caret in place while saving one property group; CLI identity checks accept the same UUID in either letter case and ignore body lookalikes (GH #684; GH #721).

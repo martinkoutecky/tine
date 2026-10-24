@@ -60,7 +60,7 @@ import {
   takeHistoryEditorSelectionFor,
 } from "../editorController";
 import { OUTLINE_MAX_SOURCE_CHARS, pastedPlainBlocks, type OutlineNode } from "../editor/outline";
-import { structuredHtmlOutline } from "../editor/htmlPaste";
+import { structuredHtmlPaste } from "../editor/htmlPaste";
 import {
   toggleInlineFormat,
   insertLink,
@@ -3170,10 +3170,11 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       return;
     }
     // Preserve explicit clipboard HTML structure on ordinary editor surfaces.
-    const htmlNodes = syntaxSensitive ? null : structuredHtmlOutline(html, text, pageFmt());
-    if (htmlNodes) {
+    const htmlPaste = syntaxSensitive ? null : structuredHtmlPaste(html, text, pageFmt());
+    if (htmlPaste) {
       e.preventDefault();
-      insertPastedOutline(htmlNodes, "structured-paste");
+      if (htmlPaste.inlineText !== null) pasteLiteralText(htmlPaste.inlineText);
+      else insertPastedOutline(htmlPaste.outline, "structured-paste");
       return;
     }
     if (text.includes("\n")) {
