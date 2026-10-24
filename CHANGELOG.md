@@ -59,6 +59,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Switching table cells by double-click saves the previous edit; invalid numbers keep their editor open (GH #754).
+
+- Board cards drag between columns even when an editor outside the board has focus, without selecting text during the drag (GH #756).
 - Board cards drag between columns even when an editor outside the board has focus, without selecting text during the drag (GH #756).
 - Hover previews stay clear of the page link or block reference that opened them, scrolling within the available space above or below it (GH #750).
 - The title and Open source actions stay visible while scrolling a hover preview (GH #752).
