@@ -25,6 +25,7 @@ import {
   type PdfOwnership,
 } from "../pdfOwnership";
 import { pdfHighlightSessionCount } from "./pdfHighlightState";
+import { sharedPdfDocumentCount } from "./pdfDocumentShare";
 import {
   clearTransientLayersForTest,
   dismissTopTransient,
@@ -1167,6 +1168,35 @@ describe("PdfViewer OG state and reference behavior", () => {
       disposeB();
     }
     expect(pdfHighlightSessionCount()).toBe(0);
+  });
+
+  it("reads and parses a PDF once for two views and frees it with the last", async () => {
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
+    const read = vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const doc = documentWithPages([page(612, 792)]);
+    getDocumentMock.mockImplementation(() => ({ promise: Promise.resolve(doc) }));
+    const hostA = document.createElement("div"), hostB = document.createElement("div");
+    document.body.append(hostA, hostB);
+    const [showB, setShowB] = createSignal(true);
+    const disposeA = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, hostA);
+    const disposeB = render(() => <Show when={showB()}><PdfViewer filename="paper.pdf" label="Paper" /></Show>, hostB);
+    try {
+      await flush();
+      expect(hostA.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready")).toBe("true");
+      expect(hostB.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready")).toBe("true");
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(getDocumentMock).toHaveBeenCalledTimes(1);
+      setShowB(false);
+      await flush();
+      expect(doc.destroy).not.toHaveBeenCalled(); // view A still reads it
+      expect(sharedPdfDocumentCount()).toBe(1);
+    } finally {
+      disposeA();
+      disposeB();
+    }
+    expect(doc.destroy).toHaveBeenCalledTimes(1);
+    expect(sharedPdfDocumentCount()).toBe(0);
   });
 
   it("saves a view's edit while a sibling view of the same PDF is still loading", async () => {

@@ -23,7 +23,7 @@ import { touchCapable } from "../inputCapability";
 import { pdfTakesOverPane } from "../viewportClass";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { acquirePdfHighlightState } from "./pdfHighlightState";
-import { createPdfLoadingTask } from "./pdfLoadingTask";
+import { acquirePdfDocument, type OpenPdfDocument } from "./pdfDocumentShare";
 import { pdfTextSelection, type PdfTextSelection } from "./pdfSelection";
 import { createPdfFind } from "./pdfFind";
 import { createPdfTiles, PDF_TILE_PIXEL_BUDGET } from "./pdfTiles";
@@ -34,13 +34,14 @@ import { COLOR_RGB, COLOR_RGBA, type PdfTheme } from "./pdfViewerPalette";
 export { PDF_FIND_TEXT_CACHE_BYTES, PDF_FIND_PAGE_TEXT_BYTES, PDF_FIND_MATCH_CAP } from "./pdfFind";
 import {
   isPdfOwnershipCurrent,
+  pdfOwnershipKey,
   drainPdfWork,
   registerPdfParticipant,
   trackPdfMutation,
   type PdfOwnership,
 } from "../pdfOwnership";
 import { PDF_THEME_KEY, MAX_PDF_BYTES, MAX_PDF_PAGES, PDF_CANVAS_CACHE_PIXEL_BUDGET,
-  PDF_CANVAS_CACHE_PAGE_CAP, storedPdfTheme, isPdfPageRef, discardPdfDocument,
+  PDF_CANVAS_CACHE_PAGE_CAP, storedPdfTheme, isPdfPageRef,
   isPdfAreaModifier, pageDimensionsError, safeCanvasSize, cropPdfArea,
   errorMessage, type PendingArea, type PdfTarget } from "./pdfViewerPrimitives";
 import { newIntersectionObserver, requestFrame, useOwnerWindow } from "../windowRealm";
@@ -120,7 +121,8 @@ export function PdfViewer(props: {
   let pending: PdfTextSelection | null = null;
   let pendingArea: PendingArea | null = null;
   let pdfDoc: pdfjs.PDFDocumentProxy | null = null;
-  const loadingTask = createPdfLoadingTask();
+  // This view's hold on the document it shares with its siblings.
+  let releaseDocument = () => {};
   let disposed = false;
   let activeHighlightId: string | undefined;
 
@@ -359,7 +361,6 @@ export function PdfViewer(props: {
   };
 
   function failPdf(message: string) {
-    loadingTask.cancel();
     detachHighlightPrepare(); // a failed document lends no geometry to siblings
     if (loadError()) return;
     io?.disconnect();
@@ -374,7 +375,7 @@ export function PdfViewer(props: {
       delete tasks[Number(k)];
     }
     scrollRef?.replaceChildren();
-    if (pdfDoc) discardPdfDocument(pdfDoc);
+    releaseDocument();
     pdfDoc = null;
     setLoadError(message);
   }
@@ -1066,7 +1067,7 @@ export function PdfViewer(props: {
 
   function cancelOwnedWork() {
     disposed = true;
-    loadingTask.cancel();
+    if (!pdfDoc) releaseDocument(); // a load still under way stops with its last view
     pinch.cancel();
     pdfTiles.reset();
     latestOwner(viewerRequests, "navigation");
@@ -1089,6 +1090,31 @@ export function PdfViewer(props: {
 
   let unregisterPdfParticipant = () => {};
 
+  // Reads and parses the PDF once for every view of it in this graph binding;
+  // owned by the binding, not by this view, since a sibling may outlive it.
+  const openSharedDocument: OpenPdfDocument = async (adoptTask) => {
+    const loadOwner = graphOwner(() => isPdfOwnershipCurrent(owner));
+    let bytes: Uint8Array;
+    try {
+      const result = await readOwned(loadOwner, backend().readAsset(props.filename, MAX_PDF_BYTES));
+      if (result.kind === "stale") return { kind: "error", message: "This graph was closed while the PDF was loading." };
+      bytes = result.value;
+    } catch (err) {
+      return { kind: "error", message: errorFamily(err) === "asset-too-large"
+        ? "This PDF is larger than 256 MiB and can't be opened safely."
+        : errorMessage("Couldn't read this PDF asset", err) };
+    }
+    if (!bytes.length) return { kind: "error", message: "Couldn't read this PDF asset: file is empty" };
+    if (bytes.byteLength > MAX_PDF_BYTES) return { kind: "error", message: "This PDF is larger than 256 MiB and can't be opened safely." };
+    const task = pdfjs.getDocument({ data: bytes });
+    adoptTask(task);
+    try {
+      return { kind: "ok", doc: await task.promise };
+    } catch (err) {
+      return { kind: "error", message: errorMessage("Couldn't load this PDF", err) };
+    }
+  };
+
   onMount(async () => {
     const loadOwner = graphOwner(() => !disposed && isPdfOwnershipCurrent(owner));
     setLoadError(null);
@@ -1106,33 +1132,17 @@ export function PdfViewer(props: {
       // Seed nothing: a sibling view's successful read must still win.
       pushToast(msg("pdf-couldn-t-load-pdf-annotations", { detail: String(error) }), "error");
     }
-    let bytes: Uint8Array;
-    try {
-      const result = await readOwned(loadOwner, backend().readAsset(props.filename, MAX_PDF_BYTES));
-      if (result.kind === "stale") return;
-      bytes = result.value;
-    } catch (err) {
-      if (!loadOwner()) return;
-      if (errorFamily(err) === "asset-too-large")
-        failPdf("This PDF is larger than 256 MiB and can't be opened safely.");
-      else failPdf(errorMessage("Couldn't read this PDF asset", err));
+    const shared = acquirePdfDocument(
+      `${pdfOwnershipKey(owner)}\0${binding.backendGeneration}\0${props.filename}`, openSharedDocument);
+    releaseDocument = shared.release;
+    if (disposed) { releaseDocument(); return; }
+    const opened = await shared.loaded;
+    if (!loadOwner()) return;
+    if (opened.kind === "error") {
+      failPdf(opened.message);
       return;
     }
-    if (!bytes.length) {
-      failPdf("Couldn't read this PDF asset: file is empty");
-      return;
-    }
-    if (bytes.byteLength > MAX_PDF_BYTES) {
-      failPdf("This PDF is larger than 256 MiB and can't be opened safely.");
-      return;
-    }
-    try {
-      await loadingTask.load(pdfjs.getDocument({ data: bytes }), loadOwner, doc => { pdfDoc = doc; });
-      if (!loadOwner() || !pdfDoc) return;
-    } catch (err) {
-      failPdf(errorMessage("Couldn't load this PDF", err));
-      return;
-    }
+    pdfDoc = opened.doc;
     if (!Number.isSafeInteger(pdfDoc.numPages) || pdfDoc.numPages < 1 || pdfDoc.numPages > MAX_PDF_PAGES) {
       failPdf(`This PDF reports an unsafe page count (${pdfDoc.numPages}); at most ${MAX_PDF_PAGES} pages can be displayed.`);
       return;
@@ -1188,7 +1198,7 @@ export function PdfViewer(props: {
     setOutlineReady(false);
     setExpandedOutlineIds(new Set<string>());
     releaseAllCanvases();
-    if (pdfDoc) discardPdfDocument(pdfDoc);
+    releaseDocument();
     pdfDoc = null;
   });
 
