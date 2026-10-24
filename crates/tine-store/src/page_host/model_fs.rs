@@ -27,10 +27,24 @@ pub(super) enum Fault {
     /// The call's first `k` system calls complete and the next one fails, as
     /// an error there or a process or power cut between the two.
     Cut(usize),
+    RootGone(usize),
+    RootReplaced(usize),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum RootState {
+    #[default]
+    Bound,
+    Gone,
+    Replaced(u64),
 }
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct ModelFs {
+    pub root: RootState,
+    pub detached: BTreeMap<String, Arc<[u8]>>,
+    pub root_fault: Option<(usize, RootState)>,
+    pub graph_io: bool,
     pub files: BTreeMap<String, Arc<[u8]>>,
     pub stable: BTreeMap<String, Arc<[u8]>>,
     pub faults: BTreeMap<Phase, VecDeque<Fault>>,
@@ -263,6 +277,15 @@ impl ModelFs {
         effect: impl FnOnce(&mut Self) -> IoResult<T>,
     ) -> IoResult<T> {
         self.calls.push(phase);
+        self.graph_io = matches!(
+            phase,
+            Phase::Read
+                | Phase::PageTemp
+                | Phase::PageRename
+                | Phase::PageSync
+                | Phase::TrashMove
+                | Phase::TrashSync
+        );
         let draft = matches!(
             phase,
             Phase::DraftTemp
@@ -281,6 +304,24 @@ impl ModelFs {
         }
         let fault = self.faults.get_mut(&phase).and_then(VecDeque::pop_front);
         match fault {
+            Some(Fault::RootGone(calls)) => {
+                self.root_fault = Some((calls, RootState::Gone));
+                let result = effect(self);
+                assert!(
+                    self.root_fault.take().is_none(),
+                    "root fault did not land: {phase:?}/{calls}"
+                );
+                result
+            }
+            Some(Fault::RootReplaced(calls)) => {
+                self.root_fault = Some((calls, RootState::Replaced(1)));
+                let result = effect(self);
+                assert!(
+                    self.root_fault.take().is_none(),
+                    "root fault did not land: {phase:?}/{calls}"
+                );
+                result
+            }
             Some(Fault::Before) => Err(IoFailure {
                 kind: ErrorKind::Io,
                 completed: false,
@@ -319,6 +360,7 @@ impl ModelFs {
     /// One system call of the current HostIo call; fails once a cut's budget
     /// is spent.
     fn call(&mut self) -> IoResult<()> {
+        self.root_step()?;
         match &mut self.budget {
             Some(0) => {
                 self.budget = None;
@@ -334,6 +376,43 @@ impl ModelFs {
                 Ok(())
             }
             None => Ok(()),
+        }
+    }
+
+    /// Root faults can land between modeled syscalls. Existing graph entries
+    /// belong to the detached epoch; only app-data drafts remain at this root.
+    fn root_step(&mut self) -> IoResult<()> {
+        match self.root_fault {
+            Some((0, next)) => {
+                self.root_fault = None;
+                self.root = next;
+                let graph_key = |key: &str| {
+                    key.starts_with("graph/")
+                        || key.starts_with("dir/")
+                        || key.starts_with("trash/")
+                        || key.starts_with("temp/page/")
+                };
+                self.detached.extend(
+                    self.files
+                        .iter()
+                        .filter(|(key, _)| graph_key(key))
+                        .map(|(key, bytes)| (key.clone(), bytes.clone())),
+                );
+                self.files.retain(|key, _| !graph_key(key));
+                self.stable.retain(|key, _| !graph_key(key));
+            }
+            Some((left, next)) => self.root_fault = Some((left - 1, next)),
+            None => {}
+        }
+        if self.graph_io && self.root != RootState::Bound {
+            Err(IoFailure {
+                kind: ErrorKind::Io,
+                completed: false,
+                operation: Some("GraphRootMoved"),
+                os_error: None,
+            })
+        } else {
+            Ok(())
         }
     }
 
@@ -401,12 +480,14 @@ impl HostIo for ModelFs {
 
     fn read_page(&mut self, page: &str) -> IoResult<Text> {
         self.run(Phase::Read, |fs| {
+            fs.root_step()?;
             Ok(fs.files.get(&format!("graph/{page}")).cloned())
         })
     }
 
     fn page_temp(&mut self, page: &str, bytes: &Text) -> IoResult<()> {
         self.run(Phase::PageTemp, |fs| {
+            fs.root_step()?;
             set(&mut fs.files, &format!("temp/page/{page}"), bytes.clone());
             Ok(())
         })
@@ -414,6 +495,7 @@ impl HostIo for ModelFs {
 
     fn page_rename(&mut self, page: &str) -> IoResult<()> {
         self.run(Phase::PageRename, |fs| {
+            fs.root_step()?;
             let bytes = fs.files.remove(&format!("temp/page/{page}"));
             fs.publications.insert(page.into(), bytes.clone());
             set(&mut fs.files, &format!("graph/{page}"), bytes);
@@ -425,6 +507,7 @@ impl HostIo for ModelFs {
 
     fn page_sync(&mut self, page: &str) -> IoResult<Witness> {
         self.run(Phase::PageSync, |fs| {
+            fs.root_step()?;
             if fs.weak_graph {
                 return Ok(Witness::Unsupported);
             }
@@ -466,6 +549,7 @@ impl HostIo for ModelFs {
     fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult {
         let removed = self.files.get(&format!("graph/{page}")).cloned();
         let result = self.run(Phase::TrashMove, |fs| {
+            fs.root_step()?;
             let source = format!("graph/{page}");
             if !fs.files.contains_key(&source) {
                 fs.publications.insert(page.into(), None);
@@ -515,6 +599,7 @@ impl HostIo for ModelFs {
 
     fn trash_sync(&mut self, page: &str, payload: &str) -> IoResult<Witness> {
         self.run(Phase::TrashSync, |fs| {
+            fs.root_step()?;
             let key = format!("trash/{page}/{payload}");
             if !fs.files.contains_key(&key) {
                 return Ok(Witness::Durable); // R-PURGE: nothing left to keep

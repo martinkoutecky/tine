@@ -2,6 +2,7 @@
 // persisting the choice so it reopens next launch.
 
 import { closeAllWorkspaceWindows } from "./workspaceWindows";
+import { refreshRootRecovery } from "./rootRecoveryState";
 import { backend, type CustomCssChange, type GraphConfigChange } from "./backend";
 import { captureBinding, bindingCurrent } from "./binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "./owned";
@@ -289,7 +290,9 @@ export async function loadGraphPath(
     waitingToast = pushToast(msg("toast-graph-open-owner-waiting", { progress }), "info", { sticky: true });
   }).catch(() => () => {});
   try {
-    result = await backend().loadGraph(path);
+    const loadArgs: [string, { relocatedFrom: string }?] = path !== requestedPath
+      ? [path, { relocatedFrom: requestedPath }] : [path];
+    result = await backend().loadGraph(...loadArgs);
   } catch (error) {
     // load_graph failed before installing a replacement binding.  Publish a new
     // local generation for the still-bound old graph; the retired viewer stays
@@ -333,6 +336,7 @@ export async function loadGraphPath(
   // The shared config door publishes the title format before meta/epoch,
   // then starts derived reads in that epoch (including force refresh).
   applyConfigDerivedState(meta, null);
+  void refreshRootRecovery();
   const configProblem = "config_problem" in result ? result.config_problem : null;
   setGraphConfigProblem(configProblem);
   if (configProblem) reportUiFailure("config-read", configProblem);

@@ -9,6 +9,9 @@ const backupBackend = vi.hoisted(() => ({
   getBackupKeep: vi.fn(),
   listBackups: vi.fn(),
   setBackupKeep: vi.fn(),
+  confirm: vi.fn(async (_message: string, _options: unknown) => false),
+  restoreBackup: vi.fn(),
+  deleteOldBackups: vi.fn(),
   // Settings reads the quick share gate on mount (the Sharing tab); off here.
   quickShareList: vi.fn(async () => ({ enabled: false, account: null, shares: [], error: null })),
 }));
@@ -40,6 +43,25 @@ afterEach(() => {
 });
 
 describe("Backups settings", () => {
+  it("names the old graph location before restore or deletion and requires confirmation", async () => {
+    backupBackend.getBackupKeep.mockResolvedValue(12);
+    backupBackend.listBackups.mockResolvedValue([{ id:"old:notes-key:zip:2026-07-22_12-00-00", stamp:"2026-07-22_12-00-00",files:1,status:"ok",old_root:"/old/notes" }]);
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <Settings />,root);
+    openSettings("backups");
+    await vi.waitFor(() => expect(root.textContent).toContain("Made when the graph was at /old/notes"));
+    const button = (text: string) => [...root.querySelectorAll("button")].find(b=>b.textContent === text)!;
+    button("Restore").click();
+    await vi.waitFor(() => expect(backupBackend.confirm).toHaveBeenCalled());
+    expect(backupBackend.confirm.mock.calls.at(-1)?.[0]).toContain("Made when the graph was at /old/notes");
+    expect(backupBackend.restoreBackup).not.toHaveBeenCalled();
+    await tick();
+    button("Delete old-location backups").click();
+    await vi.waitFor(() => expect(backupBackend.confirm.mock.calls).toHaveLength(2));
+    expect(backupBackend.confirm.mock.calls.at(-1)?.[0]).toContain("/old/notes");
+    expect(backupBackend.deleteOldBackups).not.toHaveBeenCalled();
+    dispose();
+  });
   it("reports a retention write failure after the graph changes", async () => {
     backupBackend.getBackupKeep.mockResolvedValue(12);
     backupBackend.listBackups.mockResolvedValue([]);

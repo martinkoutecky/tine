@@ -3,6 +3,56 @@
 # Strings use the JSON-compatible TOML basic-string subset enforced by i01.
 
 [[site]]
+file = "src-tauri/src/root_identity.rs"
+fn = "relocate_namespaces"
+domain = "app"
+guard = ""
+test = "src-tauri/src/root_identity.rs#relocation_is_idempotent_and_preserves_sealed_bytes"
+oracle = false
+note = "Delete only the disposable old launch checkpoint; all other device state uses independent app-data renames before host attachment."
+mutations = "fs::remove_file=1"
+
+[[site]]
+file = "src-tauri/src/root_identity.rs"
+fn = "remove_skeleton"
+domain = "app"
+guard = ""
+test = "src-tauri/src/root_identity.rs#adoption_requires_an_empty_target_and_moves_the_whole_census"
+oracle = false
+note = "Remove only a census-empty app-data namespace and known empty children under exclusion; never delete vehicles or graph files."
+mutations = "fs::remove_dir=2"
+
+[[site]]
+file = "src-tauri/src/root_identity.rs"
+fn = "rename_empty_target"
+domain = "app"
+guard = ""
+test = "src-tauri/src/root_identity.rs#relocation_never_merges_nonempty_namespaces"
+oracle = false
+note = "App-data rename under iOS graph-load exclusion or both desktop owner locks plus stopped current host. Parent sync uses the private-directory recipe."
+mutations = "device_io::move_file_noreplace=1, device_io::sync_private_directory=1, fs::remove_dir=1"
+
+[[site]]
+file = "src-tauri/src/backup/old_locations.rs"
+fn = "delete_old_snapshots"
+domain = "app"
+guard = ""
+test = "src-tauri/src/backup/restore.rs#l9_old_location_backups_restore_verified_bytes_without_rewriting_the_zip"
+oracle = false
+note = "Explicit confirmed removal of recognized snapshots in a revalidated old app-data namespace, under its backup lock. Keep the lock inode for existing waiters. No graph mutation."
+mutations = "device_io::sync_private_directory=2, fs::remove_dir_all=1, fs::remove_file=1"
+
+[[site]]
+file = "src-tauri/src/device_io.rs"
+fn = "sync_private_directory"
+domain = "primitive"
+guard = ""
+test = "src-tauri/src/root_identity.rs#relocation_is_idempotent_and_preserves_sealed_bytes"
+oracle = false
+note = "App-data caller of the existing shared directory witness; Unsupported is reported instead of accepted as strong. No new sync primitive or graph path."
+mutations = "directory_durability::sync_directory_witness=1"
+
+[[site]]
 file = "crates/tine-store/src/root_binding.rs"
 fn = "identity"
 domain = "primitive"
@@ -1481,7 +1531,7 @@ guard = ""
 test = ""
 oracle = false
 note = "Private application owner namespace setup (permissions 0700), outside graph."
-mutations = ".create=1, fs::create_dir_all=1"
+mutations = ".create=1, fs::create_dir_all=2"
 
 [[site]]
 file = "src-tauri/src/owner/serve.rs"

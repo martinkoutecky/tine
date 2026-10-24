@@ -162,6 +162,12 @@ impl HostRetirement {
         root: &std::path::Path,
     ) -> Option<(Arc<tine_store::Store>, PageHostSlot, Option<Lease>)> {
         let slot = self.0.retiring.lock().unwrap().get(root).cloned()?;
+        // A pathname can name a different directory by the time it reopens.
+        // Preserve this host in retirement until its drafts have custody;
+        // the opener must then capture a fresh Store/root witness.
+        if slot.store.check_graph_root().is_err() {
+            return None;
+        }
         let mut host = slot.host.write().unwrap_or_else(|e| e.into_inner());
         {
             let mut retiring = self.0.retiring.lock().unwrap();
@@ -191,7 +197,7 @@ impl HostRetirement {
     }
 
     /// Wait up to `bound` until no other retiring root overlaps `root`
-    /// (`root` itself is adopted, not waited for). `waiting` runs once,
+    /// (`root` itself is adopted only while its binding is intact). `waiting` runs once,
     /// with the root still saving, when the wait has to begin. The root
     /// still retiring past the bound comes back.
     pub(crate) fn wait_overlapping(
@@ -201,9 +207,13 @@ impl HostRetirement {
         waiting: impl FnOnce(&std::path::Path),
     ) -> Result<(), PathBuf> {
         let deadline = Instant::now() + bound;
+        let exact = self.0.retiring.lock().unwrap().get(root).cloned();
+        // Probe outside the retirement-map lock: a network volume's metadata
+        // call must not hold up the other graphs' retirement bookkeeping.
+        let wait_same = exact.is_some_and(|slot| slot.store.check_graph_root().is_err());
         let mut waiting = Some(waiting);
         let mut retiring = self.0.retiring.lock().unwrap();
-        while let Some(saving) = overlap(&retiring, root, false) {
+        while let Some(saving) = overlap(&retiring, root, wait_same) {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 return Err(saving);
@@ -262,6 +272,29 @@ mod tests {
     use std::sync::atomic::AtomicBool;
     use std::sync::{mpsc, Barrier, Mutex, RwLock};
     use tine_store::{EditKind, Input, PageHost, PageId, PageMail, Store};
+
+    #[test]
+    fn l9_a_detached_retiring_host_is_waited_for_instead_of_adopted() {
+        let f = Fixture::new("root-replaced");
+        let retirement = HostRetirement::default();
+        let slot = Arc::new(GraphSlot::new(f.store.clone(), f.root.clone()));
+        retirement
+            .0
+            .retiring
+            .lock()
+            .unwrap()
+            .insert(f.root.clone(), slot);
+        std::fs::rename(&f.root, f.dir.join("moved")).unwrap();
+        std::fs::create_dir(&f.root).unwrap();
+        assert!(
+            retirement.adopt(&f.root).is_none(),
+            "a reopen needs a fresh root witness"
+        );
+        assert_eq!(
+            retirement.wait_overlapping(&f.root, Duration::from_millis(10), |_| {}),
+            Err(f.root.clone())
+        );
+    }
 
     struct Fixture {
         dir: PathBuf,

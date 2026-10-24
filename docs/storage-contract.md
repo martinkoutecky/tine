@@ -145,7 +145,7 @@ paths fail for retry; paths proved outside refuse access. Path identity remains
 an assumption between the final check and the OS call: the accepted R1 window
 also includes a folder retarget in those microseconds.
 
-Graph-root identity work (L9-01/L9-02, preparatory store boundary): a live
+Graph-root identity (L9-01/L9-02): a live
 `Graph` and an isolated native host adapter bind the root directory's physical
 identity at open/attach. The shared graph write-target guard checks that witness;
 external-assets writes also check the graph binding. Unix holds a directory fd
@@ -153,12 +153,62 @@ and compares device/inode; Windows compares volume and full file id with
 delete-sharing opens. Missing or replaced roots fail as `GraphRootMoved`, which
 the host reports as an I/O failure and keeps the input available for its ordinary
 device draft. It does not change the persisted canonical-path identity.
+For an already open page, a failed physical target lookup does not refuse
+otherwise valid input before admission when the root witness proves detachment:
+serialization uses the validated page id and host comparison bytes, preserving
+the content firewalls. The guarded save then fails into ordinary draft custody.
+A bound root retains its existing target/symlink admission checks. This fallback
+adds a root probe only to failed target lookups, with no successful-edit I/O.
 Graph directory creation takes an existing graph/approved-assets bound, never
-creates that bound, and creates missing descendants one level at a time. The
-runtime binding is not yet a complete root-write invariant: restore's capability
-path, model root faults, namespace relocation/adoption, sticky UI and native
-platform proof remain pending. The lane stopped over unavailable Windows
-old-key owner arbitration; this is not a claim that L9-01/L9-02 is complete.
+creates that bound, and creates missing descendants one level at a time.
+Restore's capability path checks the same binding before reserving recovery and
+before moving or publishing each file. ModelFs has Gone/Replaced epochs and
+syscall-boundary root faults; native tests replay phase-boundary root moves.
+Reopening also refuses to adopt a retiring Store whose binding is detached:
+it waits for that host's draft-preserving stop, then captures a fresh witness.
+The accepted final check-to-OS-call race remains; this is not handle-relative
+publication or native power-cut proof. Android FUSE inode stability and Windows
+runtime/cost acceptance still require device evidence.
+
+Device state keeps its existing canonical-path keys and formats. An iOS-only
+validated container-UUID rebase independently renames drafts, both legacy and
+zip backup namespaces, sessions, notices, workspaces, v1 drafts and concord
+ledgers before host attachment; the obsolete launch checkpoint is deleted.
+Settings paths and asset-approval keys use the existing atomic settings door.
+Only empty targets can be removed; nonempty namespaces never merge, and each
+failed step is diagnosed without refusing the graph open. Sealed zips stay
+byte-for-byte unchanged; only iOS accepts their validated pre-rebase root.
+
+After open, background orphan detection reads device draft namespaces and
+checks known old roots, without reading graph contents. Each namespace needs
+one listing plus at most two listings of its known skeleton subdirectories;
+the census is bounded by 3G+1 listings, with zero work per edit. Nonempty drafts
+whose old root is unknown or no longer canonical get a sticky per-open notice:
+Recover into this graph / Not now. Dismissal is not persisted. Explicit recovery
+stops the current host through the saved-stop barrier, holds both desktop owner
+locks, renames only into a census-empty target, and relaunches ordinary draft
+recovery. Base mismatches remain conflicts. A failed stop, uncheckable census,
+held old lock or unavailable current owner lease refuses recovery, keeping drafts.
+
+Linux and macOS use the existing account owner namespace; Windows now uses
+SHGetKnownFolderPath(FOLDERID_LocalAppData)/tine/owners, independent of the
+environment and app identifier, with the existing exclusive LockFileEx lock.
+Its directories inherit the account Known Folder ACL; the owners directory and
+its tine parent must be real directories without reparse attributes. This cheap
+check supplies honest-instance exclusion; it is not a new checked-DACL endpoint.
+The Windows endpoint remains unsupported. Contention refuses open through the
+same translated app-owner error as Unix; lock errors still diagnose and open without a
+lease. Single-instance forwarding is not exclusion. iOS and Android retain
+Unsupported: one process per app with per-app sandboxed app data. A five-target
+guard pins desktop locks versus mobile sandbox exclusion. Stable and Beta
+contend for the same graph lock on all desktop targets.
+
+Backups from old locations are discovered only on opening Backups: a matching
+basename namespace must have a newest manifest whose root no longer resolves.
+Rows name that old path. Restore confirms it, verifies the original manifest
+and checksums, takes a safety snapshot of the current graph and uses Store's
+guarded restore. Explicit deletion removes recognized snapshots under their
+namespace lock, retaining the lock inode so existing waiters cannot split owners.
 
 At an absent-to-present save only, the host checks the latest published logical
 claimants and the transaction's bounded unreadable-owner predicate, as well as
@@ -191,7 +241,7 @@ checkpoint (ADR 0070) it answers from the checkpoint until the launch diff ends.
 `whole_graph_reconciled()` never serves the checkpoint: it waits for the launch
 diff, for graph-wide destructive operations and for a one-shot lookup that
 missed in the checkpoint (a cold-start `tine://` link, GH #181). The public operation
-surface is 48 operations: the methods of `Store` and `Transaction` plus every
+surface is 49 operations: the methods of `Store` and `Transaction` plus every
 public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
 The graph-command boundary guard lives at `crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is
@@ -925,7 +975,7 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::page_create_checks::Twin` | 1 | A sync-created same-name page appears between page creation and commit; refuse the ambiguous create. |
 | `transaction.rs::creating_save_owner::Twin` | 1 | Audit L8-02: sync or an external editor delivers a title claimant or a possible unreadable owner after an absent page opens. Its creating save rechecks the published name slot and bounded unreadable-owner predicate; refuse publication, name the claimant in the save notice, and retain the proposed bytes in host/draft custody. A move exempts its source; unrelated unreadable files do not refuse creation. |
 | `transaction.rs::page_open_checks::InvalidTarget` | 1 | A page host open (STEP3 §2) names a non-page path, as a malformed link or an external rename leaves it; refuse before the page is registered or anything changes disk. |
-| `transaction.rs::serialize_page::ReadOnly` | 2 | An Org page no longer round-trips after an external edit; keep its bytes and the unsaved editor proposal. R-VCS-MARKERS: a VCS merge by an external writer left unresolved markers; a rewrite would re-indent them and silently lose a side. Only `SaveBase::ResolvingMarkers` (the Concord resolver) passes, and it first stages the old bytes in `logseq/.tine-trash/conflicts/`. |
+| `transaction.rs::serialize_page_at::ReadOnly` | 2 | An Org page no longer round-trips after an external edit; keep its bytes and the unsaved editor proposal. R-VCS-MARKERS: a VCS merge by an external writer left unresolved markers; a rewrite would re-indent them and silently lose a side. Only `SaveBase::ResolvingMarkers` (the Concord resolver) passes, and it first stages the old bytes in `logseq/.tine-trash/conflicts/`. |
 | `transaction.rs::unreadable_owner::UnreadableOwner` | 1 | R-CREATE-UNREADABLE-OWNER (master 69e0a885ddf9 + 69525c055f0b, GH #543): sync delivery, an interrupted external write or malformed imported Markdown/Org leaves a page file Tine cannot read (not UTF-8 where its name lives, an oversized preamble, a permission error) or a directory it cannot list, so the file's page name is unknown; creating a page of a name it could carry would give that name two files once the bad file is repaired. Refuse a name-only creation (`CreateNew` save, `create`, `create_unique` of an ordinary page) only for a name that entry could be (`Graph::unreadable_page_could_own`: its file-name name; its preamble name when that still decodes; otherwise a name its bytes, folded as page names are, contain; any name for an unlistable directory or a file unreadable now; nothing for a FIFO, socket, device, journal or vanished entry), and name the entry. Every other creation, save, move and the watcher proceed. |
 | `transaction.rs::preflight::RepeatedFile` | 1 | A unique filename collides with a fixed step of the same operation; refuse the ambiguous plan. Earlier unique allocations are reserved and later unique steps choose the next free candidate. |
 | `transaction.rs::apply::InvalidTarget` | 1 | A generated unique candidate is no longer a valid target after a concurrent change; refuse that candidate. |
@@ -961,7 +1011,9 @@ by I-9's typed failure paths.
 | Owner / operation family | In-scope scenario and required response |
 |---|---|
 | `tine-store::model` path and graph acquisition | A configured graph or asset directory is retargeted, malformed, or resolves outside the approved root after sync or external editing; refuse reads and writes through that path. |
-| `tine-store::root_binding::RootBinding::check` (R-ROOT-MOVED, L9-02 preparation) | The user, file manager, sync/cloud client or unmounted volume moves, removes or replaces the directory bound at open. Fail guarded writes as `GraphRootMoved`, keep input in host/device-draft custody, and require a reopen. This guard is reached by `checked_write_target`; the complete scope/model/UI/platform proof is pending, not established by this preparatory patch. Proof: `page_host/production_guard_tests.rs` `l9_replaced_root_refuses_creating_save_and_keeps_input`, `l9_vanished_root_fails_with_named_reason_and_durable_draft`; bounded creation: `directory_durability.rs` `l9_directory_creation_never_recreates_a_vanished_bound`. |
+| `tine-store::root_binding::RootBinding::check` (R-ROOT-MOVED, L9-02) | The user, file manager, sync/cloud client or unmounted volume moves, removes or replaces the directory bound at open. Fail writes as `GraphRootMoved`, keep input in host/device-draft custody, show the sticky moved/kept/reopen notice. Shared write-target guards and restore's capability path check the binding. Proof: `production_guard_tests.rs` root cases, `tests/transaction.rs::l9_all_transaction_entry_paths_refuse_a_detached_graph`, `restore.rs::l9_restore_refuses_a_replaced_root_before_reserving_recovery`, ModelFs root schedules and native replay. Device acceptance limits remain above. |
+| `root_identity::is_container_rebase` (L9-01) | Plugin or web content nominates another graph's old namespace. Only iOS may authorize relocation, and only absolute paths with identical prefix and Documents-relative suffix, different valid container UUIDs, and no traversal qualify. Desktop/Android ignore the argument with a diagnostic. Proof: `only_the_container_uuid_can_change`, frontend `graph.test.tsx` rebase forwarding. |
+| `root_identity::recover_orphan_drafts`, desktop owner claim (L9-01) | Concurrent honest instances still host the old or current draft namespace. Desktop recovery requires the current lease and takes the old key's existing owner lock, refuses contention or lock errors, and stops the current host before renaming into an empty census. Mobile uses one-process sandbox exclusion. Windows open contention uses the existing app-owner error with no handover endpoint. Proof: `old_graph_id_uses_the_same_owner_lock_as_the_host`, `adoption_requires_an_empty_target_and_moves_the_whole_census`, five-target guards and `owner/lock.rs` exclusion tests. |
 | `tine-store::store` read, scan and handoff | Graph close revokes queued requests; a symlink, non-file (for the asset opener: neither file nor directory), or escaped path appears after the caller selected it, or sync retargets `assets/`; refuse stale bytes and OS handoff. A failed initial parse withholds an unpublished view. |
 | `tine-store::model::configured_hidden` scope (og T2, master `hidden_parse_failed_closed`) | A torn or hand-broken `config.edn` (sync-service delivery, an external-editor race or crash) leaves `:hidden` malformed or over its limits (unterminated vector, bad string escape, over 256 entries or 64 KiB, nesting over 32): graph-text scope hides all graph text instead of reading "nothing hidden", which would list, index, snapshot and export text the owner excluded. Recovery is fixing `config.edn`; the watcher's config reload restores the scope. A snapshot taken meanwhile holds no graph text and records `hidden_parse_failed_closed`, so its restore retires none (proof `crates/tine-store/tests/store_read.rs` `malformed_hidden_value_hides_all_graph_text`, `src-tauri/src/backup/restore.rs` `failed_closed_hidden_snapshot_records_scope_and_retires_nothing`). A missing `:hidden`, or a non-vector value, hides nothing (OG). |
 | `tine-store::page_host` request answers (step 3b, `Refusal`) | A submit or Discard for a page the host does not hold (`NotHeld`; a frontend or plugin defect, or a request from an earlier window state): refuse and change nothing. A Discard whose disk read fails (`ReadFailed`, SPEC-s2 §4.11 "discard failed"; a disk error), including the read of a running rename's source that the Discard would revert: refuse whole, change neither page, keep the rename's order (proof `crates/tine-store/src/page_host/command_tests.rs` `an_answer_that_did_not_take_its_request_names_why`, `a_discard_whose_partner_source_read_fails_changes_nothing`). A move whose versions are no longer current (`Stale`; newer input in this window raced it): refuse both pages. A move whose receiver draft cannot be written (`DraftFailed`; a full disk or an app-data disk error): refuse and change nothing. |

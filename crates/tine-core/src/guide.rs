@@ -1213,6 +1213,25 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn moved_graph_guide_explains_kept_edits_explicit_recovery_and_old_backups() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for concept in [
+            "never recreates the old graph folder",
+            "Recover into this graph",
+            "Not now",
+            "notice returns on the next open",
+            "earlier location",
+            "safety snapshot of the current graph",
+            "archives are kept unchanged",
+        ] {
+            assert!(
+                files.contains(concept),
+                "missing moved-graph onboarding outcome: {concept}"
+            );
+        }
+    }
+
+    #[test]
     fn unlinked_reference_guide_says_the_highlight_is_clickable() {
         // GH #200 (master 552d988c9): nothing in the UI announces that a
         // highlighted mention is a control, so the Guide has to.

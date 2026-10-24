@@ -180,11 +180,12 @@ function admittedText(key: string, dto: PageDto): void {
 
 /** Bind this window to the graph's page host (after a graph load). A second
  * call for the same binding (a restore relaunched the host) rebinds. */
-export async function bindHost(): Promise<void> {
+export async function bindHost(options: { refreshLoaded?: boolean } = {}): Promise<void> {
   listen();
   watch();
   if (client && bound) {
     await client.rebind();
+    if (options.refreshLoaded) await refreshLoadedHostPages(client);
     hostChanged();
     return;
   }
@@ -203,7 +204,20 @@ export async function bindHost(): Promise<void> {
   bound = true;
   for (const [name, kinds] of early) if (pageByName(name) && kinds.length) next.noteEdit(name, [kinds[0], ...kinds.slice(1)]);
   early.clear();
+  if (options.refreshLoaded) await refreshLoadedHostPages(next);
   hostChanged();
+}
+
+/** After explicit draft adoption, loaded view-only pages also need the new
+ * host's text, including conflicts not yet on disk. Temporarily acquire each
+ * graph page and await its Open answer, without a publication/conflict barrier.
+ * Input was flushed and frozen before the native saved-stop/relaunch. Cost is
+ * one Open/Close per loaded graph page, only on this explicit recovery action. */
+async function refreshLoadedHostPages(c: HostClient): Promise<void> {
+  const names = doc.pages.filter(page => !page.guide && !page.readOnly).map(page => page.name);
+  const releases = names.map(name => c.acquire(name));
+  try { await c.drain(names); }
+  finally { for (const release of releases) release(); }
 }
 
 // The binding's page client and its baseline/tombstone state end with the
@@ -492,7 +506,9 @@ function reportProblems(c: HostClient | null, names: string[]): void {
   for (const name of names) {
     const refusal = c!.refusal(name);
     const notice = c!.notice(name);
-    const text = (refusal && !(typeof refusal === "object" ? SILENT.has(refusal.reason) : SILENT.has(refusal))
+    const text = (notice?.operation === "GraphRootMoved"
+      ? notice.draftError ? msg("root-moved-draft-error") : msg("root-moved-notice") : null)
+      ?? (refusal && !(typeof refusal === "object" ? SILENT.has(refusal.reason) : SILENT.has(refusal))
       ? refusalMessage(name, refusal) : null)
       ?? (notice?.twin ? msg("document-save-twin", { name, existing: notice.twin }) : null)
       ?? (notice?.saveError ? msg("document-save-retrying", { name, step: saveStep(notice) }) : null)

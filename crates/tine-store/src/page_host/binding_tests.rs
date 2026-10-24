@@ -1676,6 +1676,9 @@ mod rename;
 #[path = "binding_apply_tests.rs"]
 mod apply_tests;
 
+#[path = "binding_root_tests.rs"]
+mod root_tests;
+
 #[path = "binding_order_tests.rs"]
 mod order;
 

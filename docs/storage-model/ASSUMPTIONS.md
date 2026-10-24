@@ -17,9 +17,9 @@ does not establish check ordering or root identity.
 | ID | Assumption | Model anchor | Guard (code) | Fault test | Platforms | Status |
 |---|---|---|---|---|---|---|
 | A-PATH-IDENTITY | A page path keeps its file identity; containment is rechecked, root replacement and check-then-act remain gaps | `disk: int -> int` | `crates/tine-store/src/page_host/production_guard.rs#ProductionIo::check_path` | `crates/tine-store/src/page_host/production_guard_tests.rs#l8_01_actual_io_rechecks_after_admission_and_after_temp` | All five; C2 and transaction schedules pending M3 | guarded-untested |
-| A-ROOT-BOUND | Every graph write lands in the directory bound at open, and Tine never creates the graph root or an ancestor | `disk: int -> int` | `crates/tine-store/src/root_binding.rs#RootBinding::check`<br>`crates/tine-store/src/directory_durability.rs#DirectoryCreation::new` | `crates/tine-store/src/page_host/production_guard_tests.rs#l9_replaced_root_refuses_creating_save_and_keeps_input`<br>`crates/tine-store/src/directory_durability.rs#l9_directory_creation_never_recreates_a_vanished_bound` | Preparatory guards on all five; complete scope, restore, ModelFs faults and Android/Windows runtime proof pending. Lane blocked on Windows old-key owner arbitration. | unguarded |
-| A-DRAFT-NAMESPACE | Relaunch finds pre-crash drafts after a root path change | `action launch` | — | — | All five; L9-01, C5 pending | unguarded |
-| A-ONE-HOST | One host owns a graph and its drafts | `alive: bool` | — | — | Linux/macOS arbitration exists; Windows/iOS/Android lack it (L9-12) | unguarded |
+| A-ROOT-BOUND | Application graph writes check the directory bound at open; Tine never creates the graph root or an ancestor | `disk: int -> int` | `crates/tine-store/src/root_binding.rs#RootBinding::check`<br>`crates/tine-store/src/directory_durability.rs#DirectoryCreation::new` | `crates/tine-store/src/page_host/production_guard_tests.rs#l9_replaced_root_refuses_creating_save_and_keeps_input`<br>`crates/tine-store/src/directory_durability.rs#l9_directory_creation_never_recreates_a_vanished_bound`<br>`crates/tine-store/src/restore.rs#l9_restore_refuses_a_replaced_root_before_reserving_recovery`<br>`crates/tine-store/src/page_host/native_conformance_tests.rs#l9_native_and_model_refuse_the_same_detached_root_phases`<br>`crates/tine-store/src/page_host/binding_root_tests.rs#l9_input_typed_after_root_moves_reaches_durable_custody` | All five guards; ModelFs root epochs and native phase replay, plus real host admission after detachment. Android FUSE stability and Windows runtime/cost remain unverified; accepted final check-to-OS race remains. Developer export and git are outside this application-content guard. | guarded-untested |
+| A-DRAFT-NAMESPACE | Relaunch finds pre-crash drafts after a root path change | `action launch` | `src-tauri/src/root_identity.rs#adopt_namespace` | `src-tauri/src/root_identity.rs#relocation_is_idempotent_and_preserves_sealed_bytes`<br>`src-tauri/src/root_identity.rs#adoption_requires_an_empty_target_and_moves_the_whole_census` | Existing formats; validated iOS auto-relocation, explicit orphan recovery elsewhere. iOS device rebase remains unverified. | guarded-untested |
+| A-ONE-HOST | One host owns a graph and its drafts | `alive: bool` | `src-tauri/src/owner/lease.rs#claim` | `src-tauri/src/root_identity.rs#old_graph_id_uses_the_same_owner_lock_as_the_host` | Linux/macOS/Windows account locks; iOS/Android one-process sandbox exclusion. Lock errors retain diagnosed fail-open; recovery refuses without the current desktop lease. Windows runtime remains unverified. | guarded-untested |
 | A-DIRSYNC | Directory sync settles names; withdraw trash creation lacks the sync; root/parent identity is unbound | `action dirSync` | `crates/tine-store/src/directory_durability.rs#create_dir_all_durable` | `crates/tine-store/tests/directory_durability_guard.rs#directory_sync_has_one_owner_and_no_discarded_result` | All five; withdraw L9-13 and C6 power fault pending | unguarded |
 | A-ATOMIC-READ | Reads return a whole version; torn-base conflict safety is unverified | `disk: int -> int` | — | — | All five; in-place writer C7 pending | assumed-outside |
 | A-DRAFT-DURABLE | App-data drafts are durable on a strong backing store | `drafts: int -> Draft` | `crates/tine-store/src/page_host/production.rs#ProductionIo::draft_sync` | `crates/tine-store/src/page_host/native_conformance_tests.rs#native_committed_scenarios_in_four_profiles` | All five; Windows private directory sync and tmpfs classification L9-15 remain gaps | guarded-untested |
@@ -49,9 +49,9 @@ OS aborts and the native adapter's pre-phase faults are separate from model
 power cuts; the four evidence classes and their limits are listed in
 [README.md](README.md#evidence-classes-and-semantic-conformance).
 
-- A-ROOT-BOUND follow-up: L9-02, RootBinding and bounded creation.
-- A-DRAFT-NAMESPACE follow-up: L9-01, stable draft/backup namespace.
-- A-ONE-HOST follow-up: L9-12, arbitration on the other three platforms.
+- A-ROOT-BOUND follow-up: Android FUSE stability and Windows runtime/cost acceptance.
+- A-DRAFT-NAMESPACE follow-up: iOS app-update rebase device acceptance.
+- A-ONE-HOST follow-up: visible warning on diagnosed fail-open (L9-12).
 - A-DIRSYNC follow-up: L9-13, durable withdraw trash directory creation.
 
 ## Mutation ledger
@@ -76,9 +76,12 @@ part of the same follow-up work, not a production fix in M0/M1:
 The shared `checked_write_target` now checks a process-local root witness;
 graph mkdir callers pass a bound and create descendants one level at a time.
 `Graph::withdraw_file_to_conflict_if` uses that bounded durable creation too.
-This preparatory delta does not close A-ROOT-BOUND or A-DIRSYNC: restore's
-capability path and a complete mutation/root-fault replay remain unverified.
-No formal model, model hash or existing proof claim changes here.
+Restore now checks the same binding at entry/reservation and each file move or
+publication. ModelFs adds Bound/Gone/Replaced epochs and root faults between
+modeled syscalls; native conformance replays the graph phase-boundary schedules.
+The interior native directory-creation race is covered separately. The model
+extension is executable adapter evidence, not a change to the formal s3.5 model,
+its hash or proof claim. A-DIRSYNC's unrelated withdraw/power obligations remain.
 
 `crates/tine-store/tests/write_sites.toml` classifies every syntactically found
 production mutation owner in tine-store, tine-graph-features, src-tauri Rust,
@@ -95,9 +98,11 @@ presence remain reviewed evidence: no taint analysis, call graph, ordering
 proof or dynamic primitive hook is claimed. HostIo helpers have `oracle=false`;
 only actual mutating seam methods have `oracle=true`. The oracle still does
 not cover transactions, restore, publish, purge or git (environment writes).
-M2–M4 environment faults and richer ModelFs are pending; none are added here.
+M2–M4 obligations beyond the L9 root epoch schedules remain pending.
 
-Per-edit cost: zero bytes, files, syscalls and transport bytes; tests/docs only.
+L9 per edit adds zero bytes/files/transport. Root checks add metadata calls at
+graph I/O boundaries (seven checks for the ordinary measured native save), and
+open-time namespace discovery is bounded by the device graph list. See receipt.
 
 Real-window conformance coverage (F1/F6):
 `src/document/host/nativeConformance.test.ts` drives the actual TS wiring/client

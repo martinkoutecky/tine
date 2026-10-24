@@ -73,6 +73,10 @@ export interface MessageArgs {
   "backend-backend-choose-a-file": {};
   "backend-backend-open-graph-folder": {};
   "backend-backend-tine": {};
+  "backup-delete-old": {};
+  "backup-delete-old-confirm": { "path": string | number };
+  "backup-delete-old-failed": { "error": string | number };
+  "backup-old-location": { "path": string | number };
   "backup-restore-confirmation": { "files": string | number; "when": string | number };
   "backup-restore-restore-failed": { "error": string | number };
   "backup-restore-restore-failed-part-way": { "error": string | number };
@@ -956,6 +960,7 @@ export interface MessageArgs {
   "graph-open-failure-couldn-t-open-the-graph": { "detail": string | number };
   "graph-open-failure-retry": {};
   "graph-open-graph": {};
+  "graph-open-other-app": {};
   "graph-page-already-exists-merge-into": { "from": string | number; "to": string | number };
   "graph-page-s-still-have-edits-that-are": { "count": number; "pages": string | number };
   "graph-pdf-changes-couldn-t-be-saved-the": {};
@@ -2188,6 +2193,17 @@ export interface MessageArgs {
   "right-sidebar-sidebar": {};
   "right-sidebar-sidebar-item-actions": {};
   "right-sidebar-this-block-is-no-longer-available": {};
+  "root-moved-draft-error": {};
+  "root-moved-notice": {};
+  "root-recovery-current-unsaved": {};
+  "root-recovery-earlier-location": {};
+  "root-recovery-failed": { "error": string | number };
+  "root-recovery-lock-unavailable": {};
+  "root-recovery-not-now": {};
+  "root-recovery-notice": { "location": string | number };
+  "root-recovery-owner-held": {};
+  "root-recovery-recover": {};
+  "root-recovery-unavailable": {};
   "router-close-pinned-tab": { "title": string | number };
   "row-chrome-collapse-all-descendants": {};
   "row-chrome-expand-all-descendants": {};

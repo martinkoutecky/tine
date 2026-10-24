@@ -62,6 +62,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Moving a graph preserves access to device-local unsaved edits through **Recover into this graph**, lists backups from its earlier location, and stops saves when an open folder moves, is replaced or disconnects (L9-01, L9-02).
+- Windows now holds the same account-wide graph owner lock as Linux and macOS, so concurrent Tine apps cannot host one graph or adopt its live drafts (L9-01, L9-02).
+
 - An asset stays in place if sync replaces a set-aside duplicate journal while Tine checks whether the asset is unused; the check refuses stale bytes even when the replacement keeps the same length and modification time (GH #623).
 
 ## [0.8.0-beta.12] - 2026-10-24

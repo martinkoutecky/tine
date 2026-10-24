@@ -6,6 +6,16 @@ use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 
+impl crate::Store {
+    /// Check the directory witness taken at open before reusing a retiring
+    /// Store at the same path. Graph writes also check the witness at their
+    /// existing guarded boundaries. One metadata probe on Unix; one identity
+    /// open/query on Windows. No persisted identity or new path is exposed.
+    pub fn check_graph_root(&self) -> Result<(), crate::IoError> {
+        self.graph.root_binding.check().map_err(Into::into)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct GraphRootMoved;
 

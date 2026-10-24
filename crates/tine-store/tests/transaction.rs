@@ -117,6 +117,74 @@ fn refused(outcome: TxOutcome) -> (Why, tine_store::Rollback) {
     }
 }
 
+#[test]
+fn l9_all_transaction_entry_paths_refuse_a_detached_graph() {
+    for replaced in [false, true] {
+        for operation in ["create", "replace", "move", "trash", "asset", "config"] {
+            let f = Fixture::with_watch(
+                WatchMode::Poll,
+                &[
+                    ("pages/A.md", b"- original\n"),
+                    ("logseq/config.edn", b"{}\n"),
+                ],
+            );
+            let page = f.id(Area::Pages, "A.md");
+            let rev = f.rev(&page);
+            let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
+            match operation {
+                "create" => {
+                    tx.create(
+                        &f.id(Area::Pages, "New.md"),
+                        Content::Bytes(b"- new\n".to_vec()),
+                    );
+                }
+                "replace" => {
+                    tx.replace(&page, rev, b"- new\n".to_vec());
+                }
+                "move" => {
+                    tx.move_file(&page, rev, &f.id(Area::Pages, "Moved.md"), None);
+                }
+                "trash" => {
+                    tx.trash(&page, rev, tine_store::TrashIf::Any);
+                }
+                "asset" => {
+                    tx.create(
+                        &f.id(Area::Assets, "new.bin"),
+                        Content::Bytes(vec![1, 2, 3]),
+                    );
+                }
+                "config" => {
+                    let file = f.id(Area::Meta, "config.edn");
+                    tx.replace(&file, f.rev(&file), b"{:foo true}\n".to_vec());
+                }
+                _ => unreachable!(),
+            }
+            let moved = f.root.with_extension("moved");
+            fs::rename(&f.root, &moved).unwrap();
+            if replaced {
+                fs::create_dir(&f.root).unwrap();
+            }
+            let outcome = tx.commit();
+            let original = fs::read(moved.join("pages/A.md")).unwrap();
+            let untouched = if replaced {
+                fs::read_dir(&f.root).unwrap().count() == 0
+            } else {
+                !f.root.exists()
+            };
+            if replaced {
+                fs::remove_dir(&f.root).unwrap();
+            }
+            fs::rename(moved, &f.root).unwrap();
+            assert!(
+                matches!(outcome, TxOutcome::NotCommitted { .. }),
+                "{operation}/{replaced}: {outcome:?}"
+            );
+            assert_eq!(original, b"- original\n");
+            assert!(untouched, "detached path changed: {operation}/{replaced}");
+        }
+    }
+}
+
 /// F3: different step orders and payloads at every existing apply/second-guard
 /// seam. Baselines displaced by us must survive; a baseline overwritten by the
 /// external actor itself is superseded (not a promise to archive external edits).

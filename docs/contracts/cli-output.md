@@ -483,6 +483,13 @@ owner newer than this `tine`) exits `1`, like `internal`.
 | `uncertain` | 8 | admitted, outcome unknown (the connection was lost after the request was sent; `tine serve --stop`) |
 | `internal` | 1 | an owner bug or unnamed failure; the message leads with a diagnostic id |
 
+Windows still has no CLI endpoint, but the app now takes the account-wide graph
+owner lock under Known Folder LocalAppData/tine/owners. Another holder refuses
+the app open through the existing app-owner error; no Windows handover is
+attempted. Lock errors retain the diagnosed fail-open policy. Linux/macOS keep
+their existing lock and endpoint; iOS/Android rely on one process per sandboxed
+app. See `docs/storage-contract.md` (L9-01/L9-02).
+
 **Refusal reasons** (`detail.reason`, and `refused:<reason>` in the text):
 
 | reason | when |

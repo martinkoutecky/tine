@@ -380,9 +380,13 @@ fn refusal_text(body: &ErrorBody) -> String {
             application-data directory, so its unsaved work could not be recovered here. \
             Stop it with `tine serve --stop`, then open the graph again."
             .into(),
-        "app-owner" => "The graph is open in another Tine window.".into(),
+        "app-owner" => app_owner_refusal(),
         _ => body.message.clone(),
     }
+}
+
+pub(crate) fn app_owner_refusal() -> String {
+    "graph-app-owner".into()
 }
 
 /// Probe the owner's state on a thread of its own; its answer (or `None`)

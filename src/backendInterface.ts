@@ -63,7 +63,11 @@ export interface Backend {
   graphBindingGeneration(): number;
   inspectGraphAccess(path: string): Promise<GraphAccessInspection>;
   approveExternalAssets(graphRoot: string, assetsPath: string): Promise<void>;
-  loadGraph(path: string): Promise<LoadGraphResult>;
+  loadGraph(path: string, options?: { relocatedFrom: string }): Promise<LoadGraphResult>;
+  /** Native-only, background app-data census after open; never scans the graph. */
+  orphanDrafts?(): Promise<{ id: string; old_root: string | null }[]>;
+  /** Explicit recovery, with both desktop owner locks and a stopped clean host. */
+  recoverOrphanDrafts?(id: string, consumedLastId: number): Promise<{ error: string | null; reloaded: { session: number; nextId: number } | null }>;
   openGraphWindow(path: string): Promise<LoadGraphResult>;
   startupGraphPath(): Promise<string | null>;
   tineLinks?: NativeTineLinks;
@@ -629,6 +633,8 @@ export interface Backend {
   setWatchMode(mode: string): Promise<void>;
   /** Available snapshots for the current graph, newest first. */
   listBackups(): Promise<BackupInfo[]>;
+  /** Native only: delete snapshots at a revalidated old location under its lock. */
+  deleteOldBackups?(id: string): Promise<void>;
   /** Restore a snapshot (graph text at original paths, config, and sidecars; snapshots current
    *  state first). Destructive — confirm before calling. `consumedLastId`: the
    *  last page-host answer the window consumed. `reloaded` is the session of the

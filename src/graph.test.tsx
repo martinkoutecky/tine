@@ -254,7 +254,7 @@ describe("mobile graph folder picker", () => {
     await expect(harness.loadGraphPath(stale)).resolves.toEqual({ kind: "loaded", root: META.root });
     expect(harness.api.prepareGraphFolder).toHaveBeenCalledWith(stale);
     expect(harness.api.inspectGraphAccess).toHaveBeenCalledWith(META.root);
-    expect(harness.api.loadGraph).toHaveBeenCalledWith(META.root);
+    expect(harness.api.loadGraph).toHaveBeenCalledWith(META.root, { relocatedFrom: stale });
     expect(localStorage.getItem("tine.graphPath")).toBe(META.root);
   });
 

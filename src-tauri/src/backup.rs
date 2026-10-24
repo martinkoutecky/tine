@@ -11,8 +11,15 @@ use tine_store::{is_asset_sidecar, is_graph_text, Area, RestoreFile, Store};
 
 mod archive;
 mod naming;
+mod old_locations;
+pub(crate) use old_locations::delete_old_backups;
+#[cfg(test)]
+use old_locations::delete_old_snapshots;
+use old_locations::{old_backup_roots, old_backup_selection};
 mod restore;
 pub(crate) use restore::restore_backup;
+pub(crate) use restore::restore_hosted;
+pub(crate) use restore::RestoreReply;
 
 // Snapshot the graph's Markdown/Org into the OS app-data dir on open, keeping the
 // last few. Local-only (outside the graph, so Syncthing never sees it); a safety
@@ -1319,6 +1326,8 @@ pub(crate) struct BackupInfo {
     stamp: String,
     files: usize,
     status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    old_root: Option<String>,
 }
 
 #[tauri::command]
@@ -1371,7 +1380,20 @@ pub(crate) async fn list_backups(
         let Some(base) = backup_base_for_root(&app, &root) else {
             return Vec::new();
         };
-        list_backups_from_base(&base, &root)
+        let mut out = list_backups_from_base(&base, &root);
+        if let Some(backups) = base.parent() {
+            for (key, old) in old_backup_roots(backups, &root) {
+                for mut row in
+                    list_backups_from_base(&backups.join(&key), std::path::Path::new(&old))
+                {
+                    row.id = format!("old:{key}:{}", row.id);
+                    row.old_root = Some(old.clone());
+                    out.push(row);
+                }
+            }
+        }
+        out.sort_by(|a, b| b.stamp.cmp(&a.stamp));
+        out
     })
     .await
     .map_err(|error| error.to_string())
@@ -1393,17 +1415,32 @@ fn list_backups_from_base(base: &std::path::Path, root: &std::path::Path) -> Vec
         let name = record.name.snapshot_name();
         let info = match record.namespace {
             naming::Namespace::Legacy => match read_manifest(&record.path) {
-                Some(manifest) if manifest.root == current_root => BackupInfo {
-                    id: format!("dir:{name}"),
-                    files: manifest.files.len(),
-                    stamp: name,
-                    status: "ok",
-                },
+                Some(manifest)
+                    if crate::root_identity::backup_root_matches(
+                        &manifest.root,
+                        std::path::Path::new(&current_root),
+                    ) =>
+                {
+                    BackupInfo {
+                        id: format!("dir:{name}"),
+                        files: manifest.files.len(),
+                        stamp: name,
+                        status: "ok",
+                        old_root: None,
+                    }
+                }
                 _ => continue,
             },
             naming::Namespace::Zip => {
                 let (files, status) = match zip_listing(&record.path) {
-                    Ok(manifest) if manifest.root == current_root => (manifest.files.len(), "ok"),
+                    Ok(manifest)
+                        if crate::root_identity::backup_root_matches(
+                            &manifest.root,
+                            std::path::Path::new(&current_root),
+                        ) =>
+                    {
+                        (manifest.files.len(), "ok")
+                    }
                     Ok(_) | Err(archive::Problem::Io(ErrorKind::NotFound)) => continue,
                     Err(archive::Problem::Unsupported(_)) => (0, "unsupported"),
                     Err(_) => (0, "damaged"),
@@ -1413,6 +1450,7 @@ fn list_backups_from_base(base: &std::path::Path, root: &std::path::Path) -> Vec
                     stamp: name,
                     files,
                     status,
+                    old_root: None,
                 }
             }
         };

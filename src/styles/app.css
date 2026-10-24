@@ -9122,3 +9122,7 @@ html.tine-embed-shading-accent .embed-block {
     gap: 2px;
   }
 }
+.root-recovery-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border-color); }
+.root-recovery-notice > span { min-width: 0; overflow-wrap: anywhere; }
+.settings-backup-origin { display: block; color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.settings-backup-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }

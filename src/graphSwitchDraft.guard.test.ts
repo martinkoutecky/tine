@@ -17,7 +17,7 @@ describe("graph switch keeps the old graph's late edits", () => {
   it("loadGraphPath awaits the last flushAll barrier, aborting on failure, before load_graph and resetStore", () => {
     const flush = graph.indexOf("if (hadGraph && !(await flushAll())) {");
     const abort = graph.indexOf("return { kind: \"aborted\" };", flush);
-    const load = graph.indexOf("await backend().loadGraph(path)", flush);
+    const load = graph.indexOf("await backend().loadGraph(", flush);
     const reset = graph.indexOf("resetStore();", load);
     expect(flush, RULE).toBeGreaterThan(0);
     expect(abort > flush && abort < load && load < reset, RULE).toBe(true);
@@ -25,7 +25,7 @@ describe("graph switch keeps the old graph's late edits", () => {
   });
 
   it("loadGraphPath does not reset the working set over input its old host never answered", () => {
-    const load = graph.indexOf("await backend().loadGraph(path)");
+    const load = graph.indexOf("await backend().loadGraph(");
     const reset = graph.indexOf("resetStore();", load);
     const between = graph.slice(load, reset);
     const late = between.indexOf("unsavedDrafts()");
