@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-all-graphs.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"g Shift+G opens All graphs, arrow keys and Enter switch to another remembered graph, and edits remain saved in their originating graph.","blocking":true,"authority":"GH #758; UI-ALL-GRAPHS-758"}],
+      "acceptableVariations": ["Graph ordering, layout, and save/render latency may vary."],
+      "nonRequirements": ["Exact pixels; remote sync graphs; native certification outside Linux WebKitGTK; new-window actions have component coverage."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-dup-id-row-resolve.mjs": {
       "contracts": [{"class":"exact-safety-interoperability","userOutcome":"With A loaded before B and both files carrying the same authored id, editing B's Linked References or page-embed row changes only B, or the row remains read-only; A stays byte-identical.","blocking":true,"authority":"UI-DUP-ID-ROW-OWNER; D-20261023-VQ; card PVTI_lAHOAAbLVc4BhPsyzhDFdsY"}],
       "acceptableVariations": ["A safely resolved live row and a read-only DTO row are both acceptable; rendering and save latency may vary."],

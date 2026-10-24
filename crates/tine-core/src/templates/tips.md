@@ -4,6 +4,8 @@ icon:: ⌨️
 	- A quick tour of the things that aren't obvious on day one. (Shortcuts are remappable in Settings.)
 	- With a non-Latin keyboard layout, shortcuts and recording use the physical key's Latin letter or digit: **Ctrl+K** still works when that key types **л**. Latin layouts such as AZERTY and Dvorak keep their letter-based shortcuts. Text you type keeps the selected language.
 - ## Find anything — Ctrl+K
+	- To switch graphs, press **g Shift+G**, choose a remembered graph with **Up/Down**, then press **Enter**. **All graphs** is also in the command palette.
+	- While editing a block beside an embedded YouTube video, press **Ctrl/Cmd+Shift+Y** to insert its current playback time, just like **/Embed Youtube timestamp**. The inserted `{{youtube-timestamp N}}` macro becomes a clickable time: click it to seek the matching or last played video. Without a ready player, the shortcut inserts nothing. What you should see: the video jumps to the inserted time when you click it.
 	- **Ctrl+K** opens the quick switcher: jump to a page, search the text of any block, or run a command — all from one box. **Ctrl+Shift+P** opens the command palette (commands only).
 	- **Search page names** searches only page names and aliases; **Search block content** searches only block text. Both commands start unbound: assign keys in **Settings → Shortcuts**, or run them from the command palette.
 	- Use **Ctrl+Shift+K** to search only the focused page, including children hidden under folded bullets. In the ordinary Ctrl+K switcher, press **Shift+Enter** on a page or block to send it to the right sidebar without leaving your current page.

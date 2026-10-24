@@ -10,6 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **All graphs** (GH #758): press **g Shift+G** or run **All graphs** from the command palette, then use the arrow keys and Enter to switch graphs. Graph actions, including opening a new window on desktop, are available from the keyboard.
+- **YouTube timestamp shortcut** (GH #757): **Ctrl/Cmd+Shift+Y** inserts the current playback time into the block you are editing. Click the timestamp to jump the video there, just as with the slash command.
+
 - **Open another view** of a PDF (⋯ menu, desktop) shows two parts of it side by side, each with its own page and zoom. Views of the same PDF now share their highlights: one made, recolored or removed in either view appears in the other at once, including views opened by splitting a pane, a new window or a restored session, which before kept separate copies.
 - **The Linked/Unlinked References count says what it counts** (GH #755): hovering the number shows "N blocks on M pages". The number still counts referencing blocks, as in Logseq, and follows the active filter.
 - **Automatic git commits** (queue cards hBpCy4/hBpb2k, ADR 0078 slice 1): a graph in a git repository can commit its changes automatically (Settings → Graph → Commit changes to git; desktop, off by default). Tine commits after a minute without edits, at most once per interval, on quit, and around renames, merges, deletes and backup restores; it never pushes or pulls 
