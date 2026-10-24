@@ -2,6 +2,34 @@ import { describe, expect, it } from "vitest";
 import { HTML_PASTE_LIMITS, structuredHtmlOutline } from "./htmlPaste";
 
 describe("structuredHtmlOutline", () => {
+  it.each(["md", "org"] as const)("keeps the reporter's copied link in %s", (format) => {
+    expect(structuredHtmlOutline(
+      '<html><head></head><body><a href="https://example.com/page">Example page</a></body></html>',
+      "Example page", format,
+    )).toEqual([{ raw: format === "org" ? "[[https://example.com/page][Example page]]" : "[Example page](https://example.com/page)", children: [] }]);
+  });
+
+  it.each(["md", "org"] as const)("uses %s links inside paragraphs and ignores HTML titles like OG", (format) => {
+    expect(structuredHtmlOutline('<p>See <a href="https://example.com" title="Title">site</a></p>', "See site", format))
+      .toEqual([{ raw: format === "org" ? "See [[https://example.com][site]]" : "See [site](https://example.com)", children: [] }]);
+    expect(structuredHtmlOutline('<a href="https://example.com">https://example.com</a>', "https://example.com", format))
+      .toEqual([{ raw: format === "org" ? "[[https://example.com][https://example.com]]" : "[https://example.com](https://example.com)", children: [] }]);
+  });
+
+  it.each([
+    ["strong", "md", "**word**"], ["em", "md", "_word_"], ["code", "md", "`word`"],
+    ["strong", "org", "*word*"], ["em", "org", "/word/"], ["code", "org", "~word~"],
+    ["b", "org", "*word*"], ["i", "org", "/word/"],
+    ["del", "org", "+word+"], ["s", "org", "+word+"], ["strike", "org", "+word+"],
+  ] as const)("preserves inline %s in %s", (tag, format, expected) => {
+    expect(structuredHtmlOutline(`<${tag}>word</${tag}>`, "word", format))
+      .toEqual([{ raw: expected, children: [] }]);
+  });
+
+  it.each(["javascript:steal()", "vbscript:steal()", "data:text/html,bad"])("declines an unsafe lone href %s", (href) => {
+    expect(structuredHtmlOutline(`<a href="${href}">word</a>`, "word")).toBeNull();
+  });
+
   it("preserves explicit nested lists", () => {
     expect(structuredHtmlOutline(
       "<ul><li>Parent<ul><li>Child <strong>bold</strong></li></ul></li><li>Sibling</li></ul>",
@@ -90,6 +118,8 @@ describe("structuredHtmlOutline", () => {
 
   it("falls back for non-semantic, malformed, deep, and oversized payloads", () => {
     expect(structuredHtmlOutline("<span>plain</span>", "plain")).toBeNull();
+    expect(structuredHtmlOutline("<p>plain</p>", "plain")).toBeNull();
+    expect(structuredHtmlOutline("plain", "plain")).toBeNull();
     expect(() => structuredHtmlOutline("<ul><li>broken", "broken")).not.toThrow();
     const deep = "<div>".repeat(HTML_PASTE_LIMITS.depth + 2) + "x" + "</div>".repeat(HTML_PASTE_LIMITS.depth + 2);
     expect(structuredHtmlOutline(deep, "x")).toBeNull();

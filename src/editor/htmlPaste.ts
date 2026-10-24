@@ -35,6 +35,11 @@ function withinDomBounds(root: ParentNode): boolean {
 /** Deterministically preserve explicit clipboard HTML structure. Returns null
  * when HTML is absent, unsafe/oversized, or no richer than the plain flavor. */
 export function structuredHtmlOutline(html: string, plain: string, format: Format = "md"): OutlineNode[] | null {
+  return structuredHtmlPaste(html, plain, format)?.outline ?? null;
+}
+
+/** Keep inline HTML out of outline insertion: its text belongs at the caret. */
+export function structuredHtmlPaste(html: string, plain: string, format: Format = "md"): { outline: OutlineNode[]; inlineText: string | null } | null {
   if (!html.trim() || new TextEncoder().encode(html).byteLength > HTML_PASTE_LIMITS.inputBytes) return null;
   const safe = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: TAGS,
@@ -44,7 +49,6 @@ export function structuredHtmlOutline(html: string, plain: string, format: Forma
   const doc = new DOMParser().parseFromString(`<body>${safe}</body>`, "text/html");
   if (!withinDomBounds(doc.body)) return null;
   const structural = doc.body.querySelectorAll(STRUCTURAL);
-  if (!structural.length) return null;
 
   const service = new TurndownService({
     bulletListMarker: "-",
@@ -54,6 +58,35 @@ export function structuredHtmlOutline(html: string, plain: string, format: Forma
     strongDelimiter: "**",
   });
   service.use(gfm);
+  // OG 0.10.9 html_parser.cljs:138-148 emits format-aware labelled links,
+  // including URL-equals-label, and ignores the optional HTML title.
+  service.addRule("formattedLink", {
+    filter: "a",
+    replacement: (content, node) => {
+      const href = node.getAttribute("href");
+      if (!href) return content;
+      const label = content.trim();
+      return format === "org" ? `[[${href}][${label}]]` : `[${label}](${href})`;
+    },
+  });
+  if (format === "org") {
+    service.addRule("orgStrong", {
+      filter: ["strong", "b"],
+      replacement: (content) => `*${content}*`,
+    });
+    service.addRule("orgEmphasis", {
+      filter: ["em", "i"],
+      replacement: (content) => `/${content}/`,
+    });
+    service.addRule("orgInlineCode", {
+      filter: (node) => node.nodeName === "CODE" && node.parentNode?.nodeName !== "PRE",
+      replacement: (_content, node) => `~${node.textContent}~`,
+    });
+    service.addRule("orgStrike", {
+      filter: (node) => ["DEL", "S", "STRIKE"].includes(node.nodeName),
+      replacement: (content) => `+${content}+`,
+    });
+  }
   service.addRule("safeImage", {
     filter: "img",
     replacement: (_content, node) => {
@@ -82,7 +115,8 @@ export function structuredHtmlOutline(html: string, plain: string, format: Forma
   if (!markdown || new TextEncoder().encode(markdown).byteLength > HTML_PASTE_LIMITS.outputBytes) return null;
   // A lone wrapper that converts to the exact plain text adds no useful
   // semantics; retain the browser/native plain path in that case.
-  if (structural.length === 1 && markdown === plain.trim()) return null;
+  if (structural.length <= 1 && markdown === plain.trim()) return null;
+  if (!structural.length) return { outline: [{ raw: markdown, children: [] }], inlineText: markdown };
   const outline = parseOutline(markdown);
-  return outline.length ? outline : null;
+  return outline.length ? { outline, inlineText: null } : null;
 }
