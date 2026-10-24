@@ -10,6 +10,7 @@ import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockC
 import { mockQueryCommands } from "./mockQuery";
 import { mockQuickShareCommands } from "./mockQuickShare";
 import { mockPageHost } from "./mockPageHost";
+import { createMockCaptureReceipts } from "./mockCaptureReceipts";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PageModified, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { previewDtoSubtree } from "./previewProjection";
@@ -670,7 +671,6 @@ type MockBackend = Backend & {
   runAdvancedQuery(query: string): Promise<{ groups: RefGroup[]; ran: string[]; ignored: string[]; supported: boolean }>;
 };
 export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((blocks): PageDto => ({ name: CONFLICT_DEMO_PAGE, kind: "page", title: CONFLICT_DEMO_PAGE, pre_block: "title:: Project Plan", blocks })), removeAccents = true): MockBackend {
-  const captureReceipts = new Map<string, "pending" | "saved">();
   const all = [...PAGES, ...NAMED, ...extraPages];
   // Page ownership uses narrow identity; search membership uses the graph fold.
   const identity = (name: string) => name.toLowerCase().normalize("NFC");
@@ -766,15 +766,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async captureTarget() {
       return "main";
     },
-    async captureReceipt(id, action) {
-      if (action === "status") return captureReceipts.get(id) ?? "missing";
-      if (action === "release") { captureReceipts.delete(id); return "saved"; }
-      if (action === "saved") { captureReceipts.set(id, "saved"); return "saved"; }
-      const prior = captureReceipts.get(id);
-      if (prior) return prior;
-      captureReceipts.set(id, "pending");
-      return "new";
-    },
+    captureReceipt: createMockCaptureReceipts(),
     async bindCaptureGraph() {},
     async forgetKnownGraph() {},
     async revealKnownGraph() {},

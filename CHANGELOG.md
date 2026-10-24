@@ -62,6 +62,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Quick Capture keeps refused text on Escape, so reopening the box files it into the current graph; a claim retired before insertion no longer reports previous-graph uncertainty (GH #254). Deleting a conflicted page now refuses an unanswered input drain after five seconds and restores editable text.
 - Reference and embed rows validate their source page before becoming editable, so a copied block identity cannot expose another page's live block or selection (follow-up to GH #748).
 - An asset stays in place if sync replaces a set-aside duplicate journal while Tine checks whether the asset is unused; the check refuses stale bytes even when the replacement keeps the same length and modification time (GH #623).
 
