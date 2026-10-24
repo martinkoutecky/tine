@@ -585,7 +585,14 @@ fn join_into_visible_group(visible: &str, hidden: &str) -> Option<String> {
     if regions.quarantined {
         return None;
     }
-    let region = regions.properties.iter().find(|p| p.primary)?.region;
+    let Some(region) = regions
+        .properties
+        .iter()
+        .find(|p| p.primary)
+        .map(|p| p.region)
+    else {
+        return before_properties_drawer(visible, hidden, &regions);
+    };
     let last = regions
         .properties
         .iter()
@@ -603,6 +610,30 @@ fn join_into_visible_group(visible: &str, hidden: &str) -> Option<String> {
     };
     Some(format!(
         "{}\n{hidden}{cr}{}",
+        &visible[..at],
+        &visible[at..]
+    ))
+}
+
+/// mldoc reads `key:: value` rows directly above a Markdown `:PROPERTIES:` drawer
+/// as one group with it (review round 2, 2026-10-24); below the body they were a
+/// second group, which OG drops.
+fn before_properties_drawer(
+    visible: &str,
+    hidden: &str,
+    regions: &block_regions::BlockRegions,
+) -> Option<String> {
+    let at = visible.find('\n')? + 1;
+    if !regions.properties_drawer_at(visible, at) {
+        return None;
+    }
+    let cr = if visible[..at].ends_with("\r\n") && !hidden.ends_with('\r') {
+        "\r"
+    } else {
+        ""
+    };
+    Some(format!(
+        "{}{hidden}{cr}\n{}",
         &visible[..at],
         &visible[at..]
     ))

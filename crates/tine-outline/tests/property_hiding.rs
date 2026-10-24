@@ -194,6 +194,24 @@ fn a_hidden_row_stays_in_the_block_s_own_property_group() {
     }
 }
 
+/// Review round 2 (2026-10-24): mldoc reads `key:: value` rows directly above a Markdown
+/// `:PROPERTIES:` drawer as one group with it. A hidden row stays above the drawer, never
+/// below the body, where OG would drop it.
+#[test]
+fn a_hidden_row_above_a_markdown_properties_drawer_stays_above_it() {
+    for raw in [
+        "Title\nheading:: true\n:PROPERTIES:\n:owner: Ada\n:END:\nbody",
+        "Title\r\nheading:: true\r\n:PROPERTIES:\r\n:owner: Ada\r\n:END:\r\nbody",
+    ] {
+        let parts = editor_text::split(raw, false, &HidePolicy::Builtin);
+        assert!(!parts.hidden.is_empty(), "{raw:?}");
+        let edited = parts.visible.replacen("Title", "Title X", 1);
+        let out =
+            editor_text::set_text_with_policy(raw, false, &edited, &HidePolicy::Builtin).unwrap();
+        assert_eq!(out, raw.replacen("Title", "Title X", 1), "{raw:?}");
+    }
+}
+
 /// Review R1 (2026-10-24): the text-only splice re-splits the source with the caller's
 /// policy, so a configured key in a LOGBOOK block keeps its exact place.
 #[test]

@@ -319,6 +319,12 @@ pub(crate) fn raw_range(raw: &str, span: &Option<Span>, document: bool) -> Optio
     );
     (r.0 < r.1 && raw.is_char_boundary(r.0) && raw.is_char_boundary(r.1)).then_some(r)
 }
+fn is_properties_drawer(raw: &str, r: &Range) -> bool {
+    r.slice(raw)
+        .lines()
+        .next()
+        .is_some_and(|line| line.trim().eq_ignore_ascii_case(":PROPERTIES:"))
+}
 fn whole_line(raw: &str, r: Range) -> Range {
     let start = raw[..r.0].rfind('\n').map_or(0, |p| p + 1);
     let end = if r.1 > start && raw.as_bytes()[r.1 - 1] == b'\n' {
@@ -908,13 +914,15 @@ impl BlockRegions {
     }
     fn own_org_region(&self, raw: &str) -> Option<usize> {
         let at = self.head_end(raw, true);
-        self.property_regions.iter().position(|r| {
-            (r.0 == at || r.0 == 0)
-                && r.slice(raw)
-                    .lines()
-                    .next()
-                    .is_some_and(|line| line.trim().eq_ignore_ascii_case(":PROPERTIES:"))
-        })
+        self.property_regions
+            .iter()
+            .position(|r| (r.0 == at || r.0 == 0) && is_properties_drawer(raw, r))
+    }
+    /// Whether a `:PROPERTIES:` drawer region starts at `at`.
+    pub fn properties_drawer_at(&self, raw: &str, at: usize) -> bool {
+        self.property_regions
+            .iter()
+            .any(|r| r.0 == at && is_properties_drawer(raw, r))
     }
     fn inserted(&self, raw: &str, at: usize, text: &str) -> String {
         let nl = newline(raw);
