@@ -10,6 +10,7 @@ mod android_safe_back;
 mod android_system_bars;
 mod app_identity;
 mod backup;
+mod capture_receipts;
 mod capture_target;
 #[cfg(desktop)]
 mod cli;
@@ -938,6 +939,7 @@ pub fn run() {
         .manage(workspace_windows::Pending::default())
         .manage(workspace_windows::CloseRequests::default())
         .manage(graph::StartupGraph::default())
+        .manage(capture_receipts::CaptureReceipts::default())
         .manage(deep_links::PendingLinks::default())
         .manage(AppState {
             graphs: RwLock::new(state::GraphRegistry::default()),
@@ -1040,6 +1042,7 @@ pub fn run() {
             workspace_windows::workspace_window_destroy,
             startup_graph_path,
             capture_target,
+            capture_receipts::capture_receipt,
             capture_graph_binding,
             capture_frontend_ready,
             create_graph,

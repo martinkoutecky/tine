@@ -57,3 +57,4 @@ document-wiring-changed-since-was-added-to-it-copy-the-rest-of = “{ $value1 }�
 document-wiring-moved-into-its-alias-owner = Moved “{ $value1 }” into its alias owner “{ $value2 }”.
 
 
+document-transfer-rolled-back = The move could not be saved. The blocks and page input were restored.

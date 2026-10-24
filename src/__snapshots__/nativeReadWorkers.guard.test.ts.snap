@@ -9,6 +9,7 @@ exports[`L7s4-03 native read dispatch > requires review for every new synchronou
   "cancel_graph_verification",
   "capture_frontend_ready",
   "capture_graph_binding",
+  "capture_receipt",
   "capture_target",
   "close_graph_window",
   "close_search_workspace",

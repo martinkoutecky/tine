@@ -30,7 +30,7 @@ it.each(["Destination", ""])("L9-08: retries a landed capture without inserting 
   vi.spyOn(backend(), "getPage").mockResolvedValue(page);
   const wait = vi.spyOn(backend(), "pageWait").mockResolvedValue(false);
   const dispose = await installQuickCaptureReceiver();
-  const payload = { id: "retry-landed", target: "main", bindingGeneration: 11, title, text: "- captured thought" };
+  const payload = { id: `retry-landed-${title}`, target: "main", bindingGeneration: 11, title, text: "- captured thought" };
   await h.receive!({ payload });
   expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: false, landed: true });
   wait.mockResolvedValue(true);
@@ -38,6 +38,25 @@ it.each(["Destination", ""])("L9-08: retries a landed capture without inserting 
   expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: true });
   expect(pageByName(name)!.roots.map(id => doc.byId[id].raw).filter(raw => raw === "captured thought")).toHaveLength(1);
   dispose();
+});
+
+it("F1: a reinstalled receiver does not insert a pending capture a second time", async () => {
+  vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(11);
+  const name = "Reload destination";
+  const page = { name, kind: "page" as const, title: name, id: "pages/Reload.md", rev: "before", pre_block: null, blocks: [] };
+  loadSingle(page);
+  answerOpensFromDocument(await bindTestHost());
+  vi.spyOn(backend(), "getPage").mockResolvedValue(page);
+  vi.spyOn(backend(), "pageWait").mockResolvedValue(false);
+  const dispose = await installQuickCaptureReceiver();
+  const payload = { id: "reload-pending", target: "main", bindingGeneration: 11, title: name, text: "- once" };
+  await h.receive!({ payload });
+  dispose();
+  const disposeReload = await installQuickCaptureReceiver();
+  await h.receive!({ payload });
+  expect(pageByName(name)!.roots.map(id => doc.byId[id].raw).filter(raw => raw === "once")).toHaveLength(1);
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: false, landed: true, closedGraph: true });
+  disposeReload();
 });
 
 it.each(["Destination", ""])("refuses graph A's delayed capture in graph B (title %s)", async (title) => {
@@ -53,7 +72,7 @@ it.each(["Destination", ""])("refuses graph A's delayed capture in graph B (titl
   expect(save).not.toHaveBeenCalled();
   expect(get).not.toHaveBeenCalled();
   expect(pageByName("Destination")).toBeUndefined();
-  expect(h.ack).toHaveBeenCalledWith("capture", "quick-capture-ack", { id: "delayed", ok: false });
+  expect(h.ack).toHaveBeenCalledWith("capture", "quick-capture-ack", { id: "delayed", ok: false, landed: true, closedGraph: true });
   dispose();
 });
 
@@ -78,5 +97,18 @@ it("saves one bound capture and acknowledges its retry without writing again", a
   await h.receive!({ payload });
   expect(save).toHaveBeenCalledOnce();
   expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: "current", ok: true });
+  dispose();
+});
+
+it("preserves the existing one-shot capture path for an idless delivery", async () => {
+  vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(11);
+  const page = { name: "One shot", kind: "page" as const, title: "One shot", id: "pages/One shot.md", rev: "before", pre_block: null, blocks: [] };
+  loadSingle(page);
+  answerOpensFromDocument(await bindTestHost());
+  vi.spyOn(backend(), "getPage").mockResolvedValue(page);
+  const dispose = await installQuickCaptureReceiver();
+  await h.receive!({ payload: { target: "main", bindingGeneration: 11, title: page.name, text: "- one shot" } });
+  expect(pageByName(page.name)!.roots.map(id => doc.byId[id].raw)).toContain("one shot");
+  expect(h.ack).not.toHaveBeenCalled();
   dispose();
 });

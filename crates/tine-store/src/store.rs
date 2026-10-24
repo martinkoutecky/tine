@@ -94,6 +94,8 @@ const PREVIEW_MAX_BYTES: usize = RESULT_BRIDGE_MAX_BYTES - 4 * 1024;
 /// Opening lists page and journal files and starts background parsing; see
 /// [`Self::open`]. `Store` is `Send + Sync`; callers can share it through `Arc`.
 pub struct Store {
+    #[cfg(test)]
+    pub(crate) marker_copy_pause: Mutex<Option<TestPause>>,
     pub(crate) graph: Arc<Graph>,
     pub(crate) writer: Arc<Mutex<()>>,
     load: Arc<LoadState>,
@@ -948,6 +950,7 @@ impl Store {
             changes,
             watch,
             faults: Mutex::new(std::collections::HashSet::new()),
+            marker_copy_pause: Mutex::new(None),
         }
     }
 
@@ -1286,6 +1289,8 @@ impl Store {
                 watch,
                 #[cfg(any(test, feature = "test-faults"))]
                 faults: Mutex::new(std::collections::HashSet::new()),
+                #[cfg(test)]
+                marker_copy_pause: Mutex::new(None),
             },
             meta,
             config,

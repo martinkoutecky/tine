@@ -9,6 +9,7 @@ import { moveBlock } from "../edits/moves";
 import { bindTestHost, submittedPages } from "./wiring.test.support";
 import { capturePages, persistTransfer } from "./wiring";
 import { setDoc } from "../model";
+import { toasts, setToasts } from "../../toasts";
 
 beforeAll(() => initParser());
 afterEach(() => { vi.restoreAllMocks(); resetStore(); });
@@ -46,7 +47,9 @@ it("L9-07: rolls back an applied transfer if an endpoint cannot serialize", asyn
   setDoc("pages", p => p.name === "Dst", "roots", roots => [...roots, "Src"]);
   setDoc("byId", "Src", "page", "Dst");
   const submit = vi.spyOn(backend(), "pageSubmit");
+  setToasts([]);
   expect(await persistTransfer(before, "move-blocks", [["Src", "Dst"]])).toBe(false);
+  expect(toasts().some(toast => toast.kind === "error")).toBe(true);
   expect(doc.byId.Src.page).toBe("Src");
   expect(doc.byId[header].originatedFromPageHeader).toBe(true);
   expect(doc.byId[header].raw).toBe("tags:: x\nunfinished");

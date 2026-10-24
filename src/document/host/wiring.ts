@@ -884,6 +884,8 @@ export function persistTransfer(before: ReadonlyMap<string, PageDto>, kinds: Edi
     const rollback = transferRollbacks.get(before);
     if (rollback) rollback();
     else for (const [name, dto] of before) installPageContent(name, dto);
+    // Selection edits and undo/redo also reach this boundary without preflight.
+    if (!refuseConflictedMove(new Set(edges.flat()))) pushToast(msg("document-transfer-rolled-back"), "error");
     return Promise.resolve(false);
   }
   const plain = !c;

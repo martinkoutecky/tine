@@ -106,6 +106,25 @@ changes: a crash before its save completes it at launch.
 then the operation is refused. A refusal changes nothing, so it is not a step. This includes referring pages
 (as Beta does: `WouldBlock`). A page in conflict is never clean, so it blocks the operation until resolved.
 
+**Binding-level exception (JJ6 / L9 F5, implementation obligation).** An explicit
+delete of a conflicted page may preserve the local buffer in a durable conflict
+recovery copy, then supply `delete_checked` a clean, disk-based plan. This is
+implemented by `page_host/binding_delete.rs`, including the already-absent-file
+case. It is not an ordinary unclean `opDelete` transition. Before admission the
+binding must stage the exact local bytes outside the driver, compare the buffer
+again inside the locked step (a changed buffer waits), and check the caller's
+disk identity under the page lock. Failure keeps the draft and disk intact.
+Only the guarded deletion publication consumes the existing file. Native
+conformance evidence: `binding_delete_tests.rs` (recovery obstruction, exact
+recovery bytes, absent disk, staging progress and concurrent draft change).
+
+The checked models, including the later s3 versions and Lean proofs, do not
+represent this binding-level recovery-copy transition or its extra custody
+location. Their D4 tag and all existing invariants remain unchanged; they prove
+the ordinary operation, not this exception. Extending that state space requires
+a separate custody-model change and proof. This note bounds the current proof
+claim instead of weakening D4 to admit an unrepresented recovery action.
+
 **D5 (interruption).** No intent record. With every changed page drafted in one file, an applied operation
 always completes after a crash; one lost before it was applied has no effect.
 

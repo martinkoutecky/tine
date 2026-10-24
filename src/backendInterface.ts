@@ -68,6 +68,7 @@ export interface Backend {
   startupGraphPath(): Promise<string | null>;
   tineLinks?: NativeTineLinks;
   captureTarget(): Promise<string>;
+  captureReceipt(id: string, action: "claim" | "saved" | "release", receiptGeneration: number): Promise<"new" | "pending" | "saved">;
   /** Lease the graph selected for this Quick Capture show before issuing
    * graph-scoped reads from its independent WebView. */
   bindCaptureGraph(): Promise<void>;

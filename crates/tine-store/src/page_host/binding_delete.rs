@@ -34,14 +34,17 @@ impl PageHost {
             return PageOperation::Refused;
         }
         let deadline = std::time::Instant::now() + retained::OPERATION_WAIT;
+        let staged = match self.stage_delete_input(session, &key, &spelling.file()) {
+            Ok(staged) => staged,
+            Err(outcome) => return outcome,
+        };
         let (shared, checked) = (Arc::downgrade(&self.driver.shared), checked.to_vec());
-        let (store, file) = (self.store.clone(), spelling.file());
         let delete = move |state: &mut State<ProductionIo, SystemClock>| {
             if state.book.session != session {
                 return (Disposition::Refused, None);
             }
             let (disposition, reply) = state.progress.with_host(|host| {
-                let resolved = match prepare_delete(host, &store, &file, &key, &checked) {
+                let resolved = match prepare_delete(host, &key, &checked, &staged) {
                     Ok(resolved) => resolved,
                     Err(refusal) => return (refusal, None),
                 };
@@ -79,9 +82,44 @@ impl PageHost {
 }
 
 impl PageHost {
+    // Read through the driver, stage with no driver/path lock held, then compare
+    // the exact buffer again at admission. A crash or refusal leaves the copy;
+    // changing the input requires another attempt with that input's own copy.
+    fn stage_delete_input(
+        &self,
+        session: u64,
+        key: &str,
+        file: &FileId,
+    ) -> Result<Option<Text>, PageOperation> {
+        let key = key.to_owned();
+        let staged = self
+            .driver
+            .shared
+            .read(move |state| {
+                (state.book.session == session).then(|| {
+                    state
+                        .progress
+                        .host
+                        .pages
+                        .get(&key)
+                        .filter(|page| page.conflict)
+                        .map(|page| page.buf.clone())
+                })
+            })
+            .ok()
+            .flatten()
+            .ok_or(PageOperation::Refused)?;
+        if let Some(Some(input)) = &staged {
+            self.store
+                .stage_marker_copy(file, input)
+                .map_err(|_| PageOperation::Refused)?;
+        }
+        Ok(staged)
+    }
+
     /// `page_delete` of a page whose file is already gone (an external
     /// delete while the page was conflicted): there is nothing to delete, but
-    /// a conflicted draft is copied recoverably under the page lock first, so
+    /// a conflicted draft is copied recoverably before admission, so
     /// the window's discard after `Applied` loses nothing (L9 review R1).
     /// `Applied` when no conflicted input is held or its copy is durable;
     /// `Refused` when the file reappeared or the copy failed (input kept);
@@ -97,20 +135,26 @@ impl PageHost {
             return PageOperation::Refused;
         }
         let deadline = std::time::Instant::now() + retained::OPERATION_WAIT;
-        let (store, file) = (self.store.clone(), spelling.file());
+        let staged = match self.stage_delete_input(session, &key, &spelling.file()) {
+            Ok(staged) => staged,
+            Err(outcome) => return outcome,
+        };
         let stage = move |state: &mut State<ProductionIo, SystemClock>| {
             if state.book.session != session {
                 return Disposition::Refused;
             }
             state.progress.with_host(|host| {
-                let Some(input) = host
+                let input = host
                     .pages
                     .get(&key)
                     .filter(|page| page.conflict)
-                    .map(|page| page.buf.clone())
-                else {
+                    .map(|page| page.buf.clone());
+                if input != staged {
+                    return Disposition::Waiting;
+                }
+                if input.is_none() {
                     return Disposition::Applied;
-                };
+                }
                 let keys = BTreeSet::from([key.clone()]);
                 if host.worker.is_some() || host.busy(&key) || host.lacks_locks(&keys) {
                     return Disposition::Waiting;
@@ -119,12 +163,7 @@ impl PageHost {
                 if !host.fs.read_page(&key).is_ok_and(|now| now.is_none()) {
                     return Disposition::Refused;
                 }
-                match input {
-                    Some(input) if store.stage_marker_copy(&file, &input).is_err() => {
-                        Disposition::Refused
-                    }
-                    _ => Disposition::Applied,
-                }
+                Disposition::Applied
             })
         };
         match (self.driver.shared).locked_step(Deadline::At(deadline), stage) {
@@ -138,11 +177,19 @@ impl PageHost {
 
 fn prepare_delete(
     host: &mut Host<ProductionIo>,
-    store: &Store,
-    file: &FileId,
     key: &str,
     checked: &[u8],
+    staged: &Option<Text>,
 ) -> Result<Option<Page>, Disposition> {
+    if &host
+        .pages
+        .get(key)
+        .filter(|page| page.conflict)
+        .map(|page| page.buf.clone())
+        != staged
+    {
+        return Err(Disposition::Waiting);
+    }
     let Some(original) = host.pages.get(key).filter(|page| page.conflict).cloned() else {
         return Ok(None);
     };
@@ -162,11 +209,6 @@ fn prepare_delete(
         .is_ok_and(|now| now.as_deref() == Some(checked))
     {
         return Err(Disposition::Refused);
-    }
-    if let Some(input) = &original.buf {
-        if store.stage_marker_copy(file, input).is_err() {
-            return Err(Disposition::Refused);
-        }
     }
     // Supply a read-only plan against disk. The live host page remains intact
     // until the operation's durable draft applies; there is no temporary discard.

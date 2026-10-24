@@ -841,6 +841,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return "main";
     },
     async bindCaptureGraph() {},
+    async captureReceipt() { return "pending" as const; },
     async defaultGraphParent() {
       return "";
     },
@@ -1036,6 +1037,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "openDevtools",
   "captureTarget",
   "bindCaptureGraph",
+  "captureReceipt",
   "defaultGraphParent",
   "conflictInventory",
   "listJournalConflicts",

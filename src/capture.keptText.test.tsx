@@ -101,6 +101,10 @@ it.each(["text", "title", "IME"])("acknowledges only the submitted snapshot, ret
   expect(h.deleted).toEqual([]);
   expect(title.value).toBe(change === "title" ? "Later title" : "Destination");
   expect(h.hide).not.toHaveBeenCalled();
+  if (change === "IME") {
+    document.querySelector(".capture-shell")!.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    await Promise.resolve();
+  }
 });
 
 it("clears and hides after a successful acknowledgement when the snapshot is unchanged", async () => {

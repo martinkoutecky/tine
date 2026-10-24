@@ -82,6 +82,7 @@ function Capture() {
   const [shortcuts, setShortcuts] = createSignal<Record<string, string>>({});
   const [captureStatus, setCaptureStatus] = createSignal<"idle" | "saving" | "error">("idle");
   const [captureMessage, setCaptureMessage] = createSignal("");
+  const [previousGraph, setPreviousGraph] = createSignal(false);
   const submitBinding = () => shortcuts()["editor/quick-capture-file"] ?? "mod+shift+enter";
   const bulletHint = () => submitBinding() === "false"
     ? "Edit as usual; use File capture to submit"
@@ -337,12 +338,38 @@ function Capture() {
   onCleanup(() => { submitAlive = false; });
   const scratchMarkdown = () => roots().map((r) => blockSubtreeMarkdown(r)).join("\n");
   let scratchRevision = 0;
+  let composing = false;
+  let afterComposition: (() => void) | undefined;
+  const scratchNodes = (): Array<{ id: string; raw: string }> => {
+    const nodes: Array<{ id: string; raw: string }> = [];
+    const visit = (id: string) => {
+      const node = docNode(id);
+      if (!node) return;
+      nodes.push({ id, raw: node.raw });
+      node.children.forEach(visit);
+    };
+    roots().forEach(visit);
+    return nodes;
+  };
+  // Subtract only text whose identity and prefix still match. Work with the
+  // outline's nodes, never with Markdown syntax or a replacement of the tree.
+  const consumeSnapshot = (nodes: Array<{ id: string; raw: string }>) => {
+    for (const prior of [...nodes].reverse()) {
+      const node = docNode(prior.id);
+      if (!node || !node.raw.startsWith(prior.raw)) continue;
+      const remainder = node.raw.slice(prior.raw.length);
+      if (!remainder && !node.children.length && (node.parent || roots().length > 1)) deleteBlock(prior.id);
+      else setRaw(prior.id, remainder, { timetracking: false });
+    }
+    resumeScratchEditor();
+  };
   // An unacknowledged insertion owns its snapshot across manual retries too.
-  let retry: { id: string; scratch: string; title: string; revision: number; generation: number; target?: string } | undefined;
+  let retry: { id: string; scratch: string; nodes: ReturnType<typeof scratchNodes>; title: string; revision: number; generation: number; target?: string } | undefined;
   const submit = () => {
     if (pendingCapture) return;
     const submitOwner = latestOwner(submitScope, "capture", () => submitAlive);
-    retry ??= { id: createQuickCaptureRequestId(), scratch: scratchMarkdown(), title: title(), revision: scratchRevision, generation: backend().graphBindingGeneration() };
+    if (composing) return;
+    retry ??= { id: createQuickCaptureRequestId(), scratch: scratchMarkdown(), nodes: scratchNodes(), title: title(), revision: scratchRevision, generation: backend().graphBindingGeneration() };
     const snapshot = retry;
     const submittedScratch = snapshot.scratch, submittedTitle = snapshot.title;
     const submittedRevision = snapshot.revision;
@@ -388,7 +415,9 @@ function Capture() {
           setCaptureMessage("");
           // Input revisions also cover DOM-local IME text.
           if (scratchRevision !== submittedRevision || scratchMarkdown() !== submittedScratch || title() !== submittedTitle) {
-            setCaptureMessage("Submitted capture saved — newer edits kept");
+            if (composing) afterComposition = () => consumeSnapshot(snapshot.nodes);
+            else consumeSnapshot(snapshot.nodes);
+            setCaptureMessage(t("capture-snapshot-saved"));
             scheduleFit();
             return;
           }
@@ -405,6 +434,7 @@ function Capture() {
         if (pendingCapture !== pending) return;
         disposePendingCapture();
         setCaptureStatus("error");
+        setPreviousGraph(true);
         setCaptureMessage("graph window not ready — try again");
         scheduleFit();
       };
@@ -449,7 +479,11 @@ function Capture() {
         const unlisten = await listen<QuickCaptureAck>("quick-capture-ack", (e) => {
           if (!quickCaptureAckMatches(pending.id, e.payload)) return;
           if (!e.payload.ok && !e.payload.landed) retry = undefined;
-          void finish(e.payload.ok);
+          void finish(e.payload.ok).then(() => {
+            if (!submitOwner()) return;
+            setPreviousGraph(!!e.payload.closedGraph);
+            if (e.payload.closedGraph) setCaptureMessage(t("capture-previous-graph"));
+          });
         });
         if (pendingCapture !== pending) {
           unlisten();
@@ -465,14 +499,32 @@ function Capture() {
   };
 
   const cancel = () => {
-    retry = undefined;
     latestOwner(submitScope, "capture");
     disposePendingCapture();
+    // An unproved insertion may already be in a host. Hide without discarding
+    // its retry identity or any later input; reopening resumes that scratch.
+    if (retry) {
+      setCaptureStatus("error");
+      setPreviousGraph(true);
+      setCaptureMessage(t("capture-previous-graph"));
+      void hideWindow();
+      return;
+    }
     setCaptureStatus("idle");
     setCaptureMessage("");
     clearScratch();
     setTitle("");
     void hideWindow();
+  };
+
+  const startNewCapture = () => {
+    if (pendingCapture) return;
+    // Explicitly retire the uncertain attempt, keeping every character for the
+    // user to reconcile against the previous graph before filing a new request.
+    retry = undefined;
+    setPreviousGraph(false);
+    setCaptureStatus("idle");
+    setCaptureMessage(t("capture-new-request"));
   };
 
   const captureApi: CaptureApi = {
@@ -583,7 +635,11 @@ function Capture() {
 
   return (
     <CaptureCtx.Provider value={captureApi}>
-      <div class="capture-shell" onInput={() => { scratchRevision++; }} onCompositionStart={() => { scratchRevision++; }}>
+      <div class="capture-shell" onInput={() => { scratchRevision++; }} onCompositionStart={() => { composing = true; scratchRevision++; }}
+        onCompositionEnd={() => {
+          composing = false;
+          queueMicrotask(() => { const consume = afterComposition; afterComposition = undefined; consume?.(); });
+        }}>
         <Show when={ready()}>
           {/* Optional page title. Filled → the capture becomes a NEW page; empty →
               appended to today. Plain Enter drops into the bullet; the submit
@@ -627,6 +683,9 @@ function Capture() {
               classList={{ "capture-status-error": captureStatus() === "error" }}
             >
               {captureMessage()}
+              <Show when={previousGraph()}>
+                <button type="button" data-testid="capture-start-new" disabled={captureStatus() === "saving"} onClick={startNewCapture}>{t("capture-start-new")}</button>
+              </Show>
             </div>
           </Show>
         </Show>

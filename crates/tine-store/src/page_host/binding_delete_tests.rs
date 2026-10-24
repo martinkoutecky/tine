@@ -2,6 +2,94 @@
 use super::*;
 
 #[test]
+fn f6_recovery_staging_leaves_driver_available_and_checks_the_staged_draft() {
+    for absent in [false, true] {
+        for change_draft in [false, true] {
+            let live = Live::new(&[("pages/a.md", "- base\n")]);
+            let (key, page) = live.open("pages/a.md");
+            if absent {
+                fs::remove_file(live.root.join(&key)).unwrap();
+            } else {
+                fs::write(live.root.join(&key), "- external\n").unwrap();
+            }
+            let id = live.submit(&key, "- draft\n", page.version, None).unwrap();
+            live.answer(&key, id);
+            live.wait(&key, "conflict", |mail| {
+                mail.page.as_ref().is_some_and(|p| p.conflict)
+            });
+            let pause: crate::store::TestPause = Default::default();
+            *live.store.marker_copy_pause.lock().unwrap() = Some(pause.clone());
+            std::thread::scope(|scope| {
+                let deleting = scope.spawn(|| {
+                    live.host.delete(
+                        live.host.session(),
+                        &PageId::from(key.clone()),
+                        (!absent).then_some(b"- external\n".as_slice()),
+                    )
+                });
+                let (lock, ready) = &*pause;
+                let mut at = lock.lock().unwrap();
+                while !at.0 {
+                    let answer = ready.wait_timeout(at, Duration::from_secs(10)).unwrap();
+                    assert!(!answer.1.timed_out(), "staging was never reached");
+                    at = answer.0;
+                }
+                drop(at);
+                let shared = live.host.driver.shared.clone();
+                let (send, receive) = mpsc::channel();
+                scope.spawn(move || {
+                    let _ = send.send(shared.read(|state| state.book.session));
+                });
+                let available = receive.recv_timeout(Duration::from_secs(1)).is_ok();
+                if available && change_draft {
+                    let current = key.clone();
+                    let version = live
+                        .host
+                        .driver
+                        .shared
+                        .read(move |state| state.progress.host.pages[&current].version)
+                        .unwrap();
+                    let id = live.submit(&key, "- newer draft\n", version, None).unwrap();
+                    live.answer(&key, id);
+                }
+                lock.lock().unwrap().1 = true;
+                ready.notify_all();
+                let outcome = deleting.join().unwrap();
+                assert!(available, "recovery staging blocked the host driver");
+                assert_eq!(
+                    outcome,
+                    if change_draft {
+                        PageOperation::Waiting
+                    } else {
+                        PageOperation::Applied
+                    }
+                );
+            });
+            let copies: Vec<_> = fs::read_dir(live.root.join("logseq/.tine-trash/conflicts"))
+                .unwrap()
+                .flatten()
+                .collect();
+            assert!(copies
+                .iter()
+                .any(|entry| fs::read(entry.path()).unwrap() == b"- draft\n"));
+            if change_draft {
+                live.host.driver.shared.with_state_for_tests(|state| {
+                    assert_eq!(
+                        state.progress.host.pages[&key].buf.as_deref(),
+                        Some(b"- newer draft\n".as_slice())
+                    );
+                });
+                assert_eq!(
+                    fs::read(live.root.join(&key)).ok(),
+                    (!absent).then(|| b"- external\n".to_vec())
+                );
+            }
+            live.host.stop();
+        }
+    }
+}
+
+#[test]
 fn l9_04_resolving_submit_copies_disk_before_publish_and_refuses_if_recovery_fails() {
     for blocks in [1, 60] {
         let disk = "- external\n".repeat(blocks);
