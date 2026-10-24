@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Switching table cells by double-click saves the previous edit; invalid numbers keep their editor open (GH #754).
+
 - Board cards drag between columns even when an editor outside the board has focus, without selecting text during the drag (GH #756).
 - Changing a block between outline levels one and two on long pages with images above no longer makes the view jump; structural edits preserve loaded image and measured window geometry (GH #745).
 

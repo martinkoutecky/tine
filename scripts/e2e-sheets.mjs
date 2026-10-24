@@ -393,6 +393,32 @@ try {
     check("typed Table Tab commits then advances", false, "no Table cell (0,4)");
   }
 
+  // GH #754: type into a property and literally double-click its neighbor.
+  // Assert the first value reaches the graph file while the second editor is open.
+  const amountCell = await browser.$('.sheet-table .sheet-cell[data-row="0"][data-sheet-column-id="prop:severity"]');
+  const adjacentCell = await browser.$('.sheet-table .sheet-cell[data-row="0"][data-sheet-column-id="prop:occurrence"]');
+  await amountCell.scrollIntoView({ block: "center", inline: "nearest" });
+  await amountCell.doubleClick();
+  const amountInput = await amountCell.$("input.sheet-prop-input");
+  await amountInput.waitForExist({ timeout: 5000 });
+  await browser.keys(["Control", "a"]);
+  await browser.keys(["7.5"]);
+  await adjacentCell.doubleClick();
+  await adjacentCell.$("input.sheet-prop-input").waitForExist({ timeout: 5000 });
+  await browser.waitUntil(() => fs.readFileSync(JFILE, "utf8").includes("severity:: 7.5"),
+    { timeout: 10_000, timeoutMsg: "GH #754: first cell draft did not reach the file after double-clicking its neighbor" });
+  check("double-clicking another cell saves the first draft to disk",
+    fs.readFileSync(JFILE, "utf8").includes("severity:: 7.5"));
+  await browser.saveScreenshot(`${TMP}/gh754-cell-handoff.png`);
+  await browser.keys(["Escape"]);
+  // Restore the formula fixture for the rename/undo/reload journey below.
+  await amountCell.doubleClick();
+  await amountCell.$("input.sheet-prop-input").waitForExist({ timeout: 5000 });
+  await browser.keys(["Control", "a"]);
+  await browser.keys(["2"]);
+  await browser.keys(["Enter"]);
+  await browser.waitUntil(() => fs.readFileSync(JFILE, "utf8").includes("severity:: 2"), { timeout: 10_000 });
+
   // GH #175: a declared, children-backed property field is a local schema
   // identity. Rename it through the literal header menu and prove that every
   // local dependency (schema, row keys, formula field refs, filter field AST,
@@ -968,7 +994,7 @@ try {
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}
-  if (failures === 0) fs.rmSync(TMP, { recursive: true, force: true });
+  if (failures === 0 && process.env.E2E_KEEP_TMP !== "1") fs.rmSync(TMP, { recursive: true, force: true });
 }
 console.log(failures === 0 ? `\nALL PASS (${checks} checks)` : `\n${failures} FAILURES (${checks} checks)`);
 process.exit(failures === 0 ? 0 : 1);
