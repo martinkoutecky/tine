@@ -7,7 +7,7 @@ import { isFavoriteBlock, isFavoritesPage } from "../favorites";
 
 import { createExpansionGate, MACRO_EXPANSION_LIMIT_LABEL } from "./expansionBudget";
 import { leadingMarker, matchLeadingMarker } from "../markers";
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
+import { For, Show, createEffect, createRenderEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { assetRelPath, extOf, mediaKind } from "../media";
 import { openPage, openPageInNewTab, openPageAtBlock, openInNewTab, zoomToBlock } from "../router";
@@ -41,7 +41,7 @@ import { backend } from "../backend";
 import { captureBinding } from "../binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
 import { writeClipboardText } from "../clipboard";
-import { acquireAssetBlob, assetVersion } from "../assetCache";
+import { acquireAssetBlob, acquireCachedAssetBlob, assetVersion } from "../assetCache";
 import { mediaEditorForAsset } from "../mediaEditors";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
@@ -819,7 +819,7 @@ function AssetImage(props: {
   // and the <img> re-reads the new bytes from disk.
   const [diskSrc, setDiskSrc] = createSignal("");
   const [previewUnavailable, setPreviewUnavailable] = createSignal(false);
-  createEffect(() => {
+  createRenderEffect(() => {
     setPreviewUnavailable(false);
     const r = rel();
     if (!r) {
@@ -830,8 +830,10 @@ function AssetImage(props: {
     assetVersion(r);
     let active = true;
     let release: (() => void) | undefined;
-    setDiskSrc("");
-    void acquireAssetBlob(r).then((lease) => {
+    const cached = acquireCachedAssetBlob(r);
+    setDiskSrc(cached?.url ?? "");
+    release = cached?.release;
+    if (!cached) void acquireAssetBlob(r).then((lease) => {
       if (!active) {
         lease.release();
         return;
