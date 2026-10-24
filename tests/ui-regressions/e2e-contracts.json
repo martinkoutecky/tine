@@ -800,7 +800,7 @@
       "stability": "stable"
     },
     "scripts/e2e-sheets.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "Sheet cells commit before navigation, arrow keys follow the real event path, and field rename migrates dependent data atomically.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "Sheet cells commit before navigation, arrow keys follow the real event path, field rename migrates dependent data atomically, and dragging a board card from outside block-editor focus saves its new task marker.", "blocking": true }],
       "acceptableVariations": ["Grid dimensions, cell styling, and focus-ring presentation may evolve."],
       "nonRequirements": ["Exact cell pixel size, column widths, or formula-editor layout."],
       "stability": "stable"
