@@ -1052,6 +1052,26 @@ mod tests {
         assert_eq!(unreadable, cold_unreadable);
         assert!(cold.explicit_referrers(&["P1".into()]).is_empty());
         fresh.close();
+        // Deleting the failed journal retires its record, as a fresh start has none.
+        // Both the watcher's path-hinted reconcile and a full refresh.
+        fs::remove_file(&loser).unwrap();
+        let core = store.watch.core_for_load();
+        core.reconcile(
+            Some(&HashSet::from([loser.clone()])),
+            false,
+            false,
+            DiffTrigger::Test,
+        )
+        .unwrap();
+        let view = store.whole_graph().unwrap();
+        assert!(
+            view.unreadable_files().is_empty(),
+            "{:?}",
+            view.unreadable_files()
+        );
+        assert!(store.referenced_assets().is_ok());
+        store.refresh(crate::Depth::Bytes).unwrap();
+        assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
         store.close();
     }
 
