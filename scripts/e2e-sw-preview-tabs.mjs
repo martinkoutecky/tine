@@ -79,11 +79,14 @@ try {
       await browser.$(`.page-section ${anchor}`).moveTo();
       await browser.$(`.peek-popup ${action}`).waitForDisplayed({ timeout: 10000 });
       const before = await browser.execute(() => document.querySelector(".tab.active")?.getAttribute("data-tab-id"));
+      // A zoomed tab is titled by its block (GH #528). The preview's bullet is a live
+      // block now (D-20261023-VQ), so its tab resolves to "Source block".
+      const title = action === ".bullet-container" ? "Source block" : "Preview Source";
       await browser.$(`.peek-popup ${action}`).click();
-      await browser.waitUntil(() => browser.execute((before) => {
+      await browser.waitUntil(() => browser.execute((before, title) => {
         const active = document.querySelector(".tab.active");
-        return active?.getAttribute("data-tab-id") !== before && active?.textContent?.includes("Preview Source");
-      }, before), { timeout: 10000, timeoutMsg: stage });
+        return active?.getAttribute("data-tab-id") !== before && active?.textContent?.includes(title);
+      }, before, title), { timeout: 10000, timeoutMsg: stage });
       if (action === ".bullet-container" || (anchor === ".block-ref" && action === ".peek-open-source")) {
         await browser.$(".zoomed-page").waitForExist({ timeout: 10000 });
       }
