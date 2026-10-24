@@ -661,7 +661,11 @@ mod tests {
     use super::*;
 
     fn open() -> (tempfile::TempDir, Arc<crate::Store>) {
-        let dir = tempfile::tempdir().unwrap();
+        // The store keys its watcher state by the canonical root. On Windows
+        // that is a `\\?\` spelling of the 8.3 temp path, so tests that look
+        // up a path (snapshot, refusals, hints, injected faults) build it from
+        // the same canonical root the watcher's own events carry.
+        let dir = tempfile::tempdir_in(fs::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
         fs::create_dir(dir.path().join("logseq")).unwrap();
         fs::write(dir.path().join("logseq/config.edn"), "{}\n").unwrap();
@@ -686,18 +690,42 @@ mod tests {
 
     #[test]
     fn w543diag_paths() {
-        let (dir, store) = open();
+        // DIAGNOSTIC: the pre-fix spelling (raw temp dir) against the store's root.
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        fs::create_dir(dir.path().join("logseq")).unwrap();
+        fs::write(dir.path().join("logseq/config.edn"), "{}\n").unwrap();
+        fs::write(dir.path().join("pages/P0.md"), "- x\n").unwrap();
+        let store = Arc::new(
+            crate::Store::open(dir.path(), Default::default())
+                .unwrap()
+                .0,
+        );
+        store.whole_graph().unwrap();
         store.watch.stop_background_for_test();
         let core = store.watch.core_for_load();
         let path = dir.path().join("pages/P0.md");
-        let keys: Vec<_> = core.snapshot.lock().unwrap().keys().take(2).cloned().collect();
+        let canonical = fs::canonicalize(std::env::temp_dir()).unwrap();
+        let fixed = canonical
+            .join(dir.path().file_name().unwrap())
+            .join("pages/P0.md");
+        let (keys, raw, fixed_hit) = {
+            let snapshot = core.snapshot.lock().unwrap();
+            let keys: Vec<_> = snapshot.keys().cloned().collect();
+            (
+                keys,
+                snapshot.contains_key(&path),
+                snapshot.contains_key(&fixed),
+            )
+        };
         eprintln!(
-            "W543DIAG tempdir={:?} root={:?} path={:?} keys={keys:?} contains={} canonical={:?}",
+            "W543DIAG tempdir={:?} root={:?} path={:?} keys={keys:?} raw_contains={} canonical_join={:?} canonical_contains={}",
             dir.path(),
             store.graph.root,
             path,
-            core.snapshot.lock().unwrap().contains_key(&path),
-            fs::canonicalize(&path).ok()
+            raw,
+            fixed,
+            fixed_hit,
         );
         store.close();
     }

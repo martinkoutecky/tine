@@ -98,7 +98,7 @@ jobs:
           npm test
 
       - name: Rust core tests
-        run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features -- --nocapture ${{ inputs.windows_test_name }}
+        run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
 
       # Real TS HostClient against a real native PageHost (builds the tine-store
       # lib-test peer, reusing this job's target). Mandatory: it must not skip.
@@ -249,7 +249,7 @@ jobs:
       - name: UNC prefix normalization controls (vendored cap-primitives, GH #533)
         run: cargo test --locked --manifest-path vendor/cap-primitives-4.0.2/Cargo.toml --lib removing_extended_prefix_keeps_unc_paths_absolute -- --nocapture
       - name: Windows core and graph-feature tests (including junction filesystem behavior)
-        run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
+        run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features -- --nocapture ${{ inputs.windows_test_name }}
       # M4 availability measurement (REVIEW-3b-P2b-2 G1): the release rename of 250 and of
       # 1000 referrers must reach its caller inside OPERATION_WAIT; the timings print here.
       - name: Windows release rename availability (250 and 1000 referrers)
