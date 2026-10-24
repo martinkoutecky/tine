@@ -5,7 +5,7 @@ import { errorFamily } from "../errorFamily";
 import { flushPage, isConflicted, isDirty, reloadHlsIfLoaded, trackAssetWrite } from "../document";
 import { bindingOwner, latestOwner, readOwned, serializeOwned, writeOwned, type Owner } from "../owned";
 import { hlsPageName } from "../pdf";
-import { isPdfOwnershipCurrent, pdfOwnershipKey, trackPdfMutation, type PdfOwnership } from "../pdfOwnership";
+import { isPdfOwnershipCurrent, pdfOwnershipKey, registerPdfParticipant, trackPdfMutation, type PdfOwnership } from "../pdfOwnership";
 import { pushToast } from "../toasts";
 import type { Highlight } from "../types";
 
@@ -48,6 +48,16 @@ export function unusedPdfCrops(crops: ReadonlyMap<string, Crop>, committed: High
 
 type PrepareHighlights = (items: Highlight[]) => Promise<Highlight[]>;
 
+const needsPageGeometry = (h: Highlight) =>
+  [h.position.bounding, ...h.position.rects].some((r) => r.source_width == null || r.source_height == null);
+
+/** With no live document, only highlights that already carry their source page
+ * size can be written; the rest wait until a view of the PDF is open again. */
+const prepareWithoutDocument: PrepareHighlights = async (items) => {
+  if (items.some(needsPageGeometry)) throw new Error("open the PDF again to save its highlights: some need its page sizes");
+  return items;
+};
+
 export interface PdfHighlightStateOptions {
   filename: string;
   label: string;
@@ -55,6 +65,8 @@ export interface PdfHighlightStateOptions {
   owner: PdfOwnership;
   /** Fallback when no view has attached one (tests, or every view gone). */
   prepare?: PrepareHighlights;
+  /** Called whenever the state may have become idle (see idle()). */
+  onSettle?: () => void;
 }
 
 /** Own one PDF's highlights, serialized saves, conflict decisions and crop
@@ -65,11 +77,19 @@ export interface PdfHighlightStateOptions {
  * local state. Cost is O(highlights + pending crops) plus backend writes. */
 export function createPdfHighlightState(options: PdfHighlightStateOptions) {
   const { filename, label, backendGeneration, owner } = options;
-  // Each mounted view supplies page geometry from its own pdf.js document; any
-  // live one gives the same source-space dimensions. The latest attached wins.
+  // Each loaded view supplies page geometry from its own pdf.js document; any
+  // live one gives the same source-space dimensions. The latest attached is
+  // tried first; a view that fails (its document closed mid-save) falls back
+  // to an older one, then to the document-free path.
   const preparers: PrepareHighlights[] = [];
-  const prepare: PrepareHighlights = (items) =>
-    (preparers.at(-1) ?? options.prepare ?? (async (all: Highlight[]) => all))(items);
+  const prepare: PrepareHighlights = async (items) => {
+    let failure: { error: unknown } | null = null;
+    for (const fn of [...preparers].reverse()) {
+      try { return await fn(items); } catch (error) { failure ??= { error }; }
+    }
+    try { return await (options.prepare ?? prepareWithoutDocument)(items); }
+    catch (error) { throw failure ? failure.error : error; }
+  };
   const attachPrepare = (fn: PrepareHighlights) => {
     preparers.push(fn);
     return () => {
@@ -84,6 +104,7 @@ export function createPdfHighlightState(options: PdfHighlightStateOptions) {
   const [decisionBusy, setDecisionBusy] = createSignal(false);
   const [cleanupPending, setCleanupPending] = createSignal(false);
   let committed: Highlight[] = [];
+  let running = 0;
   const pendingCrops = new Map<string, Crop>();
   const queue = {}, intents = {};
   const graphCurrent = bindingOwner(() => isPdfOwnershipCurrent(owner));
@@ -144,6 +165,7 @@ export function createPdfHighlightState(options: PdfHighlightStateOptions) {
       setUnsaved(false);
     } finally {
       setDecisionBusy(false);
+      settle();
     }
   };
 
@@ -164,7 +186,12 @@ export function createPdfHighlightState(options: PdfHighlightStateOptions) {
         backend().writeHighlights(filename, label, persisted, committed, "replace-page", backendGeneration)
       ));
       if (result.kind === "stale") return false;
+      const base = committed;
       committed = result.value;
+      // A newer edit is queued behind this write: keep it, but on the merged
+      // result, so a highlight the merge added (another device, OG) is not
+      // sent back as a deletion and its merged fields are not overwritten.
+      if (!landingOwner()) setHighlights(rebasePdfHighlights(base, highlights(), result.value));
       for (const [id, crop] of pendingCrops) {
         if (result.value.some((h) => h.id === id && h.image === crop.stamp)) pendingCrops.delete(id);
       }
@@ -201,8 +228,13 @@ export function createPdfHighlightState(options: PdfHighlightStateOptions) {
     return !cleanupPending();
   };
 
+  const settle = () => options.onSettle?.();
+  const counted = async <T>(work: () => Promise<T>): Promise<T> => {
+    running++;
+    try { return await work(); } finally { running--; settle(); }
+  };
   const newIntent = () => latestOwner(intents, "highlights", graphCurrent);
-  const persist = async (landingOwner = newIntent()): Promise<boolean> => {
+  const persist = (landingOwner = newIntent()): Promise<boolean> => counted(async () => {
     try {
       const result = await trackPdfMutation(owner, () =>
         serializeOwned(queue, graphCurrent, () => persistOwned(landingOwner))
@@ -211,11 +243,11 @@ export function createPdfHighlightState(options: PdfHighlightStateOptions) {
     } catch {
       return false;
     }
-  };
-  const persistInsideMutation = async (landingOwner: Owner): Promise<boolean> => {
+  });
+  const persistInsideMutation = (landingOwner: Owner): Promise<boolean> => counted(async () => {
     const result = await serializeOwned(queue, graphCurrent, () => persistOwned(landingOwner));
     return result.kind === "current" && result.value;
-  };
+  });
 
   const useDiskVersion = async () => {
     if (!conflict() || decisionBusy()) return;
@@ -235,7 +267,7 @@ export function createPdfHighlightState(options: PdfHighlightStateOptions) {
       pushToast(msg("pdf-using-disk-highlights-local-changes-were-discarded"), "success");
     } catch (e) {
       pushToast(msg("pdf-couldn-t-use-disk-highlights-or-retire-their-area-image", { detail: String(String(e)) }), "error");
-    } finally { setDecisionBusy(false); }
+    } finally { setDecisionBusy(false); settle(); }
   };
   const keepMine = async () => {
     if (!conflict() || decisionBusy()) return;
@@ -250,7 +282,7 @@ export function createPdfHighlightState(options: PdfHighlightStateOptions) {
       await persist();
     } catch (e) {
       pushToast(msg("pdf-couldn-t-reload-disk-highlights-for-keep-mine", { detail: String(String(e)) }), "error");
-    } finally { setDecisionBusy(false); }
+    } finally { setDecisionBusy(false); settle(); }
   };
 
   const discardMine = async () => {
@@ -267,43 +299,67 @@ export function createPdfHighlightState(options: PdfHighlightStateOptions) {
       pushToast(msg("pdf-local-highlight-changes-discarded-disk-sidecar-was-left-untouched"), "success");
     } catch (error) {
       pushToast(msg("pdf-couldn-t-confirm-highlight-discard", { detail: String(String(error)) }), "error");
-    } finally { setDecisionBusy(false); }
+    } finally { setDecisionBusy(false); settle(); }
   };
 
-  /** The first view's disk read seeds the state; a view joining later keeps
-   * what its siblings already hold (it may be newer, or unsaved). */
+  /** The first successful disk read seeds the state; a view joining later
+   * keeps what its siblings already hold (it may be newer, or unsaved). A view
+   * whose read failed loads nothing, so a sibling's read can still seed it;
+   * edits made meanwhile are kept on top of what that read finds. */
   const loadInitial = (items: Highlight[]): boolean => {
     if (loaded) return false;
-    load(items);
+    if (!unsaved()) {
+      load(items);
+      return true;
+    }
+    loaded = true;
+    setHighlights(rebasePdfHighlights(committed, highlights(), items));
+    committed = items;
     return true;
   };
+  /** Nothing unsaved, undecided, awaiting cleanup or being written: dropping
+   * the state loses nothing. */
+  const idle = () => running === 0 && !decisionBusy() && !unsaved() && !conflict() && !cleanupPending();
   // Every view registers a drain participant; one flush serves them all, so a
   // drain neither writes twice nor toasts a blocked decision once per view.
   let flushing: Promise<boolean> | null = null;
   const flush = (): Promise<boolean> => {
     if (flushing) return flushing;
-    const run = (async () => !drainBlocked() && (!unsaved() || await persist()))();
+    // The body starts a microtask later, after the slot is set, so a flush it
+    // triggers joins this one; the slot clears however the body ends.
+    const run = Promise.resolve().then(async () => !drainBlocked() && (!unsaved() || await persist()));
     flushing = run;
-    // Cleared after assignment: the body can settle without awaiting.
-    void run.finally(() => { if (flushing === run) flushing = null; });
+    const clear = () => { if (flushing === run) flushing = null; };
+    run.then(clear, clear);
     return run;
   };
 
   return { highlights, unsaved, conflict, decisionBusy, cleanupPending, graphCurrent, load, loadInitial, edit, addCrop,
     editBlocked, drainBlocked, persist, persistInsideMutation, useDiskVersion, keepMine, discardMine, retryCleanup, newIntent,
-    attachPrepare, flush };
+    attachPrepare, flush, idle };
 }
 
 export type PdfHighlightState = ReturnType<typeof createPdfHighlightState>;
 
-const sessions = new Map<string, { state: PdfHighlightState; views: number }>();
+interface PdfHighlightSession {
+  state: PdfHighlightState;
+  views: number;
+  /** Drop the session once it has no view and is idle (or at once when its
+   * graph binding retires). */
+  dispose(retired?: boolean): void;
+}
+
+const sessions = new Map<string, PdfHighlightSession>();
 
 /** Share one highlight state among every mounted view of a PDF in this graph
  * binding (PDF tabs and splits design, 5.1): a highlight made,
  * recolored or deleted in one view shows in its siblings at once, and their
  * saves are linearized over one base instead of racing stale snapshots. Views
- * keep their own page, zoom and scroll. The state lives while a view holds it;
- * release the lease on unmount. Cost O(1) per acquire/release. */
+ * keep their own page, zoom and scroll. Release the lease on unmount. The state
+ * outlives its last view until it is idle: a save still running, a failed or
+ * conflicted save, or a pending crop cleanup stays with the graph's drain and
+ * reappears when the PDF is opened again; retiring the binding drops it. Cost
+ * O(1) per acquire/release. */
 export function acquirePdfHighlightState(options: Omit<PdfHighlightStateOptions, "prepare">): {
   state: PdfHighlightState;
   release: () => void;
@@ -311,8 +367,21 @@ export function acquirePdfHighlightState(options: Omit<PdfHighlightStateOptions,
   const key = `${pdfOwnershipKey(options.owner)}\0${options.backendGeneration}\0${options.filename}`;
   let session = sessions.get(key);
   if (!session) {
-    session = { state: createPdfHighlightState(options), views: 0 };
-    sessions.set(key, session);
+    let unregister = () => {};
+    const created: PdfHighlightSession = {
+      state: createPdfHighlightState({ ...options, onSettle: () => created.dispose() }),
+      views: 0,
+      dispose: (retired = false) => {
+        if (sessions.get(key) !== created || (!retired && (created.views > 0 || !created.state.idle()))) return;
+        sessions.delete(key);
+        unregister();
+      },
+    };
+    sessions.set(key, created);
+    // The session, not a view, answers the graph's drain, so work left by a
+    // closed view still blocks a graph switch or close until it is resolved.
+    unregister = registerPdfParticipant(options.owner, { flush: created.state.flush, cancel: () => created.dispose(true) });
+    session = created;
   }
   const held = session;
   held.views++;
@@ -322,7 +391,8 @@ export function acquirePdfHighlightState(options: Omit<PdfHighlightStateOptions,
     release: () => {
       if (released) return;
       released = true;
-      if (--held.views === 0 && sessions.get(key) === held) sessions.delete(key);
+      held.views--;
+      held.dispose();
     },
   };
 }

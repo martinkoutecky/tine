@@ -281,8 +281,8 @@ export function PdfViewer(props: {
     });
   }
 
-  // Shared with every other mounted view of this PDF; this view only lends its
-  // page geometry for writes.
+  // Shared with every other mounted view of this PDF; this view lends its page
+  // geometry for writes once its document has loaded.
   const highlightLease = acquirePdfHighlightState({
     filename: props.filename,
     label: props.label,
@@ -290,7 +290,7 @@ export function PdfViewer(props: {
     owner,
   });
   const highlightState = highlightLease.state;
-  const detachHighlightPrepare = highlightState.attachPrepare(highlightsForWrite);
+  let detachHighlightPrepare = () => {};
   const highlights = highlightState.highlights;
   const unsavedHighlights = highlightState.unsaved;
   const highlightConflict = highlightState.conflict;
@@ -360,6 +360,7 @@ export function PdfViewer(props: {
 
   function failPdf(message: string) {
     loadingTask.cancel();
+    detachHighlightPrepare(); // a failed document lends no geometry to siblings
     if (loadError()) return;
     io?.disconnect();
     io = null;
@@ -1102,7 +1103,7 @@ export function PdfViewer(props: {
       restoredScale = state.scale;
     } catch (error) {
       if (!loadOwner()) return;
-      highlightState.loadInitial([]);
+      // Seed nothing: a sibling view's successful read must still win.
       pushToast(msg("pdf-couldn-t-load-pdf-annotations", { detail: String(error) }), "error");
     }
     let bytes: Uint8Array;
@@ -1136,6 +1137,7 @@ export function PdfViewer(props: {
       failPdf(`This PDF reports an unsafe page count (${pdfDoc.numPages}); at most ${MAX_PDF_PAGES} pages can be displayed.`);
       return;
     }
+    detachHighlightPrepare = highlightState.attachPrepare(highlightsForWrite);
     // Outline parsing can be slow on large PDFs. Start it once per document,
     // but never await it on the page-one/layout path that controls first paint.
     void loadOutline(pdfDoc);

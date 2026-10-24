@@ -163,6 +163,7 @@ describe("PdfViewer resource safety", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     document.body.replaceChildren();
+    resetPdfOwnershipForTest(); // a viewless session with unsaved work outlives its view
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     Reflect.deleteProperty(document, "elementFromPoint");
   });
@@ -704,6 +705,7 @@ describe("PdfViewer OG area-highlight selection", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     document.body.replaceChildren();
+    resetPdfOwnershipForTest(); // a viewless session with unsaved work outlives its view
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     Reflect.deleteProperty(document, "elementFromPoint");
   });
@@ -1065,6 +1067,7 @@ describe("PdfViewer OG state and reference behavior", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     document.body.replaceChildren();
+    resetPdfOwnershipForTest(); // a viewless session with unsaved work outlives its view
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     Reflect.deleteProperty(document, "elementFromPoint");
   });
@@ -1164,6 +1167,70 @@ describe("PdfViewer OG state and reference behavior", () => {
       disposeB();
     }
     expect(pdfHighlightSessionCount()).toBe(0);
+  });
+
+  it("saves a view's edit while a sibling view of the same PDF is still loading", async () => {
+    const id = "33333333-3333-4333-8333-333333333333";
+    const rect = { top: 40, left: 20, width: 80, height: 12 };
+    const loaded = { id, page: 1, position: { page: 1, bounding: rect, rects: [rect] }, color: "yellow", text: "text", image: null };
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [loaded], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const write = vi.spyOn(backend(), "writeHighlights").mockImplementation(async (_pdf, _label, items) => items);
+    getDocumentMock
+      .mockImplementationOnce(() => ({ promise: Promise.resolve(documentWithPages([page(612, 792)])) }))
+      .mockImplementationOnce(() => ({ promise: new Promise(() => {}), destroy: async () => {} })); // view B never finishes parsing
+    const hostA = document.createElement("div"), hostB = document.createElement("div");
+    document.body.append(hostA, hostB);
+    const disposeA = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, hostA);
+    const disposeB = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, hostB);
+    try {
+      await flush();
+      for (const observer of TestIntersectionObserver.instances) {
+        for (const element of observer.elements) if (element.classList.contains("pdf-page")) observer.show(element);
+      }
+      await flush();
+      hostA.querySelector<HTMLElement>(`[data-highlight-id="${id}"]`)!.click();
+      await flush();
+      hostA.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[1].dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, cancelable: true })
+      );
+      await flush();
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(write.mock.calls[0][2][0].color).toBe("green");
+      expect(write.mock.calls[0][2][0].position.bounding.source_width).toBe(612); // A's page geometry
+    } finally {
+      disposeA();
+      disposeB();
+    }
+  });
+
+  it("shows the disk highlights when one view's annotation read failed and a sibling's succeeded", async () => {
+    const id = "44444444-4444-4444-8444-444444444444";
+    const rect = { top: 40, left: 20, width: 80, height: 12 };
+    const loaded = { id, page: 1, position: { page: 1, bounding: rect, rects: [rect] }, color: "yellow", text: "text", image: null };
+    vi.spyOn(backend(), "openPdf")
+      .mockRejectedValueOnce(new Error("annotations busy"))
+      .mockResolvedValue({ highlights: [loaded], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    getDocumentMock.mockImplementation(() => ({ promise: Promise.resolve(documentWithPages([page(612, 792)])) }));
+    const hostA = document.createElement("div"), hostB = document.createElement("div");
+    document.body.append(hostA, hostB);
+    const disposeA = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, hostA);
+    const disposeB = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, hostB);
+    try {
+      await flush();
+      for (const observer of TestIntersectionObserver.instances) {
+        for (const element of observer.elements) if (element.classList.contains("pdf-page")) observer.show(element);
+      }
+      await flush();
+      expect(hostA.querySelector(`[data-highlight-id="${id}"]`)).not.toBeNull();
+      expect(hostB.querySelector(`[data-highlight-id="${id}"]`)).not.toBeNull();
+    } finally {
+      disposeA();
+      disposeB();
+    }
   });
 
   it("keeps overlapping failed recolors marked unsaved until close can retry", async () => {
@@ -1994,6 +2061,7 @@ describe("PdfViewer local transient ownership", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     document.body.replaceChildren();
+    resetPdfOwnershipForTest(); // a viewless session with unsaved work outlives its view
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     Reflect.deleteProperty(document, "elementFromPoint");
   });
@@ -2239,6 +2307,7 @@ describe("PdfViewer released-OG themes and outline", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     document.body.replaceChildren();
+    resetPdfOwnershipForTest(); // a viewless session with unsaved work outlives its view
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     Reflect.deleteProperty(document, "elementFromPoint");
   });

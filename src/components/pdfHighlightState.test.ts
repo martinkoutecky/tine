@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot } from "solid-js";
 import { backend } from "../backend";
-import { activatePdfOwnership, resetPdfOwnershipForTest } from "../pdfOwnership";
+import { activatePdfOwnership, drainPdfWork, resetPdfOwnershipForTest } from "../pdfOwnership";
 import type { Highlight } from "../types";
 import {
   acquirePdfHighlightState, createPdfHighlightState, pdfHighlightSessionCount, rebasePdfHighlights, unusedPdfCrops,
@@ -186,5 +186,118 @@ describe("PDF highlight state", () => {
     expect(unusedPdfCrops(crops, [], [area])).toEqual([]);
     expect(unusedPdfCrops(crops, [area], [])).toEqual([]);
     expect(unusedPdfCrops(crops, [], [])).toEqual([["a", { page: 1, stamp: 42 }]]);
+  });
+  describe("shared across views (milestone review 9b0dbcc36)", () => {
+    const sized = (id: string, color = "yellow"): Highlight => {
+      const r = { ...rect, source_width: 600, source_height: 800 };
+      return { ...highlight(id, color), position: { page: 1, bounding: r, rects: [r] } };
+    };
+    function lease() {
+      const owner = activatePdfOwnership("/test/pdf-graph");
+      const options = { filename: "paper.pdf", label: "Paper", backendGeneration: 0, owner };
+      return { options, first: createRoot(() => acquirePdfHighlightState(options)) };
+    }
+
+    it("saves through a working view when the newest view cannot supply page sizes", async () => {
+      const { first: { state, release } } = lease();
+      const write = vi.spyOn(backend(), "writeHighlights").mockImplementation(async (_pdf, _label, items) => items);
+      state.attachPrepare(async (items) => items.map((h) => ({ ...h, text: "A" })));
+      const detachB = state.attachPrepare(async () => { throw new Error("highlight refers to missing PDF page 1"); });
+      state.edit([highlight("a", "green")]);
+      expect(await state.persist()).toBe(true);
+      expect(write.mock.calls[0][2][0].text).toBe("A");
+      detachB();
+      release();
+    });
+
+    it("without any loaded view, writes only highlights that already carry page sizes", async () => {
+      const { first: { state, release } } = lease();
+      const write = vi.spyOn(backend(), "writeHighlights").mockImplementation(async (_pdf, _label, items) => items);
+      state.edit([highlight("legacy")]);
+      expect(await state.persist()).toBe(false);
+      expect(write).not.toHaveBeenCalled();
+      state.edit([sized("a")]);
+      expect(await state.persist()).toBe(true);
+      expect(write).toHaveBeenCalledTimes(1);
+      release();
+    });
+
+    it("keeps a conflicted save after its last view closes, for the drain and the next view", async () => {
+      const { options, first } = lease();
+      vi.spyOn(backend(), "writeHighlights").mockRejectedValueOnce(new Error("conflict"));
+      first.state.loadInitial([sized("a")]);
+      first.state.edit([sized("a", "blue")]);
+      await first.state.persist();
+      expect(first.state.conflict()).toBe(true);
+      first.release();
+      expect(pdfHighlightSessionCount()).toBe(1);
+      expect(await drainPdfWork()).toBe(false); // the graph cannot switch away from it
+      const reopened = createRoot(() => acquirePdfHighlightState(options));
+      expect(reopened.state).toBe(first.state);
+      expect(reopened.state.highlights()[0].color).toBe("blue");
+      reopened.release();
+      resetPdfOwnershipForTest(); // retiring the binding drops it
+      expect(pdfHighlightSessionCount()).toBe(0);
+    });
+
+    it("reuses the session while a save is still running after the last view closed", async () => {
+      const { options, first } = lease();
+      let finish!: () => void;
+      vi.spyOn(backend(), "writeHighlights").mockImplementationOnce((_pdf, _label, items) =>
+        new Promise((resolve) => { finish = () => resolve(items); }));
+      first.state.edit([sized("a")]);
+      const saving = first.state.persist();
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      first.release();
+      const reopened = createRoot(() => acquirePdfHighlightState(options));
+      expect(reopened.state).toBe(first.state);
+      reopened.release();
+      expect(pdfHighlightSessionCount()).toBe(1);
+      finish();
+      expect(await saving).toBe(true);
+      expect(pdfHighlightSessionCount()).toBe(0); // idle and viewless: dropped
+    });
+
+    it("keeps a merged-in highlight when a newer edit queued behind the write", async () => {
+      const { first: { state, release } } = lease();
+      state.loadInitial([sized("a")]);
+      const external = sized("external");
+      let finish!: () => void;
+      const write = vi.spyOn(backend(), "writeHighlights")
+        .mockImplementationOnce((_pdf, _label, items) => new Promise((resolve) => { finish = () => resolve([...items, external]); }))
+        .mockImplementation(async (_pdf, _label, items) => items);
+      state.edit([sized("a", "green")]);
+      const first = state.persist();
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      state.edit([...state.highlights(), sized("b")]);
+      const second = state.persist();
+      finish();
+      await Promise.all([first, second]);
+      const [, , submitted, base] = write.mock.calls[1];
+      expect(base.map((h) => h.id)).toEqual(["a", "external"]);
+      expect(submitted.map((h) => h.id).sort()).toEqual(["a", "b", "external"]);
+      expect(state.highlights().map((h) => h.id).sort()).toEqual(["a", "b", "external"]);
+      release();
+    });
+
+    it("lets a sibling's successful read seed the session after a failed first read", () => {
+      const { options, first } = lease();
+      const second = createRoot(() => acquirePdfHighlightState(options));
+      // The first view's annotation read failed: it seeds nothing.
+      expect(second.state.loadInitial([sized("disk")])).toBe(true);
+      expect(first.state.highlights().map((h) => h.id)).toEqual(["disk"]);
+      expect(second.state.loadInitial([])).toBe(false);
+      first.release(); second.release();
+    });
+
+    it("keeps edits made before the first successful read on top of it", () => {
+      const { first: { state, release } } = lease();
+      state.edit([sized("local")]);
+      expect(state.loadInitial([sized("disk")])).toBe(true);
+      expect(state.highlights().map((h) => h.id).sort()).toEqual(["disk", "local"]);
+      expect(state.unsaved()).toBe(true);
+      state.load([]);
+      release();
+    });
   });
 });
