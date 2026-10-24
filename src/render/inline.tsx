@@ -271,6 +271,10 @@ function createPeekBridge(disabled: () => boolean) {
   let touchOpen = false;
   let openT: ReturnType<typeof setTimeout> | undefined;
   let closeT: ReturnType<typeof setTimeout> | undefined;
+  // The popup's editor holds the caret (D-20261023-VQ): no hover timer closes it.
+  let held = false;
+  const setHeld = (value: boolean) => { held = value; };
+  const closeLater = () => { closeT = setTimeout(() => { if (!held) setOpen(false); }, PEEK_CLOSE_MS); };
   const clearOpen = () => {
     if (openT) {
       clearTimeout(openT);
@@ -297,7 +301,7 @@ function createPeekBridge(disabled: () => boolean) {
     clearOpen();
     if (disabled()) return;
     clearClose();
-    closeT = setTimeout(() => setOpen(false), PEEK_CLOSE_MS);
+    closeLater();
   };
   const popupEnter = () => {
     if (disabled()) return;
@@ -307,7 +311,7 @@ function createPeekBridge(disabled: () => boolean) {
     if (touchOpen) return;
     if (disabled()) return;
     clearClose();
-    closeT = setTimeout(() => setOpen(false), PEEK_CLOSE_MS);
+    closeLater();
   };
   const dismiss = () => {
     touchOpen = false;
@@ -326,7 +330,7 @@ function createPeekBridge(disabled: () => boolean) {
     touchOpen = true;
     setOpen(true);
   };
-  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss, hold };
+  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss, hold, setHeld };
 }
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
@@ -448,7 +452,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           truncatedCount={() => capped().truncated}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
-          onDismiss={peek.dismiss}
+          onDismiss={peek.dismiss} onHold={peek.setHeld}
         />
       </Show>
     </>
@@ -1488,7 +1492,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           </Show>}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
-          onDismiss={peek.dismiss}
+          onDismiss={peek.dismiss} onHold={peek.setHeld}
         />
       </Show>
     </>

@@ -19,8 +19,11 @@ vi.mock("../favorites", async original => {
 });
 // The native journey covers working-set hydration; here observe read scheduling
 // and the rendered answer independently of descendant hydration.
+// Rows show their unfolded children, as a hover preview's do.
+const MockRows = (props: { blocks: BlockDto[] }) =>
+  <For each={props.blocks}>{block => <><span>{block.raw}</span>{!block.collapsed && <MockRows blocks={block.children} />}</>}</For>;
 vi.mock("./LiveRefGroup", () => ({ LiveRefGroup: (props: { blocks: BlockDto[] }) =>
-  <div class="answer"><For each={props.blocks}>{block => <span>{block.raw}</span>}</For></div> }));
+  <div class="answer"><MockRows blocks={props.blocks} /></div> }));
 
 let rev = 0;
 let dispose: (() => void) | undefined;

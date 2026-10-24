@@ -6,6 +6,7 @@ import { LONG_PRESS_DELAY } from "./longPress";
 import { contextMenu, closeContextMenu, openPageContextMenu } from "../ui";
 import { ContextMenu } from "../components/ContextMenu";
 import { openPage, route } from "../router";
+import { pageByName } from "../document";
 import { readFileSync } from "node:fs";
 
 vi.mock("../inputCapability", async (original) => ({
@@ -27,14 +28,19 @@ it.each(["[[Tine]]", "#Tine"])("GH #655: holding %s keeps preview and page actio
   try {
     // Shared builder used by desktop right-click; platform-only actions retain
     // their existing availability policy.
-    openPageContextMenu(40, 40, "Tine");
-    const expected = actionIds();
-    expect(expected).toContain("open-sidebar");
-    closeContextMenu();
     const link = host.querySelector("a")!;
     pointer(link, "pointerdown");
     await vi.advanceTimersByTimeAsync(LONG_PRESS_DELAY + 100);
     pointer(link, "pointerup");
+    expect(document.querySelector(".peek-popup")).not.toBeNull();
+    // The editable preview (D-20261023-VQ) loads its source page; the shared
+    // builder is compared in that same state.
+    for (let i = 0; i < 40 && !pageByName("Tine"); i++) await vi.advanceTimersByTimeAsync(25);
+    expect(pageByName("Tine")).toBeTruthy();
+    openPageContextMenu(40, 40, "Tine");
+    const expected = actionIds();
+    expect(expected).toContain("open-sidebar");
+    closeContextMenu();
     expect(document.querySelector(".peek-popup")).not.toBeNull();
     const actions = document.querySelector<HTMLButtonElement>('.peek-popup [aria-label="Page actions"]');
     expect(actions).not.toBeNull();
