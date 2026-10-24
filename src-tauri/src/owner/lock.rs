@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use super::OwnerError;
 
-/// A held owner lock. Dropping it (closing the handle) releases it.
+/// A held owner lock. Dropping it unlocks the file before closing the handle.
 pub(crate) struct OwnerLock {
     file: File,
     path: PathBuf,
@@ -105,20 +105,31 @@ mod tests {
         let first = OwnerLock::try_take(&path, "serve").unwrap().expect("free");
         assert!(OwnerLock::try_take(&path, "app").unwrap().is_none(), "held");
         drop(first);
-        // A process another test spawns at the moment of the drop inherits the
-        // descriptor until its exec closes it (close-on-exec), and the lock
-        // belongs to the open file, so allow that window instead of flaking.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        let retaken = loop {
-            if let Some(lock) = OwnerLock::try_take(&path, "app").unwrap() {
-                break Some(lock);
-            }
-            if std::time::Instant::now() > deadline {
-                break None;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        };
+        let retaken = OwnerLock::try_take(&path, "app").unwrap();
         assert!(retaken.is_some(), "released");
+        assert!(path.exists(), "the lock file is never unlinked");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_duplicate_descriptor_cannot_keep_a_released_owner_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("g.lock");
+        let first = OwnerLock::try_take(&path, "serve").unwrap().expect("free");
+        // dup and fork share the open file description, and therefore its
+        // flock. Keep a duplicate alive deterministically instead of relying
+        // on another test to spawn a child during the lease release.
+        let inherited = first.file.try_clone().unwrap();
+        assert!(OwnerLock::try_take(&path, "app").unwrap().is_none());
+        drop(first);
+        let next = OwnerLock::try_take(&path, "app")
+            .unwrap()
+            .expect("released owner lock stayed held by an inherited descriptor");
+        // Closing the old description must not release the successor's lock.
+        drop(inherited);
+        assert!(OwnerLock::try_take(&path, "other").unwrap().is_none());
+        drop(next);
+        assert!(OwnerLock::try_take(&path, "other").unwrap().is_some());
         assert!(path.exists(), "the lock file is never unlinked");
     }
 }

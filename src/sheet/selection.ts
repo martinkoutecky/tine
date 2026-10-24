@@ -3,7 +3,7 @@ import { msg } from "../i18n";
 import { createRoot, createSignal } from "solid-js";
 import { pushToast } from "../toasts";
 import { clearSelection, selectBlock, prevVisible, nextVisible, blockIsGridView, withUndoUnit, blockPageReadOnly, formatForBlock, node as docNode } from "../document";
-import { editingId, endEdit, startEditing } from "../editorController";
+import { editingId, endEdit, prepareEditEntry, startEditing } from "../editorController";
 import { graphOwner } from "../owned";
 import { SHEET_CELL_HIDE, splitProps } from "../editor/properties";
 import {
@@ -597,6 +597,7 @@ export function startCellEditing(sel: CellSelInput, offset?: number): boolean {
   const node = docNode(blockId);
   if (!node) return false;
   const visibleLen = splitProps(node.raw, SHEET_CELL_HIDE, formatForBlock(blockId)).visible.length;
+  if (!prepareEditEntry()) return false;
   setCellSel(scoped);
   startEditing(blockId, offset ?? visibleLen, cellOwner(scoped));
   return true;
