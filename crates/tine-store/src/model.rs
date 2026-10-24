@@ -137,6 +137,11 @@ pub(crate) fn read_parse_bytes(path: &Path) -> io::Result<Vec<u8>> {
     read_parse_bytes_observed(path).map(|(bytes, _)| bytes)
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static READ_PARSE_BYTES_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
 /// [`read_parse_bytes`] with the open file's metadata, taken before its
 /// bytes are read (GH #623: an own-write stamp without another open).
 pub(crate) fn read_parse_bytes_observed(path: &Path) -> io::Result<(Vec<u8>, fs::Metadata)> {
@@ -149,6 +154,12 @@ pub(crate) fn read_parse_bytes_observed(path: &Path) -> io::Result<(Vec<u8>, fs:
             ParseInputTooLarge { len },
         ));
     }
+    #[cfg(test)]
+    READ_PARSE_BYTES_HOOK.with(|hook| {
+        if let Some(deliver) = hook.borrow_mut().take() {
+            deliver();
+        }
+    });
     let mut bytes = Vec::new();
     Read::by_ref(&mut input)
         .take(PARSE_INPUT_MAX_BYTES + 1)
@@ -159,6 +170,21 @@ pub(crate) fn read_parse_bytes_observed(path: &Path) -> io::Result<(Vec<u8>, fs:
             ParseInputTooLarge {
                 len: bytes.len() as u64,
             },
+        ));
+    }
+    // A sync delivery can truncate or extend the open file between metadata
+    // and EOF. Preserve that as a retryable read, before a partial UTF-8
+    // sequence or outline is mistaken for permanently malformed input.
+    if (bytes.len() as u64) < len {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "file shortened during read",
+        ));
+    }
+    if bytes.len() as u64 != len {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "file grew during read",
         ));
     }
     #[cfg(feature = "test-faults")]

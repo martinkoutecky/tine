@@ -7,6 +7,7 @@ import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { openPageByName } from "./lib/e2e-navigation.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
@@ -91,8 +92,40 @@ try {
   assert(!toast.includes(graph), `toast shows an absolute host path: ${JSON.stringify(toast)}`);
   passed.push(stage); console.log(`PASS ${stage}: ${toast}`);
 
-  await browser.saveScreenshot(path.join(run, "pass.png"));
-  fs.writeFileSync(path.join(run, "result.json"), JSON.stringify({ outcome: "pass", testedCommit, passed, graph, toast }, null, 2));
+  // GH #543: notify mode must finish a quiet retry without another event.
+  // The native journey proves settled refusal and recovery; deterministic
+  // short-read/partial-delivery boundaries live in the store module tests.
+  stage = "a newly delivered invalid-text file settles and is named with its reason";
+  const delivered = path.join(graph, "pages/Delivered.md");
+  fs.writeFileSync(delivered, Buffer.from([0xff, 0xfe]));
+  let deliveredToast = null;
+  await browser.waitUntil(async () => (deliveredToast = await browser.execute(() =>
+    [...document.querySelectorAll(".toast.toast-error")].map((node) => node.textContent ?? "")
+      .find((text) => text.includes("pages/Delivered.md")) ?? null)) !== null,
+  { timeout: 30_000, interval: 200, timeoutMsg: "the settled live read failure was never announced" });
+  assert(/utf-8/i.test(deliveredToast), `the notice lost its read reason: ${deliveredToast}`);
+  passed.push(stage); console.log(`PASS ${stage}: ${deliveredToast}`);
+
+  stage = "repairing the refused file makes its page available without reopening the graph";
+  fs.writeFileSync(delivered, "- repaired external delivery\n");
+  await openPageByName(browser, "Delivered");
+  await browser.waitUntil(() => browser.execute(() =>
+    [...document.querySelectorAll(".block-content")].some((node) => node.textContent?.includes("repaired external delivery"))),
+  { timeout: 15_000, interval: 200, timeoutMsg: "the repaired page did not become readable" });
+  assert(read(delivered) === "- repaired external delivery\n", "Tine changed the repaired file");
+  assert(read(path.join(graph, "pages/Good.md")) === "- a readable page\n", "Tine changed an unrelated page");
+  passed.push(stage); console.log(`PASS ${stage}`);
+
+  // Screenshot transport is evidence, not a semantic oracle. WebKit can
+  // time out here even after its DOM/text assertions and disk checks passed.
+  let screenshotWarning = null;
+  try { await browser.saveScreenshot(path.join(run, "pass.png")); }
+  catch (error) {
+    screenshotWarning = String(error);
+    fs.writeFileSync(path.join(run, "screenshot-warning.txt"), screenshotWarning);
+    console.warn(`WARN screenshot artifact: ${screenshotWarning}`);
+  }
+  fs.writeFileSync(path.join(run, "result.json"), JSON.stringify({ outcome: "pass", testedCommit, passed, graph, toast, screenshotWarning }, null, 2));
 } catch (error) {
   if (browser) {
     try { fs.writeFileSync(path.join(run, "failure-dom.html"), await browser.execute(() => document.documentElement.outerHTML)); } catch {}

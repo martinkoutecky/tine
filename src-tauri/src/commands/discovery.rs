@@ -40,7 +40,7 @@ pub(crate) struct PageInventoryWire {
     /// older than one it already holds.
     rev: String,
     entries: Vec<PageInventoryEntryWire>,
-    /// Graph-relative paths whose page name could not be read.
+    /// Graph-relative paths and read reasons, as on the journal feed wire.
     unreadable: Vec<String>,
 }
 
@@ -121,7 +121,7 @@ pub(super) fn page_inventory_wire(view: &WholeGraph) -> PageInventoryWire {
         unreadable: view
             .unreadable_files()
             .iter()
-            .map(|(id, _)| id.as_str().to_owned())
+            .map(|(id, reason)| format!("{}: {reason}", id.as_str()))
             .collect(),
     }
 }
@@ -337,7 +337,9 @@ mod inventory_adapter_tests {
         store.refresh(tine_store::Depth::Stamps).unwrap();
         let wire = page_inventory_wire(&store.whole_graph().unwrap());
         assert!(wire.entries.iter().any(|entry| entry.name == "Good"));
-        assert_eq!(wire.unreadable, vec!["pages/Bad.md".to_owned()]);
+        assert_eq!(wire.unreadable.len(), 1);
+        assert!(wire.unreadable[0].starts_with("pages/Bad.md: "));
+        assert!(wire.unreadable[0].to_ascii_lowercase().contains("utf-8"));
         assert!(matches!(
             resolve_name(store.whole_graph().unwrap(), "Good", false),
             ResolvedWire::Existing { .. }

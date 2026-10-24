@@ -26,5 +26,8 @@ it("the Guide says the unreadable-files notice names the files and copies the fu
     "**Some page files couldn't be read**",
     "the notice names those files (the first five, then how many more)",
     "**Copy** on the notice copies the full list",
+    "retry quietly while the write settles",
+    "repair the file or its permissions; Tine checks it again when it changes",
+    "An unchanged refused file does not keep being read in the background",
   ]) expect(recovery).toContain(detail);
 });

@@ -14,6 +14,30 @@ steps. Repair `config.edn` externally and refresh/reopen to resume writes using
 its configured directories. The graph-open reply reports the config failure;
 setup never throws over it.
 
+Watcher read failures preserve the last good page while external editors and
+sync clients deliver bytes (GH #543). A revision mismatch, short read, or
+metadata change during a read is retried; a failure on a stamp still within
+the existing two-second racy window is retried quietly. Notify mode uses the
+same racy follow-up as polling, even if no further event arrives. Once the
+stamp settles, a persistent failure is listed with its graph-relative filename
+and read reason in the **Some page files couldn't be read** notice; the rest
+of the graph remains available.
+
+Quiet retries still record uncertainty for storage guards: an unreadable
+file that could own a new page's name refuses that create, and an incomplete
+asset-reference inventory cannot authorize orphan trash. Delaying an automatic
+notice never turns an unsettled read into proof that writing or deleting is safe.
+
+Permission denied and invalid input (the 64 MiB parse cap, invalid UTF-8,
+excessive outline depth or an isolated parser failure) are terminal for that
+observed file stamp. The watcher records them once and skips further byte
+reads, parsing and publications while size, mtime, file identity and change
+time remain unchanged. A changed stamp or explicit byte refresh/rebuild
+retries them, removing repaired files from the unreadable list. Other I/O
+failures keep retrying, and are reported if they persist beyond the racy window. These
+refusals contain malformed imports, incomplete sync delivery and unavailable
+filesystem access; they never write or replace the refused file.
+
 Asset trash rechecks references in the latest published graph under the Store
 writer lock, including external/sync arrivals already published by the watcher.
 An incomplete graph view cannot prove orphan-ness and refuses trash. External

@@ -362,7 +362,7 @@ impl Snapshot {
             list,
             claimants,
             name_by_path,
-            unreadable: graph.unreadable_pages(),
+            unreadable: graph.reported_unreadable_pages(),
             answers: Default::default(),
             folds_only,
         };
