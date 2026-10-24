@@ -178,6 +178,7 @@ async function loadHarness(
   vi.doMock("./platform", () => ({ isMobile: () => platform !== "desktop", platformKind: vi.fn(async () => platform) }));
   vi.doMock("./guide", () => ({ maybeShowGuideAnnouncement: vi.fn() }));
   vi.doMock("./workspaces", () => ({ clearWorkspaces: vi.fn() }));
+  vi.doMock("./session", () => ({ hasRestoredSession: vi.fn(() => false) }));
   vi.doMock("./editorController", () => ({ endEdit: vi.fn() }));
   const closeAllWorkspaceWindows = vi.fn((_reason: string) => { events.push("close-windows"); });
   vi.doMock("./workspaceWindows", () => ({ closeAllWorkspaceWindows }));
@@ -962,6 +963,18 @@ describe("graph home page on open (config.edn :default-home)", () => {
     await harness.loadGraphPath("/tmp/other-graph");
     await settle();
     expect(harness.openPage).toHaveBeenCalledWith("Directory", "page", { inPlace: true });
+  });
+
+  it.each([false, true])("keeps restored tab routes on graph open (switch: %s)", async (switching) => {
+    const harness = await harnessWithHome("Directory", DIRECTORY);
+    if (switching) await harness.loadGraphPath(META.root);
+    await settle();
+    harness.openPage.mockClear();
+    const { hasRestoredSession } = await import("./session");
+    vi.mocked(hasRestoredSession).mockReturnValue(true);
+    await harness.loadGraphPath(switching ? "/tmp/other-graph" : META.root);
+    await settle();
+    expect(harness.openPage).not.toHaveBeenCalled();
   });
 
   it("keeps the ordinary landing when none is configured or the page no longer resolves", async () => {

@@ -28,6 +28,7 @@ import { endEdit } from "./editorController";
 import { journalHasContent } from "./journalContent";
 import { activatePdfOwnership, drainPdfWork, retirePdfOwnership } from "./pdfOwnership";
 import { openConfiguredHomePage } from "./homePage";
+import { hasRestoredSession } from "./session";
 import { isPublishedExport } from "./publishedBackend";
 import { clearWorkspaces } from "./workspaces";
 import { reportUiFailure } from "./uiFailure";
@@ -366,10 +367,10 @@ export async function loadGraphPath(
     // session before the backend knew which graph this webview would own.
     await restoreSession();
   }
-  // A configured home page (config.edn `:default-home`) replaces the landing
-  // on an ordinary open — first bind or switch, never a same-graph refresh —
-  // unless a rebind or navigation lands first.
-  if (result.kind === "loaded" && (switching || !hadGraph)) {
+  // Home supplies a fresh landing only. A readable saved session owns every
+  // restored route, regardless of how its tabs were opened (internal card 3x4).
+  // Published exports have no local session and retain their home landing.
+  if (result.kind === "loaded" && (switching || !hadGraph) && !hasRestoredSession()) {
     if (isPublishedExport()) await openConfiguredHomePage();
     else void openConfiguredHomePage();
   }

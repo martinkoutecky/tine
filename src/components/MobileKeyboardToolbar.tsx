@@ -71,7 +71,7 @@ export function revealFocusedEditorAboveToolbar(toolbarTop: number): boolean {
   const overlap = editor.getBoundingClientRect().bottom + EDITOR_TOOLBAR_MARGIN - toolbarTop;
   if (overlap <= 0) return false;
   const scroller = editor.closest<HTMLElement>(
-    ".main-content, .right-sidebar-scroll, .left-sidebar-scroll",
+    ".main-content, .right-sidebar, .left-sidebar-scroll",
   );
   if (scroller) scroller.scrollTop += overlap;
   else window.scrollBy({ top: overlap });

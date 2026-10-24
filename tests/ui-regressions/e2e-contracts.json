@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-tab-restore.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"With Index and Tasks pinned and Index configured as home, middle-click, Ctrl/Cmd-click, context-menu and sidebar new tabs retain their last routes, order, pins and active tab across a clean close and relaunch; external page edits between runs remain visible.","blocking":true,"authority":"Internal card PVTI_lAHOAAbLVc4BhPsyzhDC3x4"}],
+      "acceptableVariations": ["Session flush, page-load and rendering latency."],
+      "nonRequirements": ["Exact pixels or tab IDs; native certification outside Linux WebKitGTK; crash recovery or second-window lifecycle."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh745-windows-probe.mjs": {
       "contracts":[{"class":"core-operation","userOutcome":"On a long page with loaded images above the caret, outdenting a level-two block to level one and indenting it back keeps the block visible without a large viewport jump (GH #745, reopened on Beta 9).","blocking":true}],
       "acceptableVariations":["Small adjustments to show the caret and platform-dependent line geometry are allowed; an already-visible caret must not be thrown outside the viewport."],
@@ -240,7 +246,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-linkable-page-property-refs.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"A graph-configured bare page-property value finds its header in page-reference queries and Linked References; changing and restoring the atom updates the visible answers live.","blocking":true}],
+      "contracts": [{"class":"core-operation","userOutcome":"A graph-configured bare page-property value finds its header in page-reference queries and Linked References; changing and restoring the atom updates the visible answers live. Editing a property and clicking its group title saves the value and preserves the read-only property-row appearance in every group for that source page (GH #753).","blocking":true}],
       "acceptableVariations":["Result order, pane layout, typography and watcher delivery latency may vary while answer membership remains correct."],
       "nonRequirements":["Exact pixels, incidental DOM nesting, or certification outside Linux WebKitGTK."],
       "stability":"burn-in"
