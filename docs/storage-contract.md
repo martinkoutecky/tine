@@ -14,6 +14,38 @@ steps. Repair `config.edn` externally and refresh/reopen to resume writes using
 its configured directories. The graph-open reply reports the config failure;
 setup never throws over it.
 
+Watcher read failures preserve the last good page while external editors and
+sync clients deliver bytes (GH #543). A revision mismatch, short read, or
+metadata change during a read is retried; a failure on a stamp still within
+the existing two-second racy window is retried quietly. Notify mode uses the
+same racy follow-up as polling, even if no further event arrives. Once the
+stamp settles, a persistent failure is listed with its graph-relative filename
+and read reason in the **Some page files couldn't be read** notice; the rest
+of the graph remains available.
+
+Quiet retries still record uncertainty for storage guards: an unreadable
+file that could own a new page's name refuses that create, and an incomplete
+asset-reference inventory cannot authorize orphan trash. Delaying an automatic
+notice never turns an unsettled read into proof that writing or deleting is safe.
+
+Invalid input (the 64 MiB parse cap, invalid UTF-8,
+excessive outline depth or an isolated parser failure) are terminal for that
+observed file stamp. The watcher records them once and skips further byte
+reads, parsing and publications while size, mtime, file identity and change
+time remain unchanged. A changed stamp or explicit byte refresh/rebuild
+retries them, removing repaired files from the unreadable list. Permission
+denied and other settled I/O failures retry on the next event or existing
+poll/focus cadence, without renewing the racy follow-up timer or republishing
+an unchanged error. A denied open reads no bytes; retrying it makes access
+repairs observable even on platforms where permission changes do not change
+the file stamp. Only reads still in flux schedule the racy follow-up. A full
+walk's file-level metadata error retains that file's last good page just as a
+directory error retains its pages. The short/growing-read classification is
+watcher-only: save staging and post-write publication retain their revision
+comparison and conflict behavior when an external delivery changes length. These
+refusals contain malformed imports, incomplete sync delivery and unavailable
+filesystem access; they never write or replace the refused file.
+
 Asset trash rechecks references in the latest published graph under the Store
 writer lock, including external/sync arrivals already published by the watcher.
 An incomplete graph view cannot prove orphan-ness and refuses trash. External

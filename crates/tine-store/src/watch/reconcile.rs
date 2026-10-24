@@ -259,7 +259,7 @@ impl Core {
                             self.graph.ensure_write_target(path).is_ok()
                         }
                     })
-                    .filter_map(|path| stamp(path).map(|value| (path.clone(), value)))
+                    .filter_map(|path| stamp_metadata(path).map(|value| (path.clone(), value)))
                     .collect(),
                 Some(self.unreadable_dirs.lock().unwrap().clone()),
             )
@@ -280,6 +280,11 @@ impl Core {
             for (path, value) in &*snapshot {
                 if path
                     .ancestors()
+                    // Full-walk errors include failed file_type/lstat calls
+                    // on the file itself. Incremental errors are cloned from
+                    // the previous cycle: a stale self-error must not restore
+                    // a file that an exact removal notification just removed.
+                    .skip(usize::from(paths.is_some()))
                     .any(|ancestor| errors.contains_key(ancestor))
                 {
                     now.entry(path.clone()).or_insert_with(|| value.clone());
@@ -287,6 +292,15 @@ impl Core {
             }
         }
         let mut racy = self.racy.lock().unwrap();
+        let mut refusals = self.read_refusals.lock().unwrap();
+        // A full listing reports directory errors afresh; unchanged file
+        // refusals must survive it without being read or published again.
+        for (path, refusal) in &*refusals {
+            unreadable
+                .as_mut()
+                .unwrap()
+                .insert(path.clone(), refusal.reason.clone());
+        }
         // Stable paths need neither union allocation nor graph-wide sorting.
         // Copy their known revisions and sort only the paths requiring work.
         let names: HashSet<PathBuf> = if let Some(paths) = paths {
@@ -303,7 +317,10 @@ impl Core {
                                 && (scan_semantics
                                     || (old.identity == new.identity && old.changed == new.changed))
                         });
-                    if same && !racy.contains(path) {
+                    let refusal_moved = refusals
+                        .get(path)
+                        .is_some_and(|refusal| !refusal.stamp.same_metadata(new));
+                    if same && !racy.contains(path) && !refusal_moved {
                         new.rev = old.unwrap().rev.clone();
                         None
                     } else {
@@ -317,6 +334,9 @@ impl Core {
                     .filter(|path| !now.contains_key(*path))
                     .cloned(),
             );
+            // A new in-flux file has no committed baseline yet. A later full
+            // scan must also clear its uncertainty if it disappears.
+            names.extend(self.graph.unsettled_read_paths());
             names
         };
         let mut names: Vec<_> = names.into_iter().collect();
@@ -332,10 +352,31 @@ impl Core {
         for path in names {
             let before = snapshot.get(&path);
             if before.is_some() && !now.contains_key(&path) {
-                if let Some(value) = stamp(&path) {
+                if let Some(value) = stamp_metadata(&path) {
                     now.insert(path.clone(), value);
                 }
             }
+            if before.is_none() && !now.contains_key(&path) {
+                self.graph.note_unsettled_read(&path, None);
+                continue;
+            }
+            if !force
+                && !config_changed
+                && refusals.get(&path).is_some_and(|refusal| {
+                    now.get(&path)
+                        .is_some_and(|new| refusal.stamp.same_metadata(new))
+                })
+            {
+                if let Some(new) = now.get_mut(&path) {
+                    new.rev = refusals[&path].stamp.rev.clone();
+                }
+                continue;
+            }
+            let refused = refusals.remove(&path).is_some();
+            if refused {
+                unreadable.as_mut().unwrap().remove(&path);
+            }
+            let mut hash_error = None;
             if paths.is_none() {
                 if let (Some(old), Some(new)) = (before, now.get_mut(&path)) {
                     let same = !force
@@ -343,12 +384,12 @@ impl Core {
                         && old.len == new.len
                         && (scan_semantics
                             || (old.identity == new.identity && old.changed == new.changed));
-                    if same && !racy.contains(&path) {
+                    if same && !racy.contains(&path) && !refused {
                         new.rev = old.rev.clone();
                         continue;
                     }
-                    let moved = racy::hash_settled(&path, new);
-                    if same && !moved {
+                    let hashed = racy::hash_settled(&path, new);
+                    if same && matches!(hashed, Ok(false)) && !refused {
                         // §5.4: a racy stamp cannot vouch for the bytes, so
                         // they were reread; it stops being racy once observed
                         // outside the window.
@@ -364,8 +405,17 @@ impl Core {
                             continue;
                         }
                     }
+                    hash_error = hashed.err();
                 } else if let Some(new) = now.get_mut(&path) {
-                    racy::hash_settled(&path, new);
+                    hash_error = racy::hash_settled(&path, new).err();
+                }
+            } else if let Some(new) = now.get_mut(&path) {
+                // Keep exact notifications on their existing one-stamp path:
+                // sync_file_internal compares this hash with the bounded read.
+                // Only a failed read needs the extra metadata observation below.
+                match racy::hash_revision(&path) {
+                    Ok(rev) => new.rev = Some(rev),
+                    Err(error) => hash_error = Some(error),
                 }
             }
             match now.get(&path) {
@@ -384,6 +434,7 @@ impl Core {
             let kind = match (before, after) {
                 (None, Some(_)) => Some(ChangeKind::Created),
                 (Some(_), None) => Some(ChangeKind::Removed),
+                (Some(_), Some(_)) if refused || hash_error.is_some() => Some(ChangeKind::Modified),
                 (Some(a), Some(b)) if a.rev != b.rev => Some(ChangeKind::Modified),
                 (Some(a), Some(b)) if a.modified != b.modified => Some(ChangeKind::Touched),
                 _ => None,
@@ -407,6 +458,7 @@ impl Core {
                 _ => Vec::new(),
             };
             if !owners.is_empty() {
+                self.graph.note_unsettled_read(&path, None);
                 forwarded.extend(owners);
                 retry_baseline(&mut now, &path, before);
                 continue;
@@ -415,10 +467,13 @@ impl Core {
                 // Conflict copies are in the file feed so the window adapter can
                 // refresh the conflicts panel, but never enter the page cache.
             } else if matches!(kind, ChangeKind::Removed) {
+                self.graph.note_unsettled_read(&path, None);
                 if let Some(entry) = self.graph.forget_file_internal(&path) {
                     pages.push((id.clone(), entry.kind, entry.name));
                 }
             } else if matches!(kind, ChangeKind::Touched) {
+                self.graph.note_unsettled_read(&path, None);
+                unreadable.as_mut().unwrap().remove(&path);
                 self.graph
                     .observe_page_mtime(&path, after.and_then(|value| value.modified));
             } else {
@@ -429,36 +484,72 @@ impl Core {
                 } else {
                     observed_rev
                 };
-                let Some(expected_rev) = observed_rev.as_ref() else {
-                    unreadable
-                        .as_mut()
-                        .unwrap()
-                        .insert(path.clone(), "file hash failed".into());
-                    retry_baseline(&mut now, &path, before);
-                    continue;
+                let result = match observed_rev.as_ref() {
+                    Some(expected) => self.graph.sync_file_internal(&path, Some(expected)),
+                    None => SyncFileResult::ReadFailed(
+                        hash_error.unwrap_or_else(|| std::io::Error::other("file hash failed")),
+                    ),
                 };
-                match self.graph.sync_file_internal(&path, Some(expected_rev)) {
+                match result {
                     SyncFileResult::Reconciled { entry, rev } => {
-                        debug_assert_eq!(&rev, expected_rev);
+                        self.graph.note_unsettled_read(&path, None);
+                        debug_assert_eq!(Some(&rev), observed_rev.as_ref());
                         unreadable.as_mut().unwrap().remove(&path);
                         if let Some(entry) = entry {
                             pages.push((id.clone(), entry.kind, entry.name));
                         }
                     }
                     SyncFileResult::ChangedDuringRead => {
+                        self.graph
+                            .note_unsettled_read(&path, Some("file changed during read".into()));
                         unreadable.as_mut().unwrap().remove(&path);
+                        self.retry_read_later();
                         retry_baseline(&mut now, &path, before);
                         continue;
                     }
                     SyncFileResult::ReadFailed(error) => {
-                        unreadable
-                            .as_mut()
-                            .unwrap()
-                            .insert(path.clone(), error.to_string());
-                        retry_baseline(&mut now, &path, before);
+                        let value = after.unwrap();
+                        // A delivered partial UTF-8 sequence or a permission
+                        // change during the read is still in flux. Use §5.4's
+                        // existing settling window, and re-stat before treating
+                        // any error as belonging to this observation.
+                        let settled = !value.racy_at(observed)
+                            && stamp_metadata(&path)
+                                .is_some_and(|fresh| fresh.same_metadata(value));
+                        // Access can recover without a stamp change (Windows
+                        // ACLs, mobile scopes, minifilters). Retry its cheap
+                        // failed open on the normal event/poll cadence.
+                        let terminal = error.kind() == std::io::ErrorKind::InvalidData;
+                        if settled {
+                            self.graph.note_unsettled_read(&path, None);
+                            unreadable
+                                .as_mut()
+                                .unwrap()
+                                .insert(path.clone(), error.to_string());
+                        } else {
+                            self.graph
+                                .note_unsettled_read(&path, Some(error.to_string()));
+                            unreadable.as_mut().unwrap().remove(&path);
+                        }
+                        if settled && terminal {
+                            refusals.insert(
+                                path.clone(),
+                                ReadRefusal {
+                                    stamp: value.clone(),
+                                    reason: error.to_string(),
+                                },
+                            );
+                            racy.remove(&path);
+                        } else {
+                            if !settled {
+                                self.retry_read_later();
+                            }
+                            retry_baseline(&mut now, &path, before);
+                        }
                         continue;
                     }
                     SyncFileResult::Excluded => {
+                        self.graph.note_unsettled_read(&path, None);
                         unreadable.as_mut().unwrap().remove(&path);
                     }
                 }
@@ -490,6 +581,7 @@ impl Core {
             false
         };
         drop(racy);
+        drop(refusals);
         drop(snapshot);
         if !forwarded.is_empty() {
             if let Some(forward) = self.forward.lock().unwrap().as_ref() {
@@ -532,6 +624,16 @@ impl Core {
             );
         }
         Ok(())
+    }
+
+    /// Notify mode retries in-flux reads without waiting for another OS event.
+    /// Settled I/O failures use the normal event/poll cadence. Keep the
+    /// existing racy follow-up deadline when one is pending.
+    fn retry_read_later(&self) {
+        self.follow_up
+            .lock()
+            .unwrap()
+            .get_or_insert_with(|| Instant::now() + RACY_FOLLOW_UP);
     }
 
     fn collect_full(
@@ -580,6 +682,554 @@ mod tests {
         );
         store.whole_graph().unwrap();
         (dir, store)
+    }
+
+    fn read_failure_is_retained_until_repair(break_file: impl Fn(&Path), repair: impl Fn(&Path)) {
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        let core = store.watch.core_for_load();
+        let path = dir.path().join("pages/P0.md");
+        let file = fs::File::options().write(true).open(&path).unwrap();
+        break_file(&path);
+        file.set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+        racy::HASH_ATTEMPTS.with(|count| count.set(0));
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert_eq!(racy::HASH_ATTEMPTS.with(|count| count.get()), 1);
+        let view = store.whole_graph().unwrap();
+        let errors = view.unreadable_files();
+        assert!(
+            errors
+                .iter()
+                .any(|(id, reason)| { id.as_str() == "pages/P0.md" && !reason.is_empty() }),
+            "a settled refusal must name the file and reason: {errors:?}"
+        );
+        let generation = store.graph.cache_generation();
+        let changes = store.subscribe();
+        // Both a poll and a duplicate notification must preserve the refusal's
+        // real stamp, rather than invalidate the baseline to force another read.
+        for paths in [None, Some(HashSet::from([path.clone()])), None] {
+            core.reconcile(paths.as_ref(), false, false, DiffTrigger::Test)
+                .unwrap();
+            assert!(
+                core.snapshot.lock().unwrap()[&path].same_metadata(&stamp_metadata(&path).unwrap()),
+                "terminal failure was queued for another read"
+            );
+            assert_eq!(store.graph.cache_generation(), generation);
+            assert!(changes.try_recv().unwrap().is_none());
+            assert_eq!(
+                racy::HASH_ATTEMPTS.with(|count| count.get()),
+                1,
+                "unchanged terminal file was read again"
+            );
+        }
+        // A metadata-only touch must retry even if the bytes/revision still
+        // match the previous refused observation (including denied opens).
+        file.set_modified(SystemTime::now() - Duration::from_secs(7200))
+            .unwrap();
+        core.reconcile(None, false, true, DiffTrigger::Test)
+            .unwrap();
+        assert_eq!(racy::HASH_ATTEMPTS.with(|count| count.get()), 2);
+        repair(&path);
+        fs::write(&path, "- repaired\n").unwrap();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(!store
+            .whole_graph()
+            .unwrap()
+            .unreadable_files()
+            .iter()
+            .any(|(id, _)| id.as_str() == "pages/P0.md"));
+        assert_eq!(
+            store.page(&PageId::from("pages/P0.md")).unwrap().doc.blocks[0].raw,
+            "repaired"
+        );
+        store.close();
+    }
+
+    #[test]
+    fn gh543_r1_settled_io_failure_does_not_renew_full_walks() {
+        for kind in [
+            std::io::ErrorKind::Other,
+            std::io::ErrorKind::UnexpectedEof,
+            std::io::ErrorKind::Interrupted,
+        ] {
+            let (dir, store) = open();
+            store.watch.stop_background_for_test();
+            let core = store.watch.core_for_load();
+            *core.follow_up.lock().unwrap() = None;
+            let path = dir.path().join("pages/P0.md");
+            fs::write(&path, "- unavailable cloud delivery\n").unwrap();
+            age(&path);
+            let _fault = OpenFailure::new(&path, kind);
+            let walks = store.graph.diag.snapshot("ready")["fullDiffs"]["total"]
+                .as_u64()
+                .unwrap();
+            core.reconcile(None, false, false, DiffTrigger::Test)
+                .unwrap();
+            let generation = store.graph.cache_generation();
+            let changes = store.subscribe();
+            // Advance pending deadlines without sleeping: the real watcher entry
+            // point must perform no follow-up walks for this settled failure.
+            for _ in 0..3 {
+                if let Some(at) = core.follow_up.lock().unwrap().as_mut() {
+                    *at = Instant::now();
+                }
+                core.follow_up_if_due();
+            }
+            assert_eq!(
+                store.graph.diag.snapshot("ready")["fullDiffs"]["total"]
+                    .as_u64()
+                    .unwrap()
+                    - walks,
+                1,
+                "a settled failure must not self-renew full directory walks"
+            );
+            assert!(core.follow_up.lock().unwrap().is_none());
+            assert_eq!(store.graph.cache_generation(), generation);
+            assert!(changes.try_recv().unwrap().is_none());
+            // A normal later poll still retries and retains the refusal quietly.
+            racy::HASH_ATTEMPTS.with(|count| count.set(0));
+            core.reconcile(None, false, false, DiffTrigger::Test)
+                .unwrap();
+            assert_eq!(racy::HASH_ATTEMPTS.with(|count| count.get()), 1);
+            assert_eq!(store.graph.cache_generation(), generation);
+            assert!(changes.try_recv().unwrap().is_none());
+            store.close();
+        }
+    }
+
+    struct OpenFailure;
+
+    impl OpenFailure {
+        fn new(path: &Path, kind: std::io::ErrorKind) -> Self {
+            racy::HASH_OPEN_ERROR.with(|fault| *fault.borrow_mut() = Some((path.into(), kind)));
+            Self
+        }
+    }
+
+    impl Drop for OpenFailure {
+        fn drop(&mut self) {
+            racy::HASH_OPEN_ERROR.with(|fault| *fault.borrow_mut() = None);
+        }
+    }
+
+    fn age(path: &Path) {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+    }
+
+    #[test]
+    fn gh543_r1_permission_only_repair_with_identical_stamp_recovers() {
+        // Models Windows ACL/minifilter and mobile security-scope repairs:
+        // availability changes while every metadata field stays identical.
+        for hinted in [false, true] {
+            let (dir, store) = open();
+            store.watch.stop_background_for_test();
+            let core = store.watch.core_for_load();
+            let path = dir.path().join("pages/P0.md");
+            fs::write(&path, "- delivered before access was denied\n").unwrap();
+            age(&path);
+            let original = stamp_metadata(&path).unwrap();
+            let fault = OpenFailure::new(&path, std::io::ErrorKind::PermissionDenied);
+            core.reconcile(None, false, false, DiffTrigger::Test)
+                .unwrap();
+            let generation = store.graph.cache_generation();
+            let changes = store.subscribe();
+            racy::HASH_ATTEMPTS.with(|count| count.set(0));
+            let paths = hinted.then(|| HashSet::from([path.clone()]));
+            core.reconcile(paths.as_ref(), false, false, DiffTrigger::Test)
+                .unwrap();
+            assert_eq!(
+                racy::HASH_ATTEMPTS.with(|count| count.get()),
+                1,
+                "an unchanged access failure must retry its open on the next cycle"
+            );
+            assert_eq!(store.graph.cache_generation(), generation);
+            assert!(changes.try_recv().unwrap().is_none());
+            drop(fault);
+            assert!(stamp_metadata(&path).unwrap().same_metadata(&original));
+            core.reconcile(paths.as_ref(), false, false, DiffTrigger::Test)
+                .unwrap();
+            assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+            assert_eq!(
+                store.page(&PageId::from("pages/P0.md")).unwrap().doc.blocks[0].raw,
+                "delivered before access was denied"
+            );
+            store.close();
+        }
+    }
+
+    #[test]
+    fn gh543_r1_full_walk_file_error_keeps_the_last_good_page() {
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        let core = store.watch.core_for_load();
+        let path = dir.path().join("pages/P0.md");
+        let (mut files, mut errors, times) = core.collect_full(&store.graph.current_config());
+        files.remove(&path);
+        errors.insert(path.clone(), "injected file_type/lstat failure".into());
+        // Make the fallback path stat unavailable as it is for EACCES/ESTALE;
+        // the prepared walk's explicit file error must retain its baseline.
+        fs::rename(&path, dir.path().join("inaccessible.md")).unwrap();
+        {
+            let _writer = core.writer.lock().unwrap();
+            core.reconcile_prepared(
+                None,
+                false,
+                false,
+                None,
+                DiffTrigger::Test,
+                None,
+                Some(PreparedWalk {
+                    began: Instant::now(),
+                    observed: SystemTime::now(),
+                    files,
+                    errors,
+                    times,
+                }),
+            )
+            .unwrap();
+        }
+        let view = store.whole_graph().unwrap();
+        assert!(
+            matches!(view.resolve("P0", false), crate::Resolved::Existing { .. }),
+            "a failed file observation must retain its last good page"
+        );
+        assert!(view
+            .unreadable_files()
+            .iter()
+            .any(|(id, _)| id.as_str() == "pages/P0.md"));
+        assert!(core.snapshot.lock().unwrap().contains_key(&path));
+        store.close();
+    }
+
+    #[test]
+    fn gh543_r1_save_racing_append_or_truncation_remains_a_conflict() {
+        for external in ["- original\n- external append\n", "- cut\n"] {
+            let (dir, store) = open();
+            store.watch.stop_background_for_test();
+            let path = dir.path().join("pages/P0.md");
+            let id = PageId::from("pages/P0.md");
+            let mut read = store.page(&id).unwrap();
+            read.doc.blocks[0].raw = "unsaved typing".into();
+            let delivering = path.clone();
+            crate::model::READ_PARSE_BYTES_HOOK.with(|hook| {
+                *hook.borrow_mut() =
+                    Some(Box::new(move || fs::write(delivering, external).unwrap()));
+            });
+            let outcome = store.save(
+                crate::EditKind::SaveBlock,
+                &id,
+                crate::SaveBase::Existing(read.rev),
+                &read.doc,
+            );
+            assert!(
+                matches!(outcome, crate::SaveOutcome::Conflict { .. }),
+                "external delivery during save staging must use the conflict flow: {outcome:?}"
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), external);
+            assert_eq!(read.doc.blocks[0].raw, "unsaved typing");
+            store.close();
+        }
+    }
+
+    #[test]
+    fn gh543_a_short_read_during_delivery_is_quiet_and_recovered() {
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        let core = store.watch.core_for_load();
+        let path = dir.path().join("pages/P0.md");
+        fs::write(&path, "- a settled file replaced during its read\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+        let delivering = path.clone();
+        crate::model::READ_PARSE_BYTES_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::write(delivering, b"- partial \xf0").unwrap()
+            }));
+        });
+        let changes = store.subscribe();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+        assert!(changes.try_recv().unwrap().is_none());
+        fs::write(&path, "- finished delivery\n").unwrap();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert_eq!(
+            store.page(&PageId::from("pages/P0.md")).unwrap().doc.blocks[0].raw,
+            "finished delivery"
+        );
+        store.close();
+    }
+
+    #[test]
+    fn gh543_revision_changed_during_read_is_already_quiet_and_retried() {
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        let core = store.watch.core_for_load();
+        let path = dir.path().join("pages/P0.md");
+        fs::write(&path, "- changed between hash and read\n").unwrap();
+        core.force_mismatched_rev_once
+            .store(true, Ordering::Release);
+        let changes = store.subscribe();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+        assert!(changes.try_recv().unwrap().is_none());
+        assert!(
+            core.follow_up.lock().unwrap().is_some(),
+            "notify mode needs a retry without another event"
+        );
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert_eq!(
+            store.page(&PageId::from("pages/P0.md")).unwrap().doc.blocks[0].raw,
+            "changed between hash and read"
+        );
+        store.close();
+    }
+
+    #[test]
+    fn gh543_partial_utf8_retries_quietly_then_reports_when_settled() {
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        let core = store.watch.core_for_load();
+        let path = dir.path().join("pages/P0.md");
+        fs::write(&path, b"- partial \xf0\x9f").unwrap();
+        core.reconcile(
+            Some(&HashSet::from([path.clone()])),
+            false,
+            false,
+            DiffTrigger::Test,
+        )
+        .unwrap();
+        assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+        assert!(core.follow_up.lock().unwrap().is_some());
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(store
+            .whole_graph()
+            .unwrap()
+            .unreadable_files()
+            .iter()
+            .any(|(id, reason)| id.as_str() == "pages/P0.md" && reason.contains("utf-8")));
+        fs::write(&path, "- complete 🐈\n").unwrap();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+        store.close();
+    }
+
+    #[test]
+    fn gh543_quiet_uncertainty_still_guards_asset_trash_and_clears_after_removal() {
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        let core = store.watch.core_for_load();
+        let path = dir.path().join("pages/New.md");
+        fs::write(&path, b"- ![](../assets/kept.png) \xf0").unwrap();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+        assert!(store
+            .graph
+            .unreadable_pages()
+            .iter()
+            .any(|(id, _)| id.as_str() == "pages/New.md"));
+        assert!(
+            store.referenced_assets().is_err(),
+            "a quiet retry must not authorize orphan trash"
+        );
+        fs::remove_file(&path).unwrap();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(store.graph.unreadable_pages().is_empty());
+        assert!(store.referenced_assets().is_ok());
+        store.close();
+    }
+
+    #[test]
+    fn gh543_oversize_read_stops_until_the_file_changes() {
+        read_failure_is_retained_until_repair(
+            |path| {
+                fs::File::options()
+                    .write(true)
+                    .open(path)
+                    .unwrap()
+                    .set_len(crate::model::PARSE_INPUT_MAX_BYTES + 1)
+                    .unwrap();
+            },
+            |_| {},
+        );
+    }
+
+    #[test]
+    fn gh543_invalid_utf8_read_stops_until_the_file_changes() {
+        read_failure_is_retained_until_repair(
+            |path| {
+                fs::write(path, b"\xff\xfe").unwrap();
+            },
+            |_| {},
+        );
+    }
+
+    #[test]
+    fn gh543_removing_a_refused_file_clears_its_notice_incrementally() {
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        let core = store.watch.core_for_load();
+        let path = dir.path().join("pages/P0.md");
+        fs::write(&path, b"\xff").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(!store.whole_graph().unwrap().unreadable_files().is_empty());
+        fs::remove_file(&path).unwrap();
+        core.reconcile(
+            Some(&HashSet::from([path.clone()])),
+            false,
+            false,
+            DiffTrigger::Test,
+        )
+        .unwrap();
+        assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+        assert!(!core.read_refusals.lock().unwrap().contains_key(&path));
+        assert!(!core.snapshot.lock().unwrap().contains_key(&path));
+        store.close();
+    }
+
+    #[test]
+    fn gh543_explicit_byte_refresh_retries_an_unchanged_refusal() {
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        let core = store.watch.core_for_load();
+        let path = dir.path().join("pages/P0.md");
+        fs::write(&path, b"\xff").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        racy::HASH_ATTEMPTS.with(|count| count.set(0));
+        core.reconcile(
+            Some(&HashSet::from([path.clone()])),
+            false,
+            false,
+            DiffTrigger::Bytes,
+        )
+        .unwrap();
+        assert_eq!(racy::HASH_ATTEMPTS.with(|count| count.get()), 1);
+        assert!(!store.whole_graph().unwrap().unreadable_files().is_empty());
+        store.close();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gh543_permission_denied_retries_quietly_and_recovers_after_chmod_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let probe = tempfile::NamedTempFile::new().unwrap();
+        fs::set_permissions(probe.path(), fs::Permissions::from_mode(0o000)).unwrap();
+        let denied = fs::File::open(probe.path()).is_err();
+        fs::set_permissions(probe.path(), fs::Permissions::from_mode(0o600)).unwrap();
+        if !denied {
+            eprintln!("permission probe skipped: process bypasses access controls");
+            return;
+        }
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        let core = store.watch.core_for_load();
+        let path = dir.path().join("pages/P0.md");
+        fs::write(&path, "- delivered before chmod\n").unwrap();
+        age(&path);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(!store.whole_graph().unwrap().unreadable_files().is_empty());
+        let generation = store.graph.cache_generation();
+        let changes = store.subscribe();
+        racy::HASH_ATTEMPTS.with(|count| count.set(0));
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert_eq!(racy::HASH_ATTEMPTS.with(|count| count.get()), 1);
+        assert_eq!(store.graph.cache_generation(), generation);
+        assert!(changes.try_recv().unwrap().is_none());
+        // No rewrite or mtime touch accompanies this access repair.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+        assert_eq!(
+            store.page(&PageId::from("pages/P0.md")).unwrap().doc.blocks[0].raw,
+            "delivered before chmod"
+        );
+        store.close();
+    }
+
+    #[test]
+    fn gh543_in_flux_read_retries_without_an_unreadable_notice() {
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        let core = store.watch.core_for_load();
+        let path = dir.path().join("pages/P0.md");
+        fs::write(&path, "- external delivery\n").unwrap();
+        store
+            .graph
+            .fail_sync_read_once
+            .store(true, Ordering::Release);
+        let changes = store.subscribe();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(
+            store.whole_graph().unwrap().unreadable_files().is_empty(),
+            "an unsettled read was announced as unreadable"
+        );
+        assert!(changes.try_recv().unwrap().is_none());
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert_eq!(
+            store.page(&PageId::from("pages/P0.md")).unwrap().doc.blocks[0].raw,
+            "external delivery"
+        );
+        fs::write(&path, "- another unfinished delivery\n").unwrap();
+        store
+            .graph
+            .fail_sync_read_once
+            .store(true, Ordering::Release);
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(!store.graph.unreadable_pages().is_empty());
+        // Restoring the last good bytes takes the Touched path, which must
+        // also clear internal uncertainty rather than leave storage blocked.
+        fs::write(&path, "- external delivery\n").unwrap();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(store.graph.unreadable_pages().is_empty());
+        assert!(store.referenced_assets().is_ok());
+        store.close();
     }
 
     #[test]

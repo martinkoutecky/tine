@@ -174,7 +174,7 @@ export interface PageInventoryEntry {
 export interface PageInventory {
   rev: string;
   entries: PageInventoryEntry[];
-  /** Graph-relative paths whose page name couldn't be read; left out of `entries`
+  /** Graph-relative `path: reason` strings whose page name couldn't be read; left out of `entries`
    *  names but never failing the inventory. */
   unreadable?: string[];
 }

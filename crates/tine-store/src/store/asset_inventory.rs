@@ -23,7 +23,13 @@ impl Store {
         &self,
         view: &WholeGraph,
     ) -> io::Result<Arc<HashSet<String>>> {
-        if let Some((file, reason)) = view.unreadable_files().first() {
+        // A quiet in-flux read is still an incomplete reference inventory.
+        // Never use delayed automatic notices as proof that trash is safe.
+        let current_failures = self.graph.unreadable_pages();
+        if let Some((file, reason)) = current_failures
+            .first()
+            .or_else(|| view.unreadable_files().first())
+        {
             return Err(io::Error::other(format!("{}: {reason}", file.as_str())));
         }
         let mut names = Arc::unwrap_or_clone(view.referenced_assets());

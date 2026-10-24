@@ -137,6 +137,11 @@ pub(crate) fn read_parse_bytes(path: &Path) -> io::Result<Vec<u8>> {
     read_parse_bytes_observed(path).map(|(bytes, _)| bytes)
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static READ_PARSE_BYTES_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
 /// [`read_parse_bytes`] with the open file's metadata, taken before its
 /// bytes are read (GH #623: an own-write stamp without another open).
 pub(crate) fn read_parse_bytes_observed(path: &Path) -> io::Result<(Vec<u8>, fs::Metadata)> {
@@ -149,6 +154,12 @@ pub(crate) fn read_parse_bytes_observed(path: &Path) -> io::Result<(Vec<u8>, fs:
             ParseInputTooLarge { len },
         ));
     }
+    #[cfg(test)]
+    READ_PARSE_BYTES_HOOK.with(|hook| {
+        if let Some(deliver) = hook.borrow_mut().take() {
+            deliver();
+        }
+    });
     let mut bytes = Vec::new();
     Read::by_ref(&mut input)
         .take(PARSE_INPUT_MAX_BYTES + 1)
@@ -3980,7 +3991,27 @@ impl Graph {
         {
             return SyncFileResult::ReadFailed(io::Error::other("injected watcher read failure"));
         }
-        let content = match read_parse_input(path) {
+        let (bytes, metadata) = match read_parse_bytes_observed(path) {
+            Ok(observed) => observed,
+            Err(error) => return SyncFileResult::ReadFailed(error),
+        };
+        // A delivery can truncate or extend the open file between metadata
+        // and EOF. Only watcher reads classify this before parsing partial
+        // input; reconciliation checks whether its stamp is still in flux.
+        // Save staging/publication compare the bytes' revision
+        // through their established conflict path instead.
+        if bytes.len() as u64 != metadata.len() {
+            let (kind, reason) = if (bytes.len() as u64) < metadata.len() {
+                (io::ErrorKind::UnexpectedEof, "file shortened during read")
+            } else {
+                (io::ErrorKind::Interrupted, "file grew during read")
+            };
+            return SyncFileResult::ReadFailed(io::Error::new(kind, reason));
+        }
+        let content = match validate_parse_bytes_for_path(&bytes, path).and_then(|()| {
+            String::from_utf8(bytes)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+        }) {
             Ok(content) => content,
             Err(error) => return SyncFileResult::ReadFailed(error),
         };
@@ -7430,6 +7461,29 @@ mod tests {
             !refs.contains("Project"),
             "no stale Project anywhere: {refs:?}"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn org_autosaved_soft_newline_does_not_become_file_trivia() {
+        let dir = scratch("org-drawer-autosave");
+        let path = dir.join("pages/ManualOrg.org");
+        fs::write(&path, "* plain\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/ManualOrg.org");
+        let mut dto = store.page(&id).unwrap().doc;
+        let mut rev = dto.rev.clone().unwrap();
+        let typed = "plain\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END: suffix";
+        for end in 6..=typed.len() {
+            dto.blocks[0].raw = typed[..end].to_string();
+            rev = saved_rev(save_on_store(&store, &dto, Some(&rev)));
+        }
+        let expected = format!("* {typed}\n");
+        assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+        drop(store);
+        let reopened = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        assert_eq!(reopened.page(&id).unwrap().doc.blocks[0].raw, typed);
+        assert_eq!(fs::read_to_string(&path).unwrap(), expected);
         let _ = fs::remove_dir_all(&dir);
     }
 
