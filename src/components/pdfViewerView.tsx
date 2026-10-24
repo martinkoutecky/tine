@@ -250,13 +250,13 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
               {t("pdf-area-highlight")}</button>
             <button type="button" onClick={() => { if (props.onOpenNotes) props.onOpenNotes(); else openPage(hlsPageName(props.filename), "page"); setSettingsOpen(false); }}>{t("pdf-notes")}</button>
             <button type="button" onClick={() => { setSettingsOpen(false); setOutlineOpen(true); }}>{t("pdf-outline")}</button>
-            <Show when={props.onAnotherView && !pdfTakesOverPane()}>
-              <button type="button" class="pdf-another-view" onClick={() => {
-                setSettingsOpen(false);
-                props.onAnotherView?.({ page: curPage(), scale: scale() });
-              }}>{t("pdf-open-another-view")}</button>
-            </Show>
           </div>
+          <Show when={props.onAnotherView && !pdfTakesOverPane()}>
+            <button type="button" class="pdf-another-view" onClick={() => {
+              setSettingsOpen(false);
+              props.onAnotherView?.({ page: curPage(), scale: scale() });
+            }}>{t("pdf-open-another-view")}</button>
+          </Show>
           <div class="pdf-settings-heading">{t("pdf-theme")}</div>
           <div class="pdf-theme-choices" role="group" aria-label={t("pdf-theme-options")}>
             <For each={PDF_THEMES}>

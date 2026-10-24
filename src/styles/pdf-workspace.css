@@ -308,7 +308,8 @@
   border-bottom: 1px solid var(--border-color);
 }
 
-.pdf-settings-overflow button {
+.pdf-settings-overflow button,
+.pdf-another-view {
   min-height: 30px;
   padding: 4px 7px;
   border: 1px solid var(--border-color);
@@ -320,7 +321,8 @@
 }
 
 .pdf-settings-overflow button:hover,
-.pdf-settings-overflow button[aria-pressed="true"] {
+.pdf-settings-overflow button[aria-pressed="true"],
+.pdf-another-view:hover {
   border-color: var(--link-color);
   background: color-mix(in srgb, var(--link-color) 13%, transparent);
 }
