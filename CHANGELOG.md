@@ -60,6 +60,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Hidden properties keep their order during text edits, stay on a cleared first block, and avoid duplicate keys during sheet transfers and CLI read-then-edit; in-page replace handles these blocks again (GH #208; GH #338; internal card PVTI_lAHOAAbLVc4BhPsyzhDKQyY).
 - Editing a Markdown block that has its own properties keeps the hidden `id::` and `collapsed::` lines in the same property group, as Logseq writes them. Before, they moved below the body text, where Logseq ignores them, so references to the block could break in Logseq (internal: REG-HIDDEN-PROPS-STAY-IN-THE-GROUP).
 - Owner-lock regression checks now require immediate release even while a duplicate descriptor remains open, catching the Unix child-inheritance race without a retry that could hide it (internal REG-OWNER-LOCK-INHERITED-DESCRIPTOR).
 - Board cards drag between columns even when an editor outside the board has focus, without selecting text during the drag (GH #756).

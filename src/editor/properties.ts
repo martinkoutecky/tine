@@ -357,13 +357,12 @@ export function visibleOffsetToRawByte(raw: string, visibleOffset: number, hide:
   return rawByteOfEditor(raw, format, policyText(hide), visibleOffset);
 }
 
-/** Reattach hidden property lines to the visible text — the inverse of
- *  {@link splitProps}. Markdown appends them below the body; Org folds them back
- *  into a `:PROPERTIES:` drawer at OG's canonical spot. A metadata-only block
- *  (empty visible) is just its hidden lines. */
+/** Reattach hidden property lines to visible text. With a source, text edits
+ *  preserve its layout; a cleared Markdown block keeps its empty title line.
+ *  Structural replacements use the kernel's canonical property placement. */
 export function joinProps(visible: string, hidden: string, format: PropFormat = "md", source?: string, hide: HidePolicy = BUILTIN_HIDE): string {
   // `hide` is the policy that split `hidden` from `source`: the splice re-splits with it.
-  if (source && hasLogbookDrawer(source, format)) return editorTextJoin(visible, hidden, format, source, policyText(hide));
+  if (source !== undefined) return editorTextJoin(visible, hidden, format, source, policyText(hide));
   if (hidden && hasLogbookDrawer(hidden, "md")) return editorTextJoin(visible, hidden, format);
   // The kernel places the rows: at the end of the block's own property group,
   // else before a final quote (its lazy continuation would swallow them), else

@@ -173,7 +173,7 @@ describe("rendered-selection toolbar: exact, owned mapping (GH #375 review r1)",
   });
 
   it.each([
-    ["md", "title\nid:: 6500a1b2-0000-4000-8000-000000000001\nnext selected words", "title\nnext **selected** words\nid:: 6500a1b2-0000-4000-8000-000000000001"],
+    ["md", "title\nid:: 6500a1b2-0000-4000-8000-000000000001\nnext selected words", "title\nid:: 6500a1b2-0000-4000-8000-000000000001\nnext **selected** words"],
     ["org", "title\n:PROPERTIES:\n:ID: 6500a1b2-0000-4000-8000-000000000001\n:END:\nnext selected words", "title\n:PROPERTIES:\n:ID: 6500a1b2-0000-4000-8000-000000000001\n:END:\nnext *selected* words"],
     ["md", "title\nsecond selected words\nthird line", "title\nsecond **selected** words\nthird line"],
     ["md", "title\n| a | b |\n|---|---|\n| x | selected |", "title\n| a | b |\n|---|---|\n| x | **selected** |"],

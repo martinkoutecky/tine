@@ -33,6 +33,25 @@ fn check(block: &doc::DocBlock, counts: &mut [usize; 3]) {
                 "an edit split the property group in corpus block {}",
                 counts[1]
             );
+            if !text.is_empty() {
+                // A visible prefix edit must splice into the first visible
+                // source position, leaving every hidden row in its original
+                // group and order. Group counts alone admitted 2 -> 2 moves.
+                let raw = block.raw();
+                let at = editor_text::visible_to_raw_with(
+                    raw,
+                    org,
+                    &block_regions::parse(raw, org),
+                    &HidePolicy::Builtin,
+                    0,
+                );
+                let expected = format!("{}Edited {}", &raw[..at], &raw[at..]);
+                assert!(
+                    joined == expected,
+                    "visible edit moved metadata in corpus block {}",
+                    counts[1]
+                );
+            }
         }
     }
     for child in &block.children {

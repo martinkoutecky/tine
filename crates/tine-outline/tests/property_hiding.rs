@@ -4,6 +4,165 @@ use tine_outline::{
 };
 
 #[test]
+fn text_only_edits_splice_hidden_rows_without_reordering() {
+    let hide = HidePolicy::Configured {
+        keys: vec!["secret".into()],
+        sheet_cell: false,
+    };
+    for raw in [
+        "Title\nheading:: true\nowner:: Ada\nbody",
+        "Title\nsecret:: opaque  \ncard-repeats:: 2\nowner:: Ada\nbody",
+        "Title\r\nheading:: true\r\nowner:: Ada\r\nbody",
+        "Title\n:PROPERTIES:\n:heading: true\n:owner: Ada\n:END:\nbody",
+    ] {
+        let org = raw.contains(":PROPERTIES:");
+        let parts = editor_text::split(raw, org, &hide);
+        for (from, to) in [("Title", "Title X"), ("body", "body 2")] {
+            let text = parts.visible.replacen(from, to, 1);
+            let joined =
+                editor_text::join_preserving(&text, &parts.hidden, org, raw, &hide).unwrap();
+            assert_eq!(joined, raw.replacen(from, to, 1));
+        }
+        let text = parts
+            .visible
+            .replace("Title", "Title X")
+            .replace("body", "body 2");
+        let joined = editor_text::join_preserving(&text, &parts.hidden, org, raw, &hide).unwrap();
+        assert_eq!(
+            joined,
+            raw.replace("Title", "Title X").replace("body", "body 2")
+        );
+    }
+}
+
+#[test]
+fn raw_read_then_edit_does_not_duplicate_retained_properties() {
+    let hide = HidePolicy::Configured {
+        keys: vec!["secret".into()],
+        sheet_cell: false,
+    };
+    for org in [false, true] {
+        let raw = if org {
+            "Title\n:PROPERTIES:\n:heading: true\n:secret: old\n:END:\nbody"
+        } else {
+            "Title\nheading:: true\nsecret:: old\nbody"
+        };
+        for raw in [
+            raw.to_owned(),
+            raw.replacen(
+                "\nbody",
+                "\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:00:00]\n:END:\nbody",
+                1,
+            ),
+        ] {
+            for submitted in [
+                raw.to_owned(),
+                raw.replace("Title", "Edited"),
+                raw.replace("old", "new"),
+            ] {
+                assert_eq!(
+                    editor_text::set_text_with_policy(&raw, org, &submitted, &hide).unwrap(),
+                    submitted
+                );
+            }
+        }
+        // A fenced example does not replace the block's own property.
+        let text = if org {
+            "Title\n#+BEGIN_SRC\n:secret: literal\n#+END_SRC"
+        } else {
+            "Title\n```\nsecret:: literal\n```"
+        };
+        let joined = editor_text::set_text_with_policy(raw, org, text, &hide).unwrap();
+        assert!(joined.contains(if org { ":secret: old" } else { "secret:: old" }));
+    }
+}
+
+#[test]
+fn crlf_hidden_final_row_never_leaves_a_bare_cr() {
+    let raw = "Title\r\nowner:: Ada\r\nbody\r\nheading:: true";
+    let parts = editor_text::split(raw, false, &HidePolicy::Builtin);
+    let visible = parts.visible.replace("body", "body 2");
+    for joined in [
+        editor_text::join_preserving(&visible, &parts.hidden, false, raw, &HidePolicy::Builtin)
+            .unwrap(),
+        editor_text::join(&visible, &parts.hidden, false).unwrap(),
+    ] {
+        assert!(!joined.ends_with('\r'));
+        assert!(!joined.replace("\r\n", "").contains('\r'));
+        assert_eq!(
+            editor_text::split(&joined, false, &HidePolicy::Builtin)
+                .hidden
+                .trim_end_matches('\r'),
+            parts.hidden
+        );
+    }
+}
+
+#[test]
+fn crlf_property_only_tail_keeps_the_surviving_terminator() {
+    let raw = "Title\r\nowner:: Ada\r\nheading:: true";
+    let parts = editor_text::split(raw, false, &HidePolicy::Builtin);
+    let joined = editor_text::join(
+        &parts.visible.replace("Title", "Edited"),
+        &parts.hidden,
+        false,
+    )
+    .unwrap();
+    assert_eq!(joined, raw.replace("Title", "Edited"));
+}
+
+#[test]
+fn textarea_normalization_of_an_org_terminal_cr_keeps_the_source_layout() {
+    for raw in [
+        "Title\r\n:PROPERTIES:\r\n:heading: true\r\n:owner: Ada\r\n:END:\r",
+        "Title\r\n:PROPERTIES:\r\n:heading: true\r\n:END:\r",
+    ] {
+        let parts = editor_text::split(raw, true, &HidePolicy::Builtin);
+        let text = parts
+            .visible
+            .replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .replace("Title", "Edited");
+        let joined =
+            editor_text::join_preserving(&text, &parts.hidden, true, raw, &HidePolicy::Builtin)
+                .unwrap();
+        assert_eq!(joined, raw.replace("Title", "Edited"));
+    }
+}
+
+#[test]
+fn merge_keeps_its_existing_absorbed_metadata_policy() {
+    use tine_outline::outline::{self, Format, KeySource, OutlinePage, Verb};
+    let page: OutlinePage = serde_json::from_value(serde_json::json!({
+        "name": "P", "format": Format::Md, "roots": ["a", "b"],
+        "blocks": {
+            "a": { "raw": "Prev\nheading:: 2" },
+            "b": { "raw": "Next\nheading:: true" }
+        }
+    }))
+    .unwrap();
+    let merged = outline::apply_with_policy(
+        &[page],
+        &Verb::Merge {
+            survivor: "a".into(),
+            absorbed: "b".into(),
+            absorbed_referenced: false,
+        },
+        &KeySource::default(),
+        &HidePolicy::Builtin,
+    )
+    .unwrap();
+    let raw = &merged.pages[0]
+        .upserts
+        .iter()
+        .find(|u| u.key == "a")
+        .unwrap()
+        .raw;
+    assert!(raw.contains("heading:: 2"));
+    assert!(raw.contains("heading:: true"));
+}
+
+#[test]
 fn every_hidden_builtin_and_configured_key_keeps_bytes_after_edit_and_clear() {
     let hide = HidePolicy::Configured {
         keys: vec!["secret".into(), "tine.custom".into()],
@@ -166,20 +325,20 @@ fn a_hidden_row_stays_in_the_block_s_own_property_group() {
     for (raw, expected) in [
         (
             "Title\nbackground-color:: red\nowner:: Ada\nbody line",
-            "Title X\nowner:: Ada\nbackground-color:: red\nbody line",
+            "Title X\nbackground-color:: red\nowner:: Ada\nbody line",
         ),
         (
             "Title #card\ncard-repeats:: 2\nowner:: me\nAnswer",
-            "Title X #card\nowner:: me\ncard-repeats:: 2\nAnswer",
+            "Title X #card\ncard-repeats:: 2\nowner:: me\nAnswer",
         ),
         (
             "Title\nsecret:: s\nowner:: Ada\nbody",
-            "Title X\nowner:: Ada\nsecret:: s\nbody",
+            "Title X\nsecret:: s\nowner:: Ada\nbody",
         ),
         // No visible group: the hidden rows remain the block's only group.
         (
             "Title\nheading:: true\nbody line",
-            "Title X\nbody line\nheading:: true",
+            "Title X\nheading:: true\nbody line",
         ),
     ] {
         let parts = editor_text::split(raw, false, &hide);

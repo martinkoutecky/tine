@@ -239,10 +239,14 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
   `((uuid))` that names no block is refused `broken-ref`.
 - **`block.edit`**: the text replaces the block's editor text, as typing it would: OG hidden built-ins
   (including SRS keys) and graph-configured hidden property lines are kept byte-exact; children are kept too.
+  Raw text returned by reads may be submitted directly: an explicitly supplied primary property replaces
+  the retained row with the same normalized key, so a read-then-edit never adds a second copy. This also
+  permits an explicit new value; a property-looking line inside a fence does not replace metadata.
   On a block whose own primary properties
   include `quote`, the four comment lines (`quote::`, `quote-prefix::`, `quote-suffix::`, `author::`) are also
   kept. On an ordinary block, `author::` and quote-context lines belong to the replaced editor text, as on OG.
-  The hidden LOGBOOK drawer is kept, at its canonical position after the title, planning and head properties.
+  Text-only edits preserve the source position and order of hidden rows and LOGBOOK; structural replacements
+  use their canonical placement after the title, planning and head properties.
   If the supplied text contains a parsed LOGBOOK drawer, that drawer replaces the retained one; fence lookalikes
   remain ordinary text. A marker change writes the logbook as the app does.
   Clients supplying LOGBOOK content must pass `--rev` from the read that supplied it. A clock-only change does

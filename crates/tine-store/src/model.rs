@@ -8534,6 +8534,27 @@ mod tests {
                     ..Default::default()
                 }],
             ),
+            // OG transform-content decides pre-block status from the FIRST
+            // content line before trimming. A cleared block keeps that empty
+            // title line, so its retained card/configured metadata stays a bullet.
+            (
+                "cleared-hidden-metadata",
+                Format::Md,
+                vec![BlockDto {
+                    id: "cleared".into(),
+                    raw: tine_core::editor_text::set_text_with_policy(
+                        "Question\ncard-repeats:: 2\nsecret:: opaque",
+                        false,
+                        "",
+                        &tine_core::editor_text::HidePolicy::Configured {
+                            keys: vec!["secret".into()],
+                            sheet_cell: false,
+                        },
+                    )
+                    .unwrap(),
+                    ..Default::default()
+                }],
+            ),
             (
                 "childful",
                 Format::Md,
@@ -8597,6 +8618,12 @@ mod tests {
             };
             let reopened = store.page(&id).unwrap().doc;
             assert!(reopened.pre_block.is_none(), "promoted unsafe case {label}");
+            if label == "cleared-hidden-metadata" {
+                assert_eq!(
+                    reopened.blocks[0].raw, blocks[0].raw,
+                    "the empty title must survive reload and prevent promotion on the next save"
+                );
+            }
             assert_eq!(
                 reopened.blocks.len(),
                 blocks.len(),

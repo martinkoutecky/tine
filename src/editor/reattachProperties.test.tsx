@@ -7,8 +7,30 @@ import { doc } from "../document/model";
 import { joinProps } from "./properties";
 import { existingBlockId } from "../document/edits/identity";
 import { setRaw, undo, withUndoUnit } from "../document";
+import { pageToDto } from "../document/convert";
 
 afterEach(() => { endEdit("page-navigation"); resetStore(); document.body.innerHTML = ""; });
+
+it("clearing the first editor keeps its flashcard metadata on an outline block", () => {
+  const raw = "Question\ncard-repeats:: 2";
+  loadSingle({ name: "Card", title: "Card", kind: "page", format: "md", pre_block: null,
+    blocks: [{ id: "target", raw, collapsed: false, children: [] }] });
+  startEditing("target", 0);
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <Block id="target" />, root);
+  try {
+    const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+    expect(ta.value).toBe("Question");
+    ta.value = "";
+    ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+    expect(ta.value).toBe("");
+    endEdit("page-navigation");
+    expect(root.querySelector(".ls-block")).not.toBeNull();
+    const dto = pageToDto("Card")!;
+    expect(dto.pre_block).toBeNull();
+    expect(dto.blocks.map(block => block.raw)).toEqual(["\ncard-repeats:: 2"]);
+  } finally { dispose(); }
+});
 
 it("Org typing reattaches the ID to the accepted mixed drawer after CLOSED", () => {
   const raw = "DONE Résumé\nCLOSED: [2026-09-30 Wed 09:00]\n:PROPERTIES:\n:owner: Jane\n:id: own-id\n:END:\nbody\n:PROPERTIES:\n:id: body-id\n:END:";
@@ -84,8 +106,8 @@ it("Markdown typing keeps a hidden id in the block's own property group", () => 
     expect(ta.value).toBe("Title\nowner:: Ada\nbody line");
     ta.value += "!";
     ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "!" }));
-    // The id stays in the group (at its end, the order Tine writes), never below the body.
-    expect(doc.byId.target.raw).toBe("Title\nowner:: Ada\nid:: 650e8400-e29b-41d4-a716-446655440000\nbody line!");
+    // The id stays exactly where it was in the group, never below the body.
+    expect(doc.byId.target.raw).toBe(raw + "!");
     // The same holds before a final quote, which otherwise takes the hidden rows above it.
     expect(joinProps("Title\nowner:: Ada\nbody\n> quote", "id:: x", "md")).toBe("Title\nowner:: Ada\nid:: x\nbody\n> quote");
     expect(joinProps("Title\n> quote", "id:: x", "md")).toBe("Title\nid:: x\n> quote");

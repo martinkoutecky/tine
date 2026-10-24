@@ -1,18 +1,32 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
 import { setGraphMeta } from "../graphSession";
-import { beginPageHeaderEdit, moveBlock, resetStore } from "./index";
+import { beginPageHeaderEdit, moveBlock, resetStore, setRaw } from "./index";
 import { loadSingle } from "./workingSet";
 import { pageToDto } from "./convert";
 import { doc } from "./model";
 import { readPageProperty, setPageProperty, setBlockProperty, setSchedule } from "./edits/properties";
 import { rawWithBlockId, existingBlockId } from "./edits/identity";
-import { joinProps } from "../editor/properties";
+import { BUILTIN_HIDE, joinProps, splitProps } from "../editor/properties";
 
 beforeAll(() => initParser());
 beforeEach(() => { resetStore(); setGraphMeta(null); });
 
 describe("property mutation across page formats", () => {
+  it.each(["card-repeats", "hl-page", "created-at", "custom-id", "secret"])("keeps a cleared first block's %s out of the page header", key => {
+    setGraphMeta({ block_hidden_properties: ["secret"] } as Parameters<typeof setGraphMeta>[0]);
+    const raw = `Question\n${key}:: opaque  `;
+    loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [{ id: "first", raw, collapsed: false, children: [] }], format: "md" });
+    const parts = splitProps(raw, BUILTIN_HIDE);
+    setRaw("first", joinProps("", parts.hidden, "md", raw));
+    const saved = pageToDto("Test")!;
+    expect(saved.pre_block).toBeNull();
+    expect(saved.blocks).toHaveLength(1);
+    expect(saved.blocks[0].raw).toContain(`${key}:: opaque  `);
+    loadSingle(saved);
+    expect(pageToDto("Test")).toEqual(saved);
+  });
+
   it("writes an Org block's own drawer before body drawer lookalikes", () => {
     const raw = "* Heading\nSCHEDULED: <2026-09-28 Mon>\nBody\n:PROPERTIES:\n:id: body-id\n:END:";
     const own = "* Heading\nSCHEDULED: <2026-09-28 Mon>\n:PROPERTIES:\n:id: own-id\n:END:\nBody\n:PROPERTIES:\n:id: body-id\n:END:";

@@ -329,17 +329,65 @@ fn logbook_parts(raw: &str, is_org: bool) -> (String, Vec<String>) {
     )
 }
 
+fn without_supplied_properties(hidden: &str, is_org: bool, regions: &BlockRegions) -> String {
+    // OG with-built-in-properties also omits retained keys already present in
+    // the submitted content. A CLI raw read and a sheet transfer both carry
+    // authored rows: their explicit values win over the retained metadata.
+    // Ask the parser so fenced examples cannot replace a block property.
+    let supplied: Vec<_> = regions
+        .properties
+        .iter()
+        .filter(|p| p.primary)
+        .map(|p| property_key_norm(&p.key))
+        .collect();
+    if supplied.is_empty() {
+        hidden.to_string()
+    } else {
+        // Org hidden entries travel without their drawer wrappers.
+        let payload = if is_org {
+            format!(":PROPERTIES:\n{hidden}\n:END:")
+        } else {
+            hidden.to_string()
+        };
+        let parsed = block_regions::parse(&payload, is_org);
+        let offset = if is_org { ":PROPERTIES:\n".len() } else { 0 };
+        let mut at = offset;
+        hidden
+            .split('\n')
+            .filter(|line| {
+                let start = at;
+                at += line.len() + 1;
+                !parsed.properties.iter().any(|p| {
+                    p.primary && p.line.0 == start && supplied.contains(&property_key_norm(&p.key))
+                })
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
 fn join_properties(
     visible: &str,
     hidden: &str,
     is_org: bool,
     regions: &BlockRegions,
 ) -> Result<String, String> {
+    // Markdown's wasm fast path may supply no regions. It already needs a
+    // parse to find the visible property group; share it with collision checks.
+    let parsed;
+    let regions = if is_org {
+        regions
+    } else {
+        parsed = block_regions::parse(visible, false);
+        &parsed
+    };
+    let retained = without_supplied_properties(hidden, is_org, regions);
+    let hidden = retained.as_str();
     if hidden.is_empty() {
         return Ok(visible.to_string());
     }
     if !is_org {
-        if let Some(joined) = join_into_visible_group(visible, hidden) {
+        if let Some(joined) = join_into_visible_group(visible, hidden, regions) {
             return Ok(joined);
         }
         // Metadata appended after a final quote is its lazy continuation, so it goes
@@ -369,6 +417,8 @@ fn join_properties_preserving(
     is_org: bool,
     regions: &BlockRegions,
 ) -> Result<String, String> {
+    let retained = without_supplied_properties(hidden, is_org, regions);
+    let hidden = retained.as_str();
     let joined = join_properties(visible, hidden, is_org, regions)?;
     if hidden.is_empty() {
         return Ok(joined);
@@ -441,10 +491,18 @@ pub fn join_with(
         .find(|d| d.name.eq_ignore_ascii_case("LOGBOOK"));
     let raw = if !is_org && first_drawer.is_some_and(|d| d.range.0 > 0) {
         let at = first_drawer.unwrap().range.0;
-        let head = hidden[..at].trim_end_matches(['\r', '\n']);
+        let head = without_supplied_properties(
+            hidden[..at].trim_end_matches(['\r', '\n']),
+            false,
+            visible_regions,
+        );
         let (tail, _) = logbook_parts(&hidden[at..], false);
         let base = join_properties_preserving(visible, &tail, false, visible_regions)?;
-        block_regions::parse(&base, false).insert_drawer(&base, false, head)?
+        if head.is_empty() {
+            base
+        } else {
+            block_regions::parse(&base, false).insert_drawer(&base, false, &head)?
+        }
     } else if !drawers.is_empty() {
         join_properties_preserving(visible, &properties, is_org, visible_regions)?
     } else {
@@ -492,8 +550,8 @@ pub fn set_text_with_policy(
 
 /// Text-only edits can retain the exact metadata layout of the source buffer.
 /// The projection's two strings alone cannot recover whether a hidden property
-/// preceded a visible planning line. Splice a contiguous visible edit through
-/// the same offset map when it touches no hidden bytes; structural replacements
+/// preceded a visible planning line. Splice visible edits through the same
+/// source map when they touch no hidden bytes; structural replacements
 /// and explicit drawer content use the canonical join above.
 pub fn join_preserving(
     visible: &str,
@@ -503,10 +561,6 @@ pub fn join_preserving(
     hide: &HidePolicy,
 ) -> Result<String, String> {
     let regions = block_regions::parse(source, is_org);
-    if regions
-        .drawers
-        .iter()
-        .any(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
     {
         // The caller's policy produced `hidden`; another would miss the splice.
         let policy = hide;
@@ -544,8 +598,8 @@ pub fn join_preserving(
             if !c
                 .lines
                 .iter()
-                .zip(c.class)
-                .any(|(&(s, e), class)| class != Line::Visible && s < to && e >= from)
+                .zip(&c.class)
+                .any(|(&(s, e), class)| *class != Line::Visible && s < to && e >= from)
             {
                 let edited = format!(
                     "{}{}{}",
@@ -560,7 +614,48 @@ pub fn join_preserving(
                     return Ok(edited);
                 }
             }
+            // Replace-all can edit both sides of a hidden group. The outer
+            // prefix/suffix then spans metadata, but each surviving visible
+            // line still maps to its own exact source range. Splice those
+            // ranges with the same source map, retaining every intervening
+            // hidden row, wrapper and CRLF terminator.
+            let old_lines: Vec<_> = c
+                .lines
+                .iter()
+                .zip(&c.class)
+                .filter_map(|(&(s, e), class)| (*class == Line::Visible).then_some((s, e)))
+                .collect();
+            let mut new_lines: Vec<_> = visible.split('\n').collect();
+            // Org's reader retains the final CR while the page owns its LF.
+            // A textarea normalizes that CR to LF, exposing an extra empty
+            // line. It represents the existing terminator, not an Enter edit.
+            if previous.visible.ends_with('\r') && new_lines.last() == Some(&"") {
+                new_lines.pop();
+            }
+            if old_lines.len() == new_lines.len() {
+                let mut edited = String::new();
+                let mut at = 0;
+                for ((s, e), line) in old_lines.into_iter().zip(new_lines) {
+                    edited.push_str(&source[at..s]);
+                    if source[s..e].ends_with('\r') {
+                        edited.push_str(line.strip_suffix('\r').unwrap_or(line));
+                        edited.push('\r');
+                    } else {
+                        edited.push_str(line);
+                    }
+                    at = e;
+                }
+                edited.push_str(&source[at..]);
+                if split(&edited, is_org, policy).hidden == hidden {
+                    return Ok(edited);
+                }
+            }
         }
+    }
+    // OG keeps an empty title line on a cleared outline block. Without it,
+    // a first root made only of hidden rows looks like a new page preamble.
+    if !is_org && visible.is_empty() && !hidden.is_empty() {
+        return join(visible, hidden, is_org).map(|joined| format!("\n{joined}"));
     }
     join(visible, hidden, is_org)
 }
@@ -580,8 +675,11 @@ fn ceil_boundary(s: &str, mut at: usize) -> usize {
 /// at the group's head (`with-built-in-properties`, frontend/util/property.cljs);
 /// the end keeps the order Tine has always written, and both are one group.
 /// `None` when the text has no group (or its parse is quarantined).
-fn join_into_visible_group(visible: &str, hidden: &str) -> Option<String> {
-    let regions = block_regions::parse(visible, false);
+fn join_into_visible_group(visible: &str, hidden: &str, regions: &BlockRegions) -> Option<String> {
+    // A removed final hidden row leaves its preceding CR on the projection's
+    // last visible line. Once this group receives the row, that CR has no LF
+    // partner at EOF. Interior CRLF terminators remain unchanged.
+    let visible = visible.strip_suffix('\r').unwrap_or(visible);
     if regions.quarantined {
         return None;
     }
@@ -591,7 +689,7 @@ fn join_into_visible_group(visible: &str, hidden: &str) -> Option<String> {
         .find(|p| p.primary)
         .map(|p| p.region)
     else {
-        return before_properties_drawer(visible, hidden, &regions);
+        return before_properties_drawer(visible, hidden, regions);
     };
     let last = regions
         .properties
@@ -725,8 +823,10 @@ mod tests {
                                     .map(|p| p.value.as_str())
                                     .collect();
                                 values.sort();
-                                let mut expected = vec![new, old];
-                                expected.sort();
+                                // Explicit content owns this key, including
+                                // case-equivalent spellings; retained history
+                                // must not bring back the old property value.
+                                let expected = vec![new];
                                 assert_eq!(
                                     values, expected,
                                     "{org}/{key}/{spelling}/{title}: {out}"
@@ -947,11 +1047,11 @@ mod tests {
             ),
             ("collapsed:: true\r\n> q", "> q2", "collapsed:: true\n> q2"),
             // Not a trailing quote: below the body, as before.
-            ("collapsed:: true\nbody", "body2", "body2\ncollapsed:: true"),
+            ("collapsed:: true\nbody", "body2", "collapsed:: true\nbody2"),
             (
                 "collapsed:: true\na > b",
                 "a > c",
-                "a > c\ncollapsed:: true",
+                "collapsed:: true\na > c",
             ),
         ] {
             let out = set_text(raw, false, text).unwrap();
@@ -1001,7 +1101,7 @@ mod tests {
             (
                 format!("Title\r\nowner:: Ada\r\nbody\r\n{id}"),
                 ("body", "body 2"),
-                format!("Title\r\nowner:: Ada\r\n{id}\r\nbody 2\r"),
+                format!("Title\r\nowner:: Ada\r\n{id}\r\nbody 2"),
             ),
             // A block an earlier edit split into two groups is repaired to one.
             (
@@ -1031,7 +1131,7 @@ mod tests {
         let md = "TODO old\nid:: 6512bd43-d9ca-4c95-b0b4-1c2d3e4f5a6b\ncolor:: red";
         assert_eq!(
             set_text(md, false, "DONE new\ncolor:: blue").unwrap(),
-            "DONE new\ncolor:: blue\nid:: 6512bd43-d9ca-4c95-b0b4-1c2d3e4f5a6b"
+            "DONE new\nid:: 6512bd43-d9ca-4c95-b0b4-1c2d3e4f5a6b\ncolor:: blue"
         );
         let org = "* old\n:PROPERTIES:\n:id: 6512bd43-d9ca-4c95-b0b4-1c2d3e4f5a6b\n:END:";
         let set = set_text(org, true, "new").unwrap();

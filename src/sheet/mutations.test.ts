@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "../render/parse";
 import { blockProperty, blockIsGridView, blockSubtreeMarkdown, resetStore, undo } from "../document";
@@ -796,6 +797,24 @@ describe("fill preserves target hidden properties", () => {
 });
 
 describe("sheet hidden metadata transfer class", () => {
+  it.each(["md", "org"] as const)("fill replaces colliding authored hidden keys once and keeps destination identity (%s)", format => {
+    const raw = (title: string, value: string) => format === "md"
+      ? `${title}\nheading:: ${value}\ncard-repeats:: ${value}\nid:: ${value}`
+      : `${title}\n:PROPERTIES:\n:heading: ${value}\n:card-repeats: ${value}\n:id: ${value}\n:END:`;
+    const grid = blk("Grid", [blk("", [blk(raw("A", "source"))]), blk("", [blk(raw("B", "target"))])]);
+    grid.properties = [["tine.view", "grid"]];
+    loadSingle({ name: "Sheet", kind: "page", title: "Sheet", pre_block: null, blocks: [grid], format });
+    const id = cellId(grid.id, 1, 0)!;
+    expect(fillSheetSelection({ kind: "range", gridId: grid.id, anchor: { row: 0, col: 0 }, focus: { row: 1, col: 0 } }, "down")).toBe(true);
+    expect(blockProperty(id, "heading")).toBe("source");
+    expect(blockProperty(id, "card-repeats")).toBe("source");
+    expect(blockProperty(id, "id")).toBe("target");
+    expect(doc.byId[id].raw.split(format === "md" ? "heading::" : ":heading:")).toHaveLength(2);
+    expect(doc.byId[id].raw.split(format === "md" ? "card-repeats::" : ":card-repeats:")).toHaveLength(2);
+    undo();
+    expect(doc.byId[id].raw).toBe(raw("B", "target"));
+  });
+
   it.each(["md", "org"] as const)("review fill and structural paste carry source history (%s)", async format => {
     const drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]  \nopaque row\n:END:";
     const grid = blk(format === "md" ? "Grid\ntine.view:: grid" : "Grid\n:PROPERTIES:\n:tine.view: grid\n:END:",
