@@ -684,6 +684,24 @@ mod tests {
         (dir, store)
     }
 
+    #[test]
+    fn w543diag_paths() {
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        let core = store.watch.core_for_load();
+        let path = dir.path().join("pages/P0.md");
+        let keys: Vec<_> = core.snapshot.lock().unwrap().keys().take(2).cloned().collect();
+        eprintln!(
+            "W543DIAG tempdir={:?} root={:?} path={:?} keys={keys:?} contains={} canonical={:?}",
+            dir.path(),
+            store.graph.root,
+            path,
+            core.snapshot.lock().unwrap().contains_key(&path),
+            fs::canonicalize(&path).ok()
+        );
+        store.close();
+    }
+
     fn read_failure_is_retained_until_repair(break_file: impl Fn(&Path), repair: impl Fn(&Path)) {
         let (dir, store) = open();
         store.watch.stop_background_for_test();

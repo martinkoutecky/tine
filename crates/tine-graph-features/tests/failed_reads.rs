@@ -51,8 +51,15 @@ fn discovery_read_failure_is_reported_and_good_pages_survive() {
     let (root, store) = graph("discovery");
     fs::write(root.join("pages/Good.md"), "- good\n").unwrap();
     fs::write(root.join("pages/Bad.md"), b"title:: \xff\n- bad\n").unwrap();
+    let written = std::time::SystemTime::now();
     store.refresh(tine_store::Depth::Stamps).unwrap();
     let view = store.whole_graph().unwrap();
+    eprintln!(
+        "W543DIAG discovery unreadable={:?} mtime_age={:?} since_write={:?}",
+        view.unreadable_files(),
+        fs::metadata(root.join("pages/Bad.md")).unwrap().modified().unwrap().elapsed(),
+        written.elapsed()
+    );
     assert!(view
         .unreadable_files()
         .iter()
