@@ -8,8 +8,13 @@ export type SharedPdfDocument =
   | { kind: "error"; message: string };
 
 /** Starts one load: read the bytes, hand the pdf.js loading task over as soon
- * as it exists (so a last release can cancel it), resolve with the outcome. */
-export type OpenPdfDocument = (adoptTask: (task: { destroy(): Promise<void> }) => void) => Promise<SharedPdfDocument>;
+ * as it exists (so a last release can cancel it), hand the document over in
+ * the same microtask its task resolves (from then on it owns destruction), and
+ * resolve with the outcome. */
+export type OpenPdfDocument = (adopt: {
+  task(task: { destroy(): Promise<void> }): void;
+  document(doc: pdfjs.PDFDocumentProxy): void;
+}) => Promise<SharedPdfDocument>;
 
 interface Entry {
   loaded: Promise<SharedPdfDocument>;
@@ -40,20 +45,28 @@ export function acquirePdfDocument(key: string, open: OpenPdfDocument): {
     created.loaded = (async (): Promise<SharedPdfDocument> => {
       let result: SharedPdfDocument;
       try {
-        result = await open((task) => {
-          if (!created.released) { created.task = task; return; }
-          created.cancelled = true; // every view left while the bytes were read
-          discardPdfDocument(task);
+        result = await open({
+          task: (task) => {
+            if (!created.released) { created.task = task; return; }
+            created.cancelled = true; // every view left while the bytes were read
+            discardPdfDocument(task);
+          },
+          document: (doc) => {
+            created.task = null;
+            if (!created.released) created.doc = doc;
+            else if (!created.cancelled) discardPdfDocument(doc);
+          },
         });
       } catch (error) {
         result = { kind: "error", message: String(error) };
       }
+      const task = created.task;
       created.task = null;
-      if (result.kind === "ok") {
-        if (created.released) { if (!created.cancelled) discardPdfDocument(result.doc); }
-        else created.doc = result.doc;
-      } else if (entries.get(key) === created) {
-        entries.delete(key);
+      if (result.kind === "error") {
+        // pdf.js does not dispose a task whose parse rejected: its worker and
+        // transport stay alive until the task is destroyed.
+        if (task && !created.cancelled) { created.cancelled = true; discardPdfDocument(task); }
+        if (entries.get(key) === created) entries.delete(key);
       }
       return result;
     })();

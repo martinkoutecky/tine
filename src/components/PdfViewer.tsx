@@ -1092,8 +1092,10 @@ export function PdfViewer(props: {
 
   // Reads and parses the PDF once for every view of it in this graph binding;
   // owned by the binding, not by this view, since a sibling may outlive it.
-  const openSharedDocument: OpenPdfDocument = async (adoptTask) => {
-    const loadOwner = graphOwner(() => isPdfOwnershipCurrent(owner));
+  const openSharedDocument: OpenPdfDocument = async (adopt) => {
+    // The binding, not the display epoch: a repaint must not fail a load a
+    // sibling view is about to join.
+    const loadOwner = bindingOwner(() => isPdfOwnershipCurrent(owner));
     let bytes: Uint8Array;
     try {
       const result = await readOwned(loadOwner, backend().readAsset(props.filename, MAX_PDF_BYTES));
@@ -1107,9 +1109,11 @@ export function PdfViewer(props: {
     if (!bytes.length) return { kind: "error", message: "Couldn't read this PDF asset: file is empty" };
     if (bytes.byteLength > MAX_PDF_BYTES) return { kind: "error", message: "This PDF is larger than 256 MiB and can't be opened safely." };
     const task = pdfjs.getDocument({ data: bytes });
-    adoptTask(task);
+    adopt.task(task);
     try {
-      return { kind: "ok", doc: await task.promise };
+      const doc = await task.promise;
+      adopt.document(doc);
+      return { kind: "ok", doc };
     } catch (err) {
       return { kind: "error", message: errorMessage("Couldn't load this PDF", err) };
     }
