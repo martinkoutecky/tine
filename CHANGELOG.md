@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Following a backlink or block reference to a highlight of a PDF that was not open yet now scrolls to that highlight, as Logseq does, instead of opening the PDF with the highlight marked but off-screen. The scroll waits for the page to finish drawing, happens once, and is dropped if you scroll yourself first (card hCAoxs).
+- Opening a PDF no longer pulls the reader back to the top of the page about a tenth of a second later: following a backlink to a highlight of a PDF that was not open yet, or scrolling right after opening one, could be undone by a leftover zoom adjustment from opening (GH #672).
 - Editing a multiline Org block no longer adds permanent blank lines at the end of the file when autosave runs just after Shift+Enter (GH #741).
 - Editing a Markdown block that has its own properties keeps the hidden `id::` and `collapsed::` lines in the same property group, as Logseq writes them. Before, they moved below the body text, where Logseq ignores them, so references to the block could break in Logseq (internal: REG-HIDDEN-PROPS-STAY-IN-THE-GROUP).
 

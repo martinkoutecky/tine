@@ -188,6 +188,13 @@ export function PdfViewer(props: {
   let zoomAnchorPage: number | null = null;
   let zoomAnchorOffsetInPage = 0;
   let zoomSettling = false;
+  // The exact highlight a navigation is still owed a centre-scroll for. It is
+  // set when the navigation starts and consumed by applyPendingHighlight once the
+  // target page is rasterized at the current scale (its overlay exists and is at
+  // the right size). navigateToTarget's own `await renderPage` is not enough: a
+  // supersede (IntersectionObserver, zoom settle) makes that call return before
+  // the overlay is painted, so whoever finishes the raster applies the scroll.
+  let pendingHighlight: { id: string; page: number; current: () => boolean } | null = null;
   // The text layer (hundreds of glyph spans on a math page) is rebuilt OFF the
   // zoom hot path: the canvas sharpens immediately, the text catches up shortly
   // after the view settles. `textScale[n]` is the scale its text was built at;
@@ -417,6 +424,7 @@ export function PdfViewer(props: {
     if (renderedScale[n] === s) {
       setCanvasTransform(n, 1);
       if (s > 3 && tilePages[n] && pageEls[n]) pdfTiles.refresh(tilePages[n], n, pageEls[n], scrollRef, s);
+      if (pendingHighlight?.page === n) applyPendingHighlight();
       return;
     }
     const wrap = pageEls[n];
@@ -510,6 +518,7 @@ export function PdfViewer(props: {
     renderedPixelRatio[n] = dpr;
     clearTransform(n);
     repaintPage(n);
+    if (pendingHighlight?.page === n) applyPendingHighlight();
     scheduleText(n);
     touchLru(n);
     evictCanvases();
@@ -549,6 +558,7 @@ export function PdfViewer(props: {
     pageEls[page]?.scrollIntoView({ block: "start" });
 
     if (!highlight) {
+      pendingHighlight = null;
       for (const element of scrollRef.querySelectorAll(".pdf-hl-target")) {
         element.classList.remove("pdf-hl-target");
       }
@@ -557,19 +567,44 @@ export function PdfViewer(props: {
 
     // OG carries the highlight entity through open-block-ref! and scrolls the
     // finder to that exact highlight. Render the destination page first so the
-    // overlay exists even when it was outside the lazy viewport.
-    await renderPage(page);
-    if (!current()) return;
-    const layer = hlLayers[page];
-    const exact = layer
-      ? Array.from(layer.querySelectorAll<HTMLElement>(".pdf-hl"))
-          .find((element) => element.dataset.highlightId === highlight.id)
-      : undefined;
+    // overlay exists even when it was outside the lazy viewport. The scroll is
+    // applied once, by whichever raster of that page completes (see
+    // pendingHighlight): this call returns early when another request for the
+    // same page supersedes its raster.
+    pendingHighlight = { id: highlight.id, page, current };
     for (const element of scrollRef.querySelectorAll(".pdf-hl-target")) {
       element.classList.remove("pdf-hl-target");
     }
-    exact?.classList.add("pdf-hl-target");
-    exact?.scrollIntoView({ block: "center", inline: "nearest" });
+    await renderPage(page);
+    if (!current()) return;
+    applyPendingHighlight();
+  }
+
+  // Centre the pending highlight once its page is painted at the current scale
+  // and no zoom is settling (a settle would write its page anchor over the
+  // scroll). Otherwise leave it pending: the next completed raster of the page
+  // (the settle re-renders the visible pages) retries. Runs at most once per
+  // navigation; the reader's own scrolling cancels it.
+  function applyPendingHighlight() {
+    const pending = pendingHighlight;
+    if (!pending) return;
+    if (!pending.current() || disposed) {
+      pendingHighlight = null;
+      return;
+    }
+    if (zoomSettling || renderedScale[pending.page] !== scale()) return;
+    const layer = hlLayers[pending.page];
+    const exact = layer
+      ? Array.from(layer.querySelectorAll<HTMLElement>(".pdf-hl"))
+          .find((element) => element.dataset.highlightId === pending.id)
+      : undefined;
+    if (!exact) return;
+    pendingHighlight = null;
+    for (const element of scrollRef.querySelectorAll(".pdf-hl-target")) {
+      element.classList.remove("pdf-hl-target");
+    }
+    exact.classList.add("pdf-hl-target");
+    exact.scrollIntoView({ block: "center", inline: "nearest" });
   }
 
   // Record `n` as most-recently rendered.
@@ -777,7 +812,13 @@ export function PdfViewer(props: {
   }
 
   function onZoom() {
-    if (!pdfDoc) return;
+    // The saved/fit scale is applied before the page layout exists, and the
+    // layout is then built at that scale: nothing to resize, re-anchor or
+    // settle. Arming the settle timer here made it fire 120 ms later (or later
+    // still on a loaded machine) and write the page-top anchor over the
+    // backlink's exact-highlight scroll or over the reader's own scrolling
+    // (GH #672).
+    if (!pdfDoc || !pageEls[1]) return;
     const s = scale();
     if (!zoomSettling) {
       const anchor = curPage();
@@ -1027,6 +1068,7 @@ export function PdfViewer(props: {
   // Ctrl/Cmd + wheel zooms (like a PDF reader); modifier-added momentum tails are only consumed.
   let wheelZoomState: WheelZoomGestureState = {};
   const onWheel = (e: WheelEvent) => {
+    pendingHighlight = null; // the reader took over the scroll position
     const decision = decideWheelZoomGesture(wheelZoomState, e.ctrlKey || e.metaKey, e.timeStamp);
     wheelZoomState = decision.state;
     if (!decision.consume) return;
@@ -1074,6 +1116,7 @@ export function PdfViewer(props: {
   };
   const onMouseUp = (e: MouseEvent) => captureTextSelection(e.target, { x: e.clientX, y: e.clientY });
   const onTouchSelectionEnd = (e: TouchEvent) => {
+    pendingHighlight = null;
     if (!isMobilePlatform) return;
     const touch = e.changedTouches?.[0];
     queueMicrotask(() => captureTextSelection(e.target,
@@ -1128,6 +1171,7 @@ export function PdfViewer(props: {
     };
   };
   const onAreaDown = (e: MouseEvent) => {
+    pendingHighlight = null; // includes a scrollbar drag
     if ((!areaMode() && !areaModifier(e)) || e.button !== 0) return;
     const wrap = (e.target as HTMLElement).closest(".pdf-page") as HTMLElement | null;
     if (!wrap) return;
