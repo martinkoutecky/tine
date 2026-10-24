@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A stopped graph owner releases its lock at once, even while a process spawned at that moment still holds an inherited copy of the lock file's handle; before, the next owner could briefly find the graph still locked (internal: REG-OWNER-LOCK-INHERITED-DESCRIPTOR).
+
 - Page-property rows in Linked References keep the same appearance after editing, including other groups showing the same page (GH #753).
 
 - On mobile, the bottom editing toolbar stays usable above either sidebar drawer, acts on its focused editor, and reveals the editor above the keyboard while popups remain accessible (GH #751).
