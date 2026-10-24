@@ -27,7 +27,11 @@ it("the Guide says the unreadable-files notice names the files and copies the fu
     "the notice names those files (the first five, then how many more)",
     "**Copy** on the notice copies the full list",
     "retry quietly while the write settles",
-    "repair the file or its permissions; Tine checks it again when it changes",
-    "An unchanged refused file does not keep being read in the background",
+    "Tine keeps its last readable page",
+    "repair the file; Tine checks it again when it changes",
+    "An unchanged invalid file does not keep being read in the background",
+    "repair its permissions; Tine checks access again",
+    "even if the file's contents have not changed",
+    "does not start a repeating full-graph check",
   ]) expect(recovery).toContain(detail);
 });

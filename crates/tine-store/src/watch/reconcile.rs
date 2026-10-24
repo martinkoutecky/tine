@@ -280,7 +280,11 @@ impl Core {
             for (path, value) in &*snapshot {
                 if path
                     .ancestors()
-                    .skip(1)
+                    // Full-walk errors include failed file_type/lstat calls
+                    // on the file itself. Incremental errors are cloned from
+                    // the previous cycle: a stale self-error must not restore
+                    // a file that an exact removal notification just removed.
+                    .skip(usize::from(paths.is_some()))
                     .any(|ancestor| errors.contains_key(ancestor))
                 {
                     now.entry(path.clone()).or_insert_with(|| value.clone());
@@ -512,10 +516,10 @@ impl Core {
                         let settled = !value.racy_at(observed)
                             && stamp_metadata(&path)
                                 .is_some_and(|fresh| fresh.same_metadata(value));
-                        let terminal = matches!(
-                            error.kind(),
-                            std::io::ErrorKind::InvalidData | std::io::ErrorKind::PermissionDenied
-                        );
+                        // Access can recover without a stamp change (Windows
+                        // ACLs, mobile scopes, minifilters). Retry its cheap
+                        // failed open on the normal event/poll cadence.
+                        let terminal = error.kind() == std::io::ErrorKind::InvalidData;
                         if settled {
                             self.graph.note_unsettled_read(&path, None);
                             unreadable
@@ -537,7 +541,9 @@ impl Core {
                             );
                             racy.remove(&path);
                         } else {
-                            self.retry_read_later();
+                            if !settled {
+                                self.retry_read_later();
+                            }
                             retry_baseline(&mut now, &path, before);
                         }
                         continue;
@@ -620,8 +626,9 @@ impl Core {
         Ok(())
     }
 
-    /// Notify mode also retries failed reads without waiting for another OS
-    /// event. Keep the existing racy follow-up deadline when one is pending.
+    /// Notify mode retries in-flux reads without waiting for another OS event.
+    /// Settled I/O failures use the normal event/poll cadence. Keep the
+    /// existing racy follow-up deadline when one is pending.
     fn retry_read_later(&self) {
         self.follow_up
             .lock()
@@ -739,6 +746,197 @@ mod tests {
             "repaired"
         );
         store.close();
+    }
+
+    #[test]
+    fn gh543_r1_settled_io_failure_does_not_renew_full_walks() {
+        for kind in [
+            std::io::ErrorKind::Other,
+            std::io::ErrorKind::UnexpectedEof,
+            std::io::ErrorKind::Interrupted,
+        ] {
+            let (dir, store) = open();
+            store.watch.stop_background_for_test();
+            let core = store.watch.core_for_load();
+            *core.follow_up.lock().unwrap() = None;
+            let path = dir.path().join("pages/P0.md");
+            fs::write(&path, "- unavailable cloud delivery\n").unwrap();
+            age(&path);
+            let _fault = OpenFailure::new(&path, kind);
+            let walks = store.graph.diag.snapshot("ready")["fullDiffs"]["total"]
+                .as_u64()
+                .unwrap();
+            core.reconcile(None, false, false, DiffTrigger::Test)
+                .unwrap();
+            let generation = store.graph.cache_generation();
+            let changes = store.subscribe();
+            // Advance pending deadlines without sleeping: the real watcher entry
+            // point must perform no follow-up walks for this settled failure.
+            for _ in 0..3 {
+                if let Some(at) = core.follow_up.lock().unwrap().as_mut() {
+                    *at = Instant::now();
+                }
+                core.follow_up_if_due();
+            }
+            assert_eq!(
+                store.graph.diag.snapshot("ready")["fullDiffs"]["total"]
+                    .as_u64()
+                    .unwrap()
+                    - walks,
+                1,
+                "a settled failure must not self-renew full directory walks"
+            );
+            assert!(core.follow_up.lock().unwrap().is_none());
+            assert_eq!(store.graph.cache_generation(), generation);
+            assert!(changes.try_recv().unwrap().is_none());
+            // A normal later poll still retries and retains the refusal quietly.
+            racy::HASH_ATTEMPTS.with(|count| count.set(0));
+            core.reconcile(None, false, false, DiffTrigger::Test)
+                .unwrap();
+            assert_eq!(racy::HASH_ATTEMPTS.with(|count| count.get()), 1);
+            assert_eq!(store.graph.cache_generation(), generation);
+            assert!(changes.try_recv().unwrap().is_none());
+            store.close();
+        }
+    }
+
+    struct OpenFailure;
+
+    impl OpenFailure {
+        fn new(path: &Path, kind: std::io::ErrorKind) -> Self {
+            racy::HASH_OPEN_ERROR.with(|fault| *fault.borrow_mut() = Some((path.into(), kind)));
+            Self
+        }
+    }
+
+    impl Drop for OpenFailure {
+        fn drop(&mut self) {
+            racy::HASH_OPEN_ERROR.with(|fault| *fault.borrow_mut() = None);
+        }
+    }
+
+    fn age(path: &Path) {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+    }
+
+    #[test]
+    fn gh543_r1_permission_only_repair_with_identical_stamp_recovers() {
+        // Models Windows ACL/minifilter and mobile security-scope repairs:
+        // availability changes while every metadata field stays identical.
+        for hinted in [false, true] {
+            let (dir, store) = open();
+            store.watch.stop_background_for_test();
+            let core = store.watch.core_for_load();
+            let path = dir.path().join("pages/P0.md");
+            fs::write(&path, "- delivered before access was denied\n").unwrap();
+            age(&path);
+            let original = stamp_metadata(&path).unwrap();
+            let fault = OpenFailure::new(&path, std::io::ErrorKind::PermissionDenied);
+            core.reconcile(None, false, false, DiffTrigger::Test)
+                .unwrap();
+            let generation = store.graph.cache_generation();
+            let changes = store.subscribe();
+            racy::HASH_ATTEMPTS.with(|count| count.set(0));
+            let paths = hinted.then(|| HashSet::from([path.clone()]));
+            core.reconcile(paths.as_ref(), false, false, DiffTrigger::Test)
+                .unwrap();
+            assert_eq!(
+                racy::HASH_ATTEMPTS.with(|count| count.get()),
+                1,
+                "an unchanged access failure must retry its open on the next cycle"
+            );
+            assert_eq!(store.graph.cache_generation(), generation);
+            assert!(changes.try_recv().unwrap().is_none());
+            drop(fault);
+            assert!(stamp_metadata(&path).unwrap().same_metadata(&original));
+            core.reconcile(paths.as_ref(), false, false, DiffTrigger::Test)
+                .unwrap();
+            assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+            assert_eq!(
+                store.page(&PageId::from("pages/P0.md")).unwrap().doc.blocks[0].raw,
+                "delivered before access was denied"
+            );
+            store.close();
+        }
+    }
+
+    #[test]
+    fn gh543_r1_full_walk_file_error_keeps_the_last_good_page() {
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        let core = store.watch.core_for_load();
+        let path = dir.path().join("pages/P0.md");
+        let (mut files, mut errors, times) = core.collect_full(&store.graph.current_config());
+        files.remove(&path);
+        errors.insert(path.clone(), "injected file_type/lstat failure".into());
+        // Make the fallback path stat unavailable as it is for EACCES/ESTALE;
+        // the prepared walk's explicit file error must retain its baseline.
+        fs::rename(&path, dir.path().join("inaccessible.md")).unwrap();
+        {
+            let _writer = core.writer.lock().unwrap();
+            core.reconcile_prepared(
+                None,
+                false,
+                false,
+                None,
+                DiffTrigger::Test,
+                None,
+                Some(PreparedWalk {
+                    began: Instant::now(),
+                    observed: SystemTime::now(),
+                    files,
+                    errors,
+                    times,
+                }),
+            )
+            .unwrap();
+        }
+        let view = store.whole_graph().unwrap();
+        assert!(
+            matches!(view.resolve("P0", false), crate::Resolved::Existing { .. }),
+            "a failed file observation must retain its last good page"
+        );
+        assert!(view
+            .unreadable_files()
+            .iter()
+            .any(|(id, _)| id.as_str() == "pages/P0.md"));
+        assert!(core.snapshot.lock().unwrap().contains_key(&path));
+        store.close();
+    }
+
+    #[test]
+    fn gh543_r1_save_racing_append_or_truncation_remains_a_conflict() {
+        for external in ["- original\n- external append\n", "- cut\n"] {
+            let (dir, store) = open();
+            store.watch.stop_background_for_test();
+            let path = dir.path().join("pages/P0.md");
+            let id = PageId::from("pages/P0.md");
+            let mut read = store.page(&id).unwrap();
+            read.doc.blocks[0].raw = "unsaved typing".into();
+            let delivering = path.clone();
+            crate::model::READ_PARSE_BYTES_HOOK.with(|hook| {
+                *hook.borrow_mut() =
+                    Some(Box::new(move || fs::write(delivering, external).unwrap()));
+            });
+            let outcome = store.save(
+                crate::EditKind::SaveBlock,
+                &id,
+                crate::SaveBase::Existing(read.rev),
+                &read.doc,
+            );
+            assert!(
+                matches!(outcome, crate::SaveOutcome::Conflict { .. }),
+                "external delivery during save staging must use the conflict flow: {outcome:?}"
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), external);
+            assert_eq!(read.doc.blocks[0].raw, "unsaved typing");
+            store.close();
+        }
     }
 
     #[test]
@@ -951,7 +1149,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn gh543_permission_denied_read_stops_until_the_file_changes() {
+    fn gh543_permission_denied_retries_quietly_and_recovers_after_chmod_only() {
         use std::os::unix::fs::PermissionsExt;
         let probe = tempfile::NamedTempFile::new().unwrap();
         fs::set_permissions(probe.path(), fs::Permissions::from_mode(0o000)).unwrap();
@@ -961,14 +1159,34 @@ mod tests {
             eprintln!("permission probe skipped: process bypasses access controls");
             return;
         }
-        read_failure_is_retained_until_repair(
-            |path| {
-                fs::set_permissions(path, fs::Permissions::from_mode(0o000)).unwrap();
-            },
-            |path| {
-                fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
-            },
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        let core = store.watch.core_for_load();
+        let path = dir.path().join("pages/P0.md");
+        fs::write(&path, "- delivered before chmod\n").unwrap();
+        age(&path);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(!store.whole_graph().unwrap().unreadable_files().is_empty());
+        let generation = store.graph.cache_generation();
+        let changes = store.subscribe();
+        racy::HASH_ATTEMPTS.with(|count| count.set(0));
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert_eq!(racy::HASH_ATTEMPTS.with(|count| count.get()), 1);
+        assert_eq!(store.graph.cache_generation(), generation);
+        assert!(changes.try_recv().unwrap().is_none());
+        // No rewrite or mtime touch accompanies this access repair.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        core.reconcile(None, false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+        assert_eq!(
+            store.page(&PageId::from("pages/P0.md")).unwrap().doc.blocks[0].raw,
+            "delivered before chmod"
         );
+        store.close();
     }
 
     #[test]

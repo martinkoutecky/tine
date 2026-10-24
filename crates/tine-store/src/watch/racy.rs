@@ -6,11 +6,23 @@ use std::path::Path;
 #[cfg(test)]
 thread_local! {
     pub(super) static HASH_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    // A denied/offline open, before any bytes can be read. Path-scoped so
+    // unrelated files still exercise the real filesystem.
+    pub(super) static HASH_OPEN_ERROR: std::cell::RefCell<Option<(std::path::PathBuf, std::io::ErrorKind)>> = const { std::cell::RefCell::new(None) };
 }
 
 pub(super) fn hash_revision(path: &Path) -> std::io::Result<FileRev> {
     #[cfg(test)]
     HASH_ATTEMPTS.with(|count| count.set(count.get() + 1));
+    #[cfg(test)]
+    if let Some(kind) = HASH_OPEN_ERROR.with(|fault| {
+        fault
+            .borrow()
+            .as_ref()
+            .and_then(|(failed, kind)| (failed == path).then_some(*kind))
+    }) {
+        return Err(std::io::Error::new(kind, "injected open failure"));
+    }
     FileRev::from_file(path)
 }
 

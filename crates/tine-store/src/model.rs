@@ -172,21 +172,6 @@ pub(crate) fn read_parse_bytes_observed(path: &Path) -> io::Result<(Vec<u8>, fs:
             },
         ));
     }
-    // A sync delivery can truncate or extend the open file between metadata
-    // and EOF. Preserve that as a retryable read, before a partial UTF-8
-    // sequence or outline is mistaken for permanently malformed input.
-    if (bytes.len() as u64) < len {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "file shortened during read",
-        ));
-    }
-    if bytes.len() as u64 != len {
-        return Err(io::Error::new(
-            io::ErrorKind::Interrupted,
-            "file grew during read",
-        ));
-    }
     #[cfg(feature = "test-faults")]
     crate::cost_counters::full_read();
     Ok((bytes, metadata))
@@ -4006,7 +3991,27 @@ impl Graph {
         {
             return SyncFileResult::ReadFailed(io::Error::other("injected watcher read failure"));
         }
-        let content = match read_parse_input(path) {
+        let (bytes, metadata) = match read_parse_bytes_observed(path) {
+            Ok(observed) => observed,
+            Err(error) => return SyncFileResult::ReadFailed(error),
+        };
+        // A delivery can truncate or extend the open file between metadata
+        // and EOF. Only watcher reads classify this before parsing partial
+        // input; reconciliation checks whether its stamp is still in flux.
+        // Save staging/publication compare the bytes' revision
+        // through their established conflict path instead.
+        if bytes.len() as u64 != metadata.len() {
+            let (kind, reason) = if (bytes.len() as u64) < metadata.len() {
+                (io::ErrorKind::UnexpectedEof, "file shortened during read")
+            } else {
+                (io::ErrorKind::Interrupted, "file grew during read")
+            };
+            return SyncFileResult::ReadFailed(io::Error::new(kind, reason));
+        }
+        let content = match validate_parse_bytes_for_path(&bytes, path).and_then(|()| {
+            String::from_utf8(bytes)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+        }) {
             Ok(content) => content,
             Err(error) => return SyncFileResult::ReadFailed(error),
         };
