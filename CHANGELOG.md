@@ -61,6 +61,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Hover previews stay clear of the page link or block reference that opened them, scrolling within the available space above or below it (GH #750).
 - The title and Open source actions stay visible while scrolling a hover preview (GH #752).
+- Page-property rows in Linked References keep the same appearance after editing, including other groups showing the same page (GH #753).
 - Switching table cells by double-click saves the previous edit; invalid numbers keep their editor open (GH #754).
 
 - **Margin comments** (internal UI-MARGIN-POLISH): select words and click **Comment** in the toolbar; cards and replies now offer **Reply** and **×** (delete with replies, restored together by Undo). Blocks with their own `quote` property hide quote context and author metadata while editing and retain their saved bytes; ordinary blocks keep those properties editable. Quoted replies stay readable inside their thread.
