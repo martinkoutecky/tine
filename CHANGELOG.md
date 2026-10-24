@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Editing a Markdown block that has its own properties keeps the hidden `id::` and `collapsed::` lines in the same property group, as Logseq writes them. Before, they moved below the body text, where Logseq ignores them, so references to the block could break in Logseq (internal: REG-HIDDEN-PROPS-STAY-IN-THE-GROUP).
 - Page-property rows in Linked References keep the same appearance after editing, including other groups showing the same page (GH #753).
 
 - On mobile, the bottom editing toolbar stays usable above either sidebar drawer, acts on its focused editor, and reveals the editor above the keyboard while popups remain accessible (GH #751).
