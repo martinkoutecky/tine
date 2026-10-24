@@ -767,6 +767,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       return "main";
     },
     async captureReceipt(id, action) {
+      if (action === "status") return captureReceipts.get(id) ?? "missing";
       if (action === "release") { captureReceipts.delete(id); return "saved"; }
       if (action === "saved") { captureReceipts.set(id, "saved"); return "saved"; }
       const prior = captureReceipts.get(id);

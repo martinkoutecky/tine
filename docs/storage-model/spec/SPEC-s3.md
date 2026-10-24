@@ -109,8 +109,11 @@ then the operation is refused. A refusal changes nothing, so it is not a step. T
 **Binding-level exception (JJ6 / L9 F5, implementation obligation).** An explicit
 delete of a conflicted page may preserve the local buffer in a durable conflict
 recovery copy, then supply `delete_checked` a clean, disk-based plan. This is
-implemented by `page_host/binding_delete.rs`, including the already-absent-file
-case. It is not an ordinary unclean `opDelete` transition. Before admission the
+implemented by `page_host/binding_delete.rs` for an existing file. When the file
+is already absent, `delete_absent` stages and checks the same recovery buffer,
+then answers Applied without a plan or a call to `delete_checked`; the window
+discards its buffer only after that answer. Neither path is an ordinary unclean
+`opDelete` transition. Before admission the
 binding must stage the exact local bytes outside the driver, compare the buffer
 again inside the locked step (a changed buffer waits), and check the caller's
 disk identity under the page lock. Failure keeps the draft and disk intact.

@@ -131,7 +131,7 @@ it("L9-08: a timeout retry retains the original payload while later edits stay i
     await vi.waitFor(() => expect(h.emitted.filter(e => e.event === "quick-capture").length).toBeGreaterThan(before));
     const request = h.emitted.filter(e => e.event === "quick-capture").at(-1)!.payload as { id: string; text: string };
     await vi.advanceTimersByTimeAsync(15_001);
-    expect(document.body.textContent).toContain("try again");
+    expect(document.body.textContent).toContain("Retry File capture");
     h.markdown = "- later edit";
     h.captureApi!.submit();
     await vi.waitFor(() => expect(h.emitted.filter(e => e.event === "quick-capture")).toHaveLength(before + 4));

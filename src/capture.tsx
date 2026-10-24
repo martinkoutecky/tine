@@ -376,8 +376,14 @@ function Capture() {
     const bindingGeneration = snapshot.generation;
     const md = submittedScratch.trim(), pageTitle = submittedTitle.trim();
     void (async () => {
-      if (!md) {
+      if (!md || (snapshot.nodes.length > 0 && snapshot.nodes.every(node => !node.raw.trim()))) {
         retry = undefined;
+        if (pageTitle) {
+          setCaptureStatus("error");
+          setCaptureMessage(t("capture-title-needs-text"));
+          scheduleFit();
+          return;
+        }
         setCaptureStatus("idle");
         setCaptureMessage("");
         clearScratch();
@@ -434,8 +440,8 @@ function Capture() {
         if (pendingCapture !== pending) return;
         disposePendingCapture();
         setCaptureStatus("error");
-        setPreviousGraph(true);
-        setCaptureMessage("graph window not ready — try again");
+        setPreviousGraph(false);
+        setCaptureMessage(t("capture-retry-unconfirmed"));
         scheduleFit();
       };
       setCaptureStatus("saving");
@@ -505,8 +511,7 @@ function Capture() {
     // its retry identity or any later input; reopening resumes that scratch.
     if (retry) {
       setCaptureStatus("error");
-      setPreviousGraph(true);
-      setCaptureMessage(t("capture-previous-graph"));
+      if (!previousGraph()) setCaptureMessage(t("capture-retry-unconfirmed"));
       void hideWindow();
       return;
     }

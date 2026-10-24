@@ -62,6 +62,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Deleting a conflicted page preserves the latest typing in its recovery copy. Quick Capture keeps a title with an empty body, offers a plain retry when saving takes too long, and reports previous-graph uncertainty only after a graph window accepted the capture (GH #254 capture family; L9 review FU1/FU2/H4).
 - Quick Capture removes the saved portion before filing later additions, preserves an unconfirmed capture on Escape, and prevents retries from inserting it again after a graph-window reload (GH #254 capture family; L9 review F1–F3).
 - A block move that rolls back because of unfinished page-header input now explains why and keeps that input and the blocks (L9 review F4, card PVTI_lAHOAAbLVc4BhPsyzhC1syQ).
 - Pasting a copied link keeps its URL and inserts it at the caret, preserving surrounding text. Inline HTML formatting is retained, with links in the page's Markdown or Org format (GH #759).

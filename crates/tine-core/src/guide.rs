@@ -2261,6 +2261,9 @@ mod asset_manifest_tests {
             .unwrap()
             .markdown;
         assert!(guide.contains("additions stay for your next capture"));
+        assert!(guide.contains("plain retry"));
+        assert!(guide.contains("**Add text** reminder"));
+        assert!(guide.contains("never reached a graph"));
         assert!(guide.contains("previous graph"));
         assert!(guide.contains("without clearing its text or retry identity"));
         assert!(guide.contains("does not survive quitting"));

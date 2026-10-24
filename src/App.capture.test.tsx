@@ -72,7 +72,7 @@ it.each(["Destination", ""])("refuses graph A's delayed capture in graph B (titl
   expect(save).not.toHaveBeenCalled();
   expect(get).not.toHaveBeenCalled();
   expect(pageByName("Destination")).toBeUndefined();
-  expect(h.ack).toHaveBeenCalledWith("capture", "quick-capture-ack", { id: "delayed", ok: false, landed: true, closedGraph: true });
+  expect(h.ack).toHaveBeenCalledWith("capture", "quick-capture-ack", { id: "delayed", ok: false });
   dispose();
 });
 
@@ -97,6 +97,41 @@ it("saves one bound capture and acknowledges its retry without writing again", a
   await h.receive!({ payload });
   expect(save).toHaveBeenCalledOnce();
   expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: "current", ok: true });
+  dispose();
+});
+
+it("FU2: an old-generation request with a native pending claim remains uncertain", async () => {
+  vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(12);
+  await backend().captureReceipt("old-pending", "claim", 11);
+  const save = vi.spyOn(backend(), "pageSubmit");
+  const dispose = await installQuickCaptureReceiver();
+  await h.receive!({ payload: { id: "old-pending", target: "main", bindingGeneration: 11, title: "A", text: "- once" } });
+  expect(save).not.toHaveBeenCalled();
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", {
+    id: "old-pending", ok: false, landed: true, closedGraph: true,
+  });
+  dispose();
+});
+
+it("FU2: a claim rejected during rebind without insertion has no previous-graph warning", async () => {
+  vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(11);
+  const original = backend().captureReceipt.bind(backend());
+  vi.spyOn(backend(), "captureReceipt").mockImplementation(async (id, action, generation) => {
+    if (action === "claim") { resetStore(); throw new Error("stale binding"); }
+    return original(id, action, generation);
+  });
+  const dispose = await installQuickCaptureReceiver();
+  await h.receive!({ payload: { id: "never-claimed", target: "main", bindingGeneration: 11, text: "- unsent" } });
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: "never-claimed", ok: false });
+  dispose();
+});
+
+it("FU2: an unavailable receipt lookup keeps identity for plain retry without alleging insertion", async () => {
+  vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(12);
+  vi.spyOn(backend(), "captureReceipt").mockRejectedValue(new Error("transport unavailable"));
+  const dispose = await installQuickCaptureReceiver();
+  await h.receive!({ payload: { id: "unknown-claim", target: "main", bindingGeneration: 11, text: "- unconfirmed" } });
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: "unknown-claim", ok: false, landed: true });
   dispose();
 });
 

@@ -955,6 +955,24 @@ by I-9's typed failure paths.
 | `src::quickCaptureReceiver` retry (L9-08, F1–F3) | A save backoff, lost acknowledgement, graph-window reload or graph switch can follow an insertion. The sender retains the request id and original snapshot across transport and manual retries. A native process-memory claim precedes insertion; pending claims survive WebView reload and are not evicted by the 100 completed-id cap. A live receiver retries only its landed destination's guarded save. When reload/rebinding prevents proof of the old attempt, acknowledge a distinct uncertain/previous-graph state, keep scratch and retry identity (including on Escape), and tell the user to check that graph before capturing again; never silently reinsert. A proved refusal before insertion releases the claim and permits a new snapshot. After success, subtract matching submitted prefixes by node identity, retaining new nodes and additions. Rewritten non-prefix input stays with a reminder that the earlier capture is saved; IME subtraction waits for composition end. Scratch and claims last only for the running process. No new persisted record or graph write path. Proof `src/capture.followups.test.tsx`, `src/capture.keptText.test.tsx`, `src/App.capture.test.tsx`, `src-tauri/src/capture_receipts.rs`. |
 | `src::document::host` window writes (step 3b P2b: the page host is the only writer of page edits; the frontend save engine is gone) | An alias draft (a page with no file whose name became an alias, L13) lands in its owner only while the owner is open in the host, idle and not conflicted, and no editor is open on it (an IME composition is DOM-local input the store does not hold yet); otherwise it stays, unsaved and listed. The landing is recorded when the owner's live text receives the copy, before submission and publication are proved; if either fails, the draft stays recoverable. A retry after an unproved publication or a mid-save edit replaces the landed copy instead of appending the draft again; when the owner's text no longer holds that copy (an external editor or sync client changed the owner meanwhile) the landing refuses, says so, and keeps the draft (proof `src/document/save/aliasDraft.test.ts`, `src/document/save/aliasDraftRetry.test.ts`; audit L9-05). A watcher observation of a page with unsaved input conflicts in the host; the conflict lifts when the file provably returns to the baseline the editor loaded (an external editor's temp+rename or a mid-delivery sync gap), and the frozen edit is saved against it (og I1c, master c68c0b6e7; proof `src/document/conflictLift.test.ts`). |
 
+Before conflicted deletion (FU1), the window freezes page edits and drains its
+debounced and in-flight submits through the existing host client. It checks that
+no input or answer remains outstanding before calling native delete, so the
+recovery copy includes the last local keystrokes. Refused or unserializable
+input stops the deletion and unlocks the unchanged page; no unsent input may be
+consumed by the later discard. Ordinary deletes still require publication.
+
+A capture acknowledgement timeout (FU2) keeps the original identity and offers
+only a plain retry, including after Escape. A stale-generation request queries
+the native receipt without creating a claim: missing means proved non-insertion
+and permits a fresh snapshot, saved means success, and only pending justifies
+the previous-graph warning. A failed lookup keeps identity with plain retry;
+it proves neither insertion nor non-insertion. The status lookup is process
+memory only, read-only, scoped by window and id, and may inspect an old claim
+across binding generations. A title retained after an older snapshot saves,
+with no remaining body text, shows an Add text reminder and remains editable
+(H4); empty outline bullets are checked by node content, not Markdown syntax.
+
 An uncertain capture's **Start a new capture** action explicitly retires that
 request identity while keeping all scratch text. It writes nothing; the user is
 told to remove anything already saved in the previous graph before filing the

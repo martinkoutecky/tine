@@ -25,6 +25,11 @@ impl CaptureReceipts {
         let mut book = self.0.lock().unwrap();
         let key = (window.to_owned(), id);
         match action {
+            "status" => Ok(match book.entries.get(&key) {
+                Some((_, true)) => "saved",
+                Some(_) => "pending",
+                None => "missing",
+            }),
             "claim" => match book.entries.get(&key) {
                 Some((_, true)) => Ok("saved"),
                 Some(_) => Ok("pending"),
@@ -73,7 +78,7 @@ pub(crate) fn capture_receipt(
     receipts: tauri::State<'_, CaptureReceipts>,
 ) -> Result<&'static str, String> {
     let slot = slot_for_context(&ctx)?;
-    if slot.binding_generation != receipt_generation {
+    if action != "status" && slot.binding_generation != receipt_generation {
         return Err(crate::state::STALE_BINDING.into());
     }
     receipts.apply(ctx.window.label(), id, receipt_generation, &action)
@@ -86,6 +91,14 @@ mod tests {
     fn reload_and_rebind_do_not_turn_an_existing_claim_into_a_new_insertion() {
         let receipts = CaptureReceipts::default();
         assert_eq!(
+            receipts.apply("main", "id".into(), 12, "status").unwrap(),
+            "missing"
+        );
+        assert_eq!(
+            receipts.apply("main", "id".into(), 12, "status").unwrap(),
+            "missing"
+        );
+        assert_eq!(
             receipts.apply("main", "id".into(), 11, "claim").unwrap(),
             "new"
         );
@@ -97,8 +110,16 @@ mod tests {
             receipts.apply("main", "id".into(), 12, "claim").unwrap(),
             "pending"
         );
+        assert_eq!(
+            receipts.apply("main", "id".into(), 12, "status").unwrap(),
+            "pending"
+        );
         assert!(receipts.apply("main", "id".into(), 12, "release").is_err());
         receipts.apply("main", "id".into(), 11, "saved").unwrap();
+        assert_eq!(
+            receipts.apply("main", "id".into(), 12, "status").unwrap(),
+            "saved"
+        );
         assert_eq!(
             receipts.apply("main", "id".into(), 11, "claim").unwrap(),
             "saved"

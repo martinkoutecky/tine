@@ -75,6 +75,13 @@ it("F3: a title-only edit does not retain already-filed text", async () => {
   await ack(request.id, { ok: true });
   expect(scratch()).not.toContain("saved under first title");
   expect(title.value).toBe("Next destination");
+  const hidden = h.hide.mock.calls.length;
+  h.api!.submit();
+  await Promise.resolve();
+  expect(title.value).toBe("Next destination");
+  expect(h.hide).toHaveBeenCalledTimes(hidden);
+  expect(document.body.textContent).toContain("Add text");
+  title.value = ""; title.dispatchEvent(new Event("input", { bubbles: true }));
 });
 
 it("F3: rewritten input is kept with an earlier-saved reminder", async () => {
@@ -128,14 +135,30 @@ it("F2: a closed-graph acknowledgement explains uncertainty and Cancel keeps the
   await ack(fresh.id, { ok: true });
 });
 
-it("F2: cancelling before any acknowledgement keeps a usable retry and new-capture exit", async () => {
+it("FU2: cancelling before any acknowledgement keeps a plain retry", async () => {
   setRaw(roots()[0], "still waiting for acknowledgement");
   const request = await submit();
   h.api!.cancel();
   await Promise.resolve();
   expect(scratch()).toContain("still waiting for acknowledgement");
-  expect(document.querySelector("[data-testid=capture-start-new]")).not.toBeNull();
+  expect(document.querySelector("[data-testid=capture-start-new]")).toBeNull();
   const retry = await submit();
   expect(retry.id).toBe(request.id);
   await ack(retry.id, { ok: true });
+});
+
+it("FU2: a same-graph timeout keeps the request identity without the previous-graph exit", async () => {
+  setRaw(roots()[0], "slow live graph");
+  vi.useFakeTimers();
+  let request: { id: string; text: string };
+  try {
+    request = await submit();
+    await vi.runAllTimersAsync();
+    expect(scratch()).toContain("slow live graph");
+    expect(document.querySelector("[data-testid=capture-start-new]")).toBeNull();
+    expect(document.body.textContent).toContain("Retry File capture");
+  } finally { vi.useRealTimers(); }
+  const retried = await submit();
+  expect(retried.id).toBe(request!.id);
+  await ack(retried.id, { ok: true });
 });

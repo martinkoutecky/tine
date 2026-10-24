@@ -818,6 +818,17 @@ export async function deletePageOnDisk(name: string, kind: PageKind, path?: stri
   const finish = beginResultsChange();
   let operation: PageOperation;
   try {
+    // Freeze input before draining. A conflict cannot publish, but every local
+    // submit must be answered before the native boundary snapshots its buffer.
+    if (conflicted) await c.drain([name]);
+    const drained = !c.retired && !c.busy(name);
+    if (!drained || host() !== c || !owner()) {
+      if (host() === c) untombstone(name);
+      const reason = msg("delete-reason-unsaved", { name });
+      if (reportFailure) reportFailure(reason);
+      else if (host() === c) pushToast(msg("delete-reason-unsaved", { name }), "error");
+      return false;
+    }
     // A stale delete command deleted nothing the window can count on.
     const remove = () => writeOwned(owner, backend().pageDelete(c.session, name, kind, path))
       .then((done) => done.kind === "current" ? done.value : "refused" as const);
