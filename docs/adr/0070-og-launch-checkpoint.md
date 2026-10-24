@@ -59,6 +59,40 @@ index.
 
 ## Decision
 
+Development follow-up (HB4 / HI1 / HJ6, L10-06; FORMAT 19): the block-id index
+is exact and eager, including every runtime uuid and authored `id` property,
+with all owning page slots in ascending order. The checkpoint writer derives
+its serialized keys from the captured pages in the structural id space that
+`assign_doc_runtime_ids` assigns on load. It performs that work off the store
+writer; the loader decodes the index directly and never reconstructs it from
+the block forest. Live publications replace only the changed pages' ids.
+Dangling references require no page walk, and a moved id retains its surviving
+owner across a warm launch. Invalid owner slots decline the whole checkpoint,
+as any other mismatch does. The disposable cache remains postcard+zstd with
+the same guarded atomic replace and idle cadence. Measurements and the I-25
+unit-cost line are recorded in `RECEIPT-og-block-index-dump.md` for this lane.
+
+Measured 2026-10-24 against og `8796c6316`, using the existing release
+`checkpoint_launch_bench` (open → Ready; cold means no checkpoint), with
+seven interleaved trials per binary and mode, excluding warmups. Every Rust
+benchmark process ran under a 2 GiB address-space cap. The source graph was
+read only; both fixtures were copies under the worktree's ignored artifacts.
+The second fixture retains the 1,075 source files and adds unchanged copies
+with distinct filenames to reach 13,000. It is **not** the historical g13k
+fixture measured above, whose location was not supplied.
+
+| Fixture | Warm median, ms (before → after) | Cold median, ms | Checkpoint bytes | Checkpoint write median, ms |
+| --- | --- | --- | --- | --- |
+| Anonymized, 1,075 pages | 61.8 → 63.2 (+1.4) | 132.5 → 153.2 (+20.8) | 1,410,324 → 1,753,136 (+342,812) | 52.1 → 154.4 (+102.3) |
+| Derived, 13,000 files | 572.0 → 623.3 (+51.2) | 771.5 → 1,231.6 (+460.1) | 8,729,297 → 12,786,882 (+4,057,585) | 327.4 → 1,212.8 (+885.4) |
+
+Raw postcard size grew by 600,480 B and 7,103,594 B respectively. Median
+checkpoint capture time under the writer was 4.2 → 5.7 ms and 51.1 → 61.3 ms;
+load-id normalization and index encoding run after capture. The warm deltas
+are below 100 ms on these fixtures. The historical g13k acceptance remains
+unverified. The index adds zero bytes or files per edit; the checkpoint is
+rewritten only on the existing cadence, with one file per checkpoint.
+
 - **Where:** app data `launch-checkpoints/<graph-id>.bin`, keyed like the
   session and draft files (`settings::session_id`), never under the graph root.
   The app-data directory is Tauri's `app_data_dir` (`graph::checkpoint_app_data`,
@@ -79,12 +113,13 @@ index.
   After the header comes the zstd-compressed postcard body:
   - the published `GraphState`: parsed pages, entry list, the explicit,
     reference-candidate, alias, real-name, icon and block-ref indexes, the
+    exact block-id owners in load-time runtime-id space, the
     observed mtimes and content revisions;
   - the claimants and name tables;
   - every path's stamp as recorded when its bytes were read;
   - the racy set;
   - the generation's derived half, each part in whatever state it was in:
-    the lazily built block, referenced-name, alias and block-ref-count
+    the lazily built referenced-name, alias and block-ref-count
     indexes; the query index slot (built or seeded); and the memos (the
     derived-result cache and the query memo).
 

@@ -5,7 +5,7 @@
 //! it. The file format, the writer and the launch path live in
 //! `store/checkpoint.rs`. The dump is deliberately dumb: whatever the published
 //! generation holds is written and loaded whole, including its lazily built
-//! half ([`DerivedState`]: block index, referenced names, alias tables, the
+//! half ([`DerivedState`]: referenced names, alias tables, the
 //! query index and both memos) in whatever state it is at capture: built
 //! parts are written, unbuilt parts stay unbuilt. A loaded generation is then
 //! carried across the launch diff by the same rules as any published one
@@ -169,6 +169,18 @@ impl<P> GraphState<P> {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn invalidate_block_owner(&mut self) {
+        self.derived.block_index = BlockIndexState::In(SnapshotBlockIndex {
+            base: Arc::new(
+                [("invalid-owner".to_owned(), BlockOwners::One(usize::MAX))]
+                    .into_iter()
+                    .collect(),
+            ),
+            overlay: Arc::new(SharedMap::new()),
+        });
+    }
+
     /// The disk revision the cached page at `path` was parsed from.
     pub(crate) fn disk_rev(&self, path: &Path) -> Option<&str> {
         self.disk_revs
@@ -216,7 +228,7 @@ impl Graph {
             real_page_names: Arc::clone(&read.real_page_names),
             icon_index: read.icon_index.get().cloned(),
             block_ref_counts: read.block_ref_counts.get().cloned(),
-            derived: DerivedState::of(read, &self.root),
+            derived: DerivedState::of(read),
         })
     }
 
@@ -254,12 +266,7 @@ impl Graph {
         let mut reference = state.reference_candidate_index;
         reference.positions = Arc::clone(&pages.positions);
         let derived = state.derived;
-        // Rows naming a missing owner cannot follow a passing checksum from
-        // this writer; were they ever read, the index is left unbuilt (the
-        // first block lookup builds it, as at a cold Ready), not refused.
-        let block_index = derived
-            .block_index
-            .and_then(|index| index.into_index(root).ok());
+        let block_index = derived.block_index.into_index(&pages)?;
         let query_index = crate::query::index::QueryIndexSlot::from_checkpoint(
             derived.query_index,
             &pages.positions,
@@ -293,7 +300,7 @@ impl Graph {
             explicit_index: state.explicit_index,
             reference_candidate_index: RwLock::new(reference),
             cache_generation: state.cache_generation,
-            block_index: cell(block_index),
+            block_index: cell(Some(block_index)),
             alias_index: cell(state.alias_index),
             referenced_name_index: cell(derived.referenced_name_index),
             real_page_names: state.real_page_names,
@@ -323,14 +330,14 @@ impl Graph {
     }
 }
 
-/// The lazily built half of a published generation, as it stands at capture
-/// (`None`: not built in that generation). Capture clones `Arc`s and the small
-/// alias tables under the store writer; the encoding work (owner interning,
-/// key ordering, JSON for result DTOs) happens when it is serialized, off the
-/// writer.
+/// Exact block owners and the lazily built half of a published generation,
+/// as it stands at capture (`None`: a lazy slot was not built). Capture shares
+/// the pages and clones `Arc`s and the small alias tables under the store
+/// writer; encoding work (load-time block ids, key ordering, JSON for result
+/// DTOs) happens when it is serialized, off the writer.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct DerivedState {
-    block_index: Option<BlockIndexState>,
+    block_index: BlockIndexState,
     referenced_name_index: Option<SnapshotPageDerivedIndex>,
     aliases: Option<AliasListState>,
     alias_owner_paths_by_key: Option<AliasOwnersState>,
@@ -342,12 +349,9 @@ pub(crate) struct DerivedState {
 }
 
 impl DerivedState {
-    fn of(read: &ReadSnapshot, root: &Path) -> DerivedState {
+    fn of(read: &ReadSnapshot) -> DerivedState {
         DerivedState {
-            block_index: read.block_index.get().map(|index| BlockIndexState::Out {
-                index: index.clone(),
-                root: root.to_path_buf(),
-            }),
+            block_index: BlockIndexState::Out(Arc::clone(&read.pages)),
             referenced_name_index: read.referenced_name_index.get().cloned(),
             aliases: read
                 .alias_relation
@@ -436,96 +440,57 @@ impl<'de, V: serde::Deserialize<'de>> serde::Deserialize<'de> for Sorted<V> {
     }
 }
 
-/// The block-id index with each owning page written once (blocks refer to it
-/// by number) and its path relative to the graph root, so the image does not
-/// depend on where the graph lives; the loader re-joins it under its root.
+/// Exact block owners in the loader's structural runtime-id space.
+/// Capture shares the immutable pages. Only serialization (on the idle
+/// checkpoint writer) computes load-time ids; decoding reads the index itself.
 pub(crate) enum BlockIndexState {
-    /// A generation's index at capture.
-    Out {
-        index: SnapshotBlockIndex,
-        root: PathBuf,
-    },
-    /// The loaded rows, before their owners are joined under the root.
-    In(BlockIndexParts),
-}
-
-type BlockRows = Vec<(String, Option<u32>)>;
-
-#[derive(serde::Serialize, serde::Deserialize)]
-pub(crate) struct BlockIndexParts {
-    owners: Vec<(PathBuf, String)>,
-    base: BlockRows,
-    overlay: BlockRows,
+    Out(Arc<Pages>),
+    In(SnapshotBlockIndex),
 }
 
 impl BlockIndexState {
-    /// The index under `root`: one shared owner per page, as a build makes.
-    /// O(blocks), the same order as decoding the rows.
-    fn into_index(self, root: &Path) -> Result<SnapshotBlockIndex, &'static str> {
-        let parts = match self {
-            BlockIndexState::Out { index, .. } => return Ok(index),
-            BlockIndexState::In(parts) => parts,
+    fn into_index(
+        self,
+        pages: &Pages,
+    ) -> Result<SnapshotBlockIndex, crate::store::checkpoint::Fallback> {
+        let index = match self {
+            Self::In(index) => index,
+            Self::Out(_) => return Err(crate::store::checkpoint::Fallback::Decode),
         };
-        let owners: Vec<BlockOwner> = parts
-            .owners
-            .into_iter()
-            .map(|(path, name)| Arc::new((root.join(path), name)))
-            .collect();
-        let map = |rows: BlockRows| {
-            rows.into_iter()
-                .map(|(id, number)| match number {
-                    Some(n) => owners
-                        .get(n as usize)
-                        .map(|owner| (id, Some(Arc::clone(owner))))
-                        .ok_or("block index names a missing owner"),
-                    None => Ok((id, None)),
-                })
-                .collect::<Result<SharedMap<_, _>, _>>()
-                .map(Arc::new)
-        };
-        Ok(SnapshotBlockIndex {
-            base: map(parts.base)?,
-            overlay: map(parts.overlay)?,
-        })
+        // Validate the wire invariant without walking documents. Any mismatch
+        // declines the whole disposable checkpoint, never the graph.
+        let valid_slots: std::collections::HashSet<usize> =
+            pages.slots().map(|(slot, _)| slot).collect();
+        for (_, owners) in index.base.iter() {
+            let slots = owners.slots();
+            if slots.is_empty()
+                || slots.windows(2).any(|pair| pair[0] >= pair[1])
+                || slots.iter().any(|slot| !valid_slots.contains(slot))
+            {
+                return Err(crate::store::checkpoint::Fallback::Decode);
+            }
+        }
+        Ok(index)
     }
 }
 
 impl serde::Serialize for BlockIndexState {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let (index, root) = match self {
-            BlockIndexState::Out { index, root } => (index, root),
-            BlockIndexState::In(parts) => return parts.serialize(s),
-        };
-        let mut owners = Vec::new();
-        let mut numbers: HashMap<*const (PathBuf, String), u32> = HashMap::new();
-        let mut rows = |map: &SharedMap<String, Option<BlockOwner>>| -> BlockRows {
-            map.iter()
-                .map(|(id, owner)| {
-                    let number = owner.as_ref().map(|owner| {
-                        *numbers.entry(Arc::as_ptr(owner)).or_insert_with(|| {
-                            let path = owner.0.strip_prefix(root).unwrap_or(&owner.0);
-                            owners.push((path.to_path_buf(), owner.1.clone()));
-                            (owners.len() - 1) as u32
-                        })
-                    });
-                    (id.clone(), number)
-                })
-                .collect()
-        };
-        let base = rows(&index.base);
-        let overlay = rows(&index.overlay);
-        BlockIndexParts {
-            owners,
-            base,
-            overlay,
+        match self {
+            Self::Out(pages) => SnapshotBlockIndex::build(pages, true).base.serialize(s),
+            Self::In(index) => index.base.serialize(s),
         }
-        .serialize(s)
     }
 }
 
 impl<'de> serde::Deserialize<'de> for BlockIndexState {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        BlockIndexParts::deserialize(d).map(BlockIndexState::In)
+        SharedMap::deserialize(d).map(|base| {
+            Self::In(SnapshotBlockIndex {
+                base: Arc::new(base),
+                overlay: Arc::new(SharedMap::new()),
+            })
+        })
     }
 }
 
@@ -601,7 +566,7 @@ impl<'de> serde::Deserialize<'de> for DerivedCacheState {
 
 #[cfg(test)]
 impl ReadSnapshot {
-    /// Which lazily built parts this generation holds: (block index,
+    /// Which block and derived parts this generation holds: (block index,
     /// referenced-name index, query index, derived results, query answers).
     pub(crate) fn warm_parts(&self) -> (bool, bool, bool, usize, usize) {
         (
@@ -635,7 +600,6 @@ pub(crate) struct LazyMarks {
 impl LazyMarks {
     pub(crate) fn of(read: &ReadSnapshot) -> LazyMarks {
         let slots = [
-            read.block_index.get().is_some(),
             read.alias_index.get().is_some(),
             read.referenced_name_index.get().is_some(),
             read.alias_relation.get().is_some(),

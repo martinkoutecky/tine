@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-block-index-checkpoint.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A block reference and embed show their block's new page content after an external move and after reopening from a launch checkpoint; the referring file remains unchanged.","blocking":true,"authority":"HB4 / HI1 / HJ6; REG-AUDIT-L10-06-BLOCK-MOVE-CHECKPOINT; docs/storage-contract.md"}],
+      "acceptableVariations": ["Watcher and render latency, page layout, and checkpoint size."],
+      "nonRequirements": ["Exact pixels, DOM nesting, or native certification outside Linux WebKitGTK; dangling-reference work and owner permutations are covered by store tests."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-dup-id-row-resolve.mjs": {
       "contracts": [{"class":"exact-safety-interoperability","userOutcome":"With A loaded before B and both files carrying the same authored id, editing B's Linked References or page-embed row changes only B, or the row remains read-only; A stays byte-identical.","blocking":true,"authority":"UI-DUP-ID-ROW-OWNER; D-20261023-VQ; card PVTI_lAHOAAbLVc4BhPsyzhDFdsY"}],
       "acceptableVariations": ["A safely resolved live row and a read-only DTO row are both acceptable; rendering and save latency may vary."],

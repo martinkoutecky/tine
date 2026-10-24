@@ -3235,8 +3235,9 @@ impl WholeGraph {
     /// Resolve runtime structural block ids or persisted `id::` values in
     /// request order; unknown ids yield `None`. Runtime ids can change when
     /// the page structure changes, while persisted ids remain external refs.
-    /// Cost ranges from the identified page's blocks to O(B) if the id cannot
-    /// be routed directly to a page. More than 20,000 requested ids returns
+    /// Cost: one index lookup per id and one walk per answering page; a miss
+    /// never scans pages (I-13). Per-file deltas maintain the index.
+    /// More than 20,000 requested ids returns
     /// `ResultTooLarge` with `RequestedBlockRefs`; result data is also limited
     /// to 20,000 rows and 32 MiB.
     pub fn blocks(&self, uuids: &[String]) -> Result<Vec<Option<RefGroup>>, QueryError> {
@@ -3274,8 +3275,7 @@ impl WholeGraph {
     /// Bounded subtree preview. `max_nodes` is clamped to 1..=2,000 and
     /// output is capped below 32 MiB. Inspect `BlockPreview::truncated`:
     /// `Some` can omit descendants or even the root under the byte cap.
-    /// Cost ranges from one identified page's blocks to O(B) if the id cannot
-    /// be routed directly to a page.
+    /// Cost: one index lookup and one walk of the answering page; see [`Self::blocks`].
     pub fn preview_block(
         &self,
         uuid: &str,

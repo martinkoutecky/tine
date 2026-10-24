@@ -16,7 +16,7 @@ fn block_lines(out: &mut String, block: &DocBlock, depth: usize) {
 
 /// The canonical image of one snapshot: what its capture built, then every
 /// lazily built index, forced here (referenced names and their per-page
-/// index, editor baselines, block hints, aliases, block-ref counts, icons,
+/// index, editor baselines, exact block owners, aliases, block-ref counts, icons,
 /// the query index through queries, backlinks and unlinked references for
 /// `probes` and the first pages). Forcing them is what lets a later
 /// publication inherit them by per-file deltas.
@@ -155,11 +155,19 @@ fn lazy_lines(
         }
     }
     fn hints(out: &mut String, snapshot: &ReadSnapshot, block: &DocBlock) {
-        out.push_str(&format!(
-            "lazy hint {:?} {:?}\n",
-            block.uuid,
-            snapshot.block_page_hint(&block.uuid)
-        ));
+        let property = block.property("id");
+        for id in [Some(block.uuid.as_str()), property.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            let mut owners = snapshot
+                .block_owner_slots(id)
+                .into_iter()
+                .map(|slot| snapshot.pages[slot].0.rel_path_str().to_owned())
+                .collect::<Vec<_>>();
+            owners.sort();
+            out.push_str(&format!("block owners {id:?} {owners:?}\n"));
+        }
         for child in &block.children {
             hints(out, snapshot, child);
         }
