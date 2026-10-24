@@ -3,6 +3,16 @@
 # Strings use the JSON-compatible TOML basic-string subset enforced by i01.
 
 [[site]]
+file = "crates/tine-store/src/root_binding.rs"
+fn = "identity"
+domain = "primitive"
+guard = ""
+test = "crates/tine-store/src/page_host/production_guard_tests.rs#l9_replaced_root_refuses_creating_save_and_keeps_input"
+oracle = false
+note = "Read-only directory identity capture on Unix and Windows. The syntactic census counts OpenOptions constructors even without write/create; no filesystem mutation or persisted identity is introduced."
+mutations = "OpenOptions::new=2"
+
+[[site]]
 file = "crates/tine-store/src/page_host/production.rs"
 fn = "ProductionIo::page_sync"
 domain = "graph"
@@ -251,7 +261,7 @@ guard = ""
 test = ""
 oracle = false
 note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
-mutations = "fs::create_dir_all=1"
+mutations = "fs::create_dir=1"
 
 [[site]]
 file = "crates/tine-store/src/directory_durability.rs"
@@ -261,7 +271,7 @@ guard = ""
 test = ""
 oracle = false
 note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
-mutations = "create_dir_all_with_sync=1"
+mutations = "DirectoryCreation::new=1"
 
 [[site]]
 file = "crates/tine-store/src/directory_durability.rs"
@@ -300,7 +310,7 @@ domain = "graph"
 guard = "crates/tine-store/src/model.rs#Graph::withdraw_file_to_conflict_if"
 test = "crates/tine-store/tests/f8_vcs_markers.rs#resolving_markers_stages_the_preresolution_file_in_recoverable_trash"
 oracle = false
-note = "Withdraw conflict copy uses ensure_write_target; parent mkdir is not durable (A-DIRSYNC/L9-13). Root identity remains A-ROOT-BOUND; outside oracle."
+note = "Withdraw conflict copy uses the shared root witness and bounded durable parent creation. Outside oracle; full root/parent identity fault evidence remains pending."
 mutations = ".withdraw_file_to_conflict_if=1"
 
 [[site]]
@@ -310,8 +320,8 @@ domain = "graph"
 guard = "crates/tine-store/src/model.rs#Graph::withdraw_file_to_conflict_if"
 test = "crates/tine-store/tests/f8_vcs_markers.rs#resolving_markers_stages_the_preresolution_file_in_recoverable_trash"
 oracle = false
-note = "Withdraw conflict copy uses ensure_write_target; parent mkdir is not durable (A-DIRSYNC/L9-13). Root identity remains A-ROOT-BOUND; outside oracle."
-mutations = "fs::create_dir_all=1, move_file_noreplace=3"
+note = "Withdraw conflict copy uses ensure_write_target with the root witness and bounded durable parent creation. Outside oracle; full A-ROOT-BOUND/A-DIRSYNC environment proof remains pending."
+mutations = "directory_durability::create_dir_all_durable=1, move_file_noreplace=3"
 
 [[site]]
 file = "crates/tine-store/src/model.rs"
@@ -320,7 +330,7 @@ domain = "graph"
 guard = "crates/tine-store/src/model.rs#Graph::withdraw_file_to_conflict_if"
 test = "crates/tine-store/tests/f8_vcs_markers.rs#resolving_markers_stages_the_preresolution_file_in_recoverable_trash"
 oracle = false
-note = "Withdraw conflict copy uses ensure_write_target; parent mkdir is not durable (A-DIRSYNC/L9-13). Root identity remains A-ROOT-BOUND; outside oracle."
+note = "Withdraw conflict copy uses the shared root witness and bounded durable parent creation. Outside oracle; full root/parent identity fault evidence remains pending."
 mutations = ".withdraw_file_to_conflict_if=1"
 
 [[site]]
@@ -611,7 +621,7 @@ guard = "crates/tine-store/src/publish.rs#Store::publish_site_at"
 test = "crates/tine-store/tests/publish_site.rs#staged_writer_publishes_files_and_retires_previous_site"
 oracle = false
 note = "Graph publish stages/recovery (also used for external exports); cap-std directory handles contain stage mutations. Outside HostIo oracle; ambient directory sync/root binding remains an assumption."
-mutations = "directory_durability::sync_directory_entry=1, fs::create_dir_all=1"
+mutations = "directory_durability::create_dir_all_durable=1, directory_durability::sync_directory_entry=1"
 
 [[site]]
 file = "crates/tine-store/src/publish.rs"
@@ -790,7 +800,7 @@ domain = "graph"
 guard = "crates/tine-store/src/transaction.rs#Transaction::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir remains unbounded (A-ROOT-BOUND); rollback/cleanup outside HostIo refinement."
+note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_copy_file_new=1, atomic_copy_new=1, atomic_file::sync_existing=1, atomic_write=1, atomic_write_new=2, atomic_write_with_check=1, directory_durability::create_dir_all_durable=4, fs::remove_file=3, move_file_noreplace=2, sync_move_dirs=2"
 
 [[site]]
@@ -800,7 +810,7 @@ domain = "graph"
 guard = "crates/tine-store/src/transaction.rs#Transaction::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir remains unbounded (A-ROOT-BOUND); rollback/cleanup outside HostIo refinement."
+note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "directory_durability::sync_directory_entry=1, fs::remove_file=3"
 
 [[site]]
@@ -830,7 +840,7 @@ domain = "graph"
 guard = "crates/tine-store/src/transaction.rs#Transaction::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir remains unbounded (A-ROOT-BOUND); rollback/cleanup outside HostIo refinement."
+note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_write=1, atomic_write_new=3, move_file_noreplace=1, sync_move_dirs=1"
 
 [[site]]
@@ -840,8 +850,8 @@ domain = "graph"
 guard = "crates/tine-store/src/transaction.rs#Transaction::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir remains unbounded (A-ROOT-BOUND); rollback/cleanup outside HostIo refinement."
-mutations = "atomic_write_new=1"
+note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+mutations = "atomic_write_new=1, directory_durability::create_dir_all_durable=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
@@ -850,7 +860,7 @@ domain = "graph"
 guard = "crates/tine-store/src/transaction.rs#Transaction::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir remains unbounded (A-ROOT-BOUND); rollback/cleanup outside HostIo refinement."
+note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_write_new=1, directory_durability::create_dir_all_durable=1"
 
 [[site]]
@@ -870,7 +880,7 @@ domain = "graph"
 guard = "crates/tine-store/src/transaction.rs#Transaction::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir remains unbounded (A-ROOT-BOUND); rollback/cleanup outside HostIo refinement."
+note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_write_with_check=1, directory_durability::create_dir_all_durable=2"
 
 [[site]]
@@ -880,7 +890,7 @@ domain = "graph"
 guard = "crates/tine-store/src/transaction.rs#Transaction::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir remains unbounded (A-ROOT-BOUND); rollback/cleanup outside HostIo refinement."
+note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_file::rename_replace=1, move_file_noreplace=1, sync_move_dirs=1"
 
 [[site]]
@@ -890,7 +900,7 @@ domain = "graph"
 guard = "crates/tine-store/src/transaction.rs#Transaction::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir remains unbounded (A-ROOT-BOUND); rollback/cleanup outside HostIo refinement."
+note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_write=3, atomic_write_new=2"
 
 [[site]]

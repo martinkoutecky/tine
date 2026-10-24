@@ -432,6 +432,7 @@ fn parse_doc_with_opts(path: &Path, source: &str) -> (Document, doc::SerializeOp
 }
 pub(crate) struct Graph {
     pub(crate) root: PathBuf,
+    pub(crate) root_binding: Arc<crate::root_binding::RootBinding>,
     /// The canonical filesystem capability used for every asset operation. For
     /// ordinary graphs this is `<root>/assets`; when the runtime has explicitly
     /// approved an external assets symlink/junction it is that exact resolved
@@ -2566,7 +2567,7 @@ impl Graph {
     /// `InvalidInput`: the target is outside the graph (a refusal). Any other
     /// error: it could not be inspected (a failure the save retries).
     pub(crate) fn ensure_write_target(&self, target: &Path) -> io::Result<()> {
-        checked_write_target(&self.root, target, "graph root")
+        checked_write_target(&self.root, target, "graph root", Some(&self.root_binding))
     }
 
     /// Asset writes have their own capability boundary. Keeping this separate
@@ -2576,7 +2577,16 @@ impl Graph {
         if self.assets_root == self.root.join("assets") {
             return self.ensure_write_target(target);
         }
-        checked_write_target(&self.assets_root, target, "approved assets root")
+        self.root_binding.check()?;
+        checked_write_target(&self.assets_root, target, "approved assets root", None)
+    }
+
+    pub(crate) fn creation_bound(&self, target: &Path) -> &Path {
+        if !self.assets_root.starts_with(&self.root) && target.starts_with(&self.assets_root) {
+            &self.assets_root
+        } else {
+            &self.root
+        }
     }
 
     /// Open a graph directory, reading `logseq/config.edn` if present.
@@ -2606,6 +2616,7 @@ impl Graph {
 
     fn empty_with_config(root: PathBuf, config: Config, journal_format: JournalFormat) -> Graph {
         Graph {
+            root_binding: Arc::new(crate::root_binding::RootBinding::new(&root)),
             assets_root: root.join("assets"),
             root,
             config,
@@ -3955,7 +3966,7 @@ impl Graph {
         }
         let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
         self.ensure_write_target(&trash)?;
-        fs::create_dir_all(&trash)?;
+        crate::directory_durability::create_dir_all_durable(&trash, &self.root)?;
         let name = path
             .file_name()
             .and_then(|value| value.to_str())

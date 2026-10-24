@@ -349,7 +349,7 @@ impl Store {
                     validate_leaf(folder)?;
                     let parent = self.graph.root.join("published-queries");
                     self.graph.ensure_write_target(&parent)?;
-                    fs::create_dir_all(&parent)?;
+                    crate::directory_durability::create_dir_all_durable(&parent, &self.graph.root)?;
                     crate::directory_durability::sync_directory_entry(&self.graph.root)?;
                     parent.join(folder)
                 }

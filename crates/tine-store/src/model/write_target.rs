@@ -2,7 +2,15 @@
 use super::*;
 
 /// `Graph::ensure_write_target`'s answer for `root` (named `label`).
-pub(crate) fn checked_write_target(root: &Path, target: &Path, label: &str) -> io::Result<()> {
+pub(crate) fn checked_write_target(
+    root: &Path,
+    target: &Path,
+    label: &str,
+    binding: Option<&crate::root_binding::RootBinding>,
+) -> io::Result<()> {
+    if let Some(binding) = binding {
+        binding.check()?;
+    }
     match write_target_contained(root, target) {
         Ok(true) => Ok(()),
         Ok(false) => Err(io::Error::new(

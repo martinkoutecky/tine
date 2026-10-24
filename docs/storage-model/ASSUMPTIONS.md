@@ -17,7 +17,7 @@ does not establish check ordering or root identity.
 | ID | Assumption | Model anchor | Guard (code) | Fault test | Platforms | Status |
 |---|---|---|---|---|---|---|
 | A-PATH-IDENTITY | A page path keeps its file identity; containment is rechecked, root replacement and check-then-act remain gaps | `disk: int -> int` | `crates/tine-store/src/page_host/production_guard.rs#ProductionIo::check_path` | `crates/tine-store/src/page_host/production_guard_tests.rs#l8_01_actual_io_rechecks_after_admission_and_after_temp` | All five; C2 and transaction schedules pending M3 | guarded-untested |
-| A-ROOT-BOUND | The root stays bound; no write recreates it or its ancestors | `disk: int -> int` | — | — | All five; L9-02, C1 pending | unguarded |
+| A-ROOT-BOUND | Every graph write lands in the directory bound at open, and Tine never creates the graph root or an ancestor | `disk: int -> int` | `crates/tine-store/src/root_binding.rs#RootBinding::check`<br>`crates/tine-store/src/directory_durability.rs#DirectoryCreation::new` | `crates/tine-store/src/page_host/production_guard_tests.rs#l9_replaced_root_refuses_creating_save_and_keeps_input`<br>`crates/tine-store/src/directory_durability.rs#l9_directory_creation_never_recreates_a_vanished_bound` | Preparatory guards on all five; complete scope, restore, ModelFs faults and Android/Windows runtime proof pending. Lane blocked on Windows old-key owner arbitration. | unguarded |
 | A-DRAFT-NAMESPACE | Relaunch finds pre-crash drafts after a root path change | `action launch` | — | — | All five; L9-01, C5 pending | unguarded |
 | A-ONE-HOST | One host owns a graph and its drafts | `alive: bool` | — | — | Linux/macOS arbitration exists; Windows/iOS/Android lack it (L9-12) | unguarded |
 | A-DIRSYNC | Directory sync settles names; withdraw trash creation lacks the sync; root/parent identity is unbound | `action dirSync` | `crates/tine-store/src/directory_durability.rs#create_dir_all_durable` | `crates/tine-store/tests/directory_durability_guard.rs#directory_sync_has_one_owner_and_no_discarded_result` | All five; withdraw L9-13 and C6 power fault pending | unguarded |
@@ -73,10 +73,12 @@ part of the same follow-up work, not a production fix in M0/M1:
   git locks/publication rules do not supply the ledger's qualifying graph
   containment/root binding guard. They do not write page data.
 
-The existing containment checks on other graph rows still do not bind root
-identity (A-ROOT-BOUND). `Graph::withdraw_file_to_conflict_if` checks containment
-but creates its trash directory without a durable directory protocol
-(A-DIRSYNC). Those distinct missing guards remain explicitly unguarded above.
+The shared `checked_write_target` now checks a process-local root witness;
+graph mkdir callers pass a bound and create descendants one level at a time.
+`Graph::withdraw_file_to_conflict_if` uses that bounded durable creation too.
+This preparatory delta does not close A-ROOT-BOUND or A-DIRSYNC: restore's
+capability path and a complete mutation/root-fault replay remain unverified.
+No formal model, model hash or existing proof claim changes here.
 
 `crates/tine-store/tests/write_sites.toml` classifies every syntactically found
 production mutation owner in tine-store, tine-graph-features, src-tauri Rust,

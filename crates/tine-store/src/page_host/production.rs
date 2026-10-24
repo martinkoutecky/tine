@@ -19,6 +19,7 @@ pub(super) struct ProductionIo {
     pub(super) store: std::sync::Weak<crate::Store>,
     creation_rules: BTreeMap<String, guard::Creation>,
     graph: PathBuf,
+    root_binding: crate::root_binding::RootBinding,
     drafts: PathBuf,
     trash: PathBuf,
     page_temps: BTreeMap<String, PreparedWrite>,
@@ -94,6 +95,7 @@ impl ProductionIo {
             store: Default::default(),
             creation_rules: BTreeMap::new(),
             graph: graph.to_path_buf(),
+            root_binding: crate::root_binding::RootBinding::new(graph),
             drafts,
             trash: trash.to_path_buf(),
             page_temps: BTreeMap::new(),
@@ -222,9 +224,13 @@ impl ProductionIo {
 
     fn graph_directory(&mut self, dir: &Path) -> IoResult<()> {
         self.check_path(dir)?;
+        if !self.directories.contains_key(dir) {
+            let creation = durability::DirectoryCreation::new(dir, &self.graph).map_err(failure)?;
+            self.directories.insert(dir.to_path_buf(), creation);
+        }
         self.directories
-            .entry(dir.to_path_buf())
-            .or_insert_with(|| durability::DirectoryCreation::new(dir))
+            .get_mut(dir)
+            .unwrap()
             .finish(|dir| {
                 // Each created directory's parent sync counts (I-25).
                 #[cfg(feature = "test-faults")]
@@ -364,7 +370,14 @@ fn witness(value: DirectoryWitness) -> Witness {
 /// (`trash_move`, K6): any other `AlreadyExists`, such as a file where a
 /// directory is created, is a failure the failure bound counts.
 fn failure(error: io::Error) -> IoFailure {
-    let step = crate::directory_durability::failure_step(&error);
+    let step = if error
+        .get_ref()
+        .is_some_and(|cause| cause.is::<crate::root_binding::GraphRootMoved>())
+    {
+        Some(("GraphRootMoved", None))
+    } else {
+        crate::directory_durability::failure_step(&error)
+    };
     IoFailure {
         kind: ErrorKind::Io,
         completed: false,

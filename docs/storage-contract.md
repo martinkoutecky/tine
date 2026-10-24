@@ -145,6 +145,21 @@ paths fail for retry; paths proved outside refuse access. Path identity remains
 an assumption between the final check and the OS call: the accepted R1 window
 also includes a folder retarget in those microseconds.
 
+Graph-root identity work (L9-01/L9-02, preparatory store boundary): a live
+`Graph` and an isolated native host adapter bind the root directory's physical
+identity at open/attach. The shared graph write-target guard checks that witness;
+external-assets writes also check the graph binding. Unix holds a directory fd
+and compares device/inode; Windows compares volume and full file id with
+delete-sharing opens. Missing or replaced roots fail as `GraphRootMoved`, which
+the host reports as an I/O failure and keeps the input available for its ordinary
+device draft. It does not change the persisted canonical-path identity.
+Graph directory creation takes an existing graph/approved-assets bound, never
+creates that bound, and creates missing descendants one level at a time. The
+runtime binding is not yet a complete root-write invariant: restore's capability
+path, model root faults, namespace relocation/adoption, sticky UI and native
+platform proof remain pending. The lane stopped over unavailable Windows
+old-key owner arbitration; this is not a claim that L9-01/L9-02 is complete.
+
 At an absent-to-present save only, the host checks the latest published logical
 claimants and the transaction's bounded unreadable-owner predicate, as well as
 the physical alternate-extension twin (audit L8-02). The logical slot is the
@@ -946,6 +961,7 @@ by I-9's typed failure paths.
 | Owner / operation family | In-scope scenario and required response |
 |---|---|
 | `tine-store::model` path and graph acquisition | A configured graph or asset directory is retargeted, malformed, or resolves outside the approved root after sync or external editing; refuse reads and writes through that path. |
+| `tine-store::root_binding::RootBinding::check` (R-ROOT-MOVED, L9-02 preparation) | The user, file manager, sync/cloud client or unmounted volume moves, removes or replaces the directory bound at open. Fail guarded writes as `GraphRootMoved`, keep input in host/device-draft custody, and require a reopen. This guard is reached by `checked_write_target`; the complete scope/model/UI/platform proof is pending, not established by this preparatory patch. Proof: `page_host/production_guard_tests.rs` `l9_replaced_root_refuses_creating_save_and_keeps_input`, `l9_vanished_root_fails_with_named_reason_and_durable_draft`; bounded creation: `directory_durability.rs` `l9_directory_creation_never_recreates_a_vanished_bound`. |
 | `tine-store::store` read, scan and handoff | Graph close revokes queued requests; a symlink, non-file (for the asset opener: neither file nor directory), or escaped path appears after the caller selected it, or sync retargets `assets/`; refuse stale bytes and OS handoff. A failed initial parse withholds an unpublished view. |
 | `tine-store::model::configured_hidden` scope (og T2, master `hidden_parse_failed_closed`) | A torn or hand-broken `config.edn` (sync-service delivery, an external-editor race or crash) leaves `:hidden` malformed or over its limits (unterminated vector, bad string escape, over 256 entries or 64 KiB, nesting over 32): graph-text scope hides all graph text instead of reading "nothing hidden", which would list, index, snapshot and export text the owner excluded. Recovery is fixing `config.edn`; the watcher's config reload restores the scope. A snapshot taken meanwhile holds no graph text and records `hidden_parse_failed_closed`, so its restore retires none (proof `crates/tine-store/tests/store_read.rs` `malformed_hidden_value_hides_all_graph_text`, `src-tauri/src/backup/restore.rs` `failed_closed_hidden_snapshot_records_scope_and_retires_nothing`). A missing `:hidden`, or a non-vector value, hides nothing (OG). |
 | `tine-store::page_host` request answers (step 3b, `Refusal`) | A submit or Discard for a page the host does not hold (`NotHeld`; a frontend or plugin defect, or a request from an earlier window state): refuse and change nothing. A Discard whose disk read fails (`ReadFailed`, SPEC-s2 §4.11 "discard failed"; a disk error), including the read of a running rename's source that the Discard would revert: refuse whole, change neither page, keep the rename's order (proof `crates/tine-store/src/page_host/command_tests.rs` `an_answer_that_did_not_take_its_request_names_why`, `a_discard_whose_partner_source_read_fails_changes_nothing`). A move whose versions are no longer current (`Stale`; newer input in this window raced it): refuse both pages. A move whose receiver draft cannot be written (`DraftFailed`; a full disk or an app-data disk error): refuse and change nothing. |

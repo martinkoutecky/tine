@@ -165,51 +165,97 @@ fn classify_sync(result: io::Result<()>, private: bool) -> io::Result<DirectoryW
     }
 }
 
-/// `fs::create_dir_all(dir)`, then sync the parent of every directory it
-/// created, so a file published into `dir` afterwards survives power loss
+/// Create descendants of an existing bound one level at a time, then sync
+/// the parent of every directory created, so a file published into `dir` survives power loss
 /// with its whole directory chain. Scenario: power loss after a move into a
 /// new trash/recovery or page subdirectory — the source parent's sync makes the
 /// removal durable while the new directory's own entry is not, losing the file.
-/// Cost: one `metadata` per missing ancestor plus the existing one, and one
-/// sync per created directory; nothing beyond one `metadata` when `dir` exists.
-pub(crate) fn create_dir_all_durable(dir: &Path) -> io::Result<()> {
-    create_dir_all_with_sync(dir, sync_directory_entry)
+/// Cost: one `metadata` per missing ancestor plus the existing one, one bound
+/// check when creation is needed, and one sync per created directory. An
+/// existing dir costs one `metadata` and no directory creation.
+pub(crate) fn create_dir_all_durable(dir: &Path, bound: &Path) -> io::Result<()> {
+    DirectoryCreation::new(dir, bound)?.finish(sync_directory_entry)
 }
 
 pub(crate) fn create_dir_all_with_sync(
     dir: &Path,
     sync: impl Fn(&Path) -> io::Result<()>,
 ) -> io::Result<()> {
-    DirectoryCreation::new(dir).finish(sync)
+    // App data has no graph-root boundary. Select its existing ancestor.
+    let mut bound = dir;
+    while !bound.is_dir() {
+        bound = bound
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "no existing app-data ancestor")
+            })?;
+    }
+    DirectoryCreation::new(dir, bound)?.finish(sync)
 }
 
 /// The same audited directory-chain creation with retained sync custody. A
 /// retry after a successful mkdir cannot infer durability from its existence.
 pub(crate) struct DirectoryCreation {
-    dir: std::path::PathBuf,
+    bound: std::path::PathBuf,
+    missing: std::collections::VecDeque<std::path::PathBuf>,
     parents: std::collections::VecDeque<std::path::PathBuf>,
 }
 
 impl DirectoryCreation {
-    pub(crate) fn new(dir: &Path) -> Self {
+    pub(crate) fn new(dir: &Path, bound: &Path) -> io::Result<Self> {
+        if !dir.starts_with(bound) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "directory escapes its creation bound",
+            ));
+        }
         let mut missing = Vec::new();
         let mut probe = dir;
-        while std::fs::metadata(probe).is_err() {
-            if let Some(parent) = probe.parent().filter(|p| !p.as_os_str().is_empty()) {
-                missing.push(parent.to_path_buf());
-                probe = parent;
-            } else {
-                break;
+        loop {
+            match std::fs::metadata(probe) {
+                Ok(metadata) if metadata.is_dir() => break,
+                Ok(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotADirectory,
+                        "directory creation ancestor is a file",
+                    ))
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    if probe == bound {
+                        return Err(crate::root_binding::moved());
+                    }
+                    missing.push(probe.to_path_buf());
+                    probe = probe.parent().ok_or_else(crate::root_binding::moved)?;
+                }
+                Err(error) => return Err(error),
             }
         }
-        Self {
-            dir: dir.to_path_buf(),
-            parents: missing.into_iter().rev().collect(),
-        }
+        Ok(Self {
+            bound: bound.to_path_buf(),
+            parents: missing
+                .iter()
+                .rev()
+                .map(|path| path.parent().unwrap().to_path_buf())
+                .collect(),
+            missing: missing.into_iter().rev().collect(),
+        })
     }
 
     pub(crate) fn finish(&mut self, sync: impl Fn(&Path) -> io::Result<()>) -> io::Result<()> {
-        std::fs::create_dir_all(&self.dir)?;
+        // Never create the bound, even if it vanished since new(). A vanished
+        // ancestor during this loop makes create_dir fail rather than recurse.
+        if !self.missing.is_empty() && !self.bound.is_dir() {
+            return Err(crate::root_binding::moved());
+        }
+        while let Some(path) = self.missing.front() {
+            match std::fs::create_dir(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => {}
+                Err(error) => return Err(error),
+            }
+            self.missing.pop_front();
+        }
         while let Some(parent) = self.parents.front() {
             sync(parent)?;
             self.parents.pop_front();
@@ -261,6 +307,31 @@ pub(crate) fn dir_sync_is_unsupported(error: &io::Error) -> bool {
 mod tests {
     use super::dir_sync_is_unsupported;
     use std::io;
+
+    #[test]
+    fn l9_directory_creation_never_recreates_a_vanished_bound() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("graph");
+        std::fs::create_dir(&root).unwrap();
+        let mut creation = super::DirectoryCreation::new(&root.join("pages/sub"), &root).unwrap();
+        std::fs::rename(&root, temp.path().join("moved")).unwrap();
+        assert!(creation.finish(|_| Ok(())).is_err());
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn l9_directory_creation_refuses_an_already_missing_bound() {
+        let temp = tempfile::tempdir().unwrap();
+        let bound = temp.path().join("missing");
+        let error = super::DirectoryCreation::new(&bound.join("pages/sub"), &bound)
+            .err()
+            .unwrap();
+        assert!(error
+            .get_ref()
+            .unwrap()
+            .is::<crate::root_binding::GraphRootMoved>());
+        assert!(!bound.exists());
+    }
 
     #[cfg(unix)]
     #[test]
