@@ -4,7 +4,8 @@ import { backend } from "../backend";
 import { pageIdentityKey } from "../ui";
 import { blocksContainEdit, createMembershipResource } from "../resultMembership";
 import { graphOwner, readOwned } from "../owned";
-import { blockHasPageEmbed, formatForBlock, pageByName, resolveGuidePageDto, node as docNode } from "../document";
+import { blockHasPageEmbed, formatForBlock, pageByName, resolveBlockRef, resolveGuidePageDto, node as docNode } from "../document";
+import { blockDtoExternalId } from "../blockIdentity";
 import { nearestAncestors } from "../render/blockTrail";
 import { visibleBody } from "../render/block";
 import { CollapseSurfaceContext } from "./Block";
@@ -68,7 +69,7 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
       const g = await resolveBlockBatched(uuid);
       // embedId = the embedded block's own id, so its ref-count badge is hidden
       // inside the embed (OG hide-block-refs-count?); its children keep theirs.
-      return g ? { page: g.page, kind: g.kind, blocks: g.blocks, embedId: g.blocks[0]?.id } : null;
+      return g ? { page: g.page, kind: g.kind, path: g.path, blocks: g.blocks, embedId: g.blocks[0]?.id } : null;
     }
     const pageName = pageTarget();
     if (pageName) {
@@ -78,7 +79,7 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
       if (result.kind === "stale") return null;
       const p = result.value ?? resolveGuidePageDto(pageName);
       setAnsweredPage(p?.name);
-      return p ? { page: p.name, kind: "page" as PageKind, blocks: p.blocks, embedId: undefined } : null;
+      return p ? { page: p.name, kind: "page" as PageKind, path: result.value?.id, blocks: p.blocks, embedId: undefined } : null;
     }
     return null;
   }, (value, id) => !!value && blocksContainEdit(value.blocks, id), () => true, false,
@@ -101,7 +102,9 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
     return uuid ? blockRefTarget(uuid, e) : { page: e.page, pageKind: e.kind };
   };
   const sourceTrail = () => {
-    const id = embedded()?.embedId;
+    const e = embedded();
+    const dto = e?.embedId ? e.blocks[0] : undefined;
+    const id = e && dto ? resolveBlockRef({ uuid: blockDtoExternalId(dto), page: e.page, pageKind: e.kind, ...(e.path ? { path: e.path } : {}) }) : null;
     return id && docNode(id) ? nearestAncestors(id) : null;
   };
   return (
@@ -152,10 +155,10 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
           </Show>
           <Show when={!insidePeek} fallback={
             <LinkDepthContext.Provider value={linkDepth + 1}>
-              <RefBlocks page={embedded()!.page} pageKind={embedded()!.kind} blocks={embedded()!.blocks} readOnly />
+              <RefBlocks page={embedded()!.page} pageKind={embedded()!.kind} path={embedded()!.path} blocks={embedded()!.blocks} readOnly />
             </LinkDepthContext.Provider>
           }>
-            <LiveRefGroup page={embedded()!.page} kind={embedded()!.kind} blocks={embedded()!.blocks} embedId={embedded()!.embedId} hostBlockId={props.blockId} surface="embed" />
+            <LiveRefGroup page={embedded()!.page} kind={embedded()!.kind} path={embedded()!.path} blocks={embedded()!.blocks} embedId={embedded()!.embedId} hostBlockId={props.blockId} surface="embed" />
           </Show>
         </Show>
       </Show>
