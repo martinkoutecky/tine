@@ -384,6 +384,13 @@ fn join_properties(
     let retained = without_supplied_properties(hidden, is_org, regions);
     let hidden = retained.as_str();
     if hidden.is_empty() {
+        // A raw CLI read can supply every retained key. It still needs the
+        // same single-group restoration when a new row follows the body.
+        if !is_org && regions.property_regions.len() > 1 {
+            if let Some(joined) = join_into_visible_group(visible, hidden, regions) {
+                return Ok(joined);
+            }
+        }
         return Ok(visible.to_string());
     }
     if !is_org {
@@ -561,6 +568,27 @@ pub fn join_preserving(
     hide: &HidePolicy,
 ) -> Result<String, String> {
     let regions = block_regions::parse(source, is_org);
+    let mut canonical = None;
+    let mut accepts_splice = |edited: &str| -> Result<bool, String> {
+        let edited_regions = block_regions::parse(edited, is_org);
+        if split_with(edited, is_org, &edited_regions, hide).hidden != hidden {
+            return Ok(false);
+        }
+        // Every Markdown group is primary to our parser, but OG reads only
+        // the first. Ownership alone cannot detect a splice separating a new
+        // visible property from retained rows, or retaining an old split.
+        // Most edits have at most one group and need no canonical join.
+        if edited_regions.property_regions.len() <= 1 {
+            return Ok(true);
+        }
+        if canonical.is_none() {
+            canonical = Some(join(visible, hidden, is_org)?);
+        }
+        Ok(edited_regions.property_regions.len()
+            <= block_regions::parse(canonical.as_ref().unwrap(), is_org)
+                .property_regions
+                .len())
+    };
     {
         // The caller's policy produced `hidden`; another would miss the splice.
         let policy = hide;
@@ -595,11 +623,17 @@ pub fn join_preserving(
             let from = visible_to_raw_with(source, is_org, &regions, policy, start);
             let to = visible_to_raw_with(source, is_org, &regions, policy, old_end);
             let c = classify(source, is_org, &regions, policy);
-            if !c
-                .lines
-                .iter()
-                .zip(&c.class)
-                .any(|(&(s, e), class)| *class != Line::Visible && s < to && e >= from)
+            // LF-normalized Org text must use the line splice below: a
+            // contiguous replacement can consume an untouched CR terminator
+            // (including the last CR owned by the block rather than the page).
+            let normalized_org =
+                is_org && previous.visible.contains('\r') && !visible.contains('\r');
+            if !normalized_org
+                && !c
+                    .lines
+                    .iter()
+                    .zip(&c.class)
+                    .any(|(&(s, e), class)| *class != Line::Visible && s < to && e >= from)
             {
                 let edited = format!(
                     "{}{}{}",
@@ -610,7 +644,7 @@ pub fn join_preserving(
                 // A syntax edit (for example a new quote opener) can swallow
                 // otherwise untouched hidden bytes. Retain their ownership,
                 // not only their spelling, or use canonical placement below.
-                if split(&edited, is_org, policy).hidden == hidden {
+                if accepts_splice(&edited)? {
                     return Ok(edited);
                 }
             }
@@ -646,18 +680,22 @@ pub fn join_preserving(
                     at = e;
                 }
                 edited.push_str(&source[at..]);
-                if split(&edited, is_org, policy).hidden == hidden {
+                if accepts_splice(&edited)? {
                     return Ok(edited);
                 }
             }
         }
     }
-    // OG keeps an empty title line on a cleared outline block. Without it,
-    // a first root made only of hidden rows looks like a new page preamble.
+    // Tine keeps an empty title line here to distinguish a cleared outline
+    // block from page properties. OG trims this line (with-built-in-properties
+    // and transform-content); this is an intentional safety divergence. This
+    // shared join has no tree position: even a child can later become the first
+    // root, so retain the distinction uniformly rather than encode location in
+    // the editor projection or expand the page-header block-key policy.
     if !is_org && visible.is_empty() && !hidden.is_empty() {
         return join(visible, hidden, is_org).map(|joined| format!("\n{joined}"));
     }
-    join(visible, hidden, is_org)
+    canonical.map_or_else(|| join(visible, hidden, is_org), Ok)
 }
 
 fn ceil_boundary(s: &str, mut at: usize) -> usize {
@@ -689,8 +727,46 @@ fn join_into_visible_group(visible: &str, hidden: &str, regions: &BlockRegions) 
         .find(|p| p.primary)
         .map(|p| p.region)
     else {
-        return before_properties_drawer(visible, hidden, regions);
+        return if hidden.is_empty() {
+            None
+        } else {
+            before_properties_drawer(visible, hidden, regions)
+        };
     };
+    // The submitted text may itself contain a new property group after the
+    // body. OG with-built-in-properties gathers those rows into its first
+    // group too. Restoring only hidden rows would still hide the newly typed
+    // properties from OG. Move parser-accepted Markdown rows, retaining their
+    // bytes and leaving literal examples and opaque drawer syntax alone.
+    let later: std::collections::HashSet<_> = regions
+        .properties
+        .iter()
+        .filter(|p| p.primary && p.region != region)
+        .map(|p| p.line.0)
+        .collect();
+    if !later.is_empty() {
+        let mut kept = Vec::new();
+        let mut moved = Vec::new();
+        let mut at = 0;
+        for line in visible.split('\n') {
+            if later.contains(&at) {
+                moved.push(line);
+            } else {
+                kept.push(line);
+            }
+            at += line.len() + 1;
+        }
+        let visible = kept.join("\n");
+        let hidden = if hidden.is_empty() {
+            moved.join("\n")
+        } else {
+            format!("{}\n{hidden}", moved.join("\n"))
+        };
+        return join_into_visible_group(&visible, &hidden, &block_regions::parse(&visible, false));
+    }
+    if hidden.is_empty() {
+        return Some(visible.to_string());
+    }
     let last = regions
         .properties
         .iter()

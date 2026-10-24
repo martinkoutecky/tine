@@ -20,6 +20,7 @@ const fixtures = [
   { name: "Hidden Markdown", file: "Hidden Markdown.md", text: "- Original body\n  heading:: true  \n  card-last-score:: 5\n  secret:: opaque  \n  owner:: Ada\n", hidden: ["  heading:: true  ", "  card-last-score:: 5", "  secret:: opaque  "], visible: "Original body\nowner:: Ada" },
   { name: "Hidden Org", file: "Hidden Org.org", text: "* Original body\n:PROPERTIES:\n:heading: true  \n:card-last-score: 5\n:secret: opaque  \n:owner: Ada\n:END:\n", hidden: [":heading: true  ", ":card-last-score: 5", ":secret: opaque  "], visible: "Original body\n:PROPERTIES:\n:owner: Ada\n:END:" },
   { name: "Hidden First Root", file: "Hidden First Root.md", text: "- Original body\n  card-repeats:: 2\n  secret:: opaque  \n", hidden: ["  card-repeats:: 2", "  secret:: opaque  "], visible: "Original body", clear: true },
+  { name: "Hidden Append Property", file: "Hidden Append Property.md", text: "- Original body\n  id:: 6512bd43-d9ca-4c95-b0b4-1c2d3e4f5a6b\n  body\n", hidden: ["  id:: 6512bd43-d9ca-4c95-b0b4-1c2d3e4f5a6b"], visible: "Original body\nbody", append: true },
 ];
 if (process.env.E2E_CRLF === "1") for (const fixture of fixtures) {
   fixture.text = fixture.text.replaceAll("\n", "\r\n");
@@ -59,9 +60,27 @@ try {
     const file = path.join(graph, "pages", f.file);
     const saved = await waitForFileText(file, text => text.includes("Revised Original body"));
     for (const line of f.hidden) if (!saved.split("\n").includes(line)) throw new Error(`hidden bytes changed: ${JSON.stringify(line)}\n${saved}`);
-    if (!f.clear && !saved.includes(f.file.endsWith("org") ? ":owner: Ada" : "owner:: Ada")) throw new Error("visible user property lost");
+    if (!f.clear && !f.append && !saved.includes(f.file.endsWith("org") ? ":owner: Ada" : "owner:: Ada")) throw new Error("visible user property lost");
     console.log(`PASS ${f.name}: editor projection and byte-exact hidden lines on disk`);
     if (!f.clear && !saved.includes(f.text.replace("Original body", "Revised Original body"))) throw new Error("text edit moved property rows");
+    if (f.append) {
+      stage = "append property after body with hidden id";
+      await browser.$("//div[contains(@class, 'block-content') and contains(., 'Revised Original body')]").click();
+      await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
+      await browser.keys(["Control", "End"]);
+      await browser.keys(["Control"]);
+      await browser.keys(["Shift", "Enter"]);
+      await browser.keys(["Shift"]);
+      for (const char of "owner:: Ada") await browser.keys(char);
+      await browser.keys(["Escape"]);
+      const appended = await waitForFileText(file, text => text.includes("owner:: Ada"));
+      // Adjacent rows form the one group OG reads; checking exact placement
+      // elsewhere would forbid valid joins that preserve the same properties.
+      const normalized = appended.replaceAll("\r\n", "\n");
+      const id = f.hidden[0].trim();
+      if (!normalized.includes(`  owner:: Ada\n  ${id}`) && !normalized.includes(`  ${id}\n  owner:: Ada`)) throw new Error("appended property and retained id are not in one group");
+      console.log("PASS append property: OG reads both owner and retained id after guarded save");
+    }
     if (f.clear) {
       stage = "clear first-root flashcard";
       await browser.$("//div[contains(@class, 'block-content') and contains(., 'Revised Original body')]").click();
@@ -76,12 +95,12 @@ try {
       console.log("PASS first-root clearing: hidden metadata remains on an outline block on disk");
     }
   }
-  fs.writeFileSync(path.join(run, "proof.json"), JSON.stringify({ base: "746ced57d plus working diff", outcome: "PASS", journeys: fixtures.map(f => f.name) }, null, 2));
+  fs.writeFileSync(path.join(run, "proof.json"), JSON.stringify({ base: "b90474792 plus round-2 working diff", outcome: "PASS", journeys: fixtures.map(f => f.name) }, null, 2));
   console.log(`PASS hidden metadata survives Markdown and Org editing: ${run}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, "failure.png")); } catch {}
   try { fs.writeFileSync(path.join(run, "failure-dom.html"), await browser.getPageSource()); } catch {}
-  fs.writeFileSync(path.join(run, "failure.txt"), `Tested: 746ced57d plus working diff\nJourney: editor hidden properties, ${stage}\nExpected: metadata absent from textarea, user key visible, metadata lines byte-identical and in order after save; cleared first root remains a block.\nObserved: ${error.stack}\nClassification: ambiguous; inspect screenshot/driver.log.\n`);
+  fs.writeFileSync(path.join(run, "failure.txt"), `Tested: b90474792 plus round-2 working diff\nJourney: editor hidden properties, ${stage}\nExpected: metadata absent from textarea, user key visible, metadata lines byte-identical and in order after save; cleared first root remains a block; appended property shares OG's group with retained id.\nObserved: ${error.stack}\nClassification: ambiguous; inspect screenshot/driver.log.\n`);
   throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}

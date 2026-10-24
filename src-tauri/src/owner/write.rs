@@ -765,6 +765,27 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
             let mut next = doc.clone();
             let block = block_at_mut(&mut next.blocks, &path).expect("resolved path");
             let old = block.raw.clone();
+            // Raw CLI reads may be sent back verbatim. A copied buffer from
+            // another block must not silently replace this block's identity.
+            // Use accepted properties so fenced examples remain plain text.
+            let current = tine_core::block_regions::parse(&old, org);
+            if let Some(id) = current.property("id") {
+                let submitted = tine_core::block_regions::parse(&new_text, org);
+                if let Some(other) = submitted
+                    .properties
+                    .iter()
+                    .find(|p| p.primary && p.key.eq_ignore_ascii_case("id") && p.value != id.value)
+                {
+                    return Err(refused(
+                        "identity-change",
+                        Some(page),
+                        format!(
+                            "block.edit refuses to replace existing id {} with supplied id {}",
+                            id.value, other.value
+                        ),
+                    ));
+                }
+            }
             let hide = HidePolicy::Configured {
                 keys: config.block_hidden_properties.clone(),
                 sheet_cell: false,

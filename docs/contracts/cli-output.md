@@ -241,12 +241,15 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
   (including SRS keys) and graph-configured hidden property lines are kept byte-exact; children are kept too.
   Raw text returned by reads may be submitted directly: an explicitly supplied primary property replaces
   the retained row with the same normalized key, so a read-then-edit never adds a second copy. This also
-  permits an explicit new value; a property-looking line inside a fence does not replace metadata.
+  permits an explicit new value, except that a supplied `id` differing from an existing block `id`
+  is refused (`reason: identity-change`) with both ids in the error. Same-id and omitted-id edits keep
+  the identity; a block without an id may receive one. A property-looking line inside a fence does not replace metadata.
   On a block whose own primary properties
   include `quote`, the four comment lines (`quote::`, `quote-prefix::`, `quote-suffix::`, `author::`) are also
   kept. On an ordinary block, `author::` and quote-context lines belong to the replaced editor text, as on OG.
-  Text-only edits preserve the source position and order of hidden rows and LOGBOOK; structural replacements
-  use their canonical placement after the title, planning and head properties.
+  Text-only edits preserve the source position and order of hidden rows and LOGBOOK when that keeps
+  property ownership and creates no more property groups than canonical placement. Otherwise the join
+  restores canonical placement so OG can read the retained properties, including repairing earlier split groups.
   If the supplied text contains a parsed LOGBOOK drawer, that drawer replaces the retained one; fence lookalikes
   remain ordinary text. A marker change writes the logbook as the app does.
   Clients supplying LOGBOOK content must pass `--rev` from the read that supplied it. A clock-only change does

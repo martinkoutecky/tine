@@ -4,6 +4,96 @@ use tine_outline::{
 };
 
 #[test]
+fn source_edits_keep_all_properties_in_the_group_og_reads() {
+    let hide = HidePolicy::Configured {
+        keys: vec!["secret".into()],
+        sheet_cell: false,
+    };
+    for row in ["id:: X", "collapsed:: true", "secret:: opaque"] {
+        let mut raw = format!("Title\n{row}\nbody");
+        // Follow the editor's per-keystroke source updates, including the
+        // transition from ordinary body text to a parsed property row.
+        for ch in "\nowner:: Ada".chars() {
+            let text = format!("{}{ch}", editor_text::split(&raw, false, &hide).visible);
+            raw = editor_text::set_text_with_policy(&raw, false, &text, &hide).unwrap();
+        }
+        assert_og_group(&raw, &[row.split("::").next().unwrap(), "owner"]);
+    }
+}
+
+#[test]
+fn source_paste_at_property_end_keeps_the_hidden_id_in_ogs_group() {
+    // A paste beginning at the end of the last visible property line used to
+    // insert a paragraph between the visible and hidden property rows.
+    let raw = "Title\nowner:: Ada\nid:: X\nbody";
+    let joined =
+        editor_text::set_text(raw, false, "Title\nowner:: Ada Lovelace\nnote\nbody").unwrap();
+    assert_og_group(&joined, &["owner", "id"]);
+    assert!(joined.contains("owner:: Ada Lovelace"));
+    assert!(joined.contains("\nnote\nbody"));
+}
+
+#[test]
+fn appending_after_an_existing_visible_group_keeps_every_property_readable() {
+    let raw = "Title\nid:: X\nstatus:: active\nbody";
+    let joined =
+        editor_text::set_text(raw, false, "Title\nstatus:: active\nbody\nowner:: Ada").unwrap();
+    assert_og_group(&joined, &["id", "status", "owner"]);
+    assert!(joined.contains("\nbody"));
+    let raw_submission = format!("{raw}\nowner:: Ada");
+    let joined = editor_text::set_text(raw, false, &raw_submission).unwrap();
+    assert_og_group(&joined, &["id", "status", "owner"]);
+}
+
+#[test]
+fn source_edit_repairs_a_previously_split_property_group() {
+    let raw = "Title\nowner:: Ada\nbody\nid:: X";
+    let joined = editor_text::set_text(raw, false, "Title X\nowner:: Ada\nbody").unwrap();
+    assert_og_group(&joined, &["owner", "id"]);
+    assert_eq!(joined, "Title X\nowner:: Ada\nid:: X\nbody");
+}
+
+fn assert_og_group(raw: &str, keys: &[&str]) {
+    let regions = block_regions::parse(raw, false);
+    assert_eq!(regions.property_regions.len(), 1, "{raw:?}");
+    for key in keys {
+        assert!(
+            regions
+                .properties
+                .iter()
+                .any(|p| p.region == 0 && p.key == *key),
+            "missing {key} in OG's first group: {raw:?}"
+        );
+    }
+}
+
+#[test]
+fn org_normalized_edits_keep_cr_without_a_phantom_final_line() {
+    let mut failures = Vec::new();
+    for (raw, text, from, to) in [
+        (
+            "Title\r\n:PROPERTIES:\r\n:id: X\r\n:END:\r",
+            "Title X",
+            "Title",
+            "Title X",
+        ),
+        (
+            "Title\n:PROPERTIES:\n:id: X\n:END:\nbody\r",
+            "Title\nbody2\n",
+            "body",
+            "body2",
+        ),
+    ] {
+        let joined = editor_text::set_text(raw, true, text).unwrap();
+        let expected = raw.replacen(from, to, 1);
+        if joined != expected {
+            failures.push(format!("expected {expected:?}, got {joined:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
 fn text_only_edits_splice_hidden_rows_without_reordering() {
     let hide = HidePolicy::Configured {
         keys: vec!["secret".into()],

@@ -8,8 +8,45 @@ import { joinProps } from "./properties";
 import { existingBlockId } from "../document/edits/identity";
 import { setRaw, undo, withUndoUnit } from "../document";
 import { pageToDto } from "../document/convert";
+import { blockRegions } from "../render/parse";
 
 afterEach(() => { endEdit("page-navigation"); resetStore(); document.body.innerHTML = ""; });
+
+it.each([
+  ["Title\nid:: X\nbody", "Title\nbody\nowner:: Ada"],
+  ["Title\nowner:: Ada\nid:: X\nbody", "Title\nowner:: Ada Lovelace\nnote\nbody"],
+  ["Title\nowner:: Ada\nbody\nid:: X", "Title X\nowner:: Ada\nbody"],
+])("editor input keeps all properties in OG's first group (%s)", (raw, text) => {
+  loadSingle({ name: "Group", title: "Group", kind: "page", format: "md", pre_block: null,
+    blocks: [{ id: "target", raw, collapsed: false, children: [] }] });
+  startEditing("target", 0);
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <Block id="target" />, root);
+  try {
+    const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+    ta.value = text;
+    ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromPaste" }));
+    const regions = blockRegions(doc.byId.target.raw);
+    expect(regions.property_regions).toHaveLength(1);
+    expect(regions.properties.filter(p => p.region === 0).map(p => p.key).sort()).toEqual(["id", "owner"]);
+    expect(ta.value).toBe(text);
+  } finally { dispose(); }
+});
+
+it("explicitly typed id text takes precedence in the window editor, as in OG", () => {
+  const raw = "Title\nid:: original";
+  loadSingle({ name: "Identity", title: "Identity", kind: "page", format: "md", pre_block: null,
+    blocks: [{ id: "target", raw, collapsed: false, children: [] }] });
+  startEditing("target", 0);
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <Block id="target" />, root);
+  try {
+    const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+    ta.value = "Title\nid:: supplied";
+    ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromPaste" }));
+    expect(blockRegions(doc.byId.target.raw).properties.filter(p => p.key === "id").map(p => p.value)).toEqual(["supplied"]);
+  } finally { dispose(); }
+});
 
 it("clearing the first editor keeps its flashcard metadata on an outline block", () => {
   const raw = "Question\ncard-repeats:: 2";

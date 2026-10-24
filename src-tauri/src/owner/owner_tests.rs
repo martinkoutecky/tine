@@ -889,6 +889,92 @@ fn block_handle(page: &Value, index: usize) -> String {
 }
 
 #[test]
+fn block_edit_refuses_a_different_identity_without_writing() {
+    const OTHER: &str = "650e8400-e29b-41d4-a716-446655440000";
+    for org in [false, true] {
+        let graph = Graph::new();
+        if org {
+            std::fs::write(
+                graph.root.join("pages/identity.org"),
+                format!("* one\n:PROPERTIES:\n:id: {UUID}\n:END:\n"),
+            )
+            .unwrap();
+            graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+        }
+        let slot = graph.slot();
+        let target = if org { "identity" } else { "a" };
+        let read = verb(&slot, "page.show", json!({"name": target})).unwrap();
+        let handle = format!("{target}/{}", block_handle(&read, 0));
+        let file = graph.root.join(if org {
+            "pages/identity.org"
+        } else {
+            "pages/a.md"
+        });
+        let before = std::fs::read(&file).unwrap();
+        let text = if org {
+            format!("edited\n:PROPERTIES:\n:ID: {OTHER}\n:END:")
+        } else {
+            format!("edited\nID:: {OTHER}")
+        };
+        let error = verb(&slot, "block.edit", json!({"handle": handle, "text": text}))
+            .expect_err("identity change must be refused");
+        assert_eq!(error.code, "refused");
+        assert_eq!(error.detail.as_ref().unwrap()["reason"], "identity-change");
+        let error_text = serde_json::to_string(&error).unwrap();
+        assert!(
+            error_text.contains(UUID) && error_text.contains(OTHER),
+            "{error_text}"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+        for text in [
+            if org {
+                format!("same\n:PROPERTIES:\n:id: {UUID}\n:END:")
+            } else {
+                format!("same\nid:: {UUID}")
+            },
+            "omitted".to_string(),
+            if org {
+                format!("literal\n#+BEGIN_SRC\n:id: {OTHER}\n#+END_SRC")
+            } else {
+                format!("literal\n```\nid:: {OTHER}\n```")
+            },
+        ] {
+            let read = verb(&slot, "page.show", json!({"name": target})).unwrap();
+            let handle = format!("{target}/{}", block_handle(&read, 0));
+            verb(&slot, "block.edit", json!({"handle": handle, "text": text})).unwrap();
+            let doc = graph
+                .store
+                .page(&PageId::from(if org {
+                    "pages/identity.org"
+                } else {
+                    "pages/a.md"
+                }))
+                .unwrap()
+                .doc;
+            assert_eq!(
+                tine_core::block_regions::parse(&doc.blocks[0].raw, org)
+                    .property("id")
+                    .unwrap()
+                    .value,
+                UUID
+            );
+        }
+    }
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "a"})).unwrap();
+    verb(&slot, "block.edit", json!({"handle": format!("a/{}", block_handle(&read, 1)), "text": format!("new identity\nid:: {OTHER}")})).unwrap();
+    let doc = graph.store.page(&PageId::from("pages/a.md")).unwrap().doc;
+    assert_eq!(
+        tine_core::block_regions::parse(&doc.blocks[1].raw, false)
+            .property("id")
+            .unwrap()
+            .value,
+        OTHER
+    );
+}
+
+#[test]
 fn edit_and_prop_write_through_the_host_and_keep_hidden_properties() {
     let graph = Graph::new();
     let slot = graph.slot();

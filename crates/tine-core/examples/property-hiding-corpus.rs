@@ -11,7 +11,11 @@ fn check(block: &doc::DocBlock, counts: &mut [usize; 3]) {
     let parts = editor_text::split(block.raw(), org, &HidePolicy::Builtin);
     if !parts.hidden.is_empty() {
         counts[2] += 1;
-        for text in [format!("Edited {}", parts.visible), String::new()] {
+        for (text, prefix_edit) in [
+            (format!("Edited {}", parts.visible), true),
+            (String::new(), false),
+            (format!("{}\nowner:: Ada", parts.visible), false),
+        ] {
             let joined = editor_text::join_preserving(
                 &text,
                 &parts.hidden,
@@ -28,12 +32,39 @@ fn check(block: &doc::DocBlock, counts: &mut [usize; 3]) {
             // Review F5: the rows must stay where OG reads them. An edit may not
             // split the block's properties into more groups (OG keeps the first).
             let groups = |raw: &str| block_regions::parse(raw, org).property_regions.len();
+            let canonical = editor_text::join(&text, &parts.hidden, org).unwrap();
             assert!(
                 groups(&joined) <= groups(block.raw()).max(1),
                 "an edit split the property group in corpus block {}",
                 counts[1]
             );
-            if !text.is_empty() {
+            assert!(
+                groups(&joined) <= groups(&canonical),
+                "source splice added a group beyond canonical placement in corpus block {}",
+                counts[1]
+            );
+            if !org {
+                let parsed = block_regions::parse(&joined, false);
+                assert!(
+                    parsed
+                        .properties
+                        .iter()
+                        .filter(|p| p.primary)
+                        .all(|p| p.region == 0),
+                    "OG cannot read every property in corpus block {}",
+                    counts[1]
+                );
+                for property in block_regions::parse(&parts.hidden, false).properties {
+                    assert!(
+                        parsed.properties.iter().any(|p| p.region == 0
+                            && p.key == property.key
+                            && p.value == property.value),
+                        "OG cannot read retained property in corpus block {}",
+                        counts[1]
+                    );
+                }
+            }
+            if prefix_edit {
                 // A visible prefix edit must splice into the first visible
                 // source position, leaving every hidden row in its original
                 // group and order. Group counts alone admitted 2 -> 2 moves.
