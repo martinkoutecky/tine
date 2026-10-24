@@ -30,11 +30,6 @@ on:
           - performance
           - multiwindow
           - macos
-      windows_test_name:
-        description: "DIAGNOSTIC (batch/og-windows-543-tests only): libtest filters for the Windows core tests; skips the later Windows steps"
-        required: false
-        default: ''
-        type: string
 
 permissions:
   contents: read
@@ -249,19 +244,17 @@ jobs:
       - name: UNC prefix normalization controls (vendored cap-primitives, GH #533)
         run: cargo test --locked --manifest-path vendor/cap-primitives-4.0.2/Cargo.toml --lib removing_extended_prefix_keeps_unc_paths_absolute -- --nocapture
       - name: Windows core and graph-feature tests (including junction filesystem behavior)
-        run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features -- --nocapture ${{ inputs.windows_test_name }}
+        run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
       # M4 availability measurement (REVIEW-3b-P2b-2 G1): the release rename of 250 and of
       # 1000 referrers must reach its caller inside OPERATION_WAIT; the timings print here.
       - name: Windows release rename availability (250 and 1000 referrers)
-        if: inputs.windows_test_name == ''
         run: cargo test --release -p tine-graph-features --test integration -- --ignored --exact --nocapture rename_cost::a_250_referrer_rename_completes_inside_the_caller_bound rename_cost::a_thousand_referrer_rename_completes_inside_the_caller_bound
       - name: Windows storage timing probes (informational, G1)
-        if: ${{ !cancelled() && inputs.windows_test_name == '' }}
+        if: ${{ !cancelled() }}
         run: |
           cargo test --release -p tine-store --lib probe_deletion_step_timing -- --ignored --nocapture
           cargo test --release -p tine-graph-features --test integration rename_cost::probe_rename_wall_time -- --ignored --exact --nocapture
       - name: Windows Tauri shell compiles
-        if: inputs.windows_test_name == ''
         run: cargo check -p tine --features custom-protocol
       # Independent of the core step: a core-test failure still reports these.
       # tauri links its Common Controls v6 manifest into bins only, so the lib
@@ -269,7 +262,7 @@ jobs:
       # `<exe>.manifest` supplies it to the test exe alone; the shipped binary
       # is untouched.
       - name: Windows backup and file-lock tests (Expand-Archive opens a backup)
-        if: ${{ !cancelled() && inputs.windows_test_name == '' }}
+        if: ${{ !cancelled() }}
         run: |
           $exe = cargo test -p tine --lib --no-run --message-format=json |
             ForEach-Object { $_ | ConvertFrom-Json } |
