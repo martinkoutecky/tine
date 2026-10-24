@@ -630,6 +630,8 @@ mod pdf_workspace_guide_tests {
             "visible page regions",
             "long-press a highlight",
             "use **Back**",
+            "**Open another view**",
+            "appears in the other at once",
         ] {
             assert!(
                 pdf.contains(detail),

@@ -1,6 +1,15 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-pdf-another-view.mjs": {
+      "contracts": [
+        { "class": "stateful-ux", "userOutcome": "Open another view opens the same PDF beside the first at its page and zoom; both views share created, recolored and deleted highlights while keeping their own page, zoom and scroll, and the surviving view can save and drain after its sibling closes.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "Shared highlight edits persist once in the PDF sidecar and hls notes page through the guarded paired writer.", "blocking": true, "authority": "PDF tabs and splits design section 5; UI-PDF-ANOTHER-VIEW-SHARED-HIGHLIGHTS" }
+      ],
+      "acceptableVariations": ["Pane sizes, palette values, rendering and save latency may vary while shared overlays and durable highlight identities agree."],
+      "nonRequirements": ["Exact pixels, DOM nesting, incidental scroll offsets, or native certification outside Linux WebKitGTK; new-window and restored-tab entry paths retain component coverage."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-prop-hiding.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"On routed Markdown and Org pages, the block editor hides heading, SRS and configured secret properties, keeps an ordinary owner key visible, and saves a visible text edit with every hidden line unchanged on disk.","blocking":true,"authority":"D-20261023-VT3; internal card PVTI_lAHOAAbLVc4BhPsyzhDCwFo"}],
       "acceptableVariations": ["Property placement and save/render latency."],

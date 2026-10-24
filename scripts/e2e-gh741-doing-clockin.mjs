@@ -110,6 +110,17 @@ try {
     for (const line of lines) {
       await browser.keys(["Shift", "Enter"]);
       await browser.keys(["Shift"]);
+      // Stress the legitimate pause between Shift+Enter and the next character:
+      // autosave must not promote that live newline into permanent file trivia.
+      // This optional pacing changes the input schedule, never the byte oracle.
+      const pause = Number(process.env.E2E_MANUAL_NEWLINE_PAUSE_MS || 0);
+      if (pause) {
+        await new Promise(resolve => setTimeout(resolve, pause));
+        fs.appendFileSync(path.join(TMP, "manual-autosaves.jsonl"), JSON.stringify({
+          name, line, editor: await browser.$("textarea.block-editor").getValue(),
+          saved: fs.readFileSync(path.join(GRAPH, "pages", filename), "utf8"),
+        }) + "\n");
+      }
       // Send complete key transactions one character at a time, as the native
       // host-save/reference journeys do. A bulk keys array can coalesce repeated
       // characters or spaces before the controlled editor has committed them.
@@ -119,6 +130,8 @@ try {
     const value = await browser.$("textarea.block-editor").getValue();
     if (value !== literal) throw new Error(`active handwritten buffer differs: ${JSON.stringify(value)}`);
     for (const character of " suffix") await browser.keys([character]);
+    const finalValue = await browser.$("textarea.block-editor").getValue();
+    if (finalValue !== literal + " suffix") throw new Error(`final handwritten buffer differs: ${JSON.stringify(finalValue)}`);
     await browser.keys(["Escape"]);
     const expectedManual = bullet + (literal + " suffix").replaceAll("\n", `\n${indent}`) + "\n";
     await waitForFileText(path.join(GRAPH, "pages", filename), text => text === expectedManual);

@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Open another view** of a PDF (⋯ menu, desktop) shows two parts of it side by side, each with its own page and zoom. Views of the same PDF now share their highlights: one made, recolored or removed in either view appears in the other at once, including views opened by splitting a pane, a new window or a restored session, which before kept separate copies.
 - **The Linked/Unlinked References count says what it counts** (GH #755): hovering the number shows "N blocks on M pages". The number still counts referencing blocks, as in Logseq, and follows the active filter.
 - **Automatic git commits** (queue cards hBpCy4/hBpb2k, ADR 0078 slice 1): a graph in a git repository can commit its changes automatically (Settings → Graph → Commit changes to git; desktop, off by default). Tine commits after a minute without edits, at most once per interval, on quit, and around renames, merges, deletes and backup restores; it never pushes or pulls 
 - **A note for journal date patterns Tine does not support** (internal card g4czVA): when `:journal/file-name-format`, `:journal/page-title-format` or the older `:date-formatter` in `config.edn` uses pattern parts Tine does not interpret as Logseq does (quoted text such as `'w'`, week numbers `ww`, or other letters such as `YYYY`, `D` or `a`), today's journal shows a `config.edn` note above the configured queries naming the setting, the pattern, those parts and what Tine does with them (writes them as literal text, reads them as shorter date fields, or keeps the quote marks). Nothing is renamed or rewritten, and supported patterns, including every built-in format, behave exactly as before. See Journals, tasks, and scheduling in the Guide.
@@ -61,6 +62,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Editing a multiline Org block, including a handwritten LOGBOOK, no longer adds permanent blank lines at the end of the file when autosave runs just after Shift+Enter (GH #741).
 - Files still arriving from another editor or sync service retry quietly; settled read failures avoid repeating full-graph checks, permission repairs recover without a content change, and unreadable files keep their last readable page. Saves racing an external append still report a conflict (GH #543).
 - Typing a property after body text keeps the editor text and caret in place while saving one property group; CLI identity checks accept the same UUID in either letter case and ignore body lookalikes (GH #684; GH #721).
 - Appending or pasting property text keeps hidden metadata in the group Logseq reads, and editing repairs earlier split groups; CLI edits refuse a supplied id that differs from the block's existing id (GH #684, GH #721).

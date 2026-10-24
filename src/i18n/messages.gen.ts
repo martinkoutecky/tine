@@ -1378,6 +1378,7 @@ export interface MessageArgs {
   "pdf-no-results": {};
   "pdf-no-results-in-scanned-text": {};
   "pdf-notes": {};
+  "pdf-open-another-view": {};
   "pdf-open-highlights-notes-page": {};
   "pdf-outline": {};
   "pdf-outline-disclosure": { "label": string | number; "state": string | number };

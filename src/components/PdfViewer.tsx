@@ -22,7 +22,7 @@ import { isMac } from "../nativeChrome";
 import { touchCapable } from "../inputCapability";
 import { pdfTakesOverPane } from "../viewportClass";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
-import { createPdfHighlightState } from "./pdfHighlightState";
+import { acquirePdfHighlightState } from "./pdfHighlightState";
 import { createPdfLoadingTask } from "./pdfLoadingTask";
 import { pdfTextSelection, type PdfTextSelection } from "./pdfSelection";
 import { createPdfFind } from "./pdfFind";
@@ -65,6 +65,7 @@ export function PdfViewer(props: {
   onClose?: () => void;
   onOpenNotes?: (block?: string) => void;
   onViewState?: (state: { page: number; scale: number }) => void;
+  onAnotherView?: (state: { page: number; scale: number }) => void;
 }): JSX.Element {
   const owner = props.owner, binding = captureBinding();
   // The Tine window this viewer renders in: its listeners and frames live there.
@@ -280,13 +281,16 @@ export function PdfViewer(props: {
     });
   }
 
-  const highlightState = createPdfHighlightState({
+  // Shared with every other mounted view of this PDF; this view lends its page
+  // geometry for writes once its document has loaded.
+  const highlightLease = acquirePdfHighlightState({
     filename: props.filename,
     label: props.label,
     backendGeneration: binding.backendGeneration,
     owner,
-    prepare: highlightsForWrite,
   });
+  const highlightState = highlightLease.state;
+  let detachHighlightPrepare = () => {};
   const highlights = highlightState.highlights;
   const unsavedHighlights = highlightState.unsaved;
   const highlightConflict = highlightState.conflict;
@@ -356,6 +360,7 @@ export function PdfViewer(props: {
 
   function failPdf(message: string) {
     loadingTask.cancel();
+    detachHighlightPrepare(); // a failed document lends no geometry to siblings
     if (loadError()) return;
     io?.disconnect();
     io = null;
@@ -1093,12 +1098,12 @@ export function PdfViewer(props: {
       const result = await readOwned(loadOwner, backend().openPdf(props.filename, props.label, binding.backendGeneration));
       if (result.kind === "stale") return;
       const state = result.value;
-      highlightState.load(state.highlights);
+      highlightState.loadInitial(state.highlights);
       restoredPage = state.page;
       restoredScale = state.scale;
     } catch (error) {
       if (!loadOwner()) return;
-      highlightState.load([]);
+      // Seed nothing: a sibling view's successful read must still win.
       pushToast(msg("pdf-couldn-t-load-pdf-annotations", { detail: String(error) }), "error");
     }
     let bytes: Uint8Array;
@@ -1132,6 +1137,7 @@ export function PdfViewer(props: {
       failPdf(`This PDF reports an unsafe page count (${pdfDoc.numPages}); at most ${MAX_PDF_PAGES} pages can be displayed.`);
       return;
     }
+    detachHighlightPrepare = highlightState.attachPrepare(highlightsForWrite);
     // Outline parsing can be slow on large PDFs. Start it once per document,
     // but never await it on the page-one/layout path that controls first paint.
     void loadOutline(pdfDoc);
@@ -1174,6 +1180,8 @@ export function PdfViewer(props: {
   onCleanup(() => {
     unregisterPdfParticipant();
     cancelOwnedWork();
+    detachHighlightPrepare();
+    highlightLease.release();
     setOutlineOpen(false);
     setSettingsOpen(false);
     setOutlineItems([]);
@@ -1383,6 +1391,9 @@ export function PdfViewer(props: {
   const onKeyZoom = (e: KeyboardEvent) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
     if (shortcutKey(e) === "f") {
+      // With a PDF pane focused, only that view searches (two views of one PDF
+      // are common now); otherwise every open reader keeps its old behavior.
+      if (props.focused && !props.focused() && focusedRouter().route().kind === "pdf") return;
       e.preventDefault();
       openFind();
       return;
@@ -1569,7 +1580,9 @@ export function PdfViewer(props: {
 
   const createAreaHighlight = async (color: string) => {
     try {
-      await trackPdfMutation(owner, () => createAreaHighlightOwned(color));
+      // Held from the crop on: closing the last view while the image saves
+      // must not drop the session its highlight is about to join.
+      await highlightState.hold(() => trackPdfMutation(owner, () => createAreaHighlightOwned(color)));
     } catch {
       // Ownership retirement cancels a not-yet-started area mutation.  It must
       // not be retried after another graph is bound.
@@ -1770,7 +1783,7 @@ export function PdfViewer(props: {
   });
 
   unregisterPdfParticipant = registerPdfParticipant(owner, {
-    flush: async () => !highlightState.drainBlocked() && (!unsavedHighlights() || await persist()),
+    flush: highlightState.flush,
     cancel: cancelOwnedWork,
   });
 
