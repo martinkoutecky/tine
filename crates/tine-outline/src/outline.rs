@@ -17,7 +17,9 @@ use crate::editor_text::{self, js_blank, HidePolicy};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
+mod apply;
 mod header;
+pub use apply::apply_with_policy;
 mod insert;
 use header::header_root_kept;
 use insert::insert_outline;
@@ -346,56 +348,7 @@ impl Verb {
 
 /// Run one verb over the pages that hold every block it names.
 pub fn apply(pages: &[OutlinePage], verb: &Verb, keys: &KeySource) -> Result<Change, Reason> {
-    let mut cx = Cx {
-        pages,
-        txs: Vec::new(),
-        keys: keys.clone(),
-        used: 0,
-        focus: None,
-        notices: Vec::new(),
-        transfers: Vec::new(),
-    };
-    match verb {
-        Verb::InsertOutline {
-            place,
-            blocks,
-            live_ids,
-            reuse,
-        } => insert_outline(&mut cx, place, blocks, live_ids, reuse.as_deref())?,
-        Verb::Split {
-            key,
-            raw_offset,
-            force_child,
-            children_visible,
-            keep_start_in_scope,
-        } => split(
-            &mut cx,
-            key,
-            *raw_offset,
-            *force_child,
-            *children_visible,
-            *keep_start_in_scope,
-        )?,
-        Verb::Merge {
-            survivor, absorbed, ..
-        } => merge(&mut cx, survivor, absorbed)?,
-        Verb::Indent { keys } => indent(&mut cx, keys)?,
-        Verb::Outdent { keys, logical } => outdent(&mut cx, keys, *logical)?,
-        Verb::Delete { keys } => delete(&mut cx, keys)?,
-        Verb::MoveTo {
-            keys,
-            to,
-            inherit_from,
-        } => move_to(&mut cx, keys, to, inherit_from.as_deref())?,
-        Verb::MoveUpDown {
-            keys,
-            up,
-            within_siblings,
-        } => move_up_down(&mut cx, keys, *up, *within_siblings)?,
-        Verb::InsertEmptyChild { parent, at } => insert_empty_child(&mut cx, parent, *at)?,
-    }
-    header_root_kept(&cx, verb)?;
-    Ok(cx.finish())
+    apply_with_policy(pages, verb, keys, &HidePolicy::Builtin)
 }
 
 // ---------------------------------------------------------------------------
@@ -614,6 +567,7 @@ impl<'a> PageTx<'a> {
 
 struct Cx<'a> {
     pages: &'a [OutlinePage],
+    hide: &'a HidePolicy,
     txs: Vec<PageTx<'a>>,
     keys: KeySource,
     used: u64,
@@ -820,15 +774,9 @@ fn remove_property_lines(block: &str, key: &str) -> Result<String, Reason> {
 }
 
 /// The editor-visible join offset as a raw offset in `raw`.
-fn raw_offset_of_visible(raw: &str, format: Format, visible: usize) -> usize {
+fn raw_offset_of_visible(raw: &str, format: Format, visible: usize, hide: &HidePolicy) -> usize {
     let regions = block_regions::parse(raw, format.is_org());
-    editor_text::visible_to_raw_with(
-        raw,
-        format.is_org(),
-        &regions,
-        &HidePolicy::Builtin,
-        visible,
-    )
+    editor_text::visible_to_raw_with(raw, format.is_org(), &regions, hide, visible)
 }
 
 // ---------------------------------------------------------------------------
@@ -854,14 +802,10 @@ fn split(
     let format = cx.txs[t].base.format;
     let node = cx.txs[t].block(key).ok_or(Reason::Incomplete)?.clone();
     let regions = block_regions::parse(&node.raw, format.is_org());
-    let et = editor_text::split_with(&node.raw, format.is_org(), &regions, &HidePolicy::Builtin);
-    let offset = editor_text::raw_to_visible_with(
-        &node.raw,
-        format.is_org(),
-        &regions,
-        &HidePolicy::Builtin,
-        raw_offset,
-    );
+    let hide = cx.hide;
+    let et = editor_text::split_with(&node.raw, format.is_org(), &regions, hide);
+    let offset =
+        editor_text::raw_to_visible_with(&node.raw, format.is_org(), &regions, cx.hide, raw_offset);
     let visible = et.visible.as_bytes();
     let boundary_before = offset < visible.len() && visible[offset] == b'\n';
     let boundary_after = offset > 0 && visible[offset - 1] == b'\n';
@@ -906,7 +850,9 @@ fn split(
         // and its separator become the new block, so the original keeps only
         // the text after the boundary.
         if offset > 0 {
-            tx.block_mut(key)?.raw = join(after, &et.hidden, format)?;
+            tx.block_mut(key)?.raw =
+                editor_text::join_preserving(after, &et.hidden, format.is_org(), &node.raw, hide)
+                    .map_err(|_| Reason::Unparseable)?;
         }
         tx.insert(
             new_key.clone(),
@@ -932,7 +878,9 @@ fn split(
             &[EditKind::InsertBlocks]
         });
     } else {
-        tx.block_mut(key)?.raw = join(before, &et.hidden, format)?;
+        tx.block_mut(key)?.raw =
+            editor_text::join_preserving(before, &et.hidden, format.is_org(), &node.raw, hide)
+                .map_err(|_| Reason::Unparseable)?;
         tx.insert(
             new_key.clone(),
             Block {
@@ -984,8 +932,8 @@ fn merge(cx: &mut Cx, survivor: &str, absorbed: &str) -> Result<(), Reason> {
     if !all_fit(&gone.children, |c| tx.subtree_fits(c, Some(survivor)))? {
         return Err(Reason::DepthCap);
     }
-    let keep = editor_text::split(&keep_raw, format.is_org(), &HidePolicy::Builtin);
-    let lost = editor_text::split(&gone.raw, format.is_org(), &HidePolicy::Builtin);
+    let keep = editor_text::split(&keep_raw, format.is_org(), cx.hide);
+    let lost = editor_text::split(&gone.raw, format.is_org(), cx.hide);
     let survivor_has_id = block_regions::parse(&keep_raw, format.is_org())
         .id
         .is_some_and(|p| !p.value.trim().is_empty());
@@ -993,6 +941,20 @@ fn merge(cx: &mut Cx, survivor: &str, absorbed: &str) -> Result<(), Reason> {
         .id
         .map(|p| js_trim(p.line.slice(&gone.raw)).to_string());
     let mut hidden = keep.hidden.clone();
+    let retained = apply::retained_hidden_properties(&gone.raw, format.is_org(), cx.hide);
+    if !retained.is_empty() {
+        if !hidden.is_empty() {
+            hidden.push('\n');
+        }
+        hidden.push_str(&retained);
+    }
+    let clocks = editor_text::logbook_hidden(&gone.raw, format.is_org());
+    if !clocks.is_empty() {
+        if !hidden.is_empty() {
+            hidden.push('\n');
+        }
+        hidden.push_str(&clocks);
+    }
     if let (false, Some(id)) = (survivor_has_id, &absorbed_id) {
         hidden = if hidden.is_empty() {
             id.clone()
@@ -1009,7 +971,7 @@ fn merge(cx: &mut Cx, survivor: &str, absorbed: &str) -> Result<(), Reason> {
         &hidden,
         format,
     )?;
-    let focus = raw_offset_of_visible(&raw, format, keep.visible.len());
+    let focus = raw_offset_of_visible(&raw, format, keep.visible.len(), cx.hide);
     let parent = tx.parent_of(absorbed);
     let b = tx.block_mut(survivor)?;
     b.raw = raw;
@@ -2000,6 +1962,58 @@ mod tests {
             force_child,
             children_visible: true,
             keep_start_in_scope: false,
+        }
+    }
+
+    #[test]
+    fn gh741_logbook_enter_keeps_history_on_original_block() {
+        let raw = "DOING x\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+        for format in [Format::Md, Format::Org] {
+            let mut p = page("P", &[("a", raw, &[])], &["a"]);
+            p.format = format;
+            let change = run(&[p], split_at("a", "DOING x".len(), false)).unwrap();
+            let edits = &change.pages[0].upserts;
+            assert_eq!(edits.iter().find(|b| b.key == "a").unwrap().raw, raw);
+            assert_eq!(edits.iter().find(|b| b.key != "a").unwrap().raw, "");
+        }
+    }
+
+    #[test]
+    fn gh741_logbook_merge_keeps_both_histories_in_survivor() {
+        for format in [Format::Md, Format::Org] {
+            let first = ":LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\n:END:";
+            let second = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 09:00:00]  \n:END:";
+            for keep_drawer in [false, true] {
+                let keep = if keep_drawer {
+                    format!("one\n{first}")
+                } else {
+                    "one".into()
+                };
+                let gone = format!("two\n{second}");
+                let mut p = page("P", &[("a", &keep, &[]), ("b", &gone, &[])], &["a", "b"]);
+                p.format = format;
+                let change = run(
+                    &[p],
+                    Verb::Merge {
+                        survivor: "a".into(),
+                        absorbed: "b".into(),
+                        absorbed_referenced: false,
+                    },
+                )
+                .unwrap();
+                let raw = &change.pages[0]
+                    .upserts
+                    .iter()
+                    .find(|b| b.key == "a")
+                    .unwrap()
+                    .raw;
+                let expected = if keep_drawer {
+                    "onetwo\n:LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\nCLOCK: [2026-10-21 Wed 09:00:00]  \n:END:".to_string()
+                } else {
+                    format!("onetwo\n{second}")
+                };
+                assert_eq!(raw, &expected);
+            }
         }
     }
 

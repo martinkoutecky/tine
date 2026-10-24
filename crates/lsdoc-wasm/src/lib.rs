@@ -109,8 +109,12 @@ mod render_facets;
 /// Whether a block property key is hidden from rendered chips (I-12: the one
 /// answerer the static export also asks). O(key bytes + hidden keys), no I/O.
 #[wasm_bindgen]
-pub fn is_render_hidden_prop(key: &str, user_hidden: Vec<String>) -> bool {
-    render_facets::is_render_hidden_prop(key, &user_hidden)
+pub fn is_render_hidden_prop(key: &str, user_hidden: Vec<String>, pre_block: bool) -> bool {
+    if pre_block {
+        render_facets::is_render_hidden_page_prop(key, &user_hidden)
+    } else {
+        render_facets::is_render_hidden_prop(key, &user_hidden)
+    }
 }
 
 /// The checkbox a task marker draws: true checked, false empty, undefined none.
@@ -482,11 +486,22 @@ pub fn raw_byte_of_editor(raw: &str, is_org: bool, regions: &JsValue, policy: &s
     Ok(editor_text::visible_to_raw_with(raw, is_org, &r, &p, editor_text::utf16_to_byte(&visible, editor_utf16)))
 }
 
-/// Editor text plus hidden lines back to raw (`editor_text::join_with`); the
-/// regions are the window's cached ones for exactly `visible` (read for Org).
+/// Parser-boundary negative-only prefilter; true still needs drawer ownership.
 #[wasm_bindgen]
-pub fn editor_text_join(visible: &str, hidden: &str, is_org: bool, visible_regions: &JsValue) -> Result<String, JsValue> {
-    let r = if is_org && !hidden.is_empty() { regions_from_js(visible, visible_regions)? } else { block_regions::BlockRegions::default() };
+pub fn block_may_have_logbook(raw: &str) -> bool {
+    block_regions::may_have_logbook(raw)
+}
+
+/// Editor text plus hidden lines back to raw (`editor_text::join_with`), with
+/// optional exact source for metadata-preserving text-only edits.
+#[wasm_bindgen]
+pub fn editor_text_join(visible: &str, hidden: &str, is_org: bool, visible_regions: &JsValue, source: Option<String>, policy: Option<String>) -> Result<String, JsValue> {
+    if let Some(source) = source {
+        // The policy that split `hidden` from `source` (the built-ins when absent).
+        let hide = match policy { Some(p) => hide_policy(&p)?, None => editor_text::HidePolicy::Builtin };
+        return editor_text::join_preserving(visible, hidden, is_org, &source, &hide).map_err(|e| JsValue::from_str(&e));
+    }
+    let r = if !hidden.is_empty() && (is_org || !visible_regions.is_null()) { regions_from_js(visible, visible_regions)? } else { block_regions::BlockRegions::default() };
     editor_text::join_with(visible, hidden, is_org, &r).map_err(|e| JsValue::from_str(&e))
 }
 
@@ -528,9 +543,12 @@ pub fn outline_apply_json(request: &str) -> Result<String, JsValue> {
         pages: Vec<outline::OutlinePage>,
         verb: outline::Verb,
         keys: outline::KeySource,
+        #[serde(default)]
+        hide: Option<editor_text::HidePolicy>,
     }
     let req: Request = outline_request(request)?;
-    Ok(match outline::apply(&req.pages, &req.verb, &req.keys) {
+    let hide = req.hide.unwrap_or(editor_text::HidePolicy::Builtin);
+    Ok(match outline::apply_with_policy(&req.pages, &req.verb, &req.keys, &hide) {
         Err(reason) => serde_json::json!({ "refused": reason }).to_string(),
         Ok(change) => {
             let editor_offset = change.focus.as_ref().and_then(|f| {
@@ -550,10 +568,9 @@ pub fn outline_apply_json(request: &str) -> Result<String, JsValue> {
                     })?;
                 let org = format.is_org();
                 let r = block_regions::parse(raw, org);
-                let p = editor_text::HidePolicy::Builtin;
-                let at = editor_text::raw_to_visible_with(raw, org, &r, &p, offset);
+                let at = editor_text::raw_to_visible_with(raw, org, &r, &hide, offset);
                 Some(editor_text::byte_to_utf16(
-                    &editor_text::split_with(raw, org, &r, &p).visible,
+                    &editor_text::split_with(raw, org, &r, &hide).visible,
                     at,
                 ))
             });

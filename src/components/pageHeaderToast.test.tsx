@@ -98,13 +98,13 @@ for (const pre of [
     const { root, dispose } = mount(() => <PageView />);
     try {
       await tick(); await tick();
-      const rows = pre.split("\n").length;
-      expect(root.querySelectorAll(".page-properties .prop-row")).toHaveLength(rows);
+      const keys = pre.startsWith("file::") ? ["file", "hls-page"] : ["tine.fields", "tine.table-widths"];
+      expect([...root.querySelectorAll(".page-properties .prop-key")].map(el => el.textContent)).toEqual(keys);
       root.querySelector(".page-properties")!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
       await tick();
       expect(root.querySelector("textarea")).not.toBeNull();
       endEdit("blur"); await tick(); await tick();
-      expect(root.querySelectorAll(".page-properties .prop-row")).toHaveLength(rows);
+      expect([...root.querySelectorAll(".page-properties .prop-key")].map(el => el.textContent)).toEqual(keys);
       expect([...root.querySelectorAll(".ls-block")].map((b) => (b as HTMLElement).dataset.blockId)).toEqual(["o1"]);
       expect(await flushPage(dto.name)).toBe(true);
       for (const written of submittedPages(save)) expect(written.pre_block).toBe(pre);

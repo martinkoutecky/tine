@@ -1,0 +1,281 @@
+{
+  "schemaVersion": 1,
+  "version": "0.8.0-beta.11",
+  "baseTag": "v0.8.0-beta.10",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "Restoring a saved session keeps every tab on its last page, with its order, pins and active tab, instead of replacing the active page with the graph's configured home (internal card PVTI_lAHOAAbLVc4BhPsyzhDC3x4).",
+      "userVisible": true,
+      "regressions": [
+        "UI-TAB-RESTORE-3X4"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-TAB-RESTORE-3X4. Fail-before: proven. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "src/session.test.ts",
+          "src/graph.test.tsx",
+          "scripts/e2e-tab-restore.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A stopped graph owner releases its lock at once, even while a process spawned at that moment still holds an inherited copy of the lock file's handle; before, the next owner could briefly find the graph still locked (internal: REG-OWNER-LOCK-INHERITED-DESCRIPTOR).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OWNER-LOCK-INHERITED-DESCRIPTOR"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-OWNER-LOCK-INHERITED-DESCRIPTOR. Fail-before: On release/0.8 70b5c1e0d the duplicate-descriptor test fails. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "src-tauri/src/owner/lock.rs::tests::a_duplicate_descriptor_cannot_keep_a_released_owner_lock",
+          "src-tauri/src/owner/owner_tests/lifecycle_tests.rs::i_c_yielding_transport_is_closed_when_serve_returns_and_unlocks"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Switching table cells by double-click saves the previous edit; invalid numbers keep their editor open (GH #754).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH754-CELL-DRAFT-HANDOFF"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH754-CELL-DRAFT-HANDOFF. Fail-before: proven. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "src/components/SheetTable.test.tsx",
+          "scripts/e2e-sheets.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Board cards drag between columns even when an editor outside the board has focus, without selecting text during the drag (GH #756).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH756-BOARD-DRAG-OUTSIDE-FOCUS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH756-BOARD-DRAG-OUTSIDE-FOCUS. Fail-before: proven. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "src/components/SheetBoard.test.tsx",
+          "src/components/TabBar.test.tsx",
+          "scripts/e2e-sheets.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Changing a block between outline levels one and two on long pages with images above no longer makes the view jump; structural edits preserve loaded image and measured window geometry (GH #745).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH745-OUTDENT-INDENT-IMAGE-VIEWPORT",
+        "UI-GH745-STRUCTURAL-EDIT-CARET-STAYS-VISIBLE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH745-OUTDENT-INDENT-IMAGE-VIEWPORT, UI-GH745-STRUCTURAL-EDIT-CARET-STAYS-VISIBLE. Fail-before: proven. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "scripts/check-gh745-outline-viewport.mjs",
+          "scripts/e2e-gh745-windows-probe.mjs",
+          "src/components/Page.windowing.test.tsx",
+          "scripts/e2e-gh745-structural-edit-viewport.mjs",
+          "src/editor/caretReveal.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Page-property rows in Linked References keep the same appearance after editing, including other groups showing the same page (GH #753).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH753-PAGE-PROPERTY-ROW-CONSISTENCY"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH753-PAGE-PROPERTY-ROW-CONSISTENCY. Fail-before: proven. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "src/components/LiveRefGroup.pageProperties.test.tsx",
+          "scripts/e2e-linkable-page-property-refs.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "On mobile, the bottom editing toolbar stays usable above either sidebar drawer, acts on its focused editor, and reveals the editor above the keyboard while popups remain accessible (GH #751).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH751-MOBILE-DRAWER-EDITOR-TOOLBAR"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH751-MOBILE-DRAWER-EDITOR-TOOLBAR. Fail-before: proven. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "src/components/MobileKeyboardToolbar.test.tsx",
+          "src/mobileDrawers.shell.test.tsx",
+          "scripts/shot-gh751-toolbar.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "After a restore from backup, a page that was being edited when the restore began closes normally once editing ends, instead of staying open for the rest of the session. A component draft open across the restore (for example a table cell) no longer keeps holding back newer file content from that page after it closes (internal: REG-HOST-REBIND-ACQUISITION-RELEASE).",
+      "userVisible": true,
+      "regressions": [
+        "REG-HOST-REBIND-ACQUISITION-RELEASE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-HOST-REBIND-ACQUISITION-RELEASE. Fail-before: proven. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "src/document/host/client.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}

@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { remote } from "webdriverio";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
@@ -20,6 +21,9 @@ for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, dir))
 const clock = "CLOCK: [2026-10-21 Wed 08:54:45]";
 // The two literal samples of the report, as a user's file would hold them.
 fs.writeFileSync(path.join(GRAPH, "pages/Typing.md"), "- seed\n");
+fs.writeFileSync(path.join(GRAPH, "pages/Manual.md"), "- plain\n");
+fs.writeFileSync(path.join(GRAPH, "pages/ManualOrg.org"), "* plain\n");
+fs.writeFileSync(path.join(GRAPH, "pages/PropertyCase.org"), `* plain\n:PROPERTIES:\n:collapsed: false\n:END:\n:LOGBOOK:\n${clock}\n:END:\n* next\n`);
 fs.writeFileSync(path.join(GRAPH, "pages/AfterEnd.md"), `- DOING\n  :LOGBOOK:\n  ${clock}\n  :END:  test\n- sibling one\n`);
 fs.writeFileSync(path.join(GRAPH, "pages/Backtick.md"), `- \`DOING\n  :LOGBOOK:\n  ${clock}\n  :END:  \`\n- sibling two\n`);
 const env = { ...process.env, TINE_GRAPH: GRAPH,
@@ -30,7 +34,7 @@ const log = fs.openSync(path.join(TMP, "driver.log"), "w");
 const driver = spawn(DRIVER, ["--port", String(port), "--native-port", String(port + 1), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], { env, stdio: ["ignore", log, log], detached: true });
 let browser;
 let stage = "startup";
-const testedBase = process.env.TINE_TESTED_BASE || "release/0.8 batch/fix-gh741";
+const testedBase = process.env.TINE_TESTED_BASE || "og batch/og-741-logbook (working diff)";
 const connect = () => remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 2, connectionRetryTimeout: 30_000,
   capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } } });
 // E2E_PAGE=AfterEnd|Backtick narrows the damaged stage. E2E_ONLY=typing|damaged runs one stage (a failed page region blocks navigation, so the stages cannot share a run before the fix).
@@ -73,14 +77,70 @@ try {
     const t = document.querySelector("textarea.block-editor");
     return { value: t.value, start: t.selectionStart, end: t.selectionEnd };
   });
-  if (!/^DOING test\n:LOGBOOK:\nCLOCK: \[[^\]]+\]\n:END:$/.test(seen.value)) throw new Error(`typed text did not stay on the task line / clocked in other than once: ${JSON.stringify(seen)}`);
+  if (seen.value !== "DOING test") throw new Error(`editor must hide the LOGBOOK: ${JSON.stringify(seen)}`);
   if (seen.start !== "DOING test".length || seen.end !== seen.start) throw new Error(`caret left the task line: ${JSON.stringify(seen)}`);
   await browser.keys(["Escape"]);
   const typing = path.join(GRAPH, "pages/Typing.md");
-  await browser.waitUntil(() => /DOING test\n\s*:LOGBOOK:/.test(fs.readFileSync(typing, "utf8")), { timeout: 10_000, timeoutMsg: `Typing.md did not hold the task line: ${fs.readFileSync(typing, "utf8")}` });
+  await waitForFileText(typing, text => text.includes("DOING test\n  :LOGBOOK:"));
   if (await failureRegion()) throw new Error("page failed after typing DOING");
   const saved = fs.readFileSync(typing, "utf8");
   if ((saved.match(/CLOCK:/g) || []).length !== 1 || /:END:\s*\S/.test(saved)) throw new Error(`saved file wrong:\n${saved}`);
+  stage = "edit a clocked task and press Enter at its visible end";
+  const task = await browser.$("//div[contains(@class, 'block-content') and contains(., 'test')]");
+  await task.click();
+  await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
+  await browser.keys(["Control", "a"]);
+  await browser.keys(["Control"]);
+  await browser.keys([..."DOING revised"]);
+  await browser.keys(["End"]);
+  await browser.keys(["Enter"]);
+  await browser.keys([..."next block"]);
+  await browser.keys(["Escape"]);
+  const expected = saved.replace("DOING test", "DOING revised") + "- next block\n";
+  const split = await waitForFileText(typing, text => text === expected);
+  if (split !== expected) throw new Error("Enter moved or changed the task's clock history");
+
+  for (const [name, filename, bullet, indent] of [["Manual", "Manual.md", "- ", "  "], ["ManualOrg", "ManualOrg.org", "* ", ""]]) {
+    stage = `compose a drawer by hand on ${name}`;
+    await openPageByName(browser, name);
+    await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'plain']").click();
+    await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
+    await browser.keys(["End"]);
+    const lines = [":LOGBOOK:", clock, ":END:"];
+    for (const line of lines) {
+      await browser.keys(["Shift", "Enter"]);
+      await browser.keys(["Shift"]);
+      // Send complete key transactions one character at a time, as the native
+      // host-save/reference journeys do. A bulk keys array can coalesce repeated
+      // characters or spaces before the controlled editor has committed them.
+      for (const character of line) await browser.keys([character]);
+    }
+    const literal = `plain\n${lines.join("\n")}`;
+    const value = await browser.$("textarea.block-editor").getValue();
+    if (value !== literal) throw new Error(`active handwritten buffer differs: ${JSON.stringify(value)}`);
+    for (const character of " suffix") await browser.keys([character]);
+    await browser.keys(["Escape"]);
+    const expectedManual = bullet + (literal + " suffix").replaceAll("\n", `\n${indent}`) + "\n";
+    await waitForFileText(path.join(GRAPH, "pages", filename), text => text === expectedManual);
+  }
+  stage = "case-equivalent Org properties survive switch and reopen";
+  await openPageByName(browser, "PropertyCase");
+  await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'plain']").click();
+  await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
+  const typed = "plain\n:PROPERTIES:\n:COLLAPSED: true\n:END:\nmy newly typed text";
+  await browser.execute(value => {
+    const textarea = document.querySelector("textarea.block-editor");
+    textarea.value = value;
+    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromPaste" }));
+  }, typed);
+  await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'next']").click();
+  await browser.$("//div[contains(@class, 'block-content') and contains(., 'my newly typed text')]").click();
+  const reopened = await browser.$("textarea.block-editor").getValue();
+  if (!reopened.includes("my newly typed text")) throw new Error(`lost typed text after switching: ${JSON.stringify(reopened)}`);
+  const propertyFile = path.join(GRAPH, "pages/PropertyCase.org");
+  await waitForFileText(propertyFile, text => text.includes("my newly typed text") && text.includes(`:LOGBOOK:\n${clock}\n:END:`));
+  if (await browser.$(".toast-error").isExisting()) throw new Error("safe case-equivalent edit showed an error toast");
+  await browser.keys(["Escape"]);
   } catch (error) { problems.push(`typing: ${error.message.split("\n")[0].slice(0, 300)}`); }
   }
   if (problems.length) throw new Error(problems.join("\n"));
@@ -90,7 +150,7 @@ try {
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(TMP, "failure.png")); } catch {}
   try { fs.writeFileSync(path.join(TMP, "failure-dom.html"), await browser.getPageSource()); } catch {}
-  fs.writeFileSync(path.join(TMP, "failure.txt"), `Tested: ${testedBase}\nStage: ${stage}. Observed: ${error.stack}\n`);
+  fs.writeFileSync(path.join(TMP, "failure.txt"), `Tested: ${testedBase}\nJourney: GH741 typing, edit, Enter, manual drawer composition\nExpected: hidden saved LOGBOOK, one persisted clock on original task after Enter; handwritten drawers stay visible and save literally; damaged pages render.\nStage: ${stage}. Observed: ${error.stack}\nClassification: ambiguous (inspect screenshot and driver.log)\n`);
   throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}

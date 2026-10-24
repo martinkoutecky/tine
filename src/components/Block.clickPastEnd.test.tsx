@@ -21,8 +21,9 @@ afterEach(() => {
 });
 
 describe("click past the last glyph (GH #465)", () => {
-  it("places the caret at the end of a block ending in italic text", async () => {
-    const raw = "*some text in italics.*";
+  it.each(["", "\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:"])("places the caret at the visible end, including a hidden LOGBOOK (%s)", async (drawer) => {
+    const visible = "*some text in italics.*";
+    const raw = visible + drawer;
     loadSingle({ name: "Past end", kind: "page", title: "Past end", pre_block: null, blocks: [
       { id: "italic", raw, collapsed: false, children: [] },
     ] });
@@ -47,7 +48,8 @@ describe("click past the last glyph (GH #465)", () => {
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0, clientX: 300, clientY: 22 }));
       await vi.waitFor(() => expect(root.querySelector("textarea.block-editor")).not.toBeNull());
       const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      await vi.waitFor(() => expect(editor.selectionStart).toBe(raw.length));
+      expect(editor.value).toBe(visible);
+      await vi.waitFor(() => expect(editor.selectionStart).toBe(visible.length));
     } finally {
       dispose();
     }

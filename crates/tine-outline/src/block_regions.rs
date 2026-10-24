@@ -22,6 +22,8 @@ use lsdoc::ast::{Block, Inline, ListItem, Span};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+mod preservation;
+
 /// OG linkable-property member separator, shared by native references and wasm.
 /// `graph_parser/text.cljs::sep-by-comma` at Logseq c67b8b5fa splits both commas.
 pub fn is_linkable_property_separator(ch: char) -> bool {
@@ -316,6 +318,12 @@ pub(crate) fn raw_range(raw: &str, span: &Option<Span>, document: bool) -> Optio
         (end.saturating_sub(wrapper) + lead).min(raw.len()),
     );
     (r.0 < r.1 && raw.is_char_boundary(r.0) && raw.is_char_boundary(r.1)).then_some(r)
+}
+fn is_properties_drawer(raw: &str, r: &Range) -> bool {
+    r.slice(raw)
+        .lines()
+        .next()
+        .is_some_and(|line| line.trim().eq_ignore_ascii_case(":PROPERTIES:"))
 }
 fn whole_line(raw: &str, r: Range) -> Range {
     let start = raw[..r.0].rfind('\n').map_or(0, |p| p + 1);
@@ -768,6 +776,15 @@ pub enum Edit {
     },
 }
 
+/// Negative-only prefilter for the editor's LOGBOOK projection. A true result
+/// still requires parsed drawer ownership. Kept at the structural boundary so
+/// callers can avoid an ownership parse for ordinary property-only buffers.
+pub fn may_have_logbook(raw: &str) -> bool {
+    raw.as_bytes()
+        .windows(b":LOGBOOK:".len())
+        .any(|word| word.eq_ignore_ascii_case(b":LOGBOOK:"))
+}
+
 fn splice(raw: &str, mut edits: Vec<(Range, String)>) -> String {
     edits.sort_by_key(|(r, _)| r.0);
     let mut merged: Vec<(Range, String)> = Vec::new();
@@ -897,13 +914,15 @@ impl BlockRegions {
     }
     fn own_org_region(&self, raw: &str) -> Option<usize> {
         let at = self.head_end(raw, true);
-        self.property_regions.iter().position(|r| {
-            (r.0 == at || r.0 == 0)
-                && r.slice(raw)
-                    .lines()
-                    .next()
-                    .is_some_and(|line| line.trim().eq_ignore_ascii_case(":PROPERTIES:"))
-        })
+        self.property_regions
+            .iter()
+            .position(|r| (r.0 == at || r.0 == 0) && is_properties_drawer(raw, r))
+    }
+    /// Whether a `:PROPERTIES:` drawer region starts at `at`.
+    pub fn properties_drawer_at(&self, raw: &str, at: usize) -> bool {
+        self.property_regions
+            .iter()
+            .any(|r| r.0 == at && is_properties_drawer(raw, r))
     }
     fn inserted(&self, raw: &str, at: usize, text: &str) -> String {
         let nl = newline(raw);
@@ -918,6 +937,36 @@ impl BlockRegions {
             vec![(Range(at, at), format!("{prefix}{text}{suffix}"))],
         )
     }
+
+    /// Reinsert an opaque, parser-owned drawer at the same head position used
+    /// by clock-in. Preserve its bytes rather than rebuilding its clock rows.
+    pub fn insert_drawer(&self, raw: &str, org: bool, drawer: &str) -> Result<String, String> {
+        if self.quarantined {
+            return Err("Drawer reattachment refused: block parsing is quarantined".into());
+        }
+        let mut at = self.head_end(raw, org);
+        // A titleless Org PROPERTIES drawer starts on the first line. The
+        // title heuristic points inside it; never insert between its rows.
+        if let Some(r) = self.property_regions.iter().find(|r| r.0 <= at && at < r.1) {
+            at = r.1;
+        }
+        // Verify ownership, not spelling: lazy quotes/lists and other parser
+        // containers can consume an otherwise byte-perfect restored drawer.
+        // Also retain every existing property (including primary ownership and
+        // id) and drawer. This runs in release as well as debug builds.
+        let canonical = self.inserted(raw, at, drawer);
+        if self.insertion_preserves_metadata(raw, org, drawer, &canonical) {
+            return Ok(canonical);
+        }
+        // A drawer before a container cannot be its lazy continuation. Try this
+        // parser-verified layout without maintaining a syntax allowlist.
+        let before = self.inserted(raw, 0, drawer);
+        if self.insertion_preserves_metadata(raw, org, drawer, &before) {
+            return Ok(before);
+        }
+        Err("Drawer reattachment refused: metadata ownership would change".into())
+    }
+
     fn remove_properties(
         &self,
         raw: &str,
@@ -1022,6 +1071,7 @@ impl BlockRegions {
                 add.iter().any(|(key, _)| {
                     matches!(key.as_str(), "id" | "collapsed" | "logseq.order-list-type")
                 }),
+                newline(raw),
                 edits,
             );
         }
@@ -1034,6 +1084,7 @@ impl BlockRegions {
         org: bool,
         lines: &str,
         trailer: bool,
+        row_end: &str,
         mut edits: Vec<(Range, String)>,
     ) -> Result<String, String> {
         let own = self.own_org_region(raw);
@@ -1047,7 +1098,7 @@ impl BlockRegions {
                 (close.0, lines.to_string())
             } else {
                 let at = self.head_end(raw, org);
-                let text = format!(":PROPERTIES:{}{lines}{}:END:", newline(raw), newline(raw));
+                let text = format!(":PROPERTIES:{}{lines}{row_end}:END:", newline(raw));
                 // OG places accepted planning above a new drawer even when
                 // authored below body content. Literal lookalikes are absent.
                 if self
@@ -1094,7 +1145,15 @@ impl BlockRegions {
         } else {
             ""
         };
-        let suffix = if at < raw.len() { newline(raw) } else { "" };
+        let suffix = if at < raw.len() {
+            if org && own.is_some() {
+                row_end
+            } else {
+                newline(raw)
+            }
+        } else {
+            ""
+        };
         if !text.is_empty() {
             edits.push((Range(at, at), format!("{prefix}{text}{suffix}")));
         }
@@ -1110,16 +1169,18 @@ impl BlockRegions {
         let payload = hidden
             .split('\n')
             .filter(|line| !line.trim().is_empty())
-            .map(|line| line.trim_end_matches('\r'))
             .collect::<Vec<_>>()
-            .join(newline(raw));
+            .join("\n");
         if payload.is_empty() {
             return Ok(raw.to_string());
         }
-        self.add_properties(raw, true, &payload, false, Vec::new())
+        // These rows already carry their original CR bytes. Add only LF at a
+        // row boundary, even when the textarea and retained rows use different
+        // line endings; normal property edits still use newline(raw).
+        self.add_properties(raw, true, &payload, false, "\n", Vec::new())
     }
     /// Apply an operation using these regions from EXACTLY this raw source.
-    /// O(block bytes); zero parses in release, one preservation reparse in debug.
+    /// Reuses regions except drawer restoration's ownership reparse; debug also checks literals.
     pub fn apply(&self, raw: &str, org: bool, edit: Edit) -> Result<String, String> {
         if self.quarantined {
             return Err("Structural edit refused: block parsing is quarantined".into());
@@ -1257,15 +1318,11 @@ impl BlockRegions {
                 {
                     self.inserted(raw, d.close, &value)
                 } else {
-                    let mut at = self.head_end(raw, org);
-                    if let Some(r) = self.property_regions.iter().find(|r| r.0 == at) {
-                        at = r.1;
-                    }
-                    self.inserted(
+                    self.insert_drawer(
                         raw,
-                        at,
+                        org,
                         &format!(":{name}:{}{value}{}:END:", newline(raw), newline(raw)),
-                    )
+                    )?
                 }
             }
             Edit::ClockOut { value } => {

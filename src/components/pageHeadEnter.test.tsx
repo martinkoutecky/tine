@@ -46,7 +46,7 @@ for (const kind of ["page", "journal"] as const) {
       const dispose = render(() => <PageView />, root);
       try {
         await tick(); await tick();
-        expect(root.querySelectorAll(".page-properties .prop-row")).toHaveLength(2);
+        expect([...root.querySelectorAll(".page-properties .prop-key")].map(el => el.textContent)).toEqual(["tags"]);
         root.querySelector(".page-properties")!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
         await tick();
         const editor = root.querySelector<HTMLTextAreaElement>("textarea")!;
@@ -68,7 +68,7 @@ for (const kind of ["page", "journal"] as const) {
         endEdit("blur");
         await tick(); await tick();
         expect(toasts()).toEqual([]);
-        expect(root.querySelectorAll(".page-properties .prop-row")).toHaveLength(2);
+        expect([...root.querySelectorAll(".page-properties .prop-key")].map(el => el.textContent)).toEqual(["tags"]);
         expect(await flushPage(name)).toBe(true);
         expect(isDirty(name)).toBe(false);
         for (const written of submittedPages(save)) {

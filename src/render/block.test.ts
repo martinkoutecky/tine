@@ -124,10 +124,10 @@ describe("visibleBody removes exactly the metadata lsdoc accepted (I-12)", () =>
 
 describe("isRenderHiddenProp is the Rust render_facets answer (I-12)", () => {
   it("hides the built-ins, tine.* and logseq.table.*, and shows other logseq.* keys", () => {
-    for (const key of ["id", "Title", "hl-color", "Created_At", "tine.view", "logseq.table.version"]) {
+    for (const key of ["id", "logseq.color", "hl-color", "Created_At", "tine.view", "logseq.table.version"]) {
       expect(isRenderHiddenProp(key), key).toBe(true);
     }
-    for (const key of ["logseq.custom", "status", "public"]) expect(isRenderHiddenProp(key), key).toBe(false);
+    for (const key of ["logseq.custom", "status", "public", "title", "icon", "filters"]) expect(isRenderHiddenProp(key), key).toBe(false);
   });
   it("applies the graph's :block-hidden-properties after the shared key fold", () => {
     expect(isRenderHiddenProp("mine", ["Mine"])).toBe(true);

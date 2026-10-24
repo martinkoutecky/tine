@@ -64,6 +64,19 @@ function keydown(textarea: HTMLTextAreaElement, key: "Enter" | "Backspace", care
 }
 
 describe("own numbered-list editor invariant", () => {
+  it.each(["md", "org"] as const)("review clock-only numbered Enter keeps numbering (%s)", format => {
+    const props = format === "md" ? "logseq.order-list-type:: number" : ":PROPERTIES:\n:logseq.order-list-type: number\n:END:";
+    const drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+    load([blk("item", `${props}\n${drawer}`)], format);
+    const { textarea, dispose } = mountEditor("item");
+    try {
+      expect(textarea.value).toBe("");
+      keydown(textarea, "Enter", 0);
+      expect(blockProperty("item", "logseq.order-list-type")).toBe("number");
+      expect(doc.byId.item.raw).toContain(drawer);
+      expect(pageByName("Numbered")!.roots).toHaveLength(2);
+    } finally { dispose(); }
+  });
   it("turns exactly '1. ' into the own property, clears text, and leaves the caret at zero", () => {
     load([blk("untouched", "untouched bytes"), blk("item", "")]);
     const { textarea, dispose } = mountEditor("item");

@@ -1934,7 +1934,7 @@ describe("page properties", () => {
       expect(doc.byId[propsId].raw).toBe(raw);
     } finally { dispose(); }
   });
-  it.each(["icon", "tine.icon"])("GH #346: keeps %s:: visible in the properties list and editable beside the title icon", async (key) => {
+  it.each(["tine.icon"])("GH #346: keeps %s:: visible in the properties list and editable beside the title icon", async (key) => {
     const propsId = "11111111-1111-4111-8111-111111111111";
     const dto = { name: "Flag", kind: "page" as const, title: "Flag", pre_block: null,
       blocks: [{ id: propsId, raw: `${key}:: 🚩`, collapsed: false, children: [] }] };

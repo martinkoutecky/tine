@@ -1,0 +1,1 @@
+Eleventh Tine 0.8 Beta, fixes for the stable candidate. Restoring a session keeps every tab on its last page. Changing outline levels on long pages with images no longer makes the view jump. The mobile editing toolbar works with a sidebar open. Table cells save when you switch cells. Board cards drag even when another editor had focus.

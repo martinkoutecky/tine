@@ -237,11 +237,19 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
   page's format (Markdown `- ` or Org outline). Every created block gets `author::` (from `--author`, else
   `TINE_AUTHOR`, else `agent`); edits never add one. An anchor without `id::` gets one in the same write. A
   `((uuid))` that names no block is refused `broken-ref`.
-- **`block.edit`**: the text replaces the block's editor text, as typing it would: hidden `id::`, `collapsed::`
-  and `logseq.order-list-type::` lines and the children are kept. On a block whose own primary properties
+- **`block.edit`**: the text replaces the block's editor text, as typing it would: OG hidden built-ins
+  (including SRS keys) and graph-configured hidden property lines are kept byte-exact; children are kept too.
+  On a block whose own primary properties
   include `quote`, the four comment lines (`quote::`, `quote-prefix::`, `quote-suffix::`, `author::`) are also
   kept. On an ordinary block, `author::` and quote-context lines belong to the replaced editor text, as on OG.
-  A marker change writes the logbook as the app does.
+  The hidden LOGBOOK drawer is kept, at its canonical position after the title, planning and head properties.
+  If the supplied text contains a parsed LOGBOOK drawer, that drawer replaces the retained one; fence lookalikes
+  remain ordinary text. A marker change writes the logbook as the app does.
+  Clients supplying LOGBOOK content must pass `--rev` from the read that supplied it. A clock-only change does
+  not change an editor-text fingerprint: without that revision, an old full buffer can replace newer history.
+  Plain visible-text edits retain the current history, including clock changes since the client's read.
+  The CLI currently permits explicit history replacement without `--rev`; the revision requirement is a client
+  concurrency obligation, not an enforced refusal.
 - **`block.move`**: the block and its children go under (last child), after or before a target on the same page.
   A move to another page is refused `cross-page` in this version.
 - **`--run RUN`** (optional, every write; or `TINE_RUN`): commit the write to the graph's git repository as
@@ -379,9 +387,10 @@ id pages/a.md rev 9e8b1eedbf3d8ef0
 
 - The address of a page read is the block's **handle**, `POS~FP`: its outline position (`1`, `1.2`,
   PROTOCOL §10) and a 6-character fingerprint of its editor text (lowercase base32 of FNV-1a 64 over
-  the text a block editor shows; hidden `id::`, `collapsed::` and `logseq.order-list-type::` lines
+  the shared built-in editor projection; OG hidden built-ins, including SRS keys,
   are left out, as are `quote::`, `quote-prefix::`, `quote-suffix::` and `author::` only when the block's own
   primary properties include `quote`). Ordinary author/context properties contribute to the fingerprint.
+  Graph-configured hiding does not alter fingerprints; handles remain independent of that display preference.
   A write names a block as `PAGE/POS~FP` or by its `id::` UUID; the fingerprint
   resolves only when exactly one block on the page has it, else `stale`. The `--json` page carries the
   same string as each block's `handle`. Continuation lines align under the first line's text.
