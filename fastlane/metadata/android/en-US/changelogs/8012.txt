@@ -1,0 +1,1 @@
+Twelfth Tine 0.8 Beta, fixes for the stable candidate. Pasting a copied link keeps its URL. Opening a PDF no longer jumps back to the top of the page, and a link to a highlight in a closed PDF scrolls to it. Multiline Org blocks no longer add blank lines at the end of the file. Hidden id:: and collapsed:: lines stay with the block's properties.

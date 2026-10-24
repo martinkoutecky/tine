@@ -60,6 +60,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - **Editing an alias, or renaming or deleting an aliased page, no longer re-reads every page**: once the alias index exists, it is patched for the pages the edit changed instead of being rebuilt by a walk over the whole graph. On a generated 10,000-page graph the first alias lookup after such an edit examines 1 page instead of 10,000 (D-20261018-M2c).
 
+## [0.8.0-beta.12] - 2026-10-24
+
+Fixes for the 0.8.0 stable candidate: pasting a copied link keeps its URL (GH #759), opening a PDF no longer pulls the reader back to the top of the page (GH #672), a backlink to a highlight of a PDF that was not open scrolls to it, multiline Org blocks no longer add blank lines at the end of the file (GH #741), and hidden id:: and collapsed:: lines stay in the block's property group. Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
+
 ### Fixed
 
 - Pasting a copied link keeps its URL and inserts it at the caret, preserving surrounding text. Inline HTML formatting is retained, with links in the page's Markdown or Org format (GH #759).
