@@ -54,8 +54,13 @@ remain a window the Store writer cannot exclude. Both the unused-asset inventory
 and the trash guard include block and preamble references from physical page
 files set aside by duplicate-day journal presentation. These files use the same
 bounded parser and asset-reference collector as indexed pages; a failed read or
-analysis refuses the inventory and trash, naming the file. Only set-aside files
-are read and parsed again; they are not added to backlinks or query indexes.
+analysis refuses the inventory and trash, naming the file. After parsing a
+set-aside file, the inventory verifies the open descriptor's length and metadata
+and the live path's metadata and file identity. A replacement refuses the decision
+even if length and mtime match; an observable in-place change also refuses it.
+Stamp-invisible in-place writes and changes after this final observation can
+still race the move. Only set-aside files are read and parsed again; they are
+not added to backlinks or query indexes.
 
 `Store::read_is_current` compares a streaming descriptor with a fresh validated
 open using the existing cross-platform file-identity primitive, O(1). Verification

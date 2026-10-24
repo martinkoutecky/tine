@@ -12,9 +12,10 @@ import { answerNativeDialog } from "./lib/e2e-native-dialog.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
 const DRIVER = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(process.env.CARGO_HOME, "bin/tauri-driver") : "tauri-driver");
-const TMP = fs.mkdtempSync("/tmp/tine-gh623-trash-");
+const ARTIFACT = process.env.E2E_ARTIFACT_DIR || path.join(ROOT, "artifacts/og-trash-stray-recheck/native");
+fs.mkdirSync(ARTIFACT, { recursive: true });
+const TMP = fs.mkdtempSync(path.join(ARTIFACT, "run-"));
 const GRAPH = path.join(TMP, "graph");
-const ARTIFACT = process.env.E2E_ARTIFACT_DIR || path.join(TMP, "artifacts");
 const port = Number(process.env.E2E_DRIVER_PORT || 4694);
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, dir));
@@ -23,8 +24,11 @@ fs.mkdirSync(ARTIFACT, { recursive: true });
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 fs.writeFileSync(path.join(GRAPH, "assets/x.png"), PNG);
 fs.writeFileSync(path.join(GRAPH, "assets/y.png"), PNG);
-fs.writeFileSync(path.join(GRAPH, "pages/Photos.md"), "- solo ![solo](../assets/x.png)\n- shared ![shared](../assets/y.png)\n");
+fs.writeFileSync(path.join(GRAPH, "assets/z.png"), PNG);
+fs.writeFileSync(path.join(GRAPH, "pages/Photos.md"), "- solo ![solo](../assets/x.png)\n- shared ![shared](../assets/y.png)\n- stray ![stray](../assets/z.png)\n");
 fs.writeFileSync(path.join(GRAPH, "pages/Gallery.md"), "- also ![again](../assets/y.png)\n");
+fs.writeFileSync(path.join(GRAPH, "journals/2026_10_02.md"), "- the day\n");
+fs.writeFileSync(path.join(GRAPH, "journals/2026-10-02.md"), "- no media\n");
 const env = {
   ...process.env, TINE_GRAPH: GRAPH,
   XDG_DATA_HOME: path.join(TMP, "data"), XDG_CONFIG_HOME: path.join(TMP, "config"), XDG_CACHE_HOME: path.join(TMP, "cache"),
@@ -33,7 +37,7 @@ const env = {
 const log = fs.openSync(path.join(ARTIFACT, "driver.log"), "w");
 const driver = spawn(DRIVER, ["--port", String(port), "--native-port", String(port + 1), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], { env, stdio: ["ignore", log, log], detached: true });
 let browser;
-const proof = { app: APP, graph: GRAPH, steps: [] };
+const proof = { testedCommit: process.env.TINE_TESTED_COMMIT, app: APP, graph: GRAPH, steps: [] };
 const read = (rel) => fs.readFileSync(path.join(GRAPH, rel), "utf8");
 
 async function trashImage(alt) {
@@ -65,6 +69,19 @@ try {
   if (read("pages/Photos.md").includes("y.png")) throw new Error("Photos.md lost the edit: still references y.png");
   if (read("pages/Gallery.md") !== "- also ![again](../assets/y.png)\n") throw new Error("Gallery.md changed");
   proof.steps.push("a file another page still uses is kept; the block edit stands; the user is told");
+
+  // The only remaining reference is in a duplicate-day file omitted from
+  // query results. Deliver it externally after the graph was opened.
+  await browser.execute(() => document.querySelectorAll(".toast-close").forEach(button => button.click()));
+  const stray = "- sync delivered ![stray](../assets/z.png)\n";
+  fs.writeFileSync(path.join(GRAPH, "journals/2026-10-02.md"), stray);
+  await trashImage("stray");
+  await browser.waitUntil(async () => (await toastTexts()).some(text => text.includes("still used elsewhere")),
+    { timeout: 15_000, timeoutMsg: "no kept-file notice for the duplicate-day reference" });
+  if (!fs.existsSync(path.join(GRAPH, "assets/z.png"))) throw new Error("z.png was trashed despite the set-aside journal reference");
+  if (read("pages/Photos.md").includes("z.png")) throw new Error("the image reference removal was not saved");
+  if (read("journals/2026-10-02.md") !== stray) throw new Error("the set-aside journal changed");
+  proof.steps.push("a sync-delivered reference in a set-aside journal keeps the asset after the visible block's reference is saved away");
   await browser.saveScreenshot(path.join(ARTIFACT, "trash.png"));
   console.log(JSON.stringify(proof));
 } catch (error) {

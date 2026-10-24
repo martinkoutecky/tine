@@ -182,6 +182,10 @@ fn l8_03_trash_rechecks_stray_bytes_after_the_unused_listing() {
         (STRAY, "- no reference\n"),
         ("assets/photo.png", "png"),
     ]);
+    // Isolate the trash-time read. The live-watcher test above covers
+    // delivery; a poll during fs::write's truncation may correctly record
+    // uncertainty and refuse trash instead of returning Referenced.
+    store.stop_watcher_for_tests();
     assert_eq!(assets::orphan_assets(&store).unwrap()[0].name, "photo.png");
     fs::write(
         root.path().join(STRAY),
@@ -193,6 +197,36 @@ fn l8_03_trash_rechecks_stray_bytes_after_the_unused_listing() {
         TrashOutcome::Referenced
     );
     assert!(root.path().join("assets/photo.png").exists());
+}
+
+#[test]
+fn l8_03_trash_rechecks_stray_after_a_watcher_publication() {
+    let _guard = crate::integration_lock();
+    let referenced = "- ![photo](../assets/photo.png)\n";
+    let (root, store) = cold(&[
+        (KEEPER, "- the day\n"),
+        (STRAY, "- unused at launch\n"),
+        ("assets/photo.png", "png"),
+    ]);
+    store.stop_watcher_for_tests();
+    let stray = root.path().join(STRAY);
+    fs::write(&stray, " ".repeat(referenced.len())).unwrap();
+    // Explicit refresh uses the watcher's reconciliation and publication path.
+    store.refresh(tine_store::Depth::Bytes).unwrap();
+    assert_eq!(assets::orphan_assets(&store).unwrap()[0].name, "photo.png");
+    let modified = fs::metadata(&stray).unwrap().modified().unwrap();
+    fs::write(&stray, referenced).unwrap();
+    fs::File::open(&stray)
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    // No watcher delivery of the new bytes: this must be a fresh stray read.
+    assert_eq!(
+        assets::trash_asset(&store, "photo.png").unwrap(),
+        TrashOutcome::Referenced
+    );
+    assert!(root.path().join("assets/photo.png").exists());
+    assert_eq!(store.whole_graph().unwrap().corpus().pages.len(), 1);
 }
 
 #[test]

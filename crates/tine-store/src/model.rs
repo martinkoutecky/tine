@@ -146,6 +146,10 @@ thread_local! {
 /// bytes are read (GH #623: an own-write stamp without another open).
 pub(crate) fn read_parse_bytes_observed(path: &Path) -> io::Result<(Vec<u8>, fs::Metadata)> {
     let mut input = fs::File::open(path)?;
+    read_parse_open_file(&mut input)
+}
+
+fn read_parse_open_file(input: &mut fs::File) -> io::Result<(Vec<u8>, fs::Metadata)> {
     let metadata = input.metadata()?;
     let len = metadata.len();
     if len > PARSE_INPUT_MAX_BYTES {
@@ -161,7 +165,7 @@ pub(crate) fn read_parse_bytes_observed(path: &Path) -> io::Result<(Vec<u8>, fs:
         }
     });
     let mut bytes = Vec::new();
-    Read::by_ref(&mut input)
+    Read::by_ref(input)
         .take(PARSE_INPUT_MAX_BYTES + 1)
         .read_to_end(&mut bytes)?;
     if bytes.len() as u64 > PARSE_INPUT_MAX_BYTES {
@@ -365,12 +369,41 @@ fn parse_doc(path: &Path, content: &str) -> Document {
 /// Asset safety also includes physical files omitted from the query snapshot.
 /// Use the normal bounded input and format parser, isolating parser failures.
 pub(crate) fn collect_file_asset_refs(path: &Path, names: &mut HashSet<String>) -> io::Result<()> {
-    let content = read_parse_input(path)?;
+    let mut input = fs::File::open(path)?;
+    let (bytes, before) = read_parse_open_file(&mut input)?;
+    validate_parse_bytes_for_path(&bytes, path)?;
+    let content = std::str::from_utf8(&bytes)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let doc = parse_doc(path, &content);
+        let doc = parse_doc(path, content);
         tine_core::asset_refs::collect_document_asset_refs(&doc, names);
     }))
-    .map_err(|_| io::Error::other("asset reference parser panicked"))
+    .map_err(|_| io::Error::other("asset reference parser panicked"))?;
+
+    // A sync replacement can leave the read descriptor on old, unreferenced
+    // bytes while the live path already references the asset. An in-place
+    // delivery can also shorten/grow/change it while reading or parsing.
+    // Check after analysis, without trusting length + mtime or caching strays.
+    let current = fs::File::open(path)?;
+    let stamp = crate::watch::stamp_from_metadata(&before);
+    let unchanged = |metadata: &fs::Metadata| {
+        stamp.as_ref().is_some_and(|before| {
+            crate::watch::stamp_from_metadata(metadata)
+                .is_some_and(|after| before.same_metadata(&after))
+        })
+    };
+    let stable = bytes.len() as u64 == before.len()
+        && unchanged(&input.metadata()?)
+        && unchanged(&current.metadata()?)
+        && unchanged(&fs::symlink_metadata(path)?)
+        && same_file::Handle::from_file(input)? == same_file::Handle::from_file(current)?;
+    if !stable {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "page file changed during asset reference inventory",
+        ));
+    }
+    Ok(())
 }
 
 /// Whether `bytes`, read as the page file at `path`, hold a block with id
