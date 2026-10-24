@@ -502,20 +502,25 @@ impl ChangeFeed {
         )
     }
 
-    /// Publish after a forced rebuild (`WatchHandle::rebuild_all`): the new
+    /// Publish after a forced rebuild or restore: the new
     /// snapshot recomputes the name index and the read evaluator from the
     /// rebuilt cache instead of carrying the previous generation's.
-    pub(crate) fn publish_rebuilt(&self, files: Vec<(FileId, ChangeKind, Option<FileRev>)>) {
+    pub(crate) fn publish_rebuilt(
+        &self,
+        origin: Origin,
+        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+        config_changed: bool,
+    ) -> GraphRev {
         self.publish_inner(
-            Origin::External,
+            origin,
             files,
-            false,
+            config_changed,
             Vec::new(),
             || {},
             None,
             true,
             &HashMap::new(),
-        );
+        )
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -4045,7 +4045,6 @@ impl Graph {
         })) {
             Ok(entry) => Ok(entry),
             Err(_) => {
-                self.invalidate_cache();
                 self.record_index_failure(path);
                 Err(io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))
             }

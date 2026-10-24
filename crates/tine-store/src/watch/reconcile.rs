@@ -911,7 +911,15 @@ mod tests {
             let core = store.watch.core_for_load();
             let path = dir.path().join("pages/P0.md");
             if valid {
-                fs::write(&path, "- delivered before restore\n").unwrap();
+                fs::write(&path, "title:: Before\nicon:: 📚\n\n- original\n").unwrap();
+                store.refresh(crate::Depth::Bytes).unwrap();
+                // Populate the previous generation's lazy icon index, too.
+                store.whole_graph().unwrap().page_icons(&["Before".into()]);
+                fs::write(
+                    &path,
+                    "title:: Delivered\nicon:: 🚀\n\n- delivered before restore\n",
+                )
+                .unwrap();
                 store
                     .graph
                     .fail_sync_read_once
@@ -942,6 +950,43 @@ mod tests {
                 valid
             );
             if valid {
+                let copy = tempfile::tempdir().unwrap();
+                for area in ["pages", "logseq"] {
+                    fs::create_dir(copy.path().join(area)).unwrap();
+                    for entry in fs::read_dir(dir.path().join(area)).unwrap() {
+                        let entry = entry.unwrap();
+                        if !entry.file_type().unwrap().is_file() {
+                            continue;
+                        }
+                        fs::copy(entry.path(), copy.path().join(area).join(entry.file_name()))
+                            .unwrap();
+                    }
+                }
+                let fresh = crate::Store::open(copy.path(), Default::default())
+                    .unwrap()
+                    .0;
+                let live = store.whole_graph().unwrap();
+                let cold = fresh.whole_graph_reconciled().unwrap();
+                let claim = |view: &crate::WholeGraph, name: &str| match view.resolve(name, false) {
+                    crate::Resolved::Existing { id, others } => (true, id, others),
+                    crate::Resolved::Absent { id } => (false, id, Vec::new()),
+                    crate::Resolved::Alias { .. } => panic!("unexpected alias"),
+                };
+                for name in ["Before", "Delivered", "P0"] {
+                    assert_eq!(claim(&live, name), claim(&cold, name), "resolve {name}");
+                }
+                let inventory = |view: &crate::WholeGraph| {
+                    view.inventory(crate::InventoryScope::All)
+                        .0
+                        .iter()
+                        .map(|entry| (entry.name.clone(), claim(view, &entry.name)))
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(inventory(&live), inventory(&cold));
+                let names = ["Before".into(), "Delivered".into(), "P0".into()];
+                assert_eq!(live.page_icons(&names), cold.page_icons(&names));
+                assert_eq!(live.page_icons(&names).get("Delivered").unwrap(), "🚀");
+                fresh.close();
                 assert_eq!(
                     store.page(&PageId::from("pages/P0.md")).unwrap().doc.blocks[0].raw,
                     "delivered before restore"
@@ -949,6 +994,65 @@ mod tests {
             }
             store.close();
         }
+    }
+
+    #[test]
+    fn a_panicking_promoted_journal_leaves_other_pages_usable() {
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        fs::create_dir(dir.path().join("journals")).unwrap();
+        let winner = dir.path().join("journals/2026_10_02.md");
+        let loser = dir.path().join("journals/2026-10-02.md");
+        fs::write(&winner, "- winning journal [[P1]]\n").unwrap();
+        fs::write(
+            &loser,
+            format!("- {}\n", crate::model::TEST_PAGE_PARSE_PANIC_SENTINEL),
+        )
+        .unwrap();
+        store.refresh(crate::Depth::Bytes).unwrap();
+        assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+        fs::remove_file(&winner).unwrap();
+        store
+            .graph
+            .fail_sync_parse_once
+            .store(true, Ordering::Release);
+        store.refresh(crate::Depth::Bytes).unwrap();
+        assert!(!store.graph.fail_sync_parse_once.load(Ordering::Acquire));
+        let view = store.whole_graph().unwrap();
+        let unreadable: Vec<_> = view
+            .unreadable_files()
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(
+            unreadable,
+            [crate::FileId::from("journals/2026-10-02.md".to_owned())]
+        );
+        assert!(view.explicit_referrers(&["P1".into()]).is_empty());
+        assert_eq!(
+            store.page(&PageId::from("pages/P1.md")).unwrap().doc.blocks[0].raw,
+            "original"
+        );
+        // The next writer operation must remain usable, too.
+        fs::write(dir.path().join("pages/P1.md"), "- unrelated repair\n").unwrap();
+        store.refresh(crate::Depth::Bytes).unwrap();
+        assert_eq!(
+            store.page(&PageId::from("pages/P1.md")).unwrap().doc.blocks[0].raw,
+            "unrelated repair"
+        );
+        let fresh = crate::Store::open(dir.path(), Default::default())
+            .unwrap()
+            .0;
+        let cold = fresh.whole_graph_reconciled().unwrap();
+        let cold_unreadable: Vec<_> = cold
+            .unreadable_files()
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(unreadable, cold_unreadable);
+        assert!(cold.explicit_referrers(&["P1".into()]).is_empty());
+        fresh.close();
+        store.close();
     }
 
     #[test]

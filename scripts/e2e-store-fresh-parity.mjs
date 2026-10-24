@@ -81,9 +81,13 @@ try {
   stage = "a held canonical page keeps its icon across a real config reload";
   await openPageByName(browser, "Delta");
   assert((await icons()).Delta === "🚀", "the initial icon did not belong to the canonical file");
-  const before = (await inventory()).rev;
   fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:journal/file-name-format \"yyyy-MM-dd\"}\n");
-  await browser.waitUntil(async () => (await inventory()).rev !== before, { timeout: 20_000 });
+  // The configured filename now prefers the hyphenated journal. A revision
+  // alone could belong to an unrelated pending watcher publication.
+  await browser.waitUntil(async () => (await inventory()).entries.some(entry => entry.is_journal
+    && entry.target.id === "journals/2026-10-02.md"
+    && entry.target.others?.includes("journals/2026_10_02.md")),
+  { timeout: 20_000, timeoutMsg: "the configured journal claimant order did not change" });
   assert((await icons()).Delta === "🚀", "the native icon consumer switched to the losing title claimant");
   assert(await browser.execute(() => {
     const icon = document.querySelector("h1.page-title .page-icon");

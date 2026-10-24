@@ -133,7 +133,7 @@ impl WatchHandle {
         } else {
             self.core
                 .changes
-                .publish(Origin::Own, files, config_changed, Vec::new())
+                .publish_rebuilt(Origin::Own, files, config_changed)
         }
     }
 }

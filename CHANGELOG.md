@@ -62,6 +62,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A restore that clears an earlier read failure refreshes page names and icons even when the restored bytes are unchanged (GH #543).
+- Removing a duplicate journal's winning file keeps other pages usable when the promoted file cannot be parsed, reporting that file as unreadable (GH #644).
 - A duplicate journal file delivered or edited by sync contributes the same references and query results while Tine runs as after a restart; the existing duplicate-day resolver still lists both files (internal card PVTI_lAHOAAbLVc4BhPsyzhCJePk).
 - A name claimed by two page files keeps the winning file's icon after a configuration reload, including while that page is open (internal card PVTI_lAHOAAbLVc4BhPsyzhCJePk).
 - A file made readable by a permissions-only repair reappears on a regular check or focus refresh; unchanged invalid content is not repeatedly read or parsed (GH #543; existing fix now covered by the formerly ignored stamps-refresh repro).

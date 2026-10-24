@@ -815,16 +815,31 @@ impl Graph {
         }
     }
 
-    /// Record that `path`'s parse panicked (its page is no longer indexed).
+    /// Isolate a parser failure to `path`, retiring only its indexed row.
+    /// Capture can promote a journal mid-publication, so the cache must stay
+    /// built for unrelated pages and for the rest of that capture.
     /// A held page's index is its owner's, never a disk parse's.
     pub(super) fn record_index_failure(&self, path: &Path) {
-        let _cache = self.derived.cache.read().unwrap();
+        let mut cache = self.derived.cache.write().unwrap();
         if self.disk_sourced(path) {
-            self.derived
-                .page_index_failures
-                .write()
-                .unwrap()
-                .push(self.rel_path(path));
+            // A quiet retry must not erase an already reported launch error.
+            self.retire_row(cache.as_mut().map(Arc::make_mut), path, false);
+            let rel = self.rel_path(path);
+            let mut failures = self.derived.page_index_failures.write().unwrap();
+            if !failures.contains(&rel) {
+                failures.push(rel.clone());
+            }
+            drop(failures);
+            // A checkpoint launch also reconciles through this boundary.
+            // Replacing a whole-cache rebuild must retain its per-page error
+            // reporting, including when the watcher defers its own notice.
+            let mut unreadable = self.derived.unreadable_pages.write().unwrap();
+            let id = crate::FileId::from(rel);
+            if !unreadable.iter().any(|(known, _)| *known == id) {
+                Arc::make_mut(&mut unreadable).push((id, ParserPanicked.to_string()));
+            }
+            drop(unreadable);
+            self.move_generation(cache.is_none(), &[path]);
         }
     }
 
@@ -1241,6 +1256,11 @@ impl Graph {
         }
         Arc::make_mut(&mut self.derived.unreadable_pages.write().unwrap())
             .retain(|(id, _)| id.as_str() != rel);
+        self.derived
+            .page_index_failures
+            .write()
+            .unwrap()
+            .retain(|failed| *failed != rel);
     }
 
     /// Remove `path`'s row from `pages` with its revision, anchor and file

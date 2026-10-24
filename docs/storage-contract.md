@@ -101,7 +101,10 @@ other extensions, filename, and full path lexicographically. Ordinary twins
 retain their physical content, while only a day's winning journal contributes
 query and backlink rows. A new winner displaces the old parsed journal, and
 removing it promotes the next claimant, including a held file's last published
-bytes. Each event visits only the affected day buckets, never a graph walk.
+bytes. A promoted journal whose parse or projection panics is isolated as one
+unreadable file, just as at launch; unrelated indexed pages and later writer
+operations remain available. Each event visits only the affected day buckets,
+never a graph walk.
 Icons follow the winning ordinary claimant, including absence of an icon;
 page-slot allocation and config rebuild order cannot change the answer.
 
@@ -811,7 +814,9 @@ so a listed snapshot can still fail restore's verification. Proof
 **Restore.** The store's complete observation after restoring supersedes earlier
 watcher read uncertainty and stamp-specific refusals for paths it can read or
 confirms absent. Retiring that uncertainty publishes a fresh parse even when
-the restored files have exactly the baseline's bytes. Paths still unreadable
+the restored files have exactly the baseline's bytes. This publication rebuilds
+names, claimants and icons from the restored rows as well as page content;
+it cannot carry the earlier last-good name or icon. Paths still unreadable
 keep their guards, and the rebuilt graph still reports invalid restored
 content. Obsolete read state cannot indefinitely refuse an orphan-asset
 inventory after a successful restore.
