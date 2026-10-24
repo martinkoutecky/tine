@@ -36,7 +36,7 @@ import { SheetTable } from "./SheetTable";
 import { TodayTaskSummary } from "./TodayTaskSummary";
 import { selectedThemePresentation } from "../themeGallery";
 import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
-import { aliasNamesOf, visibleBody } from "../render/block";
+import { aliasNamesOf, visibleBody, isRenderHiddenPageProp } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
 import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, appNow, parseJournalTitle } from "../journal";
@@ -354,15 +354,8 @@ async function completeJournalFeed(owner: JournalsFeedOwner, generation: number,
   }
 }
 
-// Page properties NOT shown in the under-title property list: `alias` is surfaced
-// as the alias group rows above (AliasGroupHeader). `tine.icon` and the OG-compatible `icon` stay editable here as well as decorating the
-// title (OG's editable-built-in-properties lists `icon`). Hide internal tag-table metadata.
-// `tine/exports` is the exports page marker (docs/contracts/export-definitions.md), not something to edit.
-// GH #730: OG util/property.cljs `hidden-editable-page-properties` (#{:title :filters :icon})
-// hides `filters` (the linked-references filter store) from the pre-block display; it
-// stays in the raw editor text. Tine shows `icon` here on purpose (GH #346). Block chips
-// have their own list (render_facets.rs RENDER_HIDDEN), unchanged.
-const PAGE_PROPS_HIDDEN = new Set(["alias", "filters", "tine.tag-table", "tine/exports"]);
+// OG's pre-block predicate lives in Rust alongside ordinary-block visibility.
+// Aliases retain their AliasGroupHeader; title/icon remain editable in Properties.
 const TAG_TABLE_PROP = "tine.tag-table";
 
 function paneContextFromContext() {
@@ -1232,10 +1225,10 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         inGraph={!props.page.guide}
         onEdit={editPageHeader}
       />
-      <Show when={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
+      <Show when={headerProperties().filter(([k]) => !isRenderHiddenPageProp(k, graphMeta()?.block_hidden_properties)).length}>
         <div class="page-properties" onClick={editPageHeader}>
-          {/* `alias` is surfaced by AliasGroupHeader — see PAGE_PROPS_HIDDEN. */}
-          <For each={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
+          {/* `alias` is surfaced by AliasGroupHeader. */}
+          <For each={headerProperties().filter(([k]) => !isRenderHiddenPageProp(k, graphMeta()?.block_hidden_properties))}>
             {([key, value]) => (
               <div class="prop-row">
                 <span class="prop-key">{key}</span>

@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-prop-hiding.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"On routed Markdown and Org pages, the block editor hides heading, SRS and configured secret properties, keeps an ordinary owner key visible, and saves a visible text edit with every hidden line unchanged on disk.","blocking":true,"authority":"D-20261023-VT3; internal card PVTI_lAHOAAbLVc4BhPsyzhDCwFo"}],
+      "acceptableVariations": ["Property placement and save/render latency."],
+      "nonRequirements": ["Exact pixels or DOM nesting; native platforms other than Linux; boundary cases covered by Rust and component tests; burn-in belongs to the manager."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-tab-restore.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"With Index and Tasks pinned and Index configured as home, middle-click, Ctrl/Cmd-click, context-menu and sidebar new tabs retain their last routes, order, pins and active tab across a clean close and relaunch; external page edits between runs remain visible.","blocking":true,"authority":"Internal card PVTI_lAHOAAbLVc4BhPsyzhDC3x4"}],
       "acceptableVariations": ["Session flush, page-load and rendering latency."],
@@ -352,9 +358,9 @@
       "stability":"burn-in"
     },
     "scripts/e2e-gh741-doing-clockin.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Typing DOING with real key events keeps the rest of the typed text on the task line and clocks in once, and a page whose block holds a CLOCK line outside a complete :LOGBOOK: drawer (text or a backtick after :END:) still renders its blocks instead of 'This page could not be displayed' (GH 741).","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Typing DOING clocks in once with LOGBOOK hidden from the editor; editing the task and pressing Enter at its visible end retains its exact clock history on the original block. Handwritten drawers remain visible during composition and save literally in Markdown and Org. A page whose block holds a CLOCK line outside a complete drawer still renders its blocks (GH 741).","blocking":true}],
       "acceptableVariations":["Focus, styling and save latency may vary while the typed text, the single clock-in and the rendered page are right."],
-      "nonRequirements":["Hiding the logbook from the edit buffer (OG does; Tine still shows it)","platforms other than Linux WebKitGTK"],
+      "nonRequirements":["platforms other than Linux WebKitGTK"],
       "stability":"burn-in"
     },
     "scripts/e2e-template-collapse.mjs": {

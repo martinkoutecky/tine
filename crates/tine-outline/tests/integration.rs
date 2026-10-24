@@ -2,3 +2,4 @@
 
 #[path = "ops_fixtures.rs"]
 mod ops_fixtures;
+mod property_hiding;

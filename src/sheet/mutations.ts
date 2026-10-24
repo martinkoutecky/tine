@@ -2,7 +2,7 @@ import { msg, t } from "../i18n";
 import { blockIsGridView, blockPageReadOnly, blockProperty, blockSubtreeMarkdown, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineChildren, outlineFits, replaceChildOrders, setRaw, pageByName, setBlockProperty, undo, withUndoUnit, node as docNode } from "../document";
 import { clipboardWriteRevision, copyRich } from "../clipboard";
 import { captureBinding, bindingCurrent } from "../binding";
-import { SHEET_CELL_HIDE, hideKeys, joinProps, splitProps } from "../editor/properties";
+import { SHEET_CELL_HIDE, FORM_MANAGED, hideKeys, joinProps, splitProps, splitLogbook } from "../editor/properties";
 import { parseOutline, type OutlineNode } from "../editor/outline";
 import { visibleBody } from "../render/block";
 import { pushToast } from "../toasts";
@@ -118,13 +118,16 @@ function cellText(blockId: string | null): string {
 function writeCellVisible(id: string, visible: string): void {
   const fmt = formatForBlock(id);
   const hidden = splitProps(docNode(id)?.raw ?? "", SHEET_CELL_HIDE, fmt).hidden;
-  const body = splitProps(visible, SHEET_CELL_HIDE, fmt).visible;
+  const incoming = splitProps(visible, FORM_MANAGED, fmt);
+  const body = joinProps(incoming.visible, splitLogbook(incoming.hidden, "md").drawers, fmt);
   setRaw(id, hidden ? joinProps(body, hidden, fmt) : body, { timetracking: false });
 }
 
 function rawForCellTransfer(id: string): string {
   const raw = docNode(id)?.raw ?? "";
-  return splitProps(raw, SHEET_CELL_HIDE, formatForBlock(id)).visible;
+  // Transport keeps authored metadata even when the textarea hides it.
+  const parts = splitProps(raw, FORM_MANAGED, formatForBlock(id));
+  return joinProps(parts.visible, splitLogbook(parts.hidden, "md").drawers, formatForBlock(id));
 }
 
 function escapeHtml(s: string): string {

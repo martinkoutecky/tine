@@ -375,7 +375,7 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
       <div class={`${section}-references`}>
         <div class="references-header" onClick={() => setCollapsedOverride(!collapsed())}>
           <ReferenceDisclosure collapsed={collapsed()} />
-          {heading()} <span class="references-count">{count()}</span>
+          {heading()} <span class="references-count" title={t("references-count-title", { blocks: count(), pages: shown().filter((g) => g.blocks.length > 0).length })}>{count()}</span>
           <Show when={props.unlinked && groupsResource.loading && groups() === undefined}><span class="references-loading"> {t("references-loading")}</span></Show>
           <button type="button" class="reference-export-toggle"
             aria-label={t(props.unlinked ? "references-copy-unlinked" : "references-copy-linked")} title={t(props.unlinked ? "references-copy-unlinked-title" : "references-copy-linked-title")}

@@ -643,6 +643,7 @@ export interface MessageArgs {
   "editor-block-create": { "name": string | number };
   "editor-block-create-tag": { "name": string | number };
   "editor-block-desktop-recording-save-error": { "error": string | number };
+  "editor-block-edit-refused": { "detail": string | number };
   "editor-block-inserted-file": { "count": number };
   "editor-block-more-formatting": {};
   "editor-block-open-block-references-shift-click-sidebar": {};
@@ -2097,6 +2098,7 @@ export interface MessageArgs {
   "references-copy-linked-title": {};
   "references-copy-unlinked": {};
   "references-copy-unlinked-title": {};
+  "references-count-title": { "blocks": number; "pages": number };
   "references-expand-all": {};
   "references-expand-group": { "page": string | number };
   "references-facet-cycle": {};

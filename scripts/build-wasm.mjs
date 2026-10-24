@@ -141,8 +141,7 @@ if (!exported.includes("last_panic")) {
 for (const name of exported) glue = glue.replace(new RegExp(`^export function ${name}\\(`, "m"), `function __tine_raw_${name}(`);
 glue +=
   `
-// Tine trap isolation: see scripts/build-wasm.mjs. One guarded export per wasm-bindgen export.
-function __tineGuard(name, raw) {
+function __tineGuard(name, raw) { // Tine trap isolation: one guarded export per wasm-bindgen export.
   return function (...args) {
     try {
       return raw.apply(this, args);

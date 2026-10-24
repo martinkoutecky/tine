@@ -18,6 +18,7 @@ pub mod page_filename;
 pub mod page_format;
 pub mod property_line;
 pub mod property_refs;
+pub mod property_visibility;
 pub mod removal_refs;
 mod swallowed_rows;
 

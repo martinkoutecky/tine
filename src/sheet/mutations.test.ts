@@ -272,6 +272,19 @@ describe("sheet structural mutations", () => {
     expect(pageToDto("Sheet")).toEqual(before);
   });
 
+  it("fills and clears cells without dropping newly hidden metadata", () => {
+    const gridId = loadGrid();
+    const source = cellId(gridId, 0, 1)!;
+    setDoc("byId", source, "raw", "B\nheading:: true  \ncard-last-score:: 5");
+    fillSheetSelection({ kind: "range", gridId, anchor: { row: 0, col: 1 }, focus: { row: 1, col: 1 } }, "down");
+    const target = cellId(gridId, 1, 1)!;
+    expect(doc.byId[target].raw).toContain("heading:: true  ");
+    expect(doc.byId[target].raw).toContain("card-last-score:: 5");
+    clearSheetSelection({ kind: "cell", gridId, row: 1, col: 1 });
+    expect(doc.byId[target].raw).toContain("heading:: true  ");
+    expect(doc.byId[target].raw).toContain("card-last-score:: 5");
+  });
+
   it("pastes TSV from the anchor, grows rows/trailing cells, round-trips, and undoes fully", () => {
     const gridId = loadGrid();
     const before = pageToDto("Sheet");
@@ -783,6 +796,24 @@ describe("fill preserves target hidden properties", () => {
 });
 
 describe("sheet hidden metadata transfer class", () => {
+  it.each(["md", "org"] as const)("review fill and structural paste carry source history (%s)", async format => {
+    const drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]  \nopaque row\n:END:";
+    const grid = blk(format === "md" ? "Grid\ntine.view:: grid" : "Grid\n:PROPERTIES:\n:tine.view: grid\n:END:",
+      [blk("", [blk(`A\n${drawer}`), blk("B")]), blk("", [blk("target"), blk("other")])]);
+    grid.properties = [["tine.view", "grid"]];
+    loadSingle({ name: "Sheet", kind: "page", title: "Sheet", pre_block: null, blocks: [grid], format });
+    const target = cellId(grid.id, 1, 0)!;
+    expect(fillSheetSelection({ kind: "range", gridId: grid.id, anchor: { row: 0, col: 0 }, focus: { row: 1, col: 0 } }, "down")).toBe(true);
+    expect(doc.byId[target].raw).toContain(drawer);
+    // Plain replacement retains the destination history.
+    pasteTextIntoSheetSelection({ kind: "cell", gridId: grid.id, row: 1, col: 0 }, "changed");
+    expect(doc.byId[target].raw).toContain(drawer);
+    const copied = { kind: "range", gridId: grid.id, anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } } as const;
+    const { text } = sheetSelectionText(copied);
+    await copySheetSelection(copied);
+    expect(splatStructuralSheetSelection({ kind: "cell", gridId: grid.id, row: 1, col: 0 }, text)).toBeTruthy();
+    expect(doc.byId[target].raw).toContain(drawer);
+  });
   it.each(["md", "org"] as const)("fill-down copies user properties but keeps target configuration (%s)", (format) => {
     const source = format === "md"
       ? "A\ncollapsed:: true\ntine.view:: grid\nuser:: kept"
