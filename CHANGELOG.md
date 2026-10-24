@@ -59,6 +59,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Owner-lock regression checks now require immediate release even while a duplicate descriptor remains open, catching the Unix child-inheritance race without a retry that could hide it (internal REG-OWNER-LOCK-INHERITED-DESCRIPTOR).
 - Board cards drag between columns even when an editor outside the board has focus, without selecting text during the drag (GH #756).
 - Hover previews stay clear of the page link or block reference that opened them, scrolling within the available space above or below it (GH #750).
 - The title and Open source actions stay visible while scrolling a hover preview (GH #752).
