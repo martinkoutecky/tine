@@ -889,6 +889,105 @@ fn block_handle(page: &Value, index: usize) -> String {
 }
 
 #[test]
+fn block_edit_identity_ignores_a_nonprimary_id_lookalike() {
+    let graph = Graph::new();
+    let file = graph.root.join("pages/lookalike.org");
+    let raw = format!("one\nbody\n:PROPERTIES:\n:id: {UUID}\n:END:");
+    let regions = tine_core::block_regions::parse(&raw, true);
+    assert!(regions.property("id").is_some());
+    assert!(regions.id.is_none());
+    std::fs::write(&file, format!("* {raw}\n")).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "lookalike"})).unwrap();
+    let supplied = "650e8400-e29b-41d4-a716-446655440000";
+    let text = format!(
+        "edited\n:PROPERTIES:\n:id: {supplied}\n:END:\nbody\n:PROPERTIES:\n:id: {UUID}\n:END:"
+    );
+    verb(
+        &slot,
+        "block.edit",
+        json!({"handle": format!("lookalike/{}", block_handle(&read, 0)), "text": text}),
+    )
+    .unwrap();
+    let doc = graph
+        .store
+        .page(&PageId::from("pages/lookalike.org"))
+        .unwrap()
+        .doc;
+    let regions = tine_core::block_regions::parse(&doc.blocks[0].raw, true);
+    assert_eq!(regions.id.unwrap().value, supplied);
+    assert!(doc.blocks[0]
+        .raw
+        .contains(&format!("body\n:PROPERTIES:\n:id: {UUID}\n:END:")));
+}
+
+#[test]
+fn block_edit_identity_accepts_case_equivalent_uuid_values() {
+    const ID: &str = "650e8400-e29b-41d4-a716-446655440000";
+    for org in [false, true] {
+        for uppercase_current in [false, true] {
+            let graph = Graph::new();
+            let file = graph.root.join(if org {
+                "pages/identity.org"
+            } else {
+                "pages/identity.md"
+            });
+            let (current, supplied) = if uppercase_current {
+                (ID.to_ascii_uppercase(), ID.to_string())
+            } else {
+                (ID.to_string(), ID.to_ascii_uppercase())
+            };
+            let initial = if org {
+                format!("* one\n:PROPERTIES:\n:id: {current}\n:END:\n")
+            } else {
+                format!("- one\n  id:: {current}\n")
+            };
+            std::fs::write(&file, initial).unwrap();
+            graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+            let slot = graph.slot();
+            let read = verb(&slot, "page.show", json!({"name": "identity"})).unwrap();
+            let text = if org {
+                format!("edited\n:PROPERTIES:\n:ID: {supplied}  \n:END:")
+            } else {
+                format!("edited\nID:: {supplied}  ")
+            };
+            verb(
+                &slot,
+                "block.edit",
+                json!({"handle": format!("identity/{}", block_handle(&read, 0)), "text": text}),
+            )
+            .unwrap();
+            let doc = graph
+                .store
+                .page(&PageId::from(if org {
+                    "pages/identity.org"
+                } else {
+                    "pages/identity.md"
+                }))
+                .unwrap()
+                .doc;
+            assert_eq!(
+                tine_core::block_regions::parse(&doc.blocks[0].raw, org)
+                    .id
+                    .unwrap()
+                    .value
+                    .trim(),
+                supplied
+            );
+            // The old spelling still resolves to this block by the existing UUID rule.
+            verb(
+                &slot,
+                "block.edit",
+                json!({"handle": current, "text": "resolved"}),
+            )
+            .unwrap();
+            assert!(std::fs::read_to_string(&file).unwrap().contains("resolved"));
+        }
+    }
+}
+
+#[test]
 fn block_edit_refuses_a_different_identity_without_writing() {
     const OTHER: &str = "650e8400-e29b-41d4-a716-446655440000";
     for org in [false, true] {

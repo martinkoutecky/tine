@@ -9,8 +9,55 @@ import { existingBlockId } from "../document/edits/identity";
 import { setRaw, undo, withUndoUnit } from "../document";
 import { pageToDto } from "../document/convert";
 import { blockRegions } from "../render/parse";
+import { setGraphMeta } from "../graphSession";
 
-afterEach(() => { endEdit("page-navigation"); resetStore(); document.body.innerHTML = ""; });
+afterEach(() => { endEdit("page-navigation"); resetStore(); setGraphMeta(null); document.body.innerHTML = ""; });
+
+it.each([
+  ["id:: X", ""],
+  ["id:: X", "status:: active\n"],
+  ["collapsed:: true", "status:: active\n"],
+  ["secret:: opaque", "status:: active\n"],
+])("per-keystroke property append preserves the buffer and caret (%s, %s)", (hidden, userProperty) => {
+  setGraphMeta({ block_hidden_properties: ["secret"] } as Parameters<typeof setGraphMeta>[0]);
+  const raw = `Title\n${hidden}\n${userProperty}body`;
+  loadSingle({ name: "Typing", title: "Typing", kind: "page", format: "md", pre_block: null,
+    blocks: [{ id: "target", raw, collapsed: false, children: [] }] });
+  startEditing("target", 0);
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <Block id="target" />, root);
+  try {
+    const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+    let expected = `Title\n${userProperty}body`;
+    expect(ta.value).toBe(expected);
+    ta.setSelectionRange(expected.length, expected.length);
+    for (const char of "\nowner:: Ada") {
+      const caret = ta.selectionStart;
+      ta.value = ta.value.slice(0, caret) + char + ta.value.slice(ta.selectionEnd);
+      ta.setSelectionRange(caret + 1, caret + 1);
+      expected += char;
+      ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: char }));
+      expect(ta.value).toBe(expected);
+      expect([ta.selectionStart, ta.selectionEnd]).toEqual([expected.length, expected.length]);
+    }
+    const saved = userProperty ? `Title\n${userProperty}owner:: Ada\n${hidden}\nbody`
+      : `Title\nbody\nowner:: Ada\n${hidden}`;
+    expect(doc.byId.target.raw).toBe(saved);
+    expect(blockRegions(saved).property_regions).toHaveLength(1);
+    // A user can place the caret back in the body while the saved layout differs.
+    const caret = expected.indexOf("body") + 2;
+    ta.value = expected.slice(0, caret) + "!" + expected.slice(caret);
+    ta.setSelectionRange(caret + 1, caret + 1);
+    ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "!" }));
+    expect(ta.value).toBe(expected.replace("body", "bo!dy"));
+    expect([ta.selectionStart, ta.selectionEnd]).toEqual([caret + 1, caret + 1]);
+    expect(doc.byId.target.raw).toBe(saved.replace("body", "bo!dy"));
+    endEdit("page-navigation");
+    startEditing("target", 0);
+    expect((root.querySelector("textarea.block-editor") as HTMLTextAreaElement).value)
+      .toBe(userProperty ? `Title\n${userProperty}owner:: Ada\nbo!dy` : "Title\nbo!dy\nowner:: Ada");
+  } finally { dispose(); }
+});
 
 it.each([
   ["Title\nid:: X\nbody", "Title\nbody\nowner:: Ada"],

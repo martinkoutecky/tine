@@ -21,6 +21,7 @@ const fixtures = [
   { name: "Hidden Org", file: "Hidden Org.org", text: "* Original body\n:PROPERTIES:\n:heading: true  \n:card-last-score: 5\n:secret: opaque  \n:owner: Ada\n:END:\n", hidden: [":heading: true  ", ":card-last-score: 5", ":secret: opaque  "], visible: "Original body\n:PROPERTIES:\n:owner: Ada\n:END:" },
   { name: "Hidden First Root", file: "Hidden First Root.md", text: "- Original body\n  card-repeats:: 2\n  secret:: opaque  \n", hidden: ["  card-repeats:: 2", "  secret:: opaque  "], visible: "Original body", clear: true },
   { name: "Hidden Append Property", file: "Hidden Append Property.md", text: "- Original body\n  id:: 6512bd43-d9ca-4c95-b0b4-1c2d3e4f5a6b\n  body\n", hidden: ["  id:: 6512bd43-d9ca-4c95-b0b4-1c2d3e4f5a6b"], visible: "Original body\nbody", append: true },
+  { name: "Hidden Append Visible Group", file: "Hidden Append Visible Group.md", text: "- Original body\n  id:: 650e8400-e29b-41d4-a716-446655440000\n  status:: active\n  body\n", hidden: ["  id:: 650e8400-e29b-41d4-a716-446655440000"], visible: "Original body\nstatus:: active\nbody", append: true },
 ];
 if (process.env.E2E_CRLF === "1") for (const fixture of fixtures) {
   fixture.text = fixture.text.replaceAll("\n", "\r\n");
@@ -64,7 +65,7 @@ try {
     console.log(`PASS ${f.name}: editor projection and byte-exact hidden lines on disk`);
     if (!f.clear && !saved.includes(f.text.replace("Original body", "Revised Original body"))) throw new Error("text edit moved property rows");
     if (f.append) {
-      stage = "append property after body with hidden id";
+      stage = `append property after body: ${f.name}`;
       await browser.$("//div[contains(@class, 'block-content') and contains(., 'Revised Original body')]").click();
       await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
       await browser.keys(["Control", "End"]);
@@ -72,13 +73,26 @@ try {
       await browser.keys(["Shift", "Enter"]);
       await browser.keys(["Shift"]);
       for (const char of "owner:: Ada") await browser.keys(char);
+      const live = await browser.execute(() => {
+        const ta = document.querySelector("textarea.block-editor");
+        return { text: ta.value, start: ta.selectionStart, end: ta.selectionEnd };
+      });
+      const expected = `Revised ${f.visible}\nowner:: Ada`;
+      if (live.text !== expected || live.start !== expected.length || live.end !== expected.length) {
+        throw new Error(`property typing changed the live buffer or caret: ${JSON.stringify(live)}`);
+      }
       await browser.keys(["Escape"]);
       const appended = await waitForFileText(file, text => text.includes("owner:: Ada"));
       // Adjacent rows form the one group OG reads; checking exact placement
       // elsewhere would forbid valid joins that preserve the same properties.
       const normalized = appended.replaceAll("\r\n", "\n");
       const id = f.hidden[0].trim();
-      if (!normalized.includes(`  owner:: Ada\n  ${id}`) && !normalized.includes(`  ${id}\n  owner:: Ada`)) throw new Error("appended property and retained id are not in one group");
+      const rows = normalized.split("\n");
+      const required = [`  ${id}`, "  owner:: Ada", ...(f.visible.includes("status:: active") ? ["  status:: active"] : [])];
+      const positions = required.map(row => rows.indexOf(row));
+      if (positions.some(pos => pos < 0) || Math.max(...positions) - Math.min(...positions) !== required.length - 1) {
+        throw new Error("appended property, retained id and existing visible properties are not in one group");
+      }
       console.log("PASS append property: OG reads both owner and retained id after guarded save");
     }
     if (f.clear) {
@@ -95,12 +109,12 @@ try {
       console.log("PASS first-root clearing: hidden metadata remains on an outline block on disk");
     }
   }
-  fs.writeFileSync(path.join(run, "proof.json"), JSON.stringify({ base: "b90474792 plus round-2 working diff", outcome: "PASS", journeys: fixtures.map(f => f.name) }, null, 2));
+  fs.writeFileSync(path.join(run, "proof.json"), JSON.stringify({ base: "d1cf47e61 plus round-3 working diff", outcome: "PASS", journeys: fixtures.map(f => f.name) }, null, 2));
   console.log(`PASS hidden metadata survives Markdown and Org editing: ${run}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, "failure.png")); } catch {}
   try { fs.writeFileSync(path.join(run, "failure-dom.html"), await browser.getPageSource()); } catch {}
-  fs.writeFileSync(path.join(run, "failure.txt"), `Tested: b90474792 plus round-2 working diff\nJourney: editor hidden properties, ${stage}\nExpected: metadata absent from textarea, user key visible, metadata lines byte-identical and in order after save; cleared first root remains a block; appended property shares OG's group with retained id.\nObserved: ${error.stack}\nClassification: ambiguous; inspect screenshot/driver.log.\n`);
+  fs.writeFileSync(path.join(run, "failure.txt"), `Tested: d1cf47e61 plus round-3 working diff\nJourney: editor hidden properties, ${stage}\nExpected: metadata absent from textarea, user key visible, metadata lines byte-identical and in order after save; cleared first root remains a block; per-key appended property preserves live text/caret and shares OG's saved group with retained id and existing visible properties.\nObserved: ${error.stack}\nClassification: ambiguous; inspect screenshot/driver.log.\n`);
   throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}

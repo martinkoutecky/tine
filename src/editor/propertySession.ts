@@ -43,10 +43,15 @@ export function propertyEditorSession() {
       // of the rejoined Org buffer on every keystroke.
       const properties = own.length ? [...own.map((p): [string, string] => [p.key, p.value]), ...previousHidden()] : [];
       const typedHidden = own.some((p) => hides(hide, p.key, properties));
-      if (typedHidden || typedDrawer) {
+      const regrouped = format === "md" && hidden !== "" && own.length > 0
+        && splitProps(raw, hide, format).visible !== visible;
+      if (typedHidden || typedDrawer || regrouped) {
         // A property typed by hand must finish in this active buffer. Stripping
         // `quote:: ` as soon as the parser accepts it would put the remaining
         // keystrokes in the body. Reentry uses the ordinary split and hides it.
+        // Saving may also gather later Markdown properties into the first group
+        // OG reads. Keep that saved layout out of the live text and caret, as OG
+        // does in handler/editor.cljs::wrap-parse-block / editor-on-change!.
         const retained = previousHidden();
         const facts = facetsOf(visible, format);
         const ownCount = blockRegions(visible, format).properties.filter((p) => p.primary).length;

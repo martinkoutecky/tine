@@ -769,13 +769,13 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
             // another block must not silently replace this block's identity.
             // Use accepted properties so fenced examples remain plain text.
             let current = tine_core::block_regions::parse(&old, org);
-            if let Some(id) = current.property("id") {
+            if let Some(id) = current.id {
                 let submitted = tine_core::block_regions::parse(&new_text, org);
-                if let Some(other) = submitted
-                    .properties
-                    .iter()
-                    .find(|p| p.primary && p.key.eq_ignore_ascii_case("id") && p.value != id.value)
-                {
+                if let Some(other) = submitted.properties.iter().find(|p| {
+                    p.primary
+                        && p.key.eq_ignore_ascii_case("id")
+                        && !p.value.trim().eq_ignore_ascii_case(id.value.trim())
+                }) {
                     return Err(refused(
                         "identity-change",
                         Some(page),

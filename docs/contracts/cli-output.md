@@ -241,9 +241,12 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
   (including SRS keys) and graph-configured hidden property lines are kept byte-exact; children are kept too.
   Raw text returned by reads may be submitted directly: an explicitly supplied primary property replaces
   the retained row with the same normalized key, so a read-then-edit never adds a second copy. This also
-  permits an explicit new value, except that a supplied `id` differing from an existing block `id`
-  is refused (`reason: identity-change`) with both ids in the error. Same-id and omitted-id edits keep
-  the identity; a block without an id may receive one. A property-looking line inside a fence does not replace metadata.
+  permits an explicit new value, except that a supplied primary `id` differing from an existing accepted
+  block `id` is refused (`reason: identity-change`) with both ids in the error. The in-scope threat is
+  malformed agent input, such as submitting another block's raw text or mistyping its UUID.
+  IDs compare after trimming, ignoring ASCII letter case, as block-handle resolution does. Same-id and
+  omitted-id edits keep the identity; a block without an accepted id may receive one, even when its body
+  contains a non-primary lookalike. A property-looking line inside a fence does not replace metadata.
   On a block whose own primary properties
   include `quote`, the four comment lines (`quote::`, `quote-prefix::`, `quote-suffix::`, `author::`) are also
   kept. On an ordinary block, `author::` and quote-context lines belong to the replaced editor text, as on OG.
