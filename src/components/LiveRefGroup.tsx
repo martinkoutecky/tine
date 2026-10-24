@@ -11,7 +11,7 @@ import { observeNear, unobserveNear } from "../lazyObserve";
 import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { OccurrenceControls, ReferenceExcerptBlocks, occurrenceSelection } from "./ReferenceEvidence";
-import { startEditing } from "../editorController";
+import { editingId, startEditing } from "../editorController";
 import { visibleBody } from "../render/block";
 import { InlineText } from "../render/inline";
 import { LinkDepthContext } from "./linkDepth";
@@ -177,15 +177,25 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
     return `c:${(dtoById(id)?.breadcrumb ?? []).join("\u0001")}`;
   };
   // GH #486: the page-property row (a synthetic backend id) becomes the source
-  // page's own header block while that header is materialized for editing, so
+  // page's own header block only while that header is being edited, so
   // the edit happens in place, live, exactly as on the source page.
   const headerBlockId = (): string | null => {
     if (!ready()) return null;
     const page = pageByName(props.page);
     const first = page && page.kind === props.kind ? docNode(page.roots[0] ?? "") : undefined;
-    return first?.originatedFromPageHeader ? first.id : null;
+    return first?.originatedFromPageHeader && editingId() === first.id ? first.id : null;
   };
   const liveIdOf = (b: BlockDto): string => (b.page_property && headerBlockId()) || b.id;
+  // GH #753: the materialized header survives editing. Return to the DTO
+  // renderer on exit, using current header text until the backlink refresh
+  // arrives (including an emptied header, whose transient node is removed).
+  const readOnlyRow = (b: BlockDto): BlockDto => {
+    if (!b.page_property || !ready()) return b;
+    const page = pageByName(props.page);
+    if (!page || page.kind !== props.kind || (props.path && page.id !== props.path)) return b;
+    const first = docNode(page.roots[0] ?? "");
+    return { ...b, raw: first?.originatedFromPageHeader ? first.raw : page.preBlock ?? "" };
+  };
   // OG edits the referencing page's properties block in place (og-1.0.0
   // block.cljs block-content/properties-cp on a pre-block). Tine's edit path for
   // it is the source page's header editor (Page.tsx editPageHeader); an org page
@@ -509,9 +519,9 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
                         : props.surface === "preview"
                           // Until the source page is loaded the preview shows its
                           // capped copy; edits only ever reach the live block.
-                          ? <RefBlocks blocks={[d()]} page={props.page} pageKind={props.kind} path={props.path}
+                          ? <RefBlocks blocks={[readOnlyRow(d())]} page={props.page} pageKind={props.kind} path={props.path}
                               readOnly pageBody onOpenBlock={props.onOpenBlock} />
-                          : <RefBlocks blocks={[d()]} page={props.page} pageKind={props.kind} path={props.path}
+                          : <RefBlocks blocks={[readOnlyRow(d())]} page={props.page} pageKind={props.kind} path={props.path}
                               queryResult={props.surface === "query"}
                               onEditPageProperties={(event) => { void editPageProperties(event); }} />}
                     </Show>

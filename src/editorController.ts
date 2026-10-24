@@ -56,6 +56,18 @@ const [caretTarget, setCaretTarget] = createSignal<{ id: string; offset: CaretPo
 const [activeSurface, setActiveSurface] = createSignal<string | null>(null);
 const pendingFocusSurface = new Map<string, string>();
 
+// Native property inputs hold a draft outside the document. Editor handoffs
+// must commit it before replacing/focusing another editor, even without blur.
+const editEntryGuards = new Set<() => boolean>();
+export function registerEditEntryGuard(guard: () => boolean): () => void {
+  editEntryGuards.add(guard);
+  return () => editEntryGuards.delete(guard);
+}
+export function prepareEditEntry(): boolean {
+  for (const guard of editEntryGuards) if (!guard()) return false;
+  return true;
+}
+
 export interface HistoryEditorContext {
   blockId: string;
   selectionStart: number;
@@ -211,6 +223,7 @@ export function startEditing(
   surface: string | null = null,
   preserveHistoryRestore = false,
 ) {
+  if (!prepareEditEntry()) return;
   revealOutlineBlock(id);
   if (!preserveHistoryRestore) setPendingHistoryEditorRestore(null);
   notifyEditingStarted(id, owner);

@@ -54,7 +54,9 @@ it("quote collapse preserves CRLF content bytes", () => {
 it("collapse leaves an existing unrelated metadata line in its original slot", () => {
   const raw = "> quote\n\nid:: 11111111-1111-4111-8111-111111111111";
   const collapsed = rawWithCollapsed(raw, true, "md");
-  expect(collapsed).toBe(`collapsed:: true\n${raw}`);
+  // The new row joins the block's existing group (one group, as OG's insert-property
+  // writes it); above the quote it started a second group (REG-HIDDEN-PROPS-STAY-IN-THE-GROUP).
+  expect(collapsed).toBe(`${raw}\ncollapsed:: true`);
   expect(rawWithCollapsed(collapsed, true, "md")).toBe(collapsed);
   expect(rawWithCollapsed(collapsed, false, "md")).toBe(raw);
 });
