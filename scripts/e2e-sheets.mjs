@@ -78,6 +78,9 @@ fs.mkdirSync(`${G}/journals`, { recursive: true });
 fs.mkdirSync(`${G}/logseq`, { recursive: true });
 fs.writeFileSync(`${G}/logseq/config.edn`, '{:preferred-workflow :todo}\n');
 fs.writeFileSync(JFILE, GRID_MD);
+// The one-time Guide announcement toast sits bottom-right and can cover the query panel's Done button.
+fs.mkdirSync(`${G}/logseq`, { recursive: true });
+fs.writeFileSync(`${G}/logseq/config.edn`, "{:tine/guide-announced? true}\n");
 
 for (const d of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${d}`, { recursive: true });
 const env = {
