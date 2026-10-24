@@ -4,6 +4,7 @@ import { For, Show, type Accessor, type JSX, type Setter } from "solid-js";
 import { isMac } from "../nativeChrome";
 import { openPage } from "../router";
 import { hlsPageName } from "../pdf";
+import { pdfTakesOverPane } from "../viewportClass";
 import type { PdfOutlineItem } from "./pdfOutline";
 import { PdfOutlineTree } from "./PdfOutlineTree";
 import { COLORS, COLOR_RGBA, PDF_THEMES, type PdfTheme } from "./pdfViewerPalette";
@@ -13,7 +14,8 @@ import { COLORS, COLOR_RGBA, PDF_THEMES, type PdfTheme } from "./pdfViewerPalett
  * user events. Cost O(visible controls), with no graph I/O in this module. */
 export interface PdfViewerViewModel {
   props: { filename: string; label: string; navigation?: () => { highlightId?: string } | null;
-    onOpenNotes?: (block?: string) => void };
+    onOpenNotes?: (block?: string) => void;
+    onAnotherView?: (state: { page: number; scale: number }) => void };
   theme: Accessor<PdfTheme>;
   ready: Accessor<boolean>;
   unsavedHighlights: Accessor<boolean>;
@@ -248,6 +250,12 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
               {t("pdf-area-highlight")}</button>
             <button type="button" onClick={() => { if (props.onOpenNotes) props.onOpenNotes(); else openPage(hlsPageName(props.filename), "page"); setSettingsOpen(false); }}>{t("pdf-notes")}</button>
             <button type="button" onClick={() => { setSettingsOpen(false); setOutlineOpen(true); }}>{t("pdf-outline")}</button>
+            <Show when={props.onAnotherView && !pdfTakesOverPane()}>
+              <button type="button" class="pdf-another-view" onClick={() => {
+                setSettingsOpen(false);
+                props.onAnotherView?.({ page: curPage(), scale: scale() });
+              }}>{t("pdf-open-another-view")}</button>
+            </Show>
           </div>
           <div class="pdf-settings-heading">{t("pdf-theme")}</div>
           <div class="pdf-theme-choices" role="group" aria-label={t("pdf-theme-options")}>

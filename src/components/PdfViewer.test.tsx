@@ -24,6 +24,7 @@ import {
   retirePdfOwnership,
   type PdfOwnership,
 } from "../pdfOwnership";
+import { pdfHighlightSessionCount } from "./pdfHighlightState";
 import {
   clearTransientLayersForTest,
   dismissTopTransient,
@@ -1110,6 +1111,59 @@ describe("PdfViewer OG state and reference behavior", () => {
     } finally {
       dispose();
     }
+  });
+
+  it("shares one highlight state between two views of the same PDF", async () => {
+    const id = "22222222-2222-4222-8222-222222222222";
+    const rect = { top: 40, left: 20, width: 80, height: 12 };
+    const loaded = { id, page: 1, position: { page: 1, bounding: rect, rects: [rect] }, color: "yellow", text: "text", image: null };
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [loaded], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const write = vi.spyOn(backend(), "writeHighlights").mockImplementation(async (_pdf, _label, items) => items);
+    getDocumentMock.mockImplementation(() => ({ promise: Promise.resolve(documentWithPages([page(612, 792)])) }));
+    const hostA = document.createElement("div"), hostB = document.createElement("div");
+    document.body.append(hostA, hostB);
+    const [showB, setShowB] = createSignal(true);
+    const disposeA = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, hostA);
+    const disposeB = render(() => <Show when={showB()}><PdfViewer filename="paper.pdf" label="Paper" /></Show>, hostB);
+    const overlay = (host: HTMLElement) => host.querySelector<HTMLElement>(`[data-highlight-id="${id}"]`);
+    const recolor = async (host: HTMLElement, swatch: number) => {
+      overlay(host)!.click();
+      await flush();
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[swatch].dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, cancelable: true })
+      );
+      await flush();
+    };
+    try {
+      await flush();
+      for (const observer of TestIntersectionObserver.instances) {
+        for (const element of observer.elements) if (element.classList.contains("pdf-page")) observer.show(element);
+      }
+      await flush();
+      const yellow = overlay(hostB)!.style.background;
+      await recolor(hostA, 1); // green, made in view A
+      await flush();
+      expect(overlay(hostA)!.style.background).not.toBe(yellow);
+      expect(overlay(hostB)!.style.background).toBe(overlay(hostA)!.style.background);
+      await recolor(hostB, 2); // blue, made in view B on top of A's committed green
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(write.mock.calls[1][3][0].color).toBe("green");
+      expect(write.mock.calls[1][2][0].color).toBe("blue");
+      expect(overlay(hostA)!.style.background).toBe(overlay(hostB)!.style.background);
+      expect(pdfHighlightSessionCount()).toBe(1);
+      // Closing one view keeps the other's state; draining writes nothing more.
+      setShowB(false);
+      await flush();
+      expect(pdfHighlightSessionCount()).toBe(1);
+      expect(await drainPdfWork()).toBe(true);
+      expect(write).toHaveBeenCalledTimes(2);
+    } finally {
+      disposeA();
+      disposeB();
+    }
+    expect(pdfHighlightSessionCount()).toBe(0);
   });
 
   it("keeps overlapping failed recolors marked unsaved until close can retry", async () => {

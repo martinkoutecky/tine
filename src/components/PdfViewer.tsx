@@ -22,7 +22,7 @@ import { isMac } from "../nativeChrome";
 import { touchCapable } from "../inputCapability";
 import { pdfTakesOverPane } from "../viewportClass";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
-import { createPdfHighlightState } from "./pdfHighlightState";
+import { acquirePdfHighlightState } from "./pdfHighlightState";
 import { createPdfLoadingTask } from "./pdfLoadingTask";
 import { pdfTextSelection, type PdfTextSelection } from "./pdfSelection";
 import { createPdfFind } from "./pdfFind";
@@ -65,6 +65,7 @@ export function PdfViewer(props: {
   onClose?: () => void;
   onOpenNotes?: (block?: string) => void;
   onViewState?: (state: { page: number; scale: number }) => void;
+  onAnotherView?: (state: { page: number; scale: number }) => void;
 }): JSX.Element {
   const owner = props.owner, binding = captureBinding();
   // The Tine window this viewer renders in: its listeners and frames live there.
@@ -280,13 +281,16 @@ export function PdfViewer(props: {
     });
   }
 
-  const highlightState = createPdfHighlightState({
+  // Shared with every other mounted view of this PDF; this view only lends its
+  // page geometry for writes.
+  const highlightLease = acquirePdfHighlightState({
     filename: props.filename,
     label: props.label,
     backendGeneration: binding.backendGeneration,
     owner,
-    prepare: highlightsForWrite,
   });
+  const highlightState = highlightLease.state;
+  const detachHighlightPrepare = highlightState.attachPrepare(highlightsForWrite);
   const highlights = highlightState.highlights;
   const unsavedHighlights = highlightState.unsaved;
   const highlightConflict = highlightState.conflict;
@@ -1093,12 +1097,12 @@ export function PdfViewer(props: {
       const result = await readOwned(loadOwner, backend().openPdf(props.filename, props.label, binding.backendGeneration));
       if (result.kind === "stale") return;
       const state = result.value;
-      highlightState.load(state.highlights);
+      highlightState.loadInitial(state.highlights);
       restoredPage = state.page;
       restoredScale = state.scale;
     } catch (error) {
       if (!loadOwner()) return;
-      highlightState.load([]);
+      highlightState.loadInitial([]);
       pushToast(msg("pdf-couldn-t-load-pdf-annotations", { detail: String(error) }), "error");
     }
     let bytes: Uint8Array;
@@ -1174,6 +1178,8 @@ export function PdfViewer(props: {
   onCleanup(() => {
     unregisterPdfParticipant();
     cancelOwnedWork();
+    detachHighlightPrepare();
+    highlightLease.release();
     setOutlineOpen(false);
     setSettingsOpen(false);
     setOutlineItems([]);
@@ -1383,6 +1389,9 @@ export function PdfViewer(props: {
   const onKeyZoom = (e: KeyboardEvent) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
     if (shortcutKey(e) === "f") {
+      // With a PDF pane focused, only that view searches (two views of one PDF
+      // are common now); otherwise every open reader keeps its old behavior.
+      if (props.focused && !props.focused() && focusedRouter().route().kind === "pdf") return;
       e.preventDefault();
       openFind();
       return;
@@ -1770,7 +1779,7 @@ export function PdfViewer(props: {
   });
 
   unregisterPdfParticipant = registerPdfParticipant(owner, {
-    flush: async () => !highlightState.drainBlocked() && (!unsavedHighlights() || await persist()),
+    flush: highlightState.flush,
     cancel: cancelOwnedWork,
   });
 

@@ -5,7 +5,7 @@ import { errorFamily } from "../errorFamily";
 import { flushPage, isConflicted, isDirty, reloadHlsIfLoaded, trackAssetWrite } from "../document";
 import { bindingOwner, latestOwner, readOwned, serializeOwned, writeOwned, type Owner } from "../owned";
 import { hlsPageName } from "../pdf";
-import { isPdfOwnershipCurrent, trackPdfMutation, type PdfOwnership } from "../pdfOwnership";
+import { isPdfOwnershipCurrent, pdfOwnershipKey, trackPdfMutation, type PdfOwnership } from "../pdfOwnership";
 import { pushToast } from "../toasts";
 import type { Highlight } from "../types";
 
@@ -46,19 +46,38 @@ export function unusedPdfCrops(crops: ReadonlyMap<string, Crop>, committed: High
     !visible.some((h) => h.id === id && h.image === crop.stamp));
 }
 
-/** Own one mounted PDF's highlights, serialized saves, conflict decisions and
- * crop cleanup. Construction performs no I/O. persist returns false on failure,
- * toasts and keeps edits marked. Conflict or failed crop cleanup blocks editing
- * and drain until a decision, discard, or cleanup retry succeeds. Discard clears
- * only local state. Cost is O(highlights + pending crops) plus backend writes. */
-export function createPdfHighlightState(options: {
+type PrepareHighlights = (items: Highlight[]) => Promise<Highlight[]>;
+
+export interface PdfHighlightStateOptions {
   filename: string;
   label: string;
   backendGeneration: number;
   owner: PdfOwnership;
-  prepare: (items: Highlight[]) => Promise<Highlight[]>;
-}) {
-  const { filename, label, backendGeneration, owner, prepare } = options;
+  /** Fallback when no view has attached one (tests, or every view gone). */
+  prepare?: PrepareHighlights;
+}
+
+/** Own one PDF's highlights, serialized saves, conflict decisions and crop
+ * cleanup, for every view of that PDF (see acquirePdfHighlightState).
+ * Construction performs no I/O. persist returns false on failure, toasts and
+ * keeps edits marked. Conflict or failed crop cleanup blocks editing and drain
+ * until a decision, discard, or cleanup retry succeeds. Discard clears only
+ * local state. Cost is O(highlights + pending crops) plus backend writes. */
+export function createPdfHighlightState(options: PdfHighlightStateOptions) {
+  const { filename, label, backendGeneration, owner } = options;
+  // Each mounted view supplies page geometry from its own pdf.js document; any
+  // live one gives the same source-space dimensions. The latest attached wins.
+  const preparers: PrepareHighlights[] = [];
+  const prepare: PrepareHighlights = (items) =>
+    (preparers.at(-1) ?? options.prepare ?? (async (all: Highlight[]) => all))(items);
+  const attachPrepare = (fn: PrepareHighlights) => {
+    preparers.push(fn);
+    return () => {
+      const at = preparers.lastIndexOf(fn);
+      if (at >= 0) preparers.splice(at, 1);
+    };
+  };
+  let loaded = false;
   const [highlights, setHighlights] = createSignal<Highlight[]>([]);
   const [unsaved, setUnsaved] = createSignal(false);
   const [conflict, setConflict] = createSignal(false);
@@ -70,6 +89,7 @@ export function createPdfHighlightState(options: {
   const graphCurrent = bindingOwner(() => isPdfOwnershipCurrent(owner));
 
   const load = (items: Highlight[]) => {
+    loaded = true;
     committed = items;
     setHighlights(items);
     setUnsaved(false);
@@ -250,6 +270,64 @@ export function createPdfHighlightState(options: {
     } finally { setDecisionBusy(false); }
   };
 
-  return { highlights, unsaved, conflict, decisionBusy, cleanupPending, graphCurrent, load, edit, addCrop,
-    editBlocked, drainBlocked, persist, persistInsideMutation, useDiskVersion, keepMine, discardMine, retryCleanup, newIntent };
+  /** The first view's disk read seeds the state; a view joining later keeps
+   * what its siblings already hold (it may be newer, or unsaved). */
+  const loadInitial = (items: Highlight[]): boolean => {
+    if (loaded) return false;
+    load(items);
+    return true;
+  };
+  // Every view registers a drain participant; one flush serves them all, so a
+  // drain neither writes twice nor toasts a blocked decision once per view.
+  let flushing: Promise<boolean> | null = null;
+  const flush = (): Promise<boolean> => {
+    if (flushing) return flushing;
+    const run = (async () => !drainBlocked() && (!unsaved() || await persist()))();
+    flushing = run;
+    // Cleared after assignment: the body can settle without awaiting.
+    void run.finally(() => { if (flushing === run) flushing = null; });
+    return run;
+  };
+
+  return { highlights, unsaved, conflict, decisionBusy, cleanupPending, graphCurrent, load, loadInitial, edit, addCrop,
+    editBlocked, drainBlocked, persist, persistInsideMutation, useDiskVersion, keepMine, discardMine, retryCleanup, newIntent,
+    attachPrepare, flush };
+}
+
+export type PdfHighlightState = ReturnType<typeof createPdfHighlightState>;
+
+const sessions = new Map<string, { state: PdfHighlightState; views: number }>();
+
+/** Share one highlight state among every mounted view of a PDF in this graph
+ * binding (PDF tabs and splits design, 5.1): a highlight made,
+ * recolored or deleted in one view shows in its siblings at once, and their
+ * saves are linearized over one base instead of racing stale snapshots. Views
+ * keep their own page, zoom and scroll. The state lives while a view holds it;
+ * release the lease on unmount. Cost O(1) per acquire/release. */
+export function acquirePdfHighlightState(options: Omit<PdfHighlightStateOptions, "prepare">): {
+  state: PdfHighlightState;
+  release: () => void;
+} {
+  const key = `${pdfOwnershipKey(options.owner)}\0${options.backendGeneration}\0${options.filename}`;
+  let session = sessions.get(key);
+  if (!session) {
+    session = { state: createPdfHighlightState(options), views: 0 };
+    sessions.set(key, session);
+  }
+  const held = session;
+  held.views++;
+  let released = false;
+  return {
+    state: held.state,
+    release: () => {
+      if (released) return;
+      released = true;
+      if (--held.views === 0 && sessions.get(key) === held) sessions.delete(key);
+    },
+  };
+}
+
+/** Live shared states (test and probe use). */
+export function pdfHighlightSessionCount(): number {
+  return sessions.size;
 }

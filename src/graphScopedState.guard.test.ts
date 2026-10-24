@@ -142,6 +142,7 @@ const BOUNDED_COLLECTIONS: Record<string, string> = {
   "src/inputCapability.ts#watched": "one entry per media-query string asked (pointer: coarse, any-pointer: coarse); app-lifetime, no graph state",
   "src/assetCache.ts#cache": "MAX_CACHE_ENTRIES=128 / MAX_CACHE_BYTES=128MiB retained LRU, plus pending mounted reads",
   "src/assetCache.ts#liveEntries": "active asset leases only; last release deletes the evicted entry; clearAssetBlobCache ends graph reuse",
+  "src/components/pdfHighlightState.ts#sessions": "one entry per PDF with a mounted view (keyed by ownership generation, so never reused across graphs); the last view's lease release deletes it",
   "src/render/seededFacets.ts#seeded": "one reference-counted entry per loaded-node raw; resetStore releases owners and clears",
   "src/render/seededFacets.ts#owners": "one observer per loaded node; releases on raw change, replacement, deletion and resetStore",
   "src/changeKeys.ts#invalidators": "one permanent callback per importing cache module, no graph payload",

@@ -67,6 +67,7 @@ pdf-open-highlights-notes-page = 打开高亮与笔记页面
 pdf-notes = 笔记
 
 pdf-outline = 大纲
+pdf-open-another-view = 打开另一个视图
 
 pdf-more-settings = 更多设置
 

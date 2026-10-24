@@ -92,6 +92,7 @@ import {
   layoutRoot,
   visibleLayoutNode,
   paneRouter,
+  openPdf,
   openPdfNotes,
   layoutPaneIds,
   allPaneIds,
@@ -403,7 +404,12 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
               const current = props.router.route();
               if (current.kind === "pdf") openPdfNotes(props.paneId, hlsPageName(current.filename), block);
             }}
-            onViewState={(state) => props.router.updateActivePdfViewState(state)} />
+            onViewState={(state) => props.router.updateActivePdfViewState(state)}
+            onAnotherView={(state) => {
+              const current = props.router.route();
+              if (current.kind === "pdf") openPdf(current.filename, current.label, state.page, undefined,
+                { anotherView: true, sourcePaneId: props.paneId, scale: state.scale });
+            }} />
         </Suspense></FailureBoundary>
       </div>}
     </Show>
