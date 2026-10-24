@@ -360,6 +360,62 @@ impl Graph {
         self.derived.cache.read().unwrap().is_some()
     }
 
+    /// Apply the published day's existing claimant order to its parsed rows.
+    /// Only this day's claimants are visited. A promoted file is read once;
+    /// held files use their owner's published bytes, never a new disk read.
+    pub(crate) fn reconcile_journal_claimants(&self, entries: &[PageEntry]) -> Vec<PathBuf> {
+        let Some(winner) = entries.first() else {
+            return Vec::new();
+        };
+        let mut changed = Vec::new();
+        {
+            let mut cache = self.derived.cache.write().unwrap();
+            if let Some(pages) = cache.as_mut() {
+                for entry in &entries[1..] {
+                    if pages.positions.contains_key(entry.rel_path_str()) {
+                        self.retire_row(Some(Arc::make_mut(pages)), &entry.path, false);
+                        changed.push(entry.path.clone());
+                    }
+                }
+            }
+            if !changed.is_empty() {
+                let paths: Vec<_> = changed.iter().map(PathBuf::as_path).collect();
+                self.move_generation(cache.is_none(), &paths);
+            }
+        }
+        if self.with_cached(&winner.path, |row| row.is_some()) == Some(true) {
+            return changed;
+        }
+        match self.source(&winner.path) {
+            Source::Disk => {
+                if let SyncFileResult::ReadFailed(error) =
+                    self.sync_file_internal(&winner.path, None)
+                {
+                    let id = crate::FileId::from(winner.rel_path_str().to_owned());
+                    let mut errors = self.derived.unreadable_pages.write().unwrap();
+                    if !errors.iter().any(|(known, _)| *known == id) {
+                        Arc::make_mut(&mut errors).push((id, error.to_string()));
+                    }
+                }
+            }
+            Source::Held(bytes) => {
+                if let Some(row) = self
+                    .held_key(&winner.path)
+                    .and_then(|key| self.owned_row(&key, &bytes, None))
+                {
+                    let mut cache = self.derived.cache.write().unwrap();
+                    if let Some(pages) = cache.as_mut() {
+                        self.put_row(Arc::make_mut(pages), row);
+                        self.move_generation(false, &[&winner.path]);
+                    }
+                }
+            }
+            Source::HeldAbsent | Source::HeldUnindexed => {}
+        }
+        changed.push(winner.path.clone());
+        changed
+    }
+
     /// `f` over the cached row for `path` (None when not cached), under the
     /// cache read lock; None when the cache is not built.
     pub(super) fn with_cached<T>(

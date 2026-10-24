@@ -29,16 +29,14 @@
 //! not disk (contract, invariant (G)). Unless a page is in conflict, the
 //! barrier also waits until those bytes, and each clean held page's buffer,
 //! equal the file (the host observes every change). A dirty host's unsaved
-//! buffer is never in an index. Three answers are left out or normalized
-//! where a running store is known to differ (each an ignored test below):
-//! the live cache listing's names, duplicate-day journal strays (never
-//! created), and the icon of a name two pages claim.
+//! buffer is never in an index. Listing names, duplicate-day journal strays
+//! and icons of names with several file claimants are compared too.
 //!
 //! `TINE_CONFORMANCE_SEEDS=<n>` (or `a..b`, or a comma list) runs more
 //! seeds; `TINE_CONFORMANCE_STEPS=<n>` longer sequences.
 use super::*;
 use crate::model::index_oracle_tests::{first_difference, snapshot_image};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 struct Rng(u64);
 impl Rng {
@@ -249,12 +247,7 @@ fn resolved(resolved: crate::Resolved) -> String {
 /// The view's whole image: [`snapshot_image`] and the answers it does not
 /// ask. Only `view`'s own state: an older view must keep it.
 fn view_image(view: &crate::WholeGraph) -> String {
-    // `snapshot_image`'s icon line asks every page name, including one two
-    // pages claim; the view's icon line below leaves those out.
-    let mut out: String = (snapshot_image(&view.graph, PROBES).lines())
-        .filter(|line| !line.starts_with("icons "))
-        .map(|line| format!("{line}\n"))
-        .collect();
+    let mut out = snapshot_image(&view.graph, PROBES);
     let mut listing: Vec<_> = (view.list.iter())
         .map(|entry| format!("{:?} {:?} {:?}", entry.rel_path, entry.kind, entry.name))
         .collect();
@@ -312,28 +305,7 @@ fn view_image(view: &crate::WholeGraph) -> String {
         .collect();
     counts.sort();
     out.push_str(&format!("view block_ref_counts {counts:?}\n"));
-    // A name two pages claim takes the icon of the lower page slot, and
-    // live slot order can differ from a fresh build's
-    // (`a_twin_claimed_name_keeps_its_icon_across_a_config_reload`,
-    // ignored): such names, and aliases owned by a claimant, are left out.
-    let mut twins = BTreeSet::new();
-    for name in &names {
-        if let crate::Resolved::Existing { id, others } = view.resolve(name, false) {
-            if !others.is_empty() {
-                twins.insert(id);
-                twins.extend(others);
-            }
-        }
-    }
-    let single: Vec<String> = (names.iter())
-        .filter(|name| match view.resolve(name, false) {
-            crate::Resolved::Existing { id, .. } => !twins.contains(&id),
-            crate::Resolved::Alias { owners } => !owners.iter().any(|id| twins.contains(id)),
-            crate::Resolved::Absent { .. } => true,
-        })
-        .cloned()
-        .collect();
-    let mut icons: Vec<_> = view.page_icons(&single).into_iter().collect();
+    let mut icons: Vec<_> = view.page_icons(&names).into_iter().collect();
     icons.sort();
     out.push_str(&format!("view icons {icons:?}\n"));
     out.push_str(&format!("unreadable {:?}\n", view.unreadable_files()));
@@ -357,15 +329,17 @@ fn view_image(view: &crate::WholeGraph) -> String {
 }
 
 /// The store's image: its current view's, then the live cache's own
-/// listing and journal order. Absolute paths read `<root>`. The cache
-/// listing leaves out names: a store retitle leaves them stale
-/// (`a_store_retitle_moves_the_live_page_list`, ignored); the view's
-/// listing above compares names.
+/// listing and journal order. Absolute paths read `<root>`.
 fn store_image(store: &Store) -> (crate::WholeGraph, String) {
     let view = store.whole_graph().unwrap();
     let mut out = view_image(&view);
     let mut listing: Vec<_> = (store.graph.list_pages().iter())
-        .map(|entry| format!("{:?} {:?} {:?}", entry.rel_path, entry.kind, entry.date_key))
+        .map(|entry| {
+            format!(
+                "{:?} {:?} {:?} {:?}",
+                entry.rel_path, entry.kind, entry.date_key, entry.name
+            )
+        })
         .collect();
     listing.sort();
     for line in listing {
@@ -547,16 +521,7 @@ impl Run<'_> {
                     1 => format!("journals/2026-10-{day:02}.md"),
                     _ => format!("pages/New{n}.md"),
                 };
-                // A second file of a day is a duplicate-day stray, which a
-                // running store indexes and a cold build sets aside
-                // (`a_duplicate_day_stray_is_indexed_as_a_cold_build_does`,
-                // ignored): never made here until that is fixed.
-                let days = [
-                    format!("journals/2026_10_{day:02}.md"),
-                    format!("journals/2026-10-{day:02}.md"),
-                ];
-                let taken = |rel: &String| root.join(rel).exists();
-                if taken(&rel) || (rel.starts_with("journals/") && days.iter().any(taken)) {
+                if root.join(&rel).exists() {
                     return;
                 }
                 let text = body(&mut self.r, rel.starts_with("pages/"));
@@ -1068,11 +1033,6 @@ fn live_equals_fresh_under_mixed_host_and_poll_sequences() {
 /// warm-cache readers (journal-day recompute) read paths, kinds and days,
 /// and a cold build relists (an unwarmed cache moves past the memo).
 #[test]
-#[ignore = "bug: Graph::transaction_publish_page_inner retags the generation-keyed page-list \
-            memo (page_list_cache) whenever the file set is unchanged, also when the save \
-            changed the page's name (title::), unlike publish_owned, which retags only an \
-            unrenamed page: Graph::list_pages() keeps the old name until the next file-set \
-            change"]
 fn a_store_retitle_moves_the_live_page_list() {
     let temp = tempfile::tempdir().unwrap();
     fs::create_dir_all(temp.path().join("pages")).unwrap();
@@ -1158,9 +1118,6 @@ fn a_store_retitle_moves_the_live_page_list() {
 /// snapshot. While the session runs, the stray's blocks answer references,
 /// backlinks and queries; after a restart they do not.
 #[test]
-#[ignore = "bug: a duplicate-day journal stray created or edited while the store runs is \
-            indexed (its blocks count in references, backlinks and queries) although a cold \
-            build of the same files sets it aside; live and restarted answers differ"]
 fn a_duplicate_day_stray_is_indexed_as_a_cold_build_does() {
     let image = |store: &Store| {
         let view = store.whole_graph().unwrap();
@@ -1187,6 +1144,21 @@ fn a_duplicate_day_stray_is_indexed_as_a_cold_build_does() {
                 .store
                 .watcher_drained_for_tests(Duration::from_secs(20)));
             let running = image(&live.store);
+            let title = live.store.graph.current_journal_format().title(
+                tine_core::date::JournalDate::from_ordinal(
+                    live.store
+                        .graph
+                        .entry_for_path(&live.root.join("journals/2026_10_02.md"))
+                        .unwrap()
+                        .date_key
+                        .unwrap(),
+                ),
+            );
+            assert!(
+                matches!(live.store.whole_graph().unwrap().resolve(&title, true),
+                crate::Resolved::Existing { others, .. } if others.len() == 1),
+                "the duplicate must remain detectable through the store API"
+            );
             live.host.stop();
 
             let copy = tempfile::tempdir().unwrap();
@@ -1199,6 +1171,54 @@ fn a_duplicate_day_stray_is_indexed_as_a_cold_build_does() {
     }
 }
 
+#[test]
+fn a_journal_claimant_is_promoted_after_arrival_removal_and_held_reload() {
+    for watch in [crate::WatchMode::Notify, crate::WatchMode::Poll] {
+        let live = Live::watching(
+            &[
+                ("pages/a.md", "- a\n"),
+                ("journals/2026-10-02.md", "- fallback [[a]]\n"),
+                ("logseq/config.edn", "{}\n"),
+            ],
+            watch,
+        );
+        let referrers = |store: &Store| {
+            store
+                .whole_graph()
+                .unwrap()
+                .explicit_referrers(&["a".to_owned()])
+        };
+        let fallback = PageId::from("journals/2026-10-02.md");
+        let preferred = PageId::from("journals/2026_10_02.md");
+        assert_eq!(referrers(&live.store), [fallback.clone()]);
+        fs::write(live.root.join(preferred.as_str()), "- preferred [[a]]\n").unwrap();
+        assert!(live
+            .store
+            .watcher_drained_for_tests(Duration::from_secs(20)));
+        assert_eq!(referrers(&live.store), [preferred.clone()]);
+        live.open(fallback.as_str());
+        fs::write(
+            live.root.join("logseq/config.edn"),
+            "{:preferred-format :org}\n",
+        )
+        .unwrap();
+        assert!(live
+            .store
+            .watcher_drained_for_tests(Duration::from_secs(20)));
+        assert_eq!(referrers(&live.store), [preferred.clone()]);
+        fs::remove_file(live.root.join(preferred.as_str())).unwrap();
+        assert!(live
+            .store
+            .watcher_drained_for_tests(Duration::from_secs(20)));
+        assert_eq!(referrers(&live.store), [fallback.clone()]);
+        let copy = tempfile::tempdir().unwrap();
+        copy_graph(&live.root, copy.path());
+        let cold = Store::open(copy.path(), Default::default()).unwrap().0;
+        assert_eq!(referrers(&live.store), referrers(&cold));
+        live.host.stop();
+    }
+}
+
 /// Found by the harness above (seed 42, Notify and Poll): two pages claim
 /// one name (`pages/Delta.md` and a page titled `Delta`, as sync or an
 /// external editor can deliver). `IconIndex::get` takes the icon of the
@@ -1207,9 +1227,6 @@ fn a_duplicate_day_stray_is_indexed_as_a_cold_build_does() {
 /// the name's icon flips to the other claimant's, although `resolve` still
 /// names the same canonical file. A restart shows the first icon again.
 #[test]
-#[ignore = "bug: after a config reload while a page is held, the held page's slot moves \
-            behind the other pages; IconIndex::get takes the lowest-slot claimant's icon, \
-            so a name two pages claim shows the other claimant's icon until a restart"]
 fn a_twin_claimed_name_keeps_its_icon_across_a_config_reload() {
     let image = |store: &Store| {
         let view = store.whole_graph().unwrap();
@@ -1255,5 +1272,36 @@ fn a_twin_claimed_name_keeps_its_icon_across_a_config_reload() {
             "{watch:?}: the config changes no icon"
         );
         assert_eq!(running, image(&cold), "{watch:?}: running vs restarted");
+    }
+}
+
+#[test]
+fn a_twin_icon_uses_filename_precedence_and_preserves_an_absent_icon() {
+    for icon in ["", "icon:: 🚀\n"] {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join("pages")).unwrap();
+        // The title-only claimant sorts earlier and has a Markdown extension;
+        // the matching filename still wins, even without an icon of its own.
+        fs::write(
+            temp.path().join("pages/AAA.md"),
+            "title:: Delta\nicon:: 📚\n\n- other\n",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("pages/Delta.org"),
+            format!("{}* winner\n", icon.replace("icon::", "#+icon:")),
+        )
+        .unwrap();
+        let store = Store::open(temp.path(), Default::default()).unwrap().0;
+        let view = store.whole_graph().unwrap();
+        assert!(
+            matches!(view.resolve("Delta", false), crate::Resolved::Existing { id, others }
+            if id.as_str() == "pages/Delta.org" && others.len() == 1)
+        );
+        let icons = view.page_icons(&["Delta".to_owned()]);
+        assert_eq!(
+            icons.get("Delta").map(String::as_str),
+            (!icon.is_empty()).then_some("🚀")
+        );
     }
 }

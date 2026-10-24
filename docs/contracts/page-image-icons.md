@@ -57,6 +57,10 @@ decoded browser memory still depends on the source image dimensions.
 Images use the emoji's box with object-fit contain on every existing icon
 surface. Link width/height attributes are ignored, including in the page title.
 Property edits and asset replacement follow the existing live update paths.
+For a name claimed by several ordinary files, the icon comes from the same
+winning file as name resolution (matching filename first, then `.md`, filename,
+and full path). A winner without an icon shows none. Holding a page or reloading
+the graph configuration does not transfer its icon to a competing file.
 Namespace macros use the same reactive lookup as titles and lists. Any change
 event under `assets/` invalidates every cached icon image, including alternate
 symlink/case spellings; mounted surfaces share the next read per asset path.

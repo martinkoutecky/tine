@@ -825,6 +825,133 @@ mod tests {
     }
 
     #[test]
+    fn restore_retires_read_uncertainty_and_terminal_refusals() {
+        for terminal in [false, true] {
+            let (dir, store) = open();
+            fs::create_dir(dir.path().join("assets")).unwrap();
+            store.watch.stop_background_for_test();
+            let core = store.watch.core_for_load();
+            let path = dir.path().join("pages/P0.md");
+            fs::write(&path, b"\xff").unwrap();
+            if terminal {
+                age(&path);
+            }
+            core.reconcile(None, false, false, DiffTrigger::Test)
+                .unwrap();
+            assert!(store.referenced_assets().is_err());
+            if terminal {
+                assert!(core.read_refusals.lock().unwrap().contains_key(&path));
+            } else {
+                assert!(store.graph.unsettled_read_paths().contains(&path));
+            }
+            store
+                .restore(
+                    crate::EditKind::SaveBlock,
+                    vec![crate::RestoreFile {
+                        area: crate::Area::Pages,
+                        rel: "Restored.md".into(),
+                        bytes: b"- restored\n".to_vec(),
+                    }],
+                    None,
+                )
+                .unwrap();
+            assert!(
+                store.referenced_assets().is_ok(),
+                "restore left the inventory refused"
+            );
+            assert!(store.graph.unsettled_read_paths().is_empty());
+            assert!(core.read_refusals.lock().unwrap().is_empty());
+            core.reconcile(None, false, true, DiffTrigger::Test)
+                .unwrap();
+            assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+            store.close();
+        }
+    }
+
+    #[test]
+    fn stamps_retries_an_unchanged_denied_open_but_not_invalid_content() {
+        let (dir, store) = open();
+        store.watch.stop_background_for_test();
+        let core = store.watch.core_for_load();
+        let path = dir.path().join("pages/P0.md");
+        let original = stamp_metadata(&path).unwrap();
+        let paths = HashSet::from([path.clone()]);
+        let fault = OpenFailure::new(&path, std::io::ErrorKind::PermissionDenied);
+        core.reconcile(Some(&paths), false, false, DiffTrigger::Test)
+            .unwrap();
+        assert!(!store.whole_graph().unwrap().unreadable_files().is_empty());
+        drop(fault);
+        assert!(stamp_metadata(&path).unwrap().same_metadata(&original));
+        store.refresh(crate::Depth::Stamps).unwrap();
+        assert!(
+            store.whole_graph().unwrap().unreadable_files().is_empty(),
+            "stamps skipped an access repair"
+        );
+        fs::write(&path, b"\xff").unwrap();
+        age(&path);
+        store.refresh(crate::Depth::Stamps).unwrap();
+        racy::HASH_ATTEMPTS.with(|count| count.set(0));
+        for _ in 0..3 {
+            store.refresh(crate::Depth::Stamps).unwrap();
+        }
+        assert_eq!(
+            racy::HASH_ATTEMPTS.with(|count| count.get()),
+            0,
+            "stamps reread invalid content"
+        );
+        store.close();
+    }
+
+    #[test]
+    fn an_identical_restore_revalidates_content_before_retiring_uncertainty() {
+        for valid in [false, true] {
+            let (dir, store) = open();
+            fs::create_dir(dir.path().join("assets")).unwrap();
+            store.watch.stop_background_for_test();
+            let core = store.watch.core_for_load();
+            let path = dir.path().join("pages/P0.md");
+            if valid {
+                fs::write(&path, "- delivered before restore\n").unwrap();
+                store
+                    .graph
+                    .fail_sync_read_once
+                    .store(true, Ordering::Release);
+            } else {
+                fs::write(&path, b"\xff").unwrap();
+            }
+            core.reconcile(None, false, false, DiffTrigger::Test)
+                .unwrap();
+            assert!(store.referenced_assets().is_err());
+            let files = (0..20)
+                .map(|n| crate::RestoreFile {
+                    area: crate::Area::Pages,
+                    rel: format!("P{n}.md"),
+                    bytes: fs::read(dir.path().join(format!("pages/P{n}.md"))).unwrap(),
+                })
+                .collect();
+            // Restore writes the exact same complete file set. The file-feed
+            // byte diff is empty, but its old read uncertainty still must be
+            // replaced by an authoritative parse, including a real refusal.
+            store
+                .restore(crate::EditKind::SaveBlock, files, None)
+                .unwrap();
+            assert!(store.graph.unsettled_read_paths().is_empty());
+            assert_eq!(store.referenced_assets().is_ok(), valid);
+            assert_eq!(
+                store.whole_graph().unwrap().unreadable_files().is_empty(),
+                valid
+            );
+            if valid {
+                assert_eq!(
+                    store.page(&PageId::from("pages/P0.md")).unwrap().doc.blocks[0].raw,
+                    "delivered before restore"
+                );
+            }
+            store.close();
+        }
+    }
+
+    #[test]
     fn gh543_r1_permission_only_repair_with_identical_stamp_recovers() {
         // Models Windows ACL/minifilter and mobile security-scope repairs:
         // availability changes while every metadata field stays identical.

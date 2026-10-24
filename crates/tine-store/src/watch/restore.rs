@@ -77,13 +77,49 @@ impl WatchHandle {
         }
         let observed = SystemTime::now();
         let baseline = collect_with_revs(&self.core.graph.root, &self.core.graph.current_config());
+        // The restore's complete observation supersedes pre-restore read
+        // uncertainty. Keep failures only where this observation still could
+        // not read the file; rebuilt page parsing reports invalid content.
+        let read_again = |path: &std::path::Path| match baseline.get(path) {
+            Some(value) => value.rev.is_some(),
+            // An omitted path can also be behind an unreadable directory.
+            // Only confirmed absence retires that uncertainty.
+            None => fs::symlink_metadata(path)
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+        };
+        let mut read_state_changed = false;
+        for path in self.core.graph.unsettled_read_paths() {
+            if read_again(&path) {
+                self.core.graph.note_unsettled_read(&path, None);
+                read_state_changed = true;
+            }
+        }
+        let mut refusals = self.core.read_refusals.lock().unwrap();
+        let mut errors = self.core.unreadable_dirs.lock().unwrap();
+        refusals.retain(|path, _| {
+            if read_again(path) {
+                errors.remove(path);
+                read_state_changed = true;
+                false
+            } else {
+                true
+            }
+        });
+        drop(errors);
+        drop(refusals);
+        if read_state_changed {
+            // Hashing proves byte identity, not parseability. Even a restore
+            // of identical bytes must replace the old last-good/error view
+            // before its previous uncertainty can stop guarding asset trash.
+            self.core.graph.invalidate_cache();
+        }
         *self.core.racy.lock().unwrap() = baseline
             .iter()
             .filter(|(_, value)| value.racy_at(observed))
             .map(|(path, _)| path.clone())
             .collect();
         *self.core.snapshot.lock().unwrap() = baseline;
-        if files.is_empty() && !config_changed {
+        if files.is_empty() && !config_changed && !read_state_changed {
             self.core.changes.rev()
         } else if matches!(
             *self.core.load.status.lock().unwrap(),

@@ -62,7 +62,10 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// 17 (card yzhAbnbE): a memoized plan carries `top_level_only`, and an
 /// advanced query with `:remove-block-children? false` now lists every match; its
 /// memo key (the unchanged source text) held the top-level-only answer.
-pub(crate) const FORMAT: u32 = 17;
+/// 18 (store fresh parity): live duplicate-day journal strays no longer
+/// contribute query/backlink rows. Discard older disposable indexes that may
+/// contain those rows; the serialized shape and graph files are unchanged.
+pub(crate) const FORMAT: u32 = 18;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";
