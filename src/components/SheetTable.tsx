@@ -16,7 +16,7 @@ import { observeNear, unobserveNear } from "../lazyObserve";
 import { BUILTIN_HIDE } from "../editor/properties";
 import { isLegacyBareColumnList } from "../editor/queryViewProperties";
 import { forbidsEditEntry } from "../editor/editTargets";
-import { editingId, editingOwner } from "../editorController";
+import { editingId, editingOwner, prepareEditEntry, registerEditEntryGuard } from "../editorController";
 import { SheetCellContext, type SheetCellCtx } from "../sheet/context";
 import {
   cellOwner,
@@ -693,6 +693,7 @@ export function SheetTable(props: {
   const selected = (row: number, col: number) => cellIsSelected(props.ownerId, row, col, surfaceId);  const inRange = (row: number, col: number) => cellIsInRange(props.ownerId, row, col, surfaceId);
 
   const openPropInput = (rowId: string, field: FieldId, initial?: string) => {
+    if (!prepareEditEntry()) return;
     const rows = sortedRows();
     const row = rows.find(row => row.id === rowId);
     if (!row || !liveFormulaRowNode(row)) return;
@@ -1423,6 +1424,13 @@ function FieldCell(props: {
           class="sheet-prop-input"
           classList={{ "sheet-input-invalid": inputInvalid() }}
           ref={(el) => {
+            onCleanup(registerEditEntryGuard(() => {
+              if (!el.isConnected || !props.editing) return true;
+              if (commit(el.value)) return true;
+              select();
+              el.focus();
+              return false;
+            }));
             // Dynamically inserted autofocus inputs are not focused reliably by
             // WebKit. Without an explicit handoff, type-to-overtype displays
             // its first character but the next Tab is handled from selection
@@ -1462,6 +1470,9 @@ function FieldCell(props: {
           onBlur={(e) => {
             // e.currentTarget is null once dispatch ends — capture before the microtask
             const el = e.currentTarget;
+            // A handoff already committed and removed this input. A delayed
+            // blur must not resolve or close the replacement cell's draft.
+            if (!el.isConnected || !props.editing) return;
             if (!commit(el.value)) queueMicrotask(() => el.focus());
           }}
         />

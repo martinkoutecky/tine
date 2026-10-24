@@ -61,8 +61,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Editing a Markdown block that has its own properties keeps the hidden `id::` and `collapsed::` lines in the same property group, as Logseq writes them. Before, they moved below the body text, where Logseq ignores them, so references to the block could break in Logseq (internal: REG-HIDDEN-PROPS-STAY-IN-THE-GROUP).
 - Owner-lock regression checks now require immediate release even while a duplicate descriptor remains open, catching the Unix child-inheritance race without a retry that could hide it (internal REG-OWNER-LOCK-INHERITED-DESCRIPTOR).
+- Board cards drag between columns even when an editor outside the board has focus, without selecting text during the drag (GH #756).
 - Hover previews stay clear of the page link or block reference that opened them, scrolling within the available space above or below it (GH #750).
 - The title and Open source actions stay visible while scrolling a hover preview (GH #752).
+- Switching table cells by double-click saves the previous edit; invalid numbers keep their editor open (GH #754).
 - Page-property rows in Linked References keep the same appearance after editing, including other groups showing the same page (GH #753).
 
 - **Margin comments** (internal UI-MARGIN-POLISH): select words and click **Comment** in the toolbar; cards and replies now offer **Reply** and **×** (delete with replies, restored together by Undo). Blocks with their own `quote` property hide quote context and author metadata while editing and retain their saved bytes; ordinary blocks keep those properties editable. Quoted replies stay readable inside their thread.
