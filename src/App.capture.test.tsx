@@ -135,6 +135,33 @@ it("FU2: an unavailable receipt lookup keeps identity for plain retry without al
   dispose();
 });
 
+it.each(["claim", "destination"])("A2: owner retiring during %s before insertion forgets the new claim without a previous-graph warning", async (during) => {
+  let generation = 11;
+  let statusAvailable = false;
+  vi.spyOn(backend(), "graphBindingGeneration").mockImplementation(() => generation);
+  const original = backend().captureReceipt.bind(backend());
+  const receipts = vi.spyOn(backend(), "captureReceipt").mockImplementation(async (id, action, binding) => {
+    if (action === "status" && !statusAvailable) throw new Error("old status lease is stale");
+    const result = await original(id, action, binding);
+    if (during === "claim" && action === "claim") { resetStore(); generation = 12; }
+    return result;
+  });
+  const insert = vi.spyOn(backend(), "getPage").mockImplementation(async name => {
+    resetStore(); generation = 12;
+    return { name, kind: "page", title: name, id: `pages/${name}.md`, rev: "before", pre_block: null, blocks: [] };
+  });
+  const dispose = await installQuickCaptureReceiver();
+  const payload = { id: `claimed-never-inserted-${during}`, target: "main", bindingGeneration: 11, title: "Destination", text: "- unsent" };
+  await h.receive!({ payload });
+  expect(insert).toHaveBeenCalledTimes(during === "claim" ? 0 : 1);
+  expect(receipts).toHaveBeenCalledWith(payload.id, "forget", 11);
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: false });
+  statusAvailable = true;
+  await h.receive!({ payload });
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: false });
+  dispose();
+});
+
 it("preserves the existing one-shot capture path for an idless delivery", async () => {
   vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(11);
   const page = { name: "One shot", kind: "page" as const, title: "One shot", id: "pages/One shot.md", rev: "before", pre_block: null, blocks: [] };

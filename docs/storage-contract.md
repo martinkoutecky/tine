@@ -990,7 +990,11 @@ by I-9's typed failure paths.
 | `src::document::host` window writes (step 3b P2b: the page host is the only writer of page edits; the frontend save engine is gone) | An alias draft (a page with no file whose name became an alias, L13) lands in its owner only while the owner is open in the host, idle and not conflicted, and no editor is open on it (an IME composition is DOM-local input the store does not hold yet); otherwise it stays, unsaved and listed. The landing is recorded when the owner's live text receives the copy, before submission and publication are proved; if either fails, the draft stays recoverable. A retry after an unproved publication or a mid-save edit replaces the landed copy instead of appending the draft again; when the owner's text no longer holds that copy (an external editor or sync client changed the owner meanwhile) the landing refuses, says so, and keeps the draft (proof `src/document/save/aliasDraft.test.ts`, `src/document/save/aliasDraftRetry.test.ts`; audit L9-05). A watcher observation of a page with unsaved input conflicts in the host; the conflict lifts when the file provably returns to the baseline the editor loaded (an external editor's temp+rename or a mid-delivery sync gap), and the frozen edit is saved against it (og I1c, master c68c0b6e7; proof `src/document/conflictLift.test.ts`). |
 
 Before conflicted deletion (FU1), the window freezes page edits and drains its
-debounced and in-flight submits through the existing host client. It checks that
+debounced and in-flight submits through the existing host client, with a five-second
+timeout. A timeout refuses deletion with the same unsaved-input message, removes
+the page's tombstone and keeps its editable input; a late drain answer cannot
+resume that deletion.
+It checks that
 no input or answer remains outstanding before calling native delete, so the
 recovery copy includes the last local keystrokes. Refused or unserializable
 input stops the deletion and unlocks the unchanged page; no unsent input may be
@@ -999,11 +1003,18 @@ consumed by the later discard. Ordinary deletes still require publication.
 A capture acknowledgement timeout (FU2) keeps the original identity and offers
 only a plain retry, including after Escape. A stale-generation request queries
 the native receipt without creating a claim: missing means proved non-insertion
-and permits a fresh snapshot, saved means success, and only pending justifies
+and permits a fresh snapshot after refreshing the capture binding, saved means success, and only pending justifies
 the previous-graph warning. A failed lookup keeps identity with plain retry;
 it proves neither insertion nor non-insertion. The status lookup is process
 memory only, read-only, scoped by window and id, and may inspect an old claim
-across binding generations. A title retained after an older snapshot saves,
+across binding generations. A receiver that obtained a new claim but knows it
+never called insertion forgets that pending claim even if its binding retired
+during the claim or destination read. Forget is process-memory cleanup scoped
+to the window, id and original receipt generation; it cannot remove a saved
+receipt or another generation's claim. A failed cleanup or lookup keeps the
+conservative retry behavior. Escape keeps text after every unconfirmed filing,
+including a proved refusal; only a confirmed save consumes the submitted text.
+A title retained after an older snapshot saves,
 with no remaining body text, shows an Add text reminder and remains editable
 (H4); empty outline bullets are checked by node content, not Markdown syntax.
 
@@ -1131,7 +1142,7 @@ Review rule: a new refusal must identify a reachable scenario involving an hones
 local user, sync or external editor. Source scans cannot prove reachability;
 the reviewer traces the path and records the scenario here before accepting it.
 
-| `transaction.rs::check_orphan_asset::AssetReferenced` | 1 | The published graph still references the asset: an external-editor/sync reference arrived after the orphan listing, or another page uses a file the user just dropped from one block (GH #623). Retain the asset; `tine-graph-features::assets::trash_asset` returns it as the normal `TrashOutcome::Referenced` result (never an error), and the `trash_asset` command reports `referenced`. A partial reference inventory reports an IO failure rather than granting trash. |
+| `transaction.rs::check_orphan_asset::AssetReferenced` | 1 | The published graph still references the asset: an external-editor/sync reference arrived after the orphan listing, or another page uses a file the user just dropped from one block (GH #623). Retain the asset; `tine-graph-features::assets::trash_asset` returns it as the normal `TrashOutcome::Referenced` result (never an error), and the `trash_asset` command reports `referenced`. A partial reference inventory, including a set-aside file replaced or changed during the read by sync or an external editor, reports an IO failure naming the file rather than granting trash. |
 
 | `transaction.rs::check_orphan_asset::InvalidTarget` | 1 | An orphan-asset action is given a page/config/trash target; refuse without touching it. Ordinary trash remains available for intentional page or PDF artifact removal. |
 

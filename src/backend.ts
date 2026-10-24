@@ -218,7 +218,7 @@ class TauriBackend implements Backend {
   captureTarget() {
     return this.call<string>("capture_target");
   }
-  captureReceipt(id: string, action: "claim" | "saved" | "release" | "status", receiptGeneration: number) {
+  captureReceipt(id: string, action: "claim" | "saved" | "release" | "forget" | "status", receiptGeneration: number) {
     return this.call<"new" | "pending" | "saved" | "missing">("capture_receipt", { id, action, receiptGeneration });
   }
   async bindCaptureGraph() {

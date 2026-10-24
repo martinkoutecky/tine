@@ -38,7 +38,7 @@ impl CaptureReceipts {
                     Ok("new")
                 }
             },
-            "saved" | "release" => {
+            "saved" | "release" | "forget" => {
                 let Some((prior, saved)) = book.entries.get_mut(&key) else {
                     return Err("missing capture claim".into());
                 };
@@ -59,6 +59,9 @@ impl CaptureReceipts {
                     }
                 } else if !*saved {
                     book.entries.remove(&key);
+                    if action == "forget" {
+                        return Ok("missing");
+                    }
                 }
                 Ok("saved")
             }
@@ -77,9 +80,15 @@ pub(crate) fn capture_receipt(
     ctx: GraphContext<'_>,
     receipts: tauri::State<'_, CaptureReceipts>,
 ) -> Result<&'static str, String> {
-    let slot = slot_for_context(&ctx)?;
-    if action != "status" && slot.binding_generation != receipt_generation {
-        return Err(crate::state::STALE_BINDING.into());
+    // Forget is the receiver's proof that its own newly acquired claim never
+    // reached insertion. It must work after that binding retires. The book
+    // still requires the same window, id and original claim generation and
+    // never removes saved receipts. It performs no graph access.
+    if action != "forget" {
+        let slot = slot_for_context(&ctx)?;
+        if action != "status" && slot.binding_generation != receipt_generation {
+            return Err(crate::state::STALE_BINDING.into());
+        }
     }
     receipts.apply(ctx.window.label(), id, receipt_generation, &action)
 }
@@ -87,6 +96,37 @@ pub(crate) fn capture_receipt(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn forget_only_drops_the_matching_unsaved_claim_after_rebind() {
+        let receipts = CaptureReceipts::default();
+        assert_eq!(
+            receipts.apply("main", "id".into(), 11, "claim").unwrap(),
+            "new"
+        );
+        assert!(receipts.apply("main", "id".into(), 12, "forget").is_err());
+        assert_eq!(
+            receipts.apply("main", "id".into(), 11, "forget").unwrap(),
+            "missing"
+        );
+        assert_eq!(
+            receipts.apply("main", "id".into(), 12, "status").unwrap(),
+            "missing"
+        );
+        receipts.apply("main", "saved".into(), 11, "claim").unwrap();
+        receipts.apply("main", "saved".into(), 11, "saved").unwrap();
+        assert_eq!(
+            receipts
+                .apply("main", "saved".into(), 11, "forget")
+                .unwrap(),
+            "saved"
+        );
+        assert_eq!(
+            receipts
+                .apply("main", "saved".into(), 12, "status")
+                .unwrap(),
+            "saved"
+        );
+    }
     #[test]
     fn reload_and_rebind_do_not_turn_an_existing_claim_into_a_new_insertion() {
         let receipts = CaptureReceipts::default();
