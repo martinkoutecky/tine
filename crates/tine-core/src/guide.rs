@@ -2265,7 +2265,7 @@ mod asset_manifest_tests {
         assert!(guide.contains("**Add text** reminder"));
         assert!(guide.contains("never reached a graph"));
         assert!(guide.contains("After a refused filing, **Esc** keeps the text too"));
-        assert!(guide.contains("uses the current graph without needing to reopen"));
+        assert!(guide.contains("reopen the capture box to file it into the current graph"));
         assert!(guide.contains("previous graph"));
         assert!(guide.contains("without clearing its text or retry identity"));
         assert!(guide.contains("does not survive quitting"));
