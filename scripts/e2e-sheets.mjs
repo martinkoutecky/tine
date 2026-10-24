@@ -76,11 +76,10 @@ const GRID_MD = [
 fs.mkdirSync(`${G}/pages`, { recursive: true });
 fs.mkdirSync(`${G}/journals`, { recursive: true });
 fs.mkdirSync(`${G}/logseq`, { recursive: true });
-fs.writeFileSync(`${G}/logseq/config.edn`, '{:preferred-workflow :todo}\n');
+// One config write: the board drag needs the TODO/DOING workflow, and the one-time Guide announcement
+// toast sits bottom-right and can cover the query panel's Done button.
+fs.writeFileSync(`${G}/logseq/config.edn`, "{:preferred-workflow :todo :tine/guide-announced? true}\n");
 fs.writeFileSync(JFILE, GRID_MD);
-// The one-time Guide announcement toast sits bottom-right and can cover the query panel's Done button.
-fs.mkdirSync(`${G}/logseq`, { recursive: true });
-fs.writeFileSync(`${G}/logseq/config.edn`, "{:tine/guide-announced? true}\n");
 
 for (const d of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${d}`, { recursive: true });
 const env = {
@@ -621,11 +620,13 @@ try {
       const board = source?.closest(".sheet-board");
       board?.scrollIntoView({ block: "center" });
       const target = [...(board?.querySelectorAll(".sheet-board-column") ?? [])].find((el) => el.querySelector(".sheet-board-header")?.textContent?.startsWith("DOING"));
-      if (!source || !target) return null;
+      if (!source || !target) return { missing: true, boards: [...document.querySelectorAll(".sheet-board")].map((b) => ({
+        columns: [...b.querySelectorAll(".sheet-board-header")].map((h) => h.textContent?.trim()),
+        cards: [...b.querySelectorAll(".sheet-board-card")].map((c) => c.textContent?.trim().slice(0, 40)) })) };
       const a = source.getBoundingClientRect(), b = target.getBoundingClientRect();
       return { x: Math.round(a.left + a.width / 2), y: Math.round(a.top + a.height / 2), toX: Math.round(b.left + b.width / 2), toY: Math.round(b.top + Math.min(b.height / 2, 65)) };
     });
-    if (!dragPoints) throw new Error("GH #756: missing card/drop column");
+    if (!dragPoints || dragPoints.missing) throw new Error(`GH #756: missing card/drop column ${JSON.stringify(dragPoints)}`);
     await browser.performActions([{ type: "pointer", id: "board-card", parameters: { pointerType: "mouse" }, actions: [
       { type: "pointerMove", duration: 0, origin: "viewport", x: dragPoints.x, y: dragPoints.y },
       { type: "pointerDown", button: 0 },
