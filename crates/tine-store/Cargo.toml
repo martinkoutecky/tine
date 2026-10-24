@@ -54,6 +54,10 @@ required-features = ["test-faults"]
 name = "qf2_native_bench"
 required-features = ["test-faults"]
 
+[[example]]
+name = "hk3_query_cost"
+required-features = ["test-faults"]
+
 # Keep all integration cases in one linked executable.
 [[test]]
 name = "integration"
