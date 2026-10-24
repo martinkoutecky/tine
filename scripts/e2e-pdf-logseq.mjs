@@ -1615,6 +1615,23 @@ try {
     check();
   }, highlightId, waitMs, holdMs);
 
+  // Opt-in stress repetition keeps the same assertions and real input path.
+  // Return to A between rounds so every round also exercises B's cold mount.
+  const scrollRounds = Number(process.env.TINE_PDF_SCROLL_ROUNDS || 1);
+  if (!Number.isSafeInteger(scrollRounds) || scrollRounds < 1) {
+    throw new Error("TINE_PDF_SCROLL_ROUNDS must be a positive integer");
+  }
+  let secondViewerElementId;
+  for (let round = 1; round <= scrollRounds; round++) {
+  if (round > 1) {
+    const links = await browser.$$(".pdf-link");
+    await links[0].click();
+    await browser.waitUntil(() => browser.execute(() =>
+      document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === "logseq-sample.pdf" &&
+      document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready") === "true"), {
+      timeout: 10_000, timeoutMsg: "PDF scroll repetition did not return to A",
+    });
+  }
   const firstSecondRef = browser.$(`[data-block-ref="${SECOND_FIRST_ID}"]`);
   await firstSecondRef.waitForExist({ timeout: 10_000 });
   await browser.waitUntil(() => browser.execute((highlightId) =>
@@ -1659,7 +1676,7 @@ try {
   if (coldOpenLeftView) {
     throw new Error(`a backlink into a PDF that was not open yet did not scroll to its exact highlight: ${JSON.stringify(coldOpenLeftView)}`);
   }
-  const secondViewerElementId = (await browser.$(".pdf-viewer")).elementId;
+  secondViewerElementId = (await browser.$(".pdf-viewer")).elementId;
   const secondZoom = await browser.$(".pdf-zoom-level").getText();
   if (secondZoom !== "125%") throw new Error(`second PDF inherited the first PDF scale: ${secondZoom}`);
   if (fs.readFileSync(secondSidecar, "utf8") !== originalSecondSidecar) {
@@ -1734,6 +1751,8 @@ try {
   await browser.waitUntil(async () => await browser.$(".pdf-page-input").getValue() === "1", {
     timeout: 10_000, timeoutMsg: "GH #672: repeating the same backlink did not navigate again",
   });
+  console.log(`PASS: PDF reference scroll round ${round}/${scrollRounds}`);
+  }
 
   // OG direct-link parity: reopening the already-current resource without a
   // page/highlight intent is a no-op, not an implicit jump to page 1. The exact
