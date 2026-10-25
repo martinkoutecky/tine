@@ -399,7 +399,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-linkable-page-property-refs.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"A graph-configured bare page-property value finds its header in page-reference queries and Linked References; changing and restoring the atom updates the visible answers live. Editing a property and clicking its group title saves the value and preserves the read-only property-row appearance in every group for that source page (GH #753).","blocking":true}],
+      "contracts": [{"class":"core-operation","userOutcome":"A graph-configured bare page-property value finds its header in page-reference queries and Linked References; changing and restoring the atom updates the visible answers live. Editing a property and clicking its group title saves the value and preserves linked keys in every group for that source page. The main page and Linked References show the same linked keys before and after editing; clicking a key opens its page (GH #753).","blocking":true}],
       "acceptableVariations":["Result order, pane layout, typography and watcher delivery latency may vary while answer membership remains correct."],
       "nonRequirements":["Exact pixels, incidental DOM nesting, or certification outside Linux WebKitGTK."],
       "stability":"burn-in"

@@ -1,4 +1,5 @@
 import { TableWrap } from "./TableWrap";
+import { PropertyKey, visiblePageProperties } from "../render/PropertyKey";
 import { t, msg, render } from "../i18n";
 import { Rich } from "../i18n/Rich";
 import { For, Match, Show, Switch, createMemo, type JSX } from "solid-js";
@@ -66,13 +67,13 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
     </button>
   );
   // GH #619 item 8 (D-20261018-Q619): Search/List page rows show the page's
-  // properties as plain selectable text under the title, as comment 3 promised;
+  // properties under the title; keys share the page-header navigation;
   // the pencil edits them through the guarded page editor.
   const propertyStrip = (row: PageRow) => (
     <Show when={row.properties.length > 0}>
       <span class="query-page-props" data-selectable="text">
-        <For each={row.properties}>{([key, val]) => (
-          <span class="query-page-prop"><span class="query-page-prop-key">{key}:</span> {val}</span>
+        <For each={visiblePageProperties(row.properties)}>{([key, val]) => (
+          <span class="query-page-prop"><span class="query-page-prop-key"><PropertyKey name={key} />:</span> {val}</span>
         )}</For>
       </span>
     </Show>

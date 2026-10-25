@@ -2066,13 +2066,13 @@ describe("page properties", () => {
       await tick();
       const rows = [...root.querySelectorAll<HTMLElement>(".prop-row")];
       const row = (key: string) => rows.find((candidate) => candidate.querySelector(".prop-key")?.textContent === key)!;
-      expect([...row("tags").querySelectorAll(".page-ref")].map((link) => link.textContent)).toEqual(["books", "Knowledge work"]);
-      expect([...row("aliases").querySelectorAll(".page-ref")].map((link) => link.textContent)).toEqual(["Book shelf", "Reading"]);
-      expect(row("owner").querySelector(".page-ref")).toBeNull();
+      expect([...row("tags").querySelectorAll(".prop-value .page-ref")].map((link) => link.textContent)).toEqual(["books", "Knowledge work"]);
+      expect([...row("aliases").querySelectorAll(".prop-value .page-ref")].map((link) => link.textContent)).toEqual(["Book shelf", "Reading"]);
+      expect(row("owner").querySelector(".prop-value .page-ref")).toBeNull();
       // Explicit custom-property refs keep the app's ordinary dimmed [[bracket]]
       // styling; only the newly inferred bare built-ins need a plain label.
-      expect([...row("reviewer").querySelectorAll(".page-ref")].map((link) => link.textContent)).toEqual(["[[Jane Doe]]"]);
-      expect(row("status").querySelector(".page-ref")).toBeNull();
+      expect([...row("reviewer").querySelectorAll(".prop-value .page-ref")].map((link) => link.textContent)).toEqual(["[[Jane Doe]]"]);
+      expect(row("status").querySelector(".prop-value .page-ref")).toBeNull();
     } finally {
       dispose();
     }

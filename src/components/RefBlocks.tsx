@@ -7,7 +7,7 @@ import { t } from "../i18n";
 import { For, Show, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import type { BlockDto } from "../types";
 import { pageProperties } from "../render/block";
-import { effectiveHeadingLevel, facetsFromDto } from "../render/facets";
+import { effectiveHeadingLevel, facetsFromDto, renderedProperties } from "../render/facets";
 import { taskCheckboxState } from "../markers";
 import { AstBody } from "../render/body";
 import { blockWritable, formatForPage, node as docNode, resolveBlockRef, setCollapsed } from "../document";
@@ -18,6 +18,8 @@ import { openInNewTab, type Route } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { PagePropertyValue } from "./PagePropertyValue";
+import { PropertyKey, visiblePageProperties } from "../render/PropertyKey";
+import { PropertyRows } from "../render/PropertyRows";
 import { BeginQuery, inspectBeginQuery } from "./BeginQuery";
 import { blockDtoExternalId } from "../blockIdentity";
 import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
@@ -109,7 +111,7 @@ function RefBlock(props: {
       : null
   );
   const properties = createMemo(() =>
-    props.block.page_property ? pageProperties(props.block.raw, format()) : []
+    props.block.page_property ? visiblePageProperties(pageProperties(props.block.raw, format())) : []
   );
   const [localFold, setLocalFold] = createSignal<boolean>();
   const hasKids = () => props.block.children.length > 0;
@@ -253,7 +255,7 @@ function RefBlock(props: {
                       <br />
                     </Show>
                     <span class="page-property-reference-row">
-                      <span class="prop-key">{key}</span>{" "}
+                      <span class="prop-key"><PropertyKey name={key} /></span>{": "}
                       <span class="prop-value">
                         <PagePropertyValue propertyKey={key} value={value} format={format()} />
                       </span>
@@ -261,6 +263,9 @@ function RefBlock(props: {
                   </>
                 )}
               </For>
+            </Show>
+            <Show when={!props.block.page_property}>
+              <PropertyRows entries={renderedProperties(props.block.raw, format())} format={format()} blockId={props.block.id} />
             </Show>
             <Show when={facets().scheduled}>
               <span class="date-chip scheduled"><CalGlyph /> {facets().scheduled}</span>
