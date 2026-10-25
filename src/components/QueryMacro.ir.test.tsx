@@ -36,6 +36,7 @@ import { tryFreezeGraphRewrite } from "../document/graphRewriteState";
 import { toasts, setToasts } from "../toasts";
 import { bumpDataRev, bumpGraphEpoch } from "../graphSession";
 import { applyChangeSummary } from "../changeSummary";
+import { noteQueryInput, QUERY_QUIET_MS } from "../querySubscription";
 import { resetQueryTextOpenForTests } from "../navSettings";
 import { startEditing } from "../editorController";
 
@@ -1411,6 +1412,40 @@ describe("item 9: a query can show pages and blocks together", () => {
       query.anchor === "page" ? pageAnswer() : blockRunResult(groups()));
     return { run };
   }
+
+  it("keeps both families visible without rerunning a full registration until typing pauses", async () => {
+    vi.useFakeTimers();
+    load(`${TQL_MACRO}\ntine.result-kinds:: pages-and-blocks`);
+    const host = backend();
+    const original = host.registerQuerySubscription;
+    const register = vi.fn(async (_id: string, _request: unknown, _generation: number) => ({ mode: "full" as const, rev: "1" }));
+    host.registerQuerySubscription = register;
+    const { run } = engineByAnchor();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    let revision = 1;
+    const publish = (queryTo: string[] = []) => {
+      applyChangeSummary({ rev: String(++revision), pages: [], blocks: [], linksTo: [], props: {}, inventoryChanged: false, full: false, queryTo });
+      bumpDataRev(true);
+    };
+    try {
+      await vi.advanceTimersByTimeAsync(QUERY_QUIET_MS);
+      expect(root.querySelector(".query-count")?.textContent).toBe("2");
+      const id = register.mock.calls.find(([, request]) => (request as { kind?: string })?.kind === "full")![0];
+      run.mockClear();
+      run.mockImplementation(async query => query.anchor === "page" ? pageAnswer() : blockRunResult([]));
+      for (let i = 0; i < 3; i++) {
+        noteQueryInput(); publish([id]);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(run).not.toHaveBeenCalled();
+        expect(root.querySelector(".query-count")?.textContent).toBe("2");
+      }
+      await vi.advanceTimersByTimeAsync(500);
+      expect(run).toHaveBeenCalledTimes(2); // one execution per result family
+      expect(root.querySelector(".query-count")?.textContent).toBe("1");
+    } finally {
+      dispose(); host.registerQuerySubscription = original; vi.useRealTimers();
+    }
+  });
 
   it("shows a Pages section above a Blocks section, with the total counting both", async () => {
     load(`${TQL_MACRO}\ntine.result-kinds:: pages-and-blocks`);

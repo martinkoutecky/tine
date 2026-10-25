@@ -662,6 +662,67 @@ fn change_summary_random_reader_oracle() {
 }
 
 #[test]
+fn change_summary_instant_clock_query_fires_after_its_displayed_row_expires() {
+    let _guard = crate::integration_lock();
+    let (_dir, store) = fixture(1);
+    let timestamp = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    };
+    let created = timestamp() + 1000;
+    edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = format!("clock row\ncreated-at:: {created}");
+    });
+    let parsed = tine_core::query::wire_parse::parse_query_pair(
+        "(between created-at now +1d)",
+        tine_core::query::wire_parse::QueryTextDialect::MacroQuery,
+        &[],
+        tine_core::query::registry::Registry::none(),
+    );
+    store
+        .register_query_subscription(
+            "instant".into(),
+            Some(tine_store::QuerySubscription::Query {
+                query: parsed.query.clone(),
+                context: Default::default(),
+            }),
+            None,
+        )
+        .unwrap();
+    let count = || {
+        let IrAnswer::Result(result) = store
+            .whole_graph()
+            .unwrap()
+            .query_ir(
+                IrRequest::Run {
+                    query: &parsed.query,
+                    view: &parsed.view,
+                    context: &Default::default(),
+                },
+                &Cancel::default(),
+            )
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("query answer")
+        };
+        result.total
+    };
+    assert_eq!(count(), 1, "the displayed row starts ahead of now");
+    while timestamp() <= created {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let wire = edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = format!("edited expired row\ncreated-at:: {created}");
+    });
+    assert_eq!(count(), 0);
+    assert_eq!(wire["summary"]["full"], false);
+    assert!(strings(&wire["summary"]["queryTo"]).contains("instant"), "instant-dependent displayed answers must be invalidated even when both current touches reject the row");
+}
+
+#[test]
 fn change_summary_registered_query_kinds_and_precise_global_inputs() {
     let _guard = crate::integration_lock();
     let (_dir, store) = fixture(1);

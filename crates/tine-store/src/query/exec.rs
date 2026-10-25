@@ -114,7 +114,12 @@ impl Plan {
         new_facts: &PageFacts,
         config: &ParseConfig,
     ) -> bool {
-        self.reads_links()
+        // Both before/after tests use the current instant. Neither can prove
+        // that a row matched when a mounted answer was computed earlier. The
+        // memo never retains these answers; readers must likewise invalidate
+        // on every publication rather than trust current-time rejection.
+        self.reads_clock()
+            || self.reads_links()
             || self.registry().is_some() && old_facts.registry_rows_differ(new_facts)
             || self.reads_tag_targets() && old_facts.tags() != new_facts.tags()
             || self.touches(entry, before, old_facts, config)
@@ -142,7 +147,7 @@ impl Plan {
     /// milliseconds (`resolve_timestamp_token`); every other date token is
     /// anchored at the day's midnight. The memo files answers per day, so a
     /// clock-reading answer must not be retained (checkpoint-5 L02 B3).
-    pub(super) fn reads_clock(&self) -> bool {
+    pub(crate) fn reads_clock(&self) -> bool {
         fn is_now(value: &tine_core::query::ir::Value) -> bool {
             use tine_core::query::ir::Value;
             match value {

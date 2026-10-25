@@ -70,27 +70,55 @@ export function createQuerySubscription(question: Accessor<QuerySubscription | u
       };
       void preparation.then(release, release).catch(() => { if (owner()) console.warn("query subscription cleanup failed"); });
     });
-    return { id, prepare, mode, registered: !!register, baseline: () => baseline };
+    return { id, prepare, mode, registered: !!register, baseline: () => baseline, readStarted: false };
   });
-  const raw = createMemo(() => `${day() ?? ""}:${subscription().registered ? changedAny([`query:${subscription().id}`]) : `${graphEpoch()}:${dataRev()}`}`);
+  const [retryRevision, setRetryRevision] = createSignal(0);
+  const raw = createMemo(() => `${day() ?? ""}:${subscription().registered ? changedAny([`query:${subscription().id}`]) : `${graphEpoch()}:${dataRev()}`}:${retryRevision()}`);
   const [quietRevision, setQuietRevision] = createSignal(untrack(raw));
+  // An unknown plan can include links/near or a second result family. Its
+  // conservative dependency must be conservative about graph-wide cost too.
+  const waitsForQuiet = () => subscription().mode() !== "narrow" && !refreshEverything();
   createEffect(() => {
     const current = raw();
-    const quiet = subscription().mode() === "quiet" && !refreshEverything();
+    const quiet = waitsForQuiet();
     inputRevision();
     const settled = resultsSettled();
-    if (!quiet) { setQuietRevision(current); return; }
     if (current === untrack(quietRevision) || !settled) return;
+    if (!quiet) { setQuietRevision(current); return; }
     const delay = Math.max(0, QUERY_QUIET_MS - (Date.now() - lastInput));
+    if (delay === 0) { setQuietRevision(current); return; }
     const timer = setTimeout(() => {
       // Both are rechecked at execution: no stale-publication run can slip
       // between a timer and a newly accepted edit or publication wait.
       if (resultsSettled() && Date.now() - lastInput >= QUERY_QUIET_MS) setQuietRevision(current);
+      else setRetryRevision(n => n + 1);
     }, delay);
     onCleanup(() => clearTimeout(timer));
   });
-  const revision = createMemo(() => subscription().mode() === "quiet" && !refreshEverything() ? quietRevision() : raw());
-  return { revision, ready: () => subscription().prepare(),
+  const revision = quietRevision;
+  const ready = async () => {
+    const started = subscription();
+    const released = untrack(revision);
+    const gatesOpen = () => resultsSettled() && (!started.readStarted
+      || !untrack(waitsForQuiet) || Date.now() - lastInput >= QUERY_QUIET_MS);
+    const rearm = () => { setRetryRevision(n => n + 1); return false; };
+    // Resource inputs/epochs can change independently of the scheduled key.
+    // Do not rebuild graph-wide registration inputs before its release either.
+    if (released !== untrack(raw)) return false;
+    if (!gatesOpen()) return rearm();
+    if (!await started.prepare() || started !== untrack(subscription) || released !== untrack(revision)) return false;
+    // Another resource trigger (for example a settled results epoch) may run
+    // before the timer releases the latest publication's revision.
+    if (released !== untrack(raw)) return false;
+    // Renewal is IPC and may cross a newer input/publication. Reject before
+    // execution, then release a fresh revision only when both gates reopen.
+    // Mounting a new question retains its existing initial-read timing. HK3
+    // defers reruns of an already displayed question while the graph is edited.
+    if (!gatesOpen()) return rearm();
+    started.readStarted = true;
+    return true;
+  };
+  return { revision, ready,
     // Cache identity is sampled only when a read starts. It never schedules a
     // read. Registration's host revision closes the late-mount/delayed-event
     // race; the summary catches subsequent publications of this reader.

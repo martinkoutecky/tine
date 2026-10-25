@@ -23,6 +23,12 @@ publication before running. Tag-target and registry readers retain precise
 invalidation for their respective inputs. Links/near remain conservatively
 affected by every page edit, as the memo is. Full summaries, missed revisions
 and unknown dependencies always invalidate; answers are fully recomputed.
+Conservative `full` registrations (including Pages and blocks twins and graph
+search) use the same quiet period because their work may be graph-wide. After
+asynchronous registration renewal, readers recheck the latest input and
+publication gates before starting execution, rearming when either gate moved.
+Instant-dependent `now` plans invalidate on every publication: a currently
+nonmatching page cannot prove that the displayed answer is still current.
 Collapsed reference sections retain their last count, mark it as potentially
 out of date, and fetch the current answer when opened.
 

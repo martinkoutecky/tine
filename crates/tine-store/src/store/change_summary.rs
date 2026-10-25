@@ -59,7 +59,11 @@ pub(super) struct RegisteredTargets {
 impl ChangeFeed {
     pub(super) fn registered_targets(&self) -> RegisteredTargets {
         let (unlinked, unlinked_generation) = self.unlinked_targets.lock().unwrap().live();
-        let (queries, query_generation) = self.query_targets.lock().unwrap().live();
+        let (queries, query_generation, retired) = self.query_targets.lock().unwrap().live();
+        // The registry guard from the preceding statement is gone. A revoked
+        // plan may own graph-sized tag/registry data; destroy it outside the
+        // lock so cleanup cannot block new registrations.
+        drop(retired);
         RegisteredTargets {
             unlinked,
             queries,
@@ -154,15 +158,30 @@ impl QueryTarget {
 }
 
 impl QueryRegistry {
-    pub(super) fn live(&mut self) -> (Vec<(String, Arc<Mutex<QueryTarget>>)>, u64) {
-        self.targets
-            .retain(|_, target| target.lock().unwrap().live());
+    pub(super) fn live(
+        &mut self,
+    ) -> (
+        Vec<(String, Arc<Mutex<QueryTarget>>)>,
+        u64,
+        Vec<Arc<Mutex<QueryTarget>>>,
+    ) {
+        let mut retired = Vec::new();
+        self.targets.retain(|_, target| {
+            if target.lock().unwrap().live() {
+                true
+            } else {
+                // Retain one owner until the caller has released the lock.
+                retired.push(Arc::clone(target));
+                false
+            }
+        });
         (
             self.targets
                 .iter()
                 .map(|(id, target)| (id.clone(), Arc::clone(target)))
                 .collect(),
             self.generation,
+            retired,
         )
     }
     pub(super) fn fire_since(&self, generation: u64, summary: &mut ChangeSummary) {
@@ -180,6 +199,39 @@ fn dirty_query_plans(targets: &[(String, Arc<Mutex<QueryTarget>>)]) {
     for (_, target) in targets {
         let mut target = target.lock().unwrap();
         target.dirty = true;
+    }
+}
+
+#[cfg(test)]
+mod retirement_tests {
+    use super::*;
+
+    #[test]
+    fn revoked_query_destruction_is_deferred_until_after_registry_unlock() {
+        let revoked = Arc::new(AtomicBool::new(true));
+        let target = Arc::new(Mutex::new(QueryTarget {
+            request: QuerySubscription::Full,
+            plan: None,
+            added: 0,
+            revoked: Some(Arc::downgrade(&revoked)),
+            dirty: false,
+        }));
+        let weak = Arc::downgrade(&target);
+        let registry = Mutex::new(QueryRegistry {
+            generation: 0,
+            targets: BTreeMap::from([("revoked".into(), target)]),
+        });
+        let mut guard = registry.lock().unwrap();
+        let captured = guard.live();
+        assert!(guard.targets.is_empty());
+        assert!(weak.upgrade().is_some(), "pruning must move ownership out instead of destroying a potentially graph-sized plan under the lock");
+        drop(guard);
+        assert!(registry.try_lock().is_ok());
+        drop(captured);
+        assert!(
+            weak.upgrade().is_none(),
+            "retired plans are released after unlocking"
+        );
     }
 }
 
@@ -322,23 +374,26 @@ impl Snapshot {
                             || plan.reads_tag_targets() && was.tags() != now.tags()
                     })
                 });
-            let touched = edits
-                .iter()
-                .zip(&facts)
-                .any(|((entry, before, after), (was, now))| {
-                    if before == after {
-                        return false;
-                    }
-                    match &target.request {
-                        QuerySubscription::Full | QuerySubscription::Unlinked { .. } => true,
-                        QuerySubscription::Registry => was.registry_rows_differ(now),
-                        QuerySubscription::Query { .. } | QuerySubscription::Source { .. } => {
-                            target.plan.as_ref().is_none_or(|plan| {
-                                plan.touches_edit(entry, before, after, was, now, &config)
-                            })
+            // Time can change a displayed answer even when this publication
+            // has no changed document to pass to the shared edit predicate.
+            let touched = target.plan.as_ref().is_some_and(Plan::reads_clock)
+                || edits
+                    .iter()
+                    .zip(&facts)
+                    .any(|((entry, before, after), (was, now))| {
+                        if before == after {
+                            return false;
                         }
-                    }
-                });
+                        match &target.request {
+                            QuerySubscription::Full | QuerySubscription::Unlinked { .. } => true,
+                            QuerySubscription::Registry => was.registry_rows_differ(now),
+                            QuerySubscription::Query { .. } | QuerySubscription::Source { .. } => {
+                                target.plan.as_ref().is_none_or(|plan| {
+                                    plan.touches_edit(entry, before, after, was, now, &config)
+                                })
+                            }
+                        }
+                    });
             if touched || target.dirty || dirty {
                 summary.query_to.insert(id.clone());
             }
