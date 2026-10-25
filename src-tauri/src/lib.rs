@@ -44,6 +44,7 @@ mod host_slot_guard_tests;
 mod i18n_shell;
 #[cfg(target_os = "ios")]
 mod ios_folder_picker;
+mod linux_inline_preedit;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
 #[cfg(test)]
@@ -891,6 +892,8 @@ pub fn run() {
     // env-scrubbed spawn and do not compile the plugin at all.
     #[cfg(any(mobile, target_os = "windows"))]
     let builder = builder.plugin(tauri_plugin_opener::init());
+
+    let builder = linux_inline_preedit::configure(builder);
 
     builder
         .plugin(tauri_plugin_clipboard_manager::init())

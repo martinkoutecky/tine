@@ -88,9 +88,10 @@ function mountThreePages() {
 }
 
 describe("right-sidebar drag reorder (GH #211)", () => {
-  it("GH #524 drops a main-pane block as the first root of an empty sidebar page", async () => {
+  it.each(["empty file", "no file"])("GH #524 drops a main-pane block into a sidebar page with %s", async (state) => {
     loadSingle({ ...pageDto("Source"), id: "pages/Source.md" });
-    loadSingle({ ...pageDto("Empty"), id: "pages/Empty.md", blocks: [] });
+    if (state === "empty file") loadSingle({ ...pageDto("Empty"), id: "pages/Empty.md", blocks: [] });
+    else vi.spyOn(backend(), "getPage").mockResolvedValue(null);
     applySidebarSession({ right: true, items: [{ kind: "page", name: "Empty", pageKind: "page" }] });
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
     vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);

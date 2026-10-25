@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-linux-inline-preedit.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A Linux textarea shows real inline Hangul composition, commits each word once, supports Backspace and page completion during composition, and preserves the neighbouring block on disk.","blocking":false,"authority":"UI-LINUX-INLINE-PREEDIT; Linux inline-preedit lane 2026-10-25; GH #575 is only a possible related fix"}],
+      "acceptableVariations": ["IME event ordering, commit-on-Escape engine policy, candidate styling, caret geometry and save latency may vary. IBus Hangul may commit before forwarding an ordinary Enter that splits the block."],
+      "nonRequirements": ["CI execution: local-only, requiring an isolated IBus Hangul installation and X/DBus session. Fcitx5, native Wayland and other operating systems are not certified by this journey. No exact pixels, DOM nesting or event count is required."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-root-identity.mjs": {
       "contracts": [
         {"class":"exact-safety-interoperability","userOutcome":"A graph moved while open is never recreated by a save; typed input remains in real device drafts. Reopening at the new location offers explicit recovery, Not now preserves custody and returns at the next open, and recovery publishes the kept input through ordinary save checks.","blocking":true,"authority":"Martin RD4/RD5; L9-01/L9-02 approved design sections 2b/2c"},
@@ -963,6 +969,12 @@
       "nonRequirements": ["Exact toast placement, pixels, DOM nesting, or certification outside Linux WebKitGTK (the disk error is a read-only pages folder and the crash is SIGKILL)."],
       "stability":"burn-in"
     },
-    "scripts/e2e-org-created-format.mjs": {"contracts": [{"class": "stateful-ux", "userOutcome": "On an Org graph, a page created from the Quick Switcher's Create row is written as an .org file and edited as Org: the first property the user adds to it (Copy block ref's durable id) is saved as a :PROPERTIES: drawer, never as a Markdown id:: line.", "blocking": true}], "acceptableVariations": ["Switcher row ranking, focus, file name casing and save or watcher latency may vary while the saved bytes carry the id in an Org drawer."], "nonRequirements": ["Exact pixels, the clipboard's contents, or native platform certification outside Linux WebKitGTK."], "stability": "burn-in"}
+    "scripts/e2e-org-created-format.mjs": {"contracts": [{"class": "stateful-ux", "userOutcome": "On an Org graph, a page created from the Quick Switcher's Create row is written as an .org file and edited as Org: the first property the user adds to it (Copy block ref's durable id) is saved as a :PROPERTIES: drawer, never as a Markdown id:: line.", "blocking": true}], "acceptableVariations": ["Switcher row ranking, focus, file name casing and save or watcher latency may vary while the saved bytes carry the id in an Org drawer."], "nonRequirements": ["Exact pixels, the clipboard's contents, or native platform certification outside Linux WebKitGTK."], "stability": "burn-in"},
+    "scripts/e2e-gh524-new-page-sidebar.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A brand-new fileless page opened in the right sidebar through a link or page menu offers an editable first bullet; typing creates the page file and a dragged subtree moves from its source into the new page. Search-created pages remain editable there too (GH #524).","blocking":true}],
+      "acceptableVariations": ["First-bullet styling, editor layout, menu placement and save latency."],
+      "nonRequirements": ["Exact pixels or DOM structure; native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    }
   }
 }
