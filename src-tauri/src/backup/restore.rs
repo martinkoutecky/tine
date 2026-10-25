@@ -488,7 +488,10 @@ mod tests {
         let store = Store::open(&old, Default::default()).unwrap().0;
         let source = BackupSource::from_store(&store, &old).unwrap();
         let backups = data.path().join("backups");
-        let base = backups.join(root_backup_id(&old));
+        // Taken while `old` exists: afterwards it cannot canonicalize, and on
+        // Windows the lexical temp path may be an 8.3 short name.
+        let old_id = root_backup_id(&old);
+        let base = backups.join(&old_id);
         assert!(snapshot(&base, &store, &source, "").failure.is_none());
         let (id, _) = newest_zip(&base, &old);
         let archive = zip_base(&base).join(format!("{}.zip", &id[4..]));
@@ -506,7 +509,7 @@ mod tests {
         let roots = old_backup_roots(&backups, &new);
         assert_eq!(
             roots,
-            vec![(root_backup_id(&old), source.root.display().to_string())]
+            vec![(old_id.clone(), source.root.display().to_string())]
         );
         let wire = format!("old:{}:{id}", roots[0].0);
         let (selected, origin, snapshot_id) = old_backup_selection(&backups, &new, &wire).unwrap();
