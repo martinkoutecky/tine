@@ -45,6 +45,37 @@ describe("renderer stall diagnostics", () => {
     editor.dispatchEvent(new Event("input", { bubbles: true }));
     expect(next).toBeUndefined();
   });
+  it("registers no PerformanceObserver until typing and disconnects when typing goes idle", () => {
+    const observed: PerformanceObserverInit[] = [];
+    let live = 0;
+    class Observer {
+      static supportedEntryTypes = ["long-animation-frame", "event"];
+      constructor() { live++; }
+      observe(options: PerformanceObserverInit) { observed.push(options); }
+      disconnect() { live--; }
+    }
+    let next: FrameRequestCallback | undefined;
+    vi.stubGlobal("PerformanceObserver", Observer);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { next = callback; return 1; });
+    vi.stubGlobal("cancelAnimationFrame", () => { next = undefined; });
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    vi.spyOn(performance, "now").mockReturnValue(100);
+    const stop = installRenderStallMonitor();
+    expect(live).toBe(0); // scrolling and loading pay nothing (hosted bench)
+    expect(renderStallSnapshot().supported).toEqual(["long-animation-frame", "event"]);
+    const editor = document.createElement("textarea");
+    document.body.append(editor);
+    editor.dispatchEvent(new Event("keydown", { bubbles: true }));
+    expect(live).toBe(2);
+    expect(observed.every(options => (options as { buffered?: boolean }).buffered)).toBe(true);
+    next!(150);
+    next!(2200); // two seconds without input
+    expect(live).toBe(0);
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(live).toBe(2);
+    stop();
+    expect(live).toBe(0);
+  });
   it("exports bounded LoAF attribution and Event Timing where supported", () => {
     const callbacks: ((list: { getEntries: () => unknown[] }) => void)[] = [];
     class Observer {
