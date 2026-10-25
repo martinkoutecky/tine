@@ -391,7 +391,7 @@ const COMMANDS: CommandDef[] = [
   { id: "ui/toggle-brackets", binding: "mod+c mod+b", label: msg("command-ui-toggle-brackets"), scope: "global", run: () => changeShowBrackets(!showBrackets()), global: true },
   { id: "ui/toggle-left-sidebar", binding: "t l", label: msg("command-ui-toggle-left-sidebar"), scope: "global", run: toggleSidebar },
   { id: "ui/toggle-right-sidebar", binding: "t r", label: msg("command-ui-toggle-right-sidebar"), scope: "global", run: toggleRightSidebar },
-  { id: "ui/open-settings", binding: "t s", label: msg("command-ui-open-settings"), scope: "global", run: openSettings },
+  { id: "ui/open-settings", binding: "t s", alias: "mod+,", label: msg("command-ui-open-settings"), scope: "global", run: openSettings },
   { id: "appearance/edit-custom-css", binding: "", label: msg("command-appearance-edit-custom-css"), scope: "global", run: () => void openCssEditor(false) },
   { id: "appearance/edit-global-css", binding: "", label: msg("command-appearance-edit-global-css"), scope: "global", run: () => void openCssEditor(true) },
   { id: "graph/export-html", binding: "", label: msg("command-graph-export-html"), scope: "global", run: () => openSettings("graph") },

@@ -67,6 +67,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Sidebar disclosure arrows now use the shared SVG triangle, including nested Favorites, Tabs and namespaces; graph and workspace switchers inherit the app font (GH #761).
+- Cmd+, on macOS and Ctrl+, elsewhere open Settings, including while editing a block; the existing `t s` shortcut remains available and both defaults appear in Keyboard shortcuts (GH #762).
+
 - Mobile: the help "?" button no longer covers the last buttons of the bottom-docked formatting toolbar while text is selected, with or without the keyboard (internal UI-HELP-FAB-ABOVE-DOCKED-TOOLBAR).
 - Windows: a save made while the previous save of the same page was still replacing the file is no longer refused as "write target escapes graph root" when Windows reports the replaced file's location for the page (internal REG-WIN-WRITE-TARGET-DISPLACED; completes the 0.8.0-beta.4 fix).
 - Block references keep resolving after a block moves between pages and after reopening the graph; dangling references no longer scan unrelated pages (GH #746, GH #623).

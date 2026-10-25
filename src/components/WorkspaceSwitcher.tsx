@@ -1,4 +1,5 @@
 import { msg, t } from "../i18n";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingOwner, readOwned, writeOwned } from "../owned";
@@ -125,7 +126,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
             <EmojiText text={active() ? workspaceDisplayName(active()!) : "Workspace"} />
           </span>
         </Show>
-        <span class="workspace-switcher-caret" aria-hidden="true">▾</span>
+        <ReferenceDisclosure class="workspace-switcher-caret" collapsed={false} />
       </button>
 
       <Show when={hoverOpen() && !menuOpen()}>

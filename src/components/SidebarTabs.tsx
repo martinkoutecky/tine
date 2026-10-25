@@ -8,6 +8,7 @@
 // tree (src/tabTree.ts); this list only derives depth and what collapse hides.
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import { t } from "../i18n";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { EmojiText } from "../render/emoji";
 import { focusedRouterOf } from "../panes";
 import { MAIN_WINDOW_ID } from "../windowRealm";
@@ -108,7 +109,7 @@ export function SidebarTabs(props: { onActiveNavigationComplete?: () => void }):
           aria-controls="sidebar-tabs-list"
           onClick={() => setTabsSectionExpanded((open) => !open)}
         >
-          <span class="nav-toggle-caret" classList={{ open: tabsSectionExpanded() }}>▸</span>{t("tab-bar-open-tabs")}<span class="nav-section-count">{router().tabs().length}</span>
+          <ReferenceDisclosure class="nav-toggle-caret" collapsed={!tabsSectionExpanded()} />{t("tab-bar-open-tabs")}<span class="nav-section-count">{router().tabs().length}</span>
         </button>
         <Show when={tabsSectionExpanded()}>
           <div id="sidebar-tabs-list" role="list">
@@ -158,7 +159,7 @@ export function SidebarTabs(props: { onActiveNavigationComplete?: () => void }):
                           aria-label={tab.collapsed ? t("tab-bar-expand-group") : t("tab-bar-collapse-group")}
                           onClick={() => router().setTabCollapsed(tab.id, !tab.collapsed)}
                         >
-                          <span class="nav-toggle-caret" classList={{ open: !tab.collapsed }}>▸</span>
+                          <ReferenceDisclosure class="nav-toggle-caret" collapsed={!!tab.collapsed} />
                         </button>
                       </Show>
                     </Show>
