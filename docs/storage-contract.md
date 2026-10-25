@@ -186,7 +186,8 @@ guard was removed; the remaining boundaries can be separated by scheduling or
 I/O and do not reuse a stale witness. Linux uses one `std::fs::metadata`
 (statx, with std's stat fallback) per probe, Apple uses one stat; Windows uses one
 identity open/query. The ignored `l9_measure_per_save_root_checks` test measures
-the running platform. Windows runtime/cost acceptance remains with hosted CI.
+the running platform: ~1.4 µs per check on Linux (statx); on hosted Windows
+(run 40145619007) 20.2 µs per check, 121 µs for the six checks of a save.
 
 Device state keeps its existing canonical-path keys and formats. An iOS-only
 validated container-UUID rebase independently renames drafts, both legacy and
