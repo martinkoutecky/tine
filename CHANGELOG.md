@@ -69,6 +69,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Journal feeds, Upcoming, calendar dots and slash templates now refresh from their relevant changes, avoiding unrelated reads while typing (GH #746).
 - Sidebar disclosure arrows now use the shared SVG triangle, including nested Favorites, Tabs and namespaces; graph and workspace switchers inherit the app font (GH #761).
 - Cmd+, on macOS and Ctrl+, elsewhere open Settings, including while editing a block; the existing `t s` shortcut remains available and both defaults appear in Keyboard shortcuts (GH #762).
 - Queries skip unrelated saves and graph-wide queries wait for a 1.5-second typing pause; collapsed reference sections keep their last count with a stale indicator until opened (GH #746).

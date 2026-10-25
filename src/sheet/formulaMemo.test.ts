@@ -1,7 +1,9 @@
 import { createRoot, createSignal } from "solid-js";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import * as formula from "./formula";
-import { bumpDataRev, dataRev } from "../graphSession";
+import { bumpDataRev, bumpGraphEpoch } from "../graphSession";
+import { dataRev } from "../dataRevision";
+import { applyChangeSummary } from "../changeSummary";
 import { resetStore } from "../document";
 import { setDoc, type FeedPage, type Node } from "../document/model";
 import { initParser } from "../render/parse";
@@ -9,6 +11,36 @@ import { computeFormulaResults, createFormulaResultsMemo, createFormulaFilterMem
 
 beforeAll(initParser);
 afterEach(resetStore);
+
+it("formula cells and filters ignore unrelated saves and refresh their row page, full and gaps", () => {
+  bumpGraphEpoch();
+  let rev = 0;
+  const publish = (pages: string[] = [], full = false) => {
+    applyChangeSummary({ rev: String(++rev), pages, blocks: [], linksTo: [], props: {}, inventoryChanged: false, full });
+    bumpDataRev(true);
+  };
+  publish();
+  const rows = fixture(1);
+  createRoot(dispose => {
+    let evaluations = 0;
+    const formulas = new Map([["base", "score + 1"]]);
+    const results = createFormulaResultsMemo({ rows: () => rows, formulas: () => formulas, now: () => new Date(0), onEvaluate: () => evaluations++ });
+    const evaluator = vi.spyOn(formula, "evaluate");
+    const filtered = createFormulaFilterMemo({ rows: () => rows, formulas: () => formulas, now: () => new Date(0), filter: () => "score >= 0" });
+    try {
+      results(); filtered(); evaluations = 0; evaluator.mockClear();
+      publish(["other"]); results(); filtered();
+      expect(evaluations).toBe(0); expect(evaluator).not.toHaveBeenCalled();
+      for (const reason of ["related", "full", "gap"]) {
+        if (reason === "gap") rev += 2;
+        publish(reason === "related" ? ["sheet"] : [], reason === "full");
+        results(); filtered();
+        expect(evaluations).toBe(1); expect(evaluator).toHaveBeenCalledTimes(2);
+        evaluations = 0; evaluator.mockClear();
+      }
+    } finally { evaluator.mockRestore(); dispose(); }
+  });
+});
 
 function fixture(count: number) {
   const nodes: Node[] = Array.from({ length: count }, (_, i) => ({

@@ -5,7 +5,8 @@ import { ErrorBoundary, createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import { bumpGraphEpoch, setDataRev } from "../graphSession";
+import { bumpGraphEpoch, bumpDataRev } from "../graphSession";
+import { setDataRev } from "../dataRevision";
 import { setRefreshEverything } from "../changeKeys";
 import type { Filter, RegistrySnapshot } from "../editor/queryIr";
 import { propertyFilter } from "../editor/queryBuilder";
@@ -201,8 +202,8 @@ describe("QueryBuilder registry failure handling (RET2-UI)", () => {
       openChooser(sheet);
       expect(document.querySelector(".qs-menu")!.textContent).toContain("cost");
 
-      // A save bumps `dataRev`; the re-read for the NEW revision fails.
-      setDataRev((revision) => revision + 1);
+      // Exercise the publication adapter, including its full fallback keys.
+      bumpDataRev();
       await settle();
       expect(registry.mock.calls.length).toBe(2);
       expect(builder.boundary()).toBeNull();
@@ -237,7 +238,7 @@ describe("QueryBuilder registry failure handling (RET2-UI)", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
       await settle();
 
-      setDataRev((revision) => revision + 1);
+      bumpDataRev();
       await settle();
       expect(document.querySelector(".qs-registry-failure")).not.toBeNull();
       // Commits are refused for as long as the types are unavailable.
@@ -347,7 +348,7 @@ describe("QueryBuilder registry failure handling (RET2-UI)", () => {
       await settle();
       const choices = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((item) => item.textContent?.trim());
       expect(choices()).toContain("cost");
-      setDataRev(1);
+      bumpDataRev();
       await settle();
       expect(finish).toBeDefined();
       expect(choices()).toContain("cost");

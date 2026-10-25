@@ -7,7 +7,8 @@ import {
   registerTransientLayer,
 } from "../transientLayers";
 import { CalendarJump } from "./CalendarJump";
-import { bumpGraphEpoch } from "../graphSession";
+import { bumpGraphEpoch, bumpDataRev } from "../graphSession";
+import { applyChangeSummary } from "../changeSummary";
 
 afterEach(() => {
   clearTransientLayersForTest();
@@ -35,6 +36,30 @@ function lowerSentinel(id: string) {
 }
 
 describe("CalendarJump transient ownership", () => {
+  it("keeps calendar dots on unrelated saves and reloads journal edits, full and gaps", async () => {
+    bumpGraphEpoch();
+    let rev = 0;
+    const publish = (journals = false, full = false) => {
+      applyChangeSummary({ rev: String(++rev), pages: [], blocks: [], linksTo: [], props: {}, inventoryChanged: false, full, journals });
+      bumpDataRev(true);
+    };
+    publish();
+    const mounted = mountCalendar();
+    const days = vi.mocked(backend().journalContentDays);
+    try {
+      mounted.root.querySelector<HTMLButtonElement>('button[title="Go to date"]')!.click();
+      await vi.waitFor(() => expect(days).toHaveBeenCalledTimes(1));
+      publish();
+      await Promise.resolve();
+      expect(days).toHaveBeenCalledTimes(1);
+      publish(true);
+      await vi.waitFor(() => expect(days).toHaveBeenCalledTimes(2));
+      publish(false, true);
+      await vi.waitFor(() => expect(days).toHaveBeenCalledTimes(3));
+      rev += 2; publish();
+      await vi.waitFor(() => expect(days).toHaveBeenCalledTimes(4));
+    } finally { mounted.dispose(); }
+  });
   it("drops old graph journal dots while the calendar stays open", async () => {
     let resolveOld!: (days: number[]) => void;
     const days = vi.spyOn(backend(), "journalContentDays")

@@ -2,7 +2,7 @@ import { beforeEach, expect, it } from "vitest";
 import { applyChangeSummary, changeSummary } from "./changeSummary";
 import { applyGraphAnswers } from "./graphAnswers";
 import { bumpGraphEpoch } from "./graphSession";
-import { dataRev } from "./graphSession";
+import { dataRev } from "./dataRevision";
 import type { ChangeSummary } from "./backendTypes";
 import { invalidateBinding } from "./binding";
 import { applyGraphChangesBulk } from "./document";

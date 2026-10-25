@@ -1192,7 +1192,7 @@ these in `watch.rs`, `tests/watch.rs` and `src-tauri/src/watcher.rs`.
 
 Every publication, including an own text-only save, carries the existing
 `answers: {rev, inventoryChanged, blockRefCounts}` envelope with an added
-`summary: {rev, pages, blocks, linksTo, textTo, tagsTo, tagTableTo, refsTo, props, inventoryChanged, full}`.
+`summary: {rev, pages, blocks, linksTo, textTo, tagsTo, tagTableTo, refsTo, queryTo, days, journals, templates, props, inventoryChanged, full}`.
 The revision is a decimal string, monotonic per graph. `pages` contains edited
 source-page keys; `blocks` contains changed runtime and persisted block ids,
 including affected ancestors for subtree readers. `linksTo` conservatively
@@ -1257,6 +1257,30 @@ receiver also treats its first summary after binding and revision gaps as
 these invalidations at the existing publication/refresh-hold boundary; result
 retention is unchanged. Legacy summaries lacking S2 fields conservatively
 refresh their reader families. No new state is persisted or save path changed.
+
+S5 adds three conservative boolean hints, computed from the old and new edited
+documents, never a whole-graph scan: `journals` for journal content, `days` for
+journal content, explicit journal-date references (using the existing widened
+reference names and journal parser), or parsed scheduled/deadline facts, and
+`templates` for edits to a document containing a template, including its property
+header. Removal fires the old dependency too. Journal feeds and Upcoming use
+`days`; calendar dots use `journals`; the lazy slash-template cache uses
+`templates`. Missing hints from older hosts fire the corresponding family.
+Day rollover retains its existing frontend clock signal and host full fallback.
+
+All Pages metadata explicitly depends on every publication because its Updated
+column spans all pages. Deferred external reloads use that same publication key
+only as a lifecycle wakeup. An unregistered query or an unclassified membership
+reader conservatively uses every publication; registered graph-search and twin
+fallbacks retain S4's host `full` dependency and quiet scheduler. Formula cells
+and filters depend on their row's block and source page. The compatibility
+`dataRev` counter advances only on full fallback refreshes; no production reader
+subscribes to it directly (`src/dataRevision.ratchet.test.ts` lists the definition
+and compatibility export as its only exceptions).
+This retires the historical I-13 `referencedPageNames` specimen: page-name
+inventory already follows `pageInventoryRev` (`src/pageIndex.ts`), and the S5
+ratchet prevents new direct global-counter readers. The invariant itself remains
+active.
 
 Full runtime graph-text scans with unchanged configuration enumerate metadata outside the page/save writer.
 They validate the cache generation and publication revision after acquiring the

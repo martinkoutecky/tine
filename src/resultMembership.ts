@@ -1,6 +1,7 @@
 import { createMemo, createResource, onCleanup, untrack, type Accessor, type Resource } from "solid-js";
 import { editingId } from "./editorController";
-import { dataRev, graphEpoch } from "./graphSession";
+import { graphEpoch } from "./graphSession";
+import { changed } from "./changeKeys";
 import { node as docNode, isConflicted, isDirty, isSaving, pendingDataRevision } from "./document";
 import { graphOwner, readOwned } from "./owned";
 import { readOr, readLatestOr } from "./resourceRead";
@@ -30,7 +31,8 @@ export function createMembershipResource<S, T>(
   contains: (value: T, id: string) => boolean,
   invalidate: Accessor<boolean> = () => true,
   guardResults = false,
-  revisionSource: Accessor<unknown> = dataRev,
+  // An unclassified caller must conservatively refresh on every publication.
+  revisionSource: Accessor<unknown> = () => changed("publication"),
 ) {
   let snapshot: T | undefined;
   let scope = "";

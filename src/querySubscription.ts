@@ -4,9 +4,9 @@ import { createEffect, createMemo, createSignal, onCleanup, untrack, type Access
 import { backend } from "./backend";
 import { captureBinding } from "./binding";
 import { bindingOwner, readOwned } from "./owned";
-import { graphEpoch, dataRev } from "./graphSession";
+import { graphEpoch } from "./graphSession";
 import { changeSummary } from "./changeSummary";
-import { changedAny, refreshEverything } from "./changeKeys";
+import { changed, changedAny, refreshEverything } from "./changeKeys";
 import { resultsSettled } from "./queryResultsEpoch";
 import { onEachWindow } from "./windowRealm";
 import type { Query, ExecutionContext } from "./editor/queryIr";
@@ -73,7 +73,8 @@ export function createQuerySubscription(question: Accessor<QuerySubscription | u
     return { id, prepare, mode, registered: !!register, baseline: () => baseline, readStarted: false };
   });
   const [retryRevision, setRetryRevision] = createSignal(0);
-  const raw = createMemo(() => `${day() ?? ""}:${subscription().registered ? changedAny([`query:${subscription().id}`]) : `${graphEpoch()}:${dataRev()}`}:${retryRevision()}`);
+  // A host without registration cannot classify this reader: stay conservative.
+  const raw = createMemo(() => `${day() ?? ""}:${subscription().registered ? changedAny([`query:${subscription().id}`]) : changed("publication")}:${retryRevision()}`);
   const [quietRevision, setQuietRevision] = createSignal(untrack(raw));
   // An unknown plan can include links/near or a second result family. Its
   // conservative dependency must be conservative about graph-wide cost too.
@@ -125,6 +126,6 @@ export function createQuerySubscription(question: Accessor<QuerySubscription | u
     publication: () => untrack(() => {
       const baseline = subscription().baseline();
       const latest = changeSummary()?.rev ?? "0";
-      return `${BigInt(baseline) > BigInt(latest) ? baseline : latest}:${dataRev()}`;
+      return `${BigInt(baseline) > BigInt(latest) ? baseline : latest}:${changed("publication")}`;
     }) };
 }

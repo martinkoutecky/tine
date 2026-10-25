@@ -24,7 +24,8 @@ import { isSaving, pendingDataRevision } from "../document/host/wiring";
 import { conflictedInHost, openAsLoaded } from "./hostConflict.test.support";
 import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRecentPages, setRightSidebar } from "../ui";
 import { closeShareDialog, shareTarget } from "../shareState";
-import { bumpGraphEpoch, graphEpoch, setGraphMeta } from "../graphSession";
+import { bumpGraphEpoch, bumpDataRev, graphEpoch, setGraphMeta } from "../graphSession";
+import { applyChangeSummary } from "../changeSummary";
 import { setToasts, toasts } from "../toasts";
 import { favorites, isFavorite, seedFavorites } from "../favorites";
 import type { GraphMeta } from "../types";
@@ -120,6 +121,59 @@ it.each([
 });
 
 describe("Journals feed generation lifecycle", () => {
+  it("refreshes directly routed Upcoming for day evidence, full and gaps only", async () => {
+    bumpGraphEpoch();
+    let rev = 0;
+    const publish = (days = false, full = false) => {
+      applyChangeSummary({ rev: String(++rev), pages: [], blocks: [], linksTo: [], props: {}, inventoryChanged: false, full, days });
+      bumpDataRev(true);
+    };
+    publish();
+    const today = journalDto(journalTitle(new Date()));
+    const section: PageDto = { name: "S5 sections", title: "S5 sections", kind: "page", pre_block: "tine/journal-sections:: true",
+      blocks: [{ id: "upcoming-section", raw: "{{upcoming}}", collapsed: false, children: [] }] };
+    vi.spyOn(backend(), "getPage").mockImplementation(async name => unpinned(name === section.name ? section : today));
+    vi.spyOn(backend(), "queryRun").mockResolvedValue({ anchor: "page", pages: [{ name: section.name }] } as unknown as Awaited<ReturnType<ReturnType<typeof backend>["queryRun"]>>);
+    const api = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([], { upcoming: [unpinned(journalDto("Future day"))] }));
+    mainPaneRouter.replaceActiveRoute({ kind: "page", name: today.name, pageKind: "journal" });
+    const mounted = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(mounted.root.querySelector(".journal-upcoming")).not.toBeNull());
+      api.mockClear();
+      publish(); await flushMicrotasks();
+      expect(api).not.toHaveBeenCalled();
+      for (const reason of ["related", "full", "gap"]) {
+        if (reason === "gap") rev += 2;
+        publish(reason === "related", reason === "full");
+        await vi.waitFor(() => expect(api).toHaveBeenCalledWith(1, null, true));
+        await flushMicrotasks(); api.mockClear();
+      }
+    } finally { mounted.dispose(); }
+  });
+
+  it("refreshes the feed for day evidence, full and gaps, leaving unrelated saves alone", async () => {
+    bumpGraphEpoch();
+    let rev = 0;
+    const publish = (days = false, full = false) => {
+      applyChangeSummary({ rev: String(++rev), pages: [], blocks: [], linksTo: [], props: {}, inventoryChanged: false, full, days });
+      bumpDataRev(true);
+    };
+    publish();
+    const api = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([journalDto("Keyed day")]));
+    const mounted = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(doc.feed).toContain("Keyed day"));
+      api.mockClear();
+      publish(); await flushMicrotasks();
+      expect(api).not.toHaveBeenCalled();
+      for (const reason of ["related", "full", "gap"]) {
+        if (reason === "gap") rev += 2;
+        publish(reason === "related", reason === "full");
+        await vi.waitFor(() => expect(api).toHaveBeenCalled());
+        await flushMicrotasks(); api.mockClear();
+      }
+    } finally { mounted.dispose(); }
+  });
   it.each([false, true])("adds a new day around an active editor (dirty: %s)", async (dirty) => {
     vi.stubGlobal("IntersectionObserver", class {
       observe() {}

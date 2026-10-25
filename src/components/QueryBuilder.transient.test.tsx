@@ -7,7 +7,7 @@ import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { autocompleteFacets, backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import { bumpGraphEpoch, setDataRev } from "../graphSession";
+import { bumpGraphEpoch, bumpDataRev } from "../graphSession";
 import { setRefreshEverything } from "../changeKeys";
 import type { RegistrySnapshot } from "../editor/queryIr";
 import {
@@ -175,7 +175,7 @@ describe("QueryBuilder transient ownership (post-GH #161)", () => {
       await Promise.resolve();
       expect(registry).toHaveBeenCalledTimes(1);
 
-      setDataRev((revision) => revision + 1);
+      bumpDataRev();
       await vi.waitFor(() => expect(registry).toHaveBeenCalledTimes(2));
 
       // The facets read the builder used to make is gone entirely. The
@@ -401,7 +401,7 @@ describe("QueryBuilder registry sharing (Harvest W4-P1 item 3)", () => {
     return keys;
   }
 
-  it("issues one shared registry request per (graph scope, dataRev, declaration) for five mounted builders", async () => {
+  it("issues one shared registry request per (graph scope, publication, declaration) for five mounted builders", async () => {
     const payloads = [
       snapshot([["revision-one", 3]]),
       snapshot([["revision-two", 3]]),
@@ -433,7 +433,7 @@ describe("QueryBuilder registry sharing (Harvest W4-P1 item 3)", () => {
       // sheet showing the vocabulary the graph had before the last save.
       registry.mockClear();
       current = 1;
-      setDataRev((revision) => revision + 1);
+      bumpDataRev();
       const perRevision = await settleRegistry(registry);
       for (const sheet of sheets) {
         expect(propertyKeysOffered(sheet)).toEqual(["revision-two"]);
@@ -501,7 +501,7 @@ describe("QueryBuilder registry landing (I-20)", () => {
       const sheet = builder.open();
       await settleRegistry(registry);
       expect(propertyKeys(sheet)).toEqual(["obsolete-type"]);
-      if (kind === "data") setDataRev((n) => n + 1);
+      if (kind === "data") bumpDataRev();
       else requestQueryRegistryRefresh();
       await settleRegistry(registry);
       expect(propertyKeys(sheet)).toEqual(["obsolete-type"]);

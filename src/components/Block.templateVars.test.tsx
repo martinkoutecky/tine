@@ -9,7 +9,8 @@ import { pageByName, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import type { GraphMeta, PageDto } from "../types";
-import { bumpGraphEpoch, setGraphMeta } from "../graphSession";
+import { bumpGraphEpoch, bumpDataRev, setGraphMeta } from "../graphSession";
+import { applyChangeSummary } from "../changeSummary";
 import { Block } from "./Block";
 
 const META: GraphMeta = {
@@ -99,6 +100,35 @@ it("routes slash-template insertion through applyTemplateVars with the current p
   } finally {
     dispose();
   }
+});
+
+it("reuses slash templates after unrelated saves and refreshes related edits, full and gaps", async () => {
+  bumpGraphEpoch();
+  let rev = 0;
+  const publish = (templates = false, full = false) => {
+    applyChangeSummary({ rev: String(++rev), pages: [], blocks: [], linksTo: [], props: {}, inventoryChanged: false, full, templates });
+    bumpDataRev(true);
+  };
+  publish();
+  const list = vi.spyOn(backend(), "listTemplates").mockResolvedValue([]);
+  setGraphMeta(META);
+  loadSingle({ name: "Shared", kind: "page", title: "Shared", pre_block: null,
+    blocks: [{ id: "keyed-template-host", raw: "/", collapsed: false, children: [] }] });
+  startEditing("keyed-template-host", 1);
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <Block id="keyed-template-host" />, root);
+  const textarea = editorIn(root);
+  const request = () => { textarea.focus(); textarea.reportInput({ bubbles: true, inputType: "insertText", data: "/" }); };
+  try {
+    request(); await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+    publish(); request(); await Promise.resolve();
+    expect(list).toHaveBeenCalledTimes(1);
+    for (const reason of ["related", "full", "gap"]) {
+      if (reason === "gap") rev += 2;
+      publish(reason === "related", reason === "full"); request();
+      await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(["related", "full", "gap"].indexOf(reason) + 2));
+    }
+  } finally { dispose(); }
 });
 
 it("does not offer the previous graph's cached templates after a graph switch", async () => {

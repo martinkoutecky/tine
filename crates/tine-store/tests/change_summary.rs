@@ -181,6 +181,9 @@ fn block_ids(blocks: &[BlockDto], ids: &mut BTreeSet<String>) {
 
 #[derive(Default)]
 struct Answers {
+    days: Value,
+    journals: Value,
+    templates: Value,
     queries: BTreeMap<String, Value>,
     linked: BTreeMap<String, Value>,
     unlinked: BTreeMap<String, Value>,
@@ -205,6 +208,14 @@ fn groups(groups: &[RefGroup]) -> Value {
 fn answers(store: &Store, root: &std::path::Path) -> Answers {
     let view = store.whole_graph().unwrap();
     let mut out = Answers::default();
+    out.days = json!(view
+        .inventory(tine_store::InventoryScope::ReferencedJournals)
+        .0
+        .iter()
+        .filter_map(|entry| entry.day.map(|day| day.0))
+        .collect::<Vec<_>>());
+    out.journals = serde_json::to_value(view.journal_content_days()).unwrap();
+    out.templates = serde_json::to_value(view.templates()).unwrap();
     // A distinct presentation key forces a fresh evaluation rather than
     // validating the summary against the memo's own carried answer.
     static RUN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -342,6 +353,15 @@ fn changed_keys(
 
 fn check(before: &Answers, after: &Answers, summary: &Value) -> Result<[usize; 8], String> {
     if summary["full"] != true {
+        for (key, was, now) in [
+            ("days", &before.days, &after.days),
+            ("journals", &before.journals, &after.journals),
+            ("templates", &before.templates, &after.templates),
+        ] {
+            if was != now && summary[key] != true {
+                return Err(key.into());
+            }
+        }
         let fired = strings(&summary["queryTo"]);
         for id in changed_keys(&before.queries, &after.queries) {
             if !fired.contains(&id) {
@@ -446,6 +466,49 @@ fn check(before: &Answers, after: &Answers, summary: &Value) -> Result<[usize; 8
 }
 
 #[test]
+fn day_and_template_hints_are_edit_scoped_and_cover_removal() {
+    let _guard = crate::integration_lock();
+    let (dir, store) = fixture(3);
+    let mut previous = answers(&store, dir.path());
+    for (raw, days, templates) in [
+        ("plain unrelated text", false, false),
+        ("[[2026-10-30]]", true, false),
+        ("removed day", true, false),
+        ("TODO planned\nSCHEDULED: <2026-10-30 Fri>", true, false),
+        ("removed planning", true, false),
+        ("a template\ntemplate:: Example", false, true),
+        ("edited template body\ntemplate:: Example", false, true),
+        ("removed template", false, true),
+    ] {
+        let wire = edit(&store, "pages/A.md", |doc| doc.blocks[0].raw = raw.into());
+        let summary = &wire["summary"];
+        assert_eq!(summary["full"], false);
+        assert_eq!(summary["days"], days, "{raw}");
+        assert_eq!(summary["journals"], false, "{raw}");
+        assert_eq!(summary["templates"], templates, "{raw}");
+        let next = answers(&store, dir.path());
+        check(&previous, &next, summary).unwrap();
+        for (key, was, now) in [
+            ("days", &previous.days, &next.days),
+            ("templates", &previous.templates, &next.templates),
+        ] {
+            if was != now {
+                let mut omitted = summary.clone();
+                omitted[key] = json!(false);
+                assert_eq!(check(&previous, &next, &omitted), Err(key.into()));
+            }
+        }
+        previous = next;
+    }
+    let wire = edit(&store, "journals/2026_10_22.md", |doc| {
+        doc.blocks[0].raw = "".into()
+    });
+    assert_eq!(wire["summary"]["days"], true);
+    assert_eq!(wire["summary"]["journals"], true);
+    check(&previous, &answers(&store, dir.path()), &wire["summary"]).unwrap();
+}
+
+#[test]
 fn change_summary_random_reader_oracle() {
     let _guard = crate::integration_lock();
     let (mut total, mut full, mut readers, mut precise_readers) = (0, 0, [0; 8], [0; 8]);
@@ -530,7 +593,7 @@ fn change_summary_random_reader_oracle() {
                 _ => edit(&store, path, |doc| {
                     let suffix = format!("{seed}:{step}");
                     let original_raw = doc.blocks[0].raw.clone();
-                    match random % 15 {
+                    match random % 16 {
                         0 => doc.blocks[0].raw = format!("Target plain {suffix}"),
                         1 => doc.blocks[0].raw = format!("[[Target]] linked {suffix}"),
                         2 => doc.blocks[0].raw = format!("no references {suffix}"),
@@ -572,6 +635,7 @@ fn change_summary_random_reader_oracle() {
                                 Some(format!("note:: Cleared query properties {suffix}"));
                             doc.blocks[0].raw = format!("Cleared properties {suffix}");
                         }
+                        14 => doc.blocks[0].raw = format!("Template {suffix}\ntemplate:: Example"),
                         _ => doc.blocks[0].raw = format!("[[DayShortcut]] {suffix}"),
                     }
                     // Keep the block resolve oracle live through text edits.
