@@ -105,7 +105,7 @@ function installWindowMonitor(win: Window): () => void {
     // Keep the earliest key before the next frame (a freeze queues many keys).
     const timestamp = event.timeStamp <= lastInput && event.timeStamp >= 0 ? event.timeStamp : lastInput;
     pendingKey ??= timestamp;
-    if (!raf && !doc.hidden) { lastFrame = lastInput; raf = win.requestAnimationFrame(frame); startObservers(); }
+    if (!doc.hidden) startObservers(); // probe: no rAF loop
   };
   const visibility = () => {
     win.cancelAnimationFrame(raf);
