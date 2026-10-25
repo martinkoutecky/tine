@@ -214,6 +214,31 @@ assert.throws(
   () => selectExactCiEvidence("b".repeat(40), [{ run: successfulFullCiRun, jobs: successfulFullCiJobs }]),
   /No successful full CI evidence for exact SHA/
 );
+// A development-purpose run skipped release readiness: it backs only an
+// unpublished build (release.yml passes --allow-development when publish=false).
+const developmentFullCiRun = { ...successfulFullCiRun, display_title: `ci / full / development / ${commit}` };
+assert.throws(
+  () => selectExactCiEvidence(commit, [{ run: developmentFullCiRun, jobs: successfulFullCiJobs }]),
+  /development-purpose CI run/
+);
+assert.equal(
+  selectExactCiEvidence(commit, [{ run: developmentFullCiRun, jobs: successfulFullCiJobs }], { allowDevelopment: true }).run.id,
+  developmentFullCiRun.id
+);
+assert.equal(
+  selectExactCiEvidence(commit, [{ run: { ...successfulFullCiRun, display_title: `ci / full / ${commit}` }, jobs: successfulFullCiJobs }]).run.id,
+  successfulFullCiRun.id
+);
+assert.match(
+  ciWorkflow,
+  /purpose == 'development'[\s\S]*?release readiness not checked[\s\S]*?else\s+npm run check:release-readiness/,
+  "a development-purpose CI run must skip only the release readiness check"
+);
+assert.match(
+  releaseWorkflow,
+  /check-ci-evidence\.mjs \$\{\{ \(github\.event_name == 'workflow_dispatch' && inputs\.publish == false\) && '--allow-development' \|\| '' \}\}/,
+  "release.yml may accept a development-purpose CI run only when it publishes nothing"
+);
 assert.throws(
   () => selectExactCiEvidence(commit, [{
     run: { ...successfulFullCiRun, event: "pull_request" },
