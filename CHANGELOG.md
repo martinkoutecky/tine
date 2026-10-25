@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- A brand-new page with no file yet now shows an editable first bullet when opened in the right sidebar, so you can type or drag blocks into it without first editing it in the main pane (GH #524).
+
 ## [0.8.0-beta.12] - 2026-10-24
 
 Fixes for the 0.8.0 stable candidate: pasting a copied link keeps its URL (GH #759), opening a PDF no longer pulls the reader back to the top of the page (GH #672), a backlink to a highlight of a PDF that was not open scrolls to it, multiline Org blocks no longer add blank lines at the end of the file (GH #741), and hidden id:: and collapsed:: lines stay in the block's property group. Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
