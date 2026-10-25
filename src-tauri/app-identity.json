@@ -1,5 +1,5 @@
 {
-  "ship": "experiment",
+  "ship": "cm6spike",
   "identities": {
     "release": {
       "identifier": "page.tine.Tine",
@@ -12,6 +12,12 @@
       "productName": "Tine Beta",
       "androidApplicationId": "page.tine.beta",
       "deployName": "tine-og"
+    },
+    "cm6spike": {
+      "identifier": "page.tine.TineCm6Spike",
+      "productName": "Tine CM6 spike",
+      "androidApplicationId": "page.tine.app.cm6spike",
+      "deployName": "tine-cm6-spike"
     }
   }
 }

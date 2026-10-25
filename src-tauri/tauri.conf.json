@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Tine Beta",
+  "productName": "Tine CM6 spike",
   "version": "0.9.0-beta.1",
-  "identifier": "page.tine.TineBeta",
+  "identifier": "page.tine.TineCm6Spike",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5181",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Tine Beta",
+        "title": "Tine CM6 spike",
         "width": 1200,
         "height": 820,
         "minWidth": 640,

@@ -42,7 +42,7 @@ android {
     namespace = "page.tine.app"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "page.tine.beta"
+        applicationId = "page.tine.app.cm6spike"
         // Branch-only experiment: separate private preferences and folder grants.
         if (System.getenv("VITE_CM6_SPIKE") == "1") {
             applicationId = "page.tine.app.cm6spike"
