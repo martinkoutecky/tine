@@ -30,7 +30,7 @@ import { installSystemInsetOwner } from "./systemInsets";
 import { installPlatformAttribute } from "./nativeChrome";
 import { installEditableEmojiPlatform } from "./editableEmoji";
 import { installTextareaPrimarySelectionGuard } from "./textareaPrimarySelection";
-import { installRenderStallMonitor } from "./renderStalls";
+
 import "./styles/editableEmoji.css";
 import "./styles/app.css";
 import "./styles/touchGestures.css"; // after app.css: its .sel-toolbar-mobile overrides .sel-toolbar
@@ -58,7 +58,7 @@ if (isTauri()) installBackendClock(() => backend().localClock());
 installSystemInsetOwner();
 installEditableEmojiPlatform();
 installTextareaPrimarySelectionGuard();
-if (!isPublishedExport()) installRenderStallMonitor();
+// perf A/B probe: monitor off
 applyTheme();
 applyAccent();
 // Workspace windows (desktop): wired before the session restore reopens them.
