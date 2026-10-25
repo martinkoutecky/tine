@@ -365,10 +365,29 @@ function Capture() {
   };
   // An unacknowledged insertion owns its snapshot across manual retries too.
   let retry: { id: string; scratch: string; nodes: ReturnType<typeof scratchNodes>; title: string; revision: number; generation: number; target?: string } | undefined;
+  let needsRebind = false;
+  let rebinding = false;
+  let unconfirmedText = false;
   const submit = () => {
-    if (pendingCapture) return;
+    if (pendingCapture || rebinding) return;
     const submitOwner = latestOwner(submitScope, "capture", () => submitAlive);
     if (composing) return;
+    if (needsRebind && !retry) {
+      rebinding = true;
+      void readOwned(submitOwner, backend().bindCaptureGraph()).then(result => {
+        rebinding = false;
+        if (result.kind === "stale") return;
+        needsRebind = false;
+        submit();
+      }).catch(() => {
+        rebinding = false;
+        if (!submitOwner()) return;
+        setCaptureStatus("error");
+        setCaptureMessage(t("app-capture-couldn-t-be-saved-its-text"));
+        scheduleFit();
+      });
+      return;
+    }
     retry ??= { id: createQuickCaptureRequestId(), scratch: scratchMarkdown(), nodes: scratchNodes(), title: title(), revision: scratchRevision, generation: backend().graphBindingGeneration() };
     const snapshot = retry;
     const submittedScratch = snapshot.scratch, submittedTitle = snapshot.title;
@@ -391,6 +410,7 @@ function Capture() {
         await hideWindow();
         return;
       }
+      unconfirmedText = true;
       const id = snapshot.id;
       let target: string;
       try {
@@ -417,6 +437,7 @@ function Capture() {
         disposePendingCapture();
         if (ok) {
           retry = undefined;
+          unconfirmedText = false;
           setCaptureStatus("idle");
           setCaptureMessage("");
           // Input revisions also cover DOM-local IME text.
@@ -484,7 +505,10 @@ function Capture() {
       try {
         const unlisten = await listen<QuickCaptureAck>("quick-capture-ack", (e) => {
           if (!quickCaptureAckMatches(pending.id, e.payload)) return;
-          if (!e.payload.ok && !e.payload.landed) retry = undefined;
+          if (!e.payload.ok && !e.payload.landed) {
+            retry = undefined;
+            needsRebind = true;
+          }
           void finish(e.payload.ok).then(() => {
             if (!submitOwner()) return;
             setPreviousGraph(!!e.payload.closedGraph);
@@ -507,11 +531,12 @@ function Capture() {
   const cancel = () => {
     latestOwner(submitScope, "capture");
     disposePendingCapture();
-    // An unproved insertion may already be in a host. Hide without discarding
-    // its retry identity or any later input; reopening resumes that scratch.
-    if (retry) {
+    // An unproved insertion may already be in a host; even a proved refusal
+    // leaves attempted text in custody. Hide without discarding either scratch
+    // or an uncertain retry identity.
+    if (retry || unconfirmedText) {
       setCaptureStatus("error");
-      if (!previousGraph()) setCaptureMessage(t("capture-retry-unconfirmed"));
+      if (retry && !previousGraph()) setCaptureMessage(t("capture-retry-unconfirmed"));
       void hideWindow();
       return;
     }

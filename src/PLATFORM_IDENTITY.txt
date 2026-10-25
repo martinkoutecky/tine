@@ -16,6 +16,7 @@ src/App.tsx touchGesturePlatform x1  # why: host-event; edge-swipe back model (i
 src/androidBack.ts platform-literal x1  # why: host-event; Android back button is a host event
 src/components/AboutTab.tsx platform-literal x8  # why: native-api; update and store channel differ per host
 src/components/AboutTab.tsx platformKind x1  # why: native-api; update and store channel differ per host
+src/components/AllGraphs.tsx canRevealInFileManager x4  # why: native-api; desktop-only graph window and reveal actions share the sidebar's native capability gate
 src/components/Block.tsx isMobilePlatform x1  # why: native-api; /drawio launches a desktop-only external editor
 src/components/ContextMenu.tsx isMobilePlatform x1  # why: native-api; Export to PDF needs the desktop print/save pipeline
 src/components/CustomCssSettings.tsx isMac x1  # why: os-convention; the developer-tools shortcut hint names the OS chord

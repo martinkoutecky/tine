@@ -813,6 +813,18 @@ export function isCreateConflict(error: unknown): boolean {
 
 // ------------------------------------------------------------------ deletion (§12, D4)
 
+const DELETE_DRAIN_TIMEOUT_MS = 5_000;
+
+async function drainForDelete(c: HostClient, name: string): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      c.drain([name]).then(() => true),
+      new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), DELETE_DRAIN_TIMEOUT_MS); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
 /** Delete through the host: ordinary input is published first; conflicted
  * input stays until Applied, with a native recovery copy before admission. The host
  * waits for the deletion to publish (Finding B), so only `applied` means the
@@ -836,8 +848,7 @@ export async function deletePageOnDisk(name: string, kind: PageKind, path?: stri
   try {
     // Freeze input before draining. A conflict cannot publish, but every local
     // submit must be answered before the native boundary snapshots its buffer.
-    if (conflicted) await c.drain([name]);
-    const drained = !c.retired && !c.busy(name);
+    const drained = (!conflicted || await drainForDelete(c, name)) && !c.retired && !c.busy(name);
     if (!drained || host() !== c || !owner()) {
       if (host() === c) untombstone(name);
       const reason = msg("delete-reason-unsaved", { name });

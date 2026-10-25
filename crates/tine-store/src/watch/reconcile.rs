@@ -661,7 +661,12 @@ mod tests {
     use super::*;
 
     fn open() -> (tempfile::TempDir, Arc<crate::Store>) {
-        let dir = tempfile::tempdir().unwrap();
+        // The store keys watcher state by its canonical root, as the watcher's
+        // own events are. On a Windows runner the temp dir is an 8.3 spelling
+        // (`C:\Users\RUNNER~1\...`) and the canonical root a `\\?\` long
+        // name, so path lookups (snapshot, refusals, hints, injected faults)
+        // must start from the canonical temp dir.
+        let dir = tempfile::tempdir_in(fs::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
         fs::create_dir(dir.path().join("logseq")).unwrap();
         fs::write(dir.path().join("logseq/config.edn"), "{}\n").unwrap();

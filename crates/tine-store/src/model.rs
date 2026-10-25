@@ -10,6 +10,7 @@ pub(crate) mod entry_identity;
 pub(crate) mod held_index;
 pub(crate) use checkpoint_state::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
 pub(crate) use held_index::Source;
+mod inline_map;
 mod launch_patch;
 mod layout_retention;
 pub(crate) mod persistent;
@@ -714,11 +715,10 @@ impl ReadSnapshot {
         let capture_started = std::time::Instant::now();
         let pages = graph.peek_pages().expect("loaded graph");
         let cache_generation = graph.cache_generation();
-        // Build the indexes PRE warmed before ready. Block hints and referenced
-        // names were first-use work there, so their OnceLocks remain cold.
+        // Build eager indexes before Ready, including exact block owners.
         let initial = old.is_none().then(|| {
             // First, on the page-parse workers: it builds every block
-            // projection the other three indexes read (GJ5 S1).
+            // projection the other indexes read (GJ5 S1).
             let explicit = SnapshotExplicitIndex::capture(None, &pages, &[], None, &config);
             std::thread::scope(|scope| {
                 let signatures = scope.spawn(|| {
@@ -743,11 +743,13 @@ impl ReadSnapshot {
                         None,
                     )
                 });
+                let blocks = scope.spawn(|| SnapshotBlockIndex::build(&pages));
                 (
                     explicit,
                     signatures.join().expect("signature index worker"),
                     counts.join().expect("block count worker"),
                     aliases.join().expect("alias index worker"),
+                    blocks.join().expect("block index worker"),
                 )
             })
         });
@@ -789,14 +791,11 @@ impl ReadSnapshot {
         let block_index = std::sync::OnceLock::new();
         let previous_block =
             old.and_then(|old| old.block_index.get().map(|index| (index, &old.pages)));
-        if previous_block.is_some() {
-            let _ = block_index.set(SnapshotBlockIndex::capture(
-                previous_block,
-                &pages,
-                changed_paths,
-                position_pair,
-            ));
-        }
+        let _ = block_index.set(if let Some((_, _, _, _, index)) = &initial {
+            index.clone()
+        } else {
+            SnapshotBlockIndex::capture(previous_block, &pages, changed_paths)
+        });
         let carry_projection =
             |previous: Option<(&SnapshotPageDerivedIndex, &Arc<Pages>)>,
              project: fn(&Document) -> Vec<String>| {
@@ -812,7 +811,7 @@ impl ReadSnapshot {
                 }
                 cell
             };
-        let alias_index = if let Some((_, _, _, index)) = &initial {
+        let alias_index = if let Some((_, _, _, index, _)) = &initial {
             let cell = std::sync::OnceLock::new();
             let _ = cell.set(index.clone());
             cell
@@ -839,6 +838,11 @@ impl ReadSnapshot {
             old.map(|old| (&old.query_index, Arc::ptr_eq(&old.pages, &pages))),
             changed_paths,
         );
+        #[cfg(test)]
+        let block_full_builds =
+            usize::from(previous_block.is_none_or(|(_, before)| {
+                changed_paths.is_empty() && !Arc::ptr_eq(before, &pages)
+            }));
         let mut snapshot = Self {
             pages,
             config,
@@ -865,7 +869,7 @@ impl ReadSnapshot {
             #[cfg(test)]
             name_cache_work: 0,
             #[cfg(test)]
-            block_full_builds: std::sync::atomic::AtomicUsize::new(0),
+            block_full_builds: std::sync::atomic::AtomicUsize::new(block_full_builds),
             #[cfg(test)]
             referenced_name_full_builds: std::sync::atomic::AtomicUsize::new(0),
         };
@@ -1423,15 +1427,83 @@ impl ReadSnapshot {
     pub(crate) fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
         Arc::clone(&self.observed_mtimes)
     }
-    pub(crate) fn block_page_hint(&self, uuid: &str) -> Option<String> {
-        self.block_index
-            .get_or_init(|| {
-                #[cfg(test)]
-                self.block_full_builds
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                SnapshotBlockIndex::capture(None, &self.pages, &[], None)
+    /// The page that answers a lookup of block `uuid` (a runtime id or a
+    /// persisted `id::`): the first page, in page order, whose document holds
+    /// a block with that id, with its slot. `None` means no page in this
+    /// generation holds one (the block index is exact). Uses only keyed
+    /// lookups; cold builds construct it with the generation and later
+    /// publications carry it by per-file deltas.
+    pub(crate) fn block_owner_page(
+        &self,
+        uuid: &str,
+    ) -> Option<(usize, &(PageEntry, Arc<Document>))> {
+        let owner = self
+            .block_index
+            .get()
+            .expect("published generations hold the exact block index")
+            .first_owner(uuid)
+            .and_then(|slot| self.pages.get(slot).map(|page| (slot, page)));
+        // Also compiled in the app's debug tests, where tine-store is a dependency.
+        // A missed owner walk is as suspect as an absent row. Never recover by
+        // scanning in production: the check diagnoses the invariant in tests.
+        #[cfg(any(test, debug_assertions))]
+        {
+            let holds = |doc: &Document| {
+                let mut found = false;
+                SnapshotBlockIndex::for_each_block_id(doc, |id| found |= id == uuid);
+                found
+            };
+            if !owner.is_some_and(|(_, (_, doc))| holds(doc)) {
+                assert!(
+                    !self.pages.iter().any(|(_, doc)| holds(doc)),
+                    "block index missed held id {uuid:?}"
+                );
+            }
+        }
+        owner
+    }
+
+    /// Whole live key set, independent of ids still present in documents.
+    #[cfg(any(test, feature = "test-faults"))]
+    pub(crate) fn block_index_image(&self) -> Vec<(String, Vec<String>)> {
+        let mut rows: Vec<_> = self
+            .block_index
+            .get()
+            .unwrap()
+            .rows()
+            .map(|(id, owners)| {
+                let mut paths: Vec<_> = owners
+                    .slots()
+                    .iter()
+                    .map(|&slot| {
+                        self.pages.get(slot).map_or_else(
+                            || format!("<missing slot {slot}>"),
+                            |(entry, _)| entry.rel_path_str().to_owned(),
+                        )
+                    })
+                    .collect();
+                paths.sort();
+                (id, paths)
             })
-            .hint(uuid)
+            .collect();
+        rows.sort();
+        rows
+    }
+
+    /// Every slot the block index lists for `uuid`, ascending (index oracle).
+    #[cfg(any(test, feature = "test-faults"))]
+    pub(crate) fn block_owner_slots(&self, uuid: &str) -> Vec<usize> {
+        self.block_owner_page(uuid);
+        self.block_index
+            .get()
+            .and_then(|index| index.owners(uuid))
+            .map_or_else(Vec::new, |owners| owners.slots().to_vec())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn block_index_full_builds(&self) -> usize {
+        self.block_full_builds
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
     pub(crate) fn page_list_arc(&self) -> Arc<Vec<PageEntry>> {
         self.list.materialize()
@@ -1709,30 +1781,71 @@ impl SnapshotReferenceCandidateIndex {
     }
 }
 
-/// The page a block UUID was last seen on. One allocation per page, shared by
-/// every UUID on it, so the cold build costs one key clone per UUID.
-type BlockOwner = Arc<(PathBuf, String)>;
+/// The pages whose documents hold one block id, as ascending `Pages` slots:
+/// one (the usual case) or several (a duplicated `id::`, or a block copied to
+/// another page before its original goes).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum BlockOwners {
+    One(usize),
+    Many(Arc<Vec<usize>>),
+}
 
+impl BlockOwners {
+    fn slots(&self) -> &[usize] {
+        match self {
+            Self::One(slot) => std::slice::from_ref(slot),
+            Self::Many(slots) => slots,
+        }
+    }
+
+    fn from_slots(slots: Vec<usize>) -> Option<Self> {
+        match slots.as_slice() {
+            [] => None,
+            [slot] => Some(Self::One(*slot)),
+            _ => Some(Self::Many(Arc::new(slots))),
+        }
+    }
+}
+
+/// Block id (runtime uuid or persisted `id::`) → the pages that hold it.
+/// Exact for the pages it was captured against: a full build walks every
+/// page, and each publication swaps a changed path's previous ids for its
+/// current ones, so an id the index lacks is held by no page (I-13: a lookup
+/// never needs a whole-graph scan). Slots are `Pages` slots, which never move
+/// for a live path, are never reused, and ascend in page order. This rests on
+/// the same publication delta (`changed_paths` names every path whose
+/// document changed) that the reference and explicit indexes rest on.
 #[derive(Clone)]
 struct SnapshotBlockIndex {
-    base: Arc<SharedMap<String, Option<BlockOwner>>>,
-    overlay: Arc<SharedMap<String, Option<BlockOwner>>>,
+    uuids: inline_map::InlineMap<u128, BlockOwners>,
+    uuid_overlay: inline_map::InlineMap<u128, Option<BlockOwners>>,
+    base: Arc<SharedMap<String, BlockOwners>>,
+    /// Ids changed since the last fold; `None`: no page holds it any more.
+    overlay: Arc<SharedMap<String, Option<BlockOwners>>>,
 }
 
 impl SnapshotBlockIndex {
-    // Persistent roots share untouched UUIDs; folding N/8 changed hints into
-    // the base updates those tree paths without copying all N base entries.
+    // Persistent roots share untouched ids; folding N/8 changed ids into the
+    // base updates those tree paths without copying all N base entries.
 
-    fn for_each_block_id(doc: &Document, mut visit: impl FnMut(&str)) {
-        fn walk(blocks: &[DocBlock], visit: &mut dyn FnMut(&str)) {
+    fn authored_id(block: &DocBlock) -> Option<&str> {
+        block
+            .projection()
+            .properties()
+            .iter()
+            .find(|(key, _)| key.trim().eq_ignore_ascii_case("id"))
+            .map(|(_, value)| value.as_str())
+            .filter(|id| !id.is_empty())
+    }
+
+    fn for_each_block_id<'a>(doc: &'a Document, mut visit: impl FnMut(&'a str)) {
+        fn walk<'a>(blocks: &'a [DocBlock], visit: &mut dyn FnMut(&'a str)) {
             for block in blocks {
                 if !block.uuid.is_empty() {
                     visit(&block.uuid);
                 }
-                if let Some(id) = block.property("id") {
-                    if !id.is_empty() {
-                        visit(&id);
-                    }
+                if let Some(id) = SnapshotBlockIndex::authored_id(block) {
+                    visit(id);
                 }
                 walk(&block.children, visit);
             }
@@ -1750,77 +1863,187 @@ impl SnapshotBlockIndex {
     }
 
     fn fold_limit(&self) -> usize {
-        (self.base.len() / 8).max(1)
+        (self.len() / 8).max(1)
     }
 
-    fn owner(entry: &PageEntry) -> BlockOwner {
-        Arc::new((entry.path.clone(), entry.name.clone()))
+    fn len(&self) -> usize {
+        self.uuids.len() + self.base.len()
     }
 
+    // Index keys and authored values are case-sensitive. UUID parsing alone
+    // would collapse uppercase, simple and URN spellings that were distinct.
+    fn compact_uuid(id: &str) -> Option<u128> {
+        if id.len() != 36 || id.bytes().any(|b| b.is_ascii_uppercase()) {
+            return None;
+        }
+        uuid::Uuid::try_parse(id).ok().map(|id| id.as_u128())
+    }
+
+    fn rows(&self) -> impl Iterator<Item = (String, &BlockOwners)> {
+        let uuids = self
+            .uuids
+            .iter()
+            .filter(|(id, _)| self.uuid_overlay.get(id).is_none())
+            .chain(
+                self.uuid_overlay
+                    .iter()
+                    .filter_map(|(id, owners)| owners.as_ref().map(|owners| (id, owners))),
+            )
+            .map(|(id, owners)| (uuid::Uuid::from_u128(*id).to_string(), owners));
+        let strings = self
+            .base
+            .iter()
+            .filter(|(id, _)| self.overlay.get(id.as_str()).is_none())
+            .chain(
+                self.overlay
+                    .iter()
+                    .filter_map(|(id, owners)| owners.as_ref().map(|owners| (id, owners))),
+            )
+            .map(|(id, owners)| (id.clone(), owners));
+        uuids.chain(strings)
+    }
+
+    fn owners(&self, id: &str) -> Option<&BlockOwners> {
+        if let Some(id) = Self::compact_uuid(id) {
+            return match self.uuid_overlay.get(&id) {
+                Some(changed) => changed.as_ref(),
+                None => self.uuids.get(&id),
+            };
+        }
+        match self.overlay.get(id) {
+            Some(changed) => changed.as_ref(),
+            None => self.base.get(id),
+        }
+    }
+
+    /// Apply `change` to `id`'s ascending owner slots, recording only a change.
+    fn edit(&mut self, id: &str, change: impl FnOnce(&mut Vec<usize>)) {
+        let prior = self.owners(id);
+        let mut slots = prior.map_or_else(Vec::new, |owners| owners.slots().to_vec());
+        change(&mut slots);
+        let next = BlockOwners::from_slots(slots);
+        if next.as_ref() != prior {
+            if let Some(id) = Self::compact_uuid(id) {
+                self.uuid_overlay.insert(id, next);
+            } else {
+                Arc::make_mut(&mut self.overlay).insert(id.to_owned(), next);
+            }
+        }
+    }
+
+    /// Full build over `pages`, or `old` carried across a publication that
+    /// changed `changed_paths`: one cold sort, changed blocks' tree paths live.
     fn capture(
         old: Option<(&Self, &Arc<Pages>)>,
         pages: &Arc<Pages>,
         changed_paths: &[String],
-        positions: Option<(&SharedMap<String, usize>, &SharedMap<String, usize>)>,
     ) -> Self {
-        if let Some((previous, _previous_pages)) = old.filter(|(_, previous_pages)| {
+        let slot_page = |pages: &'_ Pages, rel: &str| {
+            pages
+                .positions
+                .get(rel)
+                .and_then(|&slot| pages.get(slot).map(|(_, doc)| (slot, Arc::clone(doc))))
+        };
+        if let Some((previous, previous_pages)) = old.filter(|(_, previous_pages)| {
             !changed_paths.is_empty() || Arc::ptr_eq(previous_pages, pages)
         }) {
             let mut index = previous.clone();
-            // A deleted ID may retain an old hint. All consumers verify the
-            // hinted page and scan on a miss. Record new owners, including
-            // ambiguity, without copying the shared base.
-            let overlay = Arc::make_mut(&mut index.overlay);
             for rel_path in changed_paths {
-                if let Some((entry, doc)) =
-                    snapshot_page_by_rel(pages, positions.map(|(_, after)| after), rel_path)
-                {
-                    let owner = Self::owner(entry);
-                    Self::for_each_block_id(doc, |id| {
-                        let prior = overlay.get(id).or_else(|| index.base.get(id));
-                        let hint = match prior {
-                            Some(None) => None,
-                            Some(Some(existing)) if existing.0 != owner.0 => None,
-                            _ => Some(owner.clone()),
-                        };
-                        overlay.insert(id.to_string(), hint);
+                if let Some((slot, doc)) = slot_page(previous_pages, rel_path) {
+                    Self::for_each_block_id(&doc, |id| {
+                        index.edit(id, |slots| slots.retain(|owner| *owner != slot));
+                    });
+                }
+                if let Some((slot, doc)) = slot_page(pages, rel_path) {
+                    Self::for_each_block_id(&doc, |id| {
+                        index.edit(id, |slots| {
+                            if let Err(at) = slots.binary_search(&slot) {
+                                slots.insert(at, slot);
+                            }
+                        });
                     });
                 }
             }
-            if index.overlay.len() >= index.fold_limit() {
+            if index.overlay.len() + index.uuid_overlay.len() >= index.fold_limit() {
+                for (id, owners) in index.uuid_overlay.iter() {
+                    match owners {
+                        Some(owners) => index.uuids.insert(*id, owners.clone()),
+                        None => index.uuids.remove(id),
+                    }
+                }
+                index.uuid_overlay = inline_map::InlineMap::new();
                 let base = Arc::make_mut(&mut index.base);
-                for (id, hint) in index.overlay.iter() {
-                    base.insert(id.clone(), hint.clone());
+                for (id, owners) in index.overlay.iter() {
+                    match owners {
+                        Some(owners) => base.insert(id.clone(), owners.clone()),
+                        None => base.remove(id),
+                    };
                 }
                 index.overlay = Arc::new(SharedMap::new());
             }
             index
         } else {
-            let mut base: HashMap<String, Option<BlockOwner>> = HashMap::new();
-            for (entry, doc) in pages.iter() {
-                let owner = Self::owner(entry);
-                Self::for_each_block_id(doc, |id| {
-                    if let Some(slot) = base.get_mut(id) {
-                        if slot.as_ref().is_some_and(|existing| existing.0 != owner.0) {
-                            *slot = None;
-                        }
-                        return;
-                    }
-                    base.insert(id.to_string(), Some(owner.clone()));
-                });
-            }
-            Self {
-                base: Arc::new(base.into_iter().collect()),
-                overlay: Arc::new(SharedMap::new()),
-            }
+            Self::build(pages)
         }
     }
 
-    fn hint(&self, uuid: &str) -> Option<String> {
-        self.overlay
-            .get(uuid)
-            .or_else(|| self.base.get(uuid))
-            .and_then(|owner| owner.as_ref().map(|owner| owner.1.clone()))
+    /// Borrow ids until sorting/deduplication is complete, then allocate each
+    /// distinct key once and consume the sorted rows in one AVL build.
+    fn build(pages: &Pages) -> Self {
+        let mut uuids = Vec::new();
+        let mut strings = Vec::new();
+        for (slot, (_, doc)) in pages.slots() {
+            Self::for_each_block_id(doc, |id| {
+                if let Some(id) = Self::compact_uuid(id) {
+                    uuids.push((id, slot));
+                } else {
+                    strings.push((id, slot));
+                }
+            });
+        }
+        Self::from_rows(uuids, strings)
+    }
+
+    fn from_rows<K: AsRef<str> + Ord + Into<String>>(
+        mut uuids: Vec<(u128, usize)>,
+        mut strings: Vec<(K, usize)>,
+    ) -> Self {
+        fn merge<K: Eq>(rows: Vec<(K, usize)>) -> Vec<(K, BlockOwners)> {
+            let mut entries: Vec<(K, BlockOwners)> = Vec::with_capacity(rows.len());
+            for (id, slot) in rows {
+                if let Some((_, owners)) = entries.last_mut().filter(|(key, _)| *key == id) {
+                    if owners.slots().last() != Some(&slot) {
+                        match owners {
+                            BlockOwners::One(first) => {
+                                *owners = BlockOwners::Many(Arc::new(vec![*first, slot]))
+                            }
+                            BlockOwners::Many(slots) => Arc::make_mut(slots).push(slot),
+                        }
+                    }
+                } else {
+                    entries.push((id, BlockOwners::One(slot)));
+                }
+            }
+            entries
+        }
+        uuids.sort_unstable();
+        strings.sort_unstable();
+        Self {
+            uuids: inline_map::InlineMap::from_sorted_unique(merge(uuids)),
+            uuid_overlay: inline_map::InlineMap::new(),
+            base: Arc::new(SharedMap::from_sorted_unique(
+                merge(strings)
+                    .into_iter()
+                    .map(|(id, owners)| (id.into(), owners))
+                    .collect(),
+            )),
+            overlay: Arc::new(SharedMap::new()),
+        }
+    }
+
+    /// The first page, in page order, holding `id`.
+    fn first_owner(&self, id: &str) -> Option<usize> {
+        self.owners(id).map(|owners| owners.slots()[0])
     }
 }
 
@@ -6695,7 +6918,7 @@ mod tests {
     }
 
     #[test]
-    fn lazy_indexes_build_once_then_carry_across_a_save() {
+    fn block_index_is_eager_and_lazy_indexes_carry_across_a_save() {
         let dir = scratch("lazy-snapshot-index-carry");
         fs::write(
             dir.join("pages").join("Target.md"),
@@ -6705,7 +6928,7 @@ mod tests {
         fs::write(dir.join("pages").join("Refs.md"), "- see [[Target]]\n").unwrap();
         let store = model_store(&dir);
         let before = published_snapshot(&store);
-        assert!(before.block_index.get().is_none());
+        assert!(before.block_index.get().is_some());
         assert!(before.referenced_name_index.get().is_none());
         std::thread::scope(|scope| {
             for _ in 0..2 {
@@ -6713,8 +6936,8 @@ mod tests {
                 scope.spawn(move || {
                     assert_eq!(
                         snapshot
-                            .block_page_hint("aaaaaaaa-0000-0000-0000-000000000001")
-                            .as_deref(),
+                            .block_owner_page("aaaaaaaa-0000-0000-0000-000000000001")
+                            .map(|(_, (entry, _))| entry.name.as_str()),
                         Some("Target")
                     );
                     assert!(snapshot
@@ -6728,7 +6951,7 @@ mod tests {
                 .block_full_builds
                 .load(std::sync::atomic::Ordering::Relaxed),
             1,
-            "racing readers must share one block-index build"
+            "the generation built its block index once before publication"
         );
         assert_eq!(
             before
@@ -6739,15 +6962,18 @@ mod tests {
         );
 
         save_model_page(&store, "Target", |target| {
-            target.blocks[0].raw = "target changed".into();
+            // Keeps its `id::`: the block index is exact, and a dropped id
+            // would rightly resolve nowhere.
+            target.blocks[0].raw =
+                "target changed\nid:: aaaaaaaa-0000-0000-0000-000000000001".into();
         });
         let after = published_snapshot(&store);
         assert!(after.block_index.get().is_some());
         assert!(after.referenced_name_index.get().is_some());
         assert_eq!(
             after
-                .block_page_hint("aaaaaaaa-0000-0000-0000-000000000001")
-                .as_deref(),
+                .block_owner_page("aaaaaaaa-0000-0000-0000-000000000001")
+                .map(|(_, (entry, _))| entry.name.as_str()),
             Some("Target")
         );
         assert!(after.referenced_page_names().contains(&"Target".to_owned()));
@@ -6770,7 +6996,7 @@ mod tests {
     }
 
     #[test]
-    fn block_hint_overlay_stays_safe_after_a_block_moves() {
+    fn block_index_stays_exact_after_a_block_moves() {
         let dir = scratch("block-hint-overlay-move");
         let entry = |name: &str| PageEntry {
             name: name.into(),
@@ -6793,7 +7019,7 @@ mod tests {
             (entry("A"), doc("A", "- empty\n")),
             (entry("B"), doc("B", "- empty\n")),
         ]));
-        let base = SnapshotBlockIndex::capture(None, &base_pages, &[], None);
+        let base = SnapshotBlockIndex::capture(None, &base_pages, &[]);
         let added_pages = Arc::new(Pages::from(vec![
             base_pages[0].clone(),
             (entry("A"), doc("A", "- source\n  id:: moved-id\n")),
@@ -6803,10 +7029,9 @@ mod tests {
             Some((&base, &base_pages)),
             &added_pages,
             &["pages/A.md".into()],
-            None,
         );
         assert_eq!(added.overlay.len(), 1);
-        assert_eq!(added.hint("moved-id").as_deref(), Some("A"));
+        assert_eq!(added.first_owner("moved-id"), Some(1));
         let removed_pages = Arc::new(Pages::from(vec![
             added_pages[0].clone(),
             (entry("A"), doc("A", "- empty again\n")),
@@ -6816,9 +7041,12 @@ mod tests {
             Some((&added, &added_pages)),
             &removed_pages,
             &["pages/A.md".into()],
-            None,
         );
-        assert_eq!(stale.hint("moved-id").as_deref(), Some("A"));
+        assert_eq!(
+            stale.first_owner("moved-id"),
+            None,
+            "an id its page dropped is held by no page"
+        );
         let moved_pages = Arc::new(Pages::from(vec![
             removed_pages[0].clone(),
             removed_pages[1].clone(),
@@ -6828,13 +7056,35 @@ mod tests {
             Some((&stale, &removed_pages)),
             &moved_pages,
             &["pages/B.md".into()],
-            None,
         );
-        assert_eq!(moved.hint("moved-id"), None);
+        assert_eq!(moved.first_owner("moved-id"), Some(2));
         assert!(moved_pages.iter().any(|(entry, doc)| {
             entry.name == "B" && SnapshotBlockIndex::block_ids(doc).contains("moved-id")
         }));
-        assert_eq!(added.hint("moved-id").as_deref(), Some("A"));
+        assert_eq!(
+            added.first_owner("moved-id"),
+            Some(1),
+            "older views keep theirs"
+        );
+        // A copy on both pages answers from the first in page order, then from
+        // the survivor once the original goes.
+        let both_pages = Arc::new(Pages::from(vec![
+            moved_pages[0].clone(),
+            (entry("A"), doc("A", "- copy\n  id:: moved-id\n")),
+            moved_pages[2].clone(),
+        ]));
+        let both = SnapshotBlockIndex::capture(
+            Some((&moved, &moved_pages)),
+            &both_pages,
+            &["pages/A.md".into()],
+        );
+        assert_eq!(both.owners("moved-id").unwrap().slots(), &[1, 2]);
+        let survivor = SnapshotBlockIndex::capture(
+            Some((&both, &both_pages)),
+            &moved_pages,
+            &["pages/A.md".into()],
+        );
+        assert_eq!(survivor.owners("moved-id").unwrap().slots(), &[2]);
         fs::write(dir.join("pages/A.md"), "- source\n  id:: moved-id\n").unwrap();
         fs::write(dir.join("pages/B.md"), "- empty\n").unwrap();
         let store = model_store(&dir);
@@ -6871,7 +7121,7 @@ mod tests {
     }
 
     #[test]
-    fn block_hint_overlay_fold_keeps_answers() {
+    fn block_index_overlay_fold_keeps_answers() {
         let dir = scratch("block-hint-overlay-fold");
         let entry = |name: &str| PageEntry {
             name: name.into(),
@@ -6894,7 +7144,7 @@ mod tests {
             (entry("A"), doc("A", "- empty\n")),
             (entry("B"), doc("B", "- empty\n")),
         ]));
-        let base = SnapshotBlockIndex::capture(None, &base_pages, &[], None);
+        let base = SnapshotBlockIndex::capture(None, &base_pages, &[]);
         assert_eq!(base.fold_limit(), 2);
         let before_pages = Arc::new(Pages::from(vec![
             base_pages[0].clone(),
@@ -6905,10 +7155,9 @@ mod tests {
             Some((&base, &base_pages)),
             &before_pages,
             &["pages/A.md".into()],
-            None,
         );
         assert_eq!(before.overlay.len(), 1);
-        assert_eq!(before.hint("first-new").as_deref(), Some("A"));
+        assert_eq!(before.first_owner("first-new"), Some(1));
         let after_pages = Arc::new(Pages::from(vec![
             before_pages[0].clone(),
             before_pages[1].clone(),
@@ -6918,12 +7167,17 @@ mod tests {
             Some((&before, &before_pages)),
             &after_pages,
             &["pages/B.md".into()],
-            None,
         );
         assert!(after.overlay.is_empty());
-        assert_eq!(after.hint("first-new"), before.hint("first-new"));
-        assert_eq!(after.hint("ballast-0"), before.hint("ballast-0"));
-        assert_eq!(after.hint("second-new").as_deref(), Some("B"));
+        assert_eq!(
+            after.first_owner("first-new"),
+            before.first_owner("first-new")
+        );
+        assert_eq!(
+            after.first_owner("ballast-0"),
+            before.first_owner("ballast-0")
+        );
+        assert_eq!(after.first_owner("second-new"), Some(2));
         let _ = fs::remove_dir_all(&dir);
     }
 

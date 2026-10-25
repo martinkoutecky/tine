@@ -141,18 +141,24 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   // A source page that failed to load leaves the group on its DTO path below,
   // which is the same path it uses before the page is near the viewport.
   const liveNode = (id: string) => {
-    if (props.surface === "preview") {
-      const dto = dtoById(id);
-      if (!dto) return docNode(id); // a live descendant, rendered by its live parent
-      // Resolve the row through its own page, like the preview's fold (GH #748):
-      // a duplicate `id::` remapped on another loaded page, a page/journal twin
-      // or a read-only source stays on the read-only copy (its folds local).
-      const source = resolveBlockRef({ uuid: blockDtoExternalId(dto), page: props.page, pageKind: props.kind, ...(props.path ? { path: props.path } : {}) });
+    const page = pageByName(props.page);
+    if (!page || page.kind !== props.kind || (props.path && page.id !== props.path)) return undefined;
+    const dto = dtoById(id);
+    if (!dto) {
+      // Ancestors, descendants and a materialized page header already carry
+      // live keys, but still belong to this group's exact source page.
+      const source = docNode(id);
+      return source?.page === props.page ? source : undefined;
+    }
+    if (props.surface !== "query") {
+      // Every DTO -> live row crosses the same page-qualified boundary. A
+      // remapped duplicate stays on its DTO: passing its old key to Block or
+      // outline navigation would expose a different page's node (GH #748).
+      // A runtime locator stays valid on that page when Copy block ref stamps
+      // its first authored id; the row keeps its live key until the next load.
+      const source = resolveBlockRef({ uuid: blockDtoExternalId(dto), page: props.page, pageKind: props.kind, ...(props.path ? { path: props.path } : {}) }, { navigation: true });
       return source === id && blockWritable(id) ? docNode(id) : undefined;
     }
-    if (props.surface !== "query") return docNode(id);
-    const dto = dtoById(id);
-    if (!dto) return docNode(id); // a live ancestor/descendant, not a result locator
     const source = resolveResultRow({ id, dto, page: props.page, kind: props.kind, path: props.path }, "mount");
     return source?.id === id ? source : undefined;
   };
@@ -394,8 +400,8 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   // leaves this group so an old choice cannot leak into a later membership.
   //
   // GH #185: prune only when result-root MEMBERSHIP changes — the sole moment a
-  // stale collapse choice could leak into a new membership. `resultRootIds()` is
-  // the effect's one reactive dependency (plus `ready()`); the subtree walk below
+  // stale collapse choice could leak into a new membership. DTO membership and
+  // pulled-in context are the dependencies (plus `ready()`); the subtree walk below
   // is wrapped in `untrack` so its doc.byId[...].children reads no longer
   // subscribe this effect to every descendant. Previously they did, so any
   // structural edit anywhere in a large reference subtree re-ran the whole
@@ -404,7 +410,11 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   // and is reclaimed at the next membership change.
   createEffect(() => {
     if (!ready()) return;
-    const roots = resultRootIds();
+    props.blocks;
+    contextRootIds();
+    // Page-qualified resolution also tracks identity structure. Its unchanged
+    // root IDs must not turn an unrelated child edit into another GC walk.
+    const roots = untrack(resultRootIds);
     untrack(() => {
       __livRefGroupInternals.pruneRuns += 1;
       const present = new Set<string>();
@@ -467,10 +477,10 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
             view and hides the caret). `roots` tracks result membership reactively;
             navOnly keeps structural mutations (merges/indents/moves) on page order. */}
         <OutlineScopeContext.Provider value={{
-          // A preview row left on its read-only copy (not the live block of
+          // A row left on its read-only copy (not the live block of
           // its own page) never enters navigation or selection: its id may name
           // another page's block.
-          get roots() { return props.surface === "preview" ? groupedIds().filter((id) => ready() && !!liveNode(id)) : groupedIds(); },
+          get roots() { return groupedIds().filter((id) => ready() && !!liveNode(id)); },
           // A preview shows source folds, so it navigates through them too.
           collapsed: (id, stored) => props.surface === "preview" ? stored
             : contextRootIds().has(id) ? false : collapseSurface.collapsed(id, stored),
@@ -522,6 +532,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
                           ? <RefBlocks blocks={[readOnlyRow(d())]} page={props.page} pageKind={props.kind} path={props.path}
                               readOnly pageBody onOpenBlock={props.onOpenBlock} />
                           : <RefBlocks blocks={[readOnlyRow(d())]} page={props.page} pageKind={props.kind} path={props.path}
+                              readOnly={!d().page_property && !liveNode(id)}
                               queryResult={props.surface === "query"}
                               onEditPageProperties={(event) => { void editPageProperties(event); }} />}
                     </Show>

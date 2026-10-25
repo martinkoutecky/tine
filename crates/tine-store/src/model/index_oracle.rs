@@ -2,6 +2,17 @@
 //! Compiled only for tests / `test-faults`; no writer or injection seam.
 use super::*;
 
+#[cfg(feature = "test-faults")]
+impl crate::WholeGraph {
+    /// Measurement probe: hold a separate exact index while `observe` samples
+    /// its allocator's live heap. This view and its published index stay held.
+    pub fn with_rebuilt_block_index(&self, observe: impl FnOnce(usize)) {
+        let index = SnapshotBlockIndex::build(&self.graph.pages);
+        observe(index.len());
+        std::hint::black_box(index);
+    }
+}
+
 fn block_lines(out: &mut String, block: &DocBlock, depth: usize) {
     out.push_str(&format!(
         "  block {depth} {:?} {:?} {}\n",
@@ -16,7 +27,7 @@ fn block_lines(out: &mut String, block: &DocBlock, depth: usize) {
 
 /// The canonical image of one snapshot: what its capture built, then every
 /// lazily built index, forced here (referenced names and their per-page
-/// index, editor baselines, block hints, aliases, block-ref counts, icons,
+/// index, editor baselines, exact block owners, aliases, block-ref counts, icons,
 /// the query index through queries, backlinks and unlinked references for
 /// `probes` and the first pages). Forcing them is what lets a later
 /// publication inherit them by per-file deltas.
@@ -154,21 +165,9 @@ fn lazy_lines(
             out.push_str(&format!("lazy editor {rel:?} {names:?}\n"));
         }
     }
-    fn hints(out: &mut String, snapshot: &ReadSnapshot, block: &DocBlock) {
-        out.push_str(&format!(
-            "lazy hint {:?} {:?}\n",
-            block.uuid,
-            snapshot.block_page_hint(&block.uuid)
-        ));
-        for child in &block.children {
-            hints(out, snapshot, child);
-        }
-    }
     if include_layout {
-        for (_, _, doc) in pages {
-            for block in &doc.roots {
-                hints(out, snapshot, block);
-            }
+        for (id, owners) in snapshot.block_index_image() {
+            out.push_str(&format!("block owners {id:?} {owners:?}\n"));
         }
     }
     let mut aliases = snapshot.page_aliases_with_owners();

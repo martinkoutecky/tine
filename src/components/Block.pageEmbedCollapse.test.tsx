@@ -20,6 +20,7 @@ for (const format of ["md", "org"] as const) for (const children of [false, true
     const source = { id: `pages/Source.${format}`, name: "Source", title: "Source", kind: "page" as const, format, pre_block: null,
       blocks: [{ id: "source", raw: "source body", collapsed: false, children: [] }] };
     vi.spyOn(backend(), "getPage").mockResolvedValue(source);
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(source);
     loadSingle({ name: "Host", title: "Host", kind: "page", format, pre_block: null,
       blocks: [{ id: "host", raw: "{{embed [[Source]]}}", collapsed: false,
         children: children ? [{ id: "child", raw: "host child", collapsed: false, children: [] }] : [] }] });

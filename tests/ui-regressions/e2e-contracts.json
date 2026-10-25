@@ -10,6 +10,24 @@
       "nonRequirements":["Exact pixels or DOM nesting; native device certification beyond Linux WebKitGTK; cheap-layer boundary permutations; final release burn-in."],
       "stability":"burn-in"
     },
+    "scripts/e2e-block-index-checkpoint.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A block reference and embed show their block's new page content after an external move and after reopening from a launch checkpoint; the referring file remains unchanged.","blocking":true,"authority":"HB4 / HI1 / HJ6; REG-AUDIT-L10-06-BLOCK-MOVE-CHECKPOINT; docs/storage-contract.md"}],
+      "acceptableVariations": ["Watcher and render latency, page layout, and checkpoint size."],
+      "nonRequirements": ["Exact pixels, DOM nesting, or native certification outside Linux WebKitGTK; dangling-reference work and owner permutations are covered by store tests."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-all-graphs.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"g Shift+G opens All graphs, arrow keys and Enter switch to another remembered graph, and edits remain saved in their originating graph.","blocking":true,"authority":"GH #758; UI-ALL-GRAPHS-758"}],
+      "acceptableVariations": ["Graph ordering, layout, and save/render latency may vary."],
+      "nonRequirements": ["Exact pixels; remote sync graphs; native certification outside Linux WebKitGTK; new-window actions have component coverage."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-dup-id-row-resolve.mjs": {
+      "contracts": [{"class":"exact-safety-interoperability","userOutcome":"With A loaded before B and both files carrying the same authored id, editing B's Linked References or page-embed row changes only B, or the row remains read-only; A stays byte-identical.","blocking":true,"authority":"UI-DUP-ID-ROW-OWNER; D-20261023-VQ; card PVTI_lAHOAAbLVc4BhPsyzhDFdsY"}],
+      "acceptableVariations": ["A safely resolved live row and a read-only DTO row are both acceptable; rendering and save latency may vary."],
+      "nonRequirements": ["Exact pixels or DOM nesting; native certification outside Linux WebKitGTK; native fail-before is not claimed when file-scoped runtime IDs prevent the authored-ID collision."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-store-fresh-parity.mjs": {
       "contracts": [
         {"class":"stateful-ux","userOutcome":"A duplicate journal delivered by an outside writer remains detectable without contributing the losing file's linked references; a held canonical page keeps its icon after config reload.","blocking":true,"authority":"D-20261019-ZY2/AL1; docs/storage-contract.md; REG-STORE-DUPLICATE-DAY-STRAY-LIVE-INDEX; REG-STORE-TWIN-ICON-CONFIG-RELOAD"}
@@ -396,7 +414,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-linkable-page-property-refs.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"A graph-configured bare page-property value finds its header in page-reference queries and Linked References; changing and restoring the atom updates the visible answers live. Editing a property and clicking its group title saves the value and preserves the read-only property-row appearance in every group for that source page (GH #753).","blocking":true}],
+      "contracts": [{"class":"core-operation","userOutcome":"A graph-configured bare page-property value finds its header in page-reference queries and Linked References; changing and restoring the atom updates the visible answers live. Editing a property and clicking its group title saves the value and preserves linked keys in every group for that source page. The main page and Linked References show the same linked keys before and after editing; clicking a key opens its page (GH #753).","blocking":true}],
       "acceptableVariations":["Result order, pane layout, typography and watcher delivery latency may vary while answer membership remains correct."],
       "nonRequirements":["Exact pixels, incidental DOM nesting, or certification outside Linux WebKitGTK."],
       "stability":"burn-in"

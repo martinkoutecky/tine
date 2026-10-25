@@ -606,7 +606,7 @@ export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId(
     // source context (matching the embryo-switcher flow) — openInNewTab here
     // would leave a stray duplicate tab beside the target.
     if (route.kind === "journals") router.openJournals();
-    else if (route.kind === "query" || route.kind === "pdf" || route.kind === "invalid" || route.kind === "conflicts" || route.kind === "all-pages") router.replaceActiveRoute(route);
+    else if (route.kind === "query" || route.kind === "pdf" || route.kind === "invalid" || route.kind === "conflicts" || route.kind === "all-pages" || route.kind === "all-graphs") router.replaceActiveRoute(route);
     else if (route.block) {
       // A block route means zoom, whereas openPageAtBlock is a whole-page
       // search-result scroll. Keep the same route semantics as an existing pane.

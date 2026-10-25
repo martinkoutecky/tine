@@ -149,3 +149,5 @@ pub use transaction::{
     Content, IoError, Refusal, RenameMap, RewriteEffect, Rollback, StepResult, TitleRebind,
     Transaction, TrashIf, TxOutcome, Why,
 };
+#[cfg(test)]
+mod resolve_blocks_work_tests;

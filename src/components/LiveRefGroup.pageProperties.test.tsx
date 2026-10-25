@@ -68,6 +68,8 @@ describe("page properties in Linked References (GH #486)", () => {
       await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
       const before = [...root.querySelectorAll(".page-property-reference .block-content")].map(el => el.innerHTML);
       expect(before).toHaveLength(2);
+      expect([...root.querySelectorAll(".page-property-reference .prop-key a.page-ref")].map(el => el.textContent))
+        .toEqual(["tags", "typo-key", "tags", "typo-key"]);
       for (let attempt = 0; attempt < 2; attempt++) {
         root.querySelector<HTMLElement>(".page-property-reference .block-content")!.click();
         const editor = await vi.waitFor(() => {

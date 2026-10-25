@@ -10,11 +10,14 @@ import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
  * Work is O(captured blocks + destination page). Transport setup failures reject;
  * Requests must carry the native capture-show binding generation; stale or
  * missing generations acknowledge false. The surface owner covers registration
- * and callbacks; writes capture graphOwner before starting. Save failure
+ * and callbacks; writes capture bindingOwner before starting. Save failure
  * acknowledges false and preserves the sender's scratch. Dispose
  * the returned listener when the app surface retires. */
 export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen(() => true)): Promise<() => void> {
   const owner = ownedWhen(live);
+  // Forget changes only process-memory custody. Its result remains meaningful
+  // after the graph or listener that acquired the claim has retired.
+  const receiptOwner = ownedWhen(() => true);
   const inFlight = new Map<string, Promise<boolean>>();
   // Pending insertions are retained independently of the completed-id cap.
   const landed = new Map<string, { name: string; owner: WriteOwner }>();
@@ -87,6 +90,14 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
     const title = (e.payload?.title ?? "").trim();
     const save = async () => {
       let ok = false;
+      let newClaim = false;
+      const forgetUninserted = async (): Promise<boolean | undefined> => {
+        if (id && newClaim && !landed.has(id)) {
+          const forgotten = await writeOwned(receiptOwner, backend().captureReceipt(id, "forget", e.payload.bindingGeneration));
+          newClaim = false;
+          return forgotten.kind === "current" ? forgotten.value === "saved" : undefined;
+        }
+      };
       try {
         const prior = id ? landed.get(id) : undefined;
         // Native process memory outlives this listener/WebView. A claim precedes
@@ -94,11 +105,17 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
         // Legacy idless deliveries are one-shot inserts, as before; they have
         // no acknowledgement/retry protocol to claim.
         if (id) {
-          const claimed = await writeOwned(saveOwner, backend().captureReceipt(id, "claim", e.payload.bindingGeneration));
-          if (claimed.kind === "stale") return await receiptStatus(id) === "saved";
+          const claimed = await writeOwned(saveOwner, backend().captureReceipt(id, "claim", e.payload.bindingGeneration)
+            .then(receipt => { newClaim = receipt === "new"; return receipt; }));
+          if (claimed.kind === "stale") {
+            // No insertion was called. Only this newly claimed attempt may
+            // forget its pending receipt, even after its binding retired.
+            const forgotten = await forgetUninserted();
+            return forgotten ?? (await receiptStatus(id) === "saved");
+          }
           const receipt = claimed.value;
           if (receipt === "saved") return true;
-          if (!saveOwner() || receipt === "missing" || (receipt === "pending" && !prior) || (prior && !prior.owner())) {
+          if ((receipt === "pending" && !prior) || (prior && !prior.owner())) {
             if (receipt === "new" || receipt === "pending") uncertain.add(id);
             return false;
           }
@@ -111,12 +128,16 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
         if (ok && id) {
           const remembered = await writeOwned(saveOwner, backend().captureReceipt(id, "saved", e.payload.bindingGeneration));
           if (remembered.kind === "stale") ok = await receiptStatus(id) === "saved";
-        } else if (id && !landed.has(id) && saveOwner()) {
-          await writeOwned(saveOwner, backend().captureReceipt(id, "release", e.payload.bindingGeneration));
+        } else {
+          ok = (await forgetUninserted()) ?? false;
         }
       } catch {
         ok = false;
-        if (id) ok = await receiptStatus(id) === "saved";
+        // A known-new claim with no insertion callback remains safe to drop.
+        // If transport fails, retain it and ask status conservatively below.
+        let forgotten: boolean | undefined;
+        try { forgotten = await forgetUninserted(); } catch { /* status decides custody */ }
+        if (id) ok = forgotten ?? (await receiptStatus(id) === "saved");
       }
       if (saveOwner()) {
         if (!ok) pushToast(msg("app-capture-couldn-t-be-saved-its-text"), "error");

@@ -828,6 +828,8 @@ pub struct GraphMeta {
     pub start_of_week: u32,
     /// Extra property keys to hide from the rendered properties area.
     pub block_hidden_properties: Vec<String>,
+    /// OG property-key links; the excludelist affects membership only.
+    pub property_pages_enabled: bool,
     /// Backlink count at which a page opens its Linked References collapsed
     /// (`:ref/linked-references-collapsed-threshold`, OG default 100).
     #[serde(default = "default_linked_references_collapsed_threshold")]
@@ -961,6 +963,7 @@ impl GraphMeta {
             shortcuts: config.shortcuts.clone(),
             start_of_week: config.start_of_week,
             block_hidden_properties: config.block_hidden_properties.clone(),
+            property_pages_enabled: config.property_pages_enabled,
             linked_references_collapsed_threshold: config.linked_references_collapsed_threshold,
             default_journal_template: config.default_journal_template.clone(),
             default_home: config.default_home.clone(),
@@ -984,6 +987,25 @@ impl GraphMeta {
             logbook_enabled_in_timestamped_blocks: config.logbook.enabled_in_timestamped_blocks,
             logbook_enabled_in_all_blocks: config.logbook.enabled_in_all_blocks,
             guide_announced: config.guide_announced,
+        }
+    }
+}
+
+#[cfg(test)]
+mod property_key_meta_tests {
+    use super::GraphMeta;
+    use crate::{config::Config, date::JournalFormat};
+
+    #[test]
+    fn property_page_link_policy_reaches_the_frontend() {
+        for (edn, enabled) in [
+            ("{}", true),
+            ("{:property-pages/enabled? false}", false),
+            ("{:property-pages/excludelist #{:owner}}", true),
+        ] {
+            let config = Config::parse(edn);
+            let meta = GraphMeta::from_config("graph".into(), &config, &JournalFormat::default());
+            assert_eq!(meta.property_pages_enabled, enabled, "{edn}");
         }
     }
 }
