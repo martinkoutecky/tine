@@ -101,7 +101,8 @@ fn existing_ancestor_once(target: &Path) -> Result<(&Path, PathBuf), Unresolved>
         match probe_lstat(existing) {
             Ok(metadata) => {
                 let resolved = match probe_canonical(existing) {
-                    Ok(resolved) => resolved,
+                    Ok(resolved) if metadata.file_type().is_symlink() => resolved,
+                    Ok(resolved) => in_own_folder(existing, resolved).map_err(Unresolved::Io)?,
                     Err(error) if metadata.file_type().is_symlink() => {
                         return Err(Unresolved::Link(error))
                     }
@@ -127,6 +128,27 @@ fn existing_ancestor_once(target: &Path) -> Result<(&Path, PathBuf), Unresolved>
     }
 }
 
+/// A link-free entry's resolution, checked against its folder. Windows can
+/// resolve a page that a save's rename is replacing to where the replaced file
+/// went (`\$Extend\$Deleted\…`) rather than where its name is
+/// (REG-WIN-WRITE-TARGET-DISPLACED). An entry that resolves under another name
+/// is answered as its folder's resolution plus its name, unless it is only a
+/// case variant in that same folder, whose resolution stands.
+fn in_own_folder(existing: &Path, resolved: PathBuf) -> io::Result<PathBuf> {
+    let (Some(parent), Some(name)) = (existing.parent(), existing.file_name()) else {
+        return Ok(resolved);
+    };
+    if resolved.file_name() == Some(name) {
+        return Ok(resolved);
+    }
+    let folder = probe_canonical(parent)?;
+    Ok(if resolved.parent() == Some(folder.as_path()) {
+        resolved
+    } else {
+        folder.join(name)
+    })
+}
+
 // Test faults for the write-target probes: `(path, step, failures)` makes the
 // next `failures` probes of `path` at `step` fail as Windows does while a
 // save replaces the file (`u32::MAX`: every probe).
@@ -136,6 +158,9 @@ thread_local! {
     /// API calls, measured without counting the platform's internal syscalls.
     pub(crate) static TARGET_PROBES: std::cell::Cell<(u64, u64, u64)> = const { std::cell::Cell::new((0, 0, 0)) };
     static PROBE_FAULTS: std::cell::RefCell<Vec<(PathBuf, ProbeStep, u32)>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// `(path, resolution)`: `path` resolves to `resolution`, as a page a
+    /// rename is replacing can on Windows.
+    static PROBE_DISPLACED: std::cell::RefCell<Vec<(PathBuf, PathBuf)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 #[cfg(test)]
@@ -179,6 +204,15 @@ fn probe_canonical(path: &Path) -> io::Result<PathBuf> {
     });
     #[cfg(test)]
     probe_fault(path, ProbeStep::Canonical)?;
+    #[cfg(test)]
+    if let Some(resolution) = PROBE_DISPLACED.with(|displaced| {
+        displaced
+            .borrow()
+            .iter()
+            .find_map(|(at, to)| (at == path).then(|| to.clone()))
+    }) {
+        return Ok(resolution);
+    }
     canonical_existing_path(path)
 }
 
@@ -282,6 +316,37 @@ mod write_target_probe_tests {
             expected,
             "three brief failures are re-probed"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// REG-WIN-WRITE-TARGET-DISPLACED: a page whose own resolution names where
+    /// the file a rename replaced went is still checked where its name is, for
+    /// the containment check and the submit's resolution alike; a case variant
+    /// in its own folder keeps its resolution.
+    #[test]
+    fn a_page_resolving_to_its_replaced_file_is_checked_through_its_folder() {
+        let (dir, graph) = graph("displaced");
+        let page = graph.root.join("pages/Page.md");
+        let folder = canonical_existing_path(&graph.root.join("pages")).unwrap();
+        let displace = |to: PathBuf| {
+            PROBE_DISPLACED.with(|displaced| *displaced.borrow_mut() = vec![(page.clone(), to)])
+        };
+        let undisplace = || PROBE_DISPLACED.with(|displaced| displaced.borrow_mut().clear());
+
+        displace(
+            dir.with_extension("volume")
+                .join("$Extend/$Deleted/0100000000000A2B"),
+        );
+        let checked = graph.ensure_write_target(&page);
+        let resolved = canonical_existing_ancestor(&page).map(|(_, resolved)| resolved);
+        undisplace();
+        assert!(checked.is_ok(), "the page is inside its graph: {checked:?}");
+        assert_eq!(resolved.unwrap(), folder.join("Page.md"));
+
+        displace(folder.join("PAGE.md"));
+        let variant = canonical_existing_ancestor(&page).map(|(_, resolved)| resolved);
+        undisplace();
+        assert_eq!(variant.unwrap(), folder.join("PAGE.md"));
         let _ = fs::remove_dir_all(&dir);
     }
 
