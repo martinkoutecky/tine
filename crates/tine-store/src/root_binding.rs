@@ -75,89 +75,110 @@ thread_local! {
     pub(crate) static CHECKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
+/// Unix stat identity. The device always counts; the inode only where the
+/// filesystem's inode numbers survive eviction of the unpinned root inode; the
+/// birth time only when both sides report one (Linux only).
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
-#[derive(PartialEq, Eq)]
 struct Identity {
     dev: u64,
     ino: u64,
     birth: Option<std::time::SystemTime>,
+    /// Decided once at open; unused on the probed side.
+    stable_ino: bool,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
+fn identity(path: &Path) -> io::Result<Identity> {
+    let mut identity = stat_identity(path)?;
+    identity.stable_ino = stable_inode_numbers(path);
+    Ok(identity)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
+fn current(path: &Path) -> io::Result<Identity> {
+    stat_identity(path)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
+fn stat_identity(path: &Path) -> io::Result<Identity> {
+    use std::os::unix::fs::MetadataExt;
+    // One metadata call per probe, without retaining a volume-pinning
+    // descriptor. On Linux std uses statx (btime included) and falls back to
+    // stat where a kernel or seccomp profile refuses statx.
+    let metadata = fs::metadata(path)?;
+    if !metadata.is_dir() {
+        return Err(moved());
+    }
+    Ok(Identity {
+        dev: metadata.dev(),
+        ino: metadata.ino(),
+        birth: compared_birth(&metadata),
+        stable_ino: true,
+    })
 }
 
 #[cfg(target_os = "linux")]
-fn identity(path: &Path) -> io::Result<Identity> {
-    use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
-    let name = std::ffi::CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
-    let mut stat = std::mem::MaybeUninit::<libc::statx>::uninit();
-    // One statx obtains dev/ino and btime without retaining a volume-pinning
-    // descriptor. Old kernels/filesystems may not expose birth time.
-    let result = unsafe {
-        libc::statx(
-            libc::AT_FDCWD,
-            name.as_ptr(),
-            libc::AT_STATX_SYNC_AS_STAT,
-            libc::STATX_BASIC_STATS | libc::STATX_BTIME,
-            stat.as_mut_ptr(),
-        )
+fn compared_birth(metadata: &fs::Metadata) -> Option<std::time::SystemTime> {
+    metadata.created().ok()
+}
+
+// APFS/HFS+ move st_birthtime back when utimes sets an earlier mtime (cp -p,
+// rsync -t onto the folder), and neither reuses inode numbers, so Apple
+// compares device and inode only.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn compared_birth(_: &fs::Metadata) -> Option<std::time::SystemTime> {
+    None
+}
+
+/// SMB/CIFS mounted noserverino (by the user, or by the kernel itself when the
+/// server's numbers are unusable) and FUSE filesystems without use_ino hand out
+/// a fresh inode number once the root's in-core inode is evicted, which nothing
+/// pins in poll mode. There only the device and birth time are compared. A
+/// failed statfs also counts as unstable: a weaker check, never a false refusal.
+#[cfg(target_os = "linux")]
+fn stable_inode_numbers(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    const UNSTABLE_INODE_FS: [u32; 4] = [0xFF53_4D42, 0xFE53_4D42, 0x517B, 0x6573_5546];
+    let Ok(name) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
     };
-    if result == 0 {
-        let stat = unsafe { stat.assume_init() };
-        if u32::from(stat.stx_mode) & libc::S_IFMT != libc::S_IFDIR {
-            return Err(moved());
-        }
-        let birth = (stat.stx_mask & libc::STATX_BTIME != 0)
-            .then(|| {
-                let seconds = stat.stx_btime.tv_sec;
-                let whole = std::time::Duration::from_secs(seconds.unsigned_abs());
-                let time = if seconds < 0 {
-                    std::time::UNIX_EPOCH.checked_sub(whole)
-                } else {
-                    std::time::UNIX_EPOCH.checked_add(whole)
-                };
-                time.and_then(|time| {
-                    time.checked_add(std::time::Duration::from_nanos(u64::from(
-                        stat.stx_btime.tv_nsec,
-                    )))
-                })
-            })
-            .flatten();
-        return Ok(Identity {
-            dev: libc::makedev(stat.stx_dev_major, stat.stx_dev_minor),
-            ino: stat.stx_ino,
-            birth,
-        });
+    let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    if unsafe { libc::statfs(name.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        return false;
     }
-    let error = io::Error::last_os_error();
-    if !matches!(
-        error.raw_os_error(),
-        Some(libc::ENOSYS | libc::EINVAL | libc::EOPNOTSUPP)
-    ) {
-        return Err(error);
-    }
-    let metadata = fs::metadata(path)?;
-    if !metadata.is_dir() {
-        return Err(moved());
-    }
-    Ok(Identity {
-        dev: metadata.dev(),
-        ino: metadata.ino(),
-        birth: None,
-    })
+    // f_type is c_long on most targets; the magic numbers are 32-bit.
+    let kind = unsafe { stat.assume_init() }.f_type as u32;
+    !UNSTABLE_INODE_FS.contains(&kind)
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-fn identity(path: &Path) -> io::Result<Identity> {
-    use std::os::unix::fs::MetadataExt;
-    let metadata = fs::metadata(path)?;
-    if !metadata.is_dir() {
-        return Err(moved());
+fn stable_inode_numbers(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(name) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    if unsafe { libc::statfs(name.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        return false;
     }
-    Ok(Identity {
-        dev: metadata.dev(),
-        ino: metadata.ino(),
-        // Apple's Metadata::created reads st_birthtime from this same stat.
-        birth: metadata.created().ok(),
-    })
+    let stat = unsafe { stat.assume_init() };
+    let kind = unsafe { std::ffi::CStr::from_ptr(stat.f_fstypename.as_ptr()) }.to_bytes();
+    !(matches!(kind, b"smbfs" | b"afpfs" | b"webdav")
+        || kind.starts_with(b"macfuse")
+        || kind.starts_with(b"osxfuse")
+        || kind.starts_with(b"fuse"))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
+impl Identity {
+    fn matches(&self, actual: &Self) -> bool {
+        self.dev == actual.dev
+            && (!self.stable_ino || self.ino == actual.ino)
+            && match (self.birth, actual.birth) {
+                (Some(expected), Some(actual)) => expected == actual,
+                _ => true,
+            }
+    }
 }
 
 // Android shared-storage FUSE inode stability has not been device-verified.
@@ -175,17 +196,12 @@ fn identity(path: &Path) -> io::Result<Identity> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "android")]
 fn current(path: &Path) -> io::Result<Identity> {
     identity(path)
 }
 
-#[cfg(any(
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "android"
-))]
+#[cfg(target_os = "android")]
 impl Identity {
     fn matches(&self, actual: &Self) -> bool {
         self == actual
@@ -274,8 +290,16 @@ mod tests {
         assert!(code.contains(
             "#[cfg(target_os = \"android\")]\n#[derive(PartialEq, Eq)]\nstruct Identity;"
         ));
-        assert!(code.contains("libc::STATX_BASIC_STATS | libc::STATX_BTIME"));
-        assert!(code.contains("birth: metadata.created().ok()"));
+        assert!(code.contains(
+            "const UNSTABLE_INODE_FS: [u32; 4] = [0xFF53_4D42, 0xFE53_4D42, 0x517B, 0x6573_5546];"
+        ));
+        assert!(code.contains(
+            "(Some(expected), Some(actual)) => expected == actual,\n                _ => true,"
+        ));
+        assert!(
+            !code.contains("libc::statx("),
+            "std metadata carries the statx fallback"
+        );
         assert!(!code.contains("_directory:"));
         for target in ["linux", "macos", "ios", "android", "windows"] {
             assert!(code.contains(&format!("target_os = \"{target}\"")));
@@ -299,6 +323,37 @@ mod tests {
         fs::remove_dir(&root).unwrap();
         fs::write(&root, b"replacement file").unwrap();
         assert!(binding.check().is_err());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
+    #[test]
+    fn l9_stat_identity_ignores_unstable_inode_numbers_and_one_sided_birth() {
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let id = |dev, ino, birth, stable_ino| Identity {
+            dev,
+            ino,
+            birth,
+            stable_ino,
+        };
+        // SMB noserverino / FUSE: a re-issued inode number for the same folder.
+        assert!(id(1, 10, Some(t), false).matches(&id(1, 11, Some(t), true)));
+        assert!(id(1, 10, None, false).matches(&id(1, 11, None, true)));
+        // ...while a different birth time or device is still a replacement.
+        let later = t + std::time::Duration::from_secs(1);
+        assert!(!id(1, 10, Some(t), false).matches(&id(1, 11, Some(later), true)));
+        assert!(!id(1, 10, None, false).matches(&id(2, 10, None, true)));
+        // Local filesystems: a new inode number is a replacement.
+        assert!(!id(1, 10, Some(t), true).matches(&id(1, 11, Some(t), true)));
+        // A birth time reported on one side only (CIFS createtime 0) is unknown.
+        assert!(id(1, 10, Some(t), true).matches(&id(1, 10, None, true)));
+        assert!(id(1, 10, None, true).matches(&id(1, 10, Some(t), true)));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn l9_local_tempdir_has_stable_inode_numbers() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(stable_inode_numbers(dir.path()));
     }
 
     #[test]

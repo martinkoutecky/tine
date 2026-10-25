@@ -149,10 +149,15 @@ Graph-root identity (L9-01/L9-02): a live
 `Graph` and an isolated native host adapter bind the root directory's physical
 identity at open/attach. The shared graph write-target guard checks that witness;
 external-assets writes also check the graph binding. Linux compares device/inode
-and statx birth time where supplied; macOS/iOS compare device/inode and
-st_birthtime where supplied. No directory descriptor is retained, so an open
-graph does not prevent eject/unmount. A delete/recreate at the same path that
-reuses the inode (and birth time, if available) is a residual identity window.
+and statx birth time when both sides supply one; macOS/iOS compare device/inode
+(APFS/HFS+ birth time moves back when an earlier mtime is set). No directory
+descriptor is retained, so an open graph does not prevent eject/unmount. Because
+nothing pins the root inode, filesystems that reissue inode numbers after
+eviction (SMB/CIFS, FUSE without stable numbers; a failed statfs counts too),
+classified once at open by statfs, compare device and birth time only. A
+delete/recreate at the same path that reuses the inode (and birth time, if
+available), or any same-device replacement on those filesystems without birth
+time, is a residual identity window.
 Windows compares volume and full file id with delete-sharing opens. Android
 uses the approved vanish-only fallback until shared-storage FUSE identity is
 device-verified: same-path directory replacement is not detected there.
@@ -178,8 +183,8 @@ root metadata probes, independent of text size: before directory creation,
 temp creation, base read, publication, the publication stamp read and directory
 sync. Only the duplicate page-path check immediately before the directory-sync
 guard was removed; the remaining boundaries can be separated by scheduling or
-I/O and do not reuse a stale witness. Linux uses one statx per probe (stat
-fallback on kernels without statx), Apple uses one stat; Windows uses one
+I/O and do not reuse a stale witness. Linux uses one `std::fs::metadata`
+(statx, with std's stat fallback) per probe, Apple uses one stat; Windows uses one
 identity open/query. The ignored `l9_measure_per_save_root_checks` test measures
 the running platform. Windows runtime/cost acceptance remains with hosted CI.
 
@@ -1039,7 +1044,7 @@ by I-9's typed failure paths.
 | Owner / operation family | In-scope scenario and required response |
 |---|---|
 | `tine-store::model` path and graph acquisition | A configured graph or asset directory is retargeted, malformed, or resolves outside the approved root after sync or external editing; refuse reads and writes through that path. |
-| `tine-store::root_binding::RootBinding::check` (R-ROOT-MOVED, L9-02) | The user, file manager, sync/cloud client or unmounted volume moves, removes or replaces the directory bound at open. Linux/macOS/iOS use stat identity with birth time where supplied; Windows uses file id. Android deliberately uses vanish-only until FUSE identity is device-verified, so same-path directory replacement is not caught there. Fail detected detachment as `GraphRootMoved`, keep input in host/device-draft custody, show the sticky moved/kept/reopen notice. Shared write-target guards and restore's capability path check the binding. Proof: `production_guard_tests.rs` root cases, `root_binding.rs::l9_platform_policy_pins_android_vanish_only_and_stat_identity`, `tests/transaction.rs::l9_all_transaction_entry_paths_refuse_a_detached_graph`, `restore.rs::l9_restore_refuses_a_replaced_root_before_reserving_recovery`, ModelFs root schedules and native replay. Device acceptance limits remain above. |
+| `tine-store::root_binding::RootBinding::check` (R-ROOT-MOVED, L9-02) | The user, file manager, sync/cloud client or unmounted volume moves, removes or replaces the directory bound at open. Linux/macOS/iOS use stat identity (Linux adds birth time when both sides supply it; SMB/FUSE filesystems compare device and birth time only, since their inode numbers change after eviction); Windows uses file id. Android deliberately uses vanish-only until FUSE identity is device-verified, so same-path directory replacement is not caught there. Fail detected detachment as `GraphRootMoved`, keep input in host/device-draft custody, show the sticky moved/kept/reopen notice. Shared write-target guards and restore's capability path check the binding. Proof: `production_guard_tests.rs` root cases, `root_binding.rs::l9_platform_policy_pins_android_vanish_only_and_stat_identity`, `root_binding.rs::l9_stat_identity_ignores_unstable_inode_numbers_and_one_sided_birth`, `tests/transaction.rs::l9_all_transaction_entry_paths_refuse_a_detached_graph`, `restore.rs::l9_restore_refuses_a_replaced_root_before_reserving_recovery`, ModelFs root schedules and native replay. Device acceptance limits remain above. |
 | `root_identity::is_container_rebase` (L9-01) | Plugin or web content nominates another graph's old namespace. Only iOS may authorize relocation, and only absolute paths with identical prefix and Documents-relative suffix, different valid container UUIDs, and no traversal qualify. Desktop/Android ignore the argument with a diagnostic. Proof: `only_the_container_uuid_can_change`, frontend `graph.test.tsx` rebase forwarding. |
 | `root_identity::recover_orphan_drafts`, desktop owner claim (L9-01) | Concurrent honest instances or in-process retiring hosts still hold the source or target draft namespace. Desktop recovery requires the current lease and takes the old key's existing owner lock, refusing contention or lock errors. All five targets exclude bound registry slots and HostRetirement entries for both namespaces, exempting only the current target under its saved-stop barrier; iOS relocation skips while either namespace is held. Mobile sandboxing supplies cross-process exclusion only. Recovery stops the current host before renaming into an empty census. Windows open contention uses the existing app-owner error with no handover endpoint. Proof: `old_graph_id_uses_the_same_owner_lock_as_the_host`, `adoption_requires_an_empty_target_and_moves_the_whole_census`, `host_retirement.rs::l9_retiring_source_refuses_draft_recovery`, `l9_recovery_and_relocation_exclude_both_bound_and_retiring_namespaces`, five-target guards and `owner/lock.rs` exclusion tests. |
 | `tine-store::store` read, scan and handoff | Graph close revokes queued requests; a symlink, non-file (for the asset opener: neither file nor directory), or escaped path appears after the caller selected it, or sync retargets `assets/`; refuse stale bytes and OS handoff. A failed initial parse withholds an unpublished view. |
