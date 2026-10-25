@@ -70,6 +70,27 @@ describe("mobile safe-area insets", () => {
     expect(narrowHelp.slice(0, narrowHelp.indexOf("\n  }"))).toContain("var(--overlay-inset-bottom, 0px) + 12px");
   });
 
+  it("lifts the help FAB above a docked mobile selection toolbar", () => {
+    // Martin 2026-10-25: the "?" covered the last buttons of the bottom-docked
+    // selection toolbar, with and without the keyboard. Its lift must track the
+    // toolbar's own bottom expression plus the toolbar's 32px height and a gap.
+    const touch = readFileSync("src/styles/touchGestures.css", "utf8");
+    const bottomOf = (selector: string) => {
+      const rule = block(touch, selector).replace(/\s+/gu, " ");
+      return rule.slice(rule.indexOf("bottom: ") + 8, rule.indexOf(";", rule.indexOf("bottom: "))).replace(/\( /gu, "(").replace(/ \)/gu, ")");
+    };
+    const flat = (selector: string) => block(help, selector).replace(/\s+/gu, " ");
+    expect(flat(":root:has(.sel-toolbar-mobile:not(.rendered-selection-toolbar)) .help-corner"))
+      .toContain(`bottom: calc(${bottomOf(".sel-toolbar-mobile")} + 32px + 8px);`);
+    expect(flat(":root:has(.sel-toolbar-mobile.rendered-selection-toolbar) .help-corner"))
+      .toContain(`bottom: calc(${bottomOf(".sel-toolbar-mobile.rendered-selection-toolbar")} + 32px + 8px);`);
+    // The 32px is the toolbar height; a resize must move the lift with it.
+    const bar = block(css, ".sel-toolbar");
+    expect(bar).toContain("padding: 3px;");
+    expect(bar).toContain("border: 1px solid");
+    expect(block(css, ".sel-toolbar button")).toContain("height: 24px;");
+  });
+
   it("puts a phone-width modal's top edge on the inset and fills the inset box", () => {
     const phone = css.slice(css.indexOf("@media (max-width: 480px)"));
     const overlay = phone.slice(phone.indexOf(".modal-overlay"), phone.indexOf(".settings-modal"));

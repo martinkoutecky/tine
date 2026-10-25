@@ -32,10 +32,13 @@ try {
       const main = document.querySelector(".main-content");
       const bar = document.querySelector("[data-rendered-selection-toolbar]")?.getBoundingClientRect();
       const navRow = document.querySelector(".mobile-navigation-toolbar")?.getBoundingClientRect();
+      const help = document.querySelector(".help-corner")?.getBoundingClientRect();
       return { label, scrollTop: Math.round(main.scrollTop), innerHeight, editing: window.__tine.editingId(),
         textarea: !!document.querySelector("textarea"), selection: getSelection().toString(),
         toolbar: bar ? { top: Math.round(bar.top), bottom: Math.round(bar.bottom) } : null,
         nav: navRow ? { top: Math.round(navRow.top), bottom: Math.round(navRow.bottom) } : null,
+        help: help ? { top: Math.round(help.top), bottom: Math.round(help.bottom),
+          clearsToolbar: !bar || help.bottom <= bar.top || help.right <= bar.left } : null,
         b3: window.__tine.raw("b3") };
     }, label);
     // Editing far below with the keyboard up, page scrolled back to the top.
