@@ -1116,6 +1116,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "queryExplainEmpty",
   "taggedPages",
   "registerUnlinkedReference",
+  "registerQuerySubscription",
   "runQuery",
   "exportQuerySubtrees",
   "runAdvancedQuery",

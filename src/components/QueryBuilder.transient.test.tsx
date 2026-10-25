@@ -156,9 +156,7 @@ describe("QueryBuilder transient ownership (post-GH #161)", () => {
       expect(registry).toHaveBeenCalledTimes(0);
 
       const sheet = open();
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(registry).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(registry).toHaveBeenCalledTimes(1));
 
       // Opening the picker and typing in its search is pure frontend work over
       // the snapshot already in hand — never a keystroke-per-request (I-13).
@@ -172,9 +170,7 @@ describe("QueryBuilder transient ownership (post-GH #161)", () => {
       expect(registry).toHaveBeenCalledTimes(1);
 
       setDataRev((revision) => revision + 1);
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(registry).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(registry).toHaveBeenCalledTimes(2));
 
       // The facets read the builder used to make is gone entirely. The
       // autocomplete producer's `queryFacets(true)` is a different question and

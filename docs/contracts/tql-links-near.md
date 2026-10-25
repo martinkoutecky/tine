@@ -14,6 +14,18 @@ reported, as `blocks` is at `@block`).
 
 ## Syntax
 
+Live refresh on development (GX4 S4): mounted query readers register their
+resolved plan with the host. Narrow queries refresh only when the memo's
+page-local invalidation predicate says an edited page can affect them. Queries
+over links/near, tag targets or the property registry coalesce relevant changes
+until 1.5 seconds after the latest local edit, and wait for that edit's
+publication before running. Tag-target and registry readers retain precise
+invalidation for their respective inputs. Links/near remain conservatively
+affected by every page edit, as the memo is. Full summaries, missed revisions
+and unknown dependencies always invalidate; answers are fully recomputed.
+Collapsed reference sections retain their last count, mark it as potentially
+out of date, and fetch the current answer when opened.
+
 ```
 any(links, <page condition>)        every(links, …)       none(links, …)
 any(linked_by, <page condition>)    every(linked_by, …)   none(linked_by, …)

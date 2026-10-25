@@ -609,6 +609,7 @@ describe("QueryWorkspace", () => {
       await Promise.resolve(); await Promise.resolve();
       expect(root.textContent).toContain("An alpha result");
       endEdit("blur");
+      await waitFor(() => expect(deps.runGraphSearch).toHaveBeenCalledTimes(2));
       await waitFor(() => expect(root.textContent).not.toContain("An alpha result"));
       expect(deps.runGraphSearch).toHaveBeenCalledTimes(2);
     } finally { endEdit("blur"); dispose(); }

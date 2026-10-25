@@ -497,12 +497,14 @@ pub(crate) async fn register_unlinked_reference(
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     crate::state::off_ui(move || {
-        slot.store.register_unlinked_reference_while_live(
-            subscription,
-            target,
-            &slot.background_cancelled,
-        );
-        Ok(())
+        slot.store
+            .register_reader_while_live(
+                subscription,
+                target.map(|name| tine_store::QuerySubscription::Unlinked { name }),
+                &slot.background_cancelled,
+            )
+            .map(|_| ())
+            .map_err(|error| format!("reader subscription failed: {error:?}"))
     })
     .await
 }

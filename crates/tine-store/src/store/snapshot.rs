@@ -138,7 +138,7 @@ impl Snapshot {
         rebuild: bool,
         rev: GraphRev,
         published: &HashMap<FileId, PageEntry>,
-        unlinked_targets: &[String],
+        targets: &super::change_summary::RegisteredTargets,
     ) -> Self {
         // The publication caller holds the store writer lock. A load worker
         // publishes only after its initial parse has finished.
@@ -403,7 +403,8 @@ impl Snapshot {
             name_set_changed,
             inventory,
             edited_pages.as_deref(),
-            unlinked_targets,
+            &targets.unlinked,
+            &targets.queries,
         );
         snapshot.answers = (inventory, counts, summary);
         snapshot

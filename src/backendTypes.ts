@@ -238,6 +238,8 @@ export interface ChangeSummary {
   tagsTo?: string[];
   tagTableTo?: string[];
   refsTo?: string[];
+  /** Mounted query subscription identities affected by this publication. */
+  queryTo?: string[];
   props: Record<string, string[]>;
   inventoryChanged: boolean;
   full: boolean;

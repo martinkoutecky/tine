@@ -6,6 +6,7 @@ import { backend } from "../backend";
 import { applyChangeSummary } from "../changeSummary";
 import { bumpDataRev, bumpGraphEpoch } from "../graphSession";
 import { resetStore } from "../document";
+import { startEditing, endEdit } from "../editorController";
 import type { ChangeSummary } from "../backendTypes";
 import type { BlockDto, RefGroup } from "../types";
 import { LinkedReferences } from "./LinkedReferences";
@@ -28,7 +29,28 @@ function publish(fields: Partial<ChangeSummary> = {}) {
 }
 const group = (raw: string): RefGroup => ({ page: "Source", kind: "page", blocks: [{ id: "shown", raw, children: [], collapsed: false }] });
 beforeEach(() => { resetStore(); bumpGraphEpoch(); rev = 0; publish(); });
-afterEach(() => { dispose?.(); dispose = undefined; vi.restoreAllMocks(); document.body.innerHTML = ""; });
+afterEach(() => { endEdit("blur"); dispose?.(); dispose = undefined; vi.restoreAllMocks(); document.body.innerHTML = ""; });
+
+it("a late larger answer cannot auto-collapse references while an edited result is retained", async () => {
+  let answer = [group("Retained original result")];
+  const read = vi.spyOn(backend(), "getBacklinks").mockImplementation(async () => answer);
+  const root = document.createElement("div"); document.body.append(root);
+  dispose = render(() => <LinkedReferences name="Target" />, root);
+  await vi.waitFor(() => expect(root.textContent).toContain("Retained original result"));
+  let finish!: (groups: RefGroup[]) => void;
+  read.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  publish({ linksTo: ["target"] });
+  await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  startEditing("shown");
+  answer = [{ ...group("Larger fresh result"), blocks: Array.from({ length: 101 }, (_, i) => ({
+    id: i === 0 ? "shown" : `added-${i}`, raw: `Larger fresh result ${i}`, children: [], collapsed: false,
+  })) }];
+  finish(answer); await tick(); await tick();
+  expect(root.textContent).toContain("Retained original result");
+  expect(root.querySelector(".references-count")?.textContent).toBe("1");
+  endEdit("blur");
+  await vi.waitFor(() => expect(root.querySelector(".references-count")?.textContent).toBe("101"));
+});
 
 it.each(["linked", "unlinked", "referrers", "tagged", "table", "toggle"])("%s skips unrelated saves and refreshes related evidence, full and gaps", async reader => {
   let text = "Original answer";
@@ -46,6 +68,7 @@ it.each(["linked", "unlinked", "referrers", "tagged", "table", "toggle"])("%s sk
     : reader === "table" ? <TagPageTable pageName="Target" />
     : <TagTableToggle page={{ name: "Target", kind: "page", roots: [] } as never} />, root);
   await vi.waitFor(() => expect(read).toHaveBeenCalled()); await tick(); await tick();
+  if (reader === "unlinked") root.querySelector<HTMLElement>(".references-header")!.click();
   read.mockClear();
   publish({ pages: ["unrelated"], blocks: ["unrelated"], linksTo: ["unrelated"] }); await tick();
   expect(read).not.toHaveBeenCalled();
@@ -59,14 +82,21 @@ it.each(["linked", "unlinked", "referrers", "tagged", "table", "toggle"])("%s sk
     read.mockClear();
   }
   if (reader !== "toggle") {
-    // Unlinked starts collapsed; collapsing must never suppress keyed reads.
     const header = root.querySelector<HTMLElement>(".references-header");
     if (header && !root.textContent?.includes(text)) header.click();
     await vi.waitFor(() => expect(root.textContent).toContain(text));
     if (header) {
       header.click(); await tick(); read.mockClear();
       publish(related as Partial<ChangeSummary>);
-      await vi.waitFor(() => expect(read).toHaveBeenCalled());
+      if (["linked", "unlinked", "tagged"].includes(reader)) {
+        await tick();
+        expect(read).not.toHaveBeenCalled();
+        expect(root.querySelector('[aria-label="Count may be out of date"]')).not.toBeNull();
+        header.click();
+        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+        await tick();
+        expect(root.querySelector('[aria-label="Count may be out of date"]')).toBeNull();
+      } else await vi.waitFor(() => expect(read).toHaveBeenCalled());
     }
   }
   if (["linked", "unlinked", "referrers", "table", "toggle"].includes(reader)) {
@@ -115,6 +145,7 @@ it.each(["linked", "unlinked", "referrers", "table"])("%s keeps displayed ancest
     : reader === "unlinked" ? <UnlinkedReferences name="Target" />
     : reader === "referrers" ? <BlockReferences id="target-id" /> : <TagPageTable pageName="Target" />, root);
   await vi.waitFor(() => expect(read).toHaveBeenCalled()); await tick(); read.mockClear();
+  if (reader === "unlinked") root.querySelector<HTMLElement>(".references-header")!.click();
   publish({ pages: ["unrelated"] }); await tick(); expect(read).not.toHaveBeenCalled();
   text = "Ancestor changed";
   publish({ pages: ["source"], blocks: ["ancestor-not-in-the-shallow-answer"] });

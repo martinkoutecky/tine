@@ -25,6 +25,7 @@ journals-upcoming = 即将到来
 references-unlinked = 未链接引用
 
 references-loading = 正在加载…
+references-count-stale = 数量可能已过期
 references-count-title = { $pages } 个页面中的 { $blocks } 个块
 
 references-copy-linked = 复制 / 导出链接引用

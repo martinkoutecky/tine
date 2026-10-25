@@ -15,6 +15,21 @@ use tine_store::{Cancel, IrAnswer, IrRequest, WholeGraph};
 
 use crate::state::{slot_for_context, GraphContext};
 
+#[tauri::command]
+pub(crate) async fn register_query_subscription(
+    subscription: String,
+    request: Option<tine_store::QuerySubscription>,
+    state: GraphContext<'_>,
+) -> Result<tine_store::QueryRegistration, String> {
+    let slot = slot_for_context(&state)?;
+    crate::state::off_ui(move || {
+        slot.store
+            .register_reader_while_live(subscription, request, &slot.background_cancelled)
+            .map_err(|error| format!("query subscription failed: {error:?}"))
+    })
+    .await
+}
+
 fn validate_query_source(query: &str) -> Result<(), String> {
     if !tine_core::query::query_source_within_limit(query) {
         return Err(format!(

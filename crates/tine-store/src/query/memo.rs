@@ -254,17 +254,19 @@ impl QueryMemo {
         for (entry, before, after) in edits {
             let old_facts = PageFacts::of(entry, before, parse_config);
             let new_facts = PageFacts::of(entry, after, parse_config);
-            let rows_moved = old_facts.registry_rows_differ(&new_facts);
             memo.entries.retain(|_, cached| {
                 let Some(plan) = &cached.plan else {
                     return true;
                 };
                 !(cached.contains(entry)
-                    || plan.reads_links()
-                    || rows_moved && plan.registry().is_some()
-                    || plan.reads_tag_targets() && old_facts.tags() != new_facts.tags()
-                    || plan.touches(entry, before, &old_facts, parse_config)
-                    || plan.touches(entry, after, &new_facts, parse_config))
+                    || plan.touches_edit(
+                        entry,
+                        before,
+                        after,
+                        &old_facts,
+                        &new_facts,
+                        parse_config,
+                    ))
             });
         }
         memo.lru.retain(|key| memo.entries.contains_key(key));

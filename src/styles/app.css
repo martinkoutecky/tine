@@ -7115,6 +7115,11 @@ img.emoji {
   line-height: 18px;
 }
 
+.references-count-stale {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
 .reference-group {
   margin-bottom: 14px;
   background: var(--bg-secondary);

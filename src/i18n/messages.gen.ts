@@ -2115,6 +2115,7 @@ export interface MessageArgs {
   "references-copy-linked-title": {};
   "references-copy-unlinked": {};
   "references-copy-unlinked-title": {};
+  "references-count-stale": {};
   "references-count-title": { "blocks": number; "pages": number };
   "references-expand-all": {};
   "references-expand-group": { "page": string | number };

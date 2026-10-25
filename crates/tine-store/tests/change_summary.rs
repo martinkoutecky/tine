@@ -22,6 +22,68 @@ const TARGETS: &[&str] = &[
     "DayShortcut",
 ];
 
+fn query_cases() -> Vec<(
+    &'static str,
+    tine_core::query::ir::Query,
+    tine_core::query::ir::ViewSettings,
+)> {
+    use tine_core::query::wire_parse::{parse_query_pair, QueryTextDialect};
+    [
+        (
+            "simple",
+            "(and (task TODO) [[Target]])",
+            QueryTextDialect::MacroQuery,
+        ),
+        ("tql", "@page and name = 'A'", QueryTextDialect::MacroTql),
+        (
+            "advanced",
+            "[:find (pull ?b [*]) :where [?b :block/marker _]]",
+            QueryTextDialect::Advanced,
+        ),
+        (
+            "links",
+            "@page and near(name = 'Target', 1)",
+            QueryTextDialect::MacroTql,
+        ),
+        (
+            "tag-targets",
+            "@page and used_as_tag = true",
+            QueryTextDialect::MacroTql,
+        ),
+        (
+            "registry-query",
+            "(property status)",
+            QueryTextDialect::MacroQuery,
+        ),
+        (
+            "clock",
+            "@block and scheduled >= today",
+            QueryTextDialect::MacroTql,
+        ),
+    ]
+    .into_iter()
+    .map(|(id, source, dialect)| {
+        let parsed = parse_query_pair(
+            source,
+            dialect,
+            &[],
+            tine_core::query::registry::Registry::none(),
+        );
+        let resolved = tine_core::query::resolve_for_execution(
+            &parsed.query,
+            &Default::default(),
+            tine_core::date::JournalDate::today(),
+        );
+        assert!(
+            !resolved.query().is_invalid(),
+            "oracle query {id}: {:?}",
+            resolved.query().diagnostics
+        );
+        (id, parsed.query, parsed.view)
+    })
+    .collect()
+}
+
 fn fixture(blocks: usize) -> (tempfile::TempDir, Store) {
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(dir.path().join("pages")).unwrap();
@@ -52,6 +114,25 @@ fn fixture(blocks: usize) -> (tempfile::TempDir, Store) {
     for &target in TARGETS {
         store.register_unlinked_reference(target.to_owned(), Some(target.to_owned()));
     }
+    for (id, query, _) in query_cases() {
+        store
+            .register_query_subscription(
+                id.into(),
+                Some(tine_store::QuerySubscription::Query {
+                    query,
+                    context: Default::default(),
+                }),
+                None,
+            )
+            .unwrap();
+    }
+    store
+        .register_query_subscription(
+            "registry".into(),
+            Some(tine_store::QuerySubscription::Registry),
+            None,
+        )
+        .unwrap();
     (dir, store)
 }
 
@@ -65,12 +146,13 @@ fn commit(store: &Store, pages: &[(&str, PageDto, SaveBase)]) -> Value {
             doc,
         );
     }
+    let outcome = tx.commit();
     let TxOutcome::Committed {
         change: Some(change),
         ..
-    } = tx.commit()
+    } = outcome
     else {
-        panic!("expected publication")
+        panic!("expected publication: {outcome:?}")
     };
     serde_json::to_value(change).unwrap()
 }
@@ -99,6 +181,7 @@ fn block_ids(blocks: &[BlockDto], ids: &mut BTreeSet<String>) {
 
 #[derive(Default)]
 struct Answers {
+    queries: BTreeMap<String, Value>,
     linked: BTreeMap<String, Value>,
     unlinked: BTreeMap<String, Value>,
     tagged: BTreeMap<String, Value>,
@@ -122,6 +205,42 @@ fn groups(groups: &[RefGroup]) -> Value {
 fn answers(store: &Store, root: &std::path::Path) -> Answers {
     let view = store.whole_graph().unwrap();
     let mut out = Answers::default();
+    // A distinct presentation key forces a fresh evaluation rather than
+    // validating the summary against the memo's own carried answer.
+    static RUN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    for (id, query, mut settings) in query_cases() {
+        settings.columns = vec![tine_core::query::ir::Field(format!(
+            "oracle-{}",
+            RUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ))];
+        let IrAnswer::Result(result) = view
+            .query_ir(
+                IrRequest::Run {
+                    query: &query,
+                    view: &settings,
+                    context: &Default::default(),
+                },
+                &Cancel::default(),
+            )
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("query answer");
+        };
+        out.queries
+            .insert(id.into(), serde_json::to_value(&result.rows).unwrap());
+    }
+    let IrAnswer::Registry(registry) = view
+        .query_ir(IrRequest::Registry, &Cancel::default())
+        .unwrap()
+        .unwrap()
+    else {
+        panic!("registry answer");
+    };
+    out.queries.insert(
+        "registry".into(),
+        serde_json::to_value(registry.rows()).unwrap(),
+    );
     let mut ids = BTreeSet::from([PERSISTED.to_owned()]);
     for path in [
         "pages/A.md",
@@ -222,6 +341,14 @@ fn changed_keys(
 }
 
 fn check(before: &Answers, after: &Answers, summary: &Value) -> Result<[usize; 8], String> {
+    if summary["full"] != true {
+        let fired = strings(&summary["queryTo"]);
+        for id in changed_keys(&before.queries, &after.queries) {
+            if !fired.contains(&id) {
+                return Err(format!("query:{id}"));
+            }
+        }
+    }
     let counts = [
         changed_keys(&before.linked, &after.linked).len(),
         changed_keys(&before.unlinked, &after.unlinked).len(),
@@ -323,6 +450,7 @@ fn change_summary_random_reader_oracle() {
     let _guard = crate::integration_lock();
     let (mut total, mut full, mut readers, mut precise_readers) = (0, 0, [0; 8], [0; 8]);
     let mut omitted = [0; 8];
+    let mut query_omissions = 0;
     for seed in 1..=8u64 {
         let (dir, store) = fixture(3);
         let mut random = seed;
@@ -401,7 +529,8 @@ fn change_summary_random_reader_oracle() {
                 }),
                 _ => edit(&store, path, |doc| {
                     let suffix = format!("{seed}:{step}");
-                    match random % 11 {
+                    let original_raw = doc.blocks[0].raw.clone();
+                    match random % 15 {
                         0 => doc.blocks[0].raw = format!("Target plain {suffix}"),
                         1 => doc.blocks[0].raw = format!("[[Target]] linked {suffix}"),
                         2 => doc.blocks[0].raw = format!("no references {suffix}"),
@@ -427,10 +556,26 @@ fn change_summary_random_reader_oracle() {
                             doc.blocks[0].children = vec![child];
                         }
                         9 => doc.blocks[0].raw = format!("(({PERSISTED})) {suffix}"),
+                        10 => doc.blocks[0].raw = format!("TODO [[Target]] {suffix}"),
+                        11 => doc.pre_block = Some(format!("status:: {suffix}")),
+                        12 => {
+                            doc.blocks[0].raw = if path == "pages/A.md" {
+                                format!("TODO Clock {suffix}\nSCHEDULED: <2026-10-26 Mon>")
+                            } else {
+                                // Keep the persisted block-id fixture separate from
+                                // the planning-line fixture's property ownership.
+                                format!("TODO [[Target]] Clock sibling {suffix}")
+                            }
+                        }
+                        13 => {
+                            doc.pre_block =
+                                Some(format!("note:: Cleared query properties {suffix}"));
+                            doc.blocks[0].raw = format!("Cleared properties {suffix}");
+                        }
                         _ => doc.blocks[0].raw = format!("[[DayShortcut]] {suffix}"),
                     }
                     // Keep the block resolve oracle live through text edits.
-                    if path == "pages/B.md" {
+                    if path == "pages/B.md" && doc.blocks[0].raw != original_raw {
                         doc.blocks[0].raw.push_str(&format!("\nid:: {PERSISTED}"));
                     }
                 }),
@@ -452,6 +597,11 @@ fn change_summary_random_reader_oracle() {
                 }
             }
             if summary["full"] == false {
+                let mut mutant = summary.clone();
+                mutant["queryTo"] = json!([]);
+                if check(&before, &after, &mutant).is_err() {
+                    query_omissions += 1;
+                }
                 for (i, field) in [
                     "pages",
                     "blocks",
@@ -494,6 +644,10 @@ fn change_summary_random_reader_oracle() {
         }
         store.close();
     }
+    assert!(
+        query_omissions > 0,
+        "the registered-query oracle must detect missing keys"
+    );
     eprintln!("GX4 oracle: 8 sequences, {total} commits, full={full}; changed reader answers [linked, unlinked, tagged, icons, blocks, pages, referrers, tables]={readers:?}; precise={precise_readers:?}");
     eprintln!("GX4 field-omission mutants rejected [pages, blocks, linksTo, props, textTo, tagsTo, refsTo, tagTableTo]={omitted:?}");
     assert!(
@@ -505,6 +659,98 @@ fn change_summary_random_reader_oracle() {
         precise_readers.iter().all(|&count| count > 0),
         "each reader needs non-full evidence"
     );
+}
+
+#[test]
+fn change_summary_registered_query_kinds_and_precise_global_inputs() {
+    let _guard = crate::integration_lock();
+    let (_dir, store) = fixture(1);
+    let source = tine_store::QuerySubscription::Source {
+        source: "@page and name = 'A'".into(),
+        dialect: tine_core::query::wire_parse::QueryTextDialect::MacroTql,
+    };
+    assert_eq!(
+        store
+            .register_query_subscription("workspace".into(), Some(source), None)
+            .unwrap()
+            .mode,
+        "narrow"
+    );
+    store
+        .register_query_subscription(
+            "unknown".into(),
+            Some(tine_store::QuerySubscription::Full),
+            None,
+        )
+        .unwrap();
+    let wire = edit(&store, "pages/B.md", |doc| {
+        doc.blocks[0].raw = format!("Unrelated plain body\nid:: {PERSISTED}")
+    });
+    let keys = strings(&wire["summary"]["queryTo"]);
+    for key in [
+        "simple",
+        "advanced",
+        "tql",
+        "workspace",
+        "tag-targets",
+        "registry-query",
+        "registry",
+        "clock",
+    ] {
+        assert!(!keys.contains(key), "unrelated edit fired {key}");
+    }
+    assert!(keys.contains("links")); // conservative memo contract
+    assert!(keys.contains("unknown"));
+    let wire = edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = "TODO [[Target]] matching body".into()
+    });
+    let keys = strings(&wire["summary"]["queryTo"]);
+    for key in ["simple", "advanced", "tql", "workspace", "links"] {
+        assert!(keys.contains(key), "matching edit missed {key}");
+    }
+    let wire = edit(&store, "pages/B.md", |doc| {
+        doc.pre_block = Some("tags:: Target\nstatus:: active".into())
+    });
+    let keys = strings(&wire["summary"]["queryTo"]);
+    for key in ["tag-targets", "registry-query", "registry"] {
+        assert!(keys.contains(key), "global-input edit missed {key}");
+    }
+    // A scheduled read renews the dependency plan against the latest snapshot;
+    // plain edits then regain the precise global-input classification.
+    for (id, query, _) in query_cases() {
+        if ["tag-targets", "registry-query"].contains(&id) {
+            store
+                .register_query_subscription(
+                    id.into(),
+                    Some(tine_store::QuerySubscription::Query {
+                        query,
+                        context: Default::default(),
+                    }),
+                    None,
+                )
+                .unwrap();
+        }
+    }
+    store
+        .register_query_subscription(
+            "registry".into(),
+            Some(tine_store::QuerySubscription::Registry),
+            None,
+        )
+        .unwrap();
+    store
+        .register_query_subscription("simple".into(), None, None)
+        .unwrap();
+    let wire = edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = "TODO [[Target]] changed again".into()
+    });
+    assert!(!strings(&wire["summary"]["queryTo"]).contains("simple"));
+    for id in ["tag-targets", "registry-query", "registry"] {
+        assert!(
+            !strings(&wire["summary"]["queryTo"]).contains(id),
+            "plain edit fired renewed {id}"
+        );
+    }
 }
 
 #[test]
@@ -613,24 +859,72 @@ fn change_summary_registered_mentions_and_incoming_targets() {
     });
     assert!(strings(&released["summary"]["textTo"]).is_empty());
     let revoked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    store.register_unlinked_reference_while_live("binding".into(), Some("Target".into()), &revoked);
+    store
+        .register_reader_while_live(
+            "binding".into(),
+            Some(tine_store::QuerySubscription::Unlinked {
+                name: "Target".into(),
+            }),
+            &revoked,
+        )
+        .unwrap();
+    store
+        .register_reader_while_live(
+            "query-binding".into(),
+            Some(tine_store::QuerySubscription::Full),
+            &revoked,
+        )
+        .unwrap();
     revoked.store(true, std::sync::atomic::Ordering::Release);
     let retired = edit(&store, "pages/A.md", |doc| {
         doc.blocks[0].raw = "Target retired binding".into()
     });
     assert!(strings(&retired["summary"]["textTo"]).is_empty());
-    store.register_unlinked_reference_while_live("late".into(), Some("Target".into()), &revoked);
+    assert!(!strings(&retired["summary"]["queryTo"]).contains("query-binding"));
+    store
+        .register_reader_while_live(
+            "late".into(),
+            Some(tine_store::QuerySubscription::Unlinked {
+                name: "Target".into(),
+            }),
+            &revoked,
+        )
+        .unwrap();
+    store
+        .register_reader_while_live(
+            "query-late".into(),
+            Some(tine_store::QuerySubscription::Full),
+            &revoked,
+        )
+        .unwrap();
     let late = edit(&store, "pages/A.md", |doc| {
         doc.blocks[0].raw = "Target late registration".into()
     });
     assert!(strings(&late["summary"]["textTo"]).is_empty());
+    assert!(!strings(&late["summary"]["queryTo"]).contains("query-late"));
     let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    store.register_unlinked_reference_while_live("dropped".into(), Some("Target".into()), &dropped);
+    store
+        .register_reader_while_live(
+            "dropped".into(),
+            Some(tine_store::QuerySubscription::Unlinked {
+                name: "Target".into(),
+            }),
+            &dropped,
+        )
+        .unwrap();
+    store
+        .register_reader_while_live(
+            "query-dropped".into(),
+            Some(tine_store::QuerySubscription::Full),
+            &dropped,
+        )
+        .unwrap();
     drop(dropped);
     let dropped = edit(&store, "pages/A.md", |doc| {
         doc.blocks[0].raw = "Target dropped binding".into()
     });
     assert!(strings(&dropped["summary"]["textTo"]).is_empty());
+    assert!(!strings(&dropped["summary"]["queryTo"]).contains("query-dropped"));
     store.close();
 }
 

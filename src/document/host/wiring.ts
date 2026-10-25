@@ -19,6 +19,7 @@ import { errorFamily } from "../../errorFamily";
 import { bindingOwner, ownedWhen, readOwned, readOwnedResource, writeOwned } from "../../owned";
 import { bumpDataRev, bumpPageInventoryRev } from "../../graphSession";
 import { installChangeKeyPublicationHold } from "../../changeKeys";
+import { noteQueryInput } from "../../querySubscription";
 import { dismissToast, pushToast } from "../../toasts";
 import { msg, renderEnglish, type UiText } from "../../i18n";
 import type { BlockDto, MergeDecision, PageDto, PageKind } from "../../types";
@@ -536,6 +537,7 @@ function reportProblems(c: HostClient | null, names: string[]): void {
 export function markDirty(name: string, kinds: EditKind | EditKinds): void {
   const page = pageByName(name);
   if (!page || page.readOnly || page.guide || deletedPages.has(name)) return;
+  noteQueryInput();
   const c = host();
   if (!c) {
     const pending = early.get(name) ?? [];

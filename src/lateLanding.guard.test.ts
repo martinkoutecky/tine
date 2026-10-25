@@ -149,7 +149,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   // queries, the draft I/O re-probe, the v1 drafts path, the read-only merge.
   "pageWindowReloaded", "pageOpen", "pageWait", "pageOwed", "onPageMail", "onGraphOpenWaiting", "onGraphOpenOwnerWaiting", "pageDraftsRetry",
   "legacyDraftsFile", "mergeLiveConflict", "guidePages", "getBacklinks",
-  "getBacklinkFilterContext", "getUnlinkedRefs", "registerUnlinkedReference", "warmDone", "getBlockRefCounts", "getBlockReferrers",
+  "getBacklinkFilterContext", "getUnlinkedRefs", "registerUnlinkedReference", "registerQuerySubscription", "warmDone", "getBlockRefCounts", "getBlockReferrers",
   "pagePrintHtml", "sheetExportInputs", "exportQuerySubtrees", "parseQuery", "printQuery", "queryOgExpressible", "queryRegistry",
   "queryRun", "taggedPages", "queryExplainEmpty", "queryFacets", "publishQueryPlan", "pageIcons",
   "readCustomCss", "openExternal", "openAsset", "openGraphFile", "openPageFile", "detectMediaEditor", "listOrphanAssets",

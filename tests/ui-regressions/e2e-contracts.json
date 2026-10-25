@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-query-subscriptions.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A journal's narrow and links queries stay idle during unrelated continuous typing; the narrow query skips that save and links coalesces into one run after typing pauses. A matching native edit updates both answers. The existing debug full-refresh mode supplies the before control.","blocking":true,"authority":"GX4 S4; HK3 1.5-second quiet period; conservative links invalidation in docs/contracts/tql-links-near.md"}],
+      "acceptableVariations": ["Publication and rendering latency, IPC batching and machine load; exact 1.5-second boundaries are covered with fake timers."],
+      "nonRequirements": ["Exact pixels, DOM nesting, native certification outside Linux WebKitGTK, or a links query skipping unrelated saves after the pause: the memo conservatively invalidates links on every edit."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-linux-inline-preedit.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A Linux textarea shows real inline Hangul composition, commits each word once, supports Backspace and page completion during composition, and preserves the neighbouring block on disk.","blocking":false,"authority":"UI-LINUX-INLINE-PREEDIT; Linux inline-preedit lane 2026-10-25; GH #575 is only a possible related fix"}],
       "acceptableVariations": ["IME event ordering, commit-on-Escape engine policy, candidate styling, caret geometry and save latency may vary. IBus Hangul may commit before forwarding an ordinary Enter that splits the block."],

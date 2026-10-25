@@ -127,7 +127,7 @@ use plugins::{
 use query_export::{publish_live, publish_query, publish_query_plan, sheet_export_inputs};
 use query_ir::{
     query_explain_empty, query_og_expressible, query_parse, query_print, query_registry, query_run,
-    tagged_pages,
+    register_query_subscription, tagged_pages,
 };
 use settings::{
     forget_known_graph, get_app_bool, get_app_string, get_capture_enter_files,
@@ -1084,6 +1084,7 @@ pub fn run() {
             get_backlinks,
             get_unlinked_refs,
             register_unlinked_reference,
+            register_query_subscription,
             warm_done,
             block_ref_counts,
             block_referrers,
