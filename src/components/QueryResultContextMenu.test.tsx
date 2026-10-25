@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 // GH #726: right-clicking a block inside a query's results opened the block
 // menu of the QUERY HOST (the nested row's handler ran, then the host row's
 // handler overrode it), so Cut / Delete removed the query block from its page.
@@ -219,12 +220,12 @@ describe("query results (GH #726)", () => {
       content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
       const editor = await vi.waitFor(() => {
-        const el = root.querySelector<HTMLTextAreaElement>('[data-block-id="query"] [data-block-id="hit"] textarea');
+        const el = maybeEditorIn(root.querySelector('[data-block-id="query"]')!, "hit");
         expect(el).not.toBeNull();
         return el!;
       });
       expect(editingId()).toBe("hit");
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      editor.keydown({ key: "Escape", bubbles: true, cancelable: true });
       await vi.waitFor(() => expect(selectedIds()).toEqual(["hit"]));
       document.dispatchEvent(new KeyboardEvent("keydown", { key, ctrlKey: key === "x", metaKey: key === "x", bubbles: true, cancelable: true }));
       await vi.waitFor(() => expect(doc.byId.hit).toBeUndefined());
@@ -243,12 +244,12 @@ describe("query results (GH #726)", () => {
       content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
       const editor = await vi.waitFor(() => {
-        const el = root.querySelector<HTMLTextAreaElement>('[data-block-id="query"] [data-block-id="hit"] textarea');
+        const el = maybeEditorIn(root.querySelector('[data-block-id="query"]')!, "hit");
         expect(el).not.toBeNull();
         return el!;
       });
-      editor.setSelectionRange(0, 0);
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
+      editor.select(0, 0);
+      editor.keydown({ key: "Backspace", bubbles: true, cancelable: true });
       await Promise.resolve();
       expect(doc.byId.query.raw).toBe("{{tine-query @block}}");
       expect(pageByName("Host")!.roots).toEqual(["query", "after"]);

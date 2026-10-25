@@ -4,6 +4,7 @@ import { loadFeed, nextVisible, pageByName } from "../document";
 import { doc } from "../document/model";
 import { editingId, startEditing } from "../editorController";
 import { Block } from "./Block";
+import { maybeEditorIn } from "../tests/editorDriver";
 import { installBlockEditorLifecycle, mount, blk, journal } from "../tests/blockEditorTestkit";
 
 installBlockEditorLifecycle();
@@ -25,11 +26,11 @@ describe("journal feed empty-day editing", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement | null;
+      const textarea = maybeEditorIn(root);
       expect(textarea).not.toBeNull();
       textarea!.focus();
-      textarea!.setSelectionRange(0, 0);
-      textarea!.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
+      textarea!.select(0, 0);
+      textarea!.keydown({ key: "Backspace", bubbles: true, cancelable: true });
 
       expect(pageByName("Today")!.roots).toEqual([todayRoot]);
       expect(doc.byId[todayRoot].raw).toBe("");

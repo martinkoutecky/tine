@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, expect, it, vi } from "vitest";
 import { backend } from "../backend";
 import { deletePage } from "../document";
@@ -24,29 +25,29 @@ it("makes an open editor read-only during deletion and resumes editing after ref
   startEditing("d1", 6);
   const view = mount(() => <Block id="d1" />);
   try {
-    const textarea = view.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-    expect(textarea.readOnly).toBe(false);
+    const textarea = maybeEditorIn(view.root)!;
+    expect(textarea.isReadOnly()).toBe(false);
     let answer!: (operation: PageOperation) => void;
     const remove = vi.spyOn(backend(), "pageDelete").mockImplementation(() => new Promise((done) => { answer = done; }));
     const deleting = deletePage("Doomed", "page", "pages/Doomed.md");
     await vi.waitFor(() => expect(remove).toHaveBeenCalledOnce());
-    expect(textarea.readOnly).toBe(true);
-    expect(textarea.value).toBe("before");
+    expect(textarea.isReadOnly()).toBe(true);
+    expect(textarea.value()).toBe("before");
     // Custom paste handlers can run even on a read-only textarea. The shared
     // store gate must refuse them and keep the visible buffer in step.
     const paste = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(paste, "clipboardData", { value: {
       getData: (type: string) => type === "text/plain" ? "blocked\npaste" : "", items: [], types: ["text/plain"],
     } });
-    textarea.dispatchEvent(paste);
+    textarea.paste(paste);
     await Promise.resolve();
-    expect(textarea.value).toBe("before");
+    expect(textarea.value()).toBe("before");
     expect(doc.byId.d1.raw).toBe("before");
     answer("refused");
     expect(await deleting).toBe(false);
-    expect(textarea.readOnly).toBe(false);
-    textarea.value = "after refusal";
-    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "l" }));
+    expect(textarea.isReadOnly()).toBe(false);
+    textarea.replaceText("after refusal");
+    textarea.reportInput({ bubbles: true, inputType: "insertText", data: "l" });
     expect(doc.byId.d1.raw).toBe("after refusal");
   } finally { view.dispose(); }
 });

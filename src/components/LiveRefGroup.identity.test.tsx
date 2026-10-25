@@ -1,3 +1,4 @@
+import { editorIn, maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { ensurePageLoaded, isSelected, node, resetStore, selectedIds, setBlockProperty } from "../document";
@@ -41,7 +42,7 @@ describe("reference row source identity", () => {
       expect(root.textContent).not.toContain("Original");
       expect(root.querySelector(`.ls-block:not(.ref-block)[data-block-id="${U}"]`)).toBeNull();
       root.querySelector<HTMLElement>(".block-content")!.click();
-      expect(root.querySelector("textarea")).toBeNull();
+      expect(maybeEditorIn(root)).toBeNull();
       expect(node(U)?.raw).toBe(`Original\nid:: ${U}`);
     } finally { dispose(); }
   });
@@ -58,11 +59,11 @@ describe("reference row source identity", () => {
       content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       content.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
       content.click();
-      await expect.poll(() => root.querySelector("textarea")).not.toBeNull();
-      const editor = root.querySelector<HTMLTextAreaElement>("textarea")!;
+      await expect.poll(() => maybeEditorIn(root)).not.toBeNull();
+      const editor = editorIn(root);
       editor.focus();
-      editor.setSelectionRange(editor.value.length, editor.value.length);
-      for (let i = 0; i < 2; i++) editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", shiftKey: true, bubbles: true, cancelable: true }));
+      editor.select(editor.value().length, editor.value().length);
+      for (let i = 0; i < 2; i++) editor.keydown({ key: "ArrowDown", shiftKey: true, bubbles: true, cancelable: true });
       expect(selectedIds()).toContain("editable");
       expect(isSelected(U)).toBe(false);
       expect(editingId()).not.toBe(U);
@@ -79,10 +80,10 @@ describe("reference row source identity", () => {
       content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       content.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
       content.click();
-      await expect.poll(() => root.querySelector("textarea")).not.toBeNull();
-      const editor = root.querySelector<HTMLTextAreaElement>("textarea")!;
-      editor.value = "Edited source";
-      editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await expect.poll(() => maybeEditorIn(root)).not.toBeNull();
+      const editor = editorIn(root);
+      editor.replaceText("Edited source");
+      editor.reportInput({ bubbles: true });
       expect(node("owned")?.raw).toBe("Edited source");
     } finally { dispose(); }
   });

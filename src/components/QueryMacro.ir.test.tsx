@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { openCalmQuery } from "../tests/calmQueryActions";
 // Ported from master src/components/QueryMacro.ir.test.tsx.
 // The seam between the block and the ONE query engine (SPEC §4.3.1, §7.1;
@@ -700,11 +701,11 @@ describe("B5: the save path chooses the name and answers NotApplicable", () => {
       save.focus(); save.click();
       await vi.waitFor(() => expect(finish).toBeDefined());
       startEditing("todo"); await settle();
-      const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      expect(editor).not.toBeNull(); editor.focus();
+      const editor = maybeEditorIn(root)!;
+      expect(editor).not.toBeNull(); editor.element.focus();
       finish!("@block and any(children, task = 'TODO')"); await settle();
       expect(root.querySelector(".query-crossing-notice")).not.toBeNull();
-      expect(document.activeElement).toBe(editor);
+      expect(document.activeElement).toBe(editor?.element);
     } finally { finish?.("-- task DONE"); dispose(); }
   });
   it("keeps Escape's query focus when a pending dialect-crossing save finishes after the editor closes", async () => {

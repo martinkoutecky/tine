@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { createSignal } from "solid-js";
@@ -68,13 +69,13 @@ it.each([400, 1500])("GH #248: typing in a zoomed block does not read identities
     mainPaneRouter.focusBlock("window-0");
     await vi.waitFor(() => expect(host.querySelector(".zoomed-page")).not.toBeNull());
     startEditing("window-0", 0);
-    await vi.waitFor(() => expect(host.querySelector("textarea.block-editor")).not.toBeNull());
+    await vi.waitFor(() => expect(maybeEditorIn(host)).not.toBeNull());
     const identityReads = vi.spyOn(blockIdentity, "existingBlockId");
     // Exercise the shared raw-write boundary used by input and ID stamping.
     for (const suffix of ["x", "xy", "x", ""]) {
       identityReads.mockClear();
       setDoc("byId", "window-0", "raw", `Row 0 unique content${suffix}`);
-      expect(host.querySelector(".zoomed-page textarea.block-editor")).not.toBeNull();
+      expect(maybeEditorIn(host.querySelector<HTMLElement>(".zoomed-page")!)).not.toBeNull();
       expect(identityReads.mock.calls.length).toBeLessThan(30);
     }
   } finally { dispose(); }
@@ -127,7 +128,7 @@ it("click-to-edit retains the clicked instance when editor state changes the pag
   try {
     const content = host.querySelector<HTMLElement>('[data-block-id="window-0"] .block-content-wrapper')!;
     content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
-    await vi.waitFor(() => expect(host.querySelector('[data-block-id="window-0"] textarea.block-editor')).not.toBeNull());
+    await vi.waitFor(() => expect(maybeEditorIn(host.querySelector<HTMLElement>('[data-block-id="window-0"]')!)).not.toBeNull());
     expect(editingId()).toBe("window-0");
   } finally { dispose(); }
 });
@@ -142,7 +143,7 @@ it("GH #745: outdenting a distant child retains previously visited windows above
     WindowObserver.set(firstWindow, false);
     const spacer = firstWindow.firstElementChild;
     startEditing("window-1000", 4);
-    await vi.waitFor(() => expect(host.querySelector('[data-block-id="window-1000"] textarea')).not.toBeNull());
+    await vi.waitFor(() => expect(maybeEditorIn(host.querySelector<HTMLElement>('[data-block-id="window-1000"]')!)).not.toBeNull());
     outdentBlock("window-1000", 4);
     expect(node("window-1000")?.parent).toBeNull();
     expect(firstWindow.isConnected).toBe(true);
@@ -182,12 +183,12 @@ it("model edit intent mounts an unrendered destination and keeps its caret alive
   const { host, dispose } = await mount();
   try {
     startEditing("window-1000", 4);
-    await vi.waitFor(() => expect(host.querySelector('[data-block-id="window-1000"] textarea')).not.toBeNull());
-    const editor = host.querySelector<HTMLTextAreaElement>('[data-block-id="window-1000"] textarea')!;
-    expect(editor.selectionStart).toBe(4);
-    const window = editor.closest<HTMLElement>("[data-outline-window]")!;
+    await vi.waitFor(() => expect(maybeEditorIn(host.querySelector<HTMLElement>('[data-block-id="window-1000"]')!)).not.toBeNull());
+    const editor = maybeEditorIn(host.querySelector<HTMLElement>('[data-block-id="window-1000"]')!)!;
+    expect(editor.selection()[0]).toBe(4);
+    const window = editor.element.closest<HTMLElement>("[data-outline-window]")!;
     WindowObserver.set(window, false);
-    expect(editor.isConnected).toBe(true);
+    expect(editor.element.isConnected).toBe(true);
     expect(editingId()).toBe("window-1000");
     endEdit("page-navigation");
   } finally { dispose(); }
@@ -270,13 +271,13 @@ it.each(["ArrowDown", "ArrowUp", "Enter", "Backspace", "Tab"])("%s keeps the liv
   try {
     const source = key === "ArrowUp" || key === "Backspace" || key === "Tab" ? "window-23" : "window-22";
     startEditing(source, key === "Backspace" || key === "ArrowUp" ? 0 : node(source)!.raw.length);
-    await vi.waitFor(() => expect(host.querySelector("textarea.block-editor")).not.toBeNull());
-    const textarea = host.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-    textarea.dispatchEvent(new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(maybeEditorIn(host)).not.toBeNull());
+    const textarea = maybeEditorIn(host)!;
+    textarea.keydown(new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true }));
     await vi.waitFor(() => {
       const current = editingId();
       expect(current).not.toBeNull();
-      expect(host.querySelector(`[data-block-id="${current}"] textarea.block-editor`)).not.toBeNull();
+      expect(maybeEditorIn(host.querySelector<HTMLElement>(`[data-block-id="${current}"]`)!)).not.toBeNull();
       if (key === "ArrowDown") expect(current).toBe("window-23");
       if (key === "ArrowUp" || key === "Backspace") expect(current).toBe("window-22");
       if (key === "Enter") { expect(current).not.toBe(source); expect(pageByName("Window")!.roots).toHaveLength(2001); }

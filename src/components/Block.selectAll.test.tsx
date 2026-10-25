@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 // GH #262: Ctrl/Cmd+A ladder from editing mode — first press is the native
 // select-all-text gesture, a press with the text fully selected escalates to
 // a block subtree selection; later presses live in selection mode and are
@@ -45,9 +46,9 @@ function page(blocks: BlockDto[]): PageDto {
   return { name: "Sel", kind: "page", title: "Sel", pre_block: null, blocks };
 }
 
-const editor = (root: HTMLElement) => root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-const modA = (el: HTMLTextAreaElement) =>
-  el.dispatchEvent(new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
+const editor = (root: HTMLElement) => editorIn(root);
+const modA = (el: EditorDriver) =>
+  el.keydown({ key: "a", ctrlKey: true, bubbles: true, cancelable: true });
 
 describe("Ctrl+A ladder from the block editor (GH #262)", () => {
   it("first press leaves text selection to the browser; a press on fully selected text selects the block subtree", () => {
@@ -60,16 +61,16 @@ describe("Ctrl+A ladder from the block editor (GH #262)", () => {
     const m = mount(() => <For each={pageByName("Sel")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
     try {
       const ta = editor(m.root);
-      expect(ta.value).toBe("c2");
+      expect(ta.value()).toBe("c2");
 
       // Press 1 with the caret collapsed: falls through (native select-all).
-      ta.setSelectionRange(0, 0);
+      ta.select(0, 0);
       modA(ta);
       expect(hasSelection()).toBe(false);
       expect(editingId()).toBe(c2Id);
 
       // Browser applied select-all: whole text selected.
-      ta.setSelectionRange(0, ta.value.length);
+      ta.select(0, ta.value().length);
       // Press 2: escalate to the block's whole visible subtree.
       modA(ta);
       expect(hasSelection()).toBe(true);
@@ -87,7 +88,7 @@ describe("Ctrl+A ladder from the block editor (GH #262)", () => {
     const m = mount(() => <For each={pageByName("Sel")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
     try {
       const ta = editor(m.root);
-      expect(ta.value).toBe("");
+      expect(ta.value()).toBe("");
       modA(ta);
       expect(hasSelection()).toBe(true);
       expect(selectedIds()).toEqual([emptyId]);

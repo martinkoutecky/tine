@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { For } from 'solid-js';
 import { render } from 'solid-js/web';
@@ -26,18 +27,17 @@ describe('exploratory GH519 newer selection wins',()=>{
         startEditing('current',0);keys=installKeybindings();
         const root=document.createElement('div');document.body.append(root);
         dispose=render(()=><For each={pageByName('Probe')?.roots??[]}>{id=><Block id={id}/>}</For>,root);
-        const editor=()=>root.querySelector('textarea.block-editor') as HTMLTextAreaElement;
-        await vi.waitFor(()=>expect(document.activeElement).toBe(editor()));
-        editor().setSelectionRange(start,end,direction);
-        editor().dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',code:'Tab',shiftKey:reverse,bubbles:true,cancelable:true}));
+        const editor=()=>editorIn(root);
+        await vi.waitFor(()=>expect(document.activeElement).toBe(editor().element));
+        editor().select(start,end,direction);
+        editor().keydown({key:'Tab',code:'Tab',shiftKey:reverse,bubbles:true,cancelable:true});
         await vi.waitFor(()=>expect(doc.byId.current.parent).toBe(null));
         editor().focus();
-        editor().setSelectionRange(6,6);
-        editor().dispatchEvent(new Event('select',{bubbles:true}));
+        editor().selectByUser(6,6);
         await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
-        expect([editor().selectionStart,editor().selectionEnd]).toEqual([6,6]);
+        expect([editor().selection()[0],editor().selection()[1]]).toEqual([6,6]);
         expect(doc.byId.current.raw).toBe(text);
-        expect(document.activeElement).toBe(editor());
+        expect(document.activeElement).toBe(editor().element);
       });
     }
   }

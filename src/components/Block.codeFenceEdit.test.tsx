@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { describe, expect, it } from "vitest";
 import { For } from "solid-js";
 import { pageByName, setRaw } from "../document";
@@ -31,13 +32,13 @@ describe("code-fence editor presentation", () => {
       <For each={pageByName("Code")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const ta = root.querySelector("textarea")!;
-      expect(ta.classList.contains("code-edit")).toBe(true);
+      const ta = maybeEditorIn(root)!;
+      expect(ta.element.classList.contains("code-edit")).toBe(true);
       // Default is horizontal scrolling, shared with the rendered code card.
-      expect(ta.getAttribute("wrap")).toBe("off");
+      expect(ta.element.getAttribute("wrap")).toBe("off");
       // Body-only code view (GH #412/#413): the payload, without the fences;
       // the wrapper bytes are preserved on commit (see codeBodyEdit tests).
-      expect(ta.value).toBe("const x = 1;\nconsole.log(x);");
+      expect(ta.value()).toBe("const x = 1;\nconsole.log(x);");
       expect.soft(root.querySelector(".code-language")?.textContent).toBe("js");
       expect.soft([...root.querySelectorAll(".calc-lineno")].map(el => el.textContent)).toEqual(["1", "2"]);
     } finally {
@@ -53,8 +54,8 @@ describe("code-fence editor presentation", () => {
       <For each={pageByName("Code")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const ta = root.querySelector("textarea")!;
-      expect(ta.classList.contains("code-edit")).toBe(false);
+      const ta = maybeEditorIn(root)!;
+      expect(ta.element.classList.contains("code-edit")).toBe(false);
     } finally {
       dispose();
     }
@@ -68,10 +69,10 @@ describe("code-fence editor presentation", () => {
       <For each={pageByName("Calc")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const ta = root.querySelector("textarea")!;
-      expect(ta.classList.contains("code-edit")).toBe(false);
+      const ta = maybeEditorIn(root)!;
+      expect(ta.element.classList.contains("code-edit")).toBe(false);
       // Calc strips the fence in the editor and shows the live results panel.
-      expect(ta.value).toBe("1+1");
+      expect(ta.value()).toBe("1+1");
       expect(root.querySelector(".calc-results")).not.toBeNull();
     } finally {
       dispose();
@@ -86,9 +87,9 @@ describe("code-fence editor presentation", () => {
       <For each={pageByName("OrgCode")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const ta = root.querySelector("textarea")!;
-      expect(ta.classList.contains("code-edit")).toBe(true);
-      expect(ta.getAttribute("wrap")).toBe("off");
+      const ta = maybeEditorIn(root)!;
+      expect(ta.element.classList.contains("code-edit")).toBe(true);
+      expect(ta.element.getAttribute("wrap")).toBe("off");
       expect(root.querySelector(".code-language")?.textContent).toBe("python");
       expect(root.querySelector(".calc-lineno")?.textContent).toBe("1");
     } finally {
@@ -105,20 +106,20 @@ describe("code-fence editor presentation", () => {
       <For each={pageByName("Live")?.roots ?? []}>{(bid) => <Editor id={bid} />}</For>
     ));
     try {
-      const ta = root.querySelector("textarea")!;
-      expect(ta.classList.contains("code-edit")).toBe(true);
-      expect(ta.value).toBe("const x = 1;");
+      const ta = maybeEditorIn(root)!;
+      expect(ta.element.classList.contains("code-edit")).toBe(true);
+      expect(ta.value()).toBe("const x = 1;");
       // The code-only shape breaks (text after the fence): the class drops
       // live and the editor returns to the honest raw text.
       setRaw(id, "```js\nconst x = 1;\n```\nplain note");
       await Promise.resolve();
-      expect(ta.classList.contains("code-edit")).toBe(false);
-      expect(ta.value).toBe("```js\nconst x = 1;\n```\nplain note");
+      expect(ta.element.classList.contains("code-edit")).toBe(false);
+      expect(ta.value()).toBe("```js\nconst x = 1;\n```\nplain note");
       // …and back: the body-only code view flips in again.
       setRaw(id, fenced);
       await Promise.resolve();
-      expect(ta.classList.contains("code-edit")).toBe(true);
-      expect(ta.value).toBe("const x = 1;");
+      expect(ta.element.classList.contains("code-edit")).toBe(true);
+      expect(ta.value()).toBe("const x = 1;");
     } finally {
       dispose();
     }

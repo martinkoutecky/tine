@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 // Margin dialogue, slice 1 (vision §3.7): Ctrl/Cmd+R in the block editor
 // creates a child comment that quotes the selection, and comment blocks render
 // as a card with a quote header, an author chip and a marked passage in the
@@ -41,13 +42,13 @@ function mount(blocks: BlockDto[], edit?: string, format: "md" | "org" = "md"): 
   return { root, dispose };
 }
 
-function ctrlR(ta: HTMLTextAreaElement): KeyboardEvent {
+function ctrlR(ta: EditorDriver | HTMLTextAreaElement): KeyboardEvent {
   const event = new KeyboardEvent("keydown", { key: "r", ctrlKey: true, bubbles: true, cancelable: true });
-  ta.dispatchEvent(event);
+  if ("kind" in ta) ta.keydown(event); else ta.dispatchEvent(event);
   return event;
 }
 
-const editor = (root: HTMLElement) => root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+const editor = (root: HTMLElement) => maybeEditorIn(root) as EditorDriver;
 
 let disposeKeys: (() => void) | null = null;
 beforeAll(async () => {
@@ -80,7 +81,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       : "The obstacle is the way.\n:PROPERTIES:\n:author: Marcus Aurelius\n:quote-suffix: after\n:END:";
     const { root, dispose } = mount([block("p", "Literature", [block("ordinary", raw)])], "ordinary", format);
     try {
-      expect(editor(root).value).toBe(raw);
+      expect(editor(root).value()).toBe(raw);
     } finally { dispose(); }
   });
 
@@ -90,14 +91,14 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
     try {
       const ta = editor(root);
       for (const character of metadata) {
-        ta.value += character;
-        ta.setSelectionRange(ta.value.length, ta.value.length);
-        ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: character }));
+        ta.replaceText(ta.value() + character);
+        ta.select(ta.value().length, ta.value().length);
+        ta.reportInput({ bubbles: true, inputType: "insertText", data: character });
       }
       endEdit("page-navigation");
       expect(docNode("c")!.raw).toBe(`My view${metadata}`);
       startEditing("c", 0);
-      expect(editor(root).value).toBe("My view");
+      expect(editor(root).value()).toBe("My view");
     } finally { dispose(); }
   });
 
@@ -105,8 +106,8 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
     const { root, dispose } = mount([block("p", "Discuss these words here")], "p");
     try {
       const ta = editor(root);
-      ta.setSelectionRange(8, 19);
-      ta.dispatchEvent(new Event("select", { bubbles: true }));
+      ta.select(8, 19);
+      ta.reportSelection(new Event("select", { bubbles: true }));
       const button = root.querySelector<HTMLButtonElement>('[data-selection-action="comment"]');
       expect(button, "the selection toolbar needs Comment").not.toBeNull();
       expect(button!.querySelector("svg")).not.toBeNull();
@@ -125,9 +126,9 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
     const { root, dispose } = mount([block("p", "Discuss these words here", [block("c", `My view\n${hidden}`)])], "c", format);
     try {
       const ta = editor(root);
-      expect(ta.value).toBe("My view");
-      ta.value = "My revised view";
-      ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+      expect(ta.value()).toBe("My view");
+      ta.replaceText("My revised view");
+      ta.reportInput({ bubbles: true, inputType: "insertText" });
       endEdit("page-navigation");
       expect(docNode("c")!.raw).toBe(`My revised view\n${hidden}`);
     } finally { dispose(); }
@@ -188,7 +189,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
     const { root, dispose } = mount([block("p", "words", [block("c", "Discuss this claim\nquote:: words", [block("r", "My view\nquote:: this claim", [block("n", "Evidence")])])])], "r");
     try {
       const ta = editor(root);
-      ta.setSelectionRange(0, 2);
+      ta.select(0, 2);
       ctrlR(ta);
       const id = docNode("r")!.children.at(-1)!;
       expect(docNode(id)!.parent).toBe("r");
@@ -205,8 +206,8 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
     ], "p");
     try {
       const ta = editor(root);
-      const at = ta.value.indexOf("a phrase");
-      ta.setSelectionRange(at, at + "a phrase worth disputing".length);
+      const at = ta.value().indexOf("a phrase");
+      ta.select(at, at + "a phrase worth disputing".length);
       const event = ctrlR(ta);
 
       expect(event.defaultPrevented).toBe(true); // never reaches the webview's reload
@@ -219,9 +220,9 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(editingId()).toBe(comment);
       await Promise.resolve();
       const commentEditor = editor(root);
-      expect(commentEditor.closest<HTMLElement>(".ls-block")!.dataset.blockId).toBe(comment);
-      expect(commentEditor.selectionStart).toBe(0);
-      expect(commentEditor.selectionEnd).toBe(0);
+      expect(commentEditor.element.closest<HTMLElement>(".ls-block")!.dataset.blockId).toBe(comment);
+      expect(commentEditor.selection()[0]).toBe(0);
+      expect(commentEditor.selection()[1]).toBe(0);
     } finally {
       dispose();
     }
@@ -231,8 +232,8 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
     const { root, dispose } = mount([block("p", "the cat sat; then the cat ran")], "p");
     try {
       const ta = editor(root);
-      const second = ta.value.lastIndexOf("the cat");
-      ta.setSelectionRange(second, second + 7);
+      const second = ta.value().lastIndexOf("the cat");
+      ta.select(second, second + 7);
       ctrlR(ta);
       const comment = docNode("p")!.children[0];
       expect(docNode(comment)!.raw).toBe("\nquote:: the cat\nquote-prefix:: the cat sat; then\nquote-suffix:: ran");
@@ -245,7 +246,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
     const { root, dispose } = mount([block("p", "Some text to discuss")], "p");
     try {
       const ta = editor(root);
-      ta.setSelectionRange(5, 9);
+      ta.select(5, 9);
       ctrlR(ta);
       expect(docNode("p")!.children).toHaveLength(1);
       endEdit("page-navigation");
@@ -261,7 +262,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
     const { root, dispose } = mount([block("p", "Whole-block remark target")], "p");
     try {
       const ta = editor(root);
-      ta.setSelectionRange(3, 3);
+      ta.select(3, 3);
       const event = ctrlR(ta);
       expect(event.defaultPrevented).toBe(true);
       const comment = docNode("p")!.children[0];
@@ -276,9 +277,9 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
     const { root, dispose } = mount([block("p", "Palette path for a phrase")], "p");
     try {
       const ta = editor(root);
-      ta.focus();
-      const at = ta.value.indexOf("a phrase");
-      ta.setSelectionRange(at, at + 8);
+      ta.element.focus();
+      const at = ta.value().indexOf("a phrase");
+      ta.select(at, at + 8);
       rememberEditorSelectionForPalette();
       endEdit("page-navigation"); // opening the palette blurs the editor
       commentOnPaletteSelection();
@@ -294,8 +295,8 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
     try {
       setToasts([]);
       const ta = editor(root);
-      ta.focus();
-      ta.setSelectionRange(0, 7);
+      ta.element.focus();
+      ta.select(0, 7);
       rememberEditorSelectionForPalette();
       endEdit("page-navigation");
       invalidateBinding();

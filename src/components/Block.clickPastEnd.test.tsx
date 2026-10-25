@@ -1,3 +1,4 @@
+import { editorIn, maybeEditorIn } from "../tests/editorDriver";
 // GH #465 (master b7cde3129, 82ea9af33, 401951955): a click in the run-out past
 // the last glyph puts the caret at the end of the block, even when the span map
 // answers a plausible interior offset (before an invisible closing `*`).
@@ -46,10 +47,10 @@ describe("click past the last glyph (GH #465)", () => {
       };
       content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: 300, clientY: 22 }));
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0, clientX: 300, clientY: 22 }));
-      await vi.waitFor(() => expect(root.querySelector("textarea.block-editor")).not.toBeNull());
-      const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      expect(editor.value).toBe(visible);
-      await vi.waitFor(() => expect(editor.selectionStart).toBe(visible.length));
+      await vi.waitFor(() => expect(maybeEditorIn(root)).not.toBeNull());
+      const editor = editorIn(root);
+      expect(editor.value()).toBe(visible);
+      await vi.waitFor(() => expect(editor.selection()[0]).toBe(visible.length));
     } finally {
       dispose();
     }

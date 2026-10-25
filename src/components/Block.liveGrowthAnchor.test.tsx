@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
@@ -31,14 +32,14 @@ describe("live growth above the active editor", () => {
       Object.defineProperty(scroller, "clientHeight", { value: 500, configurable: true });
       document.body.append(scroller);
       dispose = render(() => <For each={pageByName("Probe")?.roots ?? []}>{(id) => <Block id={id} />}</For>, scroller);
-      const editor = scroller.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const editor = editorIn(scroller);
       editor.focus();
       scroller.scrollTop = 50;
       let top = 300;
-      editor.getBoundingClientRect = () => ({ top } as DOMRect);
-      editor.value = "typed!";
-      editor.setSelectionRange(6, 6);
-      editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "!" }));
+      editor.element.getBoundingClientRect = () => ({ top } as DOMRect);
+      editor.replaceText("typed!");
+      editor.select(6, 6);
+      editor.reportInput({ bubbles: true, inputType: "insertText", data: "!" });
       top = 340; // the mirror above grew by 40px during this keystroke
       if (gesture) scroller.dispatchEvent(new Event(gesture));
       while (frames.length) frames.shift()!(0);

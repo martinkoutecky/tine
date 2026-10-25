@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { Block } from "../components/Block";
@@ -27,18 +28,18 @@ it.each([
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <Block id="target" />, root);
   try {
-    const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+    const ta = maybeEditorIn(root) as EditorDriver;
     let expected = `Title\n${userProperty}body`;
-    expect(ta.value).toBe(expected);
-    ta.setSelectionRange(expected.length, expected.length);
+    expect(ta.value()).toBe(expected);
+    ta.select(expected.length, expected.length);
     for (const char of "\nowner:: Ada") {
-      const caret = ta.selectionStart;
-      ta.value = ta.value.slice(0, caret) + char + ta.value.slice(ta.selectionEnd);
-      ta.setSelectionRange(caret + 1, caret + 1);
+      const caret = ta.selection()[0];
+      ta.replaceText(ta.value().slice(0, caret) + char + ta.value().slice(ta.selection()[1]));
+      ta.select(caret + 1, caret + 1);
       expected += char;
-      ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: char }));
-      expect(ta.value).toBe(expected);
-      expect([ta.selectionStart, ta.selectionEnd]).toEqual([expected.length, expected.length]);
+      ta.reportInput({ bubbles: true, inputType: "insertText", data: char });
+      expect(ta.value()).toBe(expected);
+      expect([ta.selection()[0], ta.selection()[1]]).toEqual([expected.length, expected.length]);
     }
     const saved = userProperty ? `Title\n${userProperty}owner:: Ada\n${hidden}\nbody`
       : `Title\nbody\nowner:: Ada\n${hidden}`;
@@ -46,15 +47,15 @@ it.each([
     expect(blockRegions(saved).property_regions).toHaveLength(1);
     // A user can place the caret back in the body while the saved layout differs.
     const caret = expected.indexOf("body") + 2;
-    ta.value = expected.slice(0, caret) + "!" + expected.slice(caret);
-    ta.setSelectionRange(caret + 1, caret + 1);
-    ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "!" }));
-    expect(ta.value).toBe(expected.replace("body", "bo!dy"));
-    expect([ta.selectionStart, ta.selectionEnd]).toEqual([caret + 1, caret + 1]);
+    ta.replaceText(expected.slice(0, caret) + "!" + expected.slice(caret));
+    ta.select(caret + 1, caret + 1);
+    ta.reportInput({ bubbles: true, inputType: "insertText", data: "!" });
+    expect(ta.value()).toBe(expected.replace("body", "bo!dy"));
+    expect([ta.selection()[0], ta.selection()[1]]).toEqual([caret + 1, caret + 1]);
     expect(doc.byId.target.raw).toBe(saved.replace("body", "bo!dy"));
     endEdit("page-navigation");
     startEditing("target", 0);
-    expect((root.querySelector("textarea.block-editor") as HTMLTextAreaElement).value)
+    expect((maybeEditorIn(root) as EditorDriver).value())
       .toBe(userProperty ? `Title\n${userProperty}owner:: Ada\nbo!dy` : "Title\nbo!dy\nowner:: Ada");
   } finally { dispose(); }
 });
@@ -70,13 +71,13 @@ it.each([
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <Block id="target" />, root);
   try {
-    const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-    ta.value = text;
-    ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromPaste" }));
+    const ta = maybeEditorIn(root) as EditorDriver;
+    ta.replaceText(text);
+    ta.reportInput({ bubbles: true, inputType: "insertFromPaste" });
     const regions = blockRegions(doc.byId.target.raw);
     expect(regions.property_regions).toHaveLength(1);
     expect(regions.properties.filter(p => p.region === 0).map(p => p.key).sort()).toEqual(["id", "owner"]);
-    expect(ta.value).toBe(text);
+    expect(ta.value()).toBe(text);
   } finally { dispose(); }
 });
 
@@ -88,9 +89,9 @@ it("explicitly typed id text takes precedence in the window editor, as in OG", (
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <Block id="target" />, root);
   try {
-    const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-    ta.value = "Title\nid:: supplied";
-    ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromPaste" }));
+    const ta = maybeEditorIn(root) as EditorDriver;
+    ta.replaceText("Title\nid:: supplied");
+    ta.reportInput({ bubbles: true, inputType: "insertFromPaste" });
     expect(blockRegions(doc.byId.target.raw).properties.filter(p => p.key === "id").map(p => p.value)).toEqual(["supplied"]);
   } finally { dispose(); }
 });
@@ -103,11 +104,11 @@ it("clearing the first editor keeps its flashcard metadata on an outline block",
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <Block id="target" />, root);
   try {
-    const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-    expect(ta.value).toBe("Question");
-    ta.value = "";
-    ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
-    expect(ta.value).toBe("");
+    const ta = maybeEditorIn(root) as EditorDriver;
+    expect(ta.value()).toBe("Question");
+    ta.replaceText("");
+    ta.reportInput({ bubbles: true, inputType: "deleteContentBackward" });
+    expect(ta.value()).toBe("");
     endEdit("page-navigation");
     expect(root.querySelector(".ls-block")).not.toBeNull();
     const dto = pageToDto("Card")!;
@@ -124,16 +125,16 @@ it("Org typing reattaches the ID to the accepted mixed drawer after CLOSED", () 
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <Block id="target" />, root);
   try {
-    const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-    ta.value += "!";
-    ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "!" }));
+    const ta = maybeEditorIn(root) as EditorDriver;
+    ta.replaceText(ta.value() + "!");
+    ta.reportInput({ bubbles: true, inputType: "insertText", data: "!" });
     expect(doc.byId.target.raw).toBe(raw + "!");
-    expect(ta.value).not.toContain(":id: own-id");
-    expect(ta.value).toContain(":id: body-id");
+    expect(ta.value()).not.toContain(":id: own-id");
+    expect(ta.value()).toContain(":id: body-id");
     expect(root.querySelector(".ls-block")?.getAttribute("data-block-ref")).toBe("own-id");
     expect(existingBlockId(doc.byId.target.raw, "org")).toBe("own-id");
     withUndoUnit("outside-edit", ["Reattach"], () => setRaw("target", "Other\n:PROPERTIES:\n:owner: Alex\n:id: external-id\n:END:", { timetracking: false }));
-    expect(ta.value).toBe("Other\n:PROPERTIES:\n:owner: Alex\n:END:");
+    expect(ta.value()).toBe("Other\n:PROPERTIES:\n:owner: Alex\n:END:");
     expect(root.querySelector(".ls-block")?.getAttribute("data-block-ref")).toBe("external-id");
     undo();
     expect(doc.byId.target.raw).toBe(raw + "!");
@@ -152,11 +153,11 @@ it("Org mixed-drawer typing on a 2,000-block page adds no ownership parse", () =
   const w = window as unknown as { __tineBench?: boolean; __tineParseStats?: { calls: number; hits: number; misses: number } };
   w.__tineBench = true; w.__tineParseStats = { calls: 0, hits: 0, misses: 0 };
   try {
-    const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+    const ta = maybeEditorIn(root) as EditorDriver;
     for (let i = 0; i < 200; i++) {
-      ta.value = `x${ta.value}`;
-      ta.setSelectionRange(1, 1);
-      ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "x" }));
+      ta.replaceText(`x${ta.value()}`);
+      ta.select(1, 1);
+      ta.reportInput({ bubbles: true, inputType: "insertText", data: "x" });
     }
     console.info(`OG-R4C Org mixed drawer at 2k: ${JSON.stringify(w.__tineParseStats)}`);
     expect(w.__tineParseStats.misses).toBe(200);
@@ -186,10 +187,10 @@ it("Markdown typing keeps a hidden id in the block's own property group", () => 
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <Block id="target" />, root);
   try {
-    const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-    expect(ta.value).toBe("Title\nowner:: Ada\nbody line");
-    ta.value += "!";
-    ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "!" }));
+    const ta = maybeEditorIn(root) as EditorDriver;
+    expect(ta.value()).toBe("Title\nowner:: Ada\nbody line");
+    ta.replaceText(ta.value() + "!");
+    ta.reportInput({ bubbles: true, inputType: "insertText", data: "!" });
     // The id stays exactly where it was in the group, never below the body.
     expect(doc.byId.target.raw).toBe(raw + "!");
     // The same holds before a final quote, which otherwise takes the hidden rows above it.

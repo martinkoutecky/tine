@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -39,15 +40,15 @@ function page(raw: string): PageDto {
   };
 }
 
-function inputAt(textarea: HTMLTextAreaElement, value: string, caret = value.length) {
+function inputAt(textarea: EditorDriver, value: string, caret = value.length) {
   textarea.focus();
-  textarea.value = value;
-  textarea.setSelectionRange(caret, caret);
-  textarea.dispatchEvent(new InputEvent("input", {
+  textarea.replaceText(value);
+  textarea.select(caret, caret);
+  textarea.reportInput({
     bubbles: true,
     inputType: "insertText",
     data: value[caret - 1] ?? null,
-  }));
+  });
 }
 
 function choose(label: string) {
@@ -64,7 +65,7 @@ describe("< advanced-section command autocomplete", () => {
     startEditing("advanced", 3);
     const { root, dispose } = mount(() => <Block id="advanced" />);
     try {
-      inputAt(root.querySelector("textarea.block-editor")!, "<引用");
+      inputAt(editorIn(root), "<引用");
       const quote = ADVANCED_BLOCK_COMMANDS.find(command => command.matchLabel === "Quote")!;
       await vi.waitFor(() => expect([...document.querySelectorAll(".autocomplete .ac-label")]
         .map(el => el.textContent)).toContain(quote.label));
@@ -80,7 +81,7 @@ describe("< advanced-section command autocomplete", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = editorIn(root);
       inputAt(textarea, "<qu");
       await vi.waitFor(() => {
         const labels = [...document.body.querySelectorAll(".autocomplete .ac-label")]
@@ -90,8 +91,8 @@ describe("< advanced-section command autocomplete", () => {
 
       choose("Quote");
       await vi.waitFor(() => expect(doc.byId.advanced.raw).toBe("#+BEGIN_QUOTE\n\n#+END_QUOTE"));
-      expect(textarea.selectionStart).toBe("#+BEGIN_QUOTE\n".length);
-      expect(textarea.selectionEnd).toBe("#+BEGIN_QUOTE\n".length);
+      expect(textarea.selection()[0]).toBe("#+BEGIN_QUOTE\n".length);
+      expect(textarea.selection()[1]).toBe("#+BEGIN_QUOTE\n".length);
 
       const second = "#+BEGIN_QUOTE\n\n#+END_QUOTE\n<ex";
       inputAt(textarea, second);
@@ -104,8 +105,8 @@ describe("< advanced-section command autocomplete", () => {
 
       const expected = "#+BEGIN_QUOTE\n\n#+END_QUOTE\n#+BEGIN_EXAMPLE\n\n#+END_EXAMPLE";
       await vi.waitFor(() => expect(doc.byId.advanced.raw).toBe(expected));
-      expect(textarea.selectionStart).toBe(expected.indexOf("\n\n#+END_EXAMPLE") + 1);
-      expect(textarea.selectionEnd).toBe(expected.indexOf("\n\n#+END_EXAMPLE") + 1);
+      expect(textarea.selection()[0]).toBe(expected.indexOf("\n\n#+END_EXAMPLE") + 1);
+      expect(textarea.selection()[1]).toBe(expected.indexOf("\n\n#+END_EXAMPLE") + 1);
     } finally {
       dispose();
     }

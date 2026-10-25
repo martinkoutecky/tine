@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { describe, expect, it } from "vitest";
 import { For } from "solid-js";
 import { pageByName, undo } from "../document";
@@ -5,7 +6,7 @@ import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import { startEditing } from "../editorController";
 import { Block } from "./Block";
-import { installBlockEditorLifecycle, mount, blk, page, pressEnter } from "../tests/blockEditorTestkit";
+import { installBlockEditorLifecycle, mount, blk, page, pressEditorEnter } from "../tests/blockEditorTestkit";
 
 installBlockEditorLifecycle();
 
@@ -22,16 +23,16 @@ describe("Enter inside a code fence", () => {
     ));
 
     try {
-      const ta = root.querySelector("textarea") as HTMLTextAreaElement | null;
+      const ta = editorIn(root);
       expect(ta).not.toBeNull();
       // Caret at the end of the `const x = 1` content line (inside the fence).
-      const caret = ta!.value.indexOf("const x = 1") + "const x = 1".length;
-      pressEnter(ta!, caret);
+      const caret = ta!.value().indexOf("const x = 1") + "const x = 1".length;
+      pressEditorEnter(ta!, caret);
 
       // The page still has exactly one root block — Enter did NOT split.
       expect(pageByName("Code")!.roots.length).toBe(1);
       // A newline was inserted inside the fence content.
-      const raw = doc.byId[id]?.raw ?? ta!.value;
+      const raw = doc.byId[id]?.raw ?? ta!.value();
       expect(raw).toContain("const x = 1\n\n```");
     } finally {
       dispose();
@@ -46,9 +47,9 @@ describe("Enter inside a code fence", () => {
       <For each={pageByName("Code")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
-      const caret = ta.value.indexOf("const x = 1") + "const x = 1".length;
-      pressEnter(ta, caret);
+      const ta = editorIn(root);
+      const caret = ta.value().indexOf("const x = 1") + "const x = 1".length;
+      pressEditorEnter(ta, caret);
       expect(pageByName("Code")!.roots).toEqual([id]);
       expect(doc.byId[id].raw).toContain("const x = 1\n\n````");
     } finally {
@@ -66,9 +67,9 @@ describe("Enter inside a code fence", () => {
       <For each={pageByName("Code")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
-      const caret = ta.value.indexOf("const x = 1") + "const x = 1".length;
-      pressEnter(ta, caret);
+      const ta = editorIn(root);
+      const caret = ta.value().indexOf("const x = 1") + "const x = 1".length;
+      pressEditorEnter(ta, caret);
       expect(pageByName("Code")!.roots.length).toBe(2);
     } finally {
       dispose();
@@ -83,8 +84,8 @@ describe("Enter inside a code fence", () => {
       <For each={pageByName("Code")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
-      pressEnter(ta, ta.value.length);
+      const ta = editorIn(root);
+      pressEditorEnter(ta, ta.value().length);
       expect(pageByName("Code")!.roots).toEqual([id]);
       expect(doc.byId[id].raw).toBe("```js\n");
     } finally {
@@ -103,9 +104,9 @@ describe("Enter inside a code fence", () => {
     ));
 
     try {
-      const ta = root.querySelector("textarea") as HTMLTextAreaElement | null;
+      const ta = editorIn(root);
       expect(ta).not.toBeNull();
-      pressEnter(ta!, ta!.value.length);
+      pressEditorEnter(ta!, ta!.value().length);
       // Ordinary text splits into a second block.
       expect(pageByName("Plain")!.roots.length).toBe(2);
     } finally {
@@ -126,11 +127,11 @@ describe("Double Enter exits a trailing code or calculator block", () => {
       <For each={pageByName("Code exit")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
+      const ta = editorIn(root);
       // The closer's mandatory separator is wrapper-owned, so the one explicit
       // trailing payload newline places the caret on the blank exit row.
-      const blankLine = ta.value.length;
-      pressEnter(ta, blankLine);
+      const blankLine = ta.value().length;
+      pressEditorEnter(ta, blankLine);
       expect(pageByName("Code exit")!.roots).toHaveLength(2);
       expect(doc.byId[id].raw).toBe("```js\nconst x = 1\n```");
       expect(doc.byId[pageByName("Code exit")!.roots[1]].raw).toBe("");
@@ -151,9 +152,9 @@ describe("Double Enter exits a trailing code or calculator block", () => {
       <For each={pageByName("Calc exit")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
-      expect(ta.value).toBe("1 + 1\n");
-      pressEnter(ta, ta.value.length);
+      const ta = editorIn(root);
+      expect(ta.value()).toBe("1 + 1\n");
+      pressEditorEnter(ta, ta.value().length);
       expect(pageByName("Calc exit")!.roots).toHaveLength(2);
       expect(doc.byId[id].raw).toBe("```calc\n1 + 1\n```");
     } finally {
@@ -169,8 +170,8 @@ describe("Double Enter exits a trailing code or calculator block", () => {
       <For each={pageByName("Plain blank")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
-      pressEnter(ta, ta.value.length);
+      const ta = editorIn(root);
+      pressEditorEnter(ta, ta.value().length);
       expect(pageByName("Plain blank")!.roots).toHaveLength(2);
       // Still no special-block exit (a new ordinary block follows). The first
       // block drops the boundary newline itself: GH #361's unified rule —

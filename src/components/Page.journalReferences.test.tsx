@@ -1,3 +1,4 @@
+import { editorIn, maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { PageView } from "./Page";
@@ -62,21 +63,21 @@ it("GF4: bodies render while references load, then late days preserve the focuse
     await vi.waitFor(() => expect(host.textContent).toContain("Body gf4-today"));
     await vi.waitFor(() => expect(feed).toHaveBeenCalledTimes(2));
     startEditing("gf4-old");
-    await vi.waitFor(() => expect(host.querySelector("textarea.block-editor")).not.toBeNull());
-    const editor = host.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+    await vi.waitFor(() => expect(maybeEditorIn(host)).not.toBeNull());
+    const editor = editorIn(host);
     editor.focus();
     host.scrollTop = 100;
     // jsdom has no layout: model the displacement caused by a day inserted
     // above the viewport and require the scroller to compensate for it.
     let lateHeight = 0;
-    vi.spyOn(editor, "getBoundingClientRect").mockImplementation(() => ({ top: 30 + (host.querySelectorAll(".page-section").length === 2 ? 0 : 140 + lateHeight) - (host.scrollTop - 100) } as DOMRect));
-    const value = editor.value;
+    vi.spyOn(editor.element, "getBoundingClientRect").mockImplementation(() => ({ top: 30 + (host.querySelectorAll(".page-section").length === 2 ? 0 : 140 + lateHeight) - (host.scrollTop - 100) } as DOMRect));
+    const value = editor.value();
     finish({ pages: [current, late, old], as_of_day: currentDayKey(), done: true, next_before_day: null });
     await vi.waitFor(() => expect(host.querySelectorAll(".page-section")).toHaveLength(3));
     expect([...host.querySelectorAll("h1.journal-title")].map(el => el.textContent?.trim())).toEqual([today, late.name, old.name]);
-    expect(host.querySelector("textarea.block-editor")).toBe(editor);
-    expect(document.activeElement).toBe(editor);
-    expect(editor.value).toBe(value);
+    expect(maybeEditorIn(host)?.element).toBe(editor.element);
+    expect(document.activeElement).toBe(editor.element);
+    expect(editor.value()).toBe(value);
     expect(host.scrollTop).toBe(240);
     const resize = resizeCallbacks.get(host.querySelector(".page")!)!;
     lateHeight = 40; // The inserted day's linked references finish later.

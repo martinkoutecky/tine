@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { For, Show } from "solid-js";
 import { pageByName } from "../document";
@@ -46,10 +47,10 @@ async function carryAcross(before: string, after: string) {
   loadSingle(page(NAME, [blk("a", "Alpha"), blk("b", before)]));
   startEditing("b", 0);
   const { root, dispose } = mountOutline();
-  const old = root.querySelector("textarea")!;
+  const old = editorIn(root);
   expect(old).not.toBeNull();
   installPageContent(NAME, external([blk("a", "Alpha"), blk("b", after)]));
-  old.dispatchEvent(new FocusEvent("blur"));
+  old.reportBlur();
   await Promise.resolve();
   return { root, dispose };
 }
@@ -61,7 +62,7 @@ describe("an editor carried across an external reload", () => {
     try {
       expect(doc.byId.b.raw).toBe(after);
       expect(editingId()).toBe("b");
-      expect(root.querySelector("textarea")?.value).toBe("let x = 2");
+      expect(editorIn(root).value()).toBe("let x = 2");
     } finally {
       dispose();
     }
@@ -93,7 +94,7 @@ describe("an editor carried across an external reload", () => {
     startEditing("b", 0);
     const { root, dispose } = mountOutline();
     try {
-      const old = root.querySelector("textarea")!;
+      const old = editorIn(root);
       // The external change deletes the edited block (no `id::`): the editor
       // is carried by outline position, and position 1 no longer exists.
       installPageContent(NAME, external([blk("a", "Alpha EXTERNAL")]));
@@ -101,7 +102,7 @@ describe("an editor carried across an external reload", () => {
       const thrown: unknown[] = [];
       const onError = (e: ErrorEvent) => { thrown.push(e.error); e.preventDefault(); };
       window.addEventListener("error", onError);
-      try { old.dispatchEvent(new FocusEvent("blur")); } finally { window.removeEventListener("error", onError); }
+      try { old.reportBlur(); } finally { window.removeEventListener("error", onError); }
       expect(thrown).toEqual([]);
       expect(doc.byId.a.raw).toBe("Alpha EXTERNAL");
       expect(doc.byId.b).toBeUndefined();

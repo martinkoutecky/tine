@@ -1,3 +1,4 @@
+import { editorIn, maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 // GH #210 (Dieterbe, 0.8.0-beta.3), in the rendered page: a table block whose
 // view is chosen before its title is typed is the first bullet of a page with no
 // page properties. Typing its title and leaving the editor must neither toast
@@ -32,9 +33,9 @@ function mount(node: () => JSX.Element) {
   document.body.appendChild(root);
   return { root, dispose: render(node, root) };
 }
-function type(editor: HTMLTextAreaElement, value: string) {
-  editor.value = value;
-  editor.dispatchEvent(new Event("input", { bubbles: true }));
+function type(editor: EditorDriver, value: string) {
+  editor.replaceText(value);
+  editor.reportInput({ bubbles: true }, "plain");
 }
 
 it("typing the title of a table block that is a page's first bullet toasts nothing and keeps saving (GH #210)", async () => {
@@ -55,7 +56,7 @@ it("typing the title of a table block that is a page's first bullet toasts nothi
     expect(root.querySelector(".page-properties")).toBeNull();
     root.querySelector('[data-block-id="t1"] .block-content')!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
     await tick();
-    type(root.querySelector<HTMLTextAreaElement>('[data-block-id="t1"] textarea')!, config);
+    type(editorIn(root, "t1"), config);
     endEdit("blur"); await tick(); await tick();
     expect(await flushPage(dto.name)).toBe(true);
     // The save kept it a bullet: no page properties exist on this page.
@@ -65,10 +66,10 @@ it("typing the title of a table block that is a page's first bullet toasts nothi
     // Now the title, typed above the config, and leave the editor.
     const { startEditing } = await import("../editorController");
     startEditing("t1", 0); await tick();
-    const editor = root.querySelector<HTMLTextAreaElement>('[data-block-id="t1"] textarea')!;
+    const editor = editorIn(root, "t1");
     type(editor, `test table\n${config}`);
     setToasts([]);
-    editor.dispatchEvent(new FocusEvent("blur"));
+    editor.reportBlur();
     await tick(); await tick();
     expect(toasts()).toEqual([]);
     expect(doc.byId.t1.originatedFromPageHeader).toBeUndefined();
@@ -102,7 +103,7 @@ for (const pre of [
       expect([...root.querySelectorAll(".page-properties .prop-key")].map(el => el.textContent)).toEqual(keys);
       root.querySelector(".page-properties")!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
       await tick();
-      expect(root.querySelector("textarea")).not.toBeNull();
+      expect(maybeEditorIn(root)).not.toBeNull();
       endEdit("blur"); await tick(); await tick();
       expect([...root.querySelectorAll(".page-properties .prop-key")].map(el => el.textContent)).toEqual(keys);
       expect([...root.querySelectorAll(".ls-block")].map((b) => (b as HTMLElement).dataset.blockId)).toEqual(["o1"]);

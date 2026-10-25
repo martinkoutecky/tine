@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { Block } from "./Block";
@@ -27,9 +28,9 @@ async function slash(label: "Scheduled" | "Deadline" | "Date picker" | "Tomorrow
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <><Block id="task" /><DatePicker /></>, root);
   mounted = dispose;
-  const textarea = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-  textarea.focus(); textarea.value = raw; textarea.setSelectionRange(caret, caret);
-  textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+  const textarea = maybeEditorIn(root)!;
+  textarea.element.focus(); textarea.replaceText(raw); textarea.select(caret, caret);
+  textarea.reportInput({ bubbles: true, inputType: "insertText" });
   await vi.waitFor(() => expect([...document.body.querySelectorAll(".ac-label")].some(el => el.textContent === label)).toBe(true));
   [...document.body.querySelectorAll<HTMLElement>(".ac-item")].find(el => el.querySelector(".ac-label")?.textContent === label)!
     .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
@@ -48,11 +49,13 @@ const addTime = () => {
 };
 // jsdom has no layout. Supply content-dependent geometry to verify that the
 // mounted editor remeasures after model writes; native E2E verifies visibility.
-async function measuredEditor(textarea: HTMLTextAreaElement) {
-  Object.defineProperty(textarea, "scrollHeight", { configurable: true,
-    get: () => textarea.value.split("\n").length * 24 });
+async function measuredEditor(textarea: EditorDriver) {
+  // Native textarea autosize geometry; other editors own their layout.
+  if (textarea.kind !== "textarea") return;
+  Object.defineProperty(textarea.element, "scrollHeight", { configurable: true,
+    get: () => textarea.value().split("\n").length * 24 });
   await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-  textarea.style.height = "24px";
+  textarea.element.style.height = "24px";
 }
 describe("date picker draft commits (GH #30 / #485)", () => {
   it.each(["Scheduled", "Deadline", "Date picker"] as const)("/%s omits redundant apply and cancel help (GH #667)", async label => {
@@ -69,17 +72,21 @@ describe("date picker draft commits (GH #30 / #485)", () => {
     if (method === "done") done(); else if (method === "outside") outside(); else { document.querySelector<HTMLInputElement>(".dp-time-input")!.focus(); key("Enter"); }
     expect(readSchedule("task", label.toLowerCase() as "scheduled" | "deadline")).toMatchObject({ d: 12, time: "10:00", repeater: "+1w" });
     expect(datePicker()).toBeNull();
-    await vi.waitFor(() => expect(parseFloat(textarea.style.height), "GH #668: programmatic planning writes must resize the open editor").toBeGreaterThanOrEqual(textarea.scrollHeight));
+    // This final observation pins native textarea autosize after the semantic commit.
+    if (textarea.kind !== "textarea") return;
+    await vi.waitFor(() => expect(parseFloat(textarea.element.style.height), "GH #668: programmatic planning writes must resize the open editor").toBeGreaterThanOrEqual(textarea.element.scrollHeight));
   });
   it("remeasures model-driven multiline insertion and removal in the same editor (GH #668)", async () => {
     const { textarea } = await slash("Deadline");
+    // Native textarea autosize after model-driven writes.
+    if (textarea.kind !== "textarea") return;
     key("Escape");
     await measuredEditor(textarea);
     setRaw("task", "Original\nInserted\nThird line");
-    await vi.waitFor(() => expect(textarea.style.height).toBe("72px"));
-    expect(document.querySelector("textarea.block-editor")).toBe(textarea);
+    await vi.waitFor(() => expect(textarea.element.style.height).toBe("72px"));
+    expect(maybeEditorIn(document)?.element).toBe(textarea.element);
     setRaw("task", "Original");
-    await vi.waitFor(() => expect(textarea.style.height).toBe("24px"));
+    await vi.waitFor(() => expect(textarea.element.style.height).toBe("24px"));
   });
   it.each(["Scheduled", "Deadline"] as const)("existing %s chip commits edited time and repeat on outside click", async label => {
     loadSingle({ name: "P", kind: "page", title: "P", format: "md", pre_block: null,
@@ -135,8 +142,8 @@ describe("date picker draft commits (GH #30 / #485)", () => {
   it("a changed editor refuses a delayed journal insertion", async () => {
     const { textarea } = await slash("Date picker");
     await vi.waitFor(() => expect(datePicker()).not.toBeNull());
-    textarea.value = "Newer text";
-    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    textarea.replaceText("Newer text");
+    textarea.reportInput({ bubbles: true, inputType: "insertText" });
     outside();
     expect(node("task").raw).toBe("Newer text");
   });

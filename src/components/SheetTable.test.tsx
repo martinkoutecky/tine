@@ -1,3 +1,4 @@
+import { maybeEditorIn, editorsIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { createMemo, createSignal, untrack, type ComponentProps, type JSX } from "solid-js";
@@ -269,7 +270,7 @@ describe("SheetTable", () => {
     doubleClick(cell(root, 1, 0));
     await tick();
     expect(editingId()).toBeNull();
-    expect(root.querySelector("textarea.block-editor")).toBeNull();
+    expect(maybeEditorIn(root)).toBeNull();
     expect(doc.byId[shared].raw).toBe("Loaded page row");
     dispose();
   });
@@ -289,8 +290,8 @@ describe("SheetTable", () => {
     const right = root.querySelector<HTMLElement>('[data-sheet-surface-id="pane:right"][data-row="0"][data-col="0"]')!;
     doubleClick(right);
     await Promise.resolve();
-    expect(root.querySelectorAll("textarea.block-editor")).toHaveLength(1);
-    expect(right.querySelector("textarea.block-editor")).not.toBeNull();
+    expect(editorsIn(root)).toHaveLength(1);
+    expect(maybeEditorIn(right)).not.toBeNull();
     dispose();
   });
 
@@ -306,13 +307,13 @@ describe("SheetTable", () => {
     const { root, dispose } = mount(() => <Block id="table" />);
     (root.querySelector(".sheet-title-header") as HTMLElement).click();
     doubleClick(cell(root, 0, 0));
-    const editor = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-    editor.value = "Zulu";
-    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "Zulu" }));
+    const editor = maybeEditorIn(root) as EditorDriver;
+    editor.replaceText("Zulu");
+    editor.reportInput({ bubbles: true, inputType: "insertText", data: "Zulu" });
     await Promise.resolve();
     expect(editingId()).toBe("a");
-    expect(root.querySelectorAll("textarea.block-editor")).toHaveLength(1);
-    expect((root.querySelector("textarea.block-editor") as HTMLTextAreaElement).value).toBe("Zulu");
+    expect(editorsIn(root)).toHaveLength(1);
+    expect((maybeEditorIn(root) as EditorDriver).value()).toBe("Zulu");
     dispose();
   });
 
@@ -426,7 +427,7 @@ describe("SheetTable", () => {
     expect(root.querySelector('[data-row="260"][data-col="0"]')).not.toBeNull();
     expect(handleCellSelectionKey(new KeyboardEvent("keydown", { key: "Enter" }))).toBe(true);
     await tick();
-    expect(root.querySelector('[data-row="260"] textarea.block-editor')).not.toBeNull();
+    expect(maybeEditorIn(root.querySelector<HTMLElement>('[data-row="260"]')!)).not.toBeNull();
     dispose();
   });
 
@@ -1328,7 +1329,7 @@ describe("SheetTable", () => {
       await tick();
       const target = method === "property double-click" || method === "keyboard Enter" || method === "keyboard overtype"
         ? cell(root, 0, 2).querySelector("input.sheet-prop-input")
-        : root.querySelector("textarea.block-editor");
+        : maybeEditorIn(root);
       expect(target).not.toBeNull();
       dispose();
     });
@@ -1345,7 +1346,7 @@ describe("SheetTable", () => {
       expect(cell(root, 0, 1).querySelector("input.sheet-prop-input")).toBe(first);
       expect(first.value).toBe("invalid");
       expect(first.classList.contains("sheet-input-invalid")).toBe(true);
-      expect(root.querySelector("textarea.block-editor")).toBeNull();
+      expect(maybeEditorIn(root)).toBeNull();
       expect(document.activeElement).toBe(first);
       dispose();
     });

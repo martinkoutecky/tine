@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
@@ -30,17 +31,17 @@ describe("sibling move keeps the editor inside the gesture", () => {
         const root = document.createElement("div");
         document.body.append(root);
         dispose = render(() => <For each={pageByName("Probe")?.roots ?? []}>{(id) => <Block id={id} />}</For>, root);
-        const editor = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+        const editor = editorIn(root);
         editor.focus();
-        editor.setSelectionRange(2, 8, direction);
-        editor.dispatchEvent(new KeyboardEvent("keydown", { key, altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+        editor.select(2, 8, direction);
+        editor.keydown({ key, altKey: true, shiftKey: true, bubbles: true, cancelable: true });
         // Synchronously, before any animation frame.
         expect(doc.pages[0].roots).toEqual(dir < 0 ? ["b", "a", "c"] : ["a", "c", "b"]);
-        expect(document.activeElement).toBe(editor);
-        expect([editor.selectionStart, editor.selectionEnd, editor.selectionDirection]).toEqual([2, 8, direction]);
+        expect(document.activeElement).toBe(editor.element);
+        expect([editor.selection()[0], editor.selection()[1], editor.direction()]).toEqual([2, 8, direction]);
         await vi.waitFor(() => expect(isBlockMoving()).toBe(false));
-        expect(document.activeElement).toBe(editor);
-        expect([editor.selectionStart, editor.selectionEnd, editor.selectionDirection]).toEqual([2, 8, direction]);
+        expect(document.activeElement).toBe(editor.element);
+        expect([editor.selection()[0], editor.selection()[1], editor.direction()]).toEqual([2, 8, direction]);
       });
     }
   }

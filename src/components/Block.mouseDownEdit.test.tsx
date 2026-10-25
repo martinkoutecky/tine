@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
@@ -52,11 +53,11 @@ describe("rendered block edit gesture (GH #368)", () => {
       const down = mouse("mousedown", 1, 1);
       content.dispatchEvent(down);
 
-      const editor = host.querySelector<HTMLTextAreaElement>("textarea.block-editor");
+      const editor = maybeEditorIn(host);
       expect(down.defaultPrevented).toBe(true);
       expect(editingId()).toBe("mouse-down-edit");
       expect(editor).not.toBeNull();
-      expect(document.activeElement).toBe(editor);
+      expect(document.activeElement).toBe(editor!.element);
       document.dispatchEvent(mouse("mouseup", 1, 1));
     } finally {
       dispose();

@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -37,7 +38,7 @@ function page(name: string, blocks: BlockDto[]): PageDto {
   return { name, kind: "page", title: name, pre_block: null, blocks };
 }
 
-function keydown(target: EventTarget, key: string, init: Partial<KeyboardEvent> = {}): KeyboardEvent {
+function keydown(target: EditorDriver, key: string, init: Partial<KeyboardEvent> = {}): KeyboardEvent {
   const event = new KeyboardEvent("keydown", {
     key,
     code: init.code ?? (key === "Tab" ? "Tab" : ""),
@@ -48,24 +49,24 @@ function keydown(target: EventTarget, key: string, init: Partial<KeyboardEvent> 
     metaKey: init.metaKey ?? false,
     altKey: init.altKey ?? false,
   });
-  target.dispatchEvent(event);
+  target.keydown(event);
   return event;
 }
 
-function activeEditor(root: HTMLElement): HTMLTextAreaElement {
-  const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement | null;
+function activeEditor(root: HTMLElement): EditorDriver {
+  const textarea = maybeEditorIn(root) as EditorDriver | null;
   if (!textarea) throw new Error("missing active block editor");
   return textarea;
 }
 
-function openCompletion(textarea: HTMLTextAreaElement) {
-  textarea.focus();
-  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-  textarea.dispatchEvent(new InputEvent("input", {
+function openCompletion(textarea: EditorDriver) {
+  textarea.element.focus();
+  textarea.select(textarea.value().length, textarea.value().length);
+  textarea.reportInput({
     bubbles: true,
     inputType: "insertText",
-    data: textarea.value.at(-1) ?? null,
-  }));
+    data: textarea.value().at(-1) ?? null,
+  });
 }
 
 describe("outline Tab ownership (GH #157)", () => {
@@ -85,16 +86,16 @@ describe("outline Tab ownership (GH #157)", () => {
     try {
       for (const shiftKey of [false, true]) {
         const editor = activeEditor(root);
-        editor.focus();
-        editor.setSelectionRange(start, end, direction);
+        editor.element.focus();
+        editor.select(start, end, direction);
         const event = keydown(editor, "Tab", { shiftKey });
         expect(event.defaultPrevented).toBe(true);
         await vi.waitFor(() => {
           expect(doc.byId.current.parent).toBe(shiftKey ? null : "previous");
           const next = activeEditor(root);
-          expect(document.activeElement).toBe(next);
-          expect(next.value).toBe("hello world");
-          expect([next.selectionStart, next.selectionEnd, next.selectionDirection]).toEqual([start, end, direction]);
+          expect(document.activeElement).toBe(next.element);
+          expect(next.value()).toBe("hello world");
+          expect([next.selection()[0], next.selection()[1], next.direction()]).toEqual([start, end, direction]);
         });
       }
     } finally {
@@ -123,14 +124,14 @@ describe("outline Tab ownership (GH #157)", () => {
       content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
       const editor = activeEditor(root);
-      expect(editor.value).toBe(visible);
-      editor.setSelectionRange(2, 8, "backward");
+      expect(editor.value()).toBe(visible);
+      editor.select(2, 8, "backward");
       keydown(editor, "Tab", { shiftKey: outdent });
       await vi.waitFor(() => {
         const next = activeEditor(root);
-        expect(document.activeElement).toBe(next);
-        expect([next.selectionStart, next.selectionEnd, next.selectionDirection]).toEqual([2, 8, "backward"]);
-        expect(next.value).toBe(visible);
+        expect(document.activeElement).toBe(next.element);
+        expect([next.selection()[0], next.selection()[1], next.direction()]).toEqual([2, 8, "backward"]);
+        expect(next.value()).toBe(visible);
         expect(doc.byId.current.parent).toBe(outdent ? null : "previous");
         expect(doc.byId.current.raw).toBe(raw);
       });
@@ -146,11 +147,11 @@ describe("outline Tab ownership (GH #157)", () => {
     startEditing("current", 0);
     try {
       const editor = activeEditor(root);
-      editor.setSelectionRange(2, 8, "backward");
+      editor.select(2, 8, "backward");
       for (const shiftKey of [false, true]) {
         keydown(editor, "Tab", { shiftKey });
-        expect(activeEditor(root)).toBe(editor);
-        expect([editor.selectionStart, editor.selectionEnd, editor.selectionDirection]).toEqual([2, 8, "backward"]);
+        expect(activeEditor(root).element).toBe(editor.element);
+        expect([editor.selection()[0], editor.selection()[1], editor.direction()]).toEqual([2, 8, "backward"]);
         expect(doc.pages[0].roots).toEqual(["current"]);
       }
     } finally {
@@ -167,11 +168,11 @@ describe("outline Tab ownership (GH #157)", () => {
     startEditing("current", 0);
     try {
       const editor = activeEditor(root);
-      editor.value = "hello world";
-      editor.setSelectionRange(2, 8, "backward");
+      editor.replaceText("hello world");
+      editor.select(2, 8, "backward");
       keydown(editor, "Tab");
       const next = activeEditor(root);
-      expect([next.selectionStart, next.selectionEnd, next.selectionDirection]).toEqual([2, 8, "backward"]);
+      expect([next.selection()[0], next.selection()[1], next.direction()]).toEqual([2, 8, "backward"]);
       expect(doc.byId.current.raw).toBe("hello world");
       expect(doc.byId.current.parent).toBe("previous");
     } finally {

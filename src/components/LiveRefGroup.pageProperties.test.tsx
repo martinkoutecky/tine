@@ -1,3 +1,4 @@
+import { editorIn, maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -52,9 +53,9 @@ const propertyRow = (raw = HEADER): BlockDto => ({
   id: "page-property:Page:source", raw, collapsed: false, children: [], page_property: true,
 });
 
-const replaceValue = (textarea: HTMLTextAreaElement, value: string) => {
-  textarea.value = value;
-  textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+const replaceValue = (textarea: EditorDriver, value: string) => {
+  textarea.replaceText(value);
+  textarea.reportInput({ bubbles: true, inputType: "insertText", data: value });
 };
 
 describe("page properties in Linked References (GH #486)", () => {
@@ -73,10 +74,10 @@ describe("page properties in Linked References (GH #486)", () => {
       for (let attempt = 0; attempt < 2; attempt++) {
         root.querySelector<HTMLElement>(".page-property-reference .block-content")!.click();
         const editor = await vi.waitFor(() => {
-          expect(root.querySelector("textarea")).not.toBeNull();
-          return root.querySelector<HTMLTextAreaElement>("textarea")!;
+          expect(maybeEditorIn(root)).not.toBeNull();
+          return editorIn(root);
         });
-        editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        editor.keydown({ key: "Escape", bubbles: true, cancelable: true });
         await vi.waitFor(() => expect(editingId()).toBeNull());
         expect([...root.querySelectorAll(".page-property-reference .block-content")].map(el => el.innerHTML)).toEqual(before);
       }
@@ -93,11 +94,11 @@ describe("page properties in Linked References (GH #486)", () => {
       await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
       root.querySelector<HTMLElement>(".page-property-reference .block-content")!.click();
       const editor = await vi.waitFor(() => {
-        expect(root.querySelector("textarea")).not.toBeNull();
-        return root.querySelector<HTMLTextAreaElement>("textarea")!;
+        expect(maybeEditorIn(root)).not.toBeNull();
+        return editorIn(root);
       });
       replaceValue(editor, "");
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      editor.keydown({ key: "Escape", bubbles: true, cancelable: true });
       await vi.waitFor(() => expect(editingId()).toBeNull());
       expect(root.textContent).not.toContain("typo-key");
       expect(readPageProperty("Source", "tags")).toBeNull();
@@ -122,13 +123,13 @@ describe("page properties in Linked References (GH #486)", () => {
       });
       row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
       const textarea = await vi.waitFor(() => {
-        const el = root.querySelector("textarea");
+        const el = maybeEditorIn(root);
         expect(el).not.toBeNull();
-        return el as HTMLTextAreaElement;
+        return el!;
       });
-      expect(textarea.value).toBe(HEADER);
+      expect(textarea.value()).toBe(HEADER);
       replaceValue(textarea, "tags:: Target\ntype:: book");
-      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      textarea.keydown({ key: "Escape", bubbles: true, cancelable: true });
       await vi.waitFor(() => expect(editingId()).toBeNull());
       expect(readPageProperty("Source", "type")).toBe("book");
       expect(readPageProperty("Source", "typo-key")).toBeNull();
@@ -163,7 +164,7 @@ describe("page properties in Linked References (GH #486)", () => {
       await vi.waitFor(() => expect(pagePropsPanel()?.scope).toEqual({ kind: "page", name: "Source" }));
       closePageProps();
       expect(root.querySelector(".page-property-reference .block-content")!.innerHTML).toBe(before);
-      expect(root.querySelector("textarea")).toBeNull();
+      expect(maybeEditorIn(root)).toBeNull();
     } finally {
       dispose();
     }

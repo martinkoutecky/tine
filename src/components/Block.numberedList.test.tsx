@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
@@ -33,7 +34,7 @@ function load(blocks: BlockDto[], format: Format = "md"): void {
   clearSeededFacets();
 }
 
-function mountEditor(id: string): { textarea: HTMLTextAreaElement; dispose: () => void } {
+function mountEditor(id: string): { textarea: EditorDriver; dispose: () => void } {
   startEditing(id, 0);
   const root = document.createElement("div");
   document.body.appendChild(root);
@@ -41,26 +42,24 @@ function mountEditor(id: string): { textarea: HTMLTextAreaElement; dispose: () =
     () => <For each={pageByName("Numbered")?.roots ?? []}>{(blockId) => <Block id={blockId} />}</For>,
     root,
   );
-  return { textarea: root.querySelector("textarea.block-editor") as HTMLTextAreaElement, dispose };
+  return { textarea: editorIn(root), dispose };
 }
 
-function typeValue(textarea: HTMLTextAreaElement, value: string): void {
+function typeValue(textarea: EditorDriver, value: string): void {
   textarea.focus();
-  textarea.value = value;
-  textarea.setSelectionRange(value.length, value.length);
-  textarea.dispatchEvent(new InputEvent("input", {
+  textarea.replaceText(value);
+  textarea.select(value.length, value.length);
+  textarea.reportInput({
     bubbles: true,
     inputType: "insertText",
     data: value.at(-1) ?? null,
-  }));
+  });
 }
 
-function keydown(textarea: HTMLTextAreaElement, key: "Enter" | "Backspace", caret: number): KeyboardEvent {
+function keydown(textarea: EditorDriver, key: "Enter" | "Backspace", caret: number): KeyboardEvent {
   textarea.focus();
-  textarea.setSelectionRange(caret, caret);
-  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
-  textarea.dispatchEvent(event);
-  return event;
+  textarea.select(caret, caret);
+  return textarea.keydown({ key, bubbles: true, cancelable: true });
 }
 
 describe("own numbered-list editor invariant", () => {
@@ -70,7 +69,7 @@ describe("own numbered-list editor invariant", () => {
     load([blk("item", `${props}\n${drawer}`)], format);
     const { textarea, dispose } = mountEditor("item");
     try {
-      expect(textarea.value).toBe("");
+      expect(textarea.value()).toBe("");
       keydown(textarea, "Enter", 0);
       expect(blockProperty("item", "logseq.order-list-type")).toBe("number");
       expect(doc.byId.item.raw).toContain(drawer);
@@ -83,8 +82,8 @@ describe("own numbered-list editor invariant", () => {
     try {
       typeValue(textarea, "1. ");
       expect(blockProperty("item", "logseq.order-list-type")).toBe("number");
-      expect(textarea.value).toBe("");
-      expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([0, 0]);
+      expect(textarea.value()).toBe("");
+      expect([textarea.selection()[0], textarea.selection()[1]]).toEqual([0, 0]);
       expect(pageToDto("Numbered")!.blocks.find((block) => block.id === "untouched")!.raw).toBe("untouched bytes");
     } finally {
       dispose();
@@ -97,7 +96,7 @@ describe("own numbered-list editor invariant", () => {
     try {
       typeValue(textarea, literal);
       expect(doc.byId.item.raw).toBe(literal);
-      expect(textarea.value).toBe(literal);
+      expect(textarea.value()).toBe(literal);
       expect(blockProperty("item", "logseq.order-list-type")).toBeNull();
       expect(doc.byId.untouched.raw).toBe("untouched bytes");
     } finally {
@@ -135,8 +134,8 @@ describe("own numbered-list editor invariant", () => {
       const event = keydown(textarea, "Backspace", 0);
       expect(event.defaultPrevented).toBe(true);
       expect(doc.byId.item.raw).toBe("text stays");
-      expect(textarea.value).toBe("text stays");
-      expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([0, 0]);
+      expect(textarea.value()).toBe("text stays");
+      expect([textarea.selection()[0], textarea.selection()[1]]).toEqual([0, 0]);
       expect(doc.byId.untouched.raw).toBe("untouched bytes");
       expect(doc.byId.after.raw).toBe("after bytes");
     } finally {
@@ -160,9 +159,9 @@ describe("own numbered-list editor invariant", () => {
     load([blk("item", "1. inner")]);
     const { textarea, dispose } = mountEditor("item");
     try {
-      keydown(textarea, "Enter", textarea.value.length);
+      keydown(textarea, "Enter", textarea.value().length);
       expect(doc.byId.item.raw).toBe("1. inner\n2. ");
-      keydown(textarea, "Backspace", textarea.value.length);
+      keydown(textarea, "Backspace", textarea.value().length);
       expect(doc.byId.item.raw).toBe("1. inner\n");
       expect(blockProperty("item", "logseq.order-list-type")).toBeNull();
     } finally {
@@ -176,10 +175,10 @@ describe("own numbered-list editor invariant", () => {
     try {
       typeValue(textarea, "1. ");
       expect(doc.byId.item.raw).toBe(":PROPERTIES:\n:logseq.order-list-type: number\n:END:");
-      expect(textarea.value).toBe("");
+      expect(textarea.value()).toBe("");
 
-      textarea.value = "org text";
-      textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "t" }));
+      textarea.replaceText("org text");
+      textarea.reportInput({ bubbles: true, inputType: "insertText", data: "t" });
       keydown(textarea, "Backspace", 0);
       expect(doc.byId.item.raw).toBe("org text");
       expect(doc.byId.untouched.raw).toBe("untouched bytes");

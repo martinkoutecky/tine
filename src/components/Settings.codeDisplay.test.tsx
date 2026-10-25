@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -77,12 +78,12 @@ it("Settings globally wraps reading and editing, and remembers the device prefer
   expect(root.querySelector(".code-language")?.textContent).toBe("python");
   expect([...root.querySelectorAll("pre.code-block .calc-lineno")].map(el => el.textContent)).toEqual(["1", "2", "1", "2"]);
   startEditing("code", 0); await tick();
-  const ta = root.querySelector("textarea.code-edit")!;
-  expect(ta.getAttribute("wrap")).toBe("off");
+  const ta = maybeEditorIn(root)!;
+  expect(ta.element.getAttribute("wrap")).toBe("off");
   const toggle = root.querySelector<HTMLButtonElement>('[data-setting-label="Wrap code lines"] [role="switch"]')!;
   runGlobalCommand("ui/toggle-code-block-wrap"); await tick();
   expect(toggle.getAttribute("aria-checked")).toBe("true");
-  expect(ta.getAttribute("wrap")).toBe("soft");
+  expect(ta.element.getAttribute("wrap")).toBe("soft");
   expect(root.querySelector("pre.code-block")?.classList.contains("code-wrapping")).toBe(true);
   expect(saved).toHaveBeenCalledWith("code_line_wrapping", "1");
   endEdit("page-navigation"); await tick();
@@ -113,7 +114,7 @@ it("open code cards react immediately to the global wrap preference", async () =
   try {
     startEditing("edit", 0); await tick();
     changeCodeWrapping(true); await tick();
-    expect.soft(root.querySelector("textarea")?.getAttribute("wrap")).toBe("soft");
+    expect.soft(maybeEditorIn(root)?.element.getAttribute("wrap")).toBe("soft");
     expect.soft(root.querySelector("pre.code-block")?.classList.contains("code-wrapping")).toBe(true);
   } finally { dispose(); }
 });

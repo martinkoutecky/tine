@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
@@ -73,11 +74,11 @@ describe("clicking a code block places the caret where clicked (GH #489)", () =>
       { name: "Card click" },
     );
     try {
-      const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      expect(ta.value).toBe(BODY);
+      const ta = editorIn(root);
+      expect(ta.value()).toBe(BODY);
       // Not the end of the block (the pre-fix answer): line two, column five.
-      expect(ta.selectionStart).toBe(BODY.indexOf("const b") + 5);
-      expect(ta.selectionEnd).toBe(ta.selectionStart);
+      expect(ta.selection()[0]).toBe(BODY.indexOf("const b") + 5);
+      expect(ta.selection()[1]).toBe(ta.selection()[0]);
     } finally {
       dispose();
     }
@@ -93,8 +94,8 @@ describe("clicking a code block places the caret where clicked (GH #489)", () =>
       { name: "Card click end" },
     );
     try {
-      const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      expect(ta.selectionStart).toBe("const a = 1;".length);
+      const ta = editorIn(root);
+      expect(ta.selection()[0]).toBe("const a = 1;".length);
     } finally {
       dispose();
     }
@@ -103,10 +104,10 @@ describe("clicking a code block places the caret where clicked (GH #489)", () =>
     const raw = "paragraph\n```js\nconst x = 1;\n```";
     const { root, dispose } = clickCode(raw, code => ({ node: textNodeContaining(code, "const x"), offset: 0 }), { name: "Mixed code click" });
     try {
-      const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      expect(ta.value).toBe("const x = 1;");
-      expect(ta.selectionStart).toBe(0);
-      expect(ta.classList.contains("code-edit")).toBe(true);
+      const ta = editorIn(root);
+      expect(ta.value()).toBe("const x = 1;");
+      expect(ta.selection()[0]).toBe(0);
+      expect(ta.element.classList.contains("code-edit")).toBe(true);
       expect(root.querySelector(".mixed-code-before")?.textContent).toContain("paragraph");
     } finally { dispose(); }
   });
@@ -115,14 +116,14 @@ describe("clicking a code block places the caret where clicked (GH #489)", () =>
     const { root, dispose } = clickCode(raw, code => ({ node: textNodeContaining(code, "const x"), offset: 0 }), { name: "Mixed context click" });
     try {
       root.querySelector<HTMLElement>(".mixed-code-before")!.dispatchEvent(new MouseEvent("mousedown", {button:0,bubbles:true,cancelable:true}));
-      expect(root.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(raw);
+      expect(editorIn(root).value()).toBe(raw);
     } finally { dispose(); }
   });
   it("keeps a heading above mixed code rendered while editing the code in its own font", () => {
     const { root, dispose } = clickCode("Heading\nheading:: true\n```js\nconst x = 1;\n```\nafter", code => ({ node: textNodeContaining(code, "const x"), offset: 0 }), { name: "Heading before code", properties: [["heading", "true"]] });
     try {
       expect(root.querySelector(".mixed-code-before .heading-text.h1")?.textContent).toBe("Heading");
-      expect(root.querySelector("textarea")!.classList.contains("h1")).toBe(false);
+      expect(editorIn(root).element.classList.contains("h1")).toBe(false);
     } finally { dispose(); }
   });
 
@@ -134,7 +135,7 @@ it.each(["md", "org"] as const)("clicks the second %s fence at its own column", 
   const { root, dispose } = clickCode(raw, code => ({ node: textNodeContaining(code, "second"), offset: 3 }),
     { name: `Second ${format}`, format, card: 1 });
   try {
-    const ta = root.querySelector("textarea")!;
-    expect(ta.value).toBe("second"); expect(ta.selectionStart).toBe(3);
+    const ta = editorIn(root);
+    expect(ta.value()).toBe("second"); expect(ta.selection()[0]).toBe(3);
   } finally { dispose(); }
 });
