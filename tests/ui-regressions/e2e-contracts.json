@@ -963,12 +963,12 @@
       "nonRequirements": ["Exact toast placement, pixels, DOM nesting, or certification outside Linux WebKitGTK (the disk error is a read-only pages folder and the crash is SIGKILL)."],
       "stability":"burn-in"
     },
-    "scripts/e2e-org-created-format.mjs": {"contracts": [{"class": "stateful-ux", "userOutcome": "On an Org graph, a page created from the Quick Switcher's Create row is written as an .org file and edited as Org: the first property the user adds to it (Copy block ref's durable id) is saved as a :PROPERTIES: drawer, never as a Markdown id:: line.", "blocking": true}], "acceptableVariations": ["Switcher row ranking, focus, file name casing and save or watcher latency may vary while the saved bytes carry the id in an Org drawer."], "nonRequirements": ["Exact pixels, the clipboard's contents, or native platform certification outside Linux WebKitGTK."], "stability": "burn-in"}
-  },
+    "scripts/e2e-org-created-format.mjs": {"contracts": [{"class": "stateful-ux", "userOutcome": "On an Org graph, a page created from the Quick Switcher's Create row is written as an .org file and edited as Org: the first property the user adds to it (Copy block ref's durable id) is saved as a :PROPERTIES: drawer, never as a Markdown id:: line.", "blocking": true}], "acceptableVariations": ["Switcher row ranking, focus, file name casing and save or watcher latency may vary while the saved bytes carry the id in an Org drawer."], "nonRequirements": ["Exact pixels, the clipboard's contents, or native platform certification outside Linux WebKitGTK."], "stability": "burn-in"},
     "scripts/e2e-gh524-new-page-sidebar.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A brand-new fileless page opened in the right sidebar through a link or page menu offers an editable first bullet; typing creates the page file and a dragged subtree moves from its source into the new page. Search-created pages remain editable there too (GH #524).","blocking":true}],
       "acceptableVariations": ["First-bullet styling, editor layout, menu placement and save latency."],
       "nonRequirements": ["Exact pixels or DOM structure; native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     }
+  }
 }
