@@ -54,6 +54,14 @@ evidence for all four full lanes while Actions retains the failed attempt.
 release runs cannot satisfy it. `scripts/test-release-pipeline.mjs` keeps this
 fail-closed contract under deterministic fixtures.
 
+A development build (a signed test APK or binaries from the development line,
+`release.yml` with `publish=false`) may instead use a full run dispatched with
+`purpose=development`. That run skips only `check:release-readiness`, because a
+development version has no released CHANGELOG section, impact file or fastlane
+changelog yet; its run name carries `/ development /`. `release.yml` passes
+`--allow-development` to the evidence check only for a `workflow_dispatch` with
+`publish=false`, so such a run can never back a publish.
+
 ## Between releases
 
 - Run focused local tests while editing and the affected behavior family's

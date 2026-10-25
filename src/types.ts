@@ -551,6 +551,8 @@ export interface GraphMeta {
   shortcuts: Record<string, string>;
   start_of_week: number; // Logseq :start-of-week, 0=Monday … 6=Sunday (default 6)
   block_hidden_properties: string[];
+  /** `:property-pages/enabled?`; absent means enabled, as in OG. */
+  property_pages_enabled?: boolean;
   /** config.edn `:ref/linked-references-collapsed-threshold` (OG default 100; 0 = always collapsed). */
   linked_references_collapsed_threshold: number;
   default_journal_template: string | null;

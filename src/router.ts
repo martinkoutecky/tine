@@ -177,6 +177,7 @@ export interface PaneRouter {
   openJournals(opts?: { inPlace?: boolean }): void;
   openConflicts(opts?: { inPlace?: boolean }): void;
   openAllPages(opts?: { inPlace?: boolean }): void;
+  openAllGraphs(opts?: { inPlace?: boolean }): void;
   /** Navigate this pane to a PDF tab. Cost O(tabs); no file read until mounted. */
   openPdf(route: PdfRoute, opts?: { inPlace?: boolean }): void;
   /** Save the active reader's page/zoom in its route; invalid values are ignored. */
@@ -242,6 +243,7 @@ export function routeTitle(r: Route): string {
   if (r.kind === "journals") return translate("navigation-prose-journals");
   if (r.kind === "conflicts") return translate("navigation-prose-conflicts");
   if (r.kind === "all-pages") return translate("navigation-prose-all-pages");
+  if (r.kind === "all-graphs") return translate("command-go-all-graphs");
   if (r.kind === "pdf") return r.label.trim() || r.filename;
   if (r.kind === "invalid") return r.title;
   if (r.kind === "query") {
@@ -270,7 +272,7 @@ export function resolveRouteBlock(r: Route): string | null {
 
 export function sameRoute(a: Route, b: Route): boolean {
   if (a.kind !== b.kind) return false;
-  if (a.kind === "journals" || a.kind === "conflicts" || a.kind === "all-pages") return true;
+  if (a.kind === "journals" || a.kind === "conflicts" || a.kind === "all-pages" || a.kind === "all-graphs") return true;
   if (a.kind === "query") return a.id === (b as QueryRoute).id;
   if (a.kind === "pdf") return a.viewId === (b as PdfRoute).viewId;
   if (a.kind === "invalid") return a === b;
@@ -620,17 +622,13 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     );
   }
 
-  function openJournals(opts: { inPlace?: boolean } = {}) {
-    navigate({ kind: "journals" }, { sticky: !opts.inPlace });
+  function openOverview(kind: "journals" | "conflicts" | "all-pages" | "all-graphs", opts: { inPlace?: boolean } = {}) {
+    navigate({ kind }, { sticky: !opts.inPlace });
   }
-
-  function openConflicts(opts: { inPlace?: boolean } = {}) {
-    navigate({ kind: "conflicts" }, { sticky: !opts.inPlace });
-  }
-
-  function openAllPages(opts: { inPlace?: boolean } = {}) {
-    navigate({ kind: "all-pages" }, { sticky: !opts.inPlace });
-  }
+  const openJournals = (opts?: { inPlace?: boolean }) => openOverview("journals", opts);
+  const openConflicts = (opts?: { inPlace?: boolean }) => openOverview("conflicts", opts);
+  const openAllPages = (opts?: { inPlace?: boolean }) => openOverview("all-pages", opts);
+  const openAllGraphs = (opts?: { inPlace?: boolean }) => openOverview("all-graphs", opts);
 
   function openPdf(pdfRoute: PdfRoute, opts: { inPlace?: boolean } = {}) {
     navigate(pdfRoute, { sticky: !opts.inPlace });
@@ -1217,6 +1215,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     openJournals,
     openConflicts,
     openAllPages,
+    openAllGraphs,
     openPdf,
     updateActivePdfViewState,
     closePdf,
@@ -1353,6 +1352,10 @@ export function openConflicts(opts: { inPlace?: boolean } = {}) {
 
 export function openAllPages(opts: { inPlace?: boolean } = {}) {
   focusedRouterInstance().openAllPages(opts);
+}
+
+export function openAllGraphs(opts: { inPlace?: boolean } = {}) {
+  focusedRouterInstance().openAllGraphs(opts);
 }
 
 export function openQueryInNewTab(

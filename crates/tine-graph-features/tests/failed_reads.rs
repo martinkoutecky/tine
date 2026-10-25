@@ -51,6 +51,15 @@ fn discovery_read_failure_is_reported_and_good_pages_survive() {
     let (root, store) = graph("discovery");
     fs::write(root.join("pages/Good.md"), "- good\n").unwrap();
     fs::write(root.join("pages/Bad.md"), b"title:: \xff\n- bad\n").unwrap();
+    // A settled delivery: a failure on a stamp inside the two-second racy
+    // window is retried quietly (GH #543, storage contract), so an immediate
+    // refresh may legitimately not list a file written a moment ago.
+    fs::File::options()
+        .write(true)
+        .open(root.join("pages/Bad.md"))
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+        .unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
     let view = store.whole_graph().unwrap();
     assert!(view

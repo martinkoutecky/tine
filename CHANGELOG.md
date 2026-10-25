@@ -10,6 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **All graphs** (GH #758): press **g Shift+G** or run **All graphs** from the command palette, then use the arrow keys and Enter to switch graphs. Graph actions, including opening a new window on desktop, are available from the keyboard.
+- **YouTube timestamp shortcut** (GH #757): **Ctrl/Cmd+Shift+Y** inserts the current playback time into the block you are editing. Click the timestamp to jump the video there, just as with the slash command.
+
 - **Open another view** of a PDF (⋯ menu, desktop) shows two parts of it side by side, each with its own page and zoom. Views of the same PDF now share their highlights: one made, recolored or removed in either view appears in the other at once, including views opened by splitting a pane, a new window or a restored session, which before kept separate copies.
 - **The Linked/Unlinked References count says what it counts** (GH #755): hovering the number shows "N blocks on M pages". The number still counts referencing blocks, as in Logseq, and follows the active filter.
 - **Automatic git commits** (queue cards hBpCy4/hBpb2k, ADR 0078 slice 1): a graph in a git repository can commit its changes automatically (Settings → Graph → Commit changes to git; desktop, off by default). Tine commits after a minute without edits, at most once per interval, on quit, and around renames, merges, deletes and backup restores; it never pushes or pulls 
@@ -37,6 +40,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Actions on one reference or embed**: hover an embed for **Edit link**, **Open source** and **Remove** above its top-right corner (with the keyboard, **Tab** reaches them; on touch screens, they appear while you edit inside the embed); a block reference's preview and its right-click or long-press menu offer **Edit link** and **Remove reference**. **Edit link** opens the block that holds the reference or embed with it selected; **Remove** deletes only that occurrence from its block, never the referenced block or page, and **Undo** restores it; if the block changed after the menu or preview opened, nothing is changed and a notice says so. Works in the main pane, the split pane and the right sidebar (GH #417; GH #418).
 
 ### Changed
+
+- Property keys link to their pages consistently in page headers, references, previews and query property lists, including after editing; Shift-click opens the key's page in the sidebar, and `:property-pages/enabled? false` keeps keys plain (GH #753).
 
 - **Hover previews are editable** (D-20261023-VQ, follow-up to GH #748): the blocks in a page or block-reference preview are now the page's own blocks, as in Logseq. Click a block's text to edit it in the preview; the change is saved to its page like any other edit. While you edit, the preview stays open when the pointer leaves it or the page scrolls, and the first Esc ends the edit (the next one closes the preview). A plain bullet click still opens that block in a new tab. Queries inside a preview still show as text and embeds stay read-only. Tested in the component suite; the app journey covers opening and folding previews.
 - **Deleting pages does less disk work** (internal, fsync investigation GH3, D-20261021-GQ3): after the first deletion in a session, a deletion syncs only the trash folder instead of it and every folder above it (three fewer directory syncs per deleted or moved page on Linux, macOS, Android and iOS), and on Windows a deletion no longer writes and removes a custody marker file, which protected nothing there (about a third of a deletion's time on hosted Windows runners).

@@ -47,6 +47,7 @@ import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../
 import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { PagePropertyValue } from "./PagePropertyValue";
+import { PropertyKey } from "../render/PropertyKey";
 import { PageConflictResolution } from "./ConflictResolution";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
@@ -461,7 +462,7 @@ export function PageView(): JSX.Element {
     );
     void (async () => {
       try {
-        if (r.kind === "query" || r.kind === "pdf" || r.kind === "invalid" || r.kind === "conflicts" || r.kind === "all-pages") {
+        if (r.kind === "query" || r.kind === "pdf" || r.kind === "invalid" || r.kind === "conflicts" || r.kind === "all-pages" || r.kind === "all-graphs") {
           // Query workspaces are rendered by PaneLeaf, not PageView. Keep this
           // guard so the page loader never interprets a virtual route as a file.
           setLoadedRoute(r);
@@ -1231,7 +1232,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           <For each={headerProperties().filter(([k]) => !isRenderHiddenPageProp(k, graphMeta()?.block_hidden_properties))}>
             {([key, value]) => (
               <div class="prop-row">
-                <span class="prop-key">{key}</span>
+                <span class="prop-key"><Show when={!props.page.guide} fallback={key}><PropertyKey name={key} /></Show></span>{props.page.guide ? " " : ": "}
                 <span class="prop-value">
                   <PagePropertyValue propertyKey={key} value={value} format={props.page.format} />
                 </span>

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
-import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { currentPageTitle, openPageByName } from "./lib/e2e-navigation.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
@@ -48,11 +48,22 @@ try {
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 2, connectionRetryTimeout: 30_000,
     capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } } });
   await browser.$(".app-container").waitForExist({ timeout: 30_000 });
+  // GH #753 development follow-up: the source and its references use linked
+  // keys, with the same navigation before and after editing the header.
+  const keyState = (selector) => browser.execute((scope) =>
+    [...document.querySelectorAll(`${scope} .prop-key`)].map(key => ({ text: key.textContent, linked: !!key.querySelector("a.page-ref") })), selector);
+  await openPageByName(browser, "Source");
+  await browser.$(".main-content .page-properties .prop-key a.page-ref").waitForDisplayed({ timeout: 15_000 });
+  const sourceKeys = await keyState(".main-content .page-properties");
+  if (sourceKeys.length !== 2 || sourceKeys.some(key => !key.linked)) throw new Error("GH753: source keys must be page links");
   await openPageByName(browser, "Queries");
   await visible(".main-content .query-block", true);
   proof.steps.push("configured bare page-property atom appears in rendered page-reference query");
   await openPageByName(browser, "Plugins");
   await visible(".main-content .linked-references", true);
+  if (JSON.stringify(await keyState(".main-content .linked-references .page-property-reference")) !== JSON.stringify(sourceKeys)) {
+    throw new Error("GH753: source and Linked References keys differ before editing");
+  }
   proof.steps.push("configured bare page-property atom appears in Linked References");
   // GH #753: the literal report journey, followed by another group for Source.
   // Compare the read-only property markup within this run, allowing the edited
@@ -89,6 +100,17 @@ try {
     timeout: 15_000, timeoutMsg: "GH753: another group for Source changed appearance after editing",
   });
   proof.steps.push("GH753: click property, edit val12 to val13, click group title; same read-only markup on both targets and edit saved on disk");
+  if (JSON.stringify(await keyState(".main-content .linked-references .page-property-reference")) !== JSON.stringify(sourceKeys)) {
+    throw new Error("GH753: key links changed after editing");
+  }
+  await openPageByName(browser, "Source");
+  await browser.$(".main-content .page-properties .prop-key a.page-ref").waitForDisplayed({ timeout: 15_000 });
+  if (JSON.stringify(await keyState(".main-content .page-properties")) !== JSON.stringify(sourceKeys)) throw new Error("GH753: source keys changed after editing");
+  await browser.$(".main-content .page-properties .prop-row:last-child .prop-key a.page-ref").click();
+  await browser.waitUntil(async () => (await currentPageTitle(browser)).toLowerCase() === "aad", {
+    timeout: 15_000, timeoutMsg: "GH753: clicking the key did not open its page",
+  });
+  proof.steps.push("GH753: main-page and Linked References keys match before/after editing; clicking aad opens its page");
   fs.writeFileSync(path.join(TMP, "gh753-after-edit-dom.html"), await browser.execute(() => document.body.innerHTML));
   await openPageByName(browser, "Plugins");
   await visible(".main-content .linked-references", true);
