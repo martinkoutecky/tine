@@ -253,6 +253,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           cargo test --release -p tine-store --lib probe_deletion_step_timing -- --ignored --nocapture
+          cargo test --release -p tine-store --lib root_binding::tests::l9_measure_per_save_root_checks -- --ignored --exact --nocapture --test-threads=1
           cargo test --release -p tine-graph-features --test integration rename_cost::probe_rename_wall_time -- --ignored --exact --nocapture
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
