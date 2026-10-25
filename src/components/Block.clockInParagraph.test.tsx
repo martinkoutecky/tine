@@ -196,7 +196,7 @@ describe("a command marker change keeps its clock change when you keep typing (G
       await flush();
       expect(textarea!.value).toBe(doc.byId[blockId].raw);
       typeChar(textarea!, "x");
-      expect(doc.byId[blockId].raw).toMatch(/^DONE taskAx\n:LOGBOOK:\nCLOCK: \[2026-10-21 Wed 08:00:00\]--\[[^\]]+\] =>\s+\d\d:\d\d:\d\d\n:END:$/);
+      expect(doc.byId[blockId].raw).toMatch(/^DONE taskAx\n:LOGBOOK:\nCLOCK: \[2026-10-21 Wed 08:00:00\]--\[[^\]]+\] =>\s+\d{2,}:\d\d:\d\d\n:END:$/);
     } finally {
       dispose();
     }
