@@ -964,7 +964,7 @@ fn the_golden_body_is_pinned_to_format() {
 }
 
 #[cfg(unix)]
-const GOLDEN: &str = "d059fdeaa41b1d063753b61c24b96867e7e6a2104089ea8752615e317c8d539e";
+const GOLDEN: &str = "e154a79e130b4594fae9eec1760fcb10f2ce7f90191770299975a993bf835be0";
 
 /// GH #623 (FORMAT 6): which cached pages carried a VCS anchor line travels
 /// in the checkpoint, so a warm launch answers the conflict inventory with no

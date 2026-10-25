@@ -15,6 +15,8 @@
 use super::*;
 use persistent::EntryListParts;
 use tine_core::doc::{CheckpointBlock, CheckpointBlocks};
+mod block_index;
+use block_index::BlockIndexState;
 
 /// The pages of a generation in checkpoint form: each slot's entry, pre-block
 /// and block forest (raw text plus the memoized projection).
@@ -440,57 +442,32 @@ impl<'de, V: serde::Deserialize<'de>> serde::Deserialize<'de> for Sorted<V> {
     }
 }
 
-/// Exact block owners in the loader's structural runtime-id space.
-/// Capture shares the immutable pages. Only serialization (on the idle
-/// checkpoint writer) computes load-time ids; decoding reads the index itself.
-pub(crate) enum BlockIndexState {
-    Out(Arc<Pages>),
-    In(SnapshotBlockIndex),
-}
-
-impl BlockIndexState {
-    fn into_index(
-        self,
-        pages: &Pages,
-    ) -> Result<SnapshotBlockIndex, crate::store::checkpoint::Fallback> {
-        let index = match self {
-            Self::In(index) => index,
-            Self::Out(_) => return Err(crate::store::checkpoint::Fallback::Decode),
-        };
-        // Validate the wire invariant without walking documents. Any mismatch
-        // declines the whole disposable checkpoint, never the graph.
-        let valid_slots: std::collections::HashSet<usize> =
-            pages.slots().map(|(slot, _)| slot).collect();
-        for (_, owners) in index.base.iter() {
-            let slots = owners.slots();
-            if slots.is_empty()
-                || slots.windows(2).any(|pair| pair[0] >= pair[1])
-                || slots.iter().any(|slot| !valid_slots.contains(slot))
-            {
-                return Err(crate::store::checkpoint::Fallback::Decode);
-            }
-        }
-        Ok(index)
-    }
-}
-
-impl serde::Serialize for BlockIndexState {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Self::Out(pages) => SnapshotBlockIndex::build(pages, true).base.serialize(s),
-            Self::In(index) => index.base.serialize(s),
-        }
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for BlockIndexState {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        SharedMap::deserialize(d).map(|base| {
-            Self::In(SnapshotBlockIndex {
-                base: Arc::new(base),
-                overlay: Arc::new(SharedMap::new()),
-            })
-        })
+#[cfg(test)]
+#[test]
+fn block_index_wire_keeps_runtime_ids_compact() {
+    let mut doc = Document {
+        pre_block: None,
+        roots: (0..2048).map(|_| DocBlock::new("ordinary block")).collect(),
+    };
+    assign_doc_runtime_ids(&mut doc.roots, "pages/A.md");
+    let entry = PageEntry {
+        name: "A".into(),
+        path: PathBuf::from("pages/A.md"),
+        rel_path: Some("pages/A.md".into()),
+        kind: PageKind::Page,
+        date_key: None,
+    };
+    let pages = Arc::new(Pages::from(vec![(entry, Arc::new(doc))]));
+    let bytes = postcard::to_stdvec(&BlockIndexState::Out(Arc::clone(&pages))).unwrap();
+    assert!(
+        bytes.len() <= 20 * 2048,
+        "{} bytes for 2048 runtime ids",
+        bytes.len()
+    );
+    let decoded: BlockIndexState = postcard::from_bytes(&bytes).unwrap();
+    let index = decoded.into_index(&pages).unwrap();
+    for block in &pages[0].1.roots {
+        assert_eq!(index.first_owner(&block.uuid), Some(0));
     }
 }
 

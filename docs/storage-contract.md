@@ -181,7 +181,12 @@ resolve on the first owning page. Block previews use the same owner lookup.
 Cold builds construct this index with the generation. The idle checkpoint
 writer writes the exact index in the structural runtime-id space assigned
 by `assign_doc_runtime_ids` at load, using the captured documents rather than
-live editor ids. Warm launch decodes those rows without rebuilding the index
+live editor ids. Runtime ids use 16-byte UUIDs grouped by owning page slot;
+authored ids retain their exact spelling. The writer borrows cached projections
+and derives structural ids without cloning documents or building a temporary
+owner tree. Cold build sorts borrowed ids once and bulk-builds the AVL;
+incremental publication keeps persistent updates over changed ids.
+Warm launch decodes those rows without rebuilding the index
 from blocks. A malformed owner slot declines the whole disposable checkpoint
 and uses the normal full build. FORMAT 19 supersedes FORMAT 18 once.
 There is no additional per-edit file or byte write: the page save protocol

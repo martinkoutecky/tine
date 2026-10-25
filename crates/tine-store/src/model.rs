@@ -713,11 +713,10 @@ impl ReadSnapshot {
         let capture_started = std::time::Instant::now();
         let pages = graph.peek_pages().expect("loaded graph");
         let cache_generation = graph.cache_generation();
-        // Build the indexes PRE warmed before ready. Block hints and referenced
-        // names were first-use work there, so their OnceLocks remain cold.
+        // Build eager indexes before Ready, including exact block owners.
         let initial = old.is_none().then(|| {
             // First, on the page-parse workers: it builds every block
-            // projection the other three indexes read (GJ5 S1).
+            // projection the other indexes read (GJ5 S1).
             let explicit = SnapshotExplicitIndex::capture(None, &pages, &[], None, &config);
             std::thread::scope(|scope| {
                 let signatures = scope.spawn(|| {
@@ -742,11 +741,13 @@ impl ReadSnapshot {
                         None,
                     )
                 });
+                let blocks = scope.spawn(|| SnapshotBlockIndex::build(&pages));
                 (
                     explicit,
                     signatures.join().expect("signature index worker"),
                     counts.join().expect("block count worker"),
                     aliases.join().expect("alias index worker"),
+                    blocks.join().expect("block index worker"),
                 )
             })
         });
@@ -788,11 +789,11 @@ impl ReadSnapshot {
         let block_index = std::sync::OnceLock::new();
         let previous_block =
             old.and_then(|old| old.block_index.get().map(|index| (index, &old.pages)));
-        let _ = block_index.set(SnapshotBlockIndex::capture(
-            previous_block,
-            &pages,
-            changed_paths,
-        ));
+        let _ = block_index.set(if let Some((_, _, _, _, index)) = &initial {
+            index.clone()
+        } else {
+            SnapshotBlockIndex::capture(previous_block, &pages, changed_paths)
+        });
         let carry_projection =
             |previous: Option<(&SnapshotPageDerivedIndex, &Arc<Pages>)>,
              project: fn(&Document) -> Vec<String>| {
@@ -808,7 +809,7 @@ impl ReadSnapshot {
                 }
                 cell
             };
-        let alias_index = if let Some((_, _, _, index)) = &initial {
+        let alias_index = if let Some((_, _, _, index, _)) = &initial {
             let cell = std::sync::OnceLock::new();
             let _ = cell.set(index.clone());
             cell
@@ -1778,16 +1779,24 @@ impl SnapshotBlockIndex {
     // Persistent roots share untouched ids; folding N/8 changed ids into the
     // base updates those tree paths without copying all N base entries.
 
-    fn for_each_block_id(doc: &Document, mut visit: impl FnMut(&str)) {
-        fn walk(blocks: &[DocBlock], visit: &mut dyn FnMut(&str)) {
+    fn authored_id(block: &DocBlock) -> Option<&str> {
+        block
+            .projection()
+            .properties()
+            .iter()
+            .find(|(key, _)| key.trim().eq_ignore_ascii_case("id"))
+            .map(|(_, value)| value.as_str())
+            .filter(|id| !id.is_empty())
+    }
+
+    fn for_each_block_id<'a>(doc: &'a Document, mut visit: impl FnMut(&'a str)) {
+        fn walk<'a>(blocks: &'a [DocBlock], visit: &mut dyn FnMut(&'a str)) {
             for block in blocks {
                 if !block.uuid.is_empty() {
                     visit(&block.uuid);
                 }
-                if let Some(id) = block.property("id") {
-                    if !id.is_empty() {
-                        visit(&id);
-                    }
+                if let Some(id) = SnapshotBlockIndex::authored_id(block) {
+                    visit(id);
                 }
                 walk(&block.children, visit);
             }
@@ -1827,7 +1836,7 @@ impl SnapshotBlockIndex {
     }
 
     /// Full build over `pages`, or `old` carried across a publication that
-    /// changed `changed_paths`: O(blocks) cold, O(changed pages' blocks) warm.
+    /// changed `changed_paths`: one cold sort, changed blocks' tree paths live.
     fn capture(
         old: Option<(&Self, &Arc<Pages>)>,
         pages: &Arc<Pages>,
@@ -1871,49 +1880,41 @@ impl SnapshotBlockIndex {
             }
             index
         } else {
-            Self::build(pages, false)
+            Self::build(pages)
         }
     }
 
-    /// The checkpoint writer uses the ids its loader will assign, rather
-    /// than editor-retained ids. This work runs only on the idle writer;
-    /// warm launch decodes these rows without visiting the block forest.
-    fn build(pages: &Pages, load_ids: bool) -> Self {
-        let mut base: HashMap<String, BlockOwners> = HashMap::new();
-        for (slot, (entry, doc)) in pages.slots() {
-            let mut normalized;
-            let doc = if load_ids {
-                normalized = Document {
-                    pre_block: None,
-                    roots: doc.roots.clone(),
-                };
-                fn clear(blocks: &mut [DocBlock]) {
-                    for block in blocks {
-                        block.uuid.clear();
-                        clear(&mut block.children);
+    /// Borrow ids until sorting/deduplication is complete, then allocate each
+    /// distinct key once and consume the sorted rows in one AVL build.
+    fn build(pages: &Pages) -> Self {
+        let mut rows = Vec::new();
+        for (slot, (_, doc)) in pages.slots() {
+            Self::for_each_block_id(doc, |id| rows.push((id, slot)));
+        }
+        rows.sort_unstable();
+        Self::from_sorted_rows(rows.into_iter())
+    }
+
+    fn from_sorted_rows<K: AsRef<str> + Into<String>>(
+        rows: impl Iterator<Item = (K, usize)>,
+    ) -> Self {
+        let mut entries: Vec<(String, BlockOwners)> = Vec::new();
+        for (id, slot) in rows {
+            if let Some((_, owners)) = entries.last_mut().filter(|(key, _)| key == id.as_ref()) {
+                if owners.slots().last() != Some(&slot) {
+                    match owners {
+                        BlockOwners::One(first) => {
+                            *owners = BlockOwners::Many(Arc::new(vec![*first, slot]))
+                        }
+                        BlockOwners::Many(slots) => Arc::make_mut(slots).push(slot),
                     }
                 }
-                clear(&mut normalized.roots);
-                assign_doc_runtime_ids(&mut normalized.roots, entry.rel_path_str());
-                &normalized
             } else {
-                doc.as_ref()
-            };
-            Self::for_each_block_id(doc, |id| match base.get_mut(id) {
-                Some(owners) if owners.slots().last() != Some(&slot) => match owners {
-                    BlockOwners::One(first) => {
-                        *owners = BlockOwners::Many(Arc::new(vec![*first, slot]));
-                    }
-                    BlockOwners::Many(slots) => Arc::make_mut(slots).push(slot),
-                },
-                Some(_) => {}
-                None => {
-                    base.insert(id.to_string(), BlockOwners::One(slot));
-                }
-            });
+                entries.push((id.into(), BlockOwners::One(slot)));
+            }
         }
         Self {
-            base: Arc::new(base.into_iter().collect()),
+            base: Arc::new(SharedMap::from_sorted_unique(entries)),
             overlay: Arc::new(SharedMap::new()),
         }
     }

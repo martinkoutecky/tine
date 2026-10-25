@@ -54,6 +54,32 @@ mod runtime_id_tests {
     use super::*;
 
     #[test]
+    fn visiting_load_ids_matches_assignment_without_changing_live_blocks() {
+        let mut roots = vec![DocBlock::new("parent"), DocBlock::new("sibling")];
+        roots[0].children.push(DocBlock::new("child"));
+        assign_doc_runtime_ids(&mut roots, "pages/old.md");
+        let live = roots[0].uuid.clone();
+        let mut visited = Vec::new();
+        visit_doc_runtime_ids(&roots, "pages/./new.md", |_, id| {
+            visited.push(id.to_string())
+        });
+        assert_eq!(roots[0].uuid, live);
+        let mut loaded = roots;
+        loaded[0].uuid.clear();
+        loaded[0].children[0].uuid.clear();
+        loaded[1].uuid.clear();
+        assign_doc_runtime_ids(&mut loaded, "pages/new.md");
+        assert_eq!(
+            visited,
+            vec![
+                loaded[0].uuid.clone(),
+                loaded[0].children[0].uuid.clone(),
+                loaded[1].uuid.clone()
+            ]
+        );
+    }
+
+    #[test]
     fn runtime_block_candidates_require_version_8_and_rfc_variant() {
         let generated = deterministic_runtime_uuid(FILE_BLOCK_RUNTIME_NAMESPACE_V1, b"probe");
         assert!(may_be_runtime_block_id(&generated.to_string()));
@@ -98,6 +124,27 @@ fn assign_runtime_ids_rec(blocks: &mut [DocBlock], parent: Uuid) {
 pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
     let owner = runtime_owner_namespace("file-block-runtime-v1", owner_rel_path);
     assign_runtime_ids_rec(roots, owner);
+}
+
+/// Visit the structural ids a fresh load will assign, borrowing the original
+/// blocks and their cached projections without copying or changing live ids.
+pub fn visit_doc_runtime_ids<'a>(
+    roots: &'a [DocBlock],
+    owner_rel_path: &str,
+    mut visit: impl FnMut(&'a DocBlock, Uuid),
+) {
+    fn walk<'a>(blocks: &'a [DocBlock], parent: Uuid, visit: &mut dyn FnMut(&'a DocBlock, Uuid)) {
+        for (index, block) in blocks.iter().enumerate() {
+            let structural = deterministic_runtime_uuid(parent, &(index as u64).to_be_bytes());
+            visit(block, structural);
+            walk(&block.children, structural, visit);
+        }
+    }
+    walk(
+        roots,
+        runtime_owner_namespace("file-block-runtime-v1", owner_rel_path),
+        &mut visit,
+    );
 }
 
 fn assign_virtual_doc_runtime_ids(roots: &mut [DocBlock], domain: &str, owner: &str) {

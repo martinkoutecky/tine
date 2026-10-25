@@ -2,6 +2,17 @@
 //! Compiled only for tests / `test-faults`; no writer or injection seam.
 use super::*;
 
+#[cfg(feature = "test-faults")]
+impl crate::WholeGraph {
+    /// Measurement probe: hold a separate exact index while `observe` samples
+    /// its allocator's live heap. This view and its published index stay held.
+    pub fn with_rebuilt_block_index(&self, observe: impl FnOnce(usize)) {
+        let index = SnapshotBlockIndex::build(&self.graph.pages);
+        observe(index.base.len());
+        std::hint::black_box(index);
+    }
+}
+
 fn block_lines(out: &mut String, block: &DocBlock, depth: usize) {
     out.push_str(&format!(
         "  block {depth} {:?} {:?} {}\n",

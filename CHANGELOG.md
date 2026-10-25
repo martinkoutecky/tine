@@ -63,6 +63,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - Block references keep resolving after a block moves between pages and after reopening the graph; dangling references no longer scan unrelated pages (GH #746, GH #623).
+- The exact block-owner index builds in bulk at cold launch and writes compact checkpoint rows without temporary page copies (GH #623).
 
 - Quick Capture keeps refused text on Escape, so reopening the box files it into the current graph; a claim retired before insertion no longer reports previous-graph uncertainty (GH #254). Deleting a conflicted page now refuses an unanswered input drain after five seconds and restores editable text.
 - Reference and embed rows validate their source page before becoming editable, so a copied block identity cannot expose another page's live block or selection (follow-up to GH #748).
