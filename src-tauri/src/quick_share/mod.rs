@@ -9,9 +9,9 @@
 //! error or log line carries either (`tests.rs` pins it). Tine never writes the
 //! graph for sharing: the records are app data.
 //!
-//! Gate: until the generation-1 viewer is deployed (phase 3), every command
-//! that reaches GitHub refuses unless [`enabled`]: a debug build, or the
-//! `TINE_QUICK_SHARE=1` environment variable at launch.
+//! Gate: every GitHub command requires a build-time attestation from the
+//! deployed viewer's headless compatibility check. Debug builds and launch
+//! environment variables cannot bypass it.
 
 pub(crate) mod github;
 #[cfg(test)]
@@ -38,10 +38,58 @@ const MAX_PREPARED: usize = 4;
 /// Listing pages read by Check and Find (100 gists each, DESIGN §3.6).
 const MAX_LIST_PAGES: usize = 30;
 
-/// Is quick share switched on in this build? Off in a shipped build until
-/// phase 3 deploys the viewer (the link would not open).
+/// A build can offer links only after check-release-readiness rendered this
+/// exact fixture corpus using the deployed generation's verified files.
 pub(crate) fn enabled() -> bool {
-    cfg!(debug_assertions) || std::env::var("TINE_QUICK_SHARE").is_ok_and(|v| v == "1")
+    viewer_attested(option_env!("TINE_QUICK_SHARE_VIEWER_G1_READY"))
+}
+
+fn viewer_attested(proof: Option<&str>) -> bool {
+    use sha2::{Digest, Sha256};
+    let Some(proof) = proof else {
+        return false;
+    };
+    let fixtures: &[(&str, &[u8])] = &[
+        (
+            "one-page/document.json",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/one-page/document.json"),
+        ),
+        (
+            "one-page/link.txt",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/one-page/link.txt"),
+        ),
+        (
+            "one-page/tine-share.bin",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/one-page/tine-share.bin"),
+        ),
+        (
+            "one-page/writer.json",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/one-page/writer.json"),
+        ),
+        (
+            "pages/document.json",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/pages/document.json"),
+        ),
+        (
+            "pages/link.txt",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/pages/link.txt"),
+        ),
+        (
+            "pages/tine-share.bin",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/pages/tine-share.bin"),
+        ),
+        (
+            "pages/writer.json",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/pages/writer.json"),
+        ),
+    ];
+    let mut hash = Sha256::new();
+    for (name, bytes) in fixtures {
+        hash.update(name.as_bytes());
+        hash.update([0]);
+        hash.update(bytes);
+    }
+    proof == format!("{:x}", hash.finalize())
 }
 
 /// A secret string (the OAuth token, a device code): `Debug` and `Display`

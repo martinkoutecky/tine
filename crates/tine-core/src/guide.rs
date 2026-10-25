@@ -1329,6 +1329,13 @@ mod rename_guide_tests {
             "`export:: <folder>`",
             "marked `tine/exports:: true` and `public:: false`",
             "Exports 2",
+            "Share pages with a link",
+            "The key is in the link, after `#`",
+            "GitHub keeps old revisions",
+            "**Delete** removes the hosted gist",
+            "properties hidden from display",
+            "Images and other files are not included",
+            "it does not delete the gist",
         ] {
             assert!(
                 files.contains(outcome),

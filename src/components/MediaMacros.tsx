@@ -6,6 +6,8 @@ import { msg, t, render as renderMessage } from "../i18n";
 import { youtubePlayerForTarget, registerYoutubePlayer, recordYoutubePlayback, unregisterYoutubePlayer, type YoutubePlayer } from "../youtubePlayer";
 import { ExternalLink } from "./ExternalLink";
 import { mainWindow } from "../windowRealm";
+import { isQuickShareViewer } from "../publishedBackend";
+import { ShareMedia } from "../quickShare/ShareMedia";
 
 interface YoutubeApi {
   Player: new (iframeId: string, options: { events?: { onReady?: () => void; onStateChange?: (event: { data: number }) => void } }) => YoutubePlayer;
@@ -126,6 +128,7 @@ export function VideoMacro(props: { body: string }): JSX.Element {
     return {};
   };
   const isYoutubeEmbed = () => /(?:^|\/\/)(?:www\.)?(?:youtube\.com|youtube-nocookie\.com)\/embed\//.test(embed() ?? "");
+  if (isQuickShareViewer()) return <ShareMedia url={safeUrl() ?? embed() ?? url()} />;
   let player: YoutubePlayer | undefined;
   onMount(() => {
     if (!isYoutubeEmbed()) return;

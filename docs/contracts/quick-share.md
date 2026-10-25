@@ -153,13 +153,49 @@ Code: `src-tauri/src/quick_share/` (`github.rs` transport, `records.rs`,
 
 ### Build gate
 
-Creating shares is off in shipped builds until the viewer is deployed
-(DESIGN §5 phase 3). On only in a debug build, or when Tine starts with
-`TINE_QUICK_SHARE=1` in its environment. Off: `quick_share_list` answers
+Creating shares is off until the deployed viewer passes the candidate's
+generation-1 fixture corpus in a headless browser. Run
+`node scripts/check-release-readiness.mjs --quick-share-only`; it fetches
+`https://tine.page/s/1/viewer.json`, verifies the hashes of deployed files
+used by the reader, and decrypts and renders every frozen fixture. Only a
+successful check writes `artifacts/quick-share-viewer/writer-ready.env` and
+the release job's `quick_share_viewer_g1_ready` output. The native build
+takes `TINE_QUICK_SHARE_VIEWER_G1_READY` from that check; the value must
+match a SHA-256 of this build's exact fixture files (names and bytes).
+A debug build and the old launch-time `TINE_QUICK_SHARE=1` switch cannot
+bypass this gate. Off: `quick_share_list` answers
 `enabled: false` (the share dialog's Link stays "coming soon", Settings has no
 Sharing tab) and every GitHub-touching command refuses with `disabled`.
 `quick_share_forget`, `quick_share_copy_link` and `quick_share_list` stay
 available, so records made while it was on remain manageable.
+
+### Hosted reader builds and retention
+
+`npm run build:quick-share-viewer` builds and checks the production reader,
+then writes `artifacts/quick-share-viewer/quick-share-viewer-g1.zip` and its
+SHA-256 sidecar. `viewer.json` carries `generation`, `link`, `envelope`,
+`document`, `snapshot_schema` (all 1), `built_from`, `fixture_sha256`, and a
+`files` map of relative names to SHA-256. The map covers every file except
+`viewer.json` itself; the pinned zip digest authenticates that manifest too.
+JavaScript, CSS and fonts have content-hashed names. The reader starts no
+plugins, applies the generation-1 CSP and no-referrer policy, and turns
+authored media into external links or not-included placeholders before
+mounting resource elements. The baked-in `src/quickShare/blocked-gists.json`
+refuses listed gist ids before any GitHub request. Abuse reports go to the
+published support address, support@tine.page; the contact never includes the
+share's fragment automatically.
+
+`website/s/generations.json` lists each generation's `current` and `retained`
+builds. A pin has a release `tag` or first-trial Actions `run_id`, plus the
+zip `sha256`. Current must be retained. Pages verifies zip and file hashes,
+then merges retained builds before current. Only `index.html` and
+`viewer.json` may change bytes under an existing name; any asset-name
+collision refuses. The deployed retention list may never lose a zip digest,
+including on rollback. A trial workflow artifact expires after 90 days:
+before then, archive its exact zip as a release asset and change that pin's
+source to the release tag, retaining its original SHA-256. Never rebuild a
+retained archive to replace its bytes. A null current means the first
+viewer has not been pinned; it deliberately deploys no generation yet.
 
 ### GitHub transport
 

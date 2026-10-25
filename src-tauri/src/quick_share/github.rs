@@ -40,6 +40,15 @@ pub(crate) struct Endpoints {
 
 impl Endpoints {
     pub(crate) fn github() -> Self {
+        // Native E2E runs the real service and dialog against a loopback GitHub.
+        // This seam is compiled out of release builds; even debug accepts only
+        // a bare local origin, never a remote HTTP destination.
+        #[cfg(debug_assertions)]
+        if let Ok(origin) = std::env::var("TINE_QUICK_SHARE_TEST_ORIGIN") {
+            if let Some(endpoints) = Self::loopback_test(&origin) {
+                return endpoints;
+            }
+        }
         Self {
             oauth: "https://github.com".into(),
             api: "https://api.github.com".into(),
@@ -48,6 +57,31 @@ impl Endpoints {
             connect_timeout: Duration::from_secs(15),
             read_timeout: Duration::from_secs(60),
         }
+    }
+
+    #[cfg(any(debug_assertions, test))]
+    pub(super) fn loopback_test(origin: &str) -> Option<Self> {
+        let url = reqwest::Url::parse(origin).ok()?;
+        if url.scheme() != "http"
+            || url.host_str() != Some("127.0.0.1")
+            || url.port().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || url.path() != "/"
+        {
+            return None;
+        }
+        let origin = origin.trim_end_matches('/').to_owned();
+        Some(Self {
+            oauth: origin.clone(),
+            api: origin.clone(),
+            raw: origin,
+            https_only: false,
+            connect_timeout: Duration::from_secs(5),
+            read_timeout: Duration::from_secs(10),
+        })
     }
 }
 

@@ -11,7 +11,8 @@ import { startCommunityExtensions } from "./plugins/startup";
 import { backend, isTauri } from "./backend";
 import { startUiLanguage } from "./i18n/preference";
 import { installBackendClock } from "./journal";
-import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
+import { isPublishedExport, isQuickShareViewer, loadPublishedSnapshot } from "./publishedBackend";
+import { QuickShareFailure, QuickShareBanner } from "./quickShare/viewer";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { installWorkspaceWindows, installWorkspaceWindowShell } from "./workspaceWindows";
 import { renderWorkspaceWindowShell } from "./components/WorkspaceWindowShell";
@@ -97,12 +98,26 @@ const mount = () => {
   // only when Solid is ready to synchronously install the real application.
   root.replaceChildren();
   render(() => <App />, root);
+  if (isQuickShareViewer()) {
+    const banner = document.createElement("div");
+    document.body.prepend(banner);
+    render(() => <QuickShareBanner />, banner);
+  }
   void revealMainWindowAfterStableFrame().catch((error) =>
     console.error("failed to reveal the main window")
   );
 };
 const publishedSnapshotReady = isPublishedExport()
   ? loadPublishedSnapshot().then(() => undefined, (error) => {
+      if (isQuickShareViewer()) {
+        // Await language selection before rendering the refusal. No raw error is logged.
+        void startUiLanguage().then(() => {
+          const root = document.getElementById("root")!;
+          root.replaceChildren();
+          render(() => <><QuickShareBanner /><QuickShareFailure error={error} /></>, root);
+        });
+        throw error;
+      }
       console.error("published snapshot unavailable");
       document.getElementById("root")!.textContent = "Couldn't load snapshot.json — serve this folder over HTTP";
       throw error;

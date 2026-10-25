@@ -1,5 +1,20 @@
 # Quick share: the link dialog and Settings → Sharing (DESIGN §0, §3.9; docs/contracts/quick-share.md).
 quick-share-title = Share as a link
+quick-share-viewer-title = Tine share
+quick-share-viewer-user-content = User content · Shared by a Tine user
+quick-share-viewer-report-abuse = Report abuse
+quick-share-viewer-bad-link = This share link is incomplete; copy the whole link.
+quick-share-viewer-unsupported-browser = This browser cannot open Tine shares; use a current Firefox, Chrome, Edge or Safari.
+quick-share-viewer-not-found = This share was deleted, or the link is wrong.
+quick-share-viewer-unreachable = GitHub could not be reached; try again later.
+quick-share-viewer-too-large = This share is larger than this viewer can open.
+quick-share-viewer-not-a-share = This is not a Tine share.
+quick-share-viewer-newer-viewer = This share needs a newer viewer.
+quick-share-viewer-unauthentic = This share could not be opened: the link's key does not match, or the file was changed.
+quick-share-viewer-invalid = This share is damaged and could not be opened.
+quick-share-viewer-blocked = This share is unavailable on tine.page.
+quick-share-viewer-remote-media = Media from { $host } (open externally)
+quick-share-viewer-asset = { $name } — not included
 quick-share-loading = Reading your quick share account…
 quick-share-preparing = Preparing the share…
 quick-share-connect-title = Connect GitHub

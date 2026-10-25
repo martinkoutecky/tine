@@ -1519,3 +1519,26 @@ fn quick_share_tls_is_declared_for_every_shipped_target() {
     assert!(github.contains(".https_only(endpoints.https_only)") && Endpoints::github().https_only);
     assert!(github.contains("redirect::Policy::none()"));
 }
+#[test]
+fn an_unattested_debug_build_does_not_offer_dead_share_links() {
+    assert!(!super::viewer_attested(None));
+    assert!(!super::viewer_attested(Some("1")));
+    assert!(!super::viewer_attested(Some(&"0".repeat(64))));
+    if option_env!("TINE_QUICK_SHARE_VIEWER_G1_READY").is_none() {
+        assert!(!super::enabled());
+    }
+}
+
+#[test]
+fn e2e_github_override_accepts_only_a_bare_loopback_origin() {
+    assert!(Endpoints::loopback_test("http://127.0.0.1:54321").is_some());
+    for origin in [
+        "http://example.com:54321",
+        "https://127.0.0.1:54321",
+        "http://127.0.0.1:54321/path",
+        "http://user@127.0.0.1:54321",
+        "http://127.0.0.1:54321/#secret",
+    ] {
+        assert!(Endpoints::loopback_test(origin).is_none());
+    }
+}

@@ -86,8 +86,11 @@ assert.match(releaseWorkflow,
   /lane: windows-x86[\s\S]*?--target i686-pc-windows-msvc[\s\S]*?rust-targets: "i686-pc-windows-msvc"[\s\S]*?win-arch: x86[\s\S]*?win-exe-dir: target\/i686-pc-windows-msvc\/release/,
   "GH #275: release.yml must retain the Windows x86 cross-build");
 
-assert.equal(layout.allAssets.length, 29, "release layout must retain its exact 29-asset inventory");
-assert.equal(layout.platformAssets.length, 28, "release layout must retain its exact platform-asset inventory");
+assert.equal(layout.allAssets.length, 30, "release layout includes the generation-1 viewer");
+assert.equal(layout.platformAssets.length, 29, "release assets include the viewer alongside platform bundles");
+assert.deepEqual(layout.lanes["quick-share-viewer-g1"], {
+  assets: ["quick-share-viewer-g1.zip"], platforms: {}, sourceAssets: { "quick-share-viewer-g1.zip": "quick-share-viewer-g1.zip" },
+});
 assert.equal(
   Object.keys(layout.updaterPlatforms).length,
   14,
@@ -128,7 +131,7 @@ assert.match(releaseWorkflow,
 assert.match(releaseWorkflow,
   /\n  stage-flatpak:\n    needs: \[preflight, flatpak\][\s\S]*?release-workflow-inputs\.mjs flatpak-x64[\s\S]*?stage-release-lane\.mjs flatpak-x64[\s\S]*?name: release-flatpak-x64/,
   "the Flatpak bundle must be named by the layout and staged like every other lane");
-assert.match(releaseWorkflow, /assemble:\n    needs: \[preflight, build, android, stage-flatpak\]/,
+assert.match(releaseWorkflow, /assemble:\n    needs: \[preflight, build, android, stage-flatpak, quick-share-viewer\]/,
   "assembly must wait for (and so be blocked by) the Flatpak lane");
 assert.match(flatpakWorkflow, /workflow_call:\n    inputs:\n      identity:/, "flatpak.yml needs an identity input to be callable");
 assert.match(flatpakWorkflow, /derive-flatpak-identity\.mjs --identity "\$FLATPAK_IDENTITY"/,
@@ -339,7 +342,7 @@ assert.match(
 );
 assert.match(
   releaseWorkflow,
-  /assemble:\n    needs: \[preflight, build, android, stage-flatpak\]/,
+  /assemble:\n    needs: \[preflight, build, android, stage-flatpak, quick-share-viewer\]/,
   "candidate assembly accidentally waits for advisory Windows scenarios"
 );
 assert.match(releaseWorkflow, /name: Upload Windows E2E evidence[\s\S]*?if: always\(\)/);

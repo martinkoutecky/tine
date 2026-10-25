@@ -41,6 +41,8 @@ jobs:
   # (a manual-update download; the updater manifest never references it).
   preflight:
     runs-on: ubuntu-22.04
+    outputs:
+      quick_share_viewer_g1_ready: ${{ steps.viewer-ready.outputs.quick_share_viewer_g1_ready }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -62,6 +64,10 @@ jobs:
         with:
           workspaces: ". -> target"
       - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Verify the deployed quick share viewer before enabling the writer
+        id: viewer-ready
+        run: node scripts/check-release-readiness.mjs --quick-share-only
       - name: Require updater signing key
         env:
           SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -90,6 +96,8 @@ jobs:
   # they upload immutable workflow artifacts for the assembler/publisher below.
   build:
     needs: preflight
+    env:
+      TINE_QUICK_SHARE_VIEWER_G1_READY: ${{ needs.preflight.outputs.quick_share_viewer_g1_ready }}
     strategy:
       fail-fast: false
       max-parallel: 6
@@ -647,6 +655,8 @@ jobs:
   #       ANDROID_KEY_PASSWORD       key password
   android:
     needs: preflight
+    env:
+      TINE_QUICK_SHARE_VIEWER_G1_READY: ${{ needs.preflight.outputs.quick_share_viewer_g1_ready }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -839,8 +849,33 @@ jobs:
   # Merge immutable lane artifacts and generate latest.json exactly once. Manual
   # dispatch stops after uploading this verified candidate and never touches a
   # GitHub Release.
+  quick-share-viewer:
+    needs: preflight
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Build the release's generation 1 viewer
+        run: |
+          export VIEWER_BUILT_FROM="v$(node -p 'require("./package.json").version')"
+          node scripts/build-quick-share-viewer.mjs
+          cp artifacts/quick-share-viewer/quick-share-viewer-g1.zip .
+          node scripts/stage-release-lane.mjs quick-share-viewer-g1 release-candidate "${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-quick-share-viewer-g1
+          path: release-candidate/quick-share-viewer-g1
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
   assemble:
-    needs: [preflight, build, android, stage-flatpak]
+    needs: [preflight, build, android, stage-flatpak, quick-share-viewer]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4

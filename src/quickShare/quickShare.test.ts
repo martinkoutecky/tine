@@ -4,7 +4,8 @@
  *  oversized shares are refused readably; navigation keeps the share prefix. */
 import { readFileSync, readdirSync } from "node:fs";
 import { gzipSync } from "node:zlib";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import blockedGists from "./blocked-gists.json";
 import {
   b64uDecode,
   b64uEncode,
@@ -63,6 +64,26 @@ function gistFetch(files: Record<string, string | number>) {
 afterEach(() => setQuickSharePrefix(null));
 
 describe("quick share generation 1", () => {
+  it("refuses a blocked gist before any request", async () => {
+    const hash = readFileSync(new URL("pages/link.txt", FIXTURES), "utf8").trim().split("#")[1];
+    const link = parseShareFragment(hash)!;
+    const blocked = blockedGists as string[];
+    const fetchImpl = vi.fn();
+    blocked.push(link.gist);
+    try {
+      expect(await reason(loadQuickShare(hash, fetchImpl))).toBe("blocked");
+      expect(fetchImpl).not.toHaveBeenCalled();
+    } finally { blocked.pop(); }
+  });
+
+  it("explains missing crypto algorithms before contacting GitHub", async () => {
+    const derive = vi.spyOn(crypto.subtle, "deriveKey").mockRejectedValueOnce(new Error("algorithm unavailable"));
+    const fetchImpl = vi.fn();
+    try {
+      expect(await reason(loadQuickShare("#incomplete", fetchImpl))).toBe("unsupported-browser");
+      expect(fetchImpl).not.toHaveBeenCalled();
+    } finally { derive.mockRestore(); }
+  });
   it("opens the Rust known-answer envelope", async () => {
     const envelope = "VFNIMQFmaXh0dXJlLXNoYXJlLWlkZml4dHVyZS1ub25jxlR5aY52hv6DfbD-0w-Gt7EoF0a_kyGqrXYGhJDTl1KKHQ";
     expect(new TextDecoder().decode(await openEnvelope(envelope, KEY))).toBe("the share document");

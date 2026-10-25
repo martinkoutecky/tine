@@ -172,6 +172,11 @@ jobs:
       - name: Performance A/B multi-round reliability fixtures
         run: node scripts/test-bench-ab.mjs
 
+      - name: Install the browser for deployed viewer compatibility
+        # Release readiness now exercises the deployed viewer in a browser.
+        # Development-purpose CI still skips the viewer-first release gate.
+        run: npx playwright install --with-deps chromium
+
       - name: UI regression catalog and release evidence contracts
         run: |
           npm run check:regressions

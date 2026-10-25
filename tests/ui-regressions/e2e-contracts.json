@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-quick-share-viewer.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A native share dialog uploads its reviewed pages to mocked GitHub, records the share without its key in the graph, and the built browser viewer renders the uploaded copy and follows a shared page link while preserving the secret prefix.","blocking":true,"authority":"UI-QUICK-SHARE-VIEWER-G1; generation 1 DESIGN sections 3.7, 3.8 and 5"}],
+      "acceptableVariations": ["Dialog layout, connection timing and rendered styling may vary."],
+      "nonRequirements": ["No live GitHub writes, real Pages deployment, mobile device HTTPS, exact pixels or complete enumeration of envelope boundary cases."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-linux-inline-preedit.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A Linux textarea shows real inline Hangul composition, commits each word once, supports Backspace and page completion during composition, and preserves the neighbouring block on disk.","blocking":false,"authority":"UI-LINUX-INLINE-PREEDIT; Linux inline-preedit lane 2026-10-25; GH #575 is only a possible related fix"}],
       "acceptableVariations": ["IME event ordering, commit-on-Escape engine policy, candidate styling, caret geometry and save latency may vary. IBus Hangul may commit before forwarding an ordinary Enter that splits the block."],

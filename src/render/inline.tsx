@@ -44,12 +44,15 @@ import { codeFences } from "../editor/fences";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
-import { writeClipboardText } from "../clipboard";
 import { acquireAssetBlob, acquireCachedAssetBlob, assetVersion } from "../assetCache";
 import { mediaEditorForAsset } from "../mediaEditors";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
+import { isQuickShareViewer } from "../publishedBackend";
+import { ShareMedia } from "../quickShare/ShareMedia";
+import { CopyButton } from "./CopyButton";
+export { CopyButton } from "./CopyButton";
 import { isMobilePlatform } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
 import { blockRefTarget, resolveBlockBatched } from "../resolveBatch";
@@ -459,34 +462,6 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   );
 }
 
-// One-click copy affordance (#24 — the logseq-copy-code / logseq-copy-url QoL).
-// Copies RAW source text (off the AST, never the rendered DOM) through the
-// backend clipboard path — WebKitGTK's navigator.clipboard is unreliable
-// ([[tine-webkitgtk-confirm]]) — and toasts. Shared by inline code + links
-// (here) and fenced code blocks (body.tsx). `class` positions it per site.
-export function CopyButton(props: { text: string; title: string; class?: string }): JSX.Element {
-  const onCopy = (e: MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    void writeClipboardText(props.text)
-      .then(() => pushToast(msg("render-copied-to-clipboard"), "success"))
-      .catch(() => pushToast(msg("render-couldn-t-copy-to-clipboard"), "error"));
-  };
-  return (
-    <button
-      class={`copy-btn${props.class ? " " + props.class : ""}`}
-      title={props.title}
-      aria-label={props.title}
-      onClick={onCopy}
-    >
-      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="9" y="9" width="11" height="11" rx="2" />
-        <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-      </svg>
-    </button>
-  );
-}
-
 function renderLink(
   s: Extract<Inline, { k: "link" }>,
   blockId?: string,
@@ -509,7 +484,9 @@ function renderLink(
     return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} span={hostSpan(s, spanMode, macroExpansion)} />;
   }
   const dest = urlDest(url);
-  const fileTarget = assetLinkRel(dest) === null ? fileLinkTarget(dest) : null;
+  const assetTarget = assetLinkRel(dest);
+  const fileTarget = assetTarget === null ? fileLinkTarget(dest) : null;
+  if (isQuickShareViewer() && (assetTarget !== null || fileTarget !== null)) return <ShareMedia url={dest} />;
   // File URLs use the OS viewer, preserving their full path (GH #577).
   // File URLs must never enter the graph annotation reader.
   const externalPdf = (/^(?:https?:\/\/|file:)/i.test(dest) || fileTarget?.kind === "outside") && /\.pdf$/i.test(dest);
@@ -582,6 +559,7 @@ function pdfFilenameFromDest(dest: string): string {
 }
 
 function PdfAssetLink(props: { dest: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  if (isQuickShareViewer()) return <ShareMedia url={props.dest} label={props.label} />;
   // The route names the PDF by its path under assets/: highlights, sidecar and
   // hls page are keyed from it, so dropping `nested/` opened another resource.
   const filename = pdfAssetFile(props.dest);
@@ -821,6 +799,7 @@ function AssetImage(props: {
   token?: MediaToken;
   spanAttrs?: SpanDomAttrs;
 }): JSX.Element {
+  if (isQuickShareViewer()) return <ShareMedia url={props.url} label={props.alt} />;
   // Width sizes the WRAPPER, not the <img>: an inline-block sized by a
   // percentage child doesn't shrink to it, so the grip (positioned against the
   // wrapper) would otherwise stay at full column width after a resize. With the
@@ -1053,6 +1032,7 @@ function MediaEmbed(props: {
   token?: MediaToken;
   spanAttrs?: SpanDomAttrs;
 }): JSX.Element {
+  if (isQuickShareViewer()) return <ShareMedia url={props.url} label={props.alt} />;
   const [failed, setFailed] = createSignal(false);
   const [blobFallback, setBlobFallback] = createSignal("");
   // Audio has no fullscreen; the "Expand" button (below) opens a wide overlay

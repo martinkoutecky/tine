@@ -1,5 +1,20 @@
 # 快速分享：链接对话框和“设置 → 分享”（DESIGN §0、§3.9；docs/contracts/quick-share.md）。
 quick-share-title = 以链接分享
+quick-share-viewer-title = Tine 分享
+quick-share-viewer-user-content = 用户内容 · 由 Tine 用户分享
+quick-share-viewer-report-abuse = 举报滥用
+quick-share-viewer-bad-link = 此分享链接不完整；请复制整个链接。
+quick-share-viewer-unsupported-browser = 此浏览器无法打开 Tine 分享；请使用新版 Firefox、Chrome、Edge 或 Safari。
+quick-share-viewer-not-found = 此分享已被删除，或链接有误。
+quick-share-viewer-unreachable = 无法连接 GitHub；请稍后重试。
+quick-share-viewer-too-large = 此分享过大，此查看器无法打开。
+quick-share-viewer-not-a-share = 这不是 Tine 分享。
+quick-share-viewer-newer-viewer = 此分享需要更新的查看器。
+quick-share-viewer-unauthentic = 无法打开此分享：链接中的密钥不匹配，或文件已被更改。
+quick-share-viewer-invalid = 此分享已损坏，无法打开。
+quick-share-viewer-blocked = 此分享在 tine.page 上不可用。
+quick-share-viewer-remote-media = 来自 { $host } 的媒体（在外部打开）
+quick-share-viewer-asset = { $name } — 未包含
 quick-share-loading = 正在读取快速分享账号…
 quick-share-preparing = 正在准备分享…
 quick-share-connect-title = 连接 GitHub

@@ -22,6 +22,8 @@ on:
       - 'website/**'
       - '.github/workflows/pages.yml'
       - 'scripts/pages-beta-manifest.mjs'
+      - 'scripts/pages-quick-share-viewers.mjs'
+      - 'scripts/quick-share-viewer-lib.mjs'
   workflow_dispatch:
 
 # Allow one concurrent deployment; let an in-progress run finish.
@@ -31,6 +33,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -42,6 +45,9 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
       - uses: actions/configure-pages@v5
       # Tine Beta 0.8.0-beta.3 and later read their updates from
       # tine.page/updates/beta/. Copy the newest Beta release's manifest and
@@ -51,6 +57,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/pages-beta-manifest.mjs website
+      # generations.json pins release assets (permanent) or a workflow artifact
+      # for the first trial. Every deployed build remains in retained forever.
+      - name: Restore retained quick share viewers and select current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/pages-quick-share-viewers.mjs website
       - uses: actions/upload-pages-artifact@v3
         with:
           path: website

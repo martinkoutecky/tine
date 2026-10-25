@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "node scripts/check-wasm-pin.mjs && npm run check:lsdoc-oracle && vite build",
+    "build:quick-share-viewer": "node scripts/build-quick-share-viewer.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "app": "tauri dev",
@@ -14,6 +15,7 @@
     "test": "vitest run && vitest run --config vitest.render.config.ts && npm run test:e2e-harness && npm run test:github",
     "test:e2e-harness": "node --test scripts/e2e-main-window.test.mjs scripts/bench-storage-ab.test.mjs",
     "test:github": "node --test scripts/github/issue-intake.test.mjs scripts/pages-beta-manifest.test.mjs scripts/retire-beta-tag.test.mjs",
+    "test:quick-share-viewer": "node --test scripts/quick-share-viewer.test.mjs",
     "test:render": "vitest run --config vitest.render.config.ts",
     "test:storage-conformance": "vitest run --config vitest.storage.config.ts",
     "build:wasm": "node scripts/build-wasm.mjs",

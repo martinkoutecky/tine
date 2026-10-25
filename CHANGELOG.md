@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Encrypted quick-share links open in the generation-1 browser reader on tine.page, with private navigation, readable errors and media loaded only when the reader follows a link.
+
 - **All graphs** (GH #758): press **g Shift+G** or run **All graphs** from the command palette, then use the arrow keys and Enter to switch graphs. Graph actions, including opening a new window on desktop, are available from the keyboard.
 - **YouTube timestamp shortcut** (GH #757): **Ctrl/Cmd+Shift+Y** inserts the current playback time into the block you are editing. Click the timestamp to jump the video there, just as with the slash command.
 

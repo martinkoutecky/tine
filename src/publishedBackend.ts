@@ -84,6 +84,11 @@ export function isPublishedExport(): boolean {
   return publishedSnapshotUrl() !== null;
 }
 
+/** Share mode has a stricter media policy than an author's own published site. */
+export function isQuickShareViewer(): boolean {
+  return publishedSnapshotUrl() === QUICK_SHARE_SNAPSHOT;
+}
+
 let snapshotPromise: Promise<PublishedSnapshot> | null = null;
 
 /** Largest snapshot document a viewer will read (I-22). Far above any real export;
