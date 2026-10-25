@@ -23,6 +23,8 @@ export const FORBID_EDIT_SELECTOR = [
   ".embed-block",
   ".block-marker",
   ".block-checkbox",
+  // {{cloze}} reveals in place on click (GH #763).
+  ".cloze",
   ".clock-badge",
   ".date-chip",
   ".hl-prefix",
