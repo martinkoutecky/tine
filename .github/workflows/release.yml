@@ -73,6 +73,9 @@ jobs:
       - name: Version, Android code, tag, and changelog agree
         env:
           REQUIRE_RELEASE_READINESS: "1"
+          # An unpublished build of the development line (og carries the next
+          # version, undated) may skip only the release-metadata checks.
+          TINE_PREFLIGHT_DEVELOPMENT: ${{ (github.event_name == 'workflow_dispatch' && inputs.publish == false) && '1' || '0' }}
         run: node scripts/check-release-preflight.mjs
       - name: lsdoc WASM pin is current
         run: node scripts/check-wasm-pin.mjs

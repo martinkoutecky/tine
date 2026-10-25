@@ -72,11 +72,14 @@ try {
 // D-20261020-BZ7), which has no dated heading yet. A development check
 // (TINE_PREFLIGHT_DEVELOPMENT=1, never on a tag) accepts that while the
 // changelog still has its [Unreleased] section; the release workflow does not
-// set it, so a tag always needs the dated heading.
+// set it for a publishing dispatch, so a tag always needs the dated heading.
+// An undated development version (release.yml: an unpublished dispatch build)
+// also skips the release readiness checks below: it publishes no release.
 const developmentTree = process.env.TINE_PREFLIGHT_DEVELOPMENT === "1"
   && !process.env.GITHUB_REF?.startsWith("refs/tags/")
   && /^## \[Unreleased\]$/m.test(changelog);
-if (!developmentTree && !new RegExp(`^## \\[${expected.replaceAll(".", "\\.")}\\] - \\d{4}-\\d{2}-\\d{2}$`, "m").test(changelog)) {
+const dated = new RegExp(`^## \\[${expected.replaceAll(".", "\\.")}\\] - \\d{4}-\\d{2}-\\d{2}$`, "m").test(changelog);
+if (!developmentTree && !dated) {
   problems.push(`CHANGELOG.md has no dated [${expected}] release heading`);
 }
 
@@ -88,7 +91,7 @@ if (process.env.GITHUB_REF?.startsWith("refs/tags/")) {
 if (process.env.REQUIRE_RELEASE_READINESS === "1") {
   for (const [script, args = []] of [
     ["check-regression-catalog.mjs"],
-    ["check-release-readiness.mjs"],
+    ...(developmentTree && !dated ? [] : [["check-release-readiness.mjs"]]),
     // No demo check: website/demo is master's (build-guide-demo.mjs header).
   ]) {
     const result = spawnSync(process.execPath, [path.join(root, "scripts", script), ...args], { encoding: "utf8" });

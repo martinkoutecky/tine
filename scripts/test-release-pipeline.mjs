@@ -239,6 +239,16 @@ assert.match(
   /check-ci-evidence\.mjs \$\{\{ \(github\.event_name == 'workflow_dispatch' && inputs\.publish == false\) && '--allow-development' \|\| '' \}\}/,
   "release.yml may accept a development-purpose CI run only when it publishes nothing"
 );
+assert.match(
+  releaseWorkflow,
+  /REQUIRE_RELEASE_READINESS: "1"\n[\s\S]*?TINE_PREFLIGHT_DEVELOPMENT: \$\{\{ \(github\.event_name == 'workflow_dispatch' && inputs\.publish == false\) && '1' \|\| '0' \}\}\n\s+run: node scripts\/check-release-preflight\.mjs/,
+  "release.yml may treat the tree as development only when it publishes nothing"
+);
+assert.match(
+  preflight,
+  /developmentTree && !dated \? \[\] : \[\["check-release-readiness\.mjs"\]\]/,
+  "only an undated development version skips release readiness"
+);
 assert.throws(
   () => selectExactCiEvidence(commit, [{
     run: { ...successfulFullCiRun, event: "pull_request" },
