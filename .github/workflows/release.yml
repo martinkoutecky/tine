@@ -54,7 +54,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CI_EVIDENCE_SHA: ${{ github.sha }}
           CI_EVIDENCE_REPOSITORY: ${{ github.repository }}
-        run: node scripts/check-ci-evidence.mjs
+        # A development-purpose CI run (no release metadata check) only
+        # satisfies a build that publishes nothing.
+        run: node scripts/check-ci-evidence.mjs ${{ (github.event_name == 'workflow_dispatch' && inputs.publish == false) && '--allow-development' || '' }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:

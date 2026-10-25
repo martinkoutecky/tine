@@ -11,6 +11,7 @@ import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from ".
 import { QueryWorkspace } from "./components/QueryWorkspace";
 import { ConflictOverview } from "./components/ConflictOverview";
 import { AllPages } from "./components/AllPages";
+import { AllGraphs } from "./components/AllGraphs";
 // pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
 // the viewer only when one is opened.
 const KeyedPdfViewer = lazy(() =>
@@ -316,6 +317,9 @@ function PaneContent(props: { router: PaneRouter }): JSX.Element {
       </Match>
       <Match when={props.router.route().kind === "all-pages"}>
         <AllPages router={props.router} />
+      </Match>
+      <Match when={props.router.route().kind === "all-graphs"}>
+        <AllGraphs />
       </Match>
     </Switch>
   );

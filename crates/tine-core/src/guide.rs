@@ -1381,6 +1381,19 @@ mod rename_guide_tests {
         // GH #164 (family 4): both doors, the add-row, non-ASCII keys, and the
         // read-only refusal; nothing else tells a reader the form exists.
         let tips = include_str!("templates/tips.md");
+        let properties = include_str!("templates/pages-links-references-search.md");
+        for outcome in [
+            "Click a property key to open its page",
+            "Shift-click opens it in the right sidebar",
+            "before and after editing",
+            ":property-pages/enabled? false",
+            "it does not remove key links",
+        ] {
+            assert!(
+                properties.contains(outcome),
+                "missing property navigation: {outcome}"
+            );
+        }
         for control in [
             "**Page properties…**",
             "right-click a block for **Properties…**",

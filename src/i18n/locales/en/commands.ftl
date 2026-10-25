@@ -148,3 +148,7 @@ command-builtin-sheet-fill = Fill sheet selection down or right
 commands-plugin-command-failed = Plugin command failed: { $error }
 commands-couldn-t-copy-selection-clipboard-write-failed = Couldn't copy selection: clipboard write failed.
 commands-couldn-t-cut-selection-clipboard-write-failed = Couldn't cut selection: clipboard write failed.
+command-go-all-graphs = All graphs
+command-editor-insert-youtube-timestamp = Insert YouTube timestamp
+all-graphs-keyboard-help = Use Up and Down to choose a graph, Enter to open it. Tab reaches graph actions.
+all-graphs-new-window-help = Shift+Enter opens the selected graph in a new window.

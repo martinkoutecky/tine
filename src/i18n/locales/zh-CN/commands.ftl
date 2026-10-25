@@ -278,3 +278,7 @@ commands-plugin-command-failed = 插件命令失败：{ $error }
 commands-couldn-t-copy-selection-clipboard-write-failed = 无法复制所选内容：写入剪贴板失败。
 
 commands-couldn-t-cut-selection-clipboard-write-failed = 无法剪切所选内容：写入剪贴板失败。
+command-go-all-graphs = 所有图谱
+command-editor-insert-youtube-timestamp = 插入 YouTube 时间戳
+all-graphs-keyboard-help = 使用上下方向键选择图谱，按 Enter 打开。按 Tab 访问图谱操作。
+all-graphs-new-window-help = 按 Shift+Enter 在新窗口中打开所选图谱。

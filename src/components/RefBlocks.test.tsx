@@ -159,7 +159,7 @@ describe("RefBlocks page-property references", () => {
     expect(out.text).toContain("alias");
     expect(out.text).toContain("owner");
     expect(out.text).not.toContain("::");
-    expect(pageRefLabels(out.html)).toEqual(["blah", "Reading", "[[Martin]]"]);
+    expect(pageRefLabels(out.html)).toEqual(["tags", "blah", "alias", "Reading", "owner", "[[Martin]]"]);
   });
 
   it("keeps an ordinary reference block on the existing inline-rendering path", () => {

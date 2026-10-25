@@ -29,6 +29,8 @@ export interface MessageArgs {
   "about-updates-arrive-through-your-app-s-distribution-channel": {};
   "about-version-label": { "build": string | number; "product": string | number; "version": string | number };
   "about-website": {};
+  "all-graphs-keyboard-help": {};
+  "all-graphs-new-window-help": {};
   "annotation-body-open-in-pdf-p": { "pageNumber": string | number };
   "app-capture-couldn-t-be-saved-its-text": {};
   "app-captured-to": { "title": string | number };
@@ -165,6 +167,7 @@ export interface MessageArgs {
   "command-editor-indent": {};
   "command-editor-insert-child-block": {};
   "command-editor-insert-link": {};
+  "command-editor-insert-youtube-timestamp": {};
   "command-editor-italics": {};
   "command-editor-kill-line-after": {};
   "command-editor-kill-line-before": {};
@@ -182,6 +185,7 @@ export interface MessageArgs {
   "command-editor-strike-through": {};
   "command-editor-toggle-undo-redo-mode": {};
   "command-editor-undo": {};
+  "command-go-all-graphs": {};
   "command-go-backward": {};
   "command-go-find-in-page": {};
   "command-go-forward": {};
