@@ -76,7 +76,7 @@ function installWindowMonitor(win: Window): () => void {
     raf = 0; lastFrame = 0; pendingKey = undefined;
     lastInput = -Infinity;
   };
-  for (const type of ["long-animation-frame", "event"]) {
+  for (const type of ["event"]) {
     try {
       if (!Observer?.supportedEntryTypes.includes(type)) continue;
       const observer = new Observer(list => {
