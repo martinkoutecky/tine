@@ -13,7 +13,7 @@ if (!out || !process.env.IBUS_ADDRESS) throw new Error("Use spike-cm6-ime-env.sh
 const report = { commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), cases: [], engine: "IBus Hangul 1.5.4, two-set keyboard", app: path.resolve(process.env.TINE_APP || "target/release/tine") };
 const key = async (...keys) => { execFileSync("xdotool", ["key", "--clearmodifiers", "--delay", "100", ...keys]); await sleep(300); };
 const modeList = (process.env.SPIKE_IME_MODES || "textarea,cm6").split(",");
-for (const mode of modeList) {
+for (const [modeIndex, mode] of modeList.entries()) {
   const dir = path.join(out, mode);
   const graph = path.join(dir, "graph");
   for (const sub of ["journals", "pages", "logseq"]) fs.mkdirSync(path.join(graph, sub), { recursive: true });
@@ -25,7 +25,8 @@ for (const mode of modeList) {
   fs.writeFileSync(path.join(graph, "pages", "한글.md"), "- Candidate page\n");
   fs.writeFileSync(path.join(graph, "logseq", "config.edn"), "{}\n");
   const log = fs.openSync(path.join(dir, "driver.log"), "w");
-  const port = Number(process.env.SPIKE_IME_PORT || 4908);
+  // Separate listeners avoid reusing a just-closed driver socket.
+  const port = Number(process.env.SPIKE_IME_PORT || 4908) + modeIndex * 2;
   const driver = spawn(process.env.TAURI_DRIVER || `${process.env.CARGO_HOME}/bin/tauri-driver`, ["--port", String(port), "--native-port", String(port + 1), "--native-driver", "/usr/bin/WebKitWebDriver"], {
     detached: true, stdio: ["ignore", log, log], env: { ...process.env, TINE_GRAPH: graph,
       XDG_DATA_HOME: path.join(dir, "data"), XDG_CONFIG_HOME: path.join(dir, "config"), XDG_CACHE_HOME: path.join(dir, "cache"),
@@ -85,6 +86,7 @@ for (const mode of modeList) {
     execFileSync("xdotool", ["windowfocus", "--sync", ids.at(-1)]);
     const compose = async () => { await key("g", "k", "s"); };
     for (const [scenario, base, at] of [["commit", "commit ", 7], ["escape-cancel", "cancel ", 7], ["enter", "enter ", 6], ["backspace", "backspace ", 10], ["page-autocomplete", "[[", 2], ["block-start", " tail", 0], ["wrapped-line", "wrapped words ".repeat(65), 700]]) {
+      if (process.env.SPIKE_IME_SCENARIOS && !process.env.SPIKE_IME_SCENARIOS.split(",").includes(scenario)) continue;
       try {
         await reset(base, at);
         await compose();
@@ -98,12 +100,14 @@ for (const mode of modeList) {
         else if (scenario === "backspace") { await key("BackSpace"); await key("Shift+space"); }
         else await key("Shift+space"); // Commit by switching mode; do not navigate to another block.
         const after = await state();
+        await browser.saveScreenshot(path.join(dir, `${scenario}-after.png`));
         const insert = scenario === "escape-cancel" ? "" : scenario === "backspace" ? "하" : "한";
         const expected = base.slice(0, at) + insert + base.slice(at);
         result(scenario, after.text === expected && after.focus, { expected, ...after });
         if (scenario === "page-autocomplete") result("page-autocomplete:open-after-commit", after.autocomplete === true || after.autocomplete === "open", after);
         await sleep(1200);
         const saved = fs.readFileSync(page, "utf8");
+        fs.writeFileSync(path.join(dir, `${scenario}-saved.md`), saved);
         const expectedDisk = `- ${expected}\n- Neighbour stays intact\n`;
         result(`${scenario}:disk-exactly-once`, saved === expectedDisk, { expected: expectedDisk, saved });
         if (after.text !== expected || !after.focus || saved !== expectedDisk) throw new Error(`${scenario}: observed editor/save mismatch; stop this editor before later scenarios can inherit a changed outline`);

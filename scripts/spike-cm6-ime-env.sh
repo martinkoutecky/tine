@@ -2,7 +2,7 @@
 # Source scripts/env.sh first; run this inside xvfb-run + dbus-run-session.
 # Debian bookworm packages are extracted locally; never install into the host.
 set -eu
-export SPIKE_IME_OUT="$PWD/artifacts/spike-cm6-stage1/${SPIKE_IME_RUN:-ime}"
+export SPIKE_IME_OUT="${SPIKE_IME_OUT:-$PWD/artifacts/spike-cm6-stage1/${SPIKE_IME_RUN:-ime}}"
 export IMROOT="${IMROOT:-$PWD/artifacts/spike-cm6-stage1/ibus-root}"
 mkdir -p "$SPIKE_IME_OUT"/{data,config,cache,runtime,components}
 export XDG_DATA_HOME="$SPIKE_IME_OUT/data"
@@ -52,4 +52,14 @@ if [ "${SPIKE_IME_GTK_PROBE:-0}" = 1 ]; then
   kill "$gtk_pid"
   exit
 fi
-node scripts/spike-cm6-ime.mjs
+if [ "${SPIKE_IME_WM:-0}" = 1 ]; then
+  /aux/koutecky/logseq/.toolchain/openbox-root/usr/bin/openbox > "$SPIKE_IME_OUT/openbox.log" 2>&1 &
+  wm_pid=$!
+  trap 'kill "$wm_pid" "$hangul_pid" "$ibus_pid" 2>/dev/null || true' EXIT
+  sleep 1
+fi
+if [ -n "${SPIKE_IME_RUNNER:-}" ]; then
+  bash "$SPIKE_IME_RUNNER"
+else
+  node scripts/spike-cm6-ime.mjs
+fi
