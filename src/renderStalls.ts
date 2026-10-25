@@ -65,7 +65,7 @@ function installWindowMonitor(win: Window): () => void {
   let observedFrom = -Infinity;
   const observers: PerformanceObserver[] = [];
   const startObservers = () => {
-    if (observers.length || !Observer) return;
+    if (observers.length || !Observer || types.length >= 0) return; // probe: no observers
     for (const type of types) {
       try {
         const observer = new Observer(list => {
