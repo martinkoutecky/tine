@@ -6,7 +6,7 @@ import { initParser } from "../render/parse";
 import { backend, type GraphChange } from "../backend";
 import { applyGraphChange, applyGraphChangesBulk, ensurePageLoaded, flushPage, installExternalChangeUiHandler, isConflicted, loadFeed, pageByName, resetStore, setRaw } from "./index";
 import { doc } from "./model";
-import { dataRev } from "../graphSession";
+import { dataRev } from "../dataRevision";
 import { setToasts, toasts } from "../toasts";
 import { applyHeldExternalChange, dismissHeldExternalChange, heldExternalChangeFor, setConflictPolicyAlwaysAsk } from "../conflictPolicy";
 import type { BlockDto, PageDto } from "../types";

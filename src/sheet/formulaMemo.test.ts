@@ -1,7 +1,8 @@
 import { createRoot, createSignal } from "solid-js";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import * as formula from "./formula";
-import { bumpDataRev, bumpGraphEpoch, dataRev } from "../graphSession";
+import { bumpDataRev, bumpGraphEpoch } from "../graphSession";
+import { dataRev } from "../dataRevision";
 import { applyChangeSummary } from "../changeSummary";
 import { resetStore } from "../document";
 import { setDoc, type FeedPage, type Node } from "../document/model";

@@ -4,7 +4,8 @@ import { backend } from "./backend";
 import { blockRefCount } from "./blockRefCounts";
 import { installPageIndex } from "./pageIndex";
 import { loadFeed, setRaw, resetStore, flushPage } from "./document";
-import { dataRev, bumpGraphEpoch } from "./graphSession";
+import { bumpGraphEpoch } from "./graphSession";
+import { dataRev } from "./dataRevision";
 import { bindTestHost } from "./document/host/wiring.test.support";
 it.each([2000,10000])("ordinary save IPC on %i pages", async (pages) => {
  resetStore();

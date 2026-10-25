@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { applyChangeSummary } from "./changeSummary";
 import { changed, changedAny, flushChangeKeys, installChangeKeyPublicationHold, setRefreshEverything } from "./changeKeys";
-import { bumpDataRev, bumpGraphEpoch, dataRev } from "./graphSession";
+import { bumpDataRev, bumpGraphEpoch } from "./graphSession";
+import { dataRev } from "./dataRevision";
 import { invalidateBinding } from "./binding";
 import { resetRefreshReads, trackRefreshRead } from "./refreshReads";
 import type { ChangeSummary } from "./backendTypes";
