@@ -68,6 +68,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - A brand-new page with no file yet now shows an editable first bullet when opened in the right sidebar, so you can type or drag blocks into it without first editing it in the main pane (GH #524).
+- Clicking a hidden `{{cloze}}` reveals the answer in place again (and hides it on a second click), instead of opening the block editor (GH #763).
 - Mobile: the help "?" button no longer covers the last buttons of the bottom-docked formatting toolbar while text is selected, with or without the keyboard (internal UI-HELP-FAB-ABOVE-DOCKED-TOOLBAR).
 - Windows: a save made while the previous save of the same page was still replacing the file is no longer refused as "write target escapes graph root" when Windows reports the replaced file's location for the page (internal REG-WIN-WRITE-TARGET-DISPLACED; completes the 0.8.0-beta.4 fix).
 - Block references keep resolving after a block moves between pages and after reopening the graph; dangling references no longer scan unrelated pages (GH #746, GH #623).
