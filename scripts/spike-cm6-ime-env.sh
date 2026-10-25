@@ -61,5 +61,5 @@ fi
 if [ -n "${SPIKE_IME_RUNNER:-}" ]; then
   bash "$SPIKE_IME_RUNNER"
 else
-  node scripts/spike-cm6-ime.mjs
+  node "${SPIKE_IME_SCRIPT:-scripts/spike-cm6-ime.mjs}"
 fi
