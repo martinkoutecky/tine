@@ -6,6 +6,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { bumpGraphEpoch, setDataRev } from "../graphSession";
+import { setRefreshEverything } from "../changeKeys";
 import type { Filter, RegistrySnapshot } from "../editor/queryIr";
 import { propertyFilter } from "../editor/queryBuilder";
 import { clearTransientLayersForTest } from "../transientLayers";
@@ -55,6 +56,7 @@ const unavailable = () => new Error(FAILURE_MESSAGE);
 /** Let the shared registry request run through its promise chain. */
 async function settle(ticks = 12): Promise<void> {
   for (let tick = 0; tick < ticks; tick += 1) await Promise.resolve();
+  await new Promise(resolve => setTimeout(resolve, 0));
 }
 
 /** Mount one builder inside an error boundary, so "the failure crashed the
@@ -120,12 +122,16 @@ function retryButton(): HTMLButtonElement {
 
 
 beforeEach(() => {
+  // These cases isolate failure/retry ownership. Quiet scheduling has its own
+  // fake-clock tests; use the existing diagnostic bypass for immediate reads.
+  setRefreshEverything(true);
   resetQueryRegistryRevisionForTests();
   vi.spyOn(backend(), "queryFacets").mockResolvedValue([]);
   vi.spyOn(backend(), "printQuery").mockResolvedValue("(and (property cost 3))");
 });
 
 afterEach(() => {
+  setRefreshEverything(false);
   clearTransientLayersForTest();
   resetSharedQueryResultsForTests();
   resetQueryRegistryRevisionForTests();

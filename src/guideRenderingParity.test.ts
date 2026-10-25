@@ -1,5 +1,11 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+it("the Guide explains query pauses and stale collapsed reference counts", () => {
+  const queries = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
+  const references = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
+  for (const outcome of ["pause typing for 1.5 seconds", "latest saved publication", "last answer visible"]) expect(queries).toContain(outcome);
+  for (const outcome of ["keep their last count", "Count may be out of date", "opening the section reloads"]) expect(references).toContain(outcome);
+});
 it("the Guide explains preview placement and reachable source actions (GH #750, GH #752)", () => {
   const guide = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
   for (const outcome of ["space above or below the link", "stays in place as its content changes", "title and **Open source** stay visible while you scroll"]) expect(guide).toContain(outcome);

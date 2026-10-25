@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
 // The left sidebar's Favorites list (family 22): one flat run of rows in
 // pre-order, indented by depth. The visible index IS `data-row-index`, so a
 // drop found by elementFromPoint needs no translation, and a label row and a
@@ -86,7 +87,7 @@ export function SidebarFavorites(props: {
               <button type="button" class="nav-fav-group-toggle" aria-expanded={!row.node.collapsed}
                 aria-label={row.node.collapsed ? t("sidebar-favorites-expand") : t("sidebar-favorites-collapse")}
                 onClick={() => setFavoriteRowCollapsed(row.path, !row.node.collapsed)}>
-                <span class="nav-toggle-caret" classList={{ open: !row.node.collapsed }}>▸</span>
+                <ReferenceDisclosure class="nav-toggle-caret" collapsed={!!row.node.collapsed} />
               </button>
             </Show>
           );

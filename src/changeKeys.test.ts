@@ -64,6 +64,15 @@ it("shown members join without another initial read and update the combined toke
   expect(changedAny(["links:p", "block:shown"])).not.toBe(initial);
 });
 
+it("registered query keys fire only for affected subscriptions", () => {
+  const before = [changed("query:narrow"), changed("query:links"), changed("query:unrelated")];
+  stage({ queryTo: ["narrow", "links"] } as Partial<ChangeSummary>);
+  bumpDataRev(true);
+  expect(changed("query:narrow")).not.toBe(before[0]);
+  expect(changed("query:links")).not.toBe(before[1]);
+  expect(changed("query:unrelated")).toBe(before[2]);
+});
+
 it("a summary-only delivery waits for the trailing delay and the previous refresh reads", async () => {
   vi.useFakeTimers();
   const before = changed("block:a");

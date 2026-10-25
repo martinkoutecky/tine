@@ -14,6 +14,7 @@ references-linked = Linked References
 journals-upcoming = Upcoming
 references-unlinked = Unlinked References
 references-loading = Loading…
+references-count-stale = Count may be out of date
 ## The number beside Linked/Unlinked References counts referencing blocks (as in Logseq); GH #755.
 references-count-title = { $blocks ->
     [one] 1 block

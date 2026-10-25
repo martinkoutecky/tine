@@ -132,6 +132,7 @@ mod transliteration;
 mod watch;
 pub use publish::{PublishDest, PublishFailed, PublishReceipt, SiteWriter};
 pub use restore::{RestoreFailed, RestoreFile, RestoreReport};
+pub use store::change_summary::{QueryRegistration, QuerySubscription};
 #[cfg(any(test, feature = "test-faults"))]
 pub use store::checkpoint::CheckpointWrite;
 pub use store::{

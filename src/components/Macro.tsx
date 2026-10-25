@@ -11,7 +11,8 @@ import { isPublishedExport } from "../publishedBackend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
 import { openPageInSidebar, openBlockInSidebar, openQueryExport, switcherOpen } from "../ui";
 import { openShareDialog } from "../shareState";
-import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { createQuerySubscription } from "../querySubscription";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 import { bindingOwner, advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
@@ -322,13 +323,18 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const { collapsed, toggle: toggleCollapsed } = createQueryFold(loadCollapsed(collapseKey()), () => optionValues()?.collapsed ?? false,
     () => props.blockId, (v) => saveCollapsed(collapseKey(), v));
 
-  // A save anywhere in the graph bumps dataRev after 700 ms of quiet. Each
-  // distinct expanded request costs one whole-graph evaluation per revision;
-  // sharedQueryResult coalesces identical open blocks into one IPC (including
-  // the 20-block case), though each host still owns its rendered rows. A
-  // collapsed query fetches once for its count and skips save reruns. The
-  // 10k-graph 3/20-block save measurements are in RECEIPT-14Q4A.md.
+  // Host-classified dependencies share S3's publication gates. Graph-wide
+  // reruns wait for input quiet; identical requests still share one IPC.
+  // A collapsed query keeps its existing initial-count/skip-reruns policy.
   const answerDay = createAnswerDay();
+  const subscription = createQuerySubscription(() => {
+    const query = runnable();
+    if (!query || emptyDraft()) return undefined;
+    // Search and the engine's independently re-read second family have no
+    // single plan at this boundary. Keep their safe full dependency.
+    return friendlySearch() !== null || bothKinds() ? { kind: "full" }
+      : { kind: "query", query: query.query, context: executionContext() ?? {} };
+  }, answerDay.day);
   const runRequest = createMemo(() => {
     const query = runnable();
     if (!query || emptyDraft()) return undefined;
@@ -350,18 +356,20 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     // The answer day reruns a day-relative query, collapsed or not, once the
     // date has moved past the shown answer's (card hB3Lv8); like a save, it
     // keeps that answer on screen until the new one lands.
-    const key = `${JSON.stringify([displayKey, query.query, query.view])}\0${answerDay.day()}\0${collapsed() ? "collapsed" : `${dataRev()}\0${resultsEpoch()}`}`;
+    const key = `${JSON.stringify([displayKey, query.query, query.view])}\0${answerDay.day()}\0${collapsed() ? "collapsed" : `${subscription.revision()}\0${resultsEpoch()}`}`;
     return { query, context, search, displayKey, key, both };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const runOwners = {};
   const [operation] = createMembershipResource(runRequest, () => runRequest()?.displayKey ?? "", async (request): Promise<QueryOperation | undefined> => {
+    if (!await subscription.ready()) return undefined;
+    const cacheKey = `${request.key}\0${subscription.publication()}`;
     const owner = latestOwner(runOwners, "run", graphOwner());
     const scope = `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
     if (request.search !== null) {
       const searchSource = request.search;
       const landed = await readOwned(owner, sharedQueryResult(
         scope,
-        `friendly-search\0${request.key}`,
+        `friendly-search\0${cacheKey}`,
         () => request.query.page_match_scope
           ? backend().runGraphSearch(
             searchSource, 500, 5_000, `inline-query:${props.blockId ?? currentPage() ?? "global"}`, false,
@@ -392,7 +400,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     }
     const landed = await readOwned(owner, sharedQueryResult(
       scope,
-      `ir\0${request.key}`,
+      `ir\0${cacheKey}`,
       () => backend().queryRun(request.query.query, request.query.view, request.context),
     ));
     if (landed.kind === "stale") return undefined;
@@ -401,7 +409,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     let twinGroups: RefGroup[] = [];
     if (request.both) {
       const twin = await bothFamilies(owner, {
-        scope, key: request.key, query: request.query.query, view: request.query.view,
+        scope, key: cacheKey, query: request.query.query, view: request.query.view,
         context: request.context, own: result, hostBlockId: props.blockId, hostProperties: hostProperties(),
       });
       if (!twin) return undefined;
@@ -420,7 +428,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       asOfDay: result.as_of_day ?? null,
       both,
     };
-  }, (value, id) => !!value && groupsContainEdit(value.groups, id), () => !collapsed(), true);
+  }, (value, id) => !!value && groupsContainEdit(value.groups, id), () => !collapsed(), true, subscription.revision);
   /** The last coherent answer; an errored run shows its error, not old rows. */
   const displayed = (): QueryOperation | undefined => {
     const current = runRequest();

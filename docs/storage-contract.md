@@ -306,6 +306,13 @@ missed in the checkpoint (a cold-start `tine://` link, GH #181). The public oper
 surface is 49 operations: the methods of `Store` and `Transaction` plus every
 public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
+GX4 S4 extends the existing mounted-reader registration operation with a typed
+dependency parameter: an unlinked target, a resolved query/source, the registry,
+or a conservative full dependency. The one lifetime-bound operation registers
+or releases these in-memory readers and returns a refresh mode and publication
+revision. It adds no storage operation, graph record or write. Publications use
+the query memo's edit predicate; stale global plans conservatively fire until
+renewed at the scheduled read, never rebuilding graph-wide inputs on publication.
 The graph-command boundary guard lives at `crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is
 `crates/tine-store/tests/client_root_boundary.rs`.
 

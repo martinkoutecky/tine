@@ -403,6 +403,9 @@ class TauriBackend implements Backend {
   registerUnlinkedReference(subscription: string, target: string | null, bindingGeneration: number) {
     return this.call<void>("register_unlinked_reference", { subscription, target }, bindingGeneration);
   }
+  registerQuerySubscription(subscription: string, request: import("./querySubscription").QuerySubscription | null, bindingGeneration: number) {
+    return this.call<import("./querySubscription").QueryRegistration>("register_query_subscription", { subscription, request }, bindingGeneration);
+  }
   warmDone() {
     return this.call<boolean>("warm_done");
   }

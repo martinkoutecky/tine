@@ -76,9 +76,10 @@ export function stageChangeKeys(change: ChangeSummary): void {
   for (const name of change.tagsTo ?? []) pending.add(`tags:${name}`);
   for (const name of change.tagTableTo ?? []) pending.add(`tagTable:${name}`);
   for (const id of change.refsTo ?? []) pending.add(`refsTo:${id}`);
+  for (const id of change.queryTo ?? []) pending.add(`query:${id}`);
   // Legacy hosts lack S2 evidence: retain conservative refreshes for just
   // these reader families rather than silently keeping their answers stale.
-  for (const [field, prefix] of [[change.textTo, "text:"], [change.tagsTo, "tags:"], [change.tagTableTo, "tagTable:"], [change.refsTo, "refsTo:"]] as const) {
+  for (const [field, prefix] of [[change.textTo, "text:"], [change.tagsTo, "tags:"], [change.tagTableTo, "tagTable:"], [change.refsTo, "refsTo:"], [change.queryTo, "query:"]] as const) {
     if (!field) for (const key of keys.keys()) if (key.startsWith(prefix)) pending.add(key);
   }
   for (const [name, props] of Object.entries(change.props)) {

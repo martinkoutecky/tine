@@ -337,6 +337,7 @@ html[data-system-insets="native-viewport"] {
   min-width: 0;
 }
 .workspace-switcher-btn {
+  font: inherit;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -372,7 +373,7 @@ html[data-system-insets="native-viewport"] {
   white-space: nowrap;
   font-size: 12px;
 }
-.workspace-switcher-caret { flex: none; font-size: 9px; opacity: .7; }
+.workspace-switcher-caret { opacity: .7; }
 .workspace-switcher-compact .workspace-switcher-btn {
   gap: 3px;
   padding-inline: 5px;
@@ -1174,6 +1175,7 @@ html[data-system-insets="native-viewport"] {
   margin-top: 4px;
 }
 .graph-switch-btn {
+  font: inherit;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1203,7 +1205,6 @@ html[data-system-insets="native-viewport"] {
   white-space: nowrap;
 }
 .graph-switch-caret {
-  font-size: 9px;
   opacity: 0.7;
 }
 .graph-switch-backdrop {
@@ -1308,6 +1309,7 @@ html[data-system-insets="native-viewport"] {
   border: 0;
   background: transparent;
   font: inherit;
+  font-size: 11px;
   text-align: left;
   cursor: pointer;
   user-select: none;
@@ -1317,13 +1319,11 @@ html[data-system-insets="native-viewport"] {
 }
 .nav-all-pages-open { width: 100%; text-align: left; background: transparent; border: 0; font: inherit; cursor: pointer; }
 .nav-all-pages-open:hover, .nav-all-pages-open.active { color: var(--text-primary); background: var(--bg-tertiary); }
-.nav-toggle-caret {
-  display: inline-block;
-  transition: transform 0.1s ease;
-  font-size: 9px;
-}
-.nav-toggle-caret.open {
-  transform: rotate(90deg);
+.nav-toggle-caret,
+.graph-switch-caret,
+.workspace-switcher-caret {
+  flex: none;
+  margin-right: 0;
 }
 .nav-section-count {
   margin-left: auto;
@@ -6781,7 +6781,6 @@ ol.md-list { list-style: decimal; }
   width: 14px;
   text-align: center;
   color: var(--text-muted);
-  font-size: 10px;
   flex: 0 0 auto;
 }
 .ns-node-label {
@@ -7113,6 +7112,11 @@ img.emoji {
   border-radius: 8px;
   padding: 0 7px;
   line-height: 18px;
+}
+
+.references-count-stale {
+  color: var(--text-muted);
+  opacity: 0.6;
 }
 
 .reference-group {

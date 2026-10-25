@@ -34,7 +34,9 @@ import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { resetTabsToJournals, route } from "../router";
 import { tryFreezeGraphRewrite } from "../document/graphRewriteState";
 import { toasts, setToasts } from "../toasts";
-import { bumpDataRev } from "../graphSession";
+import { bumpDataRev, bumpGraphEpoch } from "../graphSession";
+import { applyChangeSummary } from "../changeSummary";
+import { noteQueryInput, QUERY_QUIET_MS } from "../querySubscription";
 import { resetQueryTextOpenForTests } from "../navSettings";
 import { startEditing } from "../editorController";
 
@@ -109,6 +111,60 @@ function load(raw: string, { readOnly = false }: { readOnly?: boolean } = {}): v
     loaded: true,
   });
 }
+
+it.each(["simple", "advanced", "tql", "table"])("%s query results skip unrelated publications and refresh related, full and missed revisions", async kind => {
+  bumpGraphEpoch(); let revision = 0;
+  const publish = (queryTo: string[] = [], full = false) => {
+    applyChangeSummary({ rev: String(++revision), pages: [], blocks: [], linksTo: [], props: {}, inventoryChanged: false, full, queryTo });
+    bumpDataRev(true);
+  };
+  publish();
+  const source = kind === "advanced" ? '[:find (pull ?p [*]) :where (page-property ?p :type "Program")]' : "(task TODO)";
+  load(kind === "advanced" ? `#+BEGIN_QUERY\n{:query ${source}}\n#+END_QUERY`
+    : kind === "tql" ? "{{tine-query @block and task = 'TODO'}}" : `{{query ${source}}}`);
+  const host = backend(); const original = host.registerQuerySubscription;
+  const register = vi.fn(async (_id: string, _request: unknown, _generation: number) => ({ mode: "narrow" as const, rev: String(revision) })); host.registerQuerySubscription = register;
+  vi.spyOn(host, "parseQuery").mockResolvedValue({ query: { anchor: "block", filter: { kind: "true" },
+    source: { kind: kind === "advanced" ? "advanced" : kind === "tql" ? "tql" : "og", original: source, og_options: "" } }, view: {}, legacy_table: kind === "table" });
+  const run = vi.spyOn(host, "queryRun").mockResolvedValue(blockRunResult(groups(), { ran: ["task"] }));
+  const { root, dispose } = mount(() => <Block id="query" />);
+  try {
+    await vi.waitFor(() => expect(root.querySelector(".query-count")?.textContent).toBe("1"));
+    const id = register.mock.calls[0][0];
+    run.mockClear(); publish(["unrelated-query"]); await settle(); expect(run).not.toHaveBeenCalled();
+    run.mockResolvedValue(blockRunResult([], { ran: ["task"] })); publish([id]);
+    await vi.waitFor(() => expect(root.querySelector(".query-count")?.textContent).toBe("0"));
+    expect(run).toHaveBeenCalledTimes(1);
+    run.mockResolvedValue(blockRunResult(groups(), { ran: ["task"] })); publish([], true);
+    await vi.waitFor(() => expect(root.querySelector(".query-count")?.textContent).toBe("1"));
+    run.mockResolvedValue(blockRunResult([], { ran: ["task"] })); revision += 2; publish();
+    await vi.waitFor(() => expect(root.querySelector(".query-count")?.textContent).toBe("0"));
+  } finally { dispose(); host.registerQuerySubscription = original; }
+});
+
+it("a newly mounted query uses its registration snapshot while a publication event is delayed", async () => {
+  bumpGraphEpoch();
+  load("{{query (task TODO)}}");
+  const host = backend(); const original = host.registerQuerySubscription;
+  let hostRevision = "10";
+  host.registerQuerySubscription = async () => ({ mode: "narrow", rev: hostRevision });
+  vi.spyOn(host, "parseQuery").mockResolvedValue({ query: { anchor: "block", filter: { kind: "true" },
+    source: { kind: "og", original: "(task TODO)", og_options: "" } }, view: {} });
+  const run = vi.spyOn(host, "queryRun").mockResolvedValue(blockRunResult(groups()));
+  const first = mount(() => <Block id="query" />);
+  let second: ReturnType<typeof mount> | undefined;
+  try {
+    await vi.waitFor(() => expect(first.root.querySelector(".query-count")?.textContent).toBe("1"));
+    // The old DTO remains strongly held by this first view. The host has
+    // published a newer snapshot but its summary has not reached JS yet.
+    hostRevision = "11"; run.mockResolvedValue(blockRunResult([])); run.mockClear();
+    second = mount(() => <Block id="query" />);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(second!.root.querySelector(".query-count")?.textContent).toBe("0"));
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(first.root.querySelector(".query-count")?.textContent).toBe("1");
+  } finally { second?.dispose(); first.dispose(); host.registerQuerySubscription = original; }
+});
 
 it.each(["(and)", "(sort-by created-at)"])("restores the empty state after removing the last builder condition (%s)", async (blank) => {
   load("{{query (task TODO)}}");
@@ -1356,6 +1412,40 @@ describe("item 9: a query can show pages and blocks together", () => {
       query.anchor === "page" ? pageAnswer() : blockRunResult(groups()));
     return { run };
   }
+
+  it("keeps both families visible without rerunning a full registration until typing pauses", async () => {
+    vi.useFakeTimers();
+    load(`${TQL_MACRO}\ntine.result-kinds:: pages-and-blocks`);
+    const host = backend();
+    const original = host.registerQuerySubscription;
+    const register = vi.fn(async (_id: string, _request: unknown, _generation: number) => ({ mode: "full" as const, rev: "1" }));
+    host.registerQuerySubscription = register;
+    const { run } = engineByAnchor();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    let revision = 1;
+    const publish = (queryTo: string[] = []) => {
+      applyChangeSummary({ rev: String(++revision), pages: [], blocks: [], linksTo: [], props: {}, inventoryChanged: false, full: false, queryTo });
+      bumpDataRev(true);
+    };
+    try {
+      await vi.advanceTimersByTimeAsync(QUERY_QUIET_MS);
+      expect(root.querySelector(".query-count")?.textContent).toBe("2");
+      const id = register.mock.calls.find(([, request]) => (request as { kind?: string })?.kind === "full")![0];
+      run.mockClear();
+      run.mockImplementation(async query => query.anchor === "page" ? pageAnswer() : blockRunResult([]));
+      for (let i = 0; i < 3; i++) {
+        noteQueryInput(); publish([id]);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(run).not.toHaveBeenCalled();
+        expect(root.querySelector(".query-count")?.textContent).toBe("2");
+      }
+      await vi.advanceTimersByTimeAsync(500);
+      expect(run).toHaveBeenCalledTimes(2); // one execution per result family
+      expect(root.querySelector(".query-count")?.textContent).toBe("1");
+    } finally {
+      dispose(); host.registerQuerySubscription = original; vi.useRealTimers();
+    }
+  });
 
   it("shows a Pages section above a Blocks section, with the total counting both", async () => {
     load(`${TQL_MACRO}\ntine.result-kinds:: pages-and-blocks`);

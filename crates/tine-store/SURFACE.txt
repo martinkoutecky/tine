@@ -55,14 +55,27 @@ struct link_identity::LinkInspection
 field link_identity::LinkInspection.identity
 field link_identity::LinkInspection.target_possible
 
-## Freshness (ceiling: 28)
+## Freshness (ceiling: 33)
 # GX4 S2 explicitly requires mounted unlinked targets in the publication host.
 # Store::subscribe owns the one dispatch stream, not the changing set of views;
 # adding a subscribe parameter cannot register/release targets after dispatch
 # starts without replacing that stream. One native lifetime-bound registration
 # operation controls those transient dependencies; it does not add a faster
 # sibling of an existing reader. Revocation uses the existing binding flag.
-fn store::Store::register_unlinked_reference_while_live
+# GX4 S4: extend that existing operation's parameter to query/registry readers;
+# the old string names only an unlinked target and cannot carry a query plan.
+# register_reader_while_live replaces register_unlinked_reference_while_live,
+# so the operation count stays 49. The two parameter/result carriers and their
+# result fields carry dependencies, refresh policy and a publication revision,
+# not caller-visible cache/readiness state. No faster sibling reader is added.
+fn store::Store::register_reader_while_live
+enum store::QuerySubscription
+struct store::QueryRegistration
+field store::QueryRegistration.mode
+field store::QueryRegistration.rev
+# test-oracle: query fixtures register without a native binding's revocation
+# flag; production uses the same lifetime-bound reader operation above.
+fn store::Store::register_query_subscription
 # test-oracle: Store-only fixtures register readers without a native window's
 # cancellation flag; production uses the lifetime-bound operation above.
 fn store::Store::register_unlinked_reference
@@ -434,7 +447,9 @@ field page_host::HostRead.page
 field page_host::HostRead.bytes
 field page_host::HostRead.revision
 enum page_host::HostReadError
-## Re-exports (ceiling: 11)
+## Re-exports (ceiling: 12)
+# GX4 S4: typed parameters/results for the existing reader registration door.
+use crate::store::change_summary::{QueryRegistration,QuerySubscription}
 use crate::tine_outline::edit_kind
 use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,ReserveRefusal,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind
