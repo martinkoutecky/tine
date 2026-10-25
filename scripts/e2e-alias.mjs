@@ -94,7 +94,8 @@ try {
   });
   const propertyLinks = await browser.execute(() => [...document.querySelectorAll(".prop-row")]
     .find((row) => row.querySelector(".prop-key")?.textContent === "tags")
-    ?.querySelectorAll(".page-ref").length ?? 0);
+    ?.querySelectorAll(".prop-value .page-ref").length ?? 0);
+  // The key links to its own page too (GH #753); count the value links.
   if (propertyLinks !== 2) throw new Error(`tags property did not expose two page links: ${propertyLinks}`);
   await browser.$("h1.page-title").click();
   await browser.waitUntil(() => fs.readFileSync(`${GRAPH}/pages/Books.md`, "utf8").startsWith("alias:: book\n"), {
