@@ -1,5 +1,5 @@
 // Nonshipping experiment. No CM syntax parser is configured: lsdoc supplies all spans.
-import { createEffect, createSignal, For, onCleanup, onMount, type JSX } from "solid-js";
+import { createEffect, createSignal, For, Show, onCleanup, onMount, type JSX } from "solid-js";
 import { EditorSelection, EditorState, Prec, StateField } from "@codemirror/state";
 import { Decoration, EditorView, keymap, WidgetType, type DecorationSet } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, redo, undo } from "@codemirror/commands";
@@ -9,13 +9,12 @@ import { BUILTIN_HIDE, joinProps, splitProps } from "../editor/properties";
 import { previewSpans } from "../editor/cm6Preview";
 import { detectTrigger, pageInsert, refCompletionEnd } from "../editor/autocomplete";
 import { allPageNames } from "../pageIndex";
+import { registerFocusedEditorCommandBridge } from "../editorCommandBridge";
+import { SELECTION_ACTIONS, type SelectionAction } from "../editor/selectionActions";
+import { touchPrimary } from "../inputCapability";
 import "./cm6-spike.css";
 
-export function cm6SpikeEnabled(): boolean {
-  return (import.meta.env.DEV || import.meta.env.VITE_CM6_SPIKE === "1")
-    && typeof location !== "undefined"
-    && (new URLSearchParams(location.search).get("cm6") === "1" || sessionStorage.getItem("tine-spike-cm6") === "1");
-}
+export { cm6SpikeEnabled } from "../editor/cm6Spike";
 
 class Chip extends WidgetType {
   constructor(readonly label: string, readonly from: number) { super(); }
@@ -38,8 +37,10 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   let host!: HTMLDivElement;
   let view: EditorView | undefined;
   let removeHistoryKeys: (() => void) | undefined;
+  let removeCommandBridge: (() => void) | undefined;
   let alive = true;
   const [candidates, setCandidates] = createSignal<string[]>([]);
+  const [hasSelection, setHasSelection] = createSignal(false);
   const shownNode = node(props.id);
   const format = pageByName(shownNode.page)?.format === "org" ? "org" : "md";
   const current = () => alive && node(props.id) === shownNode && blockWritable(props.id);
@@ -111,6 +112,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
           beforeinput: () => !current(),
         }),
         EditorView.updateListener.of(update => {
+          setHasSelection(!update.state.selection.main.empty);
           if (update.docChanged) commit(update.state.doc.toString());
           if (update.docChanged || update.selectionSet) {
             const s = update.state.selection.main;
@@ -157,6 +159,31 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     }
     view.dispatch({ selection: { anchor: Math.min(anchor, view.state.doc.length), head: Math.min(head, view.state.doc.length) }, scrollIntoView: true });
     view.focus();
+    removeCommandBridge = registerFocusedEditorCommandBridge({
+      blockId: props.id,
+      blur: () => view?.contentDOM.blur(),
+      textSelection: () => {
+        const s = view?.state.selection.main;
+        return view && s && !s.empty ? { text: view.state.doc.toString(), start: s.from, end: s.to } : null;
+      },
+      dispatch: command => {
+        if (!view || !current() || view.compositionStarted) return false;
+        // Only the spike's source insertions are adapted here. Structural,
+        // media, picker, slash-menu and global-history parity remains deferred.
+        const s = view.state.selection.main;
+        const selected = view.state.sliceDoc(s.from, s.to);
+        let insert: string, caret: number;
+        if (command === "editor/soft-newline") { insert = "\n"; caret = s.from + 1; }
+        else if (command === "editor/insert-page-ref" || command === "editor/insert-block-ref") {
+          const page = command === "editor/insert-page-ref";
+          insert = (page ? "[[" : "((") + selected + (page ? "]]" : "))");
+          caret = s.from + 2 + selected.length;
+        } else return false;
+        view.dispatch({ changes: { from: s.from, to: s.to, insert }, selection: { anchor: caret }, scrollIntoView: true });
+        view.focus();
+        return true;
+      },
+    });
   });
   createEffect(() => {
     const text = visible();
@@ -164,7 +191,14 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
     }
   });
-  onCleanup(() => { alive = false; removeHistoryKeys?.(); view?.destroy(); });
+  onCleanup(() => { alive = false; removeCommandBridge?.(); removeHistoryKeys?.(); view?.destroy(); });
+  const formatSelection = (action: SelectionAction) => {
+    if (!view || !current() || view.compositionStarted) return;
+    const s = view.state.selection.main;
+    const edit = action.apply(view.state.doc.toString(), s.from, s.to, format);
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: edit.text }, selection: { anchor: edit.start, head: edit.end }, scrollIntoView: true });
+    view.focus();
+  };
   const complete = (name: string) => {
     if (!view || !current()) return;
     const raw = view.state.doc.toString();
@@ -174,7 +208,13 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     view.dispatch({ changes: { from: trigger.start, to: refCompletionEnd(raw, trigger.end, insert), insert }, selection: { anchor: trigger.start + insert.length } });
     view.focus();
   };
-  return <div class="cm6-spike" ref={host}><div class="cm6-completions"><For each={candidates()}>{name =>
+  return <div class="cm6-spike" ref={host}>
+    <Show when={hasSelection()}>
+      <div class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined} onPointerDown={event => event.preventDefault()}>
+        <For each={SELECTION_ACTIONS}>{action => <button type="button" classList={{ "sel-action-page-link": action.id === "page-link" }} title={action.title} aria-label={action.title} data-selection-action={action.id} onClick={() => formatSelection(action)}>{action.label}</button>}</For>
+      </div>
+    </Show>
+    <div class="cm6-completions"><For each={candidates()}>{name =>
     <button onMouseDown={event => { event.preventDefault(); complete(name); }}>{name}</button>
   }</For></div></div>;
 }

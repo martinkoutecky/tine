@@ -42,6 +42,9 @@ jobs:
   preflight:
     runs-on: ubuntu-22.04
     steps:
+      - name: Keep this nonshipping experiment unpublished
+        if: inputs.publish
+        run: exit 1
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -648,6 +651,11 @@ jobs:
   android:
     needs: preflight
     runs-on: ubuntu-22.04
+    # This branch never integrates. Namespace stays page.tine.app for Tauri's
+    # Kotlin lookup; Gradle gives this APK its own installation identity/name.
+    env:
+      VITE_CM6_SPIKE: "1"
+      CARGO_BUILD_JOBS: "4"
     steps:
       - uses: actions/checkout@v4
 

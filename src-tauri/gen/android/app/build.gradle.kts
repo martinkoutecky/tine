@@ -43,6 +43,11 @@ android {
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "page.tine.beta"
+        // Branch-only experiment: separate private preferences and folder grants.
+        if (System.getenv("VITE_CM6_SPIKE") == "1") {
+            applicationId = "page.tine.app.cm6spike"
+        }
+        manifestPlaceholders["tineAppLabel"] = if (System.getenv("VITE_CM6_SPIKE") == "1") "Tine CM6 spike" else "@string/app_name"
         minSdk = 24
         targetSdk = 36
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -91,6 +96,12 @@ android {
     }
     buildFeatures {
         buildConfig = true
+    }
+    if (System.getenv("VITE_CM6_SPIKE") == "1") {
+        // Build-type overlays outrank the main resources, keeping experiment
+        // shortcuts in this APK even though the Kotlin namespace is shared.
+        sourceSets.getByName("debug").res.srcDir("src/cm6spike/res")
+        sourceSets.getByName("release").res.srcDir("src/cm6spike/res")
     }
 }
 

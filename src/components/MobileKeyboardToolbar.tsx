@@ -52,7 +52,7 @@ const EDITOR_TOOLBAR_MARGIN = 8;
 
 function activeEditorHasFocus(): boolean {
   const el = document.activeElement;
-  return el instanceof HTMLTextAreaElement && el.classList.contains("block-editor");
+  return el instanceof HTMLElement && el.matches("textarea.block-editor, .cm-content[data-cm6-editor]");
 }
 
 function viewportKeyboardTop(): number {
@@ -68,7 +68,7 @@ function viewportKeyboardTop(): number {
  *  already-visible editor is a no-op returning false. O(1) layout reads. */
 export function revealFocusedEditorAboveToolbar(toolbarTop: number): boolean {
   const editor = document.activeElement;
-  if (!(editor instanceof HTMLTextAreaElement) || !editor.classList.contains("block-editor")) {
+  if (!(editor instanceof HTMLElement) || !editor.matches("textarea.block-editor, .cm-content[data-cm6-editor]")) {
     return false;
   }
   const formatting = document.querySelector<HTMLElement>("[data-mobile-selection-toolbar]")?.getBoundingClientRect();
@@ -176,7 +176,7 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
     };
     const updateAfterFocusChange = () => setTimeout(updateViewport, 0);
     const revealAfterEditorInput = (event: Event) => {
-      if (event.target instanceof HTMLTextAreaElement && event.target.classList.contains("block-editor")) {
+      if (event.target instanceof HTMLElement && event.target.matches("textarea.block-editor, .cm-content[data-cm6-editor]")) {
         scheduleEditorReveal();
       }
     };

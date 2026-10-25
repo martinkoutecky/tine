@@ -63,6 +63,10 @@
     "theme:docs-screenshots": "node scripts/shot-theme-docs.mjs"
   },
   "dependencies": {
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.15",
     "@fluent/bundle": "^0.19.1",
     "@fontsource-variable/noto-emoji": "^5.2.12",
     "@tauri-apps/api": "^2.12.3",
