@@ -31,8 +31,9 @@ for (const inventory of regressionIndex.inventories ?? []) {
   for (const entry of catalog.entries ?? []) catalogIds.add(entry.id);
 }
 const problems = [];
+// Not a release blocker: without a deployed viewer the build keeps the writer disabled.
 try { await checkQuickShareReadiness(); }
-catch { problems.push("generation 1 quick share viewer is unavailable or incompatible at https://tine.page/s/1/"); }
+catch { console.warn("note: generation 1 quick share viewer is unavailable or incompatible at https://tine.page/s/1/; this build will not offer quick share"); }
 
 if (!section) problems.push(`CHANGELOG.md has no released section for ${version}`);
 if (!fs.existsSync(impactPath)) problems.push(`missing docs/releases/v${version}-impact.json`);

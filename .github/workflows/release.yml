@@ -67,6 +67,9 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Verify the deployed quick share viewer before enabling the writer
         id: viewer-ready
+        # A missing or incompatible viewer leaves the writer disabled (the output
+        # stays empty); it never blocks an ordinary release.
+        continue-on-error: true
         run: node scripts/check-release-readiness.mjs --quick-share-only
       - name: Require updater signing key
         env:
