@@ -41,6 +41,8 @@ export interface EditorDriver {
   /** `data-block-id` of the enclosing block row, if any. */
   readonly blockId: string | null;
   value(): string;
+  /** Whether edits are currently refused by this editor. */
+  isReadOnly(): boolean;
   /** `[start, end]`, start ≤ end. */
   selection(): [number, number];
   direction(): SelectionDirection;
@@ -55,7 +57,7 @@ export interface EditorDriver {
   /** Replaces the browser's draft without reporting input yet (e.g. before a key commits it). */
   replaceText(value: string): void;
   /** Reports input for the current draft and selection, preserving plain platform input signals too. */
-  reportInput(init?: InputEventInit, eventKind?: "input" | "plain"): void;
+  reportInput(init?: InputEventInit | Event, eventKind?: "input" | "plain"): void;
   /** Releases a pointer over the editor, including the user-selection notification. */
   mouseup(init?: MouseEventInit): void;
   /**
@@ -70,9 +72,13 @@ export interface EditorDriver {
   keydown(init: KeyboardEventInit & { key: string }, extra?: { isComposing?: boolean; keyCode?: number }): KeyboardEvent;
   keyup(init: KeyboardEventInit & { key: string }): KeyboardEvent;
   /** Dispatches a paste carrying `clip`; returns it for `defaultPrevented`. */
-  paste(clip: EditorPaste): Event;
-  compositionStart(data?: string): void;
-  compositionEnd(data?: string): void;
+  paste(clip: EditorPaste | Event): Event;
+  /** Open the editor's context menu with the platform event's original flags. */
+  contextmenu(event: MouseEvent): Event;
+  /** Report the platform's selection signal without replacing the current range. */
+  reportSelection(event: Event): void;
+  compositionStart(data?: string | CompositionEvent): void;
+  compositionEnd(data?: string | CompositionEvent): void;
 }
 
 const EDITOR_SELECTOR = "textarea.block-editor";
@@ -119,6 +125,7 @@ function textareaDriver(ta: HTMLTextAreaElement): EditorDriver {
       return blockIdOf(ta);
     },
     value: () => ta.value,
+    isReadOnly: () => ta.readOnly,
     selection: () => [ta.selectionStart, ta.selectionEnd],
     direction: () => ta.selectionDirection,
     select: (start, end = start, direction) => ta.setSelectionRange(start, end, direction),
@@ -133,7 +140,7 @@ function textareaDriver(ta: HTMLTextAreaElement): EditorDriver {
     reportBlur: () => { ta.dispatchEvent(new FocusEvent("blur")); },
     replaceText: (value) => { ta.value = value; },
     reportInput: (init = {}, eventKind = "input") => {
-      ta.dispatchEvent(eventKind === "plain" ? new Event("input", init) : new InputEvent("input", init));
+      ta.dispatchEvent(init instanceof Event ? init : eventKind === "plain" ? new Event("input", init) : new InputEvent("input", init));
     },
     mouseup: (init = {}) => { ta.dispatchEvent(new MouseEvent("mouseup", init)); },
     input,
@@ -143,43 +150,46 @@ function textareaDriver(ta: HTMLTextAreaElement): EditorDriver {
       input(value, start + text.length, { inputType: "insertText", data: text });
     },
     keydown: (init, extra = {}) => {
-      const event = withProps(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }), extra);
+      const event = init instanceof KeyboardEvent ? init : withProps(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }), extra);
       ta.dispatchEvent(event);
       return event;
     },
     keyup: (init) => {
-      const event = new KeyboardEvent("keyup", { bubbles: true, cancelable: true, ...init });
+      const event = init instanceof KeyboardEvent ? init : new KeyboardEvent("keyup", { bubbles: true, cancelable: true, ...init });
       ta.dispatchEvent(event);
       return event;
     },
     paste: (clip) => {
-      const event = withProps(new Event("paste", { bubbles: true, cancelable: true }), {
+      const event = clip instanceof Event ? clip : withProps(new Event("paste", { bubbles: true, cancelable: true }), {
         clipboardData: clipboardData(clip),
       });
       ta.dispatchEvent(event);
       return event;
     },
+    contextmenu: (event) => { ta.dispatchEvent(event); return event; },
+    reportSelection: (event) => { ta.dispatchEvent(event); },
     compositionStart: (data = "") => {
-      ta.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data }));
+      ta.dispatchEvent(data instanceof CompositionEvent ? data : new CompositionEvent("compositionstart", { bubbles: true, data }));
     },
     compositionEnd: (data = "") => {
-      ta.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data }));
+      ta.dispatchEvent(data instanceof CompositionEvent ? data : new CompositionEvent("compositionend", { bubbles: true, data }));
     },
   };
 }
 
 function driverFor(el: Element): EditorDriver {
-  if (el instanceof HTMLTextAreaElement) return textareaDriver(el);
+  // Workspace-window fixtures live in another document/realm.
+  if (el.tagName.toLowerCase() === "textarea") return textareaDriver(el as HTMLTextAreaElement);
   throw new Error(`editorDriver: no backend for ${el.tagName.toLowerCase()}.${[...el.classList].join(".")}`);
 }
 
 /** Every mounted block editor under `root`, in document order. */
-export function editorsIn(root: ParentNode = document): EditorDriver[] {
-  return [...root.querySelectorAll(EDITOR_SELECTOR)].map(driverFor);
+export function editorsIn(root: ParentNode | null = document): EditorDriver[] {
+  return [...(root?.querySelectorAll(EDITOR_SELECTOR) ?? [])].map(driverFor);
 }
 
 /** The block editor under `root` (optionally of block `blockId`), or null. */
-export function maybeEditorIn(root: ParentNode = document, blockId?: string): EditorDriver | null {
+export function maybeEditorIn(root: ParentNode | null = document, blockId?: string): EditorDriver | null {
   return editorsIn(root).find((editor) => blockId === undefined || editor.blockId === blockId) ?? null;
 }
 

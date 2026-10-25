@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -37,7 +38,7 @@ async function waitFor(fn: () => boolean, timeout = 1000): Promise<boolean> {
   return fn();
 }
 const popup = () => document.body.querySelector<HTMLElement>(".peek-popup");
-const editor = () => popup()?.querySelector<HTMLTextAreaElement>("textarea.block-editor") ?? null;
+const editor = () => maybeEditorIn(popup()) ?? null;
 
 const blk = (id: string, raw: string, children: unknown[] = [], extra: object = {}) => ({ id, raw, collapsed: false, children, ...extra });
 const defaultBlocks = [blk("e1", "Editable text", [blk("e2", "Child")])];
@@ -67,7 +68,7 @@ async function editInPopup(card: HTMLElement, id = "e1") {
   content.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
   content.click(); // the user's own gesture, scoped to this rendered instance
   expect(await waitFor(() => !!editor())).toBe(true);
-  editor()!.focus();
+  editor()!.element.focus();
   await advance(0);
 }
 
@@ -79,8 +80,8 @@ describe("D-20261023-VQ: editable hover preview", () => {
       expect(card.querySelector(".ls-block:not(.ref-block)")).not.toBeNull();
       await editInPopup(card);
       const textarea = editor()!;
-      textarea.value = "Edited in preview";
-      textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      textarea.replaceText("Edited in preview");
+      textarea.reportInput({ bubbles: true });
       await advance(0);
       expect(node("e1")!.raw).toBe("Edited in preview");
     } finally {
@@ -166,7 +167,7 @@ describe("D-20261023-VQ: editable hover preview", () => {
       await advance(100);
       expect(card.textContent).toContain("Copied");
       expect(card.querySelector(".ls-block:not(.ref-block)")).toBeNull();
-      expect(card.querySelector("textarea")).toBeNull();
+      expect(maybeEditorIn(card)).toBeNull();
       expect(node(U)!.page).toBe("Orig");
       expect(node(U)!.raw).toBe(`Original\nid:: ${U}`);
     } finally {
@@ -225,8 +226,8 @@ describe("D-20261023-VQ: editable hover preview", () => {
       expect(card.textContent).toContain("Grandchild");
       await editInPopup(card, "c");
       const textarea = editor()!;
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+      textarea.select(textarea.value().length, textarea.value().length);
+      textarea.keydown(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
       await advance(0);
       expect(editingId()).toBe("g");
     } finally {
@@ -252,10 +253,10 @@ describe("D-20261023-VQ: editable hover preview", () => {
     try {
       await editInPopup(card, "e1");
       const textarea = editor()!;
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", shiftKey: true, bubbles: true, cancelable: true }));
+      textarea.select(textarea.value().length, textarea.value().length);
+      textarea.keydown(new KeyboardEvent("keydown", { key: "ArrowDown", shiftKey: true, bubbles: true, cancelable: true }));
       await advance(0);
-      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", shiftKey: true, bubbles: true, cancelable: true }));
+      textarea.keydown(new KeyboardEvent("keydown", { key: "ArrowDown", shiftKey: true, bubbles: true, cancelable: true }));
       await advance(0);
       expect(selectedIds()).toContain("e1"); // the block selection started
       expect(isSelected(U)).toBe(false);

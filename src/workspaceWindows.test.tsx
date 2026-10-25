@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "./tests/editorDriver";
 // OG-MULTIWINDOW P4: a workspace window is disposed exactly once whichever door
 // closes it, ends an edit typed in it, asks the save engine to flush, forgets
 // its pane tree and destroys its native window. An iframe stands in for the
@@ -115,12 +116,12 @@ describe("workspace window lifecycle (P4)", () => {
 
   it("disposes exactly once whichever doors race, and ends an edit typed in the window", async () => {
     const { id, win } = await openReady();
-    const editor = win.document.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-    editor.focus();
+    const editor = maybeEditorIn(win.document)!;
+    editor.element.focus();
     startEditing("block-1", 0);
     expect(editingId()).toBe("block-1");
     const blurred = vi.fn();
-    editor.addEventListener("blur", blurred);
+    editor.element.addEventListener("blur", blurred);
     // Its last pane closing is the user's door.
     const paneId = layoutPaneIds(layoutRoot(id))[0];
     expect(closePane(paneId)).toBe(true);
@@ -211,8 +212,8 @@ describe("workspace window lifecycle (P4)", () => {
   it("a title-bar close lets input already on its way land before the edit ends", async () => {
     const { win } = await openReady();
     await vi.waitFor(() => expect(native.closeRequested).toBeTruthy());
-    const editor = win.document.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-    editor.focus();
+    const editor = maybeEditorIn(win.document)!;
+    editor.element.focus();
     startEditing("block-1", 0);
     native.closeRequested!({ payload: "ws-main-1" });
     native.closeRequested!({ payload: "ws-main-1" }); // a repeated request is ignored
@@ -220,7 +221,7 @@ describe("workspace window lifecycle (P4)", () => {
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(workspaceWindowCount()).toBe(1);
     expect(editingId()).toBe("block-1");
-    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    editor.reportInput({ bubbles: true }, "plain");
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(workspaceWindowCount()).toBe(1);
     await vi.waitFor(() => expect(workspaceWindowCount()).toBe(0));

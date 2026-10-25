@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "./tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
@@ -64,11 +65,11 @@ async function openTine(bottom: boolean) {
   await vi.waitFor(() => expect(host.querySelector(`[data-block-id="${id}"]`), "the block is rendered").not.toBeNull(), { timeout: 5000 });
   startEditing(id, 0);
   const textarea = await vi.waitFor(() => {
-    const ta = host.querySelector<HTMLTextAreaElement>("textarea.block-editor");
+    const ta = maybeEditorIn(host);
     expect(ta).not.toBeNull();
     return ta!;
   });
-  textarea.focus();
+  textarea.element.focus();
   const toolbar = await vi.waitFor(() => {
     const found = host.querySelector<HTMLElement>("[data-mobile-keyboard-toolbar]:not([hidden])");
     expect(found, "the editing toolbar is up").not.toBeNull();
@@ -108,9 +109,9 @@ describe("navigation buttons in the editing toolbar (GH #598)", { timeout: 30_00
     const submit = vi.spyOn(backend(), "pageSubmit");
     const { host, dispose, textarea, toolbar, id } = await openTine(true);
     try {
-      textarea.value = "typed on the phone";
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      textarea.replaceText("typed on the phone");
+      textarea.select(textarea.value().length, textarea.value().length);
+      textarea.reportInput({ bubbles: true }, "plain");
       const back = toolbar.querySelector<HTMLButtonElement>('.mobile-keyboard-toolbar-nav button[title="Go back"]')!;
       expect(back.disabled).toBe(false);
       expect(route()).toMatchObject({ kind: "page", name: "Tine" });
@@ -131,8 +132,8 @@ describe("navigation buttons in the editing toolbar (GH #598)", { timeout: 30_00
     const submit = vi.spyOn(backend(), "pageSubmit");
     const { host, dispose, textarea, toolbar } = await openTine(true);
     try {
-      textarea.value = "search me";
-      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      textarea.replaceText("search me");
+      textarea.reportInput({ bubbles: true }, "plain");
       const search = toolbar.querySelector<HTMLButtonElement>(".mobile-keyboard-toolbar-nav [data-search-trigger]")!;
       search.dispatchEvent(pointer("pointerdown"));
       search.dispatchEvent(pointer("pointerup"));

@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
@@ -85,11 +86,11 @@ async function editAndMoveUp(root: HTMLElement, selector: string, id: string) {
   document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
   await vi.waitFor(() => expect(editingId()).toBe(id));
   const editor = await vi.waitFor(() => {
-    const el = root.querySelector<HTMLTextAreaElement>(`${selector} textarea.block-editor`);
+    const el = maybeEditorIn(root.querySelector<HTMLElement>(`${selector}`)!);
     expect(el).not.toBeNull();
     return el!;
   });
-  editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+  editor.keydown(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
 }
 
 describe("move notice for moves the view cannot show (GH #641)", () => {

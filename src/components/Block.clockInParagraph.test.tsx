@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -51,14 +52,14 @@ function mountPage(raw: string, editing: boolean, format: "md" | "org" = "md", n
     () => (<For each={pageByName(name)?.roots ?? []}>{(id): JSX.Element => <Block id={id} />}</For>),
     root,
   );
-  return { root, dispose, blockId: block.id, textarea: root.querySelector("textarea.block-editor") as HTMLTextAreaElement | null };
+  return { root, dispose, blockId: block.id, textarea: maybeEditorIn(root) as EditorDriver | null };
 }
 
-function typeChar(ta: HTMLTextAreaElement, ch: string) {
-  const caret = ta.selectionStart;
-  ta.value = ta.value.slice(0, caret) + ch + ta.value.slice(ta.selectionEnd);
-  ta.setSelectionRange(caret + ch.length, caret + ch.length);
-  ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ch }));
+function typeChar(ta: EditorDriver, ch: string) {
+  const caret = ta.selection()[0];
+  ta.replaceText(ta.value().slice(0, caret) + ch + ta.value().slice(ta.selection()[1]));
+  ta.select(caret + ch.length, caret + ch.length);
+  ta.reportInput({ bubbles: true, inputType: "insertText", data: ch });
 }
 
 const CLOCK = "CLOCK: [2026-10-21 Wed 08:54:45]";
@@ -72,14 +73,14 @@ it('review r2 refused Org edit survives switching blocks', () => {
   try {
     setToasts([]);
     const typed = 'plain\n:PROPERTIES:\n:COLLAPSED: true\n:END:\nmy newly typed text';
-    textarea!.value=typed;
-    textarea!.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertFromPaste'}));
-    textarea!.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));
+    textarea!.replaceText(typed);
+    textarea!.reportInput({bubbles:true,inputType:'insertFromPaste'});
+    textarea!.reportInput({bubbles:true,inputType:'insertText'});
     const next = root.querySelector(`[data-block-id="next-${seq}"] .block-content-wrapper`)!;
     next.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0,cancelable:true}));
     document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0}));
     startEditing(blockId,0);
-    expect(root.querySelector<HTMLTextAreaElement>('textarea.block-editor')?.value).toContain('my newly typed text');
+    expect(maybeEditorIn(root)?.value()).toContain('my newly typed text');
     expect(errors).toEqual([]);
     expect(toasts()).toEqual([]);
     expect(logbookInfo(doc.byId[blockId].raw, 'org').rows).toHaveLength(1);
@@ -99,8 +100,8 @@ it.each(['md', 'org'] as const)('review r2 refused genuine join keeps the buffer
   try {
     setToasts([]);
     const typed = 'my newly typed text';
-    textarea!.value = typed;
-    textarea!.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }));
+    textarea!.replaceText(typed);
+    textarea!.reportInput({ bubbles: true, inputType: 'insertFromPaste' });
     expect(doc.byId[blockId].raw).toBe(raw);
     expect(toasts()).toHaveLength(1);
     expect(toasts()[0]).toMatchObject({ kind: 'error', sticky: true, copyText: typed });
@@ -111,28 +112,28 @@ it.each(['md', 'org'] as const)('review r2 refused genuine join keeps the buffer
     endEdit('blur');
     startEditing(blockId, 0);
     expect(editingId()).toBe(blockId);
-    expect(textarea!.isConnected).toBe(true);
-    expect(textarea!.value).toBe(typed);
+    expect(textarea!.element.isConnected).toBe(true);
+    expect(textarea!.value()).toBe(typed);
     expect(doc.byId[blockId].raw).toBe(raw);
     // Correcting the buffer releases the edit hold; ordinary navigation works.
     join.mockRestore();
-    textarea!.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
+    textarea!.reportInput({ bubbles: true, inputType: 'insertText' });
     expect(doc.byId[blockId].raw).toContain(typed);
     expect(logbookInfo(doc.byId[blockId].raw, format).rows).toHaveLength(1);
     startEditing(`next-${seq}`, 0);
-    expect(root.querySelector<HTMLTextAreaElement>('textarea.block-editor')?.value).toBe('next');
+    expect(maybeEditorIn(root)?.value()).toBe('next');
     startEditing(blockId, 0);
-    expect(root.querySelector<HTMLTextAreaElement>('textarea.block-editor')?.value).toBe(typed);
+    expect(maybeEditorIn(root)?.value()).toBe(typed);
     // Dismissing an error then closing the surface still retains its last
     // refused buffer through the ordinary error toast's Copy recovery.
     const refusedAgain = vi.spyOn(properties, 'joinProps').mockImplementation(() => {
       throw new Error('metadata ownership would change');
     });
     try {
-      const reopened = root.querySelector<HTMLTextAreaElement>('textarea.block-editor')!;
+      const reopened = maybeEditorIn(root)!;
       const finalText = typed + ' before closing';
-      reopened.value = finalText;
-      reopened.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }));
+      reopened.replaceText(finalText);
+      reopened.reportInput({ bubbles: true, inputType: 'insertFromPaste' });
       for (const toast of toasts()) dismissToast(toast.id);
       dispose();
       disposed = true;
@@ -143,8 +144,8 @@ it.each(['md', 'org'] as const)('review r2 refused genuine join keeps the buffer
       // Identical errors in another editor must retain both recovery copies.
       const other = mountPage(raw, true, format);
       try {
-        other.textarea!.value = 'another refused draft';
-        other.textarea!.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }));
+        other.textarea!.replaceText('another refused draft');
+        other.textarea!.reportInput({ bubbles: true, inputType: 'insertFromPaste' });
       } finally { other.dispose(); }
       expect(toasts().map(toast => toast.copyText)).toEqual([finalText, 'another refused draft']);
     } finally { refusedAgain.mockRestore(); }
@@ -159,11 +160,11 @@ it.each(['md', 'org'] as const)('review r2 refused genuine join keeps the buffer
 it.each(['md','org'] as const)('review manual drawer typing preserves subsequent text (%s)', format => {
   const { textarea, blockId, dispose } = mountPage('plain', true, format);
   try {
-    textarea!.setSelectionRange(5,5);
+    textarea!.select(5, 5);
     const typed = `\n:LOGBOOK:\n${CLOCK}\n:END: suffix`;
     for (const ch of typed) typeChar(textarea!,ch);
     expect(doc.byId[blockId].raw).toBe('plain'+typed);
-    expect(textarea!.value).toBe('plain'+typed);
+    expect(textarea!.value()).toBe('plain'+typed);
   } finally {dispose();}
 });
 
@@ -171,23 +172,23 @@ it.each(['md', 'org'] as const)('manual drawer prefixes and Escape retain the au
   const { root, textarea, blockId, dispose } = mountPage('plain', true, format);
   const typed = `plain\n:LOGBOOK:\n${CLOCK}\n:END: suffix`;
   try {
-    textarea!.setSelectionRange(5, 5);
+    textarea!.select(5, 5);
     let prefix = 'plain';
     for (const ch of typed.slice(5)) {
       if (ch === '\n') {
-        textarea!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true }));
+        textarea!.keydown(new KeyboardEvent("keydown", { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true }));
         await new Promise<void>(resolve => queueMicrotask(resolve));
       } else typeChar(textarea!, ch);
       prefix += ch;
       // The textarea pairs the timestamp bracket until its closer is typed.
       const buffer = prefix.includes('[') && !prefix.includes(']') ? prefix + ']' : prefix;
-      expect(textarea!.value).toBe(buffer);
+      expect(textarea!.value()).toBe(buffer);
       expect(doc.byId[blockId].raw).toBe(buffer);
       // Save trims convenience spaces; soft newlines still reach the host.
       expect(pageToDto(doc.byId[blockId].page)!.blocks[0].raw).toBe(buffer.endsWith(' ') ? buffer.slice(0, -1) : buffer);
     }
-    textarea!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-    expect(root.querySelector('textarea.block-editor')).toBeNull();
+    textarea!.keydown(new KeyboardEvent("keydown", { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(maybeEditorIn(root)).toBeNull();
     expect(pageToDto(doc.byId[blockId].page)!.blocks[0].raw).toBe(typed);
   } finally { dispose(); }
 });
@@ -196,9 +197,9 @@ it.each(["md", "org"] as const)("Backspace preserves a titleless logbook-only fi
   const raw = `:LOGBOOK:\n${CLOCK}\n:END:`;
   const { textarea, blockId, dispose } = mountPage(raw, true, format, true);
   try {
-    expect(textarea!.value).toBe("");
+    expect(textarea!.value()).toBe("");
     expect(trailingVisibleEmptyLeaf({roots: [blockId]})).toBeNull();
-    textarea!.dispatchEvent(new KeyboardEvent("keydown", {key: "Backspace", bubbles: true, cancelable: true}));
+    textarea!.keydown(new KeyboardEvent("keydown", {key: "Backspace", bubbles: true, cancelable: true}));
     expect(doc.byId[blockId]?.raw).toBe(raw);
   } finally { dispose(); }
 });
@@ -289,9 +290,9 @@ describe("typing DOING keeps the caret on the task line (GH #741)", () => {
       for (const ch of "DOING test") typeChar(textarea!, ch);
       const raw = doc.byId[blockId].raw;
       expect(raw).toMatch(/^DOING test\n:LOGBOOK:\nCLOCK: \[\d{4}-\d\d-\d\d \w{3} \d\d:\d\d:\d\d\]\n:END:$/);
-      expect(textarea!.value).toBe("DOING test");
-      expect(textarea!.selectionStart).toBe("DOING test".length);
-      expect(textarea!.selectionEnd).toBe("DOING test".length);
+      expect(textarea!.value()).toBe("DOING test");
+      expect(textarea!.selection()[0]).toBe("DOING test".length);
+      expect(textarea!.selection()[1]).toBe("DOING test".length);
     } finally {
       dispose();
     }
@@ -302,7 +303,7 @@ describe("typing DOING keeps the caret on the task line (GH #741)", () => {
     try {
       for (const ch of "DOING test") typeChar(textarea!, ch);
       expect(doc.byId[blockId].raw).toMatch(/^DOING test\n:LOGBOOK:\nCLOCK: \[[^\]]+\]\n:END:$/);
-      expect(textarea!.selectionStart).toBe("DOING test".length);
+      expect(textarea!.selection()[0]).toBe("DOING test".length);
     } finally {
       dispose();
     }
@@ -311,10 +312,10 @@ describe("typing DOING keeps the caret on the task line (GH #741)", () => {
   it("a caret inside the title survives the clock-in of a longer task", () => {
     const { textarea, blockId, dispose } = mountPage("TODO task", true);
     try {
-      textarea!.setSelectionRange(0, 4);
+      textarea!.select(0, 4);
       for (const ch of "DOING") typeChar(textarea!, ch); // select "TODO", type over it
       expect(doc.byId[blockId].raw).toMatch(/^DOING task\n:LOGBOOK:\nCLOCK: \[[^\]]+\]\n:END:$/);
-      expect(textarea!.selectionStart).toBe(5);
+      expect(textarea!.selection()[0]).toBe(5);
       typeChar(textarea!, "!");
       expect(doc.byId[blockId].raw).toMatch(/^DOING! task\n:LOGBOOK:/);
     } finally {
@@ -328,17 +329,17 @@ describe("typing DOING keeps the caret on the task line (GH #741)", () => {
 // textarea must take the store's text, or the next keystroke commits the
 // pre-transition text and drops the clock change (review R1 of GH #741).
 describe("a command marker change keeps its clock change when you keep typing (GH #741)", () => {
-  const ctrlEnter = (ta: HTMLTextAreaElement) =>
-    ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+  const ctrlEnter = (ta: EditorDriver) =>
+    ta.keydown(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
   const flush = () => new Promise<void>((r) => queueMicrotask(r));
 
   it("DOING to DONE clocks out and stays clocked out", async () => {
     const { textarea, blockId, dispose } = mountPage(`DOING taskA\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:00:00]\n:END:`, true);
     try {
-      textarea!.setSelectionRange(11, 11);
+      textarea!.select(11, 11);
       ctrlEnter(textarea!);
       await flush();
-      expect(textarea!.value).toBe("DONE taskA");
+      expect(textarea!.value()).toBe("DONE taskA");
       typeChar(textarea!, "x");
       expect(doc.byId[blockId].raw).toMatch(/^DONE taskAx\n:LOGBOOK:\nCLOCK: \[2026-10-21 Wed 08:00:00\]--\[[^\]]+\] =>\s+\d\d:\d\d:\d\d\n:END:$/);
     } finally {
@@ -350,7 +351,7 @@ describe("a command marker change keeps its clock change when you keep typing (G
     const closed = "CLOCK: [2026-10-20 Tue 08:00:00]--[2026-10-20 Tue 09:00:00] =>  01:00:00";
     const { textarea, blockId, dispose } = mountPage(`TODO taskB\n:LOGBOOK:\n${closed}\n:END:`, true);
     try {
-      textarea!.setSelectionRange(10, 10);
+      textarea!.select(10, 10);
       ctrlEnter(textarea!);
       await flush();
       expect(doc.byId[blockId].raw.match(/CLOCK:/g)).toHaveLength(2);

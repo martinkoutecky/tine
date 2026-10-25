@@ -1,3 +1,4 @@
+import { maybeEditorIn, focusedEditor } from "../tests/editorDriver";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
@@ -61,11 +62,11 @@ describe("Enter after a collapsed embed host (GH #642)", () => {
       });
       mouseDownAndUp(content);
       const editor = await vi.waitFor(() => {
-        const element = root.querySelector<HTMLTextAreaElement>('.embed-block textarea.block-editor');
+        const element = maybeEditorIn(root.querySelector<HTMLElement>('.embed-block')!);
         expect(element).not.toBeNull(); return element!;
       });
-      editor.setSelectionRange(editor.value.length, editor.value.length);
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      editor.select(editor.value().length, editor.value().length);
+      editor.keydown(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
       const roots = pageByName("HostPage")!.roots;
       expect(roots).toHaveLength(3);
       const newId = roots[roots.indexOf("host") + 1];
@@ -94,9 +95,9 @@ describe("Enter after a collapsed embed host (GH #642)", () => {
     document.body.appendChild(root);
     const dispose = render(() => <For each={pageByName("HostPage")!.roots}>{id => <Block id={id} />}</For>, root);
     try {
-      const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      editor.setSelectionRange(editor.value.length, editor.value.length);
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      const editor = maybeEditorIn(root)!;
+      editor.select(editor.value().length, editor.value().length);
+      editor.keydown(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
       const roots = pageByName("HostPage")!.roots;
       expect(roots).toHaveLength(terminal ? 2 : 3);
       expect(doc.byId[roots[1]].raw).toBe("");
@@ -110,8 +111,8 @@ describe("Enter after a collapsed embed host (GH #642)", () => {
   it("Enter genuinely inside the embedded source keeps editing the source", async () => {
     await withHostPage(async root => {
       const editor = await editInsideEmbed(root);
-      editor.setSelectionRange(editor.value.length, editor.value.length);
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      editor.select(editor.value().length, editor.value().length);
+      editor.keydown(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
       expect(pageByName("HostPage")!.roots).toEqual(["host", "target"]);
       expect(doc.byId.target.children).toHaveLength(3);
     });
@@ -132,11 +133,11 @@ describe("Enter after a collapsed embed host (GH #642)", () => {
       });
       mouseDownAndUp(content);
       const editor = await vi.waitFor(() => {
-        const element = root.querySelector<HTMLTextAreaElement>('.embed-block textarea.block-editor');
+        const element = maybeEditorIn(root.querySelector<HTMLElement>('.embed-block')!);
         expect(element).not.toBeNull(); return element!;
       });
-      editor.setSelectionRange(editor.value.length, editor.value.length);
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      editor.select(editor.value().length, editor.value().length);
+      editor.keydown(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
       expect(pageByName("HostPage")!.roots).toEqual(["host"]);
       expect(pageByName("SourcePage")!.roots).toHaveLength(2);
       expect(doc.byId.source.children).toEqual(["child"]);
@@ -207,13 +208,11 @@ async function editInsideEmbed(root: HTMLElement) {
   });
   mouseDownAndUp(content);
   const editor = await vi.waitFor(() => {
-    const element = root.querySelector<HTMLTextAreaElement>(
-      `.embed-block [data-block-id="kid-two"] textarea.block-editor`,
-    );
+    const element = maybeEditorIn(root.querySelector<HTMLElement>(`.embed-block [data-block-id="kid-two"]`)!);
     expect(element).not.toBeNull();
     return element!;
   });
-  editor.setSelectionRange(0, 0);
+  editor.select(0, 0);
   return editor;
 }
 
@@ -221,8 +220,8 @@ async function editInsideEmbed(root: HTMLElement) {
 async function expectCaretStayedInTheEmbed() {
   await vi.waitFor(() => {
     const active = document.activeElement;
-    expect(active).toBeInstanceOf(HTMLTextAreaElement);
-    expect((active as HTMLTextAreaElement).value).toBe("child two");
+    expect(focusedEditor()).not.toBeNull();
+    expect(focusedEditor()!.value()).toBe("child two");
     expect(active!.closest(".embed-block")).not.toBeNull();
   });
 }
@@ -245,13 +244,13 @@ describe("a structural edit inside a block embed keeps the caret there (GH #477)
   it("keeps Tab (indent) in the embed", async () => {
     await withHostPage(async (root) => {
       const editor = await editInsideEmbed(root);
-      editor.setSelectionRange(2, 7, "backward");
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+      editor.select(2, 7, "backward");
+      editor.keydown(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
       await vi.waitFor(() => expect(doc.byId["kid-two"]?.parent).toBe("kid-one"));
       expect(editingId()).toBe("kid-two");
       await expectCaretStayedInTheEmbed();
-      const active = document.activeElement as HTMLTextAreaElement;
-      expect([active.selectionStart, active.selectionEnd, active.selectionDirection]).toEqual([2, 7, "backward"]);
+      const active = focusedEditor()!;
+      expect([active.selection()[0], active.selection()[1], active.direction()]).toEqual([2, 7, "backward"]);
     });
   });
 
@@ -260,33 +259,27 @@ describe("a structural edit inside a block embed keeps the caret there (GH #477)
       const editor = await editInsideEmbed(root);
       // Indent first: `kid-two` starts as a direct child of the embed root, and
       // outdenting a direct child out of the embed root is refused by design.
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+      editor.keydown(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
       await vi.waitFor(() => expect(doc.byId["kid-two"]?.parent).toBe("kid-one"));
       const nested = await vi.waitFor(() => {
-        const element = root.querySelector<HTMLTextAreaElement>(
-          `.embed-block [data-block-id="kid-two"] textarea.block-editor`,
-        );
+        const element = maybeEditorIn(root.querySelector<HTMLElement>(`.embed-block [data-block-id="kid-two"]`)!);
         expect(element).not.toBeNull();
         return element!;
       });
-      nested.setSelectionRange(2, 7, "forward");
-      nested.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }),
-      );
+      nested.select(2, 7, "forward");
+      nested.keydown(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
       await vi.waitFor(() => expect(doc.byId["kid-two"]?.parent).toBe("target"));
       expect(editingId()).toBe("kid-two");
       await expectCaretStayedInTheEmbed();
-      const active = document.activeElement as HTMLTextAreaElement;
-      expect([active.selectionStart, active.selectionEnd, active.selectionDirection]).toEqual([2, 7, "forward"]);
+      const active = focusedEditor()!;
+      expect([active.selection()[0], active.selection()[1], active.direction()]).toEqual([2, 7, "forward"]);
     });
   });
 
   it("keeps Alt+Shift+Up (move block up) in the embed", async () => {
     await withHostPage(async (root) => {
       const editor = await editInsideEmbed(root);
-      editor.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true, shiftKey: true, bubbles: true, cancelable: true }),
-      );
+      editor.keydown(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
       await vi.waitFor(() => expect(doc.byId["target"]?.children).toEqual(["kid-two", "kid-one"]));
       expect(editingId()).toBe("kid-two");
       await expectCaretStayedInTheEmbed();

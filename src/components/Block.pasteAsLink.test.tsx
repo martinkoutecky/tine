@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 // GH #448 "Paste as link", through a mounted block editor (the command reads the
 // clipboard itself and edits the focused block). Separate from
 // blockKeyboardCommands.test.tsx because a bound page host reloads the fixture
@@ -32,9 +33,9 @@ function mountBlock(raw: string, start: number, end: number) {
   const root = document.createElement("div");
   document.body.append(root);
   const dispose = render(() => <For each={pageByName("P")?.roots ?? []}>{(id) => <Block id={id} />}</For>, root);
-  const area = root.querySelector("textarea") as HTMLTextAreaElement;
-  area.focus();
-  area.setSelectionRange(start, end);
+  const area = maybeEditorIn(root) as EditorDriver;
+  area.element.focus();
+  area.select(start, end);
   return { area, dispose };
 }
 const clipboardHolds = (text: string) =>
@@ -47,7 +48,7 @@ describe("paste as link in the block editor (GH #448)", () => {
       clipboardHolds(ref);
       pasteAsLink();
       await vi.waitFor(() => expect(doc.byId[A].raw).toBe(`see [context](${ref}) here\nid:: ${A}`));
-      expect(area.value).toBe(`see [context](${ref}) here`);
+      expect(area.value()).toBe(`see [context](${ref}) here`);
     } finally {
       dispose();
     }
@@ -58,7 +59,7 @@ describe("paste as link in the block editor (GH #448)", () => {
     try {
       clipboardHolds("https://example.org/a");
       pasteAsLink();
-      await vi.waitFor(() => expect(area.value).toBe("see [context](https://example.org/a) here"));
+      await vi.waitFor(() => expect(area.value()).toBe("see [context](https://example.org/a) here"));
     } finally {
       dispose();
     }
@@ -75,7 +76,7 @@ describe("paste as link in the block editor (GH #448)", () => {
       clipboardHolds("plain words");
       pasteAsLink();
       await vi.waitFor(() => expect(toasts().some((t) => t.message.includes("doesn't hold a link"))).toBe(true));
-      expect(area.value).toBe("see context here");
+      expect(area.value()).toBe("see context here");
       expect(doc.byId[A].raw).toBe(`see context here\nid:: ${A}`);
     } finally {
       dispose();

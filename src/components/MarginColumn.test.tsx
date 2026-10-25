@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 // Margin dialogue, slice 2 (vision §3.7 "Layout"): on a wide main pane, a page
 // that holds comments draws them in a right-hand column instead of the outline,
 // with a count marker on the commented block; the threads are ordinary Blocks,
@@ -74,9 +75,9 @@ const outline = (pane: HTMLElement) => pane.querySelector(".page-blocks") as HTM
 const column = (pane: HTMLElement) => pane.querySelector(".margin-column") as HTMLElement | null;
 const thread = (pane: HTMLElement, id: string) => pane.querySelector(`.margin-thread[data-thread-id="${id}"]`) as HTMLElement | null;
 const blockEl = (root: ParentNode, id: string) => root.querySelector(`.ls-block[data-block-id="${id}"]`) as HTMLElement | null;
-const editor = (root: ParentNode) => root.querySelector("textarea.block-editor") as HTMLTextAreaElement | null;
-const key = (ta: HTMLTextAreaElement, k: string) =>
-  ta.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+const editor = (root: ParentNode) => maybeEditorIn(root) as EditorDriver | null;
+const key = (ta: EditorDriver, k: string) =>
+  ta.keydown(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
 
 const commented = () => [
   block("p", "Gradient descent converges here because the step size shrinks.", [
@@ -277,8 +278,8 @@ describe("editing in the margin", () => {
       startEditing("c2", "Which step size?".length);
       await Promise.resolve();
       const ta = editor(thread(pane, "c2")!)!;
-      expect(ta.value.startsWith("Which step size?")).toBe(true);
-      ta.setSelectionRange("Which step size?".length, "Which step size?".length);
+      expect(ta.value().startsWith("Which step size?")).toBe(true);
+      ta.select("Which step size?".length, "Which step size?".length);
       key(ta, "Enter");
       const reply = docNode("c2")!.children[0];
       expect(reply).toBeDefined();
@@ -286,7 +287,7 @@ describe("editing in the margin", () => {
       expect(docNode("c2")!.raw).toBe("Which step size?\nquote:: the step size");
       expect(editingId()).toBe(reply);
       await Promise.resolve();
-      expect(editor(thread(pane, "c2")!)!.closest<HTMLElement>(".ls-block")!.dataset.blockId).toBe(reply);
+      expect(editor(thread(pane, "c2")!)!.element.closest<HTMLElement>(".ls-block")!.dataset.blockId).toBe(reply);
     } finally {
       dispose();
     }
@@ -303,7 +304,7 @@ describe("editing in the margin", () => {
       await Promise.resolve();
       const ta = editor(thread(pane, "c1")!)!;
       // The reply's own property line is the last line: put the caret there.
-      ta.setSelectionRange(ta.value.length, ta.value.length);
+      ta.select(ta.value().length, ta.value().length);
       key(ta, "ArrowDown");
       expect(editingId()).toBe("kid");
     } finally {
@@ -317,7 +318,7 @@ describe("editing in the margin", () => {
       startEditing("kid", "an ordinary child".length);
       await Promise.resolve();
       const ta = editor(outline(pane))!;
-      ta.setSelectionRange(ta.value.length, ta.value.length);
+      ta.select(ta.value().length, ta.value().length);
       key(ta, "ArrowDown");
       expect(editingId()).toBe("after");
       await Promise.resolve();
@@ -363,9 +364,9 @@ describe("measurement cost", () => {
       flushFrames();
       const ta = editor(outline(pane))!;
       const before = marginMeasurePasses();
-      ta.value = "x" + ta.value;
-      ta.setSelectionRange(1, 1);
-      ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "x" }));
+      ta.replaceText("x" + ta.value());
+      ta.select(1, 1);
+      ta.reportInput({ bubbles: true, inputType: "insertText", data: "x" });
       expect(docNode("b7")!.raw).toBe("xblock text 7 here");
       // The typed line rewrapped: the browser reports the outline resized.
       resized(outline(pane));
@@ -379,9 +380,9 @@ describe("measurement cost", () => {
       flushFrames();
       const parent = editor(outline(pane))!;
       const again = marginMeasurePasses();
-      parent.value = "y" + parent.value;
-      parent.setSelectionRange(1, 1);
-      parent.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "y" }));
+      parent.replaceText("y" + parent.value());
+      parent.select(1, 1);
+      parent.reportInput({ bubbles: true, inputType: "insertText", data: "y" });
       resized(outline(pane));
       flushFrames();
       expect(marginMeasurePasses() - again).toBe(1);

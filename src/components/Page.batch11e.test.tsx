@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
@@ -70,17 +71,17 @@ describe("batch 11e page identity and journal continuity", () => {
       const id = second.blocks[0].id;
       await vi.waitFor(() => expect(mounted.root.querySelector(`[data-block-id="${id}"]`)).not.toBeNull());
       startEditing(id, 2);
-      await vi.waitFor(() => expect(mounted.root.querySelector<HTMLTextAreaElement>(`[data-block-id="${id}"] textarea`)).not.toBeNull());
-      const editor = mounted.root.querySelector<HTMLTextAreaElement>(`[data-block-id="${id}"] textarea`)!;
-      editor.focus();
-      editor.setSelectionRange(2, 5, "forward");
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", code: "ArrowUp", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+      await vi.waitFor(() => expect(maybeEditorIn(mounted.root.querySelector<HTMLElement>(`[data-block-id="${id}"]`)!)).not.toBeNull());
+      const editor = maybeEditorIn(mounted.root.querySelector<HTMLElement>(`[data-block-id="${id}"]`)!)!;
+      editor.element.focus();
+      editor.select(2, 5, "forward");
+      editor.keydown(new KeyboardEvent("keydown", { key: "ArrowUp", code: "ArrowUp", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
       await vi.waitFor(() => expect(doc.byId[id].page).toBe(today));
       await vi.waitFor(() => {
-        const moved = mounted.root.querySelector<HTMLTextAreaElement>(`[data-block-id="${id}"] textarea`)!;
-        expect(moved.value).toBe("Move me");
-        expect(document.activeElement).toBe(moved);
-        expect([moved.selectionStart, moved.selectionEnd, moved.selectionDirection]).toEqual([2, 5, "forward"]);
+        const moved = maybeEditorIn(mounted.root.querySelector<HTMLElement>(`[data-block-id="${id}"]`)!)!;
+        expect(moved.value()).toBe("Move me");
+        expect(document.activeElement).toBe(moved?.element);
+        expect([moved.selection()[0], moved.selection()[1], moved.direction()]).toEqual([2, 5, "forward"]);
       });
     } finally { mounted.dispose(); uninstallKeys(); vi.unstubAllGlobals(); }
   });
