@@ -52,6 +52,15 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   };
   const navSurface = () => props.surface.startsWith("ref:") || props.surface.startsWith("embed:") ? props.surface : null;
   const editSurface = () => props.surface.startsWith("embed:") ? props.surface : null;
+  const structuralEnter = (v: EditorView) => {
+    if (!current() || v.compositionStarted) return false;
+    const s = v.state.selection.main;
+    if (!s.empty) v.dispatch({ changes: { from: s.from, to: s.to } });
+    commit(v.state.doc.toString());
+    const zoom = props.scope?.forceExpandedRoot === props.id;
+    splitBlock(props.id, s.from, zoom, zoom, editSurface());
+    return true;
+  };
   const buildDecorations = (state: EditorState): DecorationSet => {
     const ranges = previewSpans(state.doc.toString(), format).map(span => {
       // Reveal at either boundary and whenever any selection intersects source.
@@ -90,15 +99,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         EditorView.contentAttributes.of({ "data-cm6-editor": props.id, "aria-label": "" }),
         Prec.highest(keymap.of([
           { key: "Mod-Shift-z", run: redo },
-          { key: "Enter", run: v => {
-            if (!current() || v.compositionStarted) return false;
-            const s = v.state.selection.main;
-            if (!s.empty) v.dispatch({ changes: { from: s.from, to: s.to } });
-            commit(v.state.doc.toString());
-            const zoom = props.scope?.forceExpandedRoot === props.id;
-            splitBlock(props.id, s.from, zoom, zoom, editSurface());
-            return true;
-          } },
+          { key: "Enter", run: structuralEnter },
           { key: "Backspace", run: v => !v.compositionStarted && current() && v.state.selection.main.empty
             && v.state.selection.main.head === 0 && mergeWithPrev(props.id, props.scope?.navOnly ? null : props.scope, editSurface()) },
           { key: "ArrowUp", run: vertical(false) },
@@ -135,6 +136,17 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       // Leave the native IME default action intact, but keep application and
       // CM keymaps out of both modern and legacy-229 composition key events.
       if (event.isComposing || event.keyCode === 229 || view.compositionStarted) {
+        event.stopImmediatePropagation();
+        return;
+      }
+      // CM6 6.43.15 skips keymaps for 100ms after compositionend on
+      // desktop WebKit. IBus Hangul has already committed and forwards a
+      // normal Enter here, so own the split before CM's suppression can
+      // leave WebKit's native line break in the block. Consumed IME/229
+      // keys stay above this boundary; modified Enter keeps its keymap.
+      if (!event.defaultPrevented && event.key === "Enter" && !event.shiftKey
+        && !event.ctrlKey && !event.metaKey && !event.altKey && structuralEnter(view)) {
+        event.preventDefault();
         event.stopImmediatePropagation();
         return;
       }

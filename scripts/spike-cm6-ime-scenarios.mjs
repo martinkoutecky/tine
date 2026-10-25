@@ -62,8 +62,10 @@ for (const mode of (process.env.SPIKE_IME_MODES || "textarea,cm6").split(",")) {
         connectionRetryTimeout: 30000, capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: app } } });
       await ensureMainWindow(browser, { what: "real IME scenarios" });
       await browser.$(".page-title").waitForExist({ timeout: 60000 });
+      await browser.$(".main-content .ls-block .block-content-wrapper").waitForExist({ timeout: 60000 });
       await browser.execute(mode => { sessionStorage.setItem("tine-spike-cm6", mode === "cm6" ? "1" : "0"); location.reload(); }, mode);
       await browser.$(".page-title").waitForExist({ timeout: 60000 });
+      await browser.$(".main-content .ls-block .block-content-wrapper").waitForExist({ timeout: 60000 });
       await sleep(500);
       journey.runtime = await browser.execute(() => ({ userAgent: navigator.userAgent, platform: navigator.platform,
         choice: sessionStorage.getItem("tine-spike-cm6"), url: location.href }));
@@ -78,7 +80,7 @@ for (const mode of (process.env.SPIKE_IME_MODES || "textarea,cm6").split(",")) {
           const text = v ? v.state.doc.toString() : e?.value ?? null;
           const anchor = v ? v.state.selection.main.anchor : e?.selectionStart ?? null;
           const head = v ? v.state.selection.main.head : e?.selectionEnd ?? null;
-          return { text, anchor, head, focus: document.activeElement?.matches("textarea.block-editor, .cm-content") ?? false,
+          return { text, anchor, head, dom: v?.contentDOM.innerHTML ?? null, focus: document.activeElement?.matches("textarea.block-editor, .cm-content") ?? false,
             blockId: (host || e)?.closest(".ls-block")?.dataset.blockId, composing: v?.compositionStarted ?? null };
         };
         for (const type of ["compositionstart", "compositionupdate", "compositionend", "beforeinput", "input", "keydown", "keyup"]) {
@@ -193,8 +195,13 @@ for (const mode of (process.env.SPIKE_IME_MODES || "textarea,cm6").split(",")) {
         // report the last observed native commit caret without inventing one.
         check("escape:editor-disposition", true, { editorOpen: false, focus: after.focus,
           lastCommit: after.events.filter(e => e.type === "compositionend").at(-1)?.after });
+      } else if (scenario === "enter") {
+        // IBus Hangul commits first, then forwards an ordinary Enter. The
+        // textarea is the reference: that same Enter must split immediately.
+        stable("after", after, "", 0);
+        check("after:new-block", !!after.blockId && after.blockId !== before.blockId, { before: before.blockId, after: after.blockId });
       } else stable("after", after, expected, at + insert.length);
-      await saved("after", disk(expected));
+      await saved("after", scenario === "enter" ? `- ${expected}\n-\n- Neighbour stays intact\n` : disk(expected));
       if (scenario.startsWith("page-autocomplete")) {
         let completion = after;
         if (cancel && !after.candidates.includes("한글")) {
@@ -234,8 +241,8 @@ for (const mode of (process.env.SPIKE_IME_MODES || "textarea,cm6").split(",")) {
         await key("Return");
         const second = await snapshot("second-enter");
         stable("second-enter", second, "", 0);
-        check("second-enter:new-block", !!second.blockId && second.blockId !== before.blockId, { before: before.blockId, after: second.blockId });
-        await saved("second-enter", `- ${expected}\n-\n- Neighbour stays intact\n`);
+        check("second-enter:new-block", !!second.blockId && second.blockId !== after.blockId, { before: after.blockId, after: second.blockId });
+        await saved("second-enter", `- ${expected}\n-\n-\n- Neighbour stays intact\n`);
       }
       if (scenario === "block-start" || scenario === "wrapped-line") {
         check("caret-visible", visible(before) && visible(preedit) && visible(after), { before: before.caret, preedit: preedit.caret, after: after.caret });
