@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearRenderStalls, createStallBuffer, installRenderStallMonitor, renderStallSnapshot, safeScriptSource } from "./renderStalls";
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); clearRenderStalls(); document.body.replaceChildren(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); clearRenderStalls(); document.body.replaceChildren(); });
 
 describe("renderer stall diagnostics", () => {
   it("retains a bounded worst-stall ring and never stores normal frames", () => {
@@ -19,7 +19,7 @@ describe("renderer stall diagnostics", () => {
     expect(safeScriptSource("https://example.com/private.js")).toBeUndefined();
     expect(safeScriptSource("file:///home/person/graph.js")).toBeUndefined();
   });
-  it("samples typing across editor surfaces, stops when idle and discards background gaps", () => {
+  it("measures key -> frame with one frame request per burst, never a per-frame loop", () => {
     let next: FrameRequestCallback | undefined;
     const request = vi.fn((callback: FrameRequestCallback) => { next = callback; return 1; });
     vi.stubGlobal("requestAnimationFrame", request);
@@ -31,11 +31,11 @@ describe("renderer stall diagnostics", () => {
     const editor = document.createElement("textarea");
     document.body.append(editor);
     editor.dispatchEvent(new Event("keydown", { bubbles: true }));
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(request).toHaveBeenCalledTimes(1); // a burst shares one frame request
     next!(250);
-    expect(renderStallSnapshot().stalls.some(stall => stall.kind === "frame" && stall.duration === 150)).toBe(true);
-    const count = request.mock.calls.length;
-    next!(2200);
-    expect(request).toHaveBeenCalledTimes(count); // idle: no successor
+    expect(renderStallSnapshot().stalls.some(stall => stall.kind === "key-frame" && stall.duration === 150)).toBe(true);
+    expect(request).toHaveBeenCalledTimes(1); // the frame callback requests no successor
     clearRenderStalls();
     editor.dispatchEvent(new Event("input", { bubbles: true }));
     document.dispatchEvent(new Event("visibilitychange"));
@@ -54,10 +54,10 @@ describe("renderer stall diagnostics", () => {
       observe(options: PerformanceObserverInit) { observed.push(options); }
       disconnect() { live--; }
     }
-    let next: FrameRequestCallback | undefined;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     vi.stubGlobal("PerformanceObserver", Observer);
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { next = callback; return 1; });
-    vi.stubGlobal("cancelAnimationFrame", () => { next = undefined; });
+    vi.stubGlobal("requestAnimationFrame", () => 1);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
     vi.spyOn(document, "hidden", "get").mockReturnValue(false);
     vi.spyOn(performance, "now").mockReturnValue(100);
     const stop = installRenderStallMonitor();
@@ -68,9 +68,13 @@ describe("renderer stall diagnostics", () => {
     editor.dispatchEvent(new Event("keydown", { bubbles: true }));
     expect(live).toBe(2);
     expect(observed.every(options => (options as { buffered?: boolean }).buffered)).toBe(true);
-    next!(150);
-    next!(2200); // two seconds without input
-    expect(live).toBe(0);
+    vi.mocked(performance.now).mockReturnValue(1500);
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(1999);
+    expect(live).toBe(2); // the later key extends the window
+    vi.mocked(performance.now).mockReturnValue(3500);
+    vi.advanceTimersByTime(1500);
+    expect(live).toBe(0); // two seconds without input
     editor.dispatchEvent(new Event("input", { bubbles: true }));
     expect(live).toBe(2);
     stop();

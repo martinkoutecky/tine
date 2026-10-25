@@ -65,7 +65,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- **Scrolling and opening large pages are fast again on Windows and Android** (development only, internal card hDSCuw): the typing-stall diagnostics added for GH #746 slowed every large-page scroll by about a frame even when nobody was typing. They now run only while you type.
+- **Opening and scrolling a large page right after typing is fast again** (development only, internal card hDSCuw): the typing-stall diagnostics added for GH #746 ran work on every frame for two seconds after each key, which made a page opened from search or the page switcher, and its first scroll, about a frame slower. They now do no per-frame work.
 
 - Quick Capture keeps refused text on Escape, so reopening the box files it into the current graph; a claim retired before insertion no longer reports previous-graph uncertainty (GH #254). Deleting a conflicted page now refuses an unanswered input drain after five seconds and restores editable text.
 - Reference and embed rows validate their source page before becoming editable, so a copied block identity cannot expose another page's live block or selection (follow-up to GH #748).
