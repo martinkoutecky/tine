@@ -12,6 +12,7 @@ export XDG_RUNTIME_DIR="$SPIKE_IME_OUT/runtime"
 chmod 700 "$XDG_RUNTIME_DIR"
 export LD_LIBRARY_PATH="$IMROOT/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 # SPIKE_XDOTOOL_DIR: a directory holding xdotool when it is not on PATH (default: none).
+# SPIKE_OPENBOX: the openbox binary used when SPIKE_IME_WM=1 (default: openbox on PATH).
 export PATH="$IMROOT/usr/bin${SPIKE_XDOTOOL_DIR:+:$SPIKE_XDOTOOL_DIR}:$PATH"
 export IBUS_COMPONENT_PATH="$SPIKE_IME_OUT/components"
 sed "s|/usr/libexec/|$IMROOT/usr/libexec/|g" "$IMROOT/usr/share/ibus/component/hangul.xml" > "$IBUS_COMPONENT_PATH/hangul.xml"
@@ -54,7 +55,7 @@ if [ "${SPIKE_IME_GTK_PROBE:-0}" = 1 ]; then
   exit
 fi
 if [ "${SPIKE_IME_WM:-0}" = 1 ]; then
-  /aux/koutecky/logseq/.toolchain/openbox-root/usr/bin/openbox > "$SPIKE_IME_OUT/openbox.log" 2>&1 &
+  "${SPIKE_OPENBOX:-openbox}" > "$SPIKE_IME_OUT/openbox.log" 2>&1 &
   wm_pid=$!
   trap 'kill "$wm_pid" "$hangul_pid" "$ibus_pid" 2>/dev/null || true' EXIT
   sleep 1
