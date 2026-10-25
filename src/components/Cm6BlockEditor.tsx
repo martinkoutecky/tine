@@ -87,6 +87,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       parent: host,
       state: EditorState.create({ doc: visible(), extensions: [
         history(), decorations, EditorView.lineWrapping,
+        EditorView.editorAttributes.of({ "data-block-editor": "cm6" }),
         EditorView.contentAttributes.of({ "data-cm6-editor": props.id, "aria-label": "" }),
         Prec.highest(keymap.of([
           { key: "Mod-Shift-z", run: redo },
