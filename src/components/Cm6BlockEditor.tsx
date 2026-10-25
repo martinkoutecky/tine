@@ -62,13 +62,21 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     return true;
   };
   const buildDecorations = (state: EditorState): DecorationSet => {
-    const ranges = previewSpans(state.doc.toString(), format).map(span => {
+    const ranges = previewSpans(state.doc.toString(), format).flatMap(span => {
       // Reveal at either boundary and whenever any selection intersects source.
       const reveal = state.selection.ranges.some(r => r.from <= span.to && r.to >= span.from);
-      const deco = (span.kind === "task" || span.kind === "page") && !reveal
-        ? Decoration.replace({ widget: new Chip(span.label!, span.from) })
-        : Decoration.mark({ class: `cm6-${span.kind}` });
-      return deco.range(span.from, span.to);
+      const mark = Decoration.mark({ class: `cm6-${span.kind}` });
+      if (reveal || span.kind === "task") return [mark.range(span.from, span.to)];
+      if (span.kind === "page") {
+        // Hide only the brackets: the name stays real text, so a click lands where it was made.
+        const src = state.doc.sliceString(span.from, span.to);
+        if (src.startsWith("[[") && src.endsWith("]]") && span.to - span.from > 4) {
+          const hidden = Decoration.replace({});
+          return [hidden.range(span.from, span.from + 2), mark.range(span.from + 2, span.to - 2), hidden.range(span.to - 2, span.to)];
+        }
+        return [Decoration.replace({ widget: new Chip(span.label!, span.from) }).range(span.from, span.to)];
+      }
+      return [mark.range(span.from, span.to)];
     });
     return Decoration.set(ranges, true);
   };
