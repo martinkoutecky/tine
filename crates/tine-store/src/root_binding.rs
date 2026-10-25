@@ -89,88 +89,87 @@ struct Identity {
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
 fn identity(path: &Path) -> io::Result<Identity> {
-    let mut identity = stat_identity(path)?;
-    identity.stable_ino = stable_inode_numbers(path);
+    let mut identity = Identity::stat(path)?;
+    identity.stable_ino = Identity::stable_inode_numbers(path);
     Ok(identity)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
 fn current(path: &Path) -> io::Result<Identity> {
-    stat_identity(path)
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
-fn stat_identity(path: &Path) -> io::Result<Identity> {
-    use std::os::unix::fs::MetadataExt;
-    // One metadata call per probe, without retaining a volume-pinning
-    // descriptor. On Linux std uses statx (btime included) and falls back to
-    // stat where a kernel or seccomp profile refuses statx.
-    let metadata = fs::metadata(path)?;
-    if !metadata.is_dir() {
-        return Err(moved());
-    }
-    Ok(Identity {
-        dev: metadata.dev(),
-        ino: metadata.ino(),
-        birth: compared_birth(&metadata),
-        stable_ino: true,
-    })
-}
-
-#[cfg(target_os = "linux")]
-fn compared_birth(metadata: &fs::Metadata) -> Option<std::time::SystemTime> {
-    metadata.created().ok()
-}
-
-// APFS/HFS+ move st_birthtime back when utimes sets an earlier mtime (cp -p,
-// rsync -t onto the folder), and neither reuses inode numbers, so Apple
-// compares device and inode only.
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-fn compared_birth(_: &fs::Metadata) -> Option<std::time::SystemTime> {
-    None
-}
-
-/// SMB/CIFS mounted noserverino (by the user, or by the kernel itself when the
-/// server's numbers are unusable) and FUSE filesystems without use_ino hand out
-/// a fresh inode number once the root's in-core inode is evicted, which nothing
-/// pins in poll mode. There only the device and birth time are compared. A
-/// failed statfs also counts as unstable: a weaker check, never a false refusal.
-#[cfg(target_os = "linux")]
-fn stable_inode_numbers(path: &Path) -> bool {
-    use std::os::unix::ffi::OsStrExt;
-    const UNSTABLE_INODE_FS: [u32; 4] = [0xFF53_4D42, 0xFE53_4D42, 0x517B, 0x6573_5546];
-    let Ok(name) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
-        return false;
-    };
-    let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
-    if unsafe { libc::statfs(name.as_ptr(), stat.as_mut_ptr()) } != 0 {
-        return false;
-    }
-    // f_type is c_long on most targets; the magic numbers are 32-bit.
-    let kind = unsafe { stat.assume_init() }.f_type as u32;
-    !UNSTABLE_INODE_FS.contains(&kind)
-}
-
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-fn stable_inode_numbers(path: &Path) -> bool {
-    use std::os::unix::ffi::OsStrExt;
-    let Ok(name) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
-        return false;
-    };
-    let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
-    if unsafe { libc::statfs(name.as_ptr(), stat.as_mut_ptr()) } != 0 {
-        return false;
-    }
-    let stat = unsafe { stat.assume_init() };
-    let kind = unsafe { std::ffi::CStr::from_ptr(stat.f_fstypename.as_ptr()) }.to_bytes();
-    !(matches!(kind, b"smbfs" | b"afpfs" | b"webdav")
-        || kind.starts_with(b"macfuse")
-        || kind.starts_with(b"osxfuse")
-        || kind.starts_with(b"fuse"))
+    Identity::stat(path)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
 impl Identity {
+    fn stat(path: &Path) -> io::Result<Identity> {
+        use std::os::unix::fs::MetadataExt;
+        // One metadata call per probe, without retaining a volume-pinning
+        // descriptor. On Linux std uses statx (btime included) and falls back to
+        // stat where a kernel or seccomp profile refuses statx.
+        let metadata = fs::metadata(path)?;
+        if !metadata.is_dir() {
+            return Err(moved());
+        }
+        Ok(Identity {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            birth: Self::compared_birth(&metadata),
+            stable_ino: true,
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn compared_birth(metadata: &fs::Metadata) -> Option<std::time::SystemTime> {
+        metadata.created().ok()
+    }
+
+    // APFS/HFS+ move st_birthtime back when utimes sets an earlier mtime (cp -p,
+    // rsync -t onto the folder), and neither reuses inode numbers, so Apple
+    // compares device and inode only.
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    fn compared_birth(_: &fs::Metadata) -> Option<std::time::SystemTime> {
+        None
+    }
+
+    /// SMB/CIFS mounted noserverino (by the user, or by the kernel itself when the
+    /// server's numbers are unusable) and FUSE filesystems without use_ino hand out
+    /// a fresh inode number once the root's in-core inode is evicted, which nothing
+    /// pins in poll mode. There only the device and birth time are compared. A
+    /// failed statfs also counts as unstable: a weaker check, never a false refusal.
+    #[cfg(target_os = "linux")]
+    fn stable_inode_numbers(path: &Path) -> bool {
+        use std::os::unix::ffi::OsStrExt;
+        const UNSTABLE_INODE_FS: [u32; 4] = [0xFF53_4D42, 0xFE53_4D42, 0x517B, 0x6573_5546];
+        let Ok(name) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+            return false;
+        };
+        let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        if unsafe { libc::statfs(name.as_ptr(), stat.as_mut_ptr()) } != 0 {
+            return false;
+        }
+        // f_type is c_long on most targets; the magic numbers are 32-bit.
+        let kind = unsafe { stat.assume_init() }.f_type as u32;
+        !UNSTABLE_INODE_FS.contains(&kind)
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    fn stable_inode_numbers(path: &Path) -> bool {
+        use std::os::unix::ffi::OsStrExt;
+        let Ok(name) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+            return false;
+        };
+        let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        if unsafe { libc::statfs(name.as_ptr(), stat.as_mut_ptr()) } != 0 {
+            return false;
+        }
+        let stat = unsafe { stat.assume_init() };
+        let kind = unsafe { std::ffi::CStr::from_ptr(stat.f_fstypename.as_ptr()) }.to_bytes();
+        !(matches!(kind, b"smbfs" | b"afpfs" | b"webdav")
+            || kind.starts_with(b"macfuse")
+            || kind.starts_with(b"osxfuse")
+            || kind.starts_with(b"fuse"))
+    }
+
     fn matches(&self, actual: &Self) -> bool {
         self.dev == actual.dev
             && (!self.stable_ino || self.ino == actual.ino)
@@ -353,7 +352,7 @@ mod tests {
     #[test]
     fn l9_local_tempdir_has_stable_inode_numbers() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(stable_inode_numbers(dir.path()));
+        assert!(Identity::stable_inode_numbers(dir.path()));
     }
 
     #[test]
