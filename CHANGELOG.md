@@ -69,7 +69,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Sidebar disclosure arrows now use the shared SVG triangle, including nested Favorites, Tabs and namespaces; graph and workspace switchers inherit the app font (GH #761).
 - Cmd+, on macOS and Ctrl+, elsewhere open Settings, including while editing a block; the existing `t s` shortcut remains available and both defaults appear in Keyboard shortcuts (GH #762).
-
 - Linux: input methods can show composing text inside the editor. Verified with IBus Hangul; this may fix Fcitx5 input not appearing (GH #575), but Fcitx5/Hyprland remains unverified.
 - A brand-new page with no file yet now shows an editable first bullet when opened in the right sidebar, so you can type or drag blocks into it without first editing it in the main pane (GH #524).
 - Clicking a hidden `{{cloze}}` reveals the answer in place again (and hides it on a second click), instead of opening the block editor (GH #763).
