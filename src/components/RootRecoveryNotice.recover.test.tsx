@@ -24,9 +24,10 @@ afterEach(() => {
   setToasts([]); document.body.innerHTML=""; vi.restoreAllMocks();
 });
 
-it("rebinds the relaunched host and clears the adopted offer without flushing the stopped session",async () => {
+it.each([false,true])("rebinds the relaunched host and distinguishes an unwitnessed move (%s)",async uncertain => {
+  host.bind.mockClear(); host.thaw.mockClear();
   const api=backend(), recover=api.recoverOrphanDrafts, discover=api.orphanDrafts;
-  api.recoverOrphanDrafts=vi.fn(async () => ({error:null,reloaded:null}));
+  api.recoverOrphanDrafts=vi.fn(async () => ({error:uncertain ? "draft-recovery-moved-durability-unwitnessed: sync failed" : null,reloaded:uncertain ? {session:2,nextId:1} : null}));
   api.orphanDrafts=vi.fn(async () => []);
   setGraphMeta({root:"/new/notes"} as GraphMeta);
   setRootRecoveryOffers([{id:"old-0123456789abcdef",old_root:"/old/notes"}]);
@@ -38,7 +39,10 @@ it("rebinds the relaunched host and clears the adopted offer without flushing th
     expect(host.bind).toHaveBeenCalledOnce();
     expect(host.bind).toHaveBeenCalledWith({refreshLoaded:true});
     expect(root.textContent).toBe("");
-    expect(toasts().filter(toast => toast.kind === "error")).toEqual([]);
+    if (uncertain) {
+      expect(toasts().some(toast => toast.message.includes("moved into this graph") && toast.message.includes("durability"))).toBe(true);
+      expect(toasts().some(toast => toast.message.includes("Could not recover"))).toBe(false);
+    } else expect(toasts().filter(toast => toast.kind === "error")).toEqual([]);
     expect(host.thaw).toHaveBeenCalledOnce();
   } finally { dispose(); api.recoverOrphanDrafts=recover; api.orphanDrafts=discover; }
 });

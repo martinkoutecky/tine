@@ -120,6 +120,9 @@ fn refused(outcome: TxOutcome) -> (Why, tine_store::Rollback) {
 #[test]
 fn l9_all_transaction_entry_paths_refuse_a_detached_graph() {
     for replaced in [false, true] {
+        if replaced && cfg!(target_os = "android") {
+            continue; // Approved vanish-only fallback pending FUSE device proof.
+        }
         for operation in ["create", "replace", "move", "trash", "asset", "config"] {
             let f = Fixture::with_watch(
                 WatchMode::Poll,

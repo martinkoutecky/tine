@@ -1220,7 +1220,12 @@ mod rename_guide_tests {
             "Recover into this graph",
             "Not now",
             "notice returns on the next open",
-            "earlier location",
+            "moved or unavailable",
+            "disconnected drive",
+            "only backups of a graph",
+            "does not prevent ejecting its drive",
+            "recovery refuses",
+            "then try again",
             "safety snapshot of the current graph",
             "archives are kept unchanged",
         ] {

@@ -589,26 +589,6 @@ fn load_graph_with_relocation(
     if let Some(result) = routed {
         return Ok(result);
     }
-    if let Some(old) = relocated_from {
-        #[cfg(target_os = "ios")]
-        if crate::root_identity::is_container_rebase(Path::new(&old), &root_key) {
-            if let Ok(data) = app.path().app_data_dir() {
-                crate::root_identity::relocate_namespaces(&data, Path::new(&old), &root_key);
-            }
-        } else {
-            crate::debug::diag("graph-relocation-invalid-container-rebase");
-        }
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "windows",
-            target_os = "android"
-        ))]
-        {
-            let _ = old;
-            crate::debug::diag("graph-relocation-ignored-on-this-platform");
-        }
-    }
     // This window's own graph, when it overlaps the new root, retires first
     // (F6). A graph that overlaps this root and is still saving its pages
     // closes first; the window hears that it waits (`graph-open-waiting`).
@@ -644,6 +624,37 @@ fn load_graph_with_relocation(
             (slot, meta, lease.map(Owner::Adopted))
         }
         None => {
+            // Only a fresh open may move namespaces, after the retirement
+            // wait and before owner claim/host attachment. A live local host
+            // of either namespace makes relocation skip without blocking open.
+            if let Some(old) = relocated_from {
+                #[cfg(target_os = "ios")]
+                if crate::root_identity::is_container_rebase(Path::new(&old), &root_key) {
+                    if let Ok(data) = app.path().app_data_dir() {
+                        let relocation = crate::root_identity::relocate_if_idle(
+                            &data,
+                            Path::new(&old),
+                            &root_key,
+                            &state.graphs.read().unwrap(),
+                        );
+                        if let Err(error) = relocation {
+                            crate::debug::diag_private("graph-relocation-owner-held", error);
+                        }
+                    }
+                } else {
+                    crate::debug::diag("graph-relocation-invalid-container-rebase");
+                }
+                #[cfg(any(
+                    target_os = "linux",
+                    target_os = "macos",
+                    target_os = "windows",
+                    target_os = "android"
+                ))]
+                {
+                    let _ = old;
+                    crate::debug::diag("graph-relocation-ignored-on-this-platform");
+                }
+            }
             let root = root_key.display().to_string();
             let approved_assets = approved_external_assets(app, &root_key);
             let LoadedGraph { store, meta } = match app.state::<StartupGraph>().take(&root_key) {

@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(not(target_os = "android"))]
 #[test]
 fn l9_replaced_root_refuses_creating_save_and_keeps_input() {
     let mut f = Fixture::new();
@@ -52,13 +53,14 @@ fn l9_root_binding_cost_is_metadata_only_and_independent_of_page_size() {
         let checks = crate::root_binding::CHECKS.with(|count| count.get());
         let writes = crate::atomic_file::TEMP_WRITES.with(|counts| counts.get());
         assert_eq!(writes, (1, body.len() as u64));
-        assert_eq!(checks, 7);
+        assert_eq!(checks, 6);
         eprintln!("L9 I-25 blocks={blocks}: root identity checks={checks}, payload writes={writes:?}; added files=0 bytes=0 transport=0");
         measured.push(checks);
     }
     assert_eq!(measured[0], measured[1]);
 }
 
+#[cfg(not(target_os = "android"))]
 #[test]
 fn l9_replaced_root_refuses_every_host_graph_io_boundary() {
     for phase in [

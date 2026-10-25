@@ -24,13 +24,13 @@ mutations = "fs::remove_dir=2"
 
 [[site]]
 file = "src-tauri/src/root_identity.rs"
-fn = "rename_empty_target"
+fn = "rename_empty_target_with_sync"
 domain = "app"
 guard = ""
 test = "src-tauri/src/root_identity.rs#relocation_never_merges_nonempty_namespaces"
 oracle = false
-note = "App-data rename under iOS graph-load exclusion or both desktop owner locks plus stopped current host. Parent sync uses the private-directory recipe."
-mutations = "device_io::move_file_noreplace=1, device_io::sync_private_directory=1, fs::remove_dir=1"
+note = "App-data rename excludes bound/retiring namespaces under graph_load and the registry; recovery also holds desktop owner locks and the saved-stop barrier. The production wrapper supplies private-directory sync; a failed sync is distinguished from a failed move."
+mutations = "device_io::move_file_noreplace=1, fs::remove_dir=1"
 
 [[site]]
 file = "src-tauri/src/backup/old_locations.rs"
@@ -59,17 +59,17 @@ domain = "primitive"
 guard = ""
 test = "crates/tine-store/src/page_host/production_guard_tests.rs#l9_replaced_root_refuses_creating_save_and_keeps_input"
 oracle = false
-note = "Read-only directory identity capture on Unix and Windows. The syntactic census counts OpenOptions constructors even without write/create; no filesystem mutation or persisted identity is introduced."
-mutations = "OpenOptions::new=2"
+note = "Read-only stat identity on Linux/macOS/iOS, vanish-only metadata on Android, and a short identity open/query on Windows. No held directory descriptor. The census counts Windows OpenOptions without write/create; no mutation or persisted identity."
+mutations = "OpenOptions::new=1"
 
 [[site]]
 file = "crates/tine-store/src/page_host/production.rs"
 fn = "ProductionIo::page_sync"
 domain = "graph"
-guard = "crates/tine-store/src/page_host/production_guard.rs#ProductionIo::check_path"
+guard = "crates/tine-store/src/page_host/production.rs#ProductionIo::graph_sync"
 test = "crates/tine-store/src/page_host/production_guard_tests.rs#l8_01_actual_io_rechecks_after_admission_and_after_temp"
 oracle = true
-note = "Host PageSync phase delegates directory sync to graph_sync, which rechecks containment; root identity and weak durability remain assumptions."
+note = "Host PageSync delegates directory sync to graph_sync, which checks containment and root identity once at the actual sync boundary; the redundant page-path check is removed. Weak durability and final check-to-OS-call identity remain assumptions."
 mutations = ".graph_sync=1"
 
 

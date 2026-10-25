@@ -3,6 +3,9 @@ use super::*;
 #[test]
 fn l9_input_typed_after_root_moves_reaches_durable_custody() {
     for replaced in [false, true] {
+        if replaced && cfg!(target_os = "android") {
+            continue; // Approved vanish-only fallback on shared-storage FUSE.
+        }
         let live = Live::new(&[("pages/a.md", "- before\n")]);
         let (key, page) = live.open("pages/a.md");
         let dto = live.dto(&key, "- typed after move\n");

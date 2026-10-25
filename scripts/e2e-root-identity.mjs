@@ -13,7 +13,7 @@ import { waitForFileText } from "./e2e-file-poll.mjs";
 import { APP_ID } from "./lib/app-identity.mjs";
 
 const root = path.resolve(import.meta.dirname,"..");
-const artifacts = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(root,"artifacts/og-root-identity-r2/native"));
+const artifacts = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(root,"artifacts/og-root-identity-r3/native"));
 fs.mkdirSync(artifacts,{ recursive:true });
 const run = fs.mkdtempSync(path.join(artifacts,"run-"));
 const old = path.join(run,"old/notes"), moved = path.join(run,"new/notes");
@@ -139,6 +139,8 @@ try {
   await launch(moved);
   await browser.$('[data-testid="root-recovery-notice"]').waitForExist({timeout:20000});
   assert((await browser.$('[data-testid="root-recovery-notice"]').getText()).includes(old),"notice did not name the old location");
+  const recoveryNotice = await browser.$('[data-testid="root-recovery-notice"]').getText();
+  assert(recoveryNotice.includes("moved or unavailable") && recoveryNotice.includes("disconnected drive"),"recovery notice did not explain disconnected storage");
   await clickNotice("Not now");
   await browser.$('[data-testid="root-recovery-notice"]').waitForExist({reverse:true,timeout:5000});
   assert(draftsHold("before move kept after move"),"Not now discarded the draft");
@@ -159,6 +161,7 @@ try {
   // visible label, and the old snapshot row by its domain path.
   await browser.execute(()=>[...document.querySelectorAll("button")].find(b=>b.textContent?.trim()==="Backups & recovery")?.click());
   await browser.waitUntil(()=>browser.execute(old=>[...document.querySelectorAll(".settings-backup-row")].some(row=>row.textContent.includes(old)),old),{timeout:15000});
+  assert(await browser.execute(old=>[...document.querySelectorAll(".settings-backup-row")].some(row=>row.textContent.includes(old) && row.textContent.includes("moved or unavailable") && row.textContent.includes("disconnected drive")),old),"backup row did not explain disconnected storage");
   screenshot("backups-old-location.png");
   const restoreOld=()=>browser.execute(old=>{
     const row=[...document.querySelectorAll(".settings-backup-row")].find(row=>row.textContent.includes(old));

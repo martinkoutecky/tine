@@ -564,6 +564,7 @@ mod destination_tests {
     use super::*;
     use std::fs;
 
+    #[cfg(not(target_os = "android"))]
     #[test]
     fn l9_restore_refuses_a_replaced_root_before_reserving_recovery() {
         let data = tempfile::tempdir().unwrap();

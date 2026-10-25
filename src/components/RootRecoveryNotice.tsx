@@ -46,6 +46,7 @@ export function RootRecoveryNotice() {
         else if (token === "draft-recovery-owner-held") pushToast(msg("root-recovery-owner-held"),"error");
         else if (token === "draft-recovery-no-longer-available") pushToast(msg("root-recovery-unavailable"),"error");
         else if (token === "draft-recovery-lock-unavailable") pushToast(msg("root-recovery-lock-unavailable"),"error");
+        else if (token.startsWith("draft-recovery-moved-durability-unwitnessed:")) pushToast(msg("root-recovery-moved-durability-unwitnessed"),"error",{sticky:true});
         else pushToast(msg("root-recovery-failed",{ error:String(error) }),"error");
       }
     } finally {

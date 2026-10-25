@@ -19,6 +19,8 @@ it("offers explicit recovery and Not now, and asks again on the next open",async
   try {
     await refreshRootRecovery();
     expect(root.textContent).toContain("Unsaved edits from /old/notes");
+    expect(root.textContent).toContain("moved or unavailable");
+    expect(root.textContent).toContain("disconnected drive");
     expect([...root.querySelectorAll("button")].map(b=>b.textContent)).toEqual(["Recover into this graph","Not now"]);
     root.querySelectorAll("button")[1].click();
     expect(root.textContent).toBe("");

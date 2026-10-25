@@ -38,16 +38,15 @@ impl ProductionIo {
     }
 
     pub(super) fn check_path(&self, path: &Path) -> IoResult<()> {
-        // A production host uses the Store's open-time witness, including a
-        // replacement between Store::open and host attachment. Isolated native
-        // adapters bind at attach.
-        let store = self.store.upgrade();
-        let binding = store
-            .as_ref()
-            .map(|store| &*store.graph.root_binding)
-            .unwrap_or(&self.root_binding);
-        crate::model::checked_write_target(&self.graph, path, "graph root", Some(binding))
-            .map_err(failure)
+        // Shared with the Store, so attachment captures no redundant identity
+        // and cannot accept a replacement since Store::open.
+        crate::model::checked_write_target(
+            &self.graph,
+            path,
+            "graph root",
+            Some(&self.root_binding),
+        )
+        .map_err(failure)
     }
 
     pub(super) fn creating_owner(

@@ -100,19 +100,34 @@ fn remove_skeleton(dir: &Path) -> io::Result<()> {
     fs::remove_dir(dir)
 }
 
-fn rename_empty_target(old: &Path, new: &Path, drafts: bool) -> io::Result<()> {
+#[derive(Debug)]
+enum NamespaceMove {
+    Skipped,
+    Moved { durability_error: Option<io::Error> },
+}
+
+fn rename_empty_target(old: &Path, new: &Path, drafts: bool) -> io::Result<NamespaceMove> {
+    rename_empty_target_with_sync(old, new, drafts, crate::device_io::sync_private_directory)
+}
+
+fn rename_empty_target_with_sync(
+    old: &Path,
+    new: &Path,
+    drafts: bool,
+    sync: impl FnOnce(&Path) -> io::Result<()>,
+) -> io::Result<NamespaceMove> {
     if !old.try_exists()? {
-        return Ok(());
+        return Ok(NamespaceMove::Skipped);
     }
     if new.try_exists()? {
         if drafts {
             if !census_empty(new)? {
-                return Ok(());
+                return Ok(NamespaceMove::Skipped);
             }
             remove_skeleton(new)?;
         } else {
             if fs::read_dir(new)?.next().transpose()?.is_some() {
-                return Ok(());
+                return Ok(NamespaceMove::Skipped);
             }
             fs::remove_dir(new)?;
         }
@@ -120,7 +135,9 @@ fn rename_empty_target(old: &Path, new: &Path, drafts: bool) -> io::Result<()> {
     // Existing audited move: no replacement, with WRITE_THROUGH on Windows,
     // where private-directory sync has no OS flush primitive.
     crate::device_io::move_file_noreplace(old, new)?;
-    crate::device_io::sync_private_directory(new.parent().expect("namespace parent"))
+    Ok(NamespaceMove::Moved {
+        durability_error: sync(new.parent().expect("namespace parent")).err(),
+    })
 }
 
 /// Each independent rename can be retried after a partial failure. No vehicle,
@@ -165,8 +182,14 @@ pub(crate) fn relocate_namespaces(data: &Path, old: &Path, new: &Path) {
         ));
     }
     for (old, new, drafts) in steps {
-        if let Err(e) = rename_empty_target(&old, &new, drafts) {
-            crate::debug::diag_private("graph-relocation-step-failed", e.to_string());
+        match rename_empty_target(&old, &new, drafts) {
+            Err(e)
+            | Ok(NamespaceMove::Moved {
+                durability_error: Some(e),
+            }) => {
+                crate::debug::diag_private("graph-relocation-step-failed", e.to_string());
+            }
+            _ => {}
         }
     }
     let checkpoint = data.join("launch-checkpoints").join(format!("{a}.bin"));
@@ -201,6 +224,23 @@ pub(crate) fn relocate_namespaces(data: &Path, old: &Path, new: &Path) {
     {
         crate::debug::diag_private("graph-relocation-step-failed", e);
     }
+}
+
+pub(crate) fn relocate_if_idle(
+    data: &Path,
+    old: &Path,
+    new: &Path,
+    registry: &crate::state::GraphRegistry,
+) -> Result<(), String> {
+    if registry.draft_namespace_held(
+        &crate::settings::host_graph_id(old),
+        &crate::settings::host_graph_id(new),
+        None,
+    ) {
+        return Err("draft-recovery-owner-held".into());
+    }
+    relocate_namespaces(data, old, new);
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
@@ -281,7 +321,7 @@ pub(crate) fn orphan_owner_lock(id: &str) -> Result<Option<crate::owner::lock::O
     #[cfg(any(target_os = "ios", target_os = "android"))]
     {
         Ok(None)
-    } // one process per app; per-app sandboxed drafts
+    } // Cross-process sandbox exclusion; the registry also excludes local hosts.
 }
 
 pub(crate) fn adopt_namespace(data: &Path, id: &str, root: &Path) -> Result<(), String> {
@@ -298,7 +338,39 @@ pub(crate) fn adopt_namespace(data: &Path, id: &str, root: &Path) -> Result<(), 
     if !census_empty(&new).map_err(|e| e.to_string())? {
         return Err("draft-recovery-current-unsaved".into());
     }
-    rename_empty_target(&old, &new, true).map_err(|e| e.to_string())
+    adoption_result(rename_empty_target(&old, &new, true))
+}
+
+fn adoption_result(result: io::Result<NamespaceMove>) -> Result<(), String> {
+    match result.map_err(|e| e.to_string())? {
+        NamespaceMove::Skipped => Err("draft-recovery-no-longer-available".into()),
+        NamespaceMove::Moved {
+            durability_error: None,
+        } => Ok(()),
+        NamespaceMove::Moved {
+            durability_error: Some(error),
+        } => Err(format!(
+            "draft-recovery-moved-durability-unwitnessed: {error}"
+        )),
+    }
+}
+
+// Shared recovery boundary; the caller holds graph_load and the target's
+// saved-stop barrier. The preflight must also exclude in-process hosts.
+pub(crate) fn recover_namespace(
+    data: &Path,
+    id: &str,
+    target: &std::sync::Arc<crate::state::GraphSlot>,
+    registry: &crate::state::GraphRegistry,
+) -> Result<(), String> {
+    if registry.draft_namespace_held(
+        id,
+        &crate::settings::host_graph_id(&target.root_key),
+        Some(target),
+    ) {
+        return Err("draft-recovery-owner-held".into());
+    }
+    adopt_namespace(data, id, &target.root_key)
 }
 
 #[tauri::command]
@@ -358,7 +430,7 @@ pub(crate) async fn recover_orphan_drafts(
             return Err("draft-recovery-no-longer-available".into());
         }
         crate::backup::restore_hosted(&slot.host, consumed_last_id, || {
-            adopt_namespace(&data, &id, &slot.root_key)
+            recover_namespace(&data, &id, &slot, &state.graphs.read().unwrap())
         })
     })
     .await
@@ -368,6 +440,27 @@ pub(crate) async fn recover_orphan_drafts(
 mod tests {
     use super::*;
     use std::fs;
+    #[test]
+    fn moved_namespace_with_failed_sync_reports_unwitnessed_durability() {
+        let data = tempfile::tempdir().unwrap();
+        let old = data.path().join("old");
+        let new = data.path().join("new");
+        fs::create_dir(&old).unwrap();
+        fs::write(old.join("vehicle"), b"kept input").unwrap();
+        let result = rename_empty_target_with_sync(&old, &new, true, |_| {
+            Err(io::Error::other("sync fault"))
+        });
+        assert_eq!(
+            adoption_result(result).unwrap_err(),
+            "draft-recovery-moved-durability-unwitnessed: sync fault"
+        );
+        assert!(!old.exists());
+        assert_eq!(fs::read(new.join("vehicle")).unwrap(), b"kept input");
+        assert_eq!(
+            adoption_result(Ok(NamespaceMove::Skipped)).unwrap_err(),
+            "draft-recovery-no-longer-available"
+        );
+    }
     fn roots() -> (PathBuf, PathBuf) {
         (PathBuf::from("/private/var/mobile/Containers/Data/Application/11111111-1111-1111-1111-111111111111/Documents/g"),
          PathBuf::from("/private/var/mobile/Containers/Data/Application/22222222-2222-2222-2222-222222222222/Documents/g"))

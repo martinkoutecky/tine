@@ -19,7 +19,7 @@ pub(super) struct ProductionIo {
     pub(super) store: std::sync::Weak<crate::Store>,
     creation_rules: BTreeMap<String, guard::Creation>,
     graph: PathBuf,
-    root_binding: crate::root_binding::RootBinding,
+    root_binding: std::sync::Arc<crate::root_binding::RootBinding>,
     drafts: PathBuf,
     trash: PathBuf,
     page_temps: BTreeMap<String, PreparedWrite>,
@@ -88,14 +88,31 @@ impl ProductionIo {
     /// Graph/page keys and graph ID are already resolved by the store boundary.
     /// Never fails (B-Q1): a drafts directory that cannot be created or
     /// listed leaves draft I/O down, the census unknown (M1).
+    #[cfg(test)]
     pub(super) fn attach(graph: &Path, app_data: &Path, graph_id: &str, trash: &Path) -> Self {
+        Self::attach_bound(
+            graph,
+            app_data,
+            graph_id,
+            trash,
+            std::sync::Arc::new(crate::root_binding::RootBinding::new(graph)),
+        )
+    }
+
+    pub(super) fn attach_bound(
+        graph: &Path,
+        app_data: &Path,
+        graph_id: &str,
+        trash: &Path,
+        root_binding: std::sync::Arc<crate::root_binding::RootBinding>,
+    ) -> Self {
         let drafts = app_data.join("drafts-v2").join(graph_id);
         let listing = list(&drafts);
         let mut io = Self {
             store: Default::default(),
             creation_rules: BTreeMap::new(),
             graph: graph.to_path_buf(),
-            root_binding: crate::root_binding::RootBinding::new(graph),
+            root_binding,
             drafts,
             trash: trash.to_path_buf(),
             page_temps: BTreeMap::new(),
@@ -621,7 +638,8 @@ impl HostIo for ProductionIo {
 
     fn page_sync(&mut self, page: &str) -> IoResult<Witness> {
         let path = self.page_path(page);
-        self.check_path(&path)?;
+        // Sync acts on the parent, not the page. graph_sync checks that
+        // directory and the root witness once at the actual sync boundary.
         let result = self.graph_sync(super::io::Phase::PageSync, path.parent().unwrap());
         if result.is_ok() {
             self.creation_rules.remove(page);

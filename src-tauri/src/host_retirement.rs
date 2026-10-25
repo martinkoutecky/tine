@@ -233,6 +233,15 @@ impl HostRetirement {
         self.0.retiring.lock().unwrap().is_empty()
     }
 
+    /// A retiring host retains its entire draft namespace, even while a
+    /// failed draft delays its stop. Called under the registry lock.
+    pub(crate) fn draft_namespace_held(&self, source: &str, target: &str) -> bool {
+        self.0.retiring.lock().unwrap().keys().any(|root| {
+            let id = crate::settings::host_graph_id(root);
+            id == source || id == target
+        })
+    }
+
     /// Wait up to `bound` for every retiring host to stop; the roots still
     /// retiring otherwise.
     pub(crate) fn wait_idle(&self, bound: Duration) -> Result<(), Vec<PathBuf>> {
@@ -274,6 +283,87 @@ mod tests {
     use tine_store::{EditKind, Input, PageHost, PageId, PageMail, Store};
 
     #[test]
+    fn l9_retiring_source_refuses_draft_recovery() {
+        let f = Fixture::new("draft-recovery-retiring");
+        let current = Fixture::new("draft-recovery-target");
+        let registry = GraphRegistry::default();
+        let source = Arc::new(GraphSlot::new(f.store.clone(), f.root.clone()));
+        let target = Arc::new(GraphSlot::new(current.store.clone(), current.root.clone()));
+        registry
+            .retirement
+            .0
+            .retiring
+            .lock()
+            .unwrap()
+            .insert(f.root.clone(), source);
+        let id = crate::settings::host_graph_id(&f.root);
+        let drafts = current.app_data.join("drafts-v2").join(&id);
+        std::fs::create_dir_all(&drafts).unwrap();
+        std::fs::write(drafts.join("vehicle"), b"retained input").unwrap();
+        assert_eq!(
+            crate::root_identity::recover_namespace(&current.app_data, &id, &target, &registry),
+            Err("draft-recovery-owner-held".into())
+        );
+        assert_eq!(
+            std::fs::read(drafts.join("vehicle")).unwrap(),
+            b"retained input"
+        );
+    }
+
+    #[test]
+    fn l9_recovery_and_relocation_exclude_both_bound_and_retiring_namespaces() {
+        let source = Fixture::new("namespace-source");
+        let current = Fixture::new("namespace-current");
+        let source_id = crate::settings::host_graph_id(&source.root);
+        let target_id = crate::settings::host_graph_id(&current.root);
+        for retiring in [false, true] {
+            for held_source in [false, true] {
+                let mut registry = GraphRegistry::default();
+                let f = if held_source { &source } else { &current };
+                let held = Arc::new(GraphSlot::new(f.store.clone(), f.root.clone()));
+                if retiring {
+                    registry
+                        .retirement
+                        .0
+                        .retiring
+                        .lock()
+                        .unwrap()
+                        .insert(f.root.clone(), held.clone());
+                } else {
+                    registry.bind("held".into(), held.clone()).unwrap();
+                }
+                // Equal roots do not exempt another slot with a live host.
+                let target = Arc::new(GraphSlot::new(current.store.clone(), current.root.clone()));
+                assert!(registry.draft_namespace_held(&source_id, &target_id, Some(&target)));
+                assert_eq!(
+                    crate::root_identity::recover_namespace(
+                        &current.app_data,
+                        &source_id,
+                        &target,
+                        &registry
+                    ),
+                    Err("draft-recovery-owner-held".into())
+                );
+                assert_eq!(
+                    crate::root_identity::relocate_if_idle(
+                        &current.app_data,
+                        &source.root,
+                        &current.root,
+                        &registry
+                    ),
+                    Err("draft-recovery-owner-held".into())
+                );
+                if !retiring && !held_source {
+                    assert!(
+                        !registry.draft_namespace_held(&source_id, &target_id, Some(&held)),
+                        "only the saved-stop target is exempt"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn l9_a_detached_retiring_host_is_waited_for_instead_of_adopted() {
         let f = Fixture::new("root-replaced");
         let retirement = HostRetirement::default();
@@ -285,7 +375,9 @@ mod tests {
             .unwrap()
             .insert(f.root.clone(), slot);
         std::fs::rename(&f.root, f.dir.join("moved")).unwrap();
-        std::fs::create_dir(&f.root).unwrap();
+        if !cfg!(target_os = "android") {
+            std::fs::create_dir(&f.root).unwrap();
+        }
         assert!(
             retirement.adopt(&f.root).is_none(),
             "a reopen needs a fresh root witness"

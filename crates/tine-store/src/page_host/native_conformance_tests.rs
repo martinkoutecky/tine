@@ -16,6 +16,9 @@ use std::path::PathBuf;
 #[test]
 fn l9_native_and_model_refuse_the_same_detached_root_phases() {
     for replaced in [false, true] {
+        if replaced && cfg!(target_os = "android") {
+            continue; // The Android fallback does not claim replacement identity.
+        }
         for phase in [
             Phase::Read,
             Phase::PageTemp,

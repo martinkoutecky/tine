@@ -107,7 +107,13 @@ impl PageHost {
         let (app_data, graph_id) = (app_data.as_path(), graph_id.as_str());
         let graph = store.graph.clone();
         let trash = crate::model::trash_root(&graph.root).join("pages");
-        let mut io = ProductionIo::attach(&graph.root, app_data, graph_id, &trash);
+        let mut io = ProductionIo::attach_bound(
+            &graph.root,
+            app_data,
+            graph_id,
+            &trash,
+            graph.root_binding.clone(),
+        );
         let spellings = io.spellings().clone();
         io.marks = Some(graph.clone());
         io.store = Arc::downgrade(store);

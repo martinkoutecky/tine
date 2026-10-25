@@ -2199,6 +2199,7 @@ export interface MessageArgs {
   "root-recovery-earlier-location": {};
   "root-recovery-failed": { "error": string | number };
   "root-recovery-lock-unavailable": {};
+  "root-recovery-moved-durability-unwitnessed": {};
   "root-recovery-not-now": {};
   "root-recovery-notice": { "location": string | number };
   "root-recovery-owner-held": {};
