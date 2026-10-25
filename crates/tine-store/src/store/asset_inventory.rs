@@ -88,7 +88,10 @@ mod tests {
             let modified = fs::metadata(&stray).unwrap().modified().unwrap();
             let replacement = root.path().join("replacement.md");
             fs::write(&replacement, referenced).unwrap();
-            fs::File::open(&replacement)
+            // Windows sets file times only through a handle opened for writing.
+            fs::File::options()
+                .write(true)
+                .open(&replacement)
                 .unwrap()
                 .set_modified(modified)
                 .unwrap();
@@ -99,7 +102,9 @@ mod tests {
                     "grow" => fs::write(&stray, format!("{referenced}- another block\n")).unwrap(),
                     "rewrite" => {
                         fs::write(&stray, referenced).unwrap();
-                        fs::File::open(&stray)
+                        fs::File::options()
+                            .write(true)
+                            .open(&stray)
                             .unwrap()
                             .set_modified(modified)
                             .unwrap();

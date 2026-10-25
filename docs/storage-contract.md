@@ -173,6 +173,34 @@ bounded unreadable-owner probe. No per-keystroke graph scan is added.
 A held `WholeGraph` view does not wait for later writers. Acquiring the first
 view with `whole_graph()` can wait for the initial parse; with a launch
 checkpoint (ADR 0070) it answers from the checkpoint until the launch diff ends.
+The block-id index is exact for its published generation: every runtime UUID
+and parser-owned `id` property maps to all owning page slots in page order.
+Saves and watcher publications remove a changed page's previous ids and add
+its current ids. A missing id is dangling without a page scan; duplicate ids
+resolve on the first owning page. Block previews use the same owner lookup.
+Cold builds construct this index with the generation. The idle checkpoint
+writer writes the exact index in the structural runtime-id space assigned
+by `assign_doc_runtime_ids` at load, using the captured documents rather than
+live editor ids. Runtime ids use 16-byte UUIDs grouped by owning page slot;
+authored ids retain their exact spelling. The writer borrows cached projections
+and derives structural ids without cloning documents or building a temporary
+owner tree. Cold build sorts borrowed ids once and bulk-builds the AVL;
+incremental publication keeps persistent updates over changed ids.
+Resident canonical lowercase UUID keys use a separate u128-keyed persistent
+AVL with entries inside shared nodes; other spellings keep exact string keys.
+The writer and loader share the page namespace and child-id derivation.
+Warm launch decodes those rows without rebuilding the index
+from blocks. A malformed owner slot declines the whole disposable checkpoint
+and uses the normal full build. FORMAT 19 supersedes FORMAT 18 once.
+There is no additional per-edit file or byte write: the page save protocol
+is unchanged. The checkpoint remains one postcard+zstd app-data file, rewritten
+on the existing idle cadence (60 s quiet, at least 5 min between writes,
+10 min maximum wait; first cold-build checkpoint after 5 s quiet).
+The `host_edit_cost::an_ordinary_edit_is_one_guarded_save_with_no_draft`
+fixture measures 10 bytes for one block and 541 bytes for 60 blocks per edit:
+one page temporary file, two fsyncs and zero directory enumerations, with
+zero additional checkpoint bytes or files per edit.
+
 `whole_graph_reconciled()` never serves the checkpoint: it waits for the launch
 diff, for graph-wide destructive operations and for a one-shot lookup that
 missed in the checkpoint (a cold-start `tine://` link, GH #181). The public operation

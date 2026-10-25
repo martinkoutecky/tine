@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { PropertyKey, visiblePageProperties } from "../render/PropertyKey";
 /** Page half of a friendly-search result. It receives already bounded and
  * ordered hits from graph search, renders O(returned rows), and only navigates.
  * The caller supplies the route operation; no file write or lookup occurs here. */
@@ -73,8 +74,8 @@ export function QueryPageResults(props: {
   ><QueryPageResultContent hit={hit} /></button>;
   const properties = (hit: QueryPageHit) => <Show when={props.showProperties && (hit.row?.properties.length ?? 0) > 0}>
     <span class="query-page-props" data-selectable="text">
-      <For each={hit.row!.properties}>{([key, val]) => (
-        <span class="query-page-prop"><span class="query-page-prop-key">{key}:</span> {val}</span>
+      <For each={visiblePageProperties(hit.row!.properties)}>{([key, val]) => (
+        <span class="query-page-prop"><span class="query-page-prop-key"><PropertyKey name={key} />:</span> {val}</span>
       )}</For>
     </span>
   </Show>;

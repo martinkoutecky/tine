@@ -240,7 +240,10 @@ fn l8_03_trash_rechecks_stray_after_a_watcher_publication() {
     assert_eq!(assets::orphan_assets(&store).unwrap()[0].name, "photo.png");
     let modified = fs::metadata(&stray).unwrap().modified().unwrap();
     fs::write(&stray, referenced).unwrap();
-    fs::File::open(&stray)
+    // Windows sets file times only through a handle opened for writing.
+    fs::File::options()
+        .write(true)
+        .open(&stray)
         .unwrap()
         .set_modified(modified)
         .unwrap();

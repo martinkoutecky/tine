@@ -3399,8 +3399,6 @@ html[data-system-insets="native-viewport"] {
 }
 
 .prop-row {
-  display: flex;
-  gap: 8px;
   padding: 1px 0;
 }
 
@@ -8920,7 +8918,7 @@ html.tine-embed-shading-accent .embed-block {
   border: 0;
   background: transparent;
 }
-/* GH #619 item 8: the page's properties, plain selectable text under its title. */
+/* GH #619 item 8: the page's properties under its title (GH #753 linked keys). */
 .query-page-props {
   grid-column: 1 / -1;
   display: flex;

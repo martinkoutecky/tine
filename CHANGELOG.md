@@ -41,6 +41,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Property keys link to their pages consistently in page headers, references, previews and query property lists, including after editing; Shift-click opens the key's page in the sidebar, and `:property-pages/enabled? false` keeps keys plain (GH #753).
+
 - **Hover previews are editable** (D-20261023-VQ, follow-up to GH #748): the blocks in a page or block-reference preview are now the page's own blocks, as in Logseq. Click a block's text to edit it in the preview; the change is saved to its page like any other edit. While you edit, the preview stays open when the pointer leaves it or the page scrolls, and the first Esc ends the edit (the next one closes the preview). A plain bullet click still opens that block in a new tab. Queries inside a preview still show as text and embeds stay read-only. Tested in the component suite; the app journey covers opening and folding previews.
 - **Deleting pages does less disk work** (internal, fsync investigation GH3, D-20261021-GQ3): after the first deletion in a session, a deletion syncs only the trash folder instead of it and every folder above it (three fewer directory syncs per deleted or moved page on Linux, macOS, Android and iOS), and on Windows a deletion no longer writes and removes a custody marker file, which protected nothing there (about a third of a deletion's time on hosted Windows runners).
 - `tine serve` skips its launch snapshot when the graph's newest backup zip is less than six hours old, so scripted edit/restart loops preserve the backup slots. A future-dated zip does not suppress backups; the app's launch snapshots are unchanged (D-20261020-CF4).
@@ -65,6 +67,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Block references keep resolving after a block moves between pages and after reopening the graph; dangling references no longer scan unrelated pages (GH #746, GH #623).
+- The exact block-owner index builds in bulk at cold launch and writes compact checkpoint rows without temporary page copies (GH #623).
+- The exact block-owner index keeps UUID keys in 16 bytes and shares one allocation per tree node, reducing its memory use on large graphs (GH #623).
 - **Opening and scrolling a large page right after typing is fast again** (development only, internal card hDSCuw): the typing-stall diagnostics added for GH #746 ran work on every frame for two seconds after each key, which made a page opened from search or the page switcher, and its first scroll, about a frame slower. They now do no per-frame work.
 
 - Quick Capture keeps refused text on Escape, so reopening the box files it into the current graph; a claim retired before insertion no longer reports previous-graph uncertainty (GH #254). Deleting a conflicted page now refuses an unanswered input drain after five seconds and restores editable text.

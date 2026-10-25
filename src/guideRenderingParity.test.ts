@@ -28,7 +28,7 @@ it("the Guide teaches inline checklist clicks, nesting, Org and own-content coll
 });
 it("the canonical Guide teaches linked property keys, shaded embeds and the tagged-page section", () => {
   const guide = readFileSync(new URL("../crates/tine-core/src/templates/pages-links-references-search.md", import.meta.url), "utf8");
-  for (const outcome of ["click the key to open its page", "Later groups remain in the file", "shaded background in both light and dark", '**Pages tagged with "X"**', "before Linked References", "Inline block tags still belong to Linked References"]) expect(guide).toContain(outcome);
+  for (const outcome of ["Click a property key to open its page", "Shift-click opens it in the right sidebar", "before and after editing", ":property-pages/enabled? false", "it does not remove key links", "Later groups remain in the file", "shaded background in both light and dark", '**Pages tagged with "X"**', "before Linked References", "Inline block tags still belong to Linked References"]) expect(guide).toContain(outcome);
 });
 
 it("the Guide explains journal feed references and their lazy/collapse behavior", () => {
