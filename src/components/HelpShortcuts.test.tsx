@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { render } from "solid-js/web";
 import { commandDefaults } from "../keybindings";
 import { renderEnglish } from "../i18n";
-import { HELP_ITEMS, buildShortcutPaneData, shortcutPaneCommandIds, type ShortcutSettingRow } from "./HelpShortcuts";
+import { HELP_ITEMS, ShortcutsSettingsPane, buildShortcutPaneData, shortcutPaneCommandIds, type ShortcutSettingRow } from "./HelpShortcuts";
 
 function rows(): ShortcutSettingRow[] {
   return commandDefaults().map((c) => ({
@@ -12,6 +13,18 @@ function rows(): ShortcutSettingRow[] {
 }
 
 describe("shortcuts pane data", () => {
+  it("shows both Settings defaults together in one shortcut row", () => {
+    const host = document.createElement("div");
+    const dispose = render(() => <ShortcutsSettingsPane shortcuts={rows()} search="Open settings" recording={null}
+      onRecord={() => {}} onReset={() => {}} onUnbind={() => {}} />, host);
+    try {
+      const matches = [...host.querySelectorAll(".help-shortcut-row")].filter((row) => row.textContent?.includes("ui/open-settings"));
+      expect(matches).toHaveLength(1);
+      expect(matches[0].querySelector(".help-keycap-button")?.textContent).toBe("t s");
+      expect(matches[0].querySelector(".help-shortcut-alias")?.textContent).toMatch(/or.*,/);
+    } finally { dispose(); }
+  });
+
   it("puts the Guide action at the top of the help menu", () => {
     expect(renderEnglish(HELP_ITEMS[0].label)).toBe("Guide");
     expect(renderEnglish(HELP_ITEMS[0].detail)).toBe("Open the in-app how-to guide");

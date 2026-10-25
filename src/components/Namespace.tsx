@@ -111,7 +111,7 @@ function NsNodeView(props: {
     <div class="ns-node">
       <div class="ns-node-row" style={{ "padding-left": `${props.depth * 12}px` }}>
         <Show when={has()} fallback={<span class="ns-node-spacer" />}>
-          <span class="ns-node-toggle" onClick={() => setOpen(!open())}>{open() ? "▾" : "▸"}</span>
+          <ReferenceDisclosure class="ns-node-toggle" collapsed={!open()} onClick={() => setOpen(!open())} />
         </Show>
         <span
           class="ns-node-label"
