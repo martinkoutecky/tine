@@ -58,7 +58,7 @@ describe("Backups settings", () => {
     expect(backupBackend.confirm.mock.calls.at(-1)?.[0]).toContain("disconnected drive");
     expect(backupBackend.restoreBackup).not.toHaveBeenCalled();
     await tick();
-    button("Delete old-location backups").click();
+    button("Delete backups from this location").click();
     await vi.waitFor(() => expect(backupBackend.confirm.mock.calls).toHaveLength(2));
     expect(backupBackend.confirm.mock.calls.at(-1)?.[0]).toContain("/old/notes");
     expect(backupBackend.confirm.mock.calls.at(-1)?.[0]).toContain("only backups");
