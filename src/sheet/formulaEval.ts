@@ -1,5 +1,5 @@
 import { createMemo, mapArray, type Accessor } from "solid-js";
-import { dataRev } from "../graphSession";
+import { changedAny, pageChangeKey } from "../changeKeys";
 import { formatForBlock, type Node as StoreNode } from "../document";
 import { facetsFromDto, facetsOf } from "../render/facets";
 import { evaluate, parseFormula, type Ast, type FormulaValue, type ParseResult } from "./formula";
@@ -202,7 +202,7 @@ export function createFormulaResultsMemo(opts: FormulaResultsOptions): Accessor<
   // .relative()); formula references also resolve in this same row context.
   // Keep provenance/hydration dependencies inside each computation as well.
   const cells = mapArray(() => opts.formulas().size ? opts.rows() : [], row => createMemo(() => {
-    dataRev();
+    changedAny([`block:${row.id}`, pageChangeKey(row.page)]);
     return computeFormulaResults([row], opts.formulas(), opts.now?.() ?? appNow(), opts.onEvaluate);
   }));
   return createMemo(() => {
@@ -266,7 +266,7 @@ export function createFormulaFilterMemo<T extends FormulaEvalRow>(
 ): Accessor<FormulaFilterState<T>> {
   const source = createMemo(() => opts.filter()?.trim() ?? "");
   const filtered = mapArray(() => source() ? opts.rows() : [], row => createMemo(() => {
-    dataRev();
+    changedAny([`block:${row.id}`, pageChangeKey(row.page)]);
     return filterFormulaRows([row], source(), opts.formulas(), opts.now?.() ?? appNow(), opts.ownerId);
   }));
   return createMemo(() => {

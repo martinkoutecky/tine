@@ -68,6 +68,12 @@ export function changedAny(dependencies: readonly string[]): string {
 export function stageChangeKeys(change: ChangeSummary): void {
   ensureEpoch();
   staged = true;
+  // Broad consumers (All Pages metadata and lifecycle wakeups) explicitly
+  // depend on publication; this does not turn precise readers into full ones.
+  pending.add("publication");
+  for (const key of ["days", "journals", "templates"] as const) {
+    if (change[key] !== false) pending.add(key);
+  }
   pendingFull ||= change.full || untrack(refreshEverything);
   for (const name of change.pages) pending.add(`page:${name}`);
   for (const id of change.blocks) pending.add(`block:${id}`);
@@ -106,7 +112,7 @@ export function stageChangeKeys(change: ChangeSummary): void {
 
 /** A caller without summary evidence must fire every key. The save/external
  * callers opt into staged evidence; an absent summary still falls back to full. */
-export function flushChangeKeys(hasSummary = false): void {
+export function flushChangeKeys(hasSummary = false): boolean {
   ensureEpoch();
   const full = !hasSummary || !staged || pendingFull;
   const affected = pending;
@@ -120,5 +126,6 @@ export function flushChangeKeys(hasSummary = false): void {
     if (full) setFullRevision(n => n + 1);
     else for (const key of affected) keys.advance(key);
   });
+  return full;
 }
 installDataRevisionRefresh(flushChangeKeys);

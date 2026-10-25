@@ -104,7 +104,8 @@ import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecoration
 import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
 import { ResultWriteTargetContext, liveWriteTarget } from "./queryResultIdentity";
-import { dataRev, graphEpoch } from "../graphSession";
+import { graphEpoch } from "../graphSession";
+import { changed } from "../changeKeys";
 import { pushToast, dismissToast } from "../toasts";
 import { copyBlockLink } from "./blockLinkCopy";
 import { seedAssetBlob } from "../assetCache";
@@ -556,14 +557,14 @@ interface AcItem {
 // One recorder app-wide: the starting editor's token outlives that editor, so Stop anywhere still stores it.
 let mobileRecordingEditorToken: AssetEditorToken | null = null;
 let templateCache: import("../types").TemplateDto[] | null = null;
-let templateCacheRev = -1;
+let templateCacheRev = "";
 let templateCacheEpoch = -1;
 async function getTemplates(): Promise<import("../types").TemplateDto[]> {
   // Re-fetch when the graph has changed since the last fetch,
   // so a template just created (here or externally) shows up without a reload.
-  const rev = dataRev(), epoch = graphEpoch();
+  const rev = changed("templates"), epoch = graphEpoch();
   if (templateCache && templateCacheRev === rev && templateCacheEpoch === epoch) return templateCache;
-  const owner = graphOwner(() => dataRev() === rev && graphEpoch() === epoch);
+  const owner = graphOwner(() => changed("templates") === rev && graphEpoch() === epoch);
   try {
     const templates = await readOwned(owner, backend().listTemplates());
     if (templates.kind === "stale") return []; templateCache = templates.value;

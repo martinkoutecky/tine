@@ -12,7 +12,8 @@ import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from ".
 import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, contextMenu, renamePageInNavigation, adoptResolvedPageName } from "../ui";
 import { openShareDialog } from "../shareState";
 import { ShareIcon } from "./ShareIcon";
-import { graphEpoch, dataRev, graphMeta } from "../graphSession";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { changed } from "../changeKeys";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "../binding";
 import { createTagTableResource } from "../tagTable";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
@@ -660,12 +661,12 @@ export function PageView(): JSX.Element {
 
   // A deferred watcher/midnight refresh is retried only when the existing edit
   // lifecycle has advanced; it never replaces a dirty feed with a stale window.
-  let previousReferenceRev = dataRev();
+  let previousReferenceRev = changed("days");
   createEffect(() => {
     const route = currentRoute();
     if (route.kind !== "journals") return;
     editingId();
-    const revision = dataRev();
+    const revision = changed("days");
     if (revision !== previousReferenceRev) {
       previousReferenceRev = revision;
       pendingFeedRestart = true;
@@ -820,7 +821,7 @@ export function PageView(): JSX.Element {
 // when the opted-in section mounts; Journals reuses its existing feed read.
 function UpcomingSection(props: { feed: boolean }): JSX.Element {
   const [days, { refetch }] = createResource(
-    () => props.feed ? null : `${graphEpoch()}\0${dataRev()}`,
+    () => props.feed ? null : changed("days"),
     async () => {
       const result = await readOwned(graphOwner(), backend().journalFeedPage(1, null, true));
       return result.kind === "current" ? result.value.upcoming ?? [] : [];

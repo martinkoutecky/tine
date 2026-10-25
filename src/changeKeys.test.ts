@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { applyChangeSummary } from "./changeSummary";
 import { changed, changedAny, flushChangeKeys, installChangeKeyPublicationHold, setRefreshEverything } from "./changeKeys";
-import { bumpDataRev, bumpGraphEpoch } from "./graphSession";
+import { bumpDataRev, bumpGraphEpoch, dataRev } from "./graphSession";
 import { invalidateBinding } from "./binding";
 import { resetRefreshReads, trackRefreshRead } from "./refreshReads";
 import type { ChangeSummary } from "./backendTypes";
@@ -16,6 +16,24 @@ beforeEach(() => {
 afterEach(() => {
   setRefreshEverything(false); installChangeKeyPublicationHold(() => false);
   resetRefreshReads(); vi.useRealTimers();
+});
+
+it("precise day, journal-content and template evidence fires only its reader family; dataRev is full-only", () => {
+  const names = ["days", "journals", "templates", "publication"];
+  const before = names.map(changed);
+  const fullBefore = dataRev();
+  stage({ days: false, journals: false, templates: false }); bumpDataRev(true);
+  expect(names.slice(0, 3).map(changed)).toEqual(before.slice(0, 3));
+  expect(changed("publication")).not.toBe(before[3]);
+  expect(dataRev()).toBe(fullBefore);
+  for (const field of ["days", "journals", "templates"] as const) {
+    const previous = names.map(changed);
+    stage({ days: false, journals: false, templates: false, [field]: true }); bumpDataRev(true);
+    names.slice(0, 3).forEach((name, i) => name === field
+      ? expect(changed(name)).not.toBe(previous[i]) : expect(changed(name)).toBe(previous[i]));
+  }
+  stage({ full: true }); bumpDataRev(true);
+  expect(dataRev()).toBeGreaterThan(fullBefore);
 });
 
 it("stages and unions exact keys until the publication gate drains them", () => {
@@ -71,6 +89,13 @@ it("registered query keys fire only for affected subscriptions", () => {
   expect(changed("query:narrow")).not.toBe(before[0]);
   expect(changed("query:links")).not.toBe(before[1]);
   expect(changed("query:unrelated")).toBe(before[2]);
+});
+
+it("older hosts without S5 hints refresh all three families conservatively", () => {
+  const names = ["days", "journals", "templates"];
+  const before = names.map(changed);
+  stage(); bumpDataRev(true);
+  names.forEach((name, i) => expect(changed(name)).not.toBe(before[i]));
 });
 
 it("a summary-only delivery waits for the trailing delay and the previous refresh reads", async () => {

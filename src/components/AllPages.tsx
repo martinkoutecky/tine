@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMou
 import { backend } from "../backend";
 import { t } from "../i18n";
 import { graphOwner, latestOwner, readOwned } from "../owned";
-import { dataRev } from "../graphSession";
+import { changed } from "../changeKeys";
 import type { PaneRouter } from "../router";
 import { allPages, pageListLabels } from "../pages";
 import { installPageIndex } from "../pageIndex";
@@ -89,7 +89,8 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
     });
   };
   onCleanup(() => { if (countTimer !== undefined) clearTimeout(countTimer); });
-  createEffect(on(dataRev, () => {
+  // This requested whole-graph table exposes modified times for every page.
+  createEffect(on(() => changed("publication"), () => {
     countPending = true;
     refreshCounts();
     // One read per open or graph revision, never per row or presentation edit.

@@ -240,6 +240,10 @@ export interface ChangeSummary {
   refsTo?: string[];
   /** Mounted query subscription identities affected by this publication. */
   queryTo?: string[];
+  /** S5 hints; absent on older hosts means conservative family invalidation. */
+  days?: boolean;
+  journals?: boolean;
+  templates?: boolean;
   props: Record<string, string[]>;
   inventoryChanged: boolean;
   full: boolean;

@@ -290,6 +290,9 @@ pub(super) struct ChangeSummary {
     tag_table_to: BTreeSet<String>,
     refs_to: BTreeSet<String>,
     query_to: BTreeSet<String>,
+    days: bool,
+    journals: bool,
+    templates: bool,
     props: BTreeMap<String, BTreeSet<String>>,
     inventory_changed: bool,
     full: bool,
@@ -408,6 +411,15 @@ impl Snapshot {
             }
             let key = page_key(&entry.name);
             summary.pages.insert(key.clone());
+            summary.journals |= entry.kind == PageKind::Journal;
+            summary.days |= summary.journals;
+            // Inspect parsed facts of this edited page only, on both sides so
+            // removing planning/template metadata invalidates its old answer.
+            for doc in [before, after] {
+                let (planning, templates) = document_reader_facts(doc);
+                summary.days |= planning;
+                summary.templates |= templates;
+            }
             // `(tag P)` reads path refs, including the source page and its
             // namespace ancestors. Backlinks exclude self; keep these keys
             // separate so typing in P does not refresh P's reference sections.
@@ -509,8 +521,41 @@ impl Snapshot {
         summary
             .tag_table_to
             .extend(summary.links_to.iter().cloned());
+        // The feed's referenced-day inventory uses these same explicit names
+        // and journal parser. Alias changes are full; the widened closure also
+        // covers journal aliases and configured/ISO day spellings. No registry
+        // or referenced-day inventory is scanned during publication.
+        summary.days |= summary
+            .links_to
+            .iter()
+            .any(|name| self.journal_format.parse(name).is_some());
         summary
     }
+}
+
+// Presence is conservative: editing any part of a template-bearing document
+// can change its insertion DTO. Do not build/copy template subtrees here.
+fn document_reader_facts(doc: &Document) -> (bool, bool) {
+    fn blocks(roots: &[DocBlock], planning: &mut bool, templates: &mut bool) {
+        for block in roots {
+            *planning |= block.scheduled().is_some() || block.deadline().is_some();
+            *templates |= block
+                .property("template")
+                .is_some_and(|name| !name.is_empty());
+            blocks(&block.children, planning, templates);
+        }
+    }
+    let mut templates = doc.pre_block.as_deref().is_some_and(|pre| {
+        tine_core::template::may_define_template(pre.as_bytes())
+            && tine_core::page_properties::document_page_property_block(doc).is_some_and(|block| {
+                block
+                    .property("template")
+                    .is_some_and(|name| !name.is_empty())
+            })
+    });
+    let mut planning = false;
+    blocks(&doc.roots, &mut planning, &mut templates);
+    (planning, templates)
 }
 
 impl Store {

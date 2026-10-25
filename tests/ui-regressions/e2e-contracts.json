@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-journal-keys.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A journal with Upcoming keeps its feed answer during unrelated continuous sidebar typing, and an external date-reference edit adds the future day. The existing debug full-refresh mode supplies the before control; calls per second and uptime are recorded.","blocking":true,"authority":"GX4 S5; GH #746; Change Summary v0 sections 5, 7 and 8"}],
+      "acceptableVariations": ["Watcher and rendering latency, IPC batching and host load; no exact call rate is required."],
+      "nonRequirements": ["Exact pixels or DOM structure, certification outside Linux WebKitGTK, or a pre-S5 executable baseline: the comparison uses the accepted full-refresh control."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-query-subscriptions.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A journal's narrow and links queries stay idle during unrelated continuous typing; the narrow query skips that save and links coalesces into one run after typing pauses. A matching native edit updates both answers. The existing debug full-refresh mode supplies the before control.","blocking":true,"authority":"GX4 S4; HK3 1.5-second quiet period; conservative links invalidation in docs/contracts/tql-links-near.md"}],
       "acceptableVariations": ["Publication and rendering latency, IPC batching and machine load; exact 1.5-second boundaries are covered with fake timers."],

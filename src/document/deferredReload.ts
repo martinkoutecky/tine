@@ -29,7 +29,7 @@ import { installResultsPendingGate } from "../queryResultsEpoch";
 import type { GraphChange } from "../backend";
 import { captureBinding, clearOnBindingInvalidated, bindingCurrent, type Binding } from "../binding";
 import { editingId } from "../editorController";
-import { dataRev } from "../graphSession";
+import { changed } from "../changeKeys";
 import { isBlockMoving } from "./edits/moves";
 import { hostState } from "./host/wiring";
 
@@ -98,5 +98,6 @@ let watching = false;
 function watchTransitions(): void {
   if (watching) return;
   watching = true;
-  createRoot(() => createEffect(on([editingId, () => isBlockMoving(), dataRev, hostState], replayDeferredExternalReloads, { defer: true })));
+  // Lifecycle wakeup, not a graph read: every publication can release a hold.
+  createRoot(() => createEffect(on([editingId, () => isBlockMoving(), () => changed("publication"), hostState], replayDeferredExternalReloads, { defer: true })));
 }
