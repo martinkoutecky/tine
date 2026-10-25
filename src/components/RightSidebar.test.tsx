@@ -407,6 +407,37 @@ describe("right sidebar collapsed-source block (GH #358)", () => {
 });
 
 describe("right sidebar page with nothing to type into (GH #483)", () => {
+  it("GH #524 offers a caret when the page has no file yet", async () => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    const save = vi.spyOn(backend(), "pageSubmit");
+    const { root, dispose } = mount([{ kind: "page", name: "Fileless page", pageKind: "page" }]);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".right-sidebar .ls-block")).not.toBeNull());
+      expect(isDirty("Fileless page")).toBe(false);
+      expect(save).not.toHaveBeenCalled();
+      root.querySelector<HTMLButtonElement>(".page-trailing-block-target")!.click();
+      await vi.waitFor(() => expect(doc.byId[editingId()!]?.page).toBe("Fileless page"));
+    } finally { dispose(); }
+  });
+  it("does not invent a page when its exact sidebar file disappeared", async () => {
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
+    const { root, dispose } = mount([{ kind: "page", name: "Missing pinned page", pageKind: "page", path: "pages/Missing pinned page.md" }]);
+    try {
+      await vi.waitFor(() => expect(backend().getPageByPath).toHaveBeenCalledWith("pages/Missing pinned page.md"));
+      await new Promise<void>(resolve => queueMicrotask(resolve));
+      expect(pageByName("Missing pinned page")).toBeUndefined();
+      expect(root.querySelector(".right-sidebar .ls-block")).toBeNull();
+    } finally { dispose(); }
+  });
+  it("keeps a sidebar read error visible instead of creating an empty page", async () => {
+    vi.spyOn(backend(), "getPage").mockRejectedValue(new Error("read failed"));
+    const { root, dispose } = mount([{ kind: "page", name: "Unreadable page", pageKind: "page" }]);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("Could not load this sidebar page"));
+      expect(pageByName("Unreadable page")).toBeUndefined();
+      expect(root.querySelector(".right-sidebar .ls-block")).toBeNull();
+    } finally { dispose(); }
+  });
   // The reporter's exact conditional — "If I add any text on this page in the
   // first place and AFTER that open it in the Sidebar, I can continue to edit"
   // — is the tell. A page shown ONLY in the sidebar never ran the main pane's
