@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -22,15 +23,14 @@ const mount = (node: () => JSX.Element) => {
   document.body.append(root);
   return { root, dispose: render(node, root) };
 };
-const pressEnter = (textarea: HTMLTextAreaElement) => {
+const pressEnter = (textarea: EditorDriver) => {
   textarea.focus();
-  textarea.selectionStart = textarea.value.length;
-  textarea.selectionEnd = textarea.value.length;
-  textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  textarea.select(textarea.value().length, textarea.value().length);
+  textarea.keydown({ key: "Enter", bubbles: true, cancelable: true });
 };
-const replaceValue = (textarea: HTMLTextAreaElement, value: string) => {
-  textarea.value = value;
-  textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+const replaceValue = (textarea: EditorDriver, value: string) => {
+  textarea.replaceText(value);
+  textarea.reportInput({ bubbles: true, inputType: "insertText", data: value });
 };
 
 describe("first-block page-property entry (GH #138)", () => {
@@ -42,15 +42,15 @@ describe("first-block page-property entry (GH #138)", () => {
       <For each={pageByName("Properties")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      const textarea = editorIn(root);
       pressEnter(textarea);
       expect(pageByName("Properties")!.roots).toEqual(["props", "body"]);
-      expect(textarea.value).toBe("alias:: book\n");
+      expect(textarea.value()).toBe("alias:: book\n");
 
       replaceValue(textarea, "alias:: book\ntags:: blah");
       pressEnter(textarea);
       expect(pageByName("Properties")!.roots).toEqual(["props", "body"]);
-      expect(textarea.value).toBe("alias:: book\ntags:: blah\n");
+      expect(textarea.value()).toBe("alias:: book\ntags:: blah\n");
 
       pressEnter(textarea);
       const roots = pageByName("Properties")!.roots;
@@ -72,7 +72,7 @@ describe("first-block page-property entry (GH #138)", () => {
       <For each={pageByName("Properties")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      pressEnter(root.querySelector("textarea") as HTMLTextAreaElement);
+      pressEnter(editorIn(root));
       expect(pageByName("Properties")!.roots).toHaveLength(3);
     } finally {
       dispose();

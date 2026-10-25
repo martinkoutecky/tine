@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -47,10 +48,10 @@ for (const format of ["md", "org"] as const) for (const children of [false, true
       expect(blockProperty("host", "collapsed")).toBe("false");
       if (children) expect(root.textContent).toContain("host child");
       startEditing("host", 0); await tick();
-      const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", ctrlKey: true, bubbles: true, cancelable: true }));
+      const editor = editorIn(root);
+      editor.keydown({ key: "ArrowUp", ctrlKey: true, bubbles: true, cancelable: true });
       expect(doc.byId.host.collapsed).toBe(true);
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", ctrlKey: true, bubbles: true, cancelable: true }));
+      editor.keydown({ key: "ArrowDown", ctrlKey: true, bubbles: true, cancelable: true });
       expect(doc.byId.host.collapsed).toBe(false);
     } finally { dispose(); }
   });

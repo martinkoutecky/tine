@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -21,8 +22,8 @@ function mount() {
   const dispose = render(() => <Block id="host" />, root);
   return { root, dispose };
 }
-function key(editor: HTMLTextAreaElement, direction: "Up" | "Down") {
-  editor.dispatchEvent(new KeyboardEvent("keydown", { key: `Arrow${direction}`, ctrlKey: true, bubbles: true, cancelable: true }));
+function key(editor: EditorDriver, direction: "Up" | "Down") {
+  editor.keydown({ key: `Arrow${direction}`, ctrlKey: true, bubbles: true, cancelable: true });
 }
 for (const format of ["md", "org"] as const) {
   it(`${format}: block embed root page body follows explicit host overrides with mouse and keyboard`, async () => {
@@ -41,7 +42,7 @@ for (const format of ["md", "org"] as const) {
       expect(root.textContent).not.toContain("deep body");
       row.querySelector<HTMLElement>(".block-content")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 })); await tick();
-      const editor = row.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+      const editor = editorIn(row);
       key(editor, "Down"); await tick();
       expect(blockProperty("host", "collapsed")).toBe("false");
       key(editor, "Up");
@@ -74,14 +75,14 @@ for (const format of ["md", "org"] as const) {
       else {
         row.querySelector<HTMLElement>(".block-content")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
         document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 })); await tick();
-        key(row.querySelector<HTMLTextAreaElement>("textarea.block-editor")!, "Up");
+        key(editorIn(row), "Up");
       }
       await tick();
       expect(blockProperty("nested", "collapsed")).toBeNull();
       expect(doc.byId.nested.collapsed).toBe(false);
       expect(row.textContent).not.toContain("deep body");
       if (action === "keyboard") {
-        key(row.querySelector<HTMLTextAreaElement>("textarea.block-editor")!, "Down");
+        key(editorIn(row), "Down");
         expect(blockProperty("nested", "collapsed")).toBeNull();
         endEdit("page-navigation");
       } else row.querySelector<HTMLButtonElement>(".collapse-toggle")!.click();

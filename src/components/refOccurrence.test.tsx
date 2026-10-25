@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 // GH #417 (with #418's toolbar remainder): a block reference, block embed or
 // page embed offers Edit link, Open source and Remove for that ONE occurrence.
 // Remove edits only the containing block's text (never the referenced block or
@@ -98,8 +99,8 @@ describe("embed actions (GH #417/#418)", () => {
       actions(root, "embed-action-edit")[0].click();
       await tick();
       expect(editingId()).toBe("host");
-      const editor = root.querySelector<HTMLTextAreaElement>('[data-block-id="host"] textarea.block-editor')!;
-      expect(editor.value.slice(editor.selectionStart, editor.selectionEnd)).toBe(raw);
+      const editor = editorIn(root, "host");
+      expect(editor.value().slice(editor.selection()[0], editor.selection()[1])).toBe(raw);
     } finally { dispose(); }
   });
 
@@ -196,8 +197,8 @@ describe("block reference actions (GH #417)", () => {
       await tick();
       menuItem("Edit link")!.click();
       await tick();
-      const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      expect(editor.value.slice(editor.selectionStart, editor.selectionEnd)).toBe(`((${T}))`);
+      const editor = editorIn(root);
+      expect(editor.value().slice(editor.selection()[0], editor.selection()[1])).toBe(`((${T}))`);
     } finally { dispose(); }
   });
 

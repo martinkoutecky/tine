@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { openCalmQuery } from "../tests/calmQueryActions";
 // GH #615 current-base verification. The shared Rust printer's anchor round-trip
 // is pinned by an_anchor_the_og_form_would_lose_is_not_og_expressible.
@@ -74,10 +75,10 @@ for (const entry of ["slash command", "existing OG query", "existing TQL query"]
     const dispose = render(() => <Block id="query" />, host);
     try {
       if (entry === "slash command") {
-        const editor = host.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+        const editor = editorIn(host);
         editor.focus();
-        editor.setSelectionRange(6, 6);
-        editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "y" }));
+        editor.select(6, 6);
+        editor.reportInput({ bubbles: true, inputType: "insertText", data: "y" });
         const command = await vi.waitFor(() => {
           const item = [...document.querySelectorAll<HTMLElement>(".autocomplete .ac-item")]
             .find(item => item.querySelector(".ac-label")?.textContent === "Query");

@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
@@ -43,11 +44,11 @@ it.each(["md", "org"] as const)("keeps template collapse at the rendered inserti
   document.body.append(root);
   const dispose = render(() => <For each={pageByName("Shared")?.roots ?? []}>{(id) => <Block id={id} />}</For>, root);
   try {
-    const textarea = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+    const textarea = editorIn(root);
     textarea.focus();
-    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "e" }));
+    textarea.reportInput({ bubbles: true, inputType: "insertText", data: "e" });
     await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Template: Collapse"));
-    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+    textarea.keydown({ key: "Enter", code: "Enter", bubbles: true, cancelable: true });
     await vi.waitFor(() => expect(Object.values(doc.byId).find((b) => b.raw.startsWith("Folded"))?.collapsed).toBe(true));
     expect(Object.values(doc.byId).find((b) => b.raw.startsWith("Nested"))?.collapsed).toBe(true);
     expect(root.textContent).not.toContain("hidden grandchild");
@@ -85,15 +86,15 @@ it("routes slash-template insertion through applyTemplateVars with the current p
     <For each={pageByName("Shared")?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ), root);
   try {
-    const textarea = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+    const textarea = editorIn(root);
     textarea.focus();
-    textarea.dispatchEvent(new InputEvent("input", {
+    textarea.reportInput({
       bubbles: true, inputType: "insertText", data: "y",
-    }));
+    });
     await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Template: Daily"));
-    textarea.dispatchEvent(new KeyboardEvent("keydown", {
+    textarea.keydown({
       key: "Enter", code: "Enter", bubbles: true, cancelable: true,
-    }));
+    });
     await vi.waitFor(() => expect(Object.values(doc.byId).map((block) => block.raw)).toContain("on [[Shared]]"));
   } finally {
     dispose();
@@ -113,9 +114,9 @@ it("does not offer the previous graph's cached templates after a graph switch", 
     const root = document.createElement("div");
     document.body.append(root);
     const dispose = render(() => <Block id={blockId} />, root);
-    const textarea = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+    const textarea = editorIn(root);
     textarea.focus();
-    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "x" }));
+    textarea.reportInput({ bubbles: true, inputType: "insertText", data: "x" });
     return { root, dispose };
   };
   const a = await open("/tmp/template-A", "host-A");
@@ -145,13 +146,13 @@ it("reports a failed template listing and retries it instead of caching 'no temp
   document.body.append(root);
   const dispose = render(() => <Block id="host-fail" />, root);
   try {
-    const textarea = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+    const textarea = editorIn(root);
     textarea.focus();
-    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "L" }));
+    textarea.reportInput({ bubbles: true, inputType: "insertText", data: "L" });
     await vi.waitFor(() => expect(toasts().some((t) => t.kind === "error" && t.message.includes("templates unreadable"))).toBe(true));
-    textarea.value = "/La";
-    textarea.setSelectionRange(3, 3);
-    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "a" }));
+    textarea.replaceText("/La");
+    textarea.select(3, 3);
+    textarea.reportInput({ bubbles: true, inputType: "insertText", data: "a" });
     await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2));
   } finally {
     dispose();

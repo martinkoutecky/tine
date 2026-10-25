@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -28,7 +29,7 @@ afterEach(() => {
 });
 
 let seq = 0;
-function mountPage(raw: string, format: "md" | "org"): { blockId: string; textarea: HTMLTextAreaElement; dispose: () => void } {
+function mountPage(raw: string, format: "md" | "org"): { blockId: string; textarea: EditorDriver; dispose: () => void } {
   const name = `CodePlan${++seq}`;
   const block: BlockDto = { id: `cp-${seq}`, raw, collapsed: false, children: [] };
   const page: PageDto = { name, kind: "page", title: name, pre_block: null, blocks: [block], format };
@@ -37,7 +38,7 @@ function mountPage(raw: string, format: "md" | "org"): { blockId: string; textar
   const root = document.createElement("div");
   document.body.appendChild(root);
   const dispose = render((): JSX.Element => <For each={pageByName(name)?.roots ?? []}>{(id) => <Block id={id} />}</For>, root);
-  return { blockId: block.id, textarea: root.querySelector("textarea.block-editor") as HTMLTextAreaElement, dispose };
+  return { blockId: block.id, textarea: editorIn(root), dispose };
 }
 
 describe("focus + blur of a whole-block code wrapper", () => {
@@ -48,8 +49,8 @@ describe("focus + blur of a whole-block code wrapper", () => {
     it(`${format}: leaves the code bytes unchanged`, () => {
       const { blockId, textarea, dispose } = mountPage(raw, format);
       try {
-        expect(textarea.value.startsWith("line1\nline2\n"), "the body-only code editor is shown").toBe(true);
-        textarea.dispatchEvent(new FocusEvent("blur"));
+        expect(textarea.value().startsWith("line1\nline2\n"), "the body-only code editor is shown").toBe(true);
+        textarea.reportBlur();
         expect(doc.byId[blockId].raw, "I-1: entering and leaving a code block never reorders it").toBe(raw);
       } finally {
         dispose();

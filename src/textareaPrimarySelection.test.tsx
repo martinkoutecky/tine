@@ -1,3 +1,4 @@
+import { editorIn } from "./tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -34,7 +35,10 @@ describe("textarea PRIMARY-selection guard (GH #530)", () => {
     startEditing("one", 0);
     const mounted = mount(() => <For each={pageByName("Primary")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
     try {
-      const textarea = mounted.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+      const editor = editorIn(mounted.root);
+      // WebKitGTK textarea serialization quirk; other editors have no native placeholder.
+      if (editor.kind !== "textarea") return;
+      const textarea = editor.element as HTMLTextAreaElement;
       expect(textarea.placeholder).not.toBe("");
     } finally {
       mounted.dispose();

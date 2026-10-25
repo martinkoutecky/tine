@@ -50,6 +50,14 @@ export interface EditorDriver {
   selectByUser(start: number, end?: number, direction?: SelectionDirection): void;
   focus(): void;
   blur(): void;
+  /** Reports a platform blur, including one delivered after the editor was detached. */
+  reportBlur(): void;
+  /** Replaces the browser's draft without reporting input yet (e.g. before a key commits it). */
+  replaceText(value: string): void;
+  /** Reports input for the current draft and selection, preserving plain platform input signals too. */
+  reportInput(init?: InputEventInit, eventKind?: "input" | "plain"): void;
+  /** Releases a pointer over the editor, including the user-selection notification. */
+  mouseup(init?: MouseEventInit): void;
   /**
    * The user's edit left the editor holding `value` with the caret at `caret`
    * (default: end), reported as one input event. The common "set value, set
@@ -122,6 +130,12 @@ function textareaDriver(ta: HTMLTextAreaElement): EditorDriver {
     // A focused textarea fires its own blur; an unfocused one gets the synthetic
     // event the tests used to dispatch by hand. Never both.
     blur: () => (document.activeElement === ta ? ta.blur() : void ta.dispatchEvent(new FocusEvent("blur"))),
+    reportBlur: () => { ta.dispatchEvent(new FocusEvent("blur")); },
+    replaceText: (value) => { ta.value = value; },
+    reportInput: (init = {}, eventKind = "input") => {
+      ta.dispatchEvent(eventKind === "plain" ? new Event("input", init) : new InputEvent("input", init));
+    },
+    mouseup: (init = {}) => { ta.dispatchEvent(new MouseEvent("mouseup", init)); },
     input,
     type: (text) => {
       const start = ta.selectionStart;

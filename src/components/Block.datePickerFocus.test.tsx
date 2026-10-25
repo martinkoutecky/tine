@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { Block } from "./Block";
@@ -26,9 +27,9 @@ async function slash(label: "Scheduled" | "Deadline", existing = "") {
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <><Block id="task" /><DatePicker /></>, root);
   mounted = dispose;
-  const textarea = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-  textarea.focus(); textarea.value = raw; textarea.setSelectionRange(caret, caret);
-  textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+  const textarea = editorIn(root);
+  textarea.focus(); textarea.replaceText(raw); textarea.select(caret, caret);
+  textarea.reportInput({ bubbles: true, inputType: "insertText" });
   await vi.waitFor(() => expect([...document.body.querySelectorAll(".ac-label")].some(el => el.textContent === label)).toBe(true));
   [...document.body.querySelectorAll<HTMLElement>(".ac-item")].find(el => el.querySelector(".ac-label")?.textContent === label)!
     .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
@@ -47,7 +48,7 @@ describe("slash calendar keyboard ownership (GH #596)", () => {
       key("Enter");
       expect(readSchedule("task", label.toLowerCase() as "scheduled" | "deadline")).toMatchObject({ y: 2027, m: 0, d: 2, time: "09:00", repeater: "+1w" });
       expect(datePicker()).toBeNull();
-      await vi.waitFor(() => expect(document.activeElement).toBe(textarea));
+      await vi.waitFor(() => expect(document.activeElement).toBe(textarea.element));
     } finally { dispose(); }
   });
   it.each(["Scheduled", "Deadline"] as const)("/%s Escape dismisses and restores the editor caret without writing a date", async (label) => {
@@ -55,10 +56,10 @@ describe("slash calendar keyboard ownership (GH #596)", () => {
     const { textarea, dispose } = await slash(label);
     try {
       await vi.waitFor(() => expect(document.activeElement?.closest(".date-picker")).not.toBeNull());
-      const caret = textarea.selectionStart;
+      const caret = textarea.selection()[0];
       key("Escape");
-      await vi.waitFor(() => expect(document.activeElement).toBe(textarea));
-      expect(textarea.selectionStart).toBe(caret);
+      await vi.waitFor(() => expect(document.activeElement).toBe(textarea.element));
+      expect(textarea.selection()[0]).toBe(caret);
       expect(readSchedule("task", label.toLowerCase() as "scheduled" | "deadline")).toBeNull();
     } finally { dispose(); }
   });

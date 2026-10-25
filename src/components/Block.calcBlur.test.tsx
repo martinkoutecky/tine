@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { describe, expect, it, vi } from "vitest";
 import { For } from "solid-js";
 import { pageByName } from "../document";
@@ -21,11 +22,11 @@ describe("calc block persistence on blur", () => {
     startEditing(id, 0);
     const { root, dispose } = mount(() => <Block id={id} />);
     try {
-      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
-      expect(ta.value).toBe("1 + 1");
+      const ta = editorIn(root);
+      expect(ta.value()).toBe("1 + 1");
       ta.focus();
-      ta.value = "2 + 2";
-      ta.dispatchEvent(new FocusEvent("blur"));
+      ta.replaceText("2 + 2");
+      ta.reportBlur();
       expect(doc.byId[id].raw, "calc exit rule: Block keeps text after the closing fence").toBe("```calc\n2 + 2\n```\nordinary text");
     } finally {
       dispose();
@@ -42,16 +43,16 @@ describe("calc block persistence on blur", () => {
     ));
 
     try {
-      const ta = root.querySelector("textarea") as HTMLTextAreaElement | null;
+      const ta = editorIn(root);
       expect(ta).not.toBeNull();
       // Editor shows the fence-stripped expressions.
-      expect(ta!.value).toBe("1 + 1");
+      expect(ta!.value()).toBe("1 + 1");
 
       // User edits: adds a line and a SCHEDULED line AFTER it (the order that
       // normalizePlanning would scramble by hoisting SCHEDULED to line 2).
       ta!.focus();
-      ta!.value = "1 + 1\n2 + 2\nSCHEDULED: <2026-07-06 Mon>";
-      ta!.dispatchEvent(new FocusEvent("blur"));
+      ta!.replaceText("1 + 1\n2 + 2\nSCHEDULED: <2026-07-06 Mon>");
+      ta!.reportBlur();
 
       const raw = doc.byId[id]?.raw ?? "";
       // Block still exists AND is still a ```calc fence (didn't vanish).
@@ -75,26 +76,26 @@ describe("calculator slash-command activation", () => {
     ));
 
     try {
-      const ta = root.querySelector("textarea") as HTMLTextAreaElement | null;
+      const ta = editorIn(root);
       expect(ta).not.toBeNull();
-      ta!.setSelectionRange(ta!.value.length, ta!.value.length);
-      ta!.dispatchEvent(new InputEvent("input", {
+      ta!.select(ta!.value().length, ta!.value().length);
+      ta!.reportInput({
         bubbles: true,
         inputType: "insertText",
         data: "r",
-      }));
+      });
 
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete")).not.toBeNull());
-      ta!.dispatchEvent(new KeyboardEvent("keydown", {
+      ta!.keydown({
         key: "Enter",
         bubbles: true,
         cancelable: true,
-      }));
+      });
 
       await vi.waitFor(() => expect(root.querySelector(".editor-wrap")?.classList.contains("calc-wrap")).toBe(true));
       expect(root.querySelector(".calc-gutter")).not.toBeNull();
       expect(root.querySelector(".calc-results")).not.toBeNull();
-      expect(ta!.value).toBe("");
+      expect(ta!.value()).toBe("");
       expect(doc.byId[id].raw).toBe("```calc\n\n```");
     } finally {
       dispose();

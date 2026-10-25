@@ -14,6 +14,7 @@ import { endEdit, startEditing } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { setToasts, toasts } from "../toasts";
 import { Block } from "./Block";
+import { editorIn } from "../tests/editorDriver";
 
 beforeAll(() => initParser());
 let disposeKeys: () => void;
@@ -31,8 +32,8 @@ function mount() {
   const root = document.createElement("div");
   document.body.appendChild(root);
   const dispose = render(() => <For each={pageByName("Reading list")!.roots}>{(id) => <Block id={id} />}</For>, root);
-  const editor = root.querySelector<HTMLElement>('[data-block-id="o1"] textarea.block-editor') as HTMLTextAreaElement;
-  editor.setSelectionRange(3, 3);
+  const editor = editorIn(root, "o1");
+  editor.select(3, 3);
   return { header, editor, dispose };
 }
 
@@ -40,7 +41,7 @@ describe("keys that would put a block above or under the page properties", () =>
   it("Alt+Shift+Up on the first block under the properties says why and changes nothing", () => {
     const { header, editor, dispose } = mount();
     try {
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+      editor.keydown({ key: "ArrowUp", altKey: true, shiftKey: true, bubbles: true, cancelable: true });
       expect(toasts().map((t) => [t.kind, t.message])).toEqual([["info", WHY]]);
       expect(pageByName("Reading list")!.roots).toEqual([header, "o1", "o2"]);
     } finally { dispose(); }
@@ -49,7 +50,7 @@ describe("keys that would put a block above or under the page properties", () =>
   it("Tab on the first block under the properties says why and does not nest it under them", () => {
     const { header, editor, dispose } = mount();
     try {
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+      editor.keydown({ key: "Tab", bubbles: true, cancelable: true });
       expect(toasts().map((t) => [t.kind, t.message])).toEqual([["info", "A block can't be indented under the page properties"]]);
       expect(pageByName("Reading list")!.roots).toEqual([header, "o1", "o2"]);
       expect(doc.byId[header].children).toEqual([]);
@@ -59,7 +60,7 @@ describe("keys that would put a block above or under the page properties", () =>
   it("Alt+Shift+Down on a later block moves it with no toast", () => {
     const { header, editor, dispose } = mount();
     try {
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+      editor.keydown({ key: "ArrowDown", altKey: true, shiftKey: true, bubbles: true, cancelable: true });
       expect(toasts()).toEqual([]);
       expect(pageByName("Reading list")!.roots).toEqual([header, "o2", "o1"]);
     } finally { dispose(); }
