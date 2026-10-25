@@ -74,6 +74,61 @@ fn parse_passes(store: &Store) -> u64 {
         .unwrap()
 }
 
+#[test]
+fn a_moved_block_keeps_its_exact_owner_across_warm_launch() {
+    let root = graph();
+    let cp = root.path().join("launch.bin");
+    let id = "aaaaaaaa-0000-4000-8000-000000000001";
+    fs::write(
+        root.path().join("pages/A.md"),
+        format!("- source\n  id:: {id}\n"),
+    )
+    .unwrap();
+    let store = open_cp(root.path(), &cp);
+    store
+        .whole_graph_reconciled()
+        .unwrap()
+        .graph
+        .block_owner_page(id);
+    // External move: the destination arrives before the source removal.
+    fs::write(
+        root.path().join("pages/B.md"),
+        format!("- moved\n  id:: {id}\n"),
+    )
+    .unwrap();
+    store.refresh(Depth::Stamps).unwrap();
+    fs::write(root.path().join("pages/A.md"), "- empty\n").unwrap();
+    store.refresh(Depth::Stamps).unwrap();
+    for rel in ["pages/A.md", "pages/B.md"] {
+        set_mtime(&root.path().join(rel), old());
+    }
+    store.refresh(Depth::Stamps).unwrap();
+    assert!(matches!(
+        store.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    store.close();
+    let loaded = open_cp(root.path(), &cp);
+    let view = loaded.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&loaded), "loaded");
+    assert_eq!(parse_passes(&loaded), 0);
+    assert_eq!(
+        view.graph
+            .block_owner_page(id)
+            .map(|(_, (entry, _))| entry.name.as_str()),
+        Some("B")
+    );
+    assert_eq!(view.graph.block_index_full_builds(), 0);
+    assert_eq!(
+        view.blocks(&[id.to_owned()]).unwrap()[0]
+            .as_ref()
+            .unwrap()
+            .page,
+        "B"
+    );
+    loaded.close();
+}
+
 /// Open, reach Ready, write the checkpoint, close.
 fn write_checkpoint(root: &Path, cp: &Path) {
     let store = open_cp(root, cp);
@@ -271,6 +326,11 @@ fn a_loaded_checkpoint_equals_a_fresh_build() {
     let cp = dir.path().join("graph.bin");
     let written = open_cp(root.path(), &cp);
     let before = captured(&written);
+    let before_index = written
+        .whole_graph_reconciled()
+        .unwrap()
+        .graph
+        .block_index_image();
     assert!(matches!(
         written.write_checkpoint_now(),
         Some(CheckpointWrite::Written { .. })
@@ -283,6 +343,20 @@ fn a_loaded_checkpoint_equals_a_fresh_build() {
     assert_eq!(parse_passes(&loaded), 0, "a loaded launch parses nothing");
     let fresh = Store::open(root.path(), Default::default()).unwrap().0;
     let built = captured(&fresh);
+    let after_index = loaded
+        .whole_graph_reconciled()
+        .unwrap()
+        .graph
+        .block_index_image();
+    assert_eq!(before_index, after_index);
+    assert_eq!(
+        after_index,
+        fresh
+            .whole_graph_reconciled()
+            .unwrap()
+            .graph
+            .block_index_image()
+    );
     assert!(
         before == after,
         "ADR 0070: install + capture must round-trip the generation"
@@ -309,7 +383,7 @@ fn a_loaded_checkpoint_equals_a_fresh_build() {
 fn warm(store: &Store) {
     let view = store.whole_graph_reconciled().unwrap();
     let graph = &view.graph;
-    graph.block_page_hint("x");
+    graph.block_owner_page("x");
     graph.referenced_page_names();
     graph.page_aliases_with_owners();
     graph.alias_owner_paths("bee");
@@ -500,7 +574,12 @@ fn rewrite_body(cp: &Path, root: &Path, edit: impl FnOnce(&mut Body<PagesOut>)) 
 #[test]
 fn an_unusable_checkpoint_falls_back_to_a_full_build() {
     type Damage = fn(&Path, &Path);
-    let cases: [(&str, &str, Damage); 11] = [
+    let cases: [(&str, &str, Damage); 12] = [
+        ("missing block owner", "decode", |cp, root| {
+            rewrite_body(cp, root, |body| {
+                body.graph.invalidate_block_owner();
+            });
+        }),
         ("missing", "missing", |cp, _| fs::remove_file(cp).unwrap()),
         ("empty", "format", |cp, _| fs::write(cp, b"").unwrap()),
         ("torn inside the preamble", "format", |cp, _| {
@@ -577,6 +656,56 @@ fn an_unusable_checkpoint_falls_back_to_a_full_build() {
         reopened.whole_graph_reconciled().unwrap();
         assert_eq!(load_outcome(&reopened), "loaded", "{case}: replaced");
     }
+}
+
+#[test]
+fn offline_block_moves_deletions_and_duplicates_match_the_whole_fresh_index() {
+    let root = graph();
+    let cp = root.path().join("launch.bin");
+    let moved = "aaaaaaaa-0000-4000-8000-000000000001";
+    let deleted = "aaaaaaaa-0000-4000-8000-000000000002";
+    let duplicate = "aaaaaaaa-0000-4000-8000-000000000003";
+    let a = root.path().join("pages/A.md");
+    fs::write(
+        &a,
+        format!(
+            "- move\n  id:: {moved}\n- delete\n  id:: {deleted}\n- duplicate\n  id:: {duplicate}\n"
+        ),
+    )
+    .unwrap();
+    set_mtime(&a, old());
+    write_checkpoint(root.path(), &cp);
+    // All three edits happen with no running store or watcher.
+    fs::write(&a, format!("- retained\n  id:: {duplicate}\n")).unwrap();
+    fs::write(
+        root.path().join("pages/B.md"),
+        format!("- moved\n  id:: {moved}\n"),
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("pages/New.md"),
+        format!("- copied\n  id:: {duplicate}\n"),
+    )
+    .unwrap();
+    let warm = open_cp(root.path(), &cp);
+    let fresh = Store::open(root.path(), Default::default()).unwrap().0;
+    let warm_view = warm.whole_graph_reconciled().unwrap();
+    let fresh_view = fresh.whole_graph_reconciled().unwrap();
+    let actual = warm_view.graph.block_index_image();
+    assert_eq!(load_outcome(&warm), "loaded");
+    assert_eq!(warm_view.graph.block_index_full_builds(), 0);
+    assert_eq!(actual, fresh_view.graph.block_index_image());
+    assert!(!actual.iter().any(|(id, _)| id == deleted));
+    assert_eq!(
+        actual.iter().find(|(id, _)| id == moved).unwrap().1,
+        ["pages/B.md"]
+    );
+    assert_eq!(
+        actual.iter().find(|(id, _)| id == duplicate).unwrap().1,
+        ["pages/A.md", "pages/New.md"]
+    );
+    warm.close();
+    fresh.close();
 }
 
 #[test]
@@ -898,13 +1027,13 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (18, GOLDEN),
+        (19, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
 
 #[cfg(unix)]
-const GOLDEN: &str = "16a3cc8f6b5602ef3417e70b39c79b866887dc74f775965ebdd48f6aefb61eef";
+const GOLDEN: &str = "e154a79e130b4594fae9eec1760fcb10f2ce7f90191770299975a993bf835be0";
 
 /// GH #623 (FORMAT 6): which cached pages carried a VCS anchor line travels
 /// in the checkpoint, so a warm launch answers the conflict inventory with no
@@ -1352,7 +1481,7 @@ fn a_read_only_session_that_builds_a_lazy_index_is_checkpointed() {
     assert_eq!(load_outcome(&session), "loaded");
     let (blocks, referenced, query_index, derived, queries) =
         session.whole_graph_reconciled().unwrap().graph.warm_parts();
-    assert!(!(blocks || referenced || query_index) && derived == 0 && queries == 0);
+    assert!(blocks && !(referenced || query_index) && derived == 0 && queries == 0);
     fast(&session);
     std::thread::sleep(Duration::from_millis(300));
     assert!(
@@ -1497,4 +1626,95 @@ fn a_race_during_the_decode_stops_it() {
         Some(Fallback::Deferred),
         "a race known before the body decodes stops it before it starts"
     );
+}
+
+/// I-13 (D-20261022-GX): the block index is exact, so a warm launch must not
+/// serve one built for the written generation's runtime ids. A block typed in
+/// the editor carries the editor's id; the loader reassigns runtime ids as a
+/// parse does, and every id the loaded pages hold resolves to its page.
+#[test]
+fn a_warm_launch_resolves_every_runtime_block_id_of_the_loaded_pages() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/C.org"),
+        "* heading\n:PROPERTIES:\n:ID: org-persisted-id\n:END:\n** nested\n",
+    )
+    .unwrap();
+    set_mtime(&root.path().join("pages/C.org"), old());
+    let cp = root.path().join("launch.bin");
+    let store = open_cp(root.path(), &cp);
+    store.whole_graph_reconciled().unwrap();
+    let id = PageId::from("pages/A.md".to_owned());
+    let mut read = store.page(&id).unwrap();
+    let mut typed = read.doc.blocks[0].clone();
+    typed.id = "11111111-2222-4333-8444-555555555555".into();
+    typed.raw = "typed above".into();
+    let mut child = typed.clone();
+    child.id = "22222222-2222-4333-8444-555555555555".into();
+    child.raw = "nested typed child\nid:: nested-persisted-id".into();
+    typed.children.push(child);
+    read.doc.blocks.insert(0, typed);
+    assert!(matches!(
+        store.save(
+            crate::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(read.rev),
+            &read.doc
+        ),
+        SaveOutcome::Saved(_)
+    ));
+    warm(&store);
+    assert!(matches!(
+        store.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    store.close();
+
+    let store = open_cp(root.path(), &cp);
+    let view = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "loaded");
+    assert!(view.graph.warm_parts().0, "a built block index loads built");
+    assert_eq!(view.graph.block_index_full_builds(), 0);
+    assert!(view
+        .graph
+        .block_owner_page("11111111-2222-4333-8444-555555555555")
+        .is_none());
+    let held: Vec<(String, String)> = view.graph.with_pages(|pages| {
+        pages
+            .iter()
+            .flat_map(|(entry, doc)| {
+                fn visit(
+                    blocks: &[tine_core::doc::DocBlock],
+                    page: &str,
+                    out: &mut Vec<(String, String)>,
+                ) {
+                    for block in blocks {
+                        out.push((block.uuid.clone(), page.to_owned()));
+                        if let Some(id) = block.property("id") {
+                            out.push((id, page.to_owned()));
+                        }
+                        visit(&block.children, page, out);
+                    }
+                }
+                let mut held = Vec::new();
+                visit(&doc.roots, &entry.name, &mut held);
+                held
+            })
+            .collect()
+    });
+    let ids: Vec<String> = held.iter().map(|(id, _)| id.clone()).collect();
+    let pages: Vec<Option<String>> = view
+        .blocks(&ids)
+        .unwrap()
+        .into_iter()
+        .map(|group| group.map(|group| group.page))
+        .collect();
+    assert_eq!(
+        pages,
+        held.into_iter()
+            .map(|(_, page)| Some(page))
+            .collect::<Vec<_>>(),
+        "every runtime id of a loaded page resolves to that page"
+    );
+    store.close();
 }

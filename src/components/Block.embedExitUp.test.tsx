@@ -117,8 +117,8 @@ describe("Up arrow at the top of an embedded block (GH #415)", () => {
     } finally { dispose(); }
   });
   it("selects the containing macro from a page embed too", async () => {
-    const source: PageDto = { name: "SourcePage", title: "SourcePage", kind: "page", pre_block: null, blocks: [leaf("source", "source text", [leaf("kid", "kid text")])] };
-    vi.spyOn(backend(), "getPage").mockResolvedValue({ ...source, id: "pages/SourcePage.md" });
+    const source: PageDto & { id: string } = { id: "pages/SourcePage.md", name: "SourcePage", title: "SourcePage", kind: "page", pre_block: null, blocks: [leaf("source", "source text", [leaf("kid", "kid text")])] };
+    vi.spyOn(backend(), "getPage").mockResolvedValue(source);
     loadFeed([{ name: "HostPage", title: "HostPage", kind: "page", pre_block: null, blocks: [leaf("host", "{{embed [[SourcePage]]}}"), leaf("below", "below")] }, source]);
     const root = document.createElement("div"); document.body.append(root);
     const dispose = render(() => <For each={pageByName("HostPage")?.roots ?? []}>{id => <Block id={id}/>}</For>, root);

@@ -3,6 +3,7 @@ import { openInNewTab } from "../router";
 import { t } from "../i18n";
 import { contextMenu, openPageContextMenu } from "../ui";
 import { PagePropertyValue } from "../components/PagePropertyValue";
+import { PropertyKey, visiblePageProperties } from "./PropertyKey";
 import { FloatingPortal } from "../components/FloatingPortal";
 import { RefBlocks } from "../components/RefBlocks";
 import { LiveRefGroup } from "../components/LiveRefGroup";
@@ -256,9 +257,9 @@ export function PeekPopup(props: {
           </div>
         </Show>
         <PeekContext.Provider value={true}>
-          <Show when={props.properties?.length}>
+          <Show when={visiblePageProperties(props.properties ?? []).length}>
             <div class="peek-page-properties">
-              <For each={props.properties}>{([key, value]) => <div><span class="prop-key">{key}</span>{" "}<PagePropertyValue propertyKey={key} value={value} format={props.format ?? "md"} /></div>}</For>
+              <For each={visiblePageProperties(props.properties ?? [])}>{([key, value]) => <div><span class="prop-key"><PropertyKey name={key} /></span>{": "}<PagePropertyValue propertyKey={key} value={value} format={props.format ?? "md"} /></div>}</For>
             </div>
           </Show>
           <Show when={props.page} fallback={

@@ -5,7 +5,7 @@
 # Pull requests get one lightweight Linux validation job and docs-only PRs skip it.
 name: ci
 
-run-name: ci / ${{ github.event_name == 'workflow_dispatch' && inputs.scope || 'pull-request' }} / ${{ github.sha }}
+run-name: ci / ${{ github.event_name == 'workflow_dispatch' && inputs.scope || 'pull-request' }}${{ github.event_name == 'workflow_dispatch' && inputs.purpose == 'development' && ' / development' || '' }} / ${{ github.sha }}
 
 on:
   pull_request:
@@ -30,6 +30,14 @@ on:
           - performance
           - multiwindow
           - macos
+      purpose:
+        description: release (default) checks release metadata; development skips only that check, and release.yml accepts such a run only with publish=false
+        required: false
+        default: release
+        type: choice
+        options:
+          - release
+          - development
 
 permissions:
   contents: read
@@ -167,7 +175,11 @@ jobs:
       - name: UI regression catalog and release evidence contracts
         run: |
           npm run check:regressions
-          npm run check:release-readiness
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.purpose || 'release' }}" = development ]; then
+            echo "purpose=development: release readiness not checked; release.yml accepts this run only with publish=false"
+          else
+            npm run check:release-readiness
+          fi
 
       # The pin guard otherwise only runs inside `npm run build`, which fast CI
       # skips — a Cargo lsdoc bump with stale vendored WASM must fail HERE, not
@@ -253,6 +265,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           cargo test --release -p tine-store --lib probe_deletion_step_timing -- --ignored --nocapture
+          cargo test --release -p tine-store --lib root_binding::tests::l9_measure_per_save_root_checks -- --ignored --exact --nocapture --test-threads=1
           cargo test --release -p tine-graph-features --test integration rename_cost::probe_rename_wall_time -- --ignored --exact --nocapture
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol

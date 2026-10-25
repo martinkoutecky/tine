@@ -1,4 +1,5 @@
 import { t } from "./i18n";
+import { errorFamily } from "./errorFamily";
 // Backend abstraction. In the Tauri app we call Rust via `invoke`. In a plain
 // browser (Vite dev / Playwright screenshots) we fall back to an in-memory mock
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
@@ -106,6 +107,11 @@ const TIMED_COMMANDS: ReadonlySet<string> = new Set([
 /** A command still running after this long is recorded as `slow`. */
 const SLOW_IPC_MS = 500;
 
+function graphOpenFailure(error: unknown): never {
+  if (errorFamily(error) === "graph-app-owner") throw new Error(t("graph-open-other-app"));
+  throw error;
+}
+
 class TauriBackend implements Backend {
   private invoke!: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
   private convertFileSrc!: (path: string, protocol?: string) => string;
@@ -197,10 +203,16 @@ class TauriBackend implements Backend {
     return this.call<T>(cmd, args, bindingGeneration);
   }
 
-  async loadGraph(path: string) {
-    const result = await this.call<LoadGraphResult>("load_graph", { path });
+  async loadGraph(path: string, options?: { relocatedFrom: string }) {
+    const result = await this.call<LoadGraphResult>("load_graph", { path, relocatedFrom: options?.relocatedFrom }).catch(graphOpenFailure);
     if (result.kind !== "focused_existing") this.bindingGeneration = result.binding_generation;
     return result;
+  }
+  orphanDrafts() {
+    return this.call<{ id: string; old_root: string | null }[]>("orphan_drafts");
+  }
+  recoverOrphanDrafts(id: string, consumedLastId: number) {
+    return this.call<{ error: string | null; reloaded: { session: number; nextId: number } | null }>("recover_orphan_drafts", { id, consumedLastId });
   }
   inspectGraphAccess(path: string) {
     return this.call<GraphAccessInspection>("inspect_graph_access", { path });
@@ -209,7 +221,7 @@ class TauriBackend implements Backend {
     return this.call<void>("approve_external_assets", { graphRoot, assetsPath });
   }
   openGraphWindow(path: string) {
-    return this.call<LoadGraphResult>("open_graph_window", { path });
+    return this.call<LoadGraphResult>("open_graph_window", { path }).catch(graphOpenFailure);
   }
   readonly tineLinks = nativeTineLinks((cmd, args) => this.call(cmd, args), (cb) => this.on<void>("tine-link-pending", cb));
   startupGraphPath() {
@@ -218,7 +230,7 @@ class TauriBackend implements Backend {
   captureTarget() {
     return this.call<string>("capture_target");
   }
-  captureReceipt(id: string, action: "claim" | "saved" | "release" | "status", receiptGeneration: number) {
+  captureReceipt(id: string, action: "claim" | "saved" | "release" | "forget" | "status", receiptGeneration: number) {
     return this.call<"new" | "pending" | "saved" | "missing">("capture_receipt", { id, action, receiptGeneration });
   }
   async bindCaptureGraph() {
@@ -882,6 +894,9 @@ class TauriBackend implements Backend {
   }
   listBackups() {
     return this.call<BackupInfo[]>("list_backups");
+  }
+  deleteOldBackups(id: string) {
+    return this.call<void>("delete_old_backups", { id });
   }
   restoreBackup(id: string, _kind: "replace-page", consumedLastId: number) {
     return this.call<{ error: string | null; reloaded: { session: number; nextId: number } | null }>(

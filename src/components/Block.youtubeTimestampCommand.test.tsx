@@ -9,6 +9,7 @@ import { doc } from "../document/model";
 import type { BlockDto, PageDto } from "../types";
 import { VideoMacro } from "./Macro";
 import { Block } from "./Block";
+import { installKeybindings } from "../keybindings";
 
 beforeAll(async () => {
   await initParser();
@@ -69,6 +70,39 @@ afterEach(() => {
 });
 
 describe("Embed Youtube timestamp slash command", () => {
+  it("leaves text and selection intact when the shortcut has no ready player", async () => {
+    const disposeKeys = installKeybindings();
+    loadSingle(commandPage());
+    startEditing("youtube-command", 0);
+    const { root, dispose } = mount(() => <Block id="youtube-command" />);
+    try {
+      const textarea = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+      inputAt(textarea, "keep this text");
+      textarea.setSelectionRange(5, 9);
+      const key = new KeyboardEvent("keydown", { key: "Y", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true });
+      textarea.dispatchEvent(key);
+      expect(key.defaultPrevented).toBe(true);
+      expect(doc.byId["youtube-command"].raw).toBe("keep this text");
+      expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([5, 9]);
+    } finally { disposeKeys(); dispose(); }
+  });
+  it("inserts at the selection with Mod+Shift+Y", async () => {
+    const disposeKeys = installKeybindings();
+    const Player = installYoutube(42.9);
+    loadSingle(commandPage());
+    startEditing("youtube-command", 0);
+    const { root, dispose } = mount(() => <><VideoMacro body="youtube dQw4w9WgXcQ" /><Block id="youtube-command" /></>);
+    try {
+      await vi.waitFor(() => expect(Player).toHaveBeenCalledOnce());
+      const textarea = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+      inputAt(textarea, "before selected after");
+      textarea.setSelectionRange(7, 15);
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Y", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+      await vi.waitFor(() => expect(doc.byId["youtube-command"].raw).toBe("before {{youtube-timestamp 42}}  after"));
+      expect(textarea.selectionStart).toBe("before {{youtube-timestamp 42}} ".length);
+    } finally { disposeKeys(); dispose(); }
+  });
+
   it("floors the selected YouTube player's current time and inserts its macro", async () => {
     const Player = installYoutube(125.9);
     loadSingle(commandPage());

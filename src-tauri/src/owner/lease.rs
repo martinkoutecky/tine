@@ -205,7 +205,15 @@ pub(crate) fn claim_for_app(
             crate::debug::diag_private("owner-lock-unavailable", &error.to_string());
             Ok(None)
         }
-        Claim::Held(paths) => super::client::take_over(root, &paths, drafts, bound, waiting),
+        Claim::Held(paths) => {
+            #[cfg(target_os = "windows")]
+            {
+                let _ = (paths, drafts, bound, waiting);
+                Err(super::client::app_owner_refusal())
+            }
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            super::client::take_over(root, &paths, drafts, bound, waiting)
+        }
     }
 }
 

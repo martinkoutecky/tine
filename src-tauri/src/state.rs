@@ -400,8 +400,8 @@ pub(crate) fn release_own_overlap(
 }
 
 /// Before an open of `root`: wait, outside the registry lock, up to `bound`
-/// for each retiring graph whose root overlaps it (another root: the same
-/// root is adopted) to save and close. `waiting` runs once, with that
+/// for each retiring graph whose root overlaps it to save and close (the same
+/// root is adopted only while its binding is intact). `waiting` runs once, with that
 /// graph's root, when the open has to wait. Past the bound, the refusal
 /// `bind` would give.
 pub(crate) fn wait_for_retiring_overlaps(
@@ -427,6 +427,24 @@ pub(crate) struct GraphRegistry {
 }
 
 impl GraphRegistry {
+    /// graph_load serializes opens/adoption; holding this registry lock also
+    /// excludes transfers into retirement. Only the target whose host is under
+    /// the saved-stop barrier may be exempted during explicit recovery.
+    pub(crate) fn draft_namespace_held(
+        &self,
+        source: &str,
+        target: &str,
+        stopped_target: Option<&Arc<GraphSlot>>,
+    ) -> bool {
+        self.by_window.values().any(|slot| {
+            if stopped_target.is_some_and(|stopped| Arc::ptr_eq(stopped, slot)) {
+                return false;
+            }
+            let id = crate::settings::host_graph_id(&slot.root_key);
+            id == source || id == target
+        }) || self.retirement.draft_namespace_held(source, target)
+    }
+
     pub(crate) fn slot(&self, window: &str) -> Option<Arc<GraphSlot>> {
         self.by_window.get(window).cloned()
     }

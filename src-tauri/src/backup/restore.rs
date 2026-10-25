@@ -26,15 +26,33 @@ pub(crate) async fn restore_backup(
         .map_err(|(kind, message)| format!("backup-failed:source:{kind:?}: {message}"))?;
     let restore_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let base = backup_base_for_root(&restore_app, &source.root).ok_or("no app-data dir")?;
+        let current_base =
+            backup_base_for_root(&restore_app, &source.root).ok_or("no app-data dir")?;
+        let (base, origin, snapshot_id) = if id.starts_with("old:") {
+            let (base, origin, snapshot) =
+                old_backup_selection(current_base.parent().unwrap(), &source.root, &id)?;
+            (base, Some(origin), snapshot.to_owned())
+        } else {
+            (current_base, None, id.clone())
+        };
+        let current_source = source.clone();
+        let mut source = source;
+        if let Some(origin) = origin {
+            source.root = PathBuf::from(origin);
+        }
         let root = slot.root_key.clone();
         crate::git_settings::around(
             &root,
             || format!("Restore backup {id}"),
             || {
                 restore_hosted(&slot.host, consumed_last_id, || {
-                    restore_from_backup_source(&id, &base, &slot.store, source, |source| {
-                        do_backup_source(&restore_app, &slot.store, source.clone(), "pre-restore")
+                    restore_from_backup_source(&snapshot_id, &base, &slot.store, source, |_| {
+                        do_backup_source(
+                            &restore_app,
+                            &slot.store,
+                            current_source.clone(),
+                            "pre-restore",
+                        )
                     })
                 })
             },
@@ -64,7 +82,7 @@ pub(crate) struct RestoreReply {
 /// fails). Otherwise `restore` runs and one fresh host launches on the tree
 /// as it now is, on success and on failure alike. With no host `restore` is
 /// the plain call.
-pub(super) fn restore_hosted(
+pub(crate) fn restore_hosted(
     slot: &std::sync::RwLock<crate::state::PageHostSlot>,
     consumed_last_id: u64,
     restore: impl FnOnce() -> Result<(), String>,
@@ -181,7 +199,7 @@ fn restore_from_backup_source(
 
 /// Run `read` holding the namespace lock (bounded wait), so no prune or
 /// partial cleanup removes the snapshot mid-read (REVIEW-backup-zip B1).
-fn under_namespace_lock<T>(
+pub(super) fn under_namespace_lock<T>(
     base: &std::path::Path,
     read: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
@@ -222,7 +240,7 @@ fn verified_zip(
     };
     drop(bytes);
     let manifest = verified.manifest;
-    if manifest.root != source.root.display().to_string() {
+    if !crate::root_identity::backup_root_matches(&manifest.root, &source.root) {
         return Err("backup belongs to a different graph".into());
     }
     let policy = &manifest.graph_text_policy;
@@ -278,7 +296,7 @@ fn verified_dir(
             return Err("backup not found".into());
         }
         let manifest = read_manifest(&src).ok_or("backup is incomplete or unverified")?;
-        if manifest.root != source.root.display().to_string() {
+        if !crate::root_identity::backup_root_matches(&manifest.root, &source.root) {
             return Err("backup belongs to a different graph".into());
         }
         if !verify_snapshot(&src, &manifest) {
@@ -459,6 +477,80 @@ fn read_verified_dir_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn l9_old_location_backups_restore_verified_bytes_without_rewriting_the_zip() {
+        let data = tempfile::tempdir().unwrap();
+        let old = data.path().join("old/notes");
+        let new = data.path().join("new/notes");
+        write(&old.join("pages/A.md"), "- backed up\n");
+        std::fs::create_dir_all(old.join("assets")).unwrap();
+        let store = Store::open(&old, Default::default()).unwrap().0;
+        let source = BackupSource::from_store(&store, &old).unwrap();
+        let backups = data.path().join("backups");
+        // Taken while `old` exists: afterwards it cannot canonicalize, and on
+        // Windows the lexical temp path may be an 8.3 short name.
+        let old_id = root_backup_id(&old);
+        let base = backups.join(&old_id);
+        assert!(snapshot(&base, &store, &source, "").failure.is_none());
+        let (id, _) = newest_zip(&base, &old);
+        let archive = zip_base(&base).join(format!("{}.zip", &id[4..]));
+        let sealed = std::fs::read(&archive).unwrap();
+        assert!(
+            old_backup_roots(&backups, &new).is_empty(),
+            "a present old graph is not an old location"
+        );
+        store.close();
+        drop(store);
+        std::fs::create_dir_all(new.parent().unwrap()).unwrap();
+        std::fs::rename(&old, &new).unwrap();
+        write(&new.join("pages/A.md"), "- current before restore\n");
+        let current = Store::open(&new, Default::default()).unwrap().0;
+        let roots = old_backup_roots(&backups, &new);
+        assert_eq!(
+            roots,
+            vec![(old_id.clone(), source.root.display().to_string())]
+        );
+        let wire = format!("old:{}:{id}", roots[0].0);
+        let (selected, origin, snapshot_id) = old_backup_selection(&backups, &new, &wire).unwrap();
+        assert_eq!(origin, source.root.display().to_string());
+        let current_source = BackupSource::from_store(&current, &new).unwrap();
+        restore_from_backup_source(snapshot_id, &selected, &current, source, |_| {
+            snapshot(
+                &backups.join(root_backup_id(&new)),
+                &current,
+                &current_source,
+                "pre-restore",
+            )
+        })
+        .unwrap();
+        assert_eq!(
+            std::fs::read(new.join("pages/A.md")).unwrap(),
+            b"- backed up\n"
+        );
+        assert_eq!(
+            std::fs::read(archive).unwrap(),
+            sealed,
+            "sealed archives are immutable"
+        );
+        assert!(
+            old_backup_selection(&backups, &new, "old:../elsewhere:zip:2026-07-22_12-00-00")
+                .is_err()
+        );
+        let unknown = zip_base(&base).join("user-note.txt");
+        std::fs::write(&unknown, b"keep").unwrap();
+        delete_old_snapshots(&base, &origin).unwrap();
+        assert_eq!(std::fs::read(unknown).unwrap(), b"keep");
+        assert!(
+            zip_base(&base).join(naming::LOCK_FILE).exists(),
+            "never unlink the lock inode"
+        );
+        assert!(list_backups_from_base(&base, std::path::Path::new(&origin)).is_empty());
+        assert!(
+            !list_backups_from_base(&backups.join(root_backup_id(&new)), &new).is_empty(),
+            "current safety backup survives old-location deletion"
+        );
+    }
 
     /// R7 (STEP3 §7 steps 4–6), plan v3 S8: a restore with a running host
     /// holds the binding's host gate across stop, file restore and relaunch

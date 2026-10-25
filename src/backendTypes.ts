@@ -88,6 +88,8 @@ export interface GitAutocommitStatus {
 }
 
 export interface BackupInfo {
+  /** Present for an on-demand old-location snapshot; restore requires confirmation. */
+  old_root?: string;
   /** What `restoreBackup` takes: `zip:<name>` or `dir:<name>` (a zip and a
    *  legacy snapshot directory with the same name are distinct backups). */
   id: string;

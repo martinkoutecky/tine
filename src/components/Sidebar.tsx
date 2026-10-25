@@ -2,7 +2,7 @@ import { For, Show, createEffect, createResource, createSignal, onCleanup, type 
 import { pageIcon } from "../pageIconBatch";
 import { msg, t } from "../i18n";
 import { JournalsIcon } from "./JournalsIcon";
-import { openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
+import { openAllGraphs, openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
 import { openSwitcher, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
 import { graphMeta } from "../graphSession";
@@ -70,7 +70,7 @@ export interface GraphNavigationActions {
   createNew(): Promise<LoadGraphPathOutcome>;
 }
 
-const graphNavigationActions: GraphNavigationActions = {
+export const graphNavigationActions: GraphNavigationActions = {
   openKnown: openKnownGraph,
   openPicked: switchGraph,
   createNew: createNewGraph,
@@ -317,6 +317,7 @@ export function GraphSwitcher(props: {
         />
         <div class="ctx-menu graph-switch-menu">
           <ResourceFailure of={knownGraphsResource} what="your other graphs" onRetry={() => void refetch()} />
+          <button class="ctx-item" onClick={() => { close(); openAllGraphs(); props.onActiveNavigationComplete?.(); }}>{t("command-go-all-graphs")}</button>
           <For each={knownGraphs() ?? []}>
             {(graph) => (
               <div

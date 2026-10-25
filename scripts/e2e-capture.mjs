@@ -22,7 +22,7 @@ const TD = process.env.TAURI_DRIVER || "tauri-driver";
 const WD = process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver";
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4456);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4457);
-const TMP = "/tmp/tine-capture-e2e";
+const TMP = process.env.E2E_TMP_DIR || "/tmp/tine-capture-e2e";
 const GRAPH = `${TMP}/graph`;
 // Avoid adjacent duplicate characters: WebKitWebDriver coalesces identical
 // synthetic key-downs on some Linux versions even though a physical keyboard
@@ -337,6 +337,37 @@ try {
   await browser.keys([...PROOF]);
   await sleep(150);
   await browser.saveScreenshot(path.join(ARTIFACT_DIR, "quick-capture-typed.png"));
+  if (process.env.E2E_CAPTURE_REFUSAL === "1") {
+    // Rebind the native graph slot while leaving the shown capture WebView on
+    // its original generation. Reload only the receiver so it takes the new
+    // lease; the real stale request must then be refused without insertion.
+    const otherGraph = `${TMP}/rebind-graph`;
+    for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(`${otherGraph}/${dir}`, { recursive: true });
+    await browser.switchToWindow(mainHandle);
+    const rebind = await browser.execute(async (other, original) => {
+      await globalThis.__TAURI_INTERNALS__.invoke("load_graph", { path: other });
+      return globalThis.__TAURI_INTERNALS__.invoke("load_graph", { path: original });
+    }, otherGraph, GRAPH);
+    if (!Number.isSafeInteger(rebind?.binding_generation)) throw new Error(`native graph rebind failed: ${JSON.stringify(rebind)}`);
+    await browser.refresh();
+    await browser.$(".ls-block").waitForExist({ timeout: 20_000 });
+    await browser.switchToWindow(captureHandle);
+    await browser.keys(["Control", "Shift", "Enter"]);
+    await browser.waitUntil(() => browser.execute(() => document.body.textContent.includes("text kept")), {
+      timeout: 10_000, timeoutMsg: "stale capture did not report retained text",
+    });
+    if (fs.readFileSync(journalPath, "utf8").includes(PROOF)) throw new Error("refused capture reached the journal");
+    await browser.keys(["Escape"]);
+    const reopen = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
+    await waitForForwarderExit(reopen, 5000);
+    reopen.unref();
+    await waitForWindow("Quick Capture", 10_000);
+    await browser.switchToWindow(captureHandle);
+    await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".capture-shell textarea")].some(editor => editor.value.includes("capture-focus-ok"))), {
+      timeout: 10_000, timeoutMsg: "Escape discarded refused capture text",
+    });
+    await browser.saveScreenshot(path.join(ARTIFACT_DIR, "quick-capture-refused-kept.png"));
+  }
   await browser.keys(["Control", "Shift", "Enter"]);
 
   const deadline = Date.now() + 10_000;
@@ -344,6 +375,8 @@ try {
   if (!fs.readFileSync(journalPath, "utf8").includes(PROOF)) {
     throw new Error(`keyboard input did not reach the graph despite proven native + DOM focus; dom=${JSON.stringify(domFocus)} journal=${JSON.stringify(fs.readFileSync(journalPath, "utf8"))}`);
   }
+  if (fs.readFileSync(journalPath, "utf8").split(PROOF).length !== 2) throw new Error("retry duplicated the capture in the journal");
+  if (process.env.E2E_CAPTURE_REFUSAL === "1") console.log("PASS: stale delivery was refused, Escape kept the text, and retry saved it exactly once");
   // Change the policy through the main Settings UI while the persistent capture
   // window is hidden. Reopening that exact WebView must refresh before Enter can
   // choose a completion; otherwise it would retain the cold existing-first signal.

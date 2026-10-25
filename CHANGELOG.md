@@ -10,6 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **All graphs** (GH #758): press **g Shift+G** or run **All graphs** from the command palette, then use the arrow keys and Enter to switch graphs. Graph actions, including opening a new window on desktop, are available from the keyboard.
+- **YouTube timestamp shortcut** (GH #757): **Ctrl/Cmd+Shift+Y** inserts the current playback time into the block you are editing. Click the timestamp to jump the video there, just as with the slash command.
+
 - **Open another view** of a PDF (⋯ menu, desktop) shows two parts of it side by side, each with its own page and zoom. Views of the same PDF now share their highlights: one made, recolored or removed in either view appears in the other at once, including views opened by splitting a pane, a new window or a restored session, which before kept separate copies.
 - **The Linked/Unlinked References count says what it counts** (GH #755): hovering the number shows "N blocks on M pages". The number still counts referencing blocks, as in Logseq, and follows the active filter.
 - **Automatic git commits** (queue cards hBpCy4/hBpb2k, ADR 0078 slice 1): a graph in a git repository can commit its changes automatically (Settings → Graph → Commit changes to git; desktop, off by default). Tine commits after a minute without edits, at most once per interval, on quit, and around renames, merges, deletes and backup restores; it never pushes or pulls 
@@ -38,6 +41,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Property keys link to their pages consistently in page headers, references, previews and query property lists, including after editing; Shift-click opens the key's page in the sidebar, and `:property-pages/enabled? false` keeps keys plain (GH #753).
+
 - **Hover previews are editable** (D-20261023-VQ, follow-up to GH #748): the blocks in a page or block-reference preview are now the page's own blocks, as in Logseq. Click a block's text to edit it in the preview; the change is saved to its page like any other edit. While you edit, the preview stays open when the pointer leaves it or the page scrolls, and the first Esc ends the edit (the next one closes the preview). A plain bullet click still opens that block in a new tab. Queries inside a preview still show as text and embeds stay read-only. Tested in the component suite; the app journey covers opening and folding previews.
 - **Deleting pages does less disk work** (internal, fsync investigation GH3, D-20261021-GQ3): after the first deletion in a session, a deletion syncs only the trash folder instead of it and every folder above it (three fewer directory syncs per deleted or moved page on Linux, macOS, Android and iOS), and on Windows a deletion no longer writes and removes a custody marker file, which protected nothing there (about a third of a deletion's time on hosted Windows runners).
 - `tine serve` skips its launch snapshot when the graph's newest backup zip is less than six hours old, so scripted edit/restart loops preserve the backup slots. A future-dated zip does not suppress backups; the app's launch snapshots are unchanged (D-20261020-CF4).
@@ -61,6 +66,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Editing an alias, or renaming or deleting an aliased page, no longer re-reads every page**: once the alias index exists, it is patched for the pages the edit changed instead of being rebuilt by a walk over the whole graph. On a generated 10,000-page graph the first alias lookup after such an edit examines 1 page instead of 10,000 (D-20261018-M2c).
 
 ### Fixed
+
+- Mobile: the help "?" button no longer covers the last buttons of the bottom-docked formatting toolbar while text is selected, with or without the keyboard (internal UI-HELP-FAB-ABOVE-DOCKED-TOOLBAR).
+- Windows: a save made while the previous save of the same page was still replacing the file is no longer refused as "write target escapes graph root" when Windows reports the replaced file's location for the page (internal REG-WIN-WRITE-TARGET-DISPLACED; completes the 0.8.0-beta.4 fix).
+- Block references keep resolving after a block moves between pages and after reopening the graph; dangling references no longer scan unrelated pages (GH #746, GH #623).
+- The exact block-owner index builds in bulk at cold launch and writes compact checkpoint rows without temporary page copies (GH #623).
+- The exact block-owner index keeps UUID keys in 16 bytes and shares one allocation per tree node, reducing its memory use on large graphs (GH #623).
+- **Opening and scrolling a large page right after typing is fast again** (development only, internal card hDSCuw): the typing-stall diagnostics added for GH #746 ran work on every frame for two seconds after each key, which made a page opened from search or the page switcher, and its first scroll, about a frame slower. They now do no per-frame work.
+
+- Quick Capture keeps refused text on Escape, so reopening the box files it into the current graph; a claim retired before insertion no longer reports previous-graph uncertainty (GH #254). Deleting a conflicted page now refuses an unanswered input drain after five seconds and restores editable text.
+- Reference and embed rows validate their source page before becoming editable, so a copied block identity cannot expose another page's live block or selection (follow-up to GH #748).
+- Moving a graph preserves access to device-local unsaved edits through **Recover into this graph** and stops saves when an open folder moves or disconnects. Recovery excludes hosts still saving; open graphs permit drive eject, and recovery/backup notices explain that a graph may be moved or unavailable, including on a disconnected drive (L9-01, L9-02).
+- Windows now holds the same account-wide graph owner lock as Linux and macOS, so concurrent Tine apps cannot host one graph or adopt its live drafts (L9-01, L9-02).
 
 - An asset stays in place if sync replaces a set-aside duplicate journal while Tine checks whether the asset is unused; the check refuses stale bytes even when the replacement keeps the same length and modification time (GH #623).
 

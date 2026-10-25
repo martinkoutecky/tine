@@ -98,7 +98,7 @@ import { isMobilePlatform } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
 import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
-import { youtubeTimestampMacroFor } from "./Macro";
+import { youtubeTimestampMacroFor, insertYoutubeTimestamp } from "./youtubeTimestampEdit";
 import { Rendered, detectMacro } from "./Rendered";
 import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecorationStyle, threadLineSettings, type ThreadLineDecoration } from "./block/rowChrome";
 import { dbg } from "../debug";
@@ -1725,10 +1725,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         replaceTrigger(timeStamp());
         return;
       case "youtube-timestamp": {
-        // OG inserts nothing when no player is registered/ready
-        // (youtube.cljs:113-122) — the slash text is still consumed.
-        const macro = youtubeTimestampMacroFor(ref);
-        replaceTrigger(macro ?? "");
+        replaceTrigger(youtubeTimestampMacroFor(ref) ?? "");
         return;
       }
       case "page-reference":
@@ -2270,6 +2267,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // its own preventDefault when it handles the event and returns whether it did
   // (false → fall through to native handling). Read ref fresh at call time.
   const runEditorCmd: Record<string, (e: KeyboardEvent) => boolean> = {
+    "editor/insert-youtube-timestamp": (e) => { e.preventDefault(); insertYoutubeTimestamp(ref, applyEdit); return true; },
     "editor/select-embedding-block": (e) => {
       if (!embedNavExit) return false;
       e.preventDefault();

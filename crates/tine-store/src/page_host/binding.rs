@@ -1065,9 +1065,8 @@ impl PageHost {
     ) -> Result<(Text, Handoff), PageRefusal> {
         let file = PageId::from(spelling).file();
         let tx = self.store.transaction(None);
-        tx.page_save_target(&file, dto)?;
         let old = source.and_then(|text| text.as_deref());
-        let (bytes, document) = tx.serialize_page(&file, dto, old, false)?;
+        let (bytes, document) = tx.serialize_host_input(&file, dto, old)?;
         let bytes: Text = Some(Arc::from(bytes));
         let handoff = Handoff {
             bytes: bytes.clone(),

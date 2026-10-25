@@ -67,6 +67,7 @@ mod query_ir;
 mod quick_share;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod quit_signal;
+mod root_identity;
 mod search_workspace;
 mod settings;
 mod share_inbox;
@@ -81,7 +82,7 @@ mod workspace_windows;
 mod youtube_identity;
 use css_files::{read_css_file, save_css_file};
 
-use backup::{get_backup_keep, list_backups, restore_backup, set_backup_keep};
+use backup::{delete_old_backups, get_backup_keep, list_backups, restore_backup, set_backup_keep};
 use commands::{
     apply_journal_filename_migrations, asset_trash_stats, block_ref_counts, block_referrers,
     capture_quick_switch, close_graph_window, copy_guide_into_graph, detect_media_editor,
@@ -1028,6 +1029,9 @@ pub fn run() {
             data_home::take_data_home_fallback_notice,
             migrate_identifier::take_identifier_migration_notice,
             load_graph,
+            root_identity::orphan_drafts,
+            root_identity::recover_orphan_drafts,
+            delete_old_backups,
             inspect_graph_access,
             approve_external_assets,
             deep_links::graph_link_identity,

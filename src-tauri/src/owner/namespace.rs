@@ -40,6 +40,19 @@ impl Namespace {
     /// `root`'s artifacts, named by the fixed-width graph hash only.
     pub(crate) fn graph(&self, root: &Path) -> Result<GraphPaths, OwnerError> {
         let key = format!("{:016x}", crate::settings::graph_hash(root));
+        self.key(&key)
+    }
+
+    /// Caller has validated the existing host graph id (L9-01 adoption).
+    pub(crate) fn graph_id(&self, id: &str) -> Result<GraphPaths, OwnerError> {
+        let key = id.rsplit_once('-').map(|(_, key)| key).unwrap_or("");
+        if key.len() != 16 || !key.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return Err(OwnerError::Unsafe("invalid draft owner key".into()));
+        }
+        self.key(key)
+    }
+
+    fn key(&self, key: &str) -> Result<GraphPaths, OwnerError> {
         let paths = GraphPaths {
             lock: self.dir.join(format!("{key}.lock")),
             socket: self.dir.join(format!("{key}.sock")),
@@ -86,11 +99,37 @@ fn account_dir() -> Result<PathBuf, OwnerError> {
     Ok(account_home()?.join("Library/Application Support/tine-owners"))
 }
 
-/// Windows: the endpoint (a named pipe with a user-only DACL and a checked
-/// directory DACL) is not built yet; the command line refuses there rather
-/// than run a second owner, and the app opens without an endpoint (CLI
-/// PROTOCOL §1, slice 1a). iOS and Android have no command line.
-#[cfg(any(target_os = "windows", target_os = "ios", target_os = "android"))]
+/// Account-wide across stable/Beta, independently of environment variables
+/// and single-instance forwarding. Windows has a lock but no endpoint yet.
+#[cfg(target_os = "windows")]
+fn account_dir() -> Result<PathBuf, OwnerError> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath};
+    let mut raw = std::ptr::null_mut();
+    // SAFETY: the OS allocates a NUL-terminated path for the current account;
+    // it is copied before releasing the allocation with CoTaskMemFree.
+    let status =
+        unsafe { SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, std::ptr::null_mut(), &mut raw) };
+    if status < 0 {
+        return Err(OwnerError::Unsafe(format!(
+            "cannot locate the account's LocalAppData: {status:#x}"
+        )));
+    }
+    let path = unsafe {
+        let mut len = 0;
+        while *raw.add(len) != 0 {
+            len += 1;
+        }
+        let path = std::ffi::OsString::from_wide(std::slice::from_raw_parts(raw, len));
+        CoTaskMemFree(raw.cast());
+        PathBuf::from(path)
+    };
+    Ok(path.join("tine").join("owners"))
+}
+
+/// Mobile: one process per app, with per-app sandboxed data, no CLI host.
+#[cfg(any(target_os = "ios", target_os = "android"))]
 fn account_dir() -> Result<PathBuf, OwnerError> {
     Err(OwnerError::Unsupported)
 }
@@ -125,8 +164,11 @@ fn create_private(dir: &Path) -> Result<(), OwnerError> {
 }
 
 #[cfg(windows)]
-fn create_private(_: &Path) -> Result<(), OwnerError> {
-    Err(OwnerError::Unsupported)
+fn create_private(dir: &Path) -> Result<(), OwnerError> {
+    // Inherit the account's LocalAppData ACL. No command endpoint is exposed;
+    // the in-scope exclusion is between concurrent honest instances.
+    std::fs::create_dir_all(dir)
+        .map_err(|e| OwnerError::Unsafe(format!("cannot create {}: {e}", dir.display())))
 }
 
 /// A directory, not a symlink, owned by this uid, with no group or other
@@ -148,8 +190,22 @@ fn check_private(dir: &Path) -> Result<(), OwnerError> {
 }
 
 #[cfg(windows)]
-fn check_private(_: &Path) -> Result<(), OwnerError> {
-    Err(OwnerError::Unsupported)
+fn check_private(dir: &Path) -> Result<(), OwnerError> {
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+    // Inspect both components created below the trusted Known Folder. A
+    // junction on either must not redirect different apps to different locks.
+    for path in std::iter::once(dir).chain(dir.parent()) {
+        let meta = std::fs::symlink_metadata(path)
+            .map_err(|e| OwnerError::Unsafe(format!("cannot inspect {}: {e}", path.display())))?;
+        if !meta.is_dir() || meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(OwnerError::Unsafe(format!(
+                "{} must be a directory, not a reparse point",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// A Unix socket path must fit `sockaddr_un.sun_path` (108 bytes on Linux,
@@ -173,4 +229,56 @@ fn check_socket_path(socket: &Path) -> Result<(), OwnerError> {
 #[cfg(windows)]
 fn check_socket_path(_: &Path) -> Result<(), OwnerError> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn windows_owner_lock_does_not_enable_a_headless_host() {
+        let source = include_str!("serve.rs");
+        let function = &source[source.find("fn serve_graph(").unwrap()..];
+        let before_claim = &function[..function.find("lease::claim(").unwrap()];
+        assert!(before_claim.contains("#[cfg(target_os = \"windows\")]"));
+        assert!(before_claim.contains("return Err(ServeFailure::Claim(OwnerError::Unsupported))"));
+    }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_owner_directory_rejects_files_and_reparse_points() {
+        use super::*;
+        let data = tempfile::tempdir().unwrap();
+        let owners = data.path().join("owners");
+        create_private(&owners).unwrap();
+        check_private(&owners).unwrap();
+        let file = data.path().join("file");
+        std::fs::write(&file, b"not a directory").unwrap();
+        assert!(check_private(&file).is_err());
+        let link = data.path().join("link");
+        match std::os::windows::fs::symlink_dir(&owners, &link) {
+            Ok(()) => assert!(check_private(&link).is_err()),
+            Err(error) => {
+                eprintln!("reparse runtime check unavailable without symlink privilege: {error}")
+            }
+        }
+    }
+    #[test]
+    fn desktop_exclusion_names_all_five_targets() {
+        let source = include_str!("namespace.rs");
+        let production = &source[..source.find("#[cfg(test)]\nmod tests").unwrap()];
+        for os in ["linux", "macos", "windows", "ios", "android"] {
+            assert!(production.contains(&format!("target_os = \"{os}\"")));
+        }
+        let start = production
+            .find("#[cfg(target_os = \"windows\")]\nfn account_dir")
+            .expect("Windows takes an account-wide owner lock, independently of single-instance");
+        let arm = &production[start..];
+        let arm = &arm[..arm.find("\n}\n").unwrap()];
+        assert!(arm.contains("SHGetKnownFolderPath"));
+        assert!(arm.contains("FOLDERID_LocalAppData"));
+        assert!(!arm.contains("std::env"));
+        assert!(!arm.contains("Unsupported"));
+        let mobile = production
+            .find("#[cfg(any(target_os = \"ios\", target_os = \"android\"))]\nfn account_dir")
+            .expect("mobile exclusion is one process per sandboxed app");
+        assert!(production[mobile..].contains("Err(OwnerError::Unsupported)"));
+    }
 }

@@ -162,3 +162,34 @@ it("FU2: a same-graph timeout keeps the request identity without the previous-gr
   expect(retried.id).toBe(request!.id);
   await ack(retried.id, { ok: true });
 });
+
+it("A1: the next File capture after an old-binding refusal refreshes the binding", async () => {
+  setRaw(roots()[0], "retry in the current graph");
+  const first = await submit();
+  await ack(first.id, { ok: false });
+  const bind = vi.spyOn(backend(), "bindCaptureGraph").mockImplementationOnce(async () => {
+    vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(18);
+  });
+  const next = await submit();
+  await ack(next.id, { ok: true });
+  expect(bind).toHaveBeenCalled();
+  expect(next.id).not.toBe(first.id);
+  expect(next).toMatchObject({ bindingGeneration: 18 });
+});
+
+it("A1: a refused old binding keeps text on Esc and files next in the current binding", async () => {
+  setRaw(roots()[0], "refused but still needed");
+  const first = await submit();
+  await ack(first.id, { ok: false });
+  h.api!.cancel();
+  await Promise.resolve();
+  expect(scratch()).toContain("refused but still needed");
+  const bind = vi.spyOn(backend(), "bindCaptureGraph").mockImplementationOnce(async () => {
+    vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(19);
+  });
+  const next = await submit();
+  expect(bind).toHaveBeenCalled();
+  expect(next.id).not.toBe(first.id);
+  expect(next).toMatchObject({ bindingGeneration: 19 });
+  await ack(next.id, { ok: true });
+});

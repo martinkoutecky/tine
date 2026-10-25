@@ -87,6 +87,57 @@ pub(super) fn host() -> Host<ModelFs> {
     Host::new(fs, locks)
 }
 
+#[test]
+fn l9_root_faults_preserve_admitted_input_in_device_drafts() {
+    for fault in [Fault::RootGone(0), Fault::RootReplaced(0)] {
+        for phase in [
+            Phase::Read,
+            Phase::PageTemp,
+            Phase::PageRename,
+            Phase::PageSync,
+        ] {
+            let mut h = host();
+            open(&mut h, "a.md");
+            edit(&mut h, "a.md", "input after move");
+            h.fs.inject(phase, [fault]);
+            assert_eq!(h.start_save("a.md"), Disposition::Pending);
+            for _ in 0..12 {
+                if h.job.is_none() {
+                    break;
+                }
+                h.advance_save();
+            }
+            assert!(!h.pages["a.md"].clean(), "{phase:?}/{fault:?}");
+            draft(&mut h, "a.md");
+            assert_eq!(
+                drafts::scan(h.fs.draft_files(true)).logical["a.md"].bytes,
+                text("input after move")
+            );
+            assert!(
+                !h.fs.files.keys().any(|key| key.starts_with("graph/")),
+                "no publication under a detached epoch"
+            );
+        }
+    }
+}
+
+#[test]
+fn l9_root_faults_between_trash_syscalls_never_create_a_replacement_tree() {
+    for offset in 0..8 {
+        for fault in [Fault::RootGone(offset), Fault::RootReplaced(offset)] {
+            let mut fs = ModelFs::default();
+            fs.external("a.md", text("original"), true);
+            fs.inject(Phase::TrashMove, [fault]);
+            let moved = fs.trash_move("a.md", "payload");
+            assert!(moved.result.is_err(), "{offset}/{fault:?}");
+            assert_eq!(moved.result.unwrap_err().operation, Some("GraphRootMoved"));
+            assert!(!fs.files.keys().any(|key| key.starts_with("dir/")
+                || key.starts_with("graph/")
+                || key.starts_with("trash/")));
+        }
+    }
+}
+
 pub(super) fn send(host: &mut Host<ModelFs>, key: &str, kind: RequestKind) -> Disposition {
     let request = Request {
         id: host.last_admitted + 1,

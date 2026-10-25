@@ -54,6 +54,9 @@
  * reports; `resolveConflict` sends Keep mine on the disk state the conflict
  * showed, or takes the host's text for Use disk. A block entering editing
  * opens its page in the host (`bindHost` binds the window after a graph load).
+ * After explicit draft adoption, `bindHost({ refreshLoaded: true })` also takes
+ * fresh host text for loaded view-only pages, including unpublished conflicts;
+ * one temporary Open/Close per loaded graph page, with input already frozen.
  * Multi-page intents that move blocks between pages run `persistTransfer`: the
  * pages freeze, their input drains, and one host move per source carries the
  * blocks; a crash between moves can leave a block in both pages, never in

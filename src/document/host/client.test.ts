@@ -427,6 +427,23 @@ describe("R4 createPage", () => {
 });
 
 describe("S8 session rebind", () => {
+  it.each([1,50])("starts the replacement session's consumed watermark at its supplied request floor (%s)",async nextId => {
+    const ctx=await setup();
+    await opened(ctx,"P",3);
+    ctx.host.session=8;
+    ctx.host.nextId=nextId;
+    await ctx.client.rebind();
+    expect(ctx.client.consumed).toBe(nextId-1);
+  });
+
+  it("an admitted unanswerable Close advances the consumed stop watermark",async () => {
+    const ctx=await setup();
+    const release=await opened(ctx,"P",3);
+    release();
+    await tick();
+    expect(ctx.client.consumed).toBe(ctx.host.last("close").id);
+  });
+
   it("drops the old session's mail, replays early new-session mail, and reopens acquired pages", async () => {
     const ctx = await setup();
     const { host, doc, client } = ctx;

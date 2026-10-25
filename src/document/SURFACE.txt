@@ -21,7 +21,7 @@ applyGraphChange
 applyGraphChangesBulk  # why: a checkout-sized watcher batch (graph-changed-bulk) is applied once (family 10); batch22a
 applyLiveResolution  # why: conflict dock applies a live-buffer resolution through the page host; batch-og-s3b
 beginPageHeaderEdit
-bindHost  # why: graph open binds the page host client for the new working set; batch-og-s3b
+bindHost  # why: graph open binds the page host client; explicit L9-01 draft adoption can refresh loaded pages from relaunched host custody without requiring publication; batch-og-s3b
 blockExternalId
 blockHasFoldableBody  # why: the bullet arrow, keyboard folds and setCollapsed share one answer to whether a block has a body to fold (children, a page embed, a query macro: OG collapsable?) (GH #619); batch-fix-gh619-query-oct18
 blockHasPageEmbed  # why: host disclosure and keyboard folds share parser-owned page-embed eligibility (GH #694); batch-embed-find

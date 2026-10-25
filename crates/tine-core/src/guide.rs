@@ -1213,6 +1213,30 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn moved_graph_guide_explains_kept_edits_explicit_recovery_and_old_backups() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for concept in [
+            "never recreates the old graph folder",
+            "Recover into this graph",
+            "Not now",
+            "notice returns on the next open",
+            "moved or unavailable",
+            "disconnected drive",
+            "only backups of a graph",
+            "does not prevent ejecting its drive",
+            "recovery refuses",
+            "then try again",
+            "safety snapshot of the current graph",
+            "archives are kept unchanged",
+        ] {
+            assert!(
+                files.contains(concept),
+                "missing moved-graph onboarding outcome: {concept}"
+            );
+        }
+    }
+
+    #[test]
     fn unlinked_reference_guide_says_the_highlight_is_clickable() {
         // GH #200 (master 552d988c9): nothing in the UI announces that a
         // highlighted mention is a control, so the Guide has to.
@@ -1381,6 +1405,19 @@ mod rename_guide_tests {
         // GH #164 (family 4): both doors, the add-row, non-ASCII keys, and the
         // read-only refusal; nothing else tells a reader the form exists.
         let tips = include_str!("templates/tips.md");
+        let properties = include_str!("templates/pages-links-references-search.md");
+        for outcome in [
+            "Click a property key to open its page",
+            "Shift-click opens it in the right sidebar",
+            "before and after editing",
+            ":property-pages/enabled? false",
+            "it does not remove key links",
+        ] {
+            assert!(
+                properties.contains(outcome),
+                "missing property navigation: {outcome}"
+            );
+        }
         for control in [
             "**Page properties…**",
             "right-click a block for **Properties…**",
@@ -2264,6 +2301,8 @@ mod asset_manifest_tests {
         assert!(guide.contains("plain retry"));
         assert!(guide.contains("**Add text** reminder"));
         assert!(guide.contains("never reached a graph"));
+        assert!(guide.contains("After a refused filing, **Esc** keeps the text too"));
+        assert!(guide.contains("reopen the capture box to file it into the current graph"));
         assert!(guide.contains("previous graph"));
         assert!(guide.contains("without clearing its text or retry identity"));
         assert!(guide.contains("does not survive quitting"));

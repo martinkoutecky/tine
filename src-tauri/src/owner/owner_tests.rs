@@ -464,14 +464,14 @@ fn the_namespace_is_private_and_fits_a_socket_path() {
 }
 
 /// AGENTS.md §2: a platform `cfg` family names every shipped target. The
-/// namespace's arms cover Linux and macOS (an endpoint) and refuse on
-/// Windows, iOS and Android; the catch-all means "not a Tine platform".
+/// namespace's arms cover desktop locks and mobile sandbox exclusion;
+/// the catch-all means "not a Tine platform".
 #[test]
 fn the_namespace_names_every_shipped_target() {
     let source = include_str!("namespace.rs");
     assert_eq!(
         source.matches("fn account_dir()").count(),
-        4,
+        5,
         "one account_dir per platform family"
     );
     let cfgs: Vec<&str> = source

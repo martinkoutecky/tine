@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 221] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 224] = [
     "add_defender_exclusion",
     "app_architecture",
     "app_platform",
@@ -40,6 +40,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 221] = [
     "debug_log",
     "default_graph_parent",
     "defender_hint",
+    "delete_old_backups",
     "detect_media_editor",
     "diagnostic_frontend_event",
     "diagnostic_ipc_event",
@@ -100,6 +101,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 221] = [
     "open_graph_window",
     "open_page_file",
     "open_pdf",
+    "orphan_drafts",
     "owner_flush_answer",
     "page_alias_group",
     "page_backlink_counts",
@@ -155,6 +157,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 221] = [
     "read_local_image",
     "read_plugin_entry",
     "read_text_file",
+    "recover_orphan_drafts",
     "register_unlinked_reference",
     "rename_file_to_page",
     "rename_page",

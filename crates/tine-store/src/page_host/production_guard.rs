@@ -38,7 +38,15 @@ impl ProductionIo {
     }
 
     pub(super) fn check_path(&self, path: &Path) -> IoResult<()> {
-        crate::model::checked_write_target(&self.graph, path, "graph root").map_err(failure)
+        // Shared with the Store, so attachment captures no redundant identity
+        // and cannot accept a replacement since Store::open.
+        crate::model::checked_write_target(
+            &self.graph,
+            path,
+            "graph root",
+            Some(&self.root_binding),
+        )
+        .map_err(failure)
     }
 
     pub(super) fn creating_owner(

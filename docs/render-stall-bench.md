@@ -44,9 +44,12 @@ is enough for this plumbing check, but cannot certify the performance budget.
 Normal app diagnostics now include an export-only `renderer` snapshot: up to
 32 worst stalls of at least 100 ms during typing. Chromium adds Long Animation
 Frame script durations, bundled asset filename/character position, and Event
-Timing where available. WebKit uses animation-frame gaps and key-to-next-frame
-latency. Background frames are ignored and the frame loop stops when typing
-stops. No key value, note text, DOM target, full script URL or function name is
+Timing where available, observed only from the first key until 2 s without
+input. Every engine records key-to-next-frame latency: a burst of keys requests
+one animation frame. There is no per-frame loop, because a continuous
+requestAnimationFrame chain after each key cost Chromium about a frame on the
+next large-page load and scroll (bench, 8554ec5a1). Background frames are
+ignored. No key value, note text, DOM target, full script URL or function name is
 recorded. The snapshot covers the app window and its workspace windows, stays
 in memory, and is cleared with
 **Clear recorded events**; restarting discards it. Copy and Save use the existing

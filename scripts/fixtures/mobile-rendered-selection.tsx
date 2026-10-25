@@ -13,9 +13,11 @@ import "../../src/styles/app.css";
 import "../../src/styles/topbar.css";
 import "../../src/styles/touchGestures.css";
 import "../../src/styles/ls-shim.css";
+import "../../src/styles/help.css";
 
 // A mobile-shaped page for scripts/shot-gh375-rendered-selection.mjs: the real
-// Block renderer, the real keyboard dock and rendered-selection toolbar, the
+// Block renderer, the real keyboard dock and rendered-selection toolbar, the help
+// corner's "?" (which must clear the docked toolbar), the
 // shipped CSS, a scroller shaped like the app's `.main-content`, and (with
 // `?nav`) a bottom navigation row like Settings > Navigation buttons at the
 // bottom. The harness plays the IME by resizing the viewport and dispatching
@@ -37,5 +39,6 @@ render(() => (
     <Show when={nav}><nav class="mobile-navigation-toolbar">nav</nav></Show>
     <MobileKeyboardToolbar />
     <RenderedSelectionToolbar />
+    <div class="help-corner"><button class="help-corner-btn" type="button">?</button></div>
   </div>
 ), document.getElementById("root")!);

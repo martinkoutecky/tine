@@ -19,6 +19,7 @@ pub(super) struct ProductionIo {
     pub(super) store: std::sync::Weak<crate::Store>,
     creation_rules: BTreeMap<String, guard::Creation>,
     graph: PathBuf,
+    root_binding: std::sync::Arc<crate::root_binding::RootBinding>,
     drafts: PathBuf,
     trash: PathBuf,
     page_temps: BTreeMap<String, PreparedWrite>,
@@ -87,13 +88,31 @@ impl ProductionIo {
     /// Graph/page keys and graph ID are already resolved by the store boundary.
     /// Never fails (B-Q1): a drafts directory that cannot be created or
     /// listed leaves draft I/O down, the census unknown (M1).
+    #[cfg(test)]
     pub(super) fn attach(graph: &Path, app_data: &Path, graph_id: &str, trash: &Path) -> Self {
+        Self::attach_bound(
+            graph,
+            app_data,
+            graph_id,
+            trash,
+            std::sync::Arc::new(crate::root_binding::RootBinding::new(graph)),
+        )
+    }
+
+    pub(super) fn attach_bound(
+        graph: &Path,
+        app_data: &Path,
+        graph_id: &str,
+        trash: &Path,
+        root_binding: std::sync::Arc<crate::root_binding::RootBinding>,
+    ) -> Self {
         let drafts = app_data.join("drafts-v2").join(graph_id);
         let listing = list(&drafts);
         let mut io = Self {
             store: Default::default(),
             creation_rules: BTreeMap::new(),
             graph: graph.to_path_buf(),
+            root_binding,
             drafts,
             trash: trash.to_path_buf(),
             page_temps: BTreeMap::new(),
@@ -222,9 +241,13 @@ impl ProductionIo {
 
     fn graph_directory(&mut self, dir: &Path) -> IoResult<()> {
         self.check_path(dir)?;
+        if !self.directories.contains_key(dir) {
+            let creation = durability::DirectoryCreation::new(dir, &self.graph).map_err(failure)?;
+            self.directories.insert(dir.to_path_buf(), creation);
+        }
         self.directories
-            .entry(dir.to_path_buf())
-            .or_insert_with(|| durability::DirectoryCreation::new(dir))
+            .get_mut(dir)
+            .unwrap()
             .finish(|dir| {
                 // Each created directory's parent sync counts (I-25).
                 #[cfg(feature = "test-faults")]
@@ -364,7 +387,14 @@ fn witness(value: DirectoryWitness) -> Witness {
 /// (`trash_move`, K6): any other `AlreadyExists`, such as a file where a
 /// directory is created, is a failure the failure bound counts.
 fn failure(error: io::Error) -> IoFailure {
-    let step = crate::directory_durability::failure_step(&error);
+    let step = if error
+        .get_ref()
+        .is_some_and(|cause| cause.is::<crate::root_binding::GraphRootMoved>())
+    {
+        Some(("GraphRootMoved", None))
+    } else {
+        crate::directory_durability::failure_step(&error)
+    };
     IoFailure {
         kind: ErrorKind::Io,
         completed: false,
@@ -608,7 +638,8 @@ impl HostIo for ProductionIo {
 
     fn page_sync(&mut self, page: &str) -> IoResult<Witness> {
         let path = self.page_path(page);
-        self.check_path(&path)?;
+        // Sync acts on the parent, not the page. graph_sync checks that
+        // directory and the root witness once at the actual sync boundary.
         let result = self.graph_sync(super::io::Phase::PageSync, path.parent().unwrap());
         if result.is_ok() {
             self.creation_rules.remove(page);

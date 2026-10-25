@@ -11,6 +11,7 @@ import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from ".
 import { QueryWorkspace } from "./components/QueryWorkspace";
 import { ConflictOverview } from "./components/ConflictOverview";
 import { AllPages } from "./components/AllPages";
+import { AllGraphs } from "./components/AllGraphs";
 // pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
 // the viewer only when one is opened.
 const KeyedPdfViewer = lazy(() =>
@@ -54,6 +55,7 @@ import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeU
 
 installAliasDraftRouteHandler((name, kind) => openPage(name, kind));
 import { pushToast } from "./toasts";
+import { RootRecoveryNotice } from "./components/RootRecoveryNotice";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
@@ -316,6 +318,9 @@ function PaneContent(props: { router: PaneRouter }): JSX.Element {
       </Match>
       <Match when={props.router.route().kind === "all-pages"}>
         <AllPages router={props.router} />
+      </Match>
+      <Match when={props.router.route().kind === "all-graphs"}>
+        <AllGraphs />
       </Match>
     </Switch>
   );
@@ -1162,6 +1167,7 @@ export function App(): JSX.Element {
         </MobileDrawerPanel>
       </Show>
       <DrawerBackground class="main-container" blockedBy="left">
+        <FailureBoundary region="Graph recovery"><RootRecoveryNotice /></FailureBoundary>
         {/* In focus mode the topbar is hidden; this thin strip at the very top
             reveals it on hover (CSS adjacency), so controls are reachable. */}
         <DrawerBackground blockedBy="right">

@@ -1,6 +1,6 @@
 import { reportUiFailure } from "./uiFailure";
 import { backend } from "./backend";
-import { blockRef, node as docNode, resolveGuideBlockRef } from "./document";
+import { blockRef, resolveBlockRef, resolveGuideBlockRef } from "./document";
 import { graphEpoch } from "./graphSession";
 import { changeKeyHasConsumers, onChangeKeyReleased, onChangeKeysFlushed } from "./changeKeys";
 import { clearOnBindingInvalidated } from "./binding";
@@ -144,5 +144,7 @@ export function blockRefTarget(
   uuid: string,
   g: RefGroup,
 ): { uuid: string; page: string; pageKind: RefGroup["kind"]; path?: string } {
-  return docNode(uuid) ? blockRef(uuid) : { uuid, page: g.page, pageKind: g.kind };
+  const ref = { uuid, page: g.page, pageKind: g.kind, ...(g.path ? { path: g.path } : {}) };
+  const id = resolveBlockRef(ref);
+  return id ? blockRef(id) : ref;
 }
