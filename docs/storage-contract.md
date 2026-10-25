@@ -186,6 +186,9 @@ authored ids retain their exact spelling. The writer borrows cached projections
 and derives structural ids without cloning documents or building a temporary
 owner tree. Cold build sorts borrowed ids once and bulk-builds the AVL;
 incremental publication keeps persistent updates over changed ids.
+Resident canonical lowercase UUID keys use a separate u128-keyed persistent
+AVL with entries inside shared nodes; other spellings keep exact string keys.
+The writer and loader share the page namespace and child-id derivation.
 Warm launch decodes those rows without rebuilding the index
 from blocks. A malformed owner slot declines the whole disposable checkpoint
 and uses the normal full build. FORMAT 19 supersedes FORMAT 18 once.

@@ -326,6 +326,11 @@ fn a_loaded_checkpoint_equals_a_fresh_build() {
     let cp = dir.path().join("graph.bin");
     let written = open_cp(root.path(), &cp);
     let before = captured(&written);
+    let before_index = written
+        .whole_graph_reconciled()
+        .unwrap()
+        .graph
+        .block_index_image();
     assert!(matches!(
         written.write_checkpoint_now(),
         Some(CheckpointWrite::Written { .. })
@@ -338,6 +343,20 @@ fn a_loaded_checkpoint_equals_a_fresh_build() {
     assert_eq!(parse_passes(&loaded), 0, "a loaded launch parses nothing");
     let fresh = Store::open(root.path(), Default::default()).unwrap().0;
     let built = captured(&fresh);
+    let after_index = loaded
+        .whole_graph_reconciled()
+        .unwrap()
+        .graph
+        .block_index_image();
+    assert_eq!(before_index, after_index);
+    assert_eq!(
+        after_index,
+        fresh
+            .whole_graph_reconciled()
+            .unwrap()
+            .graph
+            .block_index_image()
+    );
     assert!(
         before == after,
         "ADR 0070: install + capture must round-trip the generation"
@@ -637,6 +656,56 @@ fn an_unusable_checkpoint_falls_back_to_a_full_build() {
         reopened.whole_graph_reconciled().unwrap();
         assert_eq!(load_outcome(&reopened), "loaded", "{case}: replaced");
     }
+}
+
+#[test]
+fn offline_block_moves_deletions_and_duplicates_match_the_whole_fresh_index() {
+    let root = graph();
+    let cp = root.path().join("launch.bin");
+    let moved = "aaaaaaaa-0000-4000-8000-000000000001";
+    let deleted = "aaaaaaaa-0000-4000-8000-000000000002";
+    let duplicate = "aaaaaaaa-0000-4000-8000-000000000003";
+    let a = root.path().join("pages/A.md");
+    fs::write(
+        &a,
+        format!(
+            "- move\n  id:: {moved}\n- delete\n  id:: {deleted}\n- duplicate\n  id:: {duplicate}\n"
+        ),
+    )
+    .unwrap();
+    set_mtime(&a, old());
+    write_checkpoint(root.path(), &cp);
+    // All three edits happen with no running store or watcher.
+    fs::write(&a, format!("- retained\n  id:: {duplicate}\n")).unwrap();
+    fs::write(
+        root.path().join("pages/B.md"),
+        format!("- moved\n  id:: {moved}\n"),
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("pages/New.md"),
+        format!("- copied\n  id:: {duplicate}\n"),
+    )
+    .unwrap();
+    let warm = open_cp(root.path(), &cp);
+    let fresh = Store::open(root.path(), Default::default()).unwrap().0;
+    let warm_view = warm.whole_graph_reconciled().unwrap();
+    let fresh_view = fresh.whole_graph_reconciled().unwrap();
+    let actual = warm_view.graph.block_index_image();
+    assert_eq!(load_outcome(&warm), "loaded");
+    assert_eq!(warm_view.graph.block_index_full_builds(), 0);
+    assert_eq!(actual, fresh_view.graph.block_index_image());
+    assert!(!actual.iter().any(|(id, _)| id == deleted));
+    assert_eq!(
+        actual.iter().find(|(id, _)| id == moved).unwrap().1,
+        ["pages/B.md"]
+    );
+    assert_eq!(
+        actual.iter().find(|(id, _)| id == duplicate).unwrap().1,
+        ["pages/A.md", "pages/New.md"]
+    );
+    warm.close();
+    fresh.close();
 }
 
 #[test]

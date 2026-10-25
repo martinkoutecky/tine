@@ -70,13 +70,15 @@ page slot, with exact authored ids alongside. The writer borrows documents and
 their cached projections; it neither clones page forests nor builds a temporary
 owner tree. Cold construction sorts borrowed ids once and consumes unique
 entries in a linear AVL build alongside the other independent index workers.
-Decoding sorts binary UUIDs before formatting them and merges authored strings
-in their exact ordering. Live publications replace only the changed pages' ids.
+Decoding keeps canonical lowercase UUIDs as u128 keys in a separate persistent
+AVL with inline entries, without allocating a string or entry Arc per id.
+Other spellings keep exact string keys. The writer and loader share namespace
+and structural-child derivation. Live publications replace only changed pages' ids.
 Dangling references require no page walk, and a moved id retains its surviving
 owner across a warm launch. Invalid owner slots decline the whole checkpoint,
 as any other mismatch does. The disposable cache remains postcard+zstd with
 the same guarded atomic replace and idle cadence. Measurements and the I-25
-unit-cost line are recorded in `RECEIPT-og-block-index-dump-r1.md` for this lane.
+unit-cost line are recorded in the exact-block-index implementation receipts.
 
 Measured 2026-10-25 against og `8796c6316`, using the existing release
 `checkpoint_launch_bench` (open → Ready; cold means no checkpoint), with
@@ -89,19 +91,21 @@ fixture measured above, whose location was not supplied.
 
 | Fixture | Warm median, ms (before → after) | Cold median, ms | Checkpoint bytes | Checkpoint write median, ms |
 | --- | --- | --- | --- | --- |
-| Anonymized, 1,075 pages | 50.1 → 54.4 (+4.3) | 107.9 → 102.3 (−5.6) | 1,410,148 → 1,668,598 (+258,450) | 38.8 → 43.8 (+5.0) |
-| Derived, 13,000 files | 468.3 → 522.1 (+53.8) | 713.1 → 717.0 (+3.9) | 8,729,331 → 11,702,360 (+2,973,029) | 317.7 → 363.4 (+45.7) |
+| Anonymized, 1,075 pages | 47.7 → 51.3 (+3.7) | 98.9 → 100.3 (+1.4) | 1,410,073 → 1,668,484 (+258,411) | 43.1 → 43.9 (+0.8) |
+| Derived, 13,000 files | 563.0 → 579.1 (+16.1) | 922.8 → 939.2 (+16.5) | 8,729,252 → 11,705,012 (+2,975,760) | 447.7 → 477.3 (+29.6) |
 
 Raw postcard size grew by 256,316 B and 3,087,551 B respectively. On the 13k
-fixture that is 17.41 raw / 16.76 compressed bytes per distinct held id, versus
-r0's 40.05 / 22.88. The exact index retains 27,039,984 allocator-usable live
-heap bytes (25.79 MiB) for 177,374 ids, measured under the 2 GiB cap. Median
-checkpoint capture under the writer was 7.3 → 9.3 ms and 50.5 → 59.7 ms;
-load-id derivation and encoding run after capture. Cold and write deltas meet
-the r1 budgets. Warm +53.8 ms is borderline against the approximate 50 ms
-budget; a separate seven-pair warm-only run measured +38.1 ms. Both results
-are retained in the receipt, rather than selecting the faster one. Historical
-g13k acceptance remains unverified. The index adds zero bytes or files per edit;
+fixture that is 17.41 raw / 16.78 compressed bytes per distinct held id, versus
+r0's 40.05 / 22.88. The r2 compact index retains 15,687,904 allocator-usable
+live heap bytes (14.96 MiB, 88.4 B/id) for 177,374 ids, versus r1's
+27,040,016 B (25.79 MiB, 152.4 B/id), a 42.0% reduction using the same probe
+under the 2 GiB cap. Live allocations fall from 533,020 to 178,272. Raw wire
+size is unchanged from r1; both binaries load each other's FORMAT 19 caches.
+The same run interleaves og, r1 and r2: r2 warms 10.9 ms faster than r1 on
+13k, with cold launch 59.6 ms slower; all og-relative launch/write budgets
+are met. Checkpoint writer-held capture is 4.5 → 6.9 ms and 61.0 → 67.3 ms;
+load-id derivation and encoding run after capture. Historical g13k acceptance
+remains unverified. The index adds zero bytes or files per edit;
 the checkpoint is rewritten only on the existing cadence, one file per write.
 
 - **Where:** app data `launch-checkpoints/<graph-id>.bin`, keyed like the

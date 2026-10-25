@@ -10,6 +10,7 @@ pub(crate) mod entry_identity;
 pub(crate) mod held_index;
 pub(crate) use checkpoint_state::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
 pub(crate) use held_index::Source;
+mod inline_map;
 mod launch_patch;
 mod layout_retention;
 pub(crate) mod persistent;
@@ -1435,12 +1436,57 @@ impl ReadSnapshot {
         &self,
         uuid: &str,
     ) -> Option<(usize, &(PageEntry, Arc<Document>))> {
-        let slot = self
+        let owner = self
             .block_index
             .get()
             .expect("published generations hold the exact block index")
-            .first_owner(uuid)?;
-        self.pages.get(slot).map(|page| (slot, page))
+            .first_owner(uuid)
+            .and_then(|slot| self.pages.get(slot).map(|page| (slot, page)));
+        // Also compiled in the app's debug tests, where tine-store is a dependency.
+        // A missed owner walk is as suspect as an absent row. Never recover by
+        // scanning in production: the check diagnoses the invariant in tests.
+        #[cfg(any(test, debug_assertions))]
+        {
+            let holds = |doc: &Document| {
+                let mut found = false;
+                SnapshotBlockIndex::for_each_block_id(doc, |id| found |= id == uuid);
+                found
+            };
+            if !owner.is_some_and(|(_, (_, doc))| holds(doc)) {
+                assert!(
+                    !self.pages.iter().any(|(_, doc)| holds(doc)),
+                    "block index missed held id {uuid:?}"
+                );
+            }
+        }
+        owner
+    }
+
+    /// Whole live key set, independent of ids still present in documents.
+    #[cfg(any(test, feature = "test-faults"))]
+    pub(crate) fn block_index_image(&self) -> Vec<(String, Vec<String>)> {
+        let mut rows: Vec<_> = self
+            .block_index
+            .get()
+            .unwrap()
+            .rows()
+            .map(|(id, owners)| {
+                let mut paths: Vec<_> = owners
+                    .slots()
+                    .iter()
+                    .map(|&slot| {
+                        self.pages.get(slot).map_or_else(
+                            || format!("<missing slot {slot}>"),
+                            |(entry, _)| entry.rel_path_str().to_owned(),
+                        )
+                    })
+                    .collect();
+                paths.sort();
+                (id, paths)
+            })
+            .collect();
+        rows.sort();
+        rows
     }
 
     /// Every slot the block index lists for `uuid`, ascending (index oracle).
@@ -1770,6 +1816,8 @@ impl BlockOwners {
 /// document changed) that the reference and explicit indexes rest on.
 #[derive(Clone)]
 struct SnapshotBlockIndex {
+    uuids: inline_map::InlineMap<u128, BlockOwners>,
+    uuid_overlay: inline_map::InlineMap<u128, Option<BlockOwners>>,
     base: Arc<SharedMap<String, BlockOwners>>,
     /// Ids changed since the last fold; `None`: no page holds it any more.
     overlay: Arc<SharedMap<String, Option<BlockOwners>>>,
@@ -1814,10 +1862,53 @@ impl SnapshotBlockIndex {
     }
 
     fn fold_limit(&self) -> usize {
-        (self.base.len() / 8).max(1)
+        (self.len() / 8).max(1)
+    }
+
+    fn len(&self) -> usize {
+        self.uuids.len() + self.base.len()
+    }
+
+    // Index keys and authored values are case-sensitive. UUID parsing alone
+    // would collapse uppercase, simple and URN spellings that were distinct.
+    fn compact_uuid(id: &str) -> Option<u128> {
+        if id.len() != 36 || id.bytes().any(|b| b.is_ascii_uppercase()) {
+            return None;
+        }
+        uuid::Uuid::try_parse(id).ok().map(|id| id.as_u128())
+    }
+
+    fn rows(&self) -> impl Iterator<Item = (String, &BlockOwners)> {
+        let uuids = self
+            .uuids
+            .iter()
+            .filter(|(id, _)| self.uuid_overlay.get(id).is_none())
+            .chain(
+                self.uuid_overlay
+                    .iter()
+                    .filter_map(|(id, owners)| owners.as_ref().map(|owners| (id, owners))),
+            )
+            .map(|(id, owners)| (uuid::Uuid::from_u128(*id).to_string(), owners));
+        let strings = self
+            .base
+            .iter()
+            .filter(|(id, _)| self.overlay.get(id.as_str()).is_none())
+            .chain(
+                self.overlay
+                    .iter()
+                    .filter_map(|(id, owners)| owners.as_ref().map(|owners| (id, owners))),
+            )
+            .map(|(id, owners)| (id.clone(), owners));
+        uuids.chain(strings)
     }
 
     fn owners(&self, id: &str) -> Option<&BlockOwners> {
+        if let Some(id) = Self::compact_uuid(id) {
+            return match self.uuid_overlay.get(&id) {
+                Some(changed) => changed.as_ref(),
+                None => self.uuids.get(&id),
+            };
+        }
         match self.overlay.get(id) {
             Some(changed) => changed.as_ref(),
             None => self.base.get(id),
@@ -1831,7 +1922,11 @@ impl SnapshotBlockIndex {
         change(&mut slots);
         let next = BlockOwners::from_slots(slots);
         if next.as_ref() != prior {
-            Arc::make_mut(&mut self.overlay).insert(id.to_owned(), next);
+            if let Some(id) = Self::compact_uuid(id) {
+                self.uuid_overlay.insert(id, next);
+            } else {
+                Arc::make_mut(&mut self.overlay).insert(id.to_owned(), next);
+            }
         }
     }
 
@@ -1868,7 +1963,14 @@ impl SnapshotBlockIndex {
                     });
                 }
             }
-            if index.overlay.len() >= index.fold_limit() {
+            if index.overlay.len() + index.uuid_overlay.len() >= index.fold_limit() {
+                for (id, owners) in index.uuid_overlay.iter() {
+                    match owners {
+                        Some(owners) => index.uuids.insert(*id, owners.clone()),
+                        None => index.uuids.remove(id),
+                    }
+                }
+                index.uuid_overlay = inline_map::InlineMap::new();
                 let base = Arc::make_mut(&mut index.base);
                 for (id, owners) in index.overlay.iter() {
                     match owners {
@@ -1887,34 +1989,53 @@ impl SnapshotBlockIndex {
     /// Borrow ids until sorting/deduplication is complete, then allocate each
     /// distinct key once and consume the sorted rows in one AVL build.
     fn build(pages: &Pages) -> Self {
-        let mut rows = Vec::new();
+        let mut uuids = Vec::new();
+        let mut strings = Vec::new();
         for (slot, (_, doc)) in pages.slots() {
-            Self::for_each_block_id(doc, |id| rows.push((id, slot)));
+            Self::for_each_block_id(doc, |id| {
+                if let Some(id) = Self::compact_uuid(id) {
+                    uuids.push((id, slot));
+                } else {
+                    strings.push((id, slot));
+                }
+            });
         }
-        rows.sort_unstable();
-        Self::from_sorted_rows(rows.into_iter())
+        Self::from_rows(uuids, strings)
     }
 
-    fn from_sorted_rows<K: AsRef<str> + Into<String>>(
-        rows: impl Iterator<Item = (K, usize)>,
+    fn from_rows<K: AsRef<str> + Ord + Into<String>>(
+        mut uuids: Vec<(u128, usize)>,
+        mut strings: Vec<(K, usize)>,
     ) -> Self {
-        let mut entries: Vec<(String, BlockOwners)> = Vec::new();
-        for (id, slot) in rows {
-            if let Some((_, owners)) = entries.last_mut().filter(|(key, _)| key == id.as_ref()) {
-                if owners.slots().last() != Some(&slot) {
-                    match owners {
-                        BlockOwners::One(first) => {
-                            *owners = BlockOwners::Many(Arc::new(vec![*first, slot]))
+        fn merge<K: Eq>(rows: Vec<(K, usize)>) -> Vec<(K, BlockOwners)> {
+            let mut entries: Vec<(K, BlockOwners)> = Vec::with_capacity(rows.len());
+            for (id, slot) in rows {
+                if let Some((_, owners)) = entries.last_mut().filter(|(key, _)| *key == id) {
+                    if owners.slots().last() != Some(&slot) {
+                        match owners {
+                            BlockOwners::One(first) => {
+                                *owners = BlockOwners::Many(Arc::new(vec![*first, slot]))
+                            }
+                            BlockOwners::Many(slots) => Arc::make_mut(slots).push(slot),
                         }
-                        BlockOwners::Many(slots) => Arc::make_mut(slots).push(slot),
                     }
+                } else {
+                    entries.push((id, BlockOwners::One(slot)));
                 }
-            } else {
-                entries.push((id.into(), BlockOwners::One(slot)));
             }
+            entries
         }
+        uuids.sort_unstable();
+        strings.sort_unstable();
         Self {
-            base: Arc::new(SharedMap::from_sorted_unique(entries)),
+            uuids: inline_map::InlineMap::from_sorted_unique(merge(uuids)),
+            uuid_overlay: inline_map::InlineMap::new(),
+            base: Arc::new(SharedMap::from_sorted_unique(
+                merge(strings)
+                    .into_iter()
+                    .map(|(id, owners)| (id.into(), owners))
+                    .collect(),
+            )),
             overlay: Arc::new(SharedMap::new()),
         }
     }

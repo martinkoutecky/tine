@@ -8,7 +8,7 @@ impl crate::WholeGraph {
     /// its allocator's live heap. This view and its published index stay held.
     pub fn with_rebuilt_block_index(&self, observe: impl FnOnce(usize)) {
         let index = SnapshotBlockIndex::build(&self.graph.pages);
-        observe(index.base.len());
+        observe(index.len());
         std::hint::black_box(index);
     }
 }
@@ -165,29 +165,9 @@ fn lazy_lines(
             out.push_str(&format!("lazy editor {rel:?} {names:?}\n"));
         }
     }
-    fn hints(out: &mut String, snapshot: &ReadSnapshot, block: &DocBlock) {
-        let property = block.property("id");
-        for id in [Some(block.uuid.as_str()), property.as_deref()]
-            .into_iter()
-            .flatten()
-        {
-            let mut owners = snapshot
-                .block_owner_slots(id)
-                .into_iter()
-                .map(|slot| snapshot.pages[slot].0.rel_path_str().to_owned())
-                .collect::<Vec<_>>();
-            owners.sort();
-            out.push_str(&format!("block owners {id:?} {owners:?}\n"));
-        }
-        for child in &block.children {
-            hints(out, snapshot, child);
-        }
-    }
     if include_layout {
-        for (_, _, doc) in pages {
-            for block in &doc.roots {
-                hints(out, snapshot, block);
-            }
+        for (id, owners) in snapshot.block_index_image() {
+            out.push_str(&format!("block owners {id:?} {owners:?}\n"));
         }
     }
     let mut aliases = snapshot.page_aliases_with_owners();

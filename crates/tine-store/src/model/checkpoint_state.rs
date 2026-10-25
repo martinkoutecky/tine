@@ -173,14 +173,10 @@ impl<P> GraphState<P> {
 
     #[cfg(test)]
     pub(crate) fn invalidate_block_owner(&mut self) {
-        self.derived.block_index = BlockIndexState::In(SnapshotBlockIndex {
-            base: Arc::new(
-                [("invalid-owner".to_owned(), BlockOwners::One(usize::MAX))]
-                    .into_iter()
-                    .collect(),
-            ),
-            overlay: Arc::new(SharedMap::new()),
-        });
+        self.derived.block_index = BlockIndexState::In(SnapshotBlockIndex::from_rows(
+            Vec::new(),
+            vec![("invalid-owner", usize::MAX)],
+        ));
     }
 
     /// The disk revision the cached page at `path` was parsed from.

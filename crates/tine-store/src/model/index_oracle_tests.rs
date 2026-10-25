@@ -9,6 +9,53 @@ use super::*;
 
 pub(crate) use super::index_oracle::snapshot_image;
 
+#[test]
+fn the_block_oracle_includes_ids_absent_from_every_page() {
+    let dir = fixture();
+    let graph = Graph::open(dir.path());
+    graph.with_pages(|_| ());
+    let mut snapshot = ReadSnapshot::capture(
+        &graph,
+        graph.config.clone(),
+        Arc::new(EntryList::from(graph.list_pages_shared().as_slice())),
+        None,
+        &[],
+    );
+    let slot = snapshot.pages.slots().next().unwrap().0;
+    let mut index = snapshot.block_index.get().unwrap().clone();
+    index.edit("stale-key-held-by-no-page", |owners| owners.push(slot));
+    let _ = snapshot.block_index.take();
+    snapshot.block_index.set(index).ok().unwrap();
+    assert!(snapshot_image(&snapshot, &[]).contains("block owners \"stale-key-held-by-no-page\""));
+}
+
+#[test]
+#[should_panic(expected = "block index missed held id")]
+fn an_index_miss_checks_every_page_in_tests() {
+    let dir = fixture();
+    let graph = Graph::open(dir.path());
+    graph.with_pages(|_| ());
+    let mut snapshot = ReadSnapshot::capture(
+        &graph,
+        graph.config.clone(),
+        Arc::new(EntryList::from(graph.list_pages_shared().as_slice())),
+        None,
+        &[],
+    );
+    let id = snapshot
+        .pages
+        .iter()
+        .find_map(|(_, doc)| doc.roots.first())
+        .unwrap()
+        .uuid
+        .clone();
+    let mut index = snapshot.block_index.get().unwrap().clone();
+    index.edit(&id, Vec::clear);
+    snapshot.block_index.take();
+    snapshot.block_index.set(index).ok().unwrap();
+    snapshot.block_owner_page(&id);
+}
+
 /// The canonical image of `graph`'s initial build.
 pub(super) fn initial_build_image(graph: &Graph) -> String {
     graph.with_pages(|_| ());

@@ -80,6 +80,41 @@ mod runtime_id_tests {
     }
 
     #[test]
+    fn load_id_visitation_matches_markdown_org_authored_ids_and_empty_pages() {
+        fn clear(blocks: &mut [DocBlock]) {
+            for block in blocks {
+                block.uuid.clear();
+                clear(&mut block.children);
+            }
+        }
+        for (path, mut doc) in [
+            ("pages/tree.md", doc::parse("- first\n  id:: authored-key\n  - child\n    - grandchild\n      - leaf\n  - second child\n  - third child\n- second\n- third\n")),
+            ("pages/tree.org", crate::org::parse_org("* first\n:PROPERTIES:\n:ID: AAAAAAAA-0000-4000-8000-000000000001\n:END:\n** child\n*** grandchild\n**** leaf\n** second child\n** third child\n* second\n* third\n")),
+            ("pages/empty.md", doc::parse("")),
+            ("pages/empty.org", crate::org::parse_org("")),
+        ] {
+            assign_doc_runtime_ids(&mut doc.roots, "pages/live-owner.md");
+            let live = doc.clone();
+            let mut expected = Vec::new();
+            visit_doc_runtime_ids(&doc.roots, path, |block, id| {
+                expected.push((id.to_string(), block.property("id")));
+            });
+            assert_eq!(doc, live, "visitor changed live ids: {path}");
+            clear(&mut doc.roots);
+            assign_doc_runtime_ids(&mut doc.roots, path);
+            let mut actual = Vec::new();
+            fn collect(blocks: &[DocBlock], out: &mut Vec<(String, Option<String>)>) {
+                for block in blocks {
+                    out.push((block.uuid.clone(), block.property("id")));
+                    collect(&block.children, out);
+                }
+            }
+            collect(&doc.roots, &mut actual);
+            assert_eq!(actual, expected, "{path}");
+        }
+    }
+
+    #[test]
     fn runtime_block_candidates_require_version_8_and_rfc_variant() {
         let generated = deterministic_runtime_uuid(FILE_BLOCK_RUNTIME_NAMESPACE_V1, b"probe");
         assert!(may_be_runtime_block_id(&generated.to_string()));
@@ -111,7 +146,7 @@ fn assign_runtime_ids_rec(blocks: &mut [DocBlock], parent: Uuid) {
     for (sibling_index, block) in blocks.iter_mut().enumerate() {
         // Hierarchical derivation is equivalent to hashing the full sibling-index
         // path, while doing constant work per node (O(blocks)).
-        let structural = deterministic_runtime_uuid(parent, &(sibling_index as u64).to_be_bytes());
+        let structural = structural_child(parent, sibling_index);
         if block.uuid.is_empty() {
             block.uuid = structural.to_string();
         }
@@ -122,7 +157,7 @@ fn assign_runtime_ids_rec(blocks: &mut [DocBlock], parent: Uuid) {
 /// Seed missing runtime keys for a graph-backed document from its normalized,
 /// graph-relative physical owner. Existing live keys survive ordinary saves.
 pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
-    let owner = runtime_owner_namespace("file-block-runtime-v1", owner_rel_path);
+    let owner = file_runtime_namespace(owner_rel_path);
     assign_runtime_ids_rec(roots, owner);
 }
 
@@ -135,16 +170,22 @@ pub fn visit_doc_runtime_ids<'a>(
 ) {
     fn walk<'a>(blocks: &'a [DocBlock], parent: Uuid, visit: &mut dyn FnMut(&'a DocBlock, Uuid)) {
         for (index, block) in blocks.iter().enumerate() {
-            let structural = deterministic_runtime_uuid(parent, &(index as u64).to_be_bytes());
+            let structural = structural_child(parent, index);
             visit(block, structural);
             walk(&block.children, structural, visit);
         }
     }
-    walk(
-        roots,
-        runtime_owner_namespace("file-block-runtime-v1", owner_rel_path),
-        &mut visit,
-    );
+    walk(roots, file_runtime_namespace(owner_rel_path), &mut visit);
+}
+
+// The mutating loader and immutable checkpoint writer share both inputs to
+// structural identity: the physical page namespace and each sibling position.
+fn file_runtime_namespace(owner_rel_path: &str) -> Uuid {
+    runtime_owner_namespace("file-block-runtime-v1", owner_rel_path)
+}
+
+fn structural_child(parent: Uuid, sibling_index: usize) -> Uuid {
+    deterministic_runtime_uuid(parent, &(sibling_index as u64).to_be_bytes())
 }
 
 fn assign_virtual_doc_runtime_ids(roots: &mut [DocBlock], domain: &str, owner: &str) {
