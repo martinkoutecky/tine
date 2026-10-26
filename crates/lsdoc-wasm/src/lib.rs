@@ -106,6 +106,15 @@ pub fn linkable_property_names(value: &str, is_org: bool) -> Vec<String> {
 #[path = "../../tine-core/src/render_facets.rs"]
 mod render_facets;
 
+#[path = "../../tine-core/src/reference_evidence/og_built_in.rs"]
+mod og_built_in;
+
+/// OG built-ins excluded from default query-table property columns.
+#[wasm_bindgen]
+pub fn is_og_built_in_property(key: &str) -> bool {
+    og_built_in::is_og_built_in_property(key)
+}
+
 /// Whether a block property key is hidden from rendered chips (I-12: the one
 /// answerer the static export also asks). O(key bytes + hidden keys), no I/O.
 #[wasm_bindgen]

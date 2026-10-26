@@ -4,10 +4,17 @@
 // OG parity (Discussion #617 audit #9); the same keys a Logseq graph already carries.
 import { ednSlice, readEdn } from "../editor/edn";
 import { propertyKeyNorm } from "../propertyKey";
+import { is_og_built_in_property } from "../render/wasm/lsdoc_wasm";
 
 /** A property column's key: an EDN keyword's colon dropped, then the engine's own
  *  normalisation (`propertyKeyNorm`), so it matches the key the engine stored. */
 export const columnKey = (name: string): string => propertyKeyNorm(name.trim().replace(/^:/, ""));
+
+// OG query_table.cljs:92-101 excludes graph-parser/property.cljs:46-80's
+// built-ins from discovered columns. Explicit query-properties can still name them.
+export function defaultHostColumns(propertyKeys: readonly string[]): string[] {
+  return [...new Set(["block", "page", ...propertyKeys.map(columnKey).filter(key => !is_og_built_in_property(key))])];
+}
 
 /**
  * The columns `query-properties` names, in order, normalised; `null` when the
