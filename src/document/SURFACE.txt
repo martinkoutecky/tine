@@ -132,6 +132,7 @@ persistBlockRefTarget
 pinPageWhileDrafting  # why: a draft outside the block editor (sheet prop cell) pins the page its commit writes, so eviction cannot drop it (K17a); batch15a
 prevVisible
 promotePagePreamble
+queryBlockRaw  # why: quick-share Delete recognises the definition appendQueryBlock wrote (D-20261026-QSD); batch-og-qs-delete-definition
 queryWorkspacePage
 readPageProperties  # why: list every page property for the GH #164 properties editor; batch14q5
 readPageProperty
