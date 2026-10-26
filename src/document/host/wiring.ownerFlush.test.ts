@@ -9,7 +9,7 @@ import { subscribeOwnerFlush } from "./wiring";
 // window to save the text typed on it (owner/window.rs). The window runs its
 // page barrier and answers; a request for another binding gets no answer.
 
-type Request = { id: number; page: string; binding_generation: number };
+type Request = { id: number; page: string; all?: boolean; binding_generation: number };
 
 async function subscribe() {
   let deliver: (request: Request) => void = () => {};
@@ -53,5 +53,15 @@ describe("owner flush requests", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(answer).not.toHaveBeenCalled();
     stop();
+  });
+
+  it("refuses a graph-wide rename flush when a loaded page holds component input", async () => {
+    const { setDoc } = await import("../model");
+    setDoc("pages", [{ name:"Composing", kind:"page", title:"Composing", preBlock:null, roots:[], format:"md", readOnly:false, guide:false }]);
+    const release = pinPageWhileDrafting(() => "Composing");
+    const { emit, answer, stop } = await subscribe();
+    emit({ id:9, page:"", all:true, binding_generation:generation() });
+    await vi.waitFor(() => expect(answer).toHaveBeenCalledWith(9, false, generation()));
+    release(); stop(); setDoc("pages", []);
   });
 });

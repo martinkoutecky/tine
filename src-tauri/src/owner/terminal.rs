@@ -347,6 +347,35 @@ pub(super) fn render(ok: &Value, out: &mut String) {
             }
             git_line(ok, out);
         }
+        "ref" | "embed" => {
+            let _ = writeln!(out, "{}", text(ok, "text"));
+            git_line(ok, out);
+        }
+        "page-deleted" => {
+            let _ = writeln!(
+                out,
+                "deleted page {} (breaks {} references)",
+                text(ok, "name"),
+                count(ok, "broken_refs")
+            );
+            git_line(ok, out);
+        }
+        "page-renamed" => {
+            let _ = writeln!(
+                out,
+                "{} {} -> {}",
+                text(&ok["report"], "outcome"),
+                text(ok, "old"),
+                text(ok, "name")
+            );
+            for path in list(&ok["report"], "skipped_conflicted_referrers") {
+                let _ = writeln!(
+                    out,
+                    "skipped conflicted referrer: {}",
+                    path.as_str().unwrap_or("")
+                );
+            }
+        }
         "run-commits" => {
             for commit in list(ok, "commits") {
                 let who = if commit["agent"].as_bool() == Some(true) {

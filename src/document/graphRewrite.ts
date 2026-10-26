@@ -18,11 +18,11 @@ import type { RenameDone, RenameTouchedPage } from "../types";
 import { graphMeta, setGraphMeta } from "../graphSession";
 import { activeElement, isHTMLElementNode } from "../windowRealm";
 
-let refreshRenamedNavigation: ((from: string, to: string, target?: PageTarget) => void) | null = null;
+let refreshRenamedNavigation: ((from: string, to: string, target?: PageTarget, preserveRoutes?: boolean) => void) | null = null;
 
 /** The app supplies route/index effects; the document intent owns the flush,
  * edit freeze, disk rewrite and the refresh of the pages it touched. */
-export function installRenameRefreshHandler(handler: (from: string, to: string, target?: PageTarget) => void): void {
+export function installRenameRefreshHandler(handler: (from: string, to: string, target?: PageTarget, preserveRoutes?: boolean) => void): void {
   refreshRenamedNavigation = handler;
 }
 
@@ -81,26 +81,36 @@ export async function renamePageOnDisk(
       throw error;
     }
     if (result.kind === "stale") return "uncertain";
-    if (result.value.outcome === "unchanged") return "unchanged";
-    // og 21a (master a8fd4230d): files mid-merge keep their old references.
-    const skipped = result.value.skipped_conflicted_referrers ?? [];
-    if (skipped.length) pushToast(msg("graph-rewrite-conflicted-referrers", { count: skipped.length, page: from, files: skipped.join(", ") }), "warn", { sticky: true });
-    // The rename moved `:default-home` in its own transaction (OG
-    // `rename-page-aux`); an own write raises no config event, so take it in.
-    const home = result.value.home_page;
-    const meta = graphMeta();
-    if (home && meta) setGraphMeta({ ...meta, default_home: home });
-    const reloads = batch(() => {
-      const pages = forgetMovedPages(result.value.touched);
-      refreshRenamedNavigation?.(from, to, target);
-      onRefreshed?.(graphOwner());
-      return pages;
-    });
-    await reloadRewrittenPages(reloads);
+    await refreshAfterRename(from, to, target, result.value, onRefreshed);
     return result.value.outcome;
   } finally {
     release();
   }
+}
+
+/** A CLI rename is already published by this window's page host. Reuse the
+ * same working-set and navigation refresh as a rename initiated here. */
+export async function applyOwnerPageRename(rename: import("../types").OwnerPageRename): Promise<void> {
+  await refreshAfterRename(rename.old, rename.name, { name: rename.old, path: rename.path ?? undefined, pageKind: rename.kind }, rename.report, undefined, true);
+}
+
+async function refreshAfterRename(from: string, to: string, target: PageTarget | undefined, report: RenameDone, onRefreshed?: (owner: Owner) => void, preserveRoutes = false): Promise<void> {
+    if (report.outcome === "unchanged") return;
+    // og 21a (master a8fd4230d): files mid-merge keep their old references.
+    const skipped = report.skipped_conflicted_referrers ?? [];
+    if (skipped.length) pushToast(msg("graph-rewrite-conflicted-referrers", { count: skipped.length, page: from, files: skipped.join(", ") }), "warn", { sticky: true });
+    // The rename moved `:default-home` in its own transaction (OG
+    // `rename-page-aux`); an own write raises no config event, so take it in.
+    const home = report.home_page;
+    const meta = graphMeta();
+    if (home && meta) setGraphMeta({ ...meta, default_home: home });
+    const reloads = batch(() => {
+      const pages = forgetMovedPages(report.touched);
+      refreshRenamedNavigation?.(from, to, target, preserveRoutes);
+      onRefreshed?.(graphOwner());
+      return pages;
+    });
+    await reloadRewrittenPages(reloads);
 }
 
 /** Save every pending edit. The rename reads referring pages from disk, so an
@@ -167,7 +177,9 @@ function forgetMovedPages(touched: readonly RenameTouchedPage[]): { name: string
     if (!loaded) continue;
     if (page.moved) {
       loadedByPath.delete(page.path);
-      forgetPage(loaded.name);
+      // A window may have typed again between the owner's admission and this
+      // event. Keep such input under its old identity for guarded recovery.
+      if (reloadDisposition(loaded.name) === "reload") forgetPage(loaded.name);
     }
     else {
       invalidateUndoForPage(loaded.name);

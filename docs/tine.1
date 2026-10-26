@@ -47,7 +47,7 @@ tine\-status(1)
 Show which process owns the graph and what it is doing
 .TP
 tine\-page(1)
-Read pages
+Read, create, rename or delete pages
 .TP
 tine\-block(1)
 Read blocks
@@ -57,6 +57,12 @@ Show a journal page: today, or the given date (YYYY\-MM\-DD)
 .TP
 tine\-refs(1)
 Show the linked references of a page, or of a block with \-\-block
+.TP
+tine\-ref(1)
+Print ((uuid)), durably assigning the block an id when needed
+.TP
+tine\-embed(1)
+Print {{embed ((uuid))}}, ensuring a durable block id first
 .TP
 tine\-search(1)
 Search page names and block text, as the app\*(Aqs search does
