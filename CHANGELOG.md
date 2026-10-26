@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Date-shaped links open an existing ordinary page when no journal file exists for the day, avoiding an empty duplicate journal (UI-DATE-PAGE-LINK).
 - Backspace and Delete merges drop the absorbed block's hidden heading, flashcard state and clocks; referenced IDs transfer when possible, and merges that would lose a referenced ID leave both blocks in place (REG-F2-MERGE-HIDDEN-ROWS, hDI40A).
 - Links inside query-result ancestor breadcrumbs are clickable again (GH #743).
 - The “Pages tagged with” section stays folded when you return to a tab (GH #739).

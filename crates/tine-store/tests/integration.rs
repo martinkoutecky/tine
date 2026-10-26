@@ -35,6 +35,9 @@ fn isolated_case(name: &str) -> bool {
 #[path = "alias_edit_cost.rs"]
 mod alias_edit_cost;
 
+#[path = "date_page_link.rs"]
+mod date_page_link;
+
 #[path = "assumption_ledger.rs"]
 mod assumption_ledger;
 
