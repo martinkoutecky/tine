@@ -1,0 +1,907 @@
+{
+ "about": "Logseq 0.10.9's answers on the corpus logseq-md, read from its database through its API (logseq.api.q, custom_query, get_page_linked_references) on 2026-10-11, today being 2026-10-11; a block by its page and its first line, lower-cased; the pages referring to each page with a file.",
+ "queries": [
+  {
+   "kind": "simple",
+   "query": "(task TODO)",
+   "answer": [
+    [
+     "oct 3rd, 2026",
+     "todo read [[kalem]] docs"
+    ],
+    [
+     "project/plugins",
+     "todo [#a] write the graph plugin [[project/plugins/graph]]"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "(task NOW LATER)",
+   "answer": [
+    [
+     "oct 10th, 2026",
+     "now start [[project/plugins/graph]]"
+    ],
+    [
+     "project/plugins",
+     "later the typst mode, after the mode binding"
+    ],
+    [
+     "project/plugins",
+     "now review ((6512c0de-0001-4000-8000-000000000002))"
+    ],
+    [
+     "templates",
+     "later review yesterday: <% yesterday %>"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "(task DONE)",
+   "answer": [
+    [
+     "oct 4th, 2026",
+     "done wrote graph_todo.md"
+    ],
+    [
+     "project/plugins",
+     "done the docx plugin"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "(task TODO DOING NOW LATER WAITING)",
+   "answer": [
+    [
+     "oct 10th, 2026",
+     "now start [[project/plugins/graph]]"
+    ],
+    [
+     "oct 3rd, 2026",
+     "todo read [[kalem]] docs"
+    ],
+    [
+     "project/plugins",
+     "doing [#b] the plain-text accounting plugin"
+    ],
+    [
+     "project/plugins",
+     "later the typst mode, after the mode binding"
+    ],
+    [
+     "project/plugins",
+     "now review ((6512c0de-0001-4000-8000-000000000002))"
+    ],
+    [
+     "project/plugins",
+     "todo [#a] write the graph plugin [[project/plugins/graph]]"
+    ],
+    [
+     "project/plugins",
+     "waiting the owner's decision on the api version"
+    ],
+    [
+     "templates",
+     "later review yesterday: <% yesterday %>"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "(priority A)",
+   "answer": [
+    [
+     "project/plugins",
+     "todo [#a] write the graph plugin [[project/plugins/graph]]"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "(priority A B)",
+   "answer": [
+    [
+     "project/plugins",
+     "doing [#b] the plain-text accounting plugin"
+    ],
+    [
+     "project/plugins",
+     "todo [#a] write the graph plugin [[project/plugins/graph]]"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "[[Kalem]]",
+   "answer": [
+    [
+     "kalem",
+     "# a heading block"
+    ],
+    [
+     "kalem",
+     "```rust"
+    ],
+    [
+     "kalem",
+     "a link with a label: [the plugins]([[project/plugins]]) and a url https://example.com/#anchor"
+    ],
+    [
+     "kalem",
+     "alias:: editor, [[the editor]]"
+    ],
+    [
+     "kalem",
+     "its keys are doom's: `[[not a link]]` in code"
+    ],
+    [
+     "kalem",
+     "its parts"
+    ],
+    [
+     "kalem",
+     "kalem is an editor of [[org]] and [[markdown]] files #software"
+    ],
+    [
+     "kalem",
+     "plugins, as [[project/plugins]] lists them"
+    ],
+    [
+     "kalem",
+     "the core: org, markdown, csv, latex"
+    ],
+    [
+     "kalem",
+     "this one: [[project/plugins/graph]]"
+    ],
+    [
+     "oct 3rd, 2026",
+     "todo read [[kalem]] docs"
+    ],
+    [
+     "program",
+     "a page named by a property: [[kalem]] is one"
+    ],
+    [
+     "project/plugins",
+     "the plugins of [[kalem]], in getkalem/plugins"
+    ],
+    [
+     "project/plugins/graph",
+     "logseq graphs and obsidian vaults in [[kalem]]"
+    ],
+    [
+     "queries",
+     "#+begin_note"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "(and [[Kalem]] (task TODO))",
+   "answer": [
+    [
+     "oct 3rd, 2026",
+     "todo read [[kalem]] docs"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "(or [[Org]] [[Markdown]])",
+   "answer": [
+    [
+     "kalem",
+     "alias:: editor, [[the editor]]"
+    ],
+    [
+     "kalem",
+     "kalem is an editor of [[org]] and [[markdown]] files #software"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "(and [[Project/Plugins]] (task NOW LATER TODO DOING))",
+   "answer": [
+    [
+     "oct 10th, 2026",
+     "now start [[project/plugins/graph]]"
+    ],
+    [
+     "project/plugins",
+     "doing [#b] the plain-text accounting plugin"
+    ],
+    [
+     "project/plugins",
+     "later the typst mode, after the mode binding"
+    ],
+    [
+     "project/plugins",
+     "now review ((6512c0de-0001-4000-8000-000000000002))"
+    ],
+    [
+     "project/plugins",
+     "todo [#a] write the graph plugin [[project/plugins/graph]]"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "(and (task NOW LATER TODO DOING DONE) (not (priority A)))",
+   "answer": [
+    [
+     "oct 10th, 2026",
+     "now start [[project/plugins/graph]]"
+    ],
+    [
+     "oct 3rd, 2026",
+     "todo read [[kalem]] docs"
+    ],
+    [
+     "oct 4th, 2026",
+     "done wrote graph_todo.md"
+    ],
+    [
+     "project/plugins",
+     "doing [#b] the plain-text accounting plugin"
+    ],
+    [
+     "project/plugins",
+     "done the docx plugin"
+    ],
+    [
+     "project/plugins",
+     "later the typst mode, after the mode binding"
+    ],
+    [
+     "project/plugins",
+     "now review ((6512c0de-0001-4000-8000-000000000002))"
+    ],
+    [
+     "templates",
+     "later review yesterday: <% yesterday %>"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "(namespace [[Project]])",
+   "answer": [
+    [
+     "project/plugins"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "(page-tags software)",
+   "answer": [
+    [
+     "kalem"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "(page-property type [[Program]])",
+   "answer": [
+    [
+     "kalem"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "(page \"Kalem\")",
+   "answer": [
+    [
+     "kalem",
+     "# a heading block"
+    ],
+    [
+     "kalem",
+     "```rust"
+    ],
+    [
+     "kalem",
+     "a link with a label: [the plugins]([[project/plugins]]) and a url https://example.com/#anchor"
+    ],
+    [
+     "kalem",
+     "alias:: editor, [[the editor]]"
+    ],
+    [
+     "kalem",
+     "its keys are doom's: `[[not a link]]` in code"
+    ],
+    [
+     "kalem",
+     "its parts"
+    ],
+    [
+     "kalem",
+     "kalem is an editor of [[org]] and [[markdown]] files #software"
+    ],
+    [
+     "kalem",
+     "plugins, as [[project/plugins]] lists them"
+    ],
+    [
+     "kalem",
+     "the core: org, markdown, csv, latex"
+    ],
+    [
+     "kalem",
+     "this one: [[project/plugins/graph]]"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "(between -30d today)",
+   "answer": [
+    [
+     "oct 10th, 2026",
+     "## plan for [[oct 10th, 2026]]"
+    ],
+    [
+     "oct 10th, 2026",
+     "now start [[project/plugins/graph]]"
+    ],
+    [
+     "oct 10th, 2026",
+     "unlinked: the graph plugin and kalem"
+    ],
+    [
+     "oct 1st, 2026",
+     "a day: notes of 2026-10-01"
+    ],
+    [
+     "oct 2nd, 2026",
+     "a day: notes of 2026-10-02"
+    ],
+    [
+     "oct 3rd, 2026",
+     "decided: the graph plugin first"
+    ],
+    [
+     "oct 3rd, 2026",
+     "met about [[project/plugins]] #meeting"
+    ],
+    [
+     "oct 3rd, 2026",
+     "see [[oct 4th, 2026]]"
+    ],
+    [
+     "oct 3rd, 2026",
+     "todo read [[kalem]] docs"
+    ],
+    [
+     "oct 4th, 2026",
+     "done wrote graph_todo.md"
+    ],
+    [
+     "oct 4th, 2026",
+     "the day after [[oct 3rd, 2026]]"
+    ],
+    [
+     "oct 5th, 2026",
+     "a day: notes of 2026-10-05"
+    ],
+    [
+     "oct 6th, 2026",
+     "a day: notes of 2026-10-06"
+    ],
+    [
+     "oct 7th, 2026",
+     "a day: notes of 2026-10-07"
+    ],
+    [
+     "oct 8th, 2026",
+     "a day: notes of 2026-10-08"
+    ],
+    [
+     "oct 9th, 2026",
+     "a day: notes of 2026-10-09"
+    ]
+   ]
+  },
+  {
+   "kind": "simple",
+   "query": "[[meeting]]",
+   "answer": [
+    [
+     "oct 3rd, 2026",
+     "decided: the graph plugin first"
+    ],
+    [
+     "oct 3rd, 2026",
+     "met about [[project/plugins]] #meeting"
+    ],
+    [
+     "oct 3rd, 2026",
+     "see [[oct 4th, 2026]]"
+    ]
+   ]
+  },
+  {
+   "kind": "advanced",
+   "query": "[:find (pull ?b [*]) :where [?b :block/marker \"DONE\"]]",
+   "answer": [
+    [
+     "oct 4th, 2026",
+     "done wrote graph_todo.md"
+    ],
+    [
+     "project/plugins",
+     "done the docx plugin"
+    ]
+   ]
+  },
+  {
+   "kind": "advanced",
+   "query": "[:find (pull ?b [*]) :where (task ?b #{\"NOW\" \"LATER\"})]",
+   "answer": [
+    [
+     "oct 10th, 2026",
+     "now start [[project/plugins/graph]]"
+    ],
+    [
+     "project/plugins",
+     "later the typst mode, after the mode binding"
+    ],
+    [
+     "project/plugins",
+     "now review ((6512c0de-0001-4000-8000-000000000002))"
+    ],
+    [
+     "templates",
+     "later review yesterday: <% yesterday %>"
+    ]
+   ]
+  },
+  {
+   "kind": "advanced",
+   "query": "[:find (pull ?b [*]) :where (page-ref ?b \"kalem\")]",
+   "answer": [
+    [
+     "kalem",
+     "# a heading block"
+    ],
+    [
+     "kalem",
+     "```rust"
+    ],
+    [
+     "kalem",
+     "a link with a label: [the plugins]([[project/plugins]]) and a url https://example.com/#anchor"
+    ],
+    [
+     "kalem",
+     "alias:: editor, [[the editor]]"
+    ],
+    [
+     "kalem",
+     "its keys are doom's: `[[not a link]]` in code"
+    ],
+    [
+     "kalem",
+     "its parts"
+    ],
+    [
+     "kalem",
+     "kalem is an editor of [[org]] and [[markdown]] files #software"
+    ],
+    [
+     "kalem",
+     "plugins, as [[project/plugins]] lists them"
+    ],
+    [
+     "kalem",
+     "the core: org, markdown, csv, latex"
+    ],
+    [
+     "kalem",
+     "this one: [[project/plugins/graph]]"
+    ],
+    [
+     "oct 3rd, 2026",
+     "todo read [[kalem]] docs"
+    ],
+    [
+     "program",
+     "a page named by a property: [[kalem]] is one"
+    ],
+    [
+     "project/plugins",
+     "the plugins of [[kalem]], in getkalem/plugins"
+    ],
+    [
+     "project/plugins/graph",
+     "logseq graphs and obsidian vaults in [[kalem]]"
+    ],
+    [
+     "queries",
+     "#+begin_note"
+    ]
+   ]
+  },
+  {
+   "kind": "advanced",
+   "query": "[:find (pull ?b [*]) :where [?b :block/priority \"A\"]]",
+   "answer": [
+    [
+     "project/plugins",
+     "todo [#a] write the graph plugin [[project/plugins/graph]]"
+    ]
+   ]
+  },
+  {
+   "kind": "advanced",
+   "query": "[:find (pull ?p [*]) :where [?p :block/journal? true]]",
+   "answer": [
+    [
+     "oct 10th, 2026"
+    ],
+    [
+     "oct 1st, 2026"
+    ],
+    [
+     "oct 2nd, 2026"
+    ],
+    [
+     "oct 3rd, 2026"
+    ],
+    [
+     "oct 4th, 2026"
+    ],
+    [
+     "oct 5th, 2026"
+    ],
+    [
+     "oct 6th, 2026"
+    ],
+    [
+     "oct 7th, 2026"
+    ],
+    [
+     "oct 8th, 2026"
+    ],
+    [
+     "oct 9th, 2026"
+    ]
+   ]
+  },
+  {
+   "kind": "advanced",
+   "query": "[:find (pull ?p [*]) :where (page-property ?p :type \"Program\")]",
+   "answer": [
+    [
+     "kalem"
+    ]
+   ]
+  },
+  {
+   "kind": "advanced",
+   "query": "[:find (pull ?b [*]) :where [?b :block/refs ?p] [?p :block/name \"project/plugins\"]]",
+   "answer": [
+    [
+     "kalem",
+     "a link with a label: [the plugins]([[project/plugins]]) and a url https://example.com/#anchor"
+    ],
+    [
+     "kalem",
+     "plugins, as [[project/plugins]] lists them"
+    ],
+    [
+     "kalem",
+     "this one: [[project/plugins/graph]]"
+    ],
+    [
+     "oct 10th, 2026",
+     "now start [[project/plugins/graph]]"
+    ],
+    [
+     "oct 3rd, 2026",
+     "met about [[project/plugins]] #meeting"
+    ],
+    [
+     "project/plugins",
+     "todo [#a] write the graph plugin [[project/plugins/graph]]"
+    ],
+    [
+     "project/plugins/graph",
+     "and a page: {{embed [[project/plugins]]}}"
+    ]
+   ]
+  },
+  {
+   "kind": "advanced",
+   "query": "[:find (pull ?b [*]) :where [?b :block/path-refs ?p] [?p :block/name \"project/plugins\"]]",
+   "answer": [
+    [
+     "kalem",
+     "a link with a label: [the plugins]([[project/plugins]]) and a url https://example.com/#anchor"
+    ],
+    [
+     "kalem",
+     "plugins, as [[project/plugins]] lists them"
+    ],
+    [
+     "kalem",
+     "this one: [[project/plugins/graph]]"
+    ],
+    [
+     "oct 10th, 2026",
+     "now start [[project/plugins/graph]]"
+    ],
+    [
+     "oct 3rd, 2026",
+     "decided: the graph plugin first"
+    ],
+    [
+     "oct 3rd, 2026",
+     "met about [[project/plugins]] #meeting"
+    ],
+    [
+     "oct 3rd, 2026",
+     "see [[oct 4th, 2026]]"
+    ],
+    [
+     "project/plugins",
+     "canceled a plugin for every format at once"
+    ],
+    [
+     "project/plugins",
+     "doing [#b] the plain-text accounting plugin"
+    ],
+    [
+     "project/plugins",
+     "done the docx plugin"
+    ],
+    [
+     "project/plugins",
+     "later the typst mode, after the mode binding"
+    ],
+    [
+     "project/plugins",
+     "now review ((6512c0de-0001-4000-8000-000000000002))"
+    ],
+    [
+     "project/plugins",
+     "the plugins of [[kalem]], in getkalem/plugins"
+    ],
+    [
+     "project/plugins",
+     "todo [#a] write the graph plugin [[project/plugins/graph]]"
+    ],
+    [
+     "project/plugins",
+     "waiting the owner's decision on the api version"
+    ],
+    [
+     "project/plugins/graph",
+     "and a page: {{embed [[project/plugins]]}}"
+    ]
+   ]
+  },
+  {
+   "kind": "advanced",
+   "query": "[:find (pull ?b [*]) :where [?b :block/page ?p] [?p :block/name \"kalem\"] [?b :block/parent ?p]]",
+   "answer": [
+    [
+     "kalem",
+     "# a heading block"
+    ],
+    [
+     "kalem",
+     "```rust"
+    ],
+    [
+     "kalem",
+     "a link with a label: [the plugins]([[project/plugins]]) and a url https://example.com/#anchor"
+    ],
+    [
+     "kalem",
+     "alias:: editor, [[the editor]]"
+    ],
+    [
+     "kalem",
+     "its keys are doom's: `[[not a link]]` in code"
+    ],
+    [
+     "kalem",
+     "its parts"
+    ],
+    [
+     "kalem",
+     "kalem is an editor of [[org]] and [[markdown]] files #software"
+    ]
+   ]
+  }
+ ],
+ "backlinks": {
+  "journals/2026_10_10.md": [],
+  "pages/Project___Plugins.md": [
+   "kalem",
+   "oct 10th, 2026",
+   "oct 3rd, 2026",
+   "project/plugins/graph"
+  ],
+  "pages/Kalem.md": [
+   "oct 3rd, 2026",
+   "program",
+   "project/plugins",
+   "project/plugins/graph",
+   "queries"
+  ],
+  "journals/2026_10_07.md": [],
+  "pages/Templates.md": [],
+  "journals/2026_10_05.md": [],
+  "journals/2026_10_03.md": [
+   "oct 4th, 2026"
+  ],
+  "pages/Project___Plugins___Graph.md": [
+   "kalem",
+   "oct 10th, 2026",
+   "project/plugins"
+  ],
+  "pages/Queries.md": [],
+  "pages/Program.md": [
+   "kalem"
+  ],
+  "journals/2026_10_06.md": [],
+  "journals/2026_10_08.md": [],
+  "pages/hls__paper_1700000000000_0.md": [],
+  "assets/readme.md": [],
+  "journals/2026_10_01.md": [],
+  "journals/2026_10_02.md": [],
+  "journals/2026_10_04.md": [
+   "oct 3rd, 2026"
+  ],
+  "journals/2026_10_09.md": [],
+  "pages/Questions%3F.md": [],
+  "whiteboards/Design.edn": [
+   "project/plugins/graph"
+  ],
+  "pages/contents.md": []
+ },
+ "graph_view": {
+  "about": "The global graph view with the corpus's :graph/settings (orphans shown; journals, Logseq's own pages and excluded pages left out), as frontend.handler.graph/build-global-graph builds it: its nodes, and the links between them (get-pages-relation without journals, get-all-tagged-pages, get-all-namespace-relation), read with datascript_query and filtered as that function filters.",
+  "nodes": [
+   "6512c0de-0001-4000-8000-000000000001",
+   "a [[nested]] link",
+   "design",
+   "editor",
+   "file",
+   "file-path",
+   "hls__paper_1700000000000_0",
+   "kalem",
+   "markdown",
+   "meeting",
+   "nested",
+   "note graphs",
+   "org",
+   "program",
+   "project",
+   "project/plugins",
+   "project/plugins/graph",
+   "queries",
+   "questions?",
+   "read from assets",
+   "readme",
+   "related",
+   "software",
+   "templates",
+   "the editor",
+   "type",
+   "writing"
+  ],
+  "links": [
+   [
+    "6512c0de-0001-4000-8000-000000000001",
+    "project/plugins/graph"
+   ],
+   [
+    "a [[nested]] link",
+    "queries"
+   ],
+   [
+    "design",
+    "project/plugins/graph"
+   ],
+   [
+    "editor",
+    "kalem"
+   ],
+   [
+    "file",
+    "hls__paper_1700000000000_0"
+   ],
+   [
+    "file-path",
+    "hls__paper_1700000000000_0"
+   ],
+   [
+    "kalem",
+    "markdown"
+   ],
+   [
+    "kalem",
+    "org"
+   ],
+   [
+    "kalem",
+    "program"
+   ],
+   [
+    "kalem",
+    "project"
+   ],
+   [
+    "kalem",
+    "project/plugins"
+   ],
+   [
+    "kalem",
+    "project/plugins/graph"
+   ],
+   [
+    "kalem",
+    "queries"
+   ],
+   [
+    "kalem",
+    "related"
+   ],
+   [
+    "kalem",
+    "software"
+   ],
+   [
+    "kalem",
+    "the editor"
+   ],
+   [
+    "kalem",
+    "type"
+   ],
+   [
+    "kalem",
+    "writing"
+   ],
+   [
+    "nested",
+    "queries"
+   ],
+   [
+    "note graphs",
+    "queries"
+   ],
+   [
+    "project",
+    "project/plugins"
+   ],
+   [
+    "project",
+    "project/plugins/graph"
+   ],
+   [
+    "project/plugins",
+    "project/plugins/graph"
+   ],
+   [
+    "read from assets",
+    "readme"
+   ],
+   [
+    "templates",
+    "type"
+   ]
+  ]
+ }
+}

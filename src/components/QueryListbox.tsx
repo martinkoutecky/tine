@@ -1,3 +1,6 @@
+import { focusOnMount } from "../focusOnMount";
+import { shortcutKey } from "../shortcutKey";
+import { t } from "../i18n";
 import { For, Show, createEffect, createMemo, createSignal, type JSX } from "solid-js";
 
 // **The ONE listbox keyboard/ARIA controller the query sheet uses (§7.7, D-14).** It was a private `Listbox` …
@@ -116,10 +119,10 @@ export function Listbox(props: {
     setActiveKey(rows[next].key);
   };
   const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key === "ArrowDown" || (event.ctrlKey && event.key === "n")) {
+    if (event.key === "ArrowDown" || (event.ctrlKey && shortcutKey(event) === "n")) {
       event.preventDefault();
       move(1);
-    } else if (event.key === "ArrowUp" || (event.ctrlKey && event.key === "p")) {
+    } else if (event.key === "ArrowUp" || (event.ctrlKey && shortcutKey(event) === "p")) {
       event.preventDefault();
       move(-1);
     } else if (event.key === "Enter") {
@@ -156,15 +159,14 @@ export function Listbox(props: {
     >
       <Show when={props.filterable}>
         <input
-          ref={(element) => props.inputRef?.(element)}
+          ref={(element) => { props.inputRef?.(element); focusOnMount(element); }}
           class="qs-menu-filter"
-          autofocus
           role="combobox"
           aria-expanded="true"
           aria-controls={props.id}
           aria-activedescendant={activeKey() ? optionId(activeKey()!) : undefined}
           aria-label={props.label}
-          placeholder={props.placeholder ?? "Type to filter"}
+          placeholder={props.placeholder ?? t("query-listbox-type-to-filter")}
           value={query()}
           onInput={(e) => setQuery(e.currentTarget.value)}
         />
@@ -209,7 +211,7 @@ function PlainList(props: { context: ListboxBody }): JSX.Element {
               onMouseEnter={() => context.setActiveKey(option.key)}
               onClick={() => context.pick(option.key)}
             >
-              {option.label}
+              <span class="qs-option-label">{option.label}</span>
               <Show when={option.hint}>
                 <span class="qs-option-hint">{option.hint}</span>
               </Show>

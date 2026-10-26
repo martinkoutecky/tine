@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { rawText, renderEnglish } from "./i18n";
 vi.mock("./toasts", () => ({ pushToast: vi.fn() }));
 afterEach(() => { vi.restoreAllMocks(); vi.resetModules(); });
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -23,5 +24,8 @@ it("keeps the user's newer choice when startup finishes late and rolls back a re
   resolve("9"); await load; expect(budget.queryExportBudgetMiB()).toBe(2);
   set.mockRejectedValueOnce(new Error("disk")); budget.changeQueryExportBudgetMiB(4); await tick();
   expect(budget.queryExportBudgetMiB()).toBe(2);
-  const { pushToast } = await import("./toasts"); expect(pushToast).toHaveBeenCalledWith("Could not save query export size limit.", "error");
+  const { pushToast } = await import("./toasts");
+  const [text, kind] = vi.mocked(pushToast).mock.calls.at(-1)!;
+  expect(renderEnglish(typeof text === "string" ? rawText(text) : text)).toBe("Could not save query export size limit.");
+  expect(kind).toBe("error");
 });

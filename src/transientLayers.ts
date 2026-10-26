@@ -4,7 +4,8 @@
  * "The user pressed outside" is a different question from Escape/Back, and
  * `dismissOnOutsidePointer` below is its one producer for the whole app
  * (GH #472, master 8198daf34). */
-import { createEffect, onCleanup } from "solid-js";
+import { createEffect, createMemo, createRoot, createSignal, onCleanup } from "solid-js";
+import { MAIN_WINDOW_ID, activeWindowId, documentOf, onEachWindow, queryAllWindows, windowById, windowIds } from "./windowRealm";
 
 export type TransientDismissReason = "escape" | "back" | "explicit";
 export interface TransientLayer {
@@ -19,6 +20,10 @@ export interface TransientLayer {
 type Entry = TransientLayer & { token: number };
 let serial = 0;
 const layers = new Map<string, Entry>();
+/** Moves whenever a layer registers or unregisters, so the overlay window
+ * below re-reads the registry. */
+const [layerVersion, setLayerVersion] = createSignal(0);
+const bumpLayers = () => setLayerVersion((v) => v + 1);
 
 function containsEventTarget(root: HTMLElement, target: EventTarget | null): boolean {
   try {
@@ -34,6 +39,7 @@ export function registerTransientLayer(layer: TransientLayer): () => void {
   // effect is being disposed).  Keep the entry identity in the disposer.
   const entry: Entry = { ...layer, token: ++serial };
   layers.set(layer.id, entry);
+  bumpLayers();
   // A visible owner can be brought in front of another visible owner without a
   // remount (for example two right-sidebar editors).  Bind this at the actual
   // registered root rather than relying on a registry-only test call.
@@ -44,16 +50,23 @@ export function registerTransientLayer(layer: TransientLayer): () => void {
       entry.token = ++serial;
     }
   };
-  if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
-    document.addEventListener("focusin", activateFromEvent, true);
-    document.addEventListener("pointerdown", activateFromEvent, true);
-  }
+  // Every Tine window: a layer can live in a workspace window (OG-MULTIWINDOW P1).
+  const stopListening = onEachWindow((win) => {
+    const doc = win.document;
+    if (typeof doc?.addEventListener !== "function") return;
+    doc.addEventListener("focusin", activateFromEvent, true);
+    doc.addEventListener("pointerdown", activateFromEvent, true);
+    return () => {
+      doc.removeEventListener("focusin", activateFromEvent, true);
+      doc.removeEventListener("pointerdown", activateFromEvent, true);
+    };
+  });
   return () => {
-    if (typeof document !== "undefined" && typeof document.removeEventListener === "function") {
-      document.removeEventListener("focusin", activateFromEvent, true);
-      document.removeEventListener("pointerdown", activateFromEvent, true);
+    stopListening();
+    if (layers.get(layer.id) === entry) {
+      layers.delete(layer.id);
+      bumpLayers();
     }
-    if (layers.get(layer.id) === entry) layers.delete(layer.id);
   };
 }
 
@@ -129,7 +142,10 @@ export function dismissTopTransient(reason: TransientDismissReason): boolean {
   const top = topTransientLayer();
   if (!top) return false;
   const handled = top.dismiss(reason);
-  if (!handled && layers.get(top.id) === top) layers.delete(top.id);
+  if (!handled && layers.get(top.id) === top) {
+    layers.delete(top.id);
+    bumpLayers();
+  }
   if (handled) queueMicrotask(() => restoreAfterTransientDismissal(top));
   return true;
 }
@@ -152,7 +168,7 @@ function tryFocus(candidate: HTMLElement | null | undefined): boolean {
   } catch {
     return false;
   }
-  return document.activeElement === candidate;
+  return documentOf(candidate).activeElement === candidate;
 }
 
 function tryFocusRoot(root: HTMLElement | null | undefined): boolean {
@@ -172,14 +188,39 @@ function restoreAfterTransientDismissal(top: Entry) {
   const newer = topTransientLayer();
   if (newer && tryFocus(newer.trigger?.())) return;
   if (newer && tryFocusRoot(newer.root?.())) return;
-  const drawer = document.querySelector<HTMLElement>("[data-active-drawer='left'] .left-sidebar, [data-active-drawer='right'] .right-sidebar");
+  const drawer = queryAllWindows<HTMLElement>("[data-active-drawer='left'] .left-sidebar, [data-active-drawer='right'] .right-sidebar");
   tryFocusRoot(drawer);
 }
 
 export function clearTransientLayersForTest() {
   layers.clear();
   serial = 0;
+  bumpLayers();
 }
+
+/** Is an app-level overlay (a layer whose root is not inside a pane, such as
+ * the switcher, a context menu or a dialog) open? Pane-local popovers do not
+ * count. Reactive; O(layers). */
+function appOverlayOpen(): boolean {
+  layerVersion();
+  for (const entry of layers.values()) {
+    const root = entry.root?.();
+    if (root?.isConnected && !root.closest("[data-pane-id]")) return true;
+  }
+  return false;
+}
+
+/** OG-MULTIWINDOW P1: the Tine window that hosts the app-level overlays
+ * (switcher, menus, dialogs, toasts). It follows the window the user is in,
+ * but holds still while an overlay is open there, so an open dialog is never
+ * torn out of the window it was opened in. Falls back to main when its window
+ * closes. Reactive; O(layers) per change. */
+export const overlayWindowId = createRoot(() => createMemo<string>((previous) => {
+  const active = activeWindowId();
+  const ids = windowIds();
+  if (previous && previous !== active && ids.includes(previous) && appOverlayOpen()) return previous;
+  return windowById(active) ? active : MAIN_WINDOW_ID;
+}));
 
 /** Close a popover when a pointer goes down outside it.
  *
@@ -207,7 +248,7 @@ export function dismissOnOutsidePointer(options: {
 }): void {
   createEffect(() => {
     if (!options.open()) return;
-    if (typeof document === "undefined" || typeof document.addEventListener !== "function") return;
+    if (typeof document === "undefined") return;
     const onDown = (event: Event) => {
       const target = event.target;
       for (const element of options.inside()) {
@@ -215,9 +256,13 @@ export function dismissOnOutsidePointer(options: {
       }
       options.dismiss();
     };
-    for (const type of ["pointerdown", "mousedown"] as const) {
-      document.addEventListener(type, onDown, true);
-      onCleanup(() => document.removeEventListener(type, onDown, true));
-    }
+    // A press in ANY Tine window is outside a popover unless it hit `inside`,
+    // so clicking into another workspace window closes it too.
+    onCleanup(onEachWindow((win) => {
+      const doc = win.document;
+      if (typeof doc?.addEventListener !== "function") return;
+      for (const type of ["pointerdown", "mousedown"] as const) doc.addEventListener(type, onDown, true);
+      return () => { for (const type of ["pointerdown", "mousedown"] as const) doc.removeEventListener(type, onDown, true); };
+    }));
   });
 }

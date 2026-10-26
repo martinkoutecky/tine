@@ -69,6 +69,35 @@ pub fn take_synced_directories() -> Vec<std::path::PathBuf> {
 /// without a directory flush; standard file opening cannot flush its directory
 /// handles, and the caller is responsible for its own rename durability protocol.
 pub fn sync_directory_entry(dir: &Path) -> io::Result<()> {
+    sync_directory(dir, false).map(|_| ())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DirectoryWitness {
+    Durable,
+    Unsupported,
+}
+
+/// Graph publication retains exactly Beta's tolerated error set, but reports
+/// a weak witness distinctly so the host cannot claim strong durability.
+pub(crate) fn sync_directory_witness(dir: &Path) -> io::Result<DirectoryWitness> {
+    sync_directory(dir, false)
+}
+
+/// App-data metadata must meet the design's platform witness. Unix never
+/// tolerates a directory-sync error here. Windows relies on write-through
+/// moves / successful DeleteFileW and NTFS's ordered metadata journal; there
+/// is no native directory flush and no native power-cut proof.
+pub(crate) fn sync_private_directory(dir: &Path) -> io::Result<()> {
+    sync_directory(dir, true).map(|_| ())
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static SYNC_ERROR: std::cell::Cell<Option<io::ErrorKind>> = const { std::cell::Cell::new(None) };
+}
+
+fn sync_directory(dir: &Path, private: bool) -> io::Result<DirectoryWitness> {
     #[cfg(feature = "test-faults")]
     SYNCED.with(|synced| synced.borrow_mut().push(dir.to_path_buf()));
     #[cfg(all(feature = "test-faults", unix))]
@@ -76,6 +105,13 @@ pub fn sync_directory_entry(dir: &Path) -> io::Result<()> {
         return Err(report_failure(io::Error::other(
             "injected directory sync I/O failure",
         )));
+    }
+    #[cfg(test)]
+    if let Some(kind) = SYNC_ERROR.with(|error| error.take()) {
+        return classify_sync(
+            Err(io::Error::new(kind, "injected directory sync failure")),
+            private,
+        );
     }
 
     #[cfg(any(
@@ -85,18 +121,20 @@ pub fn sync_directory_entry(dir: &Path) -> io::Result<()> {
         target_os = "ios"
     ))]
     {
-        match std::fs::File::open(dir).and_then(|directory| directory.sync_all()) {
-            Ok(()) => Ok(()),
-            Err(error) if dir_sync_is_unsupported(&error) => Ok(()),
-            Err(error) => Err(report_failure(error)),
-        }
+        classify_sync(
+            std::fs::File::open(dir).and_then(|directory| directory.sync_all()),
+            private,
+        )
     }
     #[cfg(target_os = "windows")]
     {
         // Directory handles cannot be synced with std::fs. NTFS renames are
         // journaled, but this helper does not verify the filesystem or rename.
         let _ = dir;
-        Ok(())
+        // The caller's synced temp + WRITE_THROUGH move is the Windows
+        // publication recipe (SPEC-s2 §4.7), not a directory flush.
+        let _ = private;
+        Ok(DirectoryWitness::Durable)
     }
     #[cfg(not(any(
         target_os = "linux",
@@ -106,11 +144,21 @@ pub fn sync_directory_entry(dir: &Path) -> io::Result<()> {
         target_os = "windows"
     )))]
     {
-        let _ = dir;
+        let _ = (dir, private);
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "directory sync unsupported on this target",
         ))
+    }
+}
+
+fn classify_sync(result: io::Result<()>, private: bool) -> io::Result<DirectoryWitness> {
+    match result {
+        Ok(()) => Ok(DirectoryWitness::Durable),
+        Err(error) if !private && dir_sync_is_unsupported(&error) => {
+            Ok(DirectoryWitness::Unsupported)
+        }
+        Err(error) => Err(report_failure(error)),
     }
 }
 
@@ -122,22 +170,49 @@ pub fn sync_directory_entry(dir: &Path) -> io::Result<()> {
 /// Cost: one `metadata` per missing ancestor plus the existing one, and one
 /// sync per created directory; nothing beyond one `metadata` when `dir` exists.
 pub(crate) fn create_dir_all_durable(dir: &Path) -> io::Result<()> {
-    let mut missing = Vec::new();
-    let mut probe = dir;
-    while std::fs::metadata(probe).is_err() {
-        missing.push(probe);
-        match probe.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => probe = parent,
-            _ => break,
+    create_dir_all_with_sync(dir, sync_directory_entry)
+}
+
+pub(crate) fn create_dir_all_with_sync(
+    dir: &Path,
+    sync: impl Fn(&Path) -> io::Result<()>,
+) -> io::Result<()> {
+    DirectoryCreation::new(dir).finish(sync)
+}
+
+/// The same audited directory-chain creation with retained sync custody. A
+/// retry after a successful mkdir cannot infer durability from its existence.
+pub(crate) struct DirectoryCreation {
+    dir: std::path::PathBuf,
+    parents: std::collections::VecDeque<std::path::PathBuf>,
+}
+
+impl DirectoryCreation {
+    pub(crate) fn new(dir: &Path) -> Self {
+        let mut missing = Vec::new();
+        let mut probe = dir;
+        while std::fs::metadata(probe).is_err() {
+            if let Some(parent) = probe.parent().filter(|p| !p.as_os_str().is_empty()) {
+                missing.push(parent.to_path_buf());
+                probe = parent;
+            } else {
+                break;
+            }
+        }
+        Self {
+            dir: dir.to_path_buf(),
+            parents: missing.into_iter().rev().collect(),
         }
     }
-    std::fs::create_dir_all(dir)?;
-    for created in missing.into_iter().rev() {
-        if let Some(parent) = created.parent().filter(|p| !p.as_os_str().is_empty()) {
-            sync_directory_entry(parent)?;
+
+    pub(crate) fn finish(&mut self, sync: impl Fn(&Path) -> io::Result<()>) -> io::Result<()> {
+        std::fs::create_dir_all(&self.dir)?;
+        while let Some(parent) = self.parents.front() {
+            sync(parent)?;
+            self.parents.pop_front();
         }
+        Ok(())
     }
-    Ok(())
 }
 
 /// True for directory-sync errors that mean "this filesystem does not offer

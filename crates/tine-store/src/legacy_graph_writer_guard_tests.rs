@@ -1,3 +1,4 @@
+use crate::test_cfg::cfg_test;
 use quote::ToTokens;
 use std::path::{Path, PathBuf};
 use syn::visit::Visit;
@@ -56,6 +57,36 @@ const ALLOWED_GRAPH_UNIT_CALLS: &[(&str, &str, &str)] = &[
     (
         "crates/tine-store/src/model.rs",
         "search_cache_isolates_one_page_projection_panic",
+        "invalidate_cache",
+    ),
+    (
+        "crates/tine-store/src/model/held_index.rs",
+        "a_build_that_read_a_page_before_its_hold_declines",
+        "invalidate_cache",
+    ),
+    (
+        "crates/tine-store/src/model/held_index.rs",
+        "review2_rebuild_preserves_a_held_file_missing_from_disk",
+        "invalidate_cache",
+    ),
+    (
+        "crates/tine-store/src/model/held_index.rs",
+        "review2_ondemand_names_a_held_page_from_owner_bytes",
+        "invalidate_cache",
+    ),
+    (
+        "crates/tine-store/src/model/derived_tests.rs",
+        "a_removal_after_cache_eviction_unnames_the_page",
+        "invalidate_cache",
+    ),
+    (
+        "crates/tine-store/src/model/derived_tests.rs",
+        "a_removed_duplicate_claimant_leaves_the_other",
+        "invalidate_cache",
+    ),
+    (
+        "crates/tine-store/src/model/derived_tests.rs",
+        "journal_twins_and_shadows_keep_their_claimants",
         "invalidate_cache",
     ),
     (
@@ -201,11 +232,7 @@ impl TestCalls {
 impl<'ast> Visit<'ast> for TestCalls {
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
         let previous = self.in_test_module;
-        self.in_test_module |= module.ident == "tests"
-            || module.attrs.iter().any(|attr| {
-                attr.path().is_ident("cfg")
-                    && attr.meta.to_token_stream().to_string().contains("test")
-            });
+        self.in_test_module |= module.ident == "tests" || cfg_test(&module.attrs);
         syn::visit::visit_item_mod(self, module);
         self.in_test_module = previous;
     }
@@ -295,6 +322,25 @@ fn planted_legacy_writer_fails_the_guard() {
             #[test] fn violation() {
                 assert!(g.save_page(&page, None).is_ok());
             }
+        }
+    "#;
+    assert_eq!(
+        violations(planted, "planted.rs", false),
+        ["violation: save_page"]
+    );
+}
+
+/// N2 family (REVIEW-3b-P2b-2): the cfg predicate is parsed, so a
+/// `cfg(not(test))` module is production and its writer is not a test
+/// writer; `cfg(all(test, ..))` is still test code.
+#[test]
+fn a_not_test_module_is_production_to_the_guard() {
+    let planted = r#"
+        #[cfg(not(test))] mod live {
+            fn production() { g.save_page(&page, None); }
+        }
+        #[cfg(all(test, unix))] mod checks {
+            fn violation() { g.save_page(&page, None); }
         }
     "#;
     assert_eq!(

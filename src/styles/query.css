@@ -46,7 +46,7 @@
   font-weight: 600;
 }
 .qs-seg-advanced {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   color: var(--text-muted);
   border-bottom: 1px dotted var(--border-color);
 }
@@ -71,7 +71,7 @@
 }
 .qs-preview-error {
   font-size: 12px;
-  color: var(--danger-color, #c0392b);
+  color: var(--tine-danger-color, var(--palette-danger));
 }
 /* --- the editing sheet --- */
 .qs-overlay {
@@ -162,7 +162,7 @@
   color: var(--text-primary);
 }
 .qs-anchor-prompt-text code {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 11px;
 }
 .qs-anchor-prompt-actions {
@@ -253,7 +253,7 @@
   flex: 1 1 auto;
 }
 .qs-property-key {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 12px;
   color: var(--text-secondary);
 }
@@ -281,7 +281,7 @@
    diagnostic beside it. Greyed instead of red when disabled — a disabled broken
    condition does not invalidate the query (§3.5). */
 .qs-row-raw .qs-raw-text {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 12px;
   color: #b91c1c;
   overflow: hidden;
@@ -433,7 +433,7 @@
   background: var(--bg-tertiary);
 }
 .qs-row-advanced .qs-advanced {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 12px;
   color: var(--text-muted);
   flex: 1 1 auto;
@@ -466,7 +466,7 @@
   color: var(--text-muted);
 }
 .qs-raw-suggestions code {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
 }
 .qs-raw-edit {
   border: none;
@@ -541,7 +541,7 @@
   border-radius: 999px;
   padding: 2px 10px;
   font-size: 12px;
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   cursor: pointer;
 }
 .qs-try-item:hover {
@@ -568,6 +568,8 @@
   z-index: 60;
   min-width: 200px;
   max-width: 320px;
+  /* GH #619 c6: as wide as its rows need (up to the cap), not squeezed to the anchor's containing block. */
+  width: max-content;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
@@ -636,7 +638,12 @@
   border-radius: 5px;
   font-size: 13px;
   cursor: pointer;
+  /* GH #619 c6: a menu inside a block inherits `.block-content { word-break: break-word }`, which let the
+     label shrink to one letter per line beside its nowrap hint. Words stay whole; the label keeps its
+     line and the hint wraps instead. */
+  word-break: normal;
 }
+.qs-option-label { flex: none; max-width: 100%; }
 .qs-option:hover,
 .qs-option.active {
   background: var(--bg-tertiary);
@@ -647,7 +654,8 @@
 .qs-option-hint {
   color: var(--text-muted);
   font-size: 11px;
-  white-space: nowrap;
+  min-width: 0;
+  text-align: right;
 }
 .qs-option-section {
   padding: 6px 8px 2px;
@@ -703,7 +711,7 @@
 }
 .qs-conn.active {
   background: var(--link-color);
-  color: #fff;
+  color: var(--on-accent, #fff);
   border-color: var(--link-color);
 }
 .qs-between {
@@ -770,13 +778,15 @@
   }
   .qs-menu {
     max-width: none;
+    width: auto;
     right: 0;
   }
 }
 /* The §7.5 crossing notice: an inline region under the block (P4 hosts the same
    component inside its pane), not a toast — the bytes already changed and the
    way back must still be there when the reader looks up. */
-.query-crossing-notice {
+.query-crossing-notice,
+.query-og-hint {
   margin: 4px 0;
   padding: 8px 10px;
   border: 1px solid var(--border-color);
@@ -788,7 +798,8 @@
   outline: 2px solid var(--accent, #4a90d9);
   outline-offset: 1px;
 }
-.query-crossing-notice-text {
+.query-crossing-notice-text,
+.query-og-hint-text {
   margin: 0 0 6px;
   color: var(--text-primary);
 }
@@ -798,10 +809,11 @@
   font-size: 12px;
 }
 .query-crossing-notice-changed code {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   word-break: break-word;
 }
-.query-crossing-notice-actions {
+.query-crossing-notice-actions,
+.query-og-hint-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -827,11 +839,11 @@
 }
 .query-text-pane-input {
   width: 100%;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--tine-mono-font, var(--font-mono, monospace));
   resize: vertical;
 }
 .query-text-pane-input.query-text-pane-invalid {
-  border-color: var(--danger-color, #c0392b);
+  border-color: var(--tine-danger-color, var(--palette-danger));
 }
 .query-text-pane-status {
   display: flex;
@@ -840,7 +852,7 @@
   gap: 8px;
 }
 .query-text-pane-error {
-  color: var(--danger-color, #c0392b);
+  color: var(--tine-danger-color, var(--palette-danger));
   font-size: 12px;
 }
 .query-text-pane-pending {
@@ -869,7 +881,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  border-left: 2px solid var(--danger-color, #c0392b);
+  border-left: 2px solid var(--tine-danger-color, var(--palette-danger));
   padding-left: 8px;
 }
 .query-text-pane-diagnostic-message {
@@ -899,7 +911,7 @@
   color: var(--text-muted);
 }
 .query-text-pane-diagnostic-alts code {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 11px;
 }
 /* "Why is this empty?" (Q14, N19): asked only once a run has come back empty. */
@@ -925,7 +937,7 @@
 }
 /* The run's own diagnostics, distinct from a failed command. */
 .query-diagnostics {
-  color: var(--danger-color, #c0392b);
+  color: var(--tine-danger-color, var(--palette-danger));
 }
 /* One entry per requested aggregate, laid out on one line. */
 .query-summary .qs-entry + .qs-entry {

@@ -29,6 +29,7 @@ fn backdate(path: &std::path::Path) {
 
 #[test]
 fn the_inventory_reads_only_pages_that_may_carry_an_anchor_line() {
+    let _integration_guard = crate::integration_lock();
     let root = tempfile::tempdir().unwrap();
     for dir in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.path().join(dir)).unwrap();
@@ -72,7 +73,7 @@ fn the_inventory_reads_only_pages_that_may_carry_an_anchor_line() {
          bytes carried an anchor line (M1, M2 and the fenced F1: one marker scan \
          each, plus the queue object's own read of the two listed pages), never the \
          {PAGES} unmarked pages; got {reads} reads (store {} full {} preamble {} hash {}); the flag \
-         is `Store::vcs_anchor_state`, exemplar crates/tine-store/src/model.rs `DiskObs`",
+         is `Store::may_carry_vcs_markers`, exemplar crates/tine-store/src/model.rs `DiskObs`",
         counts.store_reads, counts.full_reads, counts.preamble_reads, counts.hash_reads,
     );
 }

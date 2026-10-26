@@ -17,7 +17,7 @@ import DOMPurify from "dompurify";
 // shared graphs), and in Tauri an injected `onerror=`/`<script>` can call Tine's
 // IPC to read/write the whole graph or exfiltrate via `fetch`; the export
 // re-publishes raw HTML as served content. So: allowlist tags + attrs, drop all
-// event handlers and `style`, and lean on DOMPurify's URI safety (which blocks
+// event handlers and (all but colour declarations of) `style`, and lean on DOMPurify's URI safety (which blocks
 // `javascript:` etc.).
 
 /** Tags that survive sanitization — inline text formatting plus a small set of
@@ -32,7 +32,8 @@ import DOMPurify from "dompurify";
 export const RAW_HTML_TAGS = policy.tags;
 
 /** Attributes that survive, across all allowed tags. Note the absence of
- *  `style` (positioning/tracking), `autoplay`, and any `on*` handler.
+ *  `style` here (positioning/tracking; colour declarations are carried over
+ *  separately, see `colorOnlyStyle`), `autoplay`, and any `on*` handler.
  *  `controls` exposes user-driven playback; `loop`/`muted` retain playback
  *  state without starting it; `preload` is the browser's media fetch hint;
  *  `poster` is the video placeholder; `type` lets `<source>` advertise its
@@ -57,6 +58,34 @@ function hasDeniedResourceScheme(value: string): boolean {
 // at a local file loses its src. When the user has opted in, the app matches the
 // sanitized `<img>` elements (in document order) back to these scanned paths and
 // swaps in a blob URL read over the gated IPC. The paths are projected from the same inert DOM used for sanitizing.
+
+// --- Colour-only `style` (GH #243) ---
+// OG's DOMPurify default keeps `style` on hiccup/raw HTML, which is how Logseq users
+// write `[:span {:style "color: red"} "x"]`. Tine keeps only colour declarations, so a
+// shared note can recolor text but never position, resize, hide or fetch anything:
+// property names come from the policy's `browser.styleProperties`, and a value must be
+// one closed colour literal (#hex, a bare colour word, or a flat rgb()/hsl()/oklch()-
+// style function with only numbers, `%`, `/`, `,` and `.`): no url(), var(), calc(),
+// image-set() or `!important`. Anything else in the attribute is dropped.
+const STYLE_PROPERTIES: readonly string[] = policy.browser.styleProperties;
+const COLOR_VALUE = /^(?:#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|[a-z]{3,30}|(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch)\(\s*[-+0-9a-z.%/,\s]{1,80}\))$/i;
+const COLOR_FUNCTION_BANNED = /(?:var|calc|url|env|attr|image|min|max|clamp)/i;
+
+/** The colour declarations of a `style` attribute value, serialized; "" if none. */
+export function colorOnlyStyle(value: string): string {
+  const kept: string[] = [];
+  for (const declaration of value.split(";")) {
+    const colon = declaration.indexOf(":");
+    if (colon < 0) continue;
+    const property = declaration.slice(0, colon).trim().toLowerCase();
+    const v = declaration.slice(colon + 1).trim();
+    if (!STYLE_PROPERTIES.includes(property) || !COLOR_VALUE.test(v)) continue;
+    // A function body may contain letters (`from`, `none`, channel names) but never a nested call.
+    if (v.includes("(") && COLOR_FUNCTION_BANNED.test(v.slice(v.indexOf("(")))) continue;
+    kept.push(`${property}: ${v}`);
+  }
+  return kept.join("; ");
+}
 
 /** True if `src` is a local filesystem path (not a web / data / blob URL). */
 function isLocalSrc(src: string): boolean {
@@ -94,20 +123,32 @@ export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPres
   const src = frame?.getAttribute("src");
   if (frame && src && /^https?:\/\//i.test(src)) {
     const dimension = (name: "width" | "height") => {
-      const attr = /^(\d+px|\d+%|\d+)/i.exec(frame.getAttribute(name) ?? "")?.[1];
+      const attr = frame.getAttribute(name)?.trim();
       const style = frame.style.getPropertyValue(name);
-      return attr ?? (/^\d+(?:px|%)$/i.test(style) ? style : undefined);
+      // Inline CSS overrides HTML presentation attributes, as in a browser.
+      // Numeric HTML dimensions are pixels, never unitless CSS lengths.
+      if (/^\d+(?:\.\d+)?(?:px|%)$/i.test(style)) return style;
+      if (!attr || !/^\d+(?:\.\d+)?(?:px|%)?$/i.test(attr)) return undefined;
+      return /^\d+(?:\.\d+)?$/.test(attr) ? `${attr}px` : attr;
     };
     return { html: "", localImages: [], iframe: { src, width: dimension("width"), height: dimension("height") } };
   }
   const paths = new WeakMap<Element, string | null>();
   for (const image of root.querySelectorAll("img")) paths.set(image, localImagePath(image.getAttribute("src") ?? ""));
+  // DOMPurify runs IN_PLACE, so surviving elements keep identity: capture the colour
+  // declarations first and put them back on whatever survives.
+  const colors = new Map<Element, string>();
+  for (const element of root.querySelectorAll("[style]")) {
+    const kept = colorOnlyStyle(element.getAttribute("style") ?? "");
+    if (kept) colors.set(element, kept);
+  }
   DOMPurify.sanitize(root, {
     ALLOWED_TAGS: RAW_HTML_TAGS,
     ALLOWED_ATTR: RAW_HTML_ATTRS,
     ALLOW_DATA_ATTR: false,
     IN_PLACE: true,
   });
+  for (const [element, kept] of colors) if (root.contains(element)) element.setAttribute("style", kept);
   for (const element of root.querySelectorAll<HTMLElement>("[src], [poster]")) {
     for (const attr of ["src", "poster"] as const) {
       const value = element.getAttribute(attr);

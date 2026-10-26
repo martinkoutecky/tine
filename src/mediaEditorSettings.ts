@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Device-local external-editor command templates (GH #38), persisted in
 // tine-settings.json via the generic app_string backend so native launch actions
 // and independent WebViews share one value. One command per media-editor registry
@@ -93,7 +94,7 @@ export async function initMediaEditorSettings(): Promise<void> {
           if (read) seedPreference(read);
         }
       } catch {
-        pushToast(`Could not load ${e.id} editor command.`, "error");
+        pushToast(msg("settings-could-not-load-editor-command", { id: e.id }), "error");
       }
     }),
   );

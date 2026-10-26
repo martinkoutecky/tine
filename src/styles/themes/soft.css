@@ -1,0 +1,110 @@
+/* Soft (GH #649), refined from EllisMorrow's medium palette. Installed only
+ * while Soft is selected, before custom.css. Contrast: soft.test.ts. Secondary,
+ * muted and bullet tones adjust minimally for selected hover/active surfaces. */
+html[data-theme="light"] {
+  --ls-active-primary-color: #16486f;
+  --ls-primary-background-color: #cbc9c3;
+  --ls-secondary-background-color: #c1beb6;
+  --ls-tertiary-background-color: #b7b3aa;
+  --ls-quaternary-background-color: #ada9a0;
+  --ls-primary-text-color: #20221e;
+  --ls-secondary-text-color: #3a3d36;
+  --ls-title-text-color: #191b18;
+  --ls-link-text-color: #123b5e;
+  --ls-link-text-hover-color: #0d2f4b;
+  --ls-link-ref-text-color: var(--ls-link-text-color);
+  --ls-block-ref-link-text-color: var(--ls-link-ref-text-color);
+  --ls-a-chosen-bg: rgba(30, 79, 116, 0.10);
+  --ls-border-color: #ada9a0;
+  --ls-secondary-border-color: var(--ls-border-color);
+  --ls-guideline-color: rgba(44, 50, 47, 0.18);
+  --ls-block-highlight-color: #bbc0bb;
+  --ls-block-bullet-color: #52584f;
+  --ls-block-bullet-active-color: var(--ls-active-primary-color);
+  --ls-selection-background-color: rgba(30, 79, 116, 0.12);
+  --ls-page-inline-code-bg-color: #bbb8ae;
+  --ls-page-inline-code-color: var(--ls-primary-text-color);
+  --ls-page-mark-bg-color: #d6c181;
+  --ls-page-mark-color: #26251c;
+  --ls-tag-text-color: #48275b;
+  --text-muted: #3a3d35;
+  --marker-color: var(--text-muted);
+  --done-color: var(--text-muted);
+  --bullet-ring: rgba(44, 50, 47, 0.08);
+  --guide-hover: rgba(44, 50, 47, 0.34);
+  --match-mark-bg: rgba(214, 193, 129, 0.60);
+  --on-accent: #ffffff;
+  --soft-active-bg: #b9b6ae;
+  --soft-modal-shadow: 0 20px 56px rgba(25, 31, 29, 0.24);
+  --scrollbar-thumb: #999c96;
+  --scrollbar-thumb-hover: #8c928a;
+}
+
+html[data-theme="dark"] {
+  --ls-active-primary-color: #cdecff;
+  --ls-primary-background-color: #4c4e53;
+  --ls-secondary-background-color: #43464c;
+  --ls-tertiary-background-color: #55585e;
+  --ls-quaternary-background-color: #575a61;
+  --ls-primary-text-color: #f0f1ed;
+  --ls-secondary-text-color: #dce0dd;
+  --ls-title-text-color: #fafbf7;
+  --ls-link-text-color: #cdecff;
+  --ls-link-text-hover-color: #d9eeff;
+  --ls-link-ref-text-color: var(--ls-link-text-color);
+  --ls-block-ref-link-text-color: var(--ls-link-ref-text-color);
+  --ls-a-chosen-bg: rgba(135, 183, 230, 0.08);
+  --ls-border-color: #656971;
+  --ls-secondary-border-color: var(--ls-border-color);
+  --ls-guideline-color: rgba(225, 233, 240, 0.14);
+  --ls-block-highlight-color: #485663;
+  --ls-block-bullet-color: #afb4b9;
+  --ls-block-bullet-active-color: var(--ls-active-primary-color);
+  --ls-selection-background-color: rgba(106, 161, 218, 0.12);
+  --ls-page-inline-code-bg-color: #454950;
+  --ls-page-inline-code-color: var(--ls-primary-text-color);
+  --ls-page-mark-bg-color: #74602e;
+  --ls-page-mark-color: #fff0bf;
+  --ls-tag-text-color: #f0e3fa;
+  --text-muted: #d7dcd9;
+  --marker-color: var(--text-muted);
+  --done-color: var(--text-muted);
+  --bullet-ring: rgba(225, 233, 240, 0.08);
+  --guide-hover: rgba(225, 233, 240, 0.34);
+  --match-mark-bg: rgba(116, 96, 46, 0.75);
+  --on-accent: #1c1d20;
+  --soft-active-bg: #55585e;
+  --soft-modal-shadow: 0 20px 56px rgba(16, 20, 26, 0.34);
+  --scrollbar-thumb: #6b7077;
+  --scrollbar-thumb-hover: #81878e;
+}
+
+/* Refine app-owned states; retain all existing sizes and hit targets. */
+:is(.nav-item.active, .nav-page.active, .settings-nav-item.active, .tab.active) {
+  background: var(--soft-active-bg);
+  color: var(--text-title);
+  box-shadow: none;
+}
+.settings-nav-item:hover { background: var(--bg-tertiary); }
+.settings-nav-item.active:hover { background: var(--soft-active-bg); }
+.settings-modal { box-shadow: var(--soft-modal-shadow); }
+:is(.page-ref, .external-link, .block-ref):hover {
+  color: var(--link-hover); text-underline-offset: 0.15em;
+}
+/* Match the existing outline scrollbars; keep native touch/forced-color behavior. */
+@media (pointer: fine) and (forced-colors: none) {
+  :is(.settings-pane-body, .settings-nav) {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+    scrollbar-width: thin;
+  }
+  :is(.settings-pane-body, .settings-nav)::-webkit-scrollbar-track,
+  :is(.settings-pane-body, .settings-nav)::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  :is(.settings-pane-body, .settings-nav)::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb); border-radius: 999px;
+  }
+  :is(.settings-pane-body, .settings-nav)::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+}

@@ -7,7 +7,7 @@ use std::io;
 
 use tine_core::date::{JournalDate, JournalFormat};
 use tine_core::model::{JournalConflict, JournalFile};
-use tine_store::{Area, Day, FileEntry, PageId, Store, StoreError};
+use tine_store::{Area, Day, FileEntry, FileId, Input, PageHost, PageId, Store, StoreError};
 
 use crate::{store_error, tx_error};
 
@@ -15,6 +15,8 @@ use crate::{store_error, tx_error};
 /// day, including a journal that disappeared between inventory and read.
 pub struct FeedPage<T> {
     pub pages: Vec<T>,
+    /// Referenced future days, nearest first, first request only.
+    pub upcoming: Vec<T>,
     pub next_before_day: Option<i64>,
     pub done: bool,
     pub as_of_day: i64,
@@ -49,6 +51,7 @@ where
             .any(|(day, _)| before_day.is_none_or(|before| day.0 < before));
         return Ok(FeedPage {
             pages: Vec::new(),
+            upcoming: Vec::new(),
             next_before_day: None,
             done,
             as_of_day,
@@ -76,6 +79,7 @@ where
     let done = candidates.peek().is_none();
     Ok(FeedPage {
         pages: out,
+        upcoming: Vec::new(),
         next_before_day: if done { None } else { last_examined },
         done,
         as_of_day,
@@ -83,21 +87,70 @@ where
     })
 }
 
-/// Page the dated journal feed by day, skipping a file deleted since inventory.
-/// A journal that cannot be listed or read (undecodable, oversized, a disk
-/// error, a non-UTF-8 name) is skipped and named in `unreadable`; only a
-/// failure of the whole store (closed, area scan) fails the request.
-/// Cost O(J log J + bytes of returned pages).
+/// One feed identity and body; `doc.rev` is absent for a virtual journal day.
+pub struct FeedRead {
+    pub id: PageId,
+    pub doc: tine_core::model::PageDto,
+}
+
+fn feed_read(read: tine_store::PageRead) -> FeedRead {
+    let mut doc = read.doc;
+    doc.rev = Some(read.rev.into());
+    doc.read_only = read.read_only.is_some();
+    FeedRead { id: read.id, doc }
+}
+
+fn virtual_day(store: &Store, day: Day) -> FeedRead {
+    let config = store.config();
+    let title = format(store).title(JournalDate::from_ordinal(day.0));
+    FeedRead {
+        id: store.journal_id(day),
+        doc: tine_core::model::PageDto {
+            name: title.clone(),
+            title,
+            kind: tine_core::model::PageKind::Journal,
+            pre_block: None,
+            blocks: Vec::new(),
+            rev: None,
+            format: config.preferred_format,
+            read_only: false,
+            guide: false,
+        },
+    }
+}
+
+/// Page the dated journal feed by day, including referenced fileless dates.
+/// Unreadable files are skipped and named; store/index failures fail the read.
+/// Cost O((J + D) log(J + D) + R + returned page bytes), plus indexed alias
+/// lookups for date-shaped names. J is journal files, R indexed reference names,
+/// D referenced dates. No reference-content scan or graph file write.
 pub fn feed_page(
     store: &Store,
     limit: usize,
     before_day: Option<i64>,
-) -> Result<FeedPage<tine_store::PageRead>, io::Error> {
+) -> Result<FeedPage<FeedRead>, io::Error> {
     let as_of_day = JournalDate::today().ordinal_key();
     let (entries, listing_unreadable) = feed_days_through(store, Day(as_of_day))?;
+    let referenced: std::collections::BTreeSet<_> = store
+        .whole_graph()
+        .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?
+        .inventory(tine_store::InventoryScope::ReferencedJournals)
+        .0
+        .iter()
+        .filter_map(|entry| entry.day)
+        .collect();
+    let mut days: BTreeMap<_, _> = entries.into_iter().collect();
+    for day in referenced.iter().filter(|day| day.0 <= as_of_day) {
+        days.entry(*day).or_insert_with(|| store.journal_id(*day));
+    }
+    let by_id: BTreeMap<_, _> = days.iter().map(|(day, id)| (id.clone(), *day)).collect();
+    let entries = days.into_iter().rev().collect();
     let mut page = collect_feed_page(entries, limit, before_day, as_of_day, |id| {
         Ok(match store.page(id) {
-            Ok(read) => Loaded::Page(read),
+            Ok(read) => Loaded::Page(feed_read(read)),
+            Err(StoreError::NotFound) if referenced.contains(&by_id[id]) => {
+                Loaded::Page(virtual_day(store, by_id[id]))
+            }
             Err(StoreError::NotFound) => Loaded::Gone,
             Err(StoreError::Closed) => return Err(store_error(StoreError::Closed)),
             Err(error) => Loaded::Unreadable(store_error(error).to_string()),
@@ -107,6 +160,13 @@ pub fn feed_page(
     // only, so a paged feed names each one once per load.
     if before_day.is_none() {
         page.unreadable.splice(0..0, listing_unreadable);
+        // Upcoming shows references, not journal bodies: proposed identities
+        // suffice and avoid reading every future journal file on feed open.
+        page.upcoming = referenced
+            .into_iter()
+            .filter(|day| day.0 > as_of_day)
+            .map(|day| virtual_day(store, day))
+            .collect();
     }
     Ok(page)
 }
@@ -460,10 +520,15 @@ pub fn journal_filename_migrations(store: &Store) -> io::Result<Vec<JournalFilen
 /// only when `migration_plan` still gives the same `to` for its `from`;
 /// otherwise it is reported as skipped with the reason. A file not in
 /// `confirmed` is never renamed. References are not rewritten (the name stays
-/// the journal's title). Caller takes the pre-migration backup. Cost
-/// O(J log J + confirmed × J + migrated file bytes).
+/// the journal's title). Caller takes the pre-migration backup. With a
+/// host, each still-eligible proposal is its own host operation (DESIGN
+/// §3.1, A-R3) of its source and target: their unsaved input is saved
+/// first, and a proposal whose page cannot be saved is skipped with that
+/// reason, never blocking the others. Cost O(J log J + confirmed × J +
+/// migrated file bytes).
 pub fn migrate_journal_filenames(
     store: &Store,
+    host: Option<&PageHost>,
     confirmed: &[JournalFilenameMigration],
 ) -> io::Result<MigrationResult> {
     let fmt = format(store);
@@ -498,38 +563,103 @@ pub fn migrate_journal_filenames(
             }
         };
         let target = proposal.to.clone();
-        let rev = match store.read(&entry, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-            Ok((_, rev)) => rev,
-            Err(error) => {
-                result
-                    .skipped
-                    .push(skip(format!("source could not be read: {error:?}")));
-                continue;
-            }
-        };
         let Ok(to) = store.file_id(Area::Journals, &target) else {
             continue; // `migration_plan` already refused an invalid name.
         };
-        let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
-        tx.move_file(&entry, rev, &to, None);
-        match tx_error(tx.commit()) {
-            Ok(_) => {
+        let moved = match (host, store.as_page(&entry), store.as_page(&to)) {
+            (Some(running), Some(from), Some(page)) => {
+                migrate_hosted(store, running, (&entry, from), (&to, page), &target)
+            }
+            // No host: the transaction under the retained-writer route, as before P3.
+            _ => {
+                let pages = crate::retained::pages(store, [&entry, &to]);
+                crate::retained::reserved(
+                    host,
+                    Input::Flush,
+                    || Ok(pages.clone()),
+                    crate::retained::unsaved,
+                    |_| Ok(migrate_one(store, &entry, &to)),
+                )
+                .and_then(|moved| moved)
+            }
+        };
+        match moved {
+            Ok(()) => {
                 // The day count is unchanged: the moved file keeps its day.
                 listing.rels.remove(&proposal.from);
                 listing.rels.insert(target);
                 result.migrated += 1;
             }
-            Err(error) => {
-                let reason = if error.kind() == io::ErrorKind::AlreadyExists {
-                    "same-day .md/.org twin would be created".to_owned()
-                } else {
-                    format!("move refused: {error}")
-                };
-                result.skipped.push(skip(reason));
-            }
+            Err(reason) => result.skipped.push(skip(reason.to_string())),
         }
     }
     Ok(result)
+}
+
+/// Move one eligible journal file to `to` as its own transaction; the
+/// error is the reason the proposal is skipped.
+fn migrate_one(store: &Store, entry: &FileId, to: &FileId) -> io::Result<()> {
+    let (_, rev) = migration_source(store, entry)?;
+    tx_error(migration_transaction(store, entry, to, rev).commit())
+        .map(drop)
+        .map_err(migration_error)
+}
+
+fn migration_error(error: io::Error) -> io::Error {
+    if error.kind() == io::ErrorKind::AlreadyExists {
+        io::Error::other("same-day .md/.org twin would be created")
+    } else {
+        io::Error::other(format!("move refused: {error}"))
+    }
+}
+
+fn migration_transaction<'a>(
+    store: &'a Store,
+    entry: &FileId,
+    to: &FileId,
+    rev: tine_store::FileRev,
+) -> tine_store::Transaction<'a> {
+    let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+    tx.move_file(entry, rev, to, None);
+    tx
+}
+
+/// One eligible journal file's move to `to` as one host operation (DESIGN
+/// §3.1): its bytes unchanged, `to` written over no file, then the source
+/// deleted from the bytes the move was planned from. A target that appeared
+/// since the listing refuses, never overwritten; the error is the reason
+/// the proposal is skipped.
+fn migrate_hosted(
+    store: &Store,
+    host: &PageHost,
+    (entry, from): (&FileId, PageId),
+    (to, page): (&FileId, PageId),
+    _target: &str,
+) -> io::Result<()> {
+    let plan = || {
+        let (_, rev) = migration_source(store, entry)?;
+        migration_transaction(store, entry, to, rev)
+            .plan()
+            .map(Some)
+            .map_err(crate::why_error)
+            .map_err(migration_error)
+    };
+    crate::retained::operation(
+        host,
+        Input::Flush,
+        &[from.clone(), page.clone()],
+        "renaming the journal file",
+        "journal changed repeatedly during migration",
+        crate::retained::unsaved,
+        plan,
+    )
+}
+
+/// A migrating journal's bytes and revision, or the reason it is skipped.
+fn migration_source(store: &Store, entry: &FileId) -> io::Result<(Vec<u8>, tine_store::FileRev)> {
+    store
+        .read(entry, Some(tine_store::PARSE_INPUT_MAX_BYTES))
+        .map_err(|error| io::Error::other(format!("source could not be read: {error:?}")))
 }
 
 /// Duplicate-day files with first-line previews, canonical first. A file whose
@@ -612,15 +742,48 @@ pub fn read_journal_file(store: &Store, name: &str) -> io::Result<String> {
 
 /// Trash one top-level journal with a revision guard, retrying an external
 /// conflict four times. Cost O(file bytes) per attempt.
-pub fn trash_journal_file(store: &Store, name: &str) -> io::Result<()> {
+/// With a host, one host operation deletes the page (DESIGN §3.1); the host
+/// keeps the deleted bytes in graph trash. The page's unsaved input is saved
+/// first (`Input::Flush`).
+pub fn trash_journal_file(store: &Store, host: Option<&PageHost>, name: &str) -> io::Result<()> {
     journal_name(name)?;
     let id = store.file_id(Area::Journals, name).map_err(store_error)?;
-    crate::retry_on_conflict("journal changed repeatedly during trash", || {
-        crate::trash_current(
-            store,
-            &id,
-            Some(tine_store::PARSE_INPUT_MAX_BYTES),
-            "no such journal file",
-        )
-    })
+    let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
+    let (Some(running), Some(page)) = (host, store.as_page(&id)) else {
+        // No host: the transaction under the retained-writer route, as before P2.
+        let discover = || Ok(crate::retained::pages(store, [&id]));
+        return crate::retained::reserved(
+            host,
+            Input::Flush,
+            discover,
+            crate::retained::unsaved,
+            |_| {
+                crate::retry_on_conflict("journal changed repeatedly during trash", || {
+                    crate::trash_current(store, &id, max, "no such journal file")
+                })
+            },
+        );
+    };
+    let plan = || {
+        let rev = match store.read(&id, max) {
+            Ok((_, rev)) => rev,
+            Err(StoreError::NotFound) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "no such journal file",
+                ))
+            }
+            Err(error) => return Err(store_error(error)),
+        };
+        crate::retained::plan(crate::trash_transaction(store, &id, rev)).map(Some)
+    };
+    crate::retained::operation(
+        running,
+        Input::Flush,
+        std::slice::from_ref(&page),
+        "moving the journal to trash",
+        "journal changed repeatedly during trash",
+        crate::retained::unsaved,
+        plan,
+    )
 }

@@ -2,6 +2,7 @@ package page.tine.app
 
 import android.os.Bundle
 import android.os.SystemClock
+import android.webkit.WebView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
@@ -14,6 +15,13 @@ class MainActivity : TauriActivity() {
    * which is below any throttle, so the first notice suppressed itself and the
    * stamp was never written — the notice could never appear at all. */
   private var lastBlockedBackNoticeAt: Long? = null
+
+  /** The app WebView, once wry has created it, and the last IME visibility
+   * sent to it. The IME inset is applied as padding below, so the page sees the
+   * keyboard only as a smaller window, the same as a window resize: it needs
+   * this signal to tell the two apart (GH #716). */
+  private var webView: WebView? = null
+  private var imeVisible: Boolean? = null
 
   private val safeBackCallback = object : OnBackPressedCallback(true) {
     override fun handleOnBackPressed() {
@@ -46,6 +54,7 @@ class MainActivity : TauriActivity() {
         WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
       )
       val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+      publishIme(insets.isVisible(WindowInsetsCompat.Type.ime()))
       view.setPadding(safe.left, safe.top, safe.right, maxOf(safe.bottom, ime.bottom))
       insets
     }
@@ -90,6 +99,23 @@ class MainActivity : TauriActivity() {
   internal fun takeBackOwnership() {
     safeBackCallback.remove()
     onBackPressedDispatcher.addCallback(this, safeBackCallback)
+  }
+
+  override fun onWebViewCreate(webView: WebView) {
+    this.webView = webView
+  }
+
+  /** Tell the page whether the soft keyboard is up, on each change only.
+   * MobileKeyboardToolbar listens for this `tine-ime` event; a constant script,
+   * no data from outside. Before the page loads the event is lost and the page
+   * falls back to its focus rule until the next change. UI thread. */
+  private fun publishIme(visible: Boolean) {
+    if (visible == imeVisible) return
+    imeVisible = visible
+    webView?.evaluateJavascript(
+      "window.dispatchEvent(new CustomEvent('tine-ime',{detail:$visible}))",
+      null,
+    )
   }
 
   override fun onSaveInstanceState(outState: Bundle) {

@@ -1,3 +1,5 @@
+import { Rich } from "../i18n/Rich";
+import { msg, t, render, renderEnglish, type Msg } from "../i18n";
 import { For, Show, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { openExternal } from "./primitives";
 import { closeHelpPopup, helpPopupOpen, openSettings, openWelcome, toggleHelpPopup } from "../ui";
@@ -11,38 +13,38 @@ import "../styles/help.css";
 const REPO = "https://github.com/martinkoutecky/tine";
 
 type HelpItem =
-  | { label: string; detail: string; run: () => void }
-  | { label: string; detail: string; href: string };
+  | { label: Msg; detail: Msg; run: () => void }
+  | { label: Msg; detail: Msg; href: string };
 
 export const HELP_ITEMS: HelpItem[] = [
   {
-    label: "Guide",
-    detail: "Open the in-app how-to guide",
+    label: msg("help-guide"),
+    detail: msg("help-open-the-in-app-how-to-guide"),
     run: () => void openGuide(),
   },
   {
-    label: "Keyboard shortcuts",
-    detail: "Open Settings on the shortcuts tab",
+    label: msg("help-keyboard-shortcuts"),
+    detail: msg("help-open-settings-on-the-shortcuts-tab"),
     run: () => openSettings("shortcuts"),
   },
   {
-    label: "Features documentation",
-    detail: "Open docs/FEATURES.md on GitHub",
+    label: msg("help-features-documentation"),
+    detail: msg("help-open-docs-features-md-on-github"),
     href: `${REPO}/blob/main/docs/FEATURES.md`,
   },
   {
-    label: "Report a bug / Request a feature",
-    detail: "Open the GitHub issue templates",
+    label: msg("help-report-a-bug-request-a-feature"),
+    detail: msg("help-open-the-github-issue-templates"),
     href: `${REPO}/issues/new/choose`,
   },
   {
-    label: "Release notes",
-    detail: "Open the GitHub releases page",
+    label: msg("help-release-notes"),
+    detail: msg("help-open-the-github-releases-page"),
     href: `${REPO}/releases`,
   },
   {
-    label: "Welcome screen",
-    detail: "Show first-run onboarding again",
+    label: msg("help-welcome-screen"),
+    detail: msg("help-show-first-run-onboarding-again"),
     run: openWelcome,
   },
 ];
@@ -68,15 +70,15 @@ export function HelpPopup(): JSX.Element {
   return (
     <div class="help-corner" ref={root}>
       <Show when={helpPopupOpen()}>
-        <div class="help-menu" role="menu" aria-label="Help">
+        <div class="help-menu" role="menu" aria-label={t("help-help")}>
           <For each={HELP_ITEMS}>
             {(item) => (
               <button class="help-menu-item" role="menuitem" onClick={() => run(item)}>
                 <span class="help-menu-label">
-                  <EmojiText text={item.label} />
+                  <EmojiText text={render(item.label)} />
                 </span>
                 <span class="help-menu-detail">
-                  <EmojiText text={item.detail} />
+                  <EmojiText text={render(item.detail)} />
                 </span>
               </button>
             )}
@@ -85,8 +87,8 @@ export function HelpPopup(): JSX.Element {
       </Show>
       <button
         class="help-corner-btn"
-        title="Help (?)"
-        aria-label="Help"
+        title={t("help-help-with-shortcut")}
+        aria-label={t("help-help")}
         aria-haspopup="menu"
         aria-expanded={helpPopupOpen()}
         onClick={toggleHelpPopup}
@@ -99,7 +101,9 @@ export function HelpPopup(): JSX.Element {
 
 export interface ShortcutSettingRow {
   id: string;
+  /** In the active UI language; `english` also matches a search (tine#107). */
   label: string;
+  english?: string;
   binding: string;
   /** A second built-in chord that runs the same command. Shown beside the
    *  binding so it is discoverable, but not remappable and not its own row: it
@@ -118,21 +122,21 @@ export interface ShortcutPaneSection {
   builtins: BuiltinKeyDef[];
 }
 
-const SHORTCUT_GROUPS: { scope: ShortcutScope; title: string; description: string }[] = [
+const SHORTCUT_GROUPS: { scope: ShortcutScope; title: Msg; description: Msg }[] = [
   {
     scope: "global",
-    title: "Global",
-    description: "Available across the app. Modifier chords can also fire while a block is being edited.",
+    title: msg("help-global"),
+    description: msg("help-available-across-the-app-modifier-chords-can"),
   },
   {
     scope: "select",
-    title: "Select mode",
-    description: "Available when no text editor is focused, including block selection and navigation sequences.",
+    title: msg("help-select-mode"),
+    description: msg("help-available-when-no-text-editor-is-focused"),
   },
   {
     scope: "editor",
-    title: "Editor",
-    description: "Available while editing a block.",
+    title: msg("help-editor"),
+    description: msg("help-available-while-editing-a-block"),
   },
 ];
 
@@ -146,8 +150,10 @@ export function buildShortcutPaneData(shortcuts: ShortcutSettingRow[], search = 
   };
   return SHORTCUT_GROUPS.map((group) => ({
     ...group,
-    commands: shortcuts.filter((s) => s.scope === group.scope && matches(s.label, s.id, s.effective, s.binding)),
-    builtins: BUILTIN_KEYS.filter((s) => s.scope === group.scope && matches(s.label, s.id, s.binding, s.details)),
+    title: render(group.title),
+    description: render(group.description),
+    commands: shortcuts.filter((s) => s.scope === group.scope && matches(s.label, s.english, s.id, s.effective, s.binding)),
+    builtins: BUILTIN_KEYS.filter((s) => s.scope === group.scope && matches(render(s.label), renderEnglish(s.label), s.id, s.binding, s.details && render(s.details), s.details && renderEnglish(s.details))),
   }));
 }
 
@@ -157,8 +163,8 @@ export function shortcutPaneCommandIds(sections: ShortcutPaneSection[]): string[
 
 function displayBinding(binding: string): string {
   const b = binding.trim();
-  if (!b) return "Unbound";
-  if (b === "false") return "Unbound";
+  if (!b) return t("help-unbound");
+  if (b === "false") return t("help-unbound");
   return b;
 }
 
@@ -170,56 +176,52 @@ function TriggerTable(props: { shortcuts: ShortcutSettingRow[] }): JSX.Element {
   const rows = createMemo(() => [
     {
       trigger: "/",
-      label: "Slash commands",
-      detail: "Commands, templates, dates, uploads, queries, and callouts inside the block editor.",
+      label: msg("help-slash-commands"),
+      detail: msg("help-commands-templates-dates-uploads-queries-and-callouts"),
     },
     {
       trigger: bindingFor(props.shortcuts, "go/search", "mod+k"),
-      label: "Search / quick switch",
-      detail: "Jump to pages and blocks from the switcher.",
+      label: msg("help-search-quick-switch"),
+      detail: msg("help-jump-to-pages-and-blocks-from-the"),
     },
     {
       trigger: "[[ ]]",
-      label: "Page reference autocomplete",
-      detail: "Search or create pages while typing a page reference.",
+      label: msg("help-page-reference-autocomplete"),
+      detail: msg("help-search-or-create-pages-while-typing-a"),
     },
     {
       trigger: "(( ))",
-      label: "Block reference autocomplete",
-      detail: "Search blocks and insert a durable block reference.",
+      label: msg("help-block-reference-autocomplete"),
+      detail: msg("help-search-blocks-and-insert-a-durable-block"),
     },
     {
       trigger: "shift+click",
-      label: "Open reference in sidebar",
-      detail: "Works on pages, block references, bullets, and reference-count badges.",
+      label: msg("help-open-reference-in-sidebar"),
+      detail: msg("help-works-on-pages-block-references-bullets-and"),
     },
     {
       trigger: "right-click",
-      label: "Context menu",
-      detail: "Open block, page, reference, color, copy, template, and delete actions.",
+      label: msg("help-context-menu"),
+      detail: msg("help-open-block-page-reference-color-copy-template"),
     },
   ]);
 
   return (
     <section class="help-settings-section">
-      <div class="help-section-head">
-        <h3>Triggers</h3>
+      <div class="help-section-head"><h3>{t("help-triggers")}</h3>
       </div>
       <table class="help-table">
         <thead>
-          <tr>
-            <th>Action</th>
-            <th>Trigger</th>
-            <th>Notes</th>
+          <tr><th>{t("help-action")}</th><th>{t("help-trigger")}</th><th>{t("help-notes")}</th>
           </tr>
         </thead>
         <tbody>
           <For each={rows()}>
             {(row) => (
               <tr>
-                <td>{row.label}</td>
+                <td>{render(row.label)}</td>
                 <td><code>{row.trigger}</code></td>
-                <td>{row.detail}</td>
+                <td>{render(row.detail)}</td>
               </tr>
             )}
           </For>
@@ -231,33 +233,33 @@ function TriggerTable(props: { shortcuts: ShortcutSettingRow[] }): JSX.Element {
 
 type SyntaxFormat = "md" | "org";
 type SyntaxRow = {
-  label: string;
+  label: Msg;
   md: string;
   org: string;
   result: () => JSX.Element;
 };
 
 const SYNTAX_ROWS: SyntaxRow[] = [
-  { label: "Bold", md: "**Bold**", org: "*Bold*", result: () => <strong>Bold</strong> },
-  { label: "Italic", md: "*Italic*", org: "/Italic/", result: () => <em>Italic</em> },
-  { label: "Strikethrough", md: "~~Strike~~", org: "+Strike+", result: () => <del>Strike</del> },
-  { label: "Highlight", md: "==Highlight==", org: "^^Highlight^^", result: () => <mark>Highlight</mark> },
-  { label: "LaTeX", md: "$$E = mc^2$$", org: "$$E = mc^2$$", result: () => <span>E = mc^2</span> },
-  { label: "Inline code", md: "`code`", org: "~code~", result: () => <code>code</code> },
+  { label: msg("help-bold"), md: "**Bold**", org: "*Bold*", result: () => <strong>Bold</strong> },
+  { label: msg("help-italic"), md: "*Italic*", org: "/Italic/", result: () => <em>Italic</em> },
+  { label: msg("help-strikethrough"), md: "~~Strike~~", org: "+Strike+", result: () => <del>Strike</del> },
+  { label: msg("help-highlight"), md: "==Highlight==", org: "^^Highlight^^", result: () => <mark>Highlight</mark> },
+  { label: msg("help-latex"), md: "$$E = mc^2$$", org: "$$E = mc^2$$", result: () => <span>E = mc^2</span> },
+  { label: msg("help-inline-code"), md: "`code`", org: "~code~", result: () => <code>code</code> },
   {
-    label: "Code block",
+    label: msg("help-code-block"),
     md: "```clojure\n(println \"Hello\")\n```",
     org: "#+BEGIN_SRC clojure\n(println \"Hello\")\n#+END_SRC",
     result: () => <pre><code>(println "Hello")</code></pre>,
   },
   {
-    label: "Link",
+    label: msg("help-link"),
     md: "[Link](https://example.com)",
     org: "[[https://example.com][Link]]",
     result: () => <a>Link</a>,
   },
   {
-    label: "Image",
+    label: msg("help-image"),
     md: "![image](../assets/example.png)",
     org: "[[../assets/example.png][image]]",
     result: () => <span class="help-image-chip">image</span>,
@@ -273,25 +275,19 @@ function SyntaxTable(): JSX.Element {
 
   return (
     <section class="help-settings-section">
-      <div class="help-section-head">
-        <h3>{format() === "org" ? "Org syntax" : "Markdown syntax"}</h3>
-        <button class="help-link-button" onClick={() => openExternal(learnMore())}>
-          Learn more
-        </button>
+      <div class="help-section-head"><h3>{format() === "org" ? t("help-org-syntax") : t("help-markdown-syntax")}</h3>
+        <button class="help-link-button" onClick={() => openExternal(learnMore())}>{t("help-learn-more")}</button>
       </div>
       <table class="help-table help-syntax-table">
         <thead>
-          <tr>
-            <th>Style</th>
-            <th>Syntax</th>
-            <th>Result</th>
+          <tr><th>{t("help-style")}</th><th>{t("help-syntax")}</th><th>{t("help-result")}</th>
           </tr>
         </thead>
         <tbody>
           <For each={SYNTAX_ROWS}>
             {(row) => (
               <tr>
-                <td>{row.label}</td>
+                <td>{render(row.label)}</td>
                 <td><code>{format() === "org" ? row.org : row.md}</code></td>
                 <td class="help-rendered">{row.result()}</td>
               </tr>
@@ -319,28 +315,22 @@ function ShortcutRow(props: {
           class="help-keycap help-keycap-button"
           classList={{ recording: recording(), overridden: props.row.overridden, disabled: props.row.effective === "false" }}
           onClick={() => props.onRecord(props.row.id)}
-          title="Click to remap"
-        >
-          {recording() ? "Press keys..." : displayBinding(props.row.effective)}
+          title={t("help-click-to-remap")}
+        >{recording() ? t("help-press-keys") : displayBinding(props.row.effective)}
         </button>
         <Show when={props.row.alias && !props.row.overridden}>
-          <span class="help-shortcut-alias">
-            or <span class="help-keycap help-keycap-static">{displayBinding(props.row.alias!)}</span>
-          </span>
+          <span class="help-shortcut-alias"><Rich message={msg("help-or", { alias: displayBinding(props.row.alias!) })} slots={{ "span": (children) => <span class="help-keycap help-keycap-static">{children}</span> }} /></span>
         </Show>
       </span>
       <span class="help-shortcut-tail">
-        <Show when={props.row.effective.trim() && props.row.effective !== "false"}>
-          <button class="help-reset" title="Remove this keybinding" onClick={() => props.onUnbind(props.row.id)}>Unbind</button>
+        <Show when={props.row.effective.trim() && props.row.effective !== "false"}><button class="help-reset" title={t("help-remove-this-keybinding")} onClick={() => props.onUnbind(props.row.id)}>{t("help-unbind")}</button>
         </Show>
         <Show when={props.row.overridden}>
           <button
             class="help-reset"
-            title="Reset to default"
+            title={t("help-reset-to-default")}
             onClick={() => props.onReset(props.row.id)}
-          >
-            Reset
-          </button>
+          >{t("help-reset")}</button>
         </Show>
         <span class="mono help-shortcut-id">{props.row.id}</span>
       </span>
@@ -352,14 +342,13 @@ function BuiltinRow(props: { row: BuiltinKeyDef }): JSX.Element {
   return (
     <div class="help-shortcut-row help-builtin-row">
       <span class="help-shortcut-label">
-        {props.row.label}
+        {render(props.row.label)}
         <Show when={props.row.details}>
-          <span class="help-shortcut-detail">{props.row.details}</span>
+          <span class="help-shortcut-detail">{render(props.row.details!)}</span>
         </Show>
       </span>
       <span class="help-keycap help-keycap-static">{props.row.binding}</span>
-      <span class="help-shortcut-tail">
-        <span class="help-builtin-pill">Built-in</span>
+      <span class="help-shortcut-tail"><span class="help-builtin-pill">{t("help-built-in")}</span>
         <span class="mono help-shortcut-id">{props.row.id}</span>
       </span>
     </div>
@@ -378,17 +367,13 @@ export function ShortcutsSettingsPane(props: {
 
   return (
     <div class="help-shortcuts-pane">
-      <div class="settings-hint settings-block">
-        Click a binding to record new keys (<code>mod</code> = Ctrl, or Cmd on macOS). Esc cancels.
-        Overrides are saved locally on top of <code>config.edn</code>.
-      </div>
+      <div class="settings-hint settings-block"><Rich message={msg("help-click-a-binding-to-record-new-keys")} slots={{ "code": (children) => <code>{children}</code> }} /></div>
 
       <Show when={!props.search.trim()}>
         <TriggerTable shortcuts={props.shortcuts} />
         <SyntaxTable />
       </Show>
-      <Show when={props.search.trim() && sections().every((section) => !section.commands.length && !section.builtins.length)}>
-        <div class="settings-search-empty">No matching shortcuts</div>
+      <Show when={props.search.trim() && sections().every((section) => !section.commands.length && !section.builtins.length)}><div class="settings-search-empty">{t("help-no-matching-shortcuts")}</div>
       </Show>
 
       <For each={sections()}>
@@ -402,8 +387,7 @@ export function ShortcutsSettingsPane(props: {
               </div>
             </div>
 
-            <Show when={section.commands.length}>
-              <div class="help-shortcut-subhead">Remappable commands</div>
+            <Show when={section.commands.length}><div class="help-shortcut-subhead">{t("help-remappable-commands")}</div>
               <div class="help-shortcut-list">
                 <For each={section.commands}>
                   {(row) => (
@@ -419,8 +403,7 @@ export function ShortcutsSettingsPane(props: {
               </div>
             </Show>
 
-            <Show when={section.builtins.length}>
-              <div class="help-shortcut-subhead">Built-in keys</div>
+            <Show when={section.builtins.length}><div class="help-shortcut-subhead">{t("help-built-in-keys")}</div>
               <div class="help-shortcut-list">
                 <For each={section.builtins}>
                   {(row) => <BuiltinRow row={row} />}

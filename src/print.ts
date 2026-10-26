@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Print / export-to-PDF: render a whole page to a self-contained HTML document in
 // the Rust core (assets inlined, no sidebar — see publish::page_print_html), drop
 // it into a hidden same-origin <iframe>, and print that frame. The user's native
@@ -14,6 +15,7 @@ import { clearOnBindingInvalidated } from "./binding";
 import { pushToast } from "./toasts";
 import { flushAll } from "./document";
 import type { PrintOpts } from "./types";
+import { mainWindow } from "./windowRealm";
 
 /** The default export options (match the Rust `PrintOpts::default`). */
 export const DEFAULT_PRINT_OPTS: PrintOpts = {
@@ -46,7 +48,8 @@ function loadPrintRenderers() {
 
 function bundledStylesheets(): HTMLLinkElement[] {
   const current = new URL(document.baseURI);
-  return [...document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"][href]')]
+  // The bundle's stylesheets live in the main window's <head> (popups mirror it).
+  return [...mainWindow.document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"][href]')]
     .filter((link) => {
       try {
         const url = new URL(link.href, document.baseURI);
@@ -61,7 +64,7 @@ function bundledStylesheets(): HTMLLinkElement[] {
 }
 
 class PrintQueryLimitError extends Error {
-  constructor(detail: string) {
+  constructor(readonly detail: string) {
     super(`PDF export stopped at the Print query limit. ${detail}`);
     this.name = "PrintQueryLimitError";
   }
@@ -137,7 +140,7 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
   activePrint = controller;
   const owner = graphOwner(() => activePrint === controller && !controller.signal.aborted);
   const abort = () => controller.abort();
-  window.addEventListener("pagehide", abort);
+  mainWindow.addEventListener("pagehide", abort);
   window.addEventListener("beforeunload", abort);
   let iframe: HTMLIFrameElement | undefined;
   let watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -150,7 +153,7 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
     clearTimeout(watchdog);
     iframe?.remove();
     controller.signal.removeEventListener("abort", cleanup);
-    window.removeEventListener("pagehide", abort);
+    mainWindow.removeEventListener("pagehide", abort);
     window.removeEventListener("beforeunload", abort);
     if (activePrint === controller) activePrint = null;
     cancel();
@@ -163,7 +166,7 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
     const saved = savedResult?.kind === "current" && savedResult.value;
     if (!owner()) { cleanup(); return; }
     if (!saved) {
-      pushToast("PDF export stopped because some page edits could not be saved. Resolve the save conflict and try again.", "error");
+      pushToast(msg("print-pdf-export-stopped-because-some-page-edits-could"), "error");
       cleanup();
       return;
     }
@@ -182,7 +185,8 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
     cleanup();
     if (!current) return;
     // `no-page` (deleted mid-action) or any core error — never leave a dangling frame.
-    pushToast(e instanceof PrintQueryLimitError ? e.message : `Couldn't prepare “${name}” for PDF`, "error");
+    if (e instanceof PrintQueryLimitError) pushToast(msg("print-query-limit", { detail: e.detail }), "error");
+    else pushToast(msg("print-couldn-t-prepare-for-pdf", { name }), "error");
     console.error("pagePrintHtml failed");
     return;
   }
@@ -220,7 +224,7 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
         win.focus();
         win.print();
       } catch (e) {
-        if (owner()) pushToast("Print failed", "error");
+        if (owner()) pushToast(msg("print-print-failed"), "error");
         console.error("iframe print failed");
         cleanup();
       }
@@ -229,11 +233,12 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
     iframe.onerror = cleanup;
     // A failed load, stalled font, or missing afterprint must release the guard.
     watchdog = setTimeout(cleanup, 60_000);
-    document.body.appendChild(iframe);
+    // The print frame is the main window's; the OS print dialog belongs to it.
+    mainWindow.document.body.appendChild(iframe);
   } catch {
     const current = owner();
     cleanup();
-    if (current) pushToast("Print failed", "error");
+    if (current) pushToast(msg("print-print-failed"), "error");
     console.error("iframe setup failed");
   }
 }

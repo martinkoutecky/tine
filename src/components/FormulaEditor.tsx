@@ -1,9 +1,40 @@
+import { msg, render, t } from "../i18n";
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { closeFormulaEditor, formulaEditor, type FormulaEditorHome, type FormulaEditorTarget } from "../ui";
 import { blockPageReadOnly, pageByName, setBlockProperty, setPageProperty, node as docNode } from "../document";
 import { astToExpr, encodeFormulaExpr, formulaNameValid, parseFormula, type Ast, type BinaryOp } from "../sheet/formula";
 import { registerTransientLayer } from "../transientLayers";
 import { refuseStaleWrite } from "../binding";
+import { useOwnerWindow } from "../windowRealm";
+
+// Deferred catalog messages; property getters resolve in the consuming computation.
+const UI_MESSAGES = {
+  "formula-and": msg("formula-and"),
+  "formula-or": msg("formula-or"),
+  "formula-mod": msg("formula-mod"),
+  "formula-contains-text": msg("formula-contains-text"),
+  "formula-needle": msg("formula-needle"),
+  "formula-lowercase": msg("formula-lowercase"),
+  "formula-trim-spaces": msg("formula-trim-spaces"),
+  "formula-replace-text": msg("formula-replace-text"),
+  "formula-search": msg("formula-search"),
+  "formula-replacement": msg("formula-replacement"),
+  "formula-join-list": msg("formula-join-list"),
+  "formula-separator": msg("formula-separator"),
+  "formula-round": msg("formula-round"),
+  "formula-floor": msg("formula-floor"),
+  "formula-ceil": msg("formula-ceil"),
+  "formula-absolute": msg("formula-absolute"),
+  "formula-fixed-decimals": msg("formula-fixed-decimals"),
+  "formula-places": msg("formula-places"),
+  "formula-year": msg("formula-year"),
+  "formula-month": msg("formula-month"),
+  "formula-day": msg("formula-day"),
+  "formula-relative-date": msg("formula-relative-date"),
+  "formula-format-date": msg("formula-format-date"),
+  "formula-format": msg("formula-format"),
+  "formula-length": msg("formula-length"),
+};
 
 const STDLIB_CHIPS = [
   "if()",
@@ -42,13 +73,13 @@ const OPERATOR_OPTIONS: { op: BinaryOp; label: string }[] = [
   { op: "<=", label: "≤" },
   { op: ">", label: ">" },
   { op: ">=", label: "≥" },
-  { op: "&&", label: "and" },
-  { op: "||", label: "or" },
+  { op: "&&", get label() { return render(UI_MESSAGES["formula-and"]); } },
+  { op: "||", get label() { return render(UI_MESSAGES["formula-or"]); } },
   { op: "+", label: "+" },
   { op: "-", label: "−" },
   { op: "*", label: "×" },
   { op: "/", label: "÷" },
-  { op: "%", label: "mod" },
+  { op: "%", get label() { return render(UI_MESSAGES["formula-mod"]); } },
 ];
 
 type TransformArg = { kind: "text" | "number"; placeholder: string; value: string };
@@ -61,30 +92,30 @@ type TransformSpec = {
 };
 
 const TRANSFORMS: TransformSpec[] = [
-  { name: "contains", label: "contains text", group: "text", args: [{ kind: "text", placeholder: "needle", value: "" }] },
-  { name: "lower", label: "lowercase", group: "text", args: [] },
-  { name: "trim", label: "trim spaces", group: "text", args: [] },
+  { name: "contains", get label() { return render(UI_MESSAGES["formula-contains-text"]); }, group: "text", args: [{ kind: "text", get placeholder() { return render(UI_MESSAGES["formula-needle"]); }, value: "" }] },
+  { name: "lower", get label() { return render(UI_MESSAGES["formula-lowercase"]); }, group: "text", args: [] },
+  { name: "trim", get label() { return render(UI_MESSAGES["formula-trim-spaces"]); }, group: "text", args: [] },
   {
     name: "replace",
-    label: "replace text",
+    get label() { return render(UI_MESSAGES["formula-replace-text"]); },
     group: "text",
     args: [
-      { kind: "text", placeholder: "search", value: "" },
-      { kind: "text", placeholder: "replacement", value: "" },
+      { kind: "text", get placeholder() { return render(UI_MESSAGES["formula-search"]); }, value: "" },
+      { kind: "text", get placeholder() { return render(UI_MESSAGES["formula-replacement"]); }, value: "" },
     ],
   },
-  { name: "join", label: "join list", group: "text", args: [{ kind: "text", placeholder: "separator", value: "," }] },
-  { name: "round", label: "round", group: "number", args: [] },
-  { name: "floor", label: "floor", group: "number", args: [] },
-  { name: "ceil", label: "ceil", group: "number", args: [] },
-  { name: "abs", label: "absolute", group: "number", args: [] },
-  { name: "toFixed", label: "fixed decimals", group: "number", args: [{ kind: "number", placeholder: "places", value: "0" }] },
-  { name: "year", label: "year", group: "date", property: true, args: [] },
-  { name: "month", label: "month", group: "date", property: true, args: [] },
-  { name: "day", label: "day", group: "date", property: true, args: [] },
-  { name: "relative", label: "relative date", group: "date", args: [] },
-  { name: "format", label: "format date", group: "date", args: [{ kind: "text", placeholder: "format", value: "YYYY-MM-DD" }] },
-  { name: "length", label: "length", group: "any", property: true, args: [] },
+  { name: "join", get label() { return render(UI_MESSAGES["formula-join-list"]); }, group: "text", args: [{ kind: "text", get placeholder() { return render(UI_MESSAGES["formula-separator"]); }, value: "," }] },
+  { name: "round", get label() { return render(UI_MESSAGES["formula-round"]); }, group: "number", args: [] },
+  { name: "floor", get label() { return render(UI_MESSAGES["formula-floor"]); }, group: "number", args: [] },
+  { name: "ceil", get label() { return render(UI_MESSAGES["formula-ceil"]); }, group: "number", args: [] },
+  { name: "abs", get label() { return render(UI_MESSAGES["formula-absolute"]); }, group: "number", args: [] },
+  { name: "toFixed", get label() { return render(UI_MESSAGES["formula-fixed-decimals"]); }, group: "number", args: [{ kind: "number", get placeholder() { return render(UI_MESSAGES["formula-places"]); }, value: "0" }] },
+  { name: "year", get label() { return render(UI_MESSAGES["formula-year"]); }, group: "date", property: true, args: [] },
+  { name: "month", get label() { return render(UI_MESSAGES["formula-month"]); }, group: "date", property: true, args: [] },
+  { name: "day", get label() { return render(UI_MESSAGES["formula-day"]); }, group: "date", property: true, args: [] },
+  { name: "relative", get label() { return render(UI_MESSAGES["formula-relative-date"]); }, group: "date", args: [] },
+  { name: "format", get label() { return render(UI_MESSAGES["formula-format-date"]); }, group: "date", args: [{ kind: "text", get placeholder() { return render(UI_MESSAGES["formula-format"]); }, value: "YYYY-MM-DD" }] },
+  { name: "length", get label() { return render(UI_MESSAGES["formula-length"]); }, group: "any", property: true, args: [] },
 ];
 
 const TRANSFORM_BY_NAME = new Map(TRANSFORMS.map((spec) => [spec.name, spec]));
@@ -129,7 +160,7 @@ function formulaBuilderCanRenderRoot(ast: Ast): boolean {
 
 function literalLabel(value: string | number | boolean | null): string {
   if (typeof value === "string") return `"${value}"`;
-  return value === null ? "empty" : String(value);
+  return value === null ? t("formula-prose-empty") : String(value);
 }
 
 function opLabel(op: BinaryOp): string {
@@ -197,15 +228,16 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
     return parsed.ok ? parsed.ast : null;
   })();
   const [rawMode, setRawMode] = createSignal(initialParsed == null);
-  const [winW, setWinW] = createSignal(typeof window !== "undefined" ? window.innerWidth : 1280);
-  const [winH, setWinH] = createSignal(typeof window !== "undefined" ? window.innerHeight : 800);
+  const ownerWindow = typeof window !== "undefined" ? useOwnerWindow() : undefined;
+  const [winW, setWinW] = createSignal(ownerWindow ? ownerWindow.innerWidth : 1280);
+  const [winH, setWinH] = createSignal(ownerWindow ? ownerWindow.innerHeight : 800);
   let firstInput: HTMLInputElement | HTMLTextAreaElement | undefined;
   let textarea: HTMLTextAreaElement | undefined;
 
   const existingNames = createMemo(() => new Set(props.target.formulas.map(([n]) => n)));
   const formulaChips = createMemo(() => props.target.formulas.map(([n]) => `formula.${n}`));
   const modeLabel = () =>
-    props.target.mode === "filter" ? "Edit filter" : props.target.mode === "edit" ? "Edit formula" : "Add formula";
+    props.target.mode === "filter" ? t("formula-prose-edit-filter") : props.target.mode === "edit" ? t("formula-prose-edit-formula") : t("formula-prose-add-formula");
 
   const parseResult = createMemo((): EditorParseResult => {
     const value = expr().trim();
@@ -296,13 +328,14 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
 
   onMount(() => {
     queueMicrotask(() => firstInput?.focus());
+    if (!ownerWindow) return;
     const onResize = () => {
-      setWinW(window.innerWidth);
-      setWinH(window.innerHeight);
+      setWinW(ownerWindow.innerWidth);
+      setWinH(ownerWindow.innerHeight);
     };
-    window.addEventListener("resize", onResize);
+    ownerWindow.addEventListener("resize", onResize);
     onCleanup(() => {
-      window.removeEventListener("resize", onResize);
+      ownerWindow.removeEventListener("resize", onResize);
     });
   });
 
@@ -328,8 +361,7 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
         <div class="formula-editor-head">{modeLabel()}</div>
         <Show when={props.target.mode === "add"}>
           <label class="formula-editor-label">
-            Name
-            <input
+            {t("formula-name")}<input
               class="formula-editor-input"
               classList={{ invalid: !!nameError() }}
               ref={(el) => {
@@ -345,15 +377,15 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
         </Show>
         <div class="formula-editor-label">
           <div class="formula-editor-label-row">
-            <span>Expression</span>
+            <span>{t("formula-expression")}</span>
             <button
               type="button"
               class="qb-sort formula-editor-raw-toggle"
               classList={{ active: rawMode() }}
-              title={rawMode() ? "Switch to visual formula builder" : "Edit raw formula text"}
+              title={rawMode() ? t("formula-switch-to-visual-formula-builder") : t("formula-edit-raw-formula-text")}
               onClick={toggleRawMode}
             >
-              {rawMode() ? "Builder" : "</> raw"}
+              {rawMode() ? t("formula-builder") : t("formula-raw")}
             </button>
           </div>
           <Show
@@ -419,11 +451,9 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
         </Show>
         <div class="formula-editor-actions">
           <button type="button" class="formula-editor-btn" onClick={closeFormulaEditor}>
-            Cancel
-          </button>
+            {t("formula-cancel")}</button>
           <button type="submit" class="formula-editor-btn primary" disabled={!canSave()}>
-            Save
-          </button>
+            {t("formula-save")}</button>
         </div>
       </form>
     </div>
@@ -511,21 +541,21 @@ function ConditionalFace(props: {
   };
   return (
     <div class="formula-builder-if">
-      <span class="formula-builder-keyword">IF</span>
+      <span class="formula-builder-keyword">{t("formula-if")}</span>
       <ConditionFace
         ast={props.ast.args[0]}
         fields={props.fields}
         formulas={props.formulas}
         onChange={(next) => setArg(0, next)}
       />
-      <span class="formula-builder-keyword">THEN</span>
+      <span class="formula-builder-keyword">{t("formula-then")}</span>
       <ValueFace
         ast={props.ast.args[1]}
         fields={props.fields}
         formulas={props.formulas}
         onChange={(next) => setArg(1, next)}
       />
-      <span class="formula-builder-keyword">ELSE</span>
+      <span class="formula-builder-keyword">{t("formula-else")}</span>
       <ValueFace
         ast={props.ast.args[2]}
         fields={props.fields}
@@ -563,8 +593,8 @@ function ConditionFace(props: {
           formulas={props.formulas}
           onChange={(left) => props.onChange({ ...ast, left })}
         />
-        <button type="button" class="qb-op formula-builder-boolean-op" title="Toggle AND / OR" onClick={flip}>
-          {ast.op === "&&" ? "AND" : "OR"}
+        <button type="button" class="qb-op formula-builder-boolean-op" title={t("formula-toggle-and-or")} onClick={flip}>
+          {ast.op === "&&" ? t("formula-condition-and") : t("formula-condition-or")}
         </button>
         <ConditionFace
           ast={ast.right}
@@ -599,7 +629,7 @@ function OperatorSelect(props: { op: BinaryOp; onChange: (op: BinaryOp) => void 
     <select
       class="formula-builder-operator"
       value={props.op}
-      title="Formula operator"
+      title={t("formula-operator-label")}
       onChange={(e) => props.onChange(e.currentTarget.value as BinaryOp)}
     >
       <For each={OPERATOR_OPTIONS}>
@@ -650,7 +680,7 @@ function ValueFace(props: {
         }}
         type="button"
         class="qb-chip formula-builder-value-face"
-        title="Edit formula value"
+        title={t("formula-edit-formula-value")}
         onClick={(e) => {
           e.stopPropagation();
           setOpen(!open());
@@ -682,7 +712,7 @@ function ValuePicker(props: {
 }): JSX.Element {
   return (
     <div ref={props.rootRef} class="qb-picker formula-builder-picker" onClick={(e) => e.stopPropagation()}>
-      <div class="qb-picker-title">Field</div>
+      <div class="qb-picker-title">{t("formula-field")}</div>
       <For each={props.fields}>
         {(field) => (
           <button
@@ -695,12 +725,12 @@ function ValuePicker(props: {
         )}
       </For>
       <CommitTextInput
-        placeholder="custom field"
+        placeholder={t("formula-custom-field")}
         onCommit={(value) => props.onCommit({ kind: "field", name: value })}
       />
       <Show when={props.formulas.length > 0}>
         <div class="qb-divider" />
-        <div class="qb-picker-title">Formula</div>
+        <div class="qb-picker-title">{t("formula-formula")}</div>
         <For each={props.formulas}>
           {([formula]) => (
             <button
@@ -714,60 +744,53 @@ function ValuePicker(props: {
         </For>
       </Show>
       <div class="qb-divider" />
-      <div class="qb-picker-title">Literal</div>
+      <div class="qb-picker-title">{t("formula-literal")}</div>
       <CommitNumberInput onCommit={(value) => props.onCommit({ kind: "literal", value })} />
       <CommitTextInput
-        placeholder="text literal"
+        placeholder={t("formula-text-literal")}
         onCommit={(value) => props.onCommit({ kind: "literal", value })}
       />
       <div class="formula-builder-literal-row">
         <button type="button" class="qb-conn" onClick={() => props.onCommit({ kind: "literal", value: true })}>
-          True
-        </button>
+          {t("formula-true")}</button>
         <button type="button" class="qb-conn" onClick={() => props.onCommit({ kind: "literal", value: false })}>
-          False
-        </button>
+          {t("formula-false")}</button>
         <button type="button" class="qb-conn" onClick={() => props.onCommit({ kind: "literal", value: null })}>
-          Empty
-        </button>
+          {t("formula-empty")}</button>
       </div>
       <div class="qb-divider" />
-      <div class="qb-picker-title">Function</div>
+      <div class="qb-picker-title">{t("formula-function")}</div>
       <button
         type="button"
         class="qb-menu-item formula-builder-function"
         onClick={() => props.onCommit({ kind: "call", name: "if", args: [{ kind: "literal", value: true }, props.ast, { kind: "literal", value: null }] })}
       >
-        if condition
-      </button>
+        {t("formula-if-condition")}</button>
       <button
         type="button"
         class="qb-menu-item formula-builder-function"
         onClick={() => props.onCommit({ kind: "call", name: "isEmpty", args: [props.ast] })}
       >
-        is empty
-      </button>
+        {t("formula-is-empty")}</button>
       <button
         type="button"
         class="qb-menu-item formula-builder-function"
         onClick={() => props.onCommit({ kind: "call", name: "now", args: [] })}
       >
-        now
-      </button>
+        {t("formula-now")}</button>
       <button
         type="button"
         class="qb-menu-item formula-builder-function"
         onClick={() => props.onCommit({ kind: "call", name: "today", args: [] })}
       >
-        today
-      </button>
+        {t("formula-today")}</button>
       <div class="qb-divider" />
-      <div class="qb-picker-title">Transform</div>
+      <div class="qb-picker-title">{t("formula-transform")}</div>
       <For each={TRANSFORMS}>
         {(spec) => <TransformPick object={props.ast} spec={spec} onCommit={props.onCommit} />}
       </For>
       <div class="qb-divider" />
-      <div class="qb-picker-title">Raw expression</div>
+      <div class="qb-picker-title">{t("formula-raw-expression")}</div>
       <RawCommitInput source={astToExpr(props.ast)} onCommit={props.onCommit} />
     </div>
   );
@@ -805,7 +828,7 @@ function CommitNumberInput(props: { onCommit: (value: number) => void }): JSX.El
   return (
     <input
       class="qb-input"
-      placeholder="number literal"
+      placeholder={t("formula-number-literal")}
       value={value()}
       onInput={(e) => setValue(e.currentTarget.value)}
       onKeyDown={(e) => {
@@ -871,8 +894,7 @@ function TransformPick(props: {
           )}
         </For>
         <button type="button" class="qb-commit" disabled={!ready()} onClick={commit}>
-          Apply
-        </button>
+          {t("formula-apply")}</button>
       </div>
     </Show>
   );

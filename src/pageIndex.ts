@@ -1,4 +1,4 @@
-import { reportUiFailure } from "./uiFailure";
+import { reportUiFailure, reportUnreadableFiles } from "./uiFailure";
 import { createEffect, createMemo, createRoot, createSignal, on } from "solid-js";
 import { backend } from "./backend";
 import { graphOwner, latestOwner, readOwned } from "./owned";
@@ -16,7 +16,8 @@ import type { PageEntry, PageInventory, PageInventoryEntry, PageKind, ResolvedPa
 // (`pageIndex.guard.test.ts`).
 //
 // Refresh economy: graph binding or native inventory-change signals cost one
-// IPC per tick. Text-only saves leave this answer alone (I-25).
+// IPC per tick, and a burst while one is in flight costs one more. Text-only
+// saves leave this answer alone (I-25).
 
 interface Held {
   generation: number;
@@ -34,6 +35,8 @@ const [held, setHeld] = createSignal<Held | null>(null);
 // request issued before it is dropped.
 let generation = 0;
 let queued = false;
+let inFlight: string | null = null;
+let again = false;
 const refreshScope = {};
 
 function build(inventory: PageInventory, rev: bigint): Held {
@@ -68,7 +71,7 @@ export async function refreshPageIndex(): Promise<void> {
     if (owner()) reportUiFailure("page-inventory", error);
     return;
   }
-  if (inventory.unreadable?.length) reportUiFailure("unreadable-files", inventory.unreadable.join(", "));
+  if (inventory.unreadable?.length) reportUnreadableFiles(inventory.unreadable);
   const rev = BigInt(inventory.rev);
   const current = held();
   if (current && current.generation === generation && rev < current.rev) return;
@@ -80,8 +83,27 @@ function scheduleRefresh(): void {
   queued = true;
   queueMicrotask(() => {
     queued = false;
-    void refreshPageIndex();
+    void signalled();
   });
+}
+
+/** One signal-driven fetch in flight per graph binding, plus at most one
+ *  trailing fetch for the signals that arrived meanwhile (PERF-FIXES D2): a
+ *  burst of publications (a rename's referrers) costs two inventory reads,
+ *  not one per publication. A rebind or graph switch never waits behind the
+ *  previous binding's read. */
+async function signalled(): Promise<void> {
+  const binding = `${generation}:${graphEpoch()}`;
+  if (inFlight === binding) { again = true; return; }
+  inFlight = binding;
+  try {
+    do {
+      again = false;
+      await refreshPageIndex();
+    } while (again && inFlight === binding);
+  } finally {
+    if (inFlight === binding) inFlight = null;
+  }
 }
 
 /** Forget the held inventory (graph bind/switch, rename). */

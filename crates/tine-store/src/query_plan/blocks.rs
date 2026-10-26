@@ -241,6 +241,7 @@ mod tests {
             .0;
         let graph = store.whole_graph().unwrap();
         let request = crate::SearchRequest {
+            transliteration: false,
             text: "needle".into(),
             within: None,
             page_limit: 0,

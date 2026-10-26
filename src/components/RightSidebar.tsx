@@ -1,20 +1,26 @@
+import { t } from "../i18n";
 import { BlockList } from "./BlockList";
-import { resizeSidebar, commitSidebarWidth } from "../sidebarSizing";
+import { resizeSidebar, commitSidebarWidth, setLeftSidebarReserve } from "../sidebarSizing";
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
-import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, replaceSidebarBlock, type SidebarBlock, type SidebarItem } from "../ui";
+import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, closeOtherRightSidebarItems, collapseOtherRightSidebarItems, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, sidebarOpen, sidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, replaceSidebarBlock, openBlockInSidebar, type SidebarBlock, type SidebarItem } from "../ui";
+import { replaceSidebarItem } from "../sidebarReplace";
 import { beginRowReorderDrag, rowReorderClickSuppressed, type RowDropTarget } from "./rowReorder";
 import "../styles/rightSidebarReorder.css";
 import { graphEpoch } from "../graphSession";
 import { mobileDrawerMode } from "../mobileDrawers";
-import { registerTransientLayer } from "../transientLayers";
+import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
+import { FloatingPortal } from "./FloatingPortal";
 import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell";
-import { openPageTarget, openPageAtBlock, openPageTargetInNewTab } from "../router";
+import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
+import { InlineText } from "../render/inline";
+import { visibleBody } from "../render/block";
+import { nearestAncestors } from "../render/blockTrail";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { EmojiText } from "../render/emoji";
+import { pageIconPrefix } from "../pageIconBatch";
 import { backend } from "../backend";
-import { ensurePageLoaded, pageByName, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, node as docNode } from "../document";
-import { visibleBody } from "../render/block";
+import { ensurePageLoaded, pageByName, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, formatForBlock, blockRef, blockPositionRef, node as docNode } from "../document";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
 import { TaggedPages } from "./TaggedPages";
 import { LinkedReferences } from "./LinkedReferences";
@@ -22,6 +28,8 @@ import { PageTypingTarget } from "./Page";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { endEditForSurface } from "../editorController";
 import { FailureBoundary } from "./FailureBoundary";
+import { isHTMLElementNode, mainWindow } from "../windowRealm";
+import { rightSidebarFocusRequest } from "../ui";
 
 function surfaceKey(item: SidebarItem): string {
   return `sidebar:${sidebarItemKey(item)}`;
@@ -50,8 +58,8 @@ type Row = ReturnType<typeof rowAttrs>;
  * disclosure removes the owning surface. Then clear any remaining edit owner
  * (for example when the window-focus preservation path kept edit mode alive). */
 function prepareSurfaceForUnmount(key: string) {
-  const active = document.activeElement;
-  if (active instanceof HTMLElement) {
+  const active = mainWindow.document.activeElement;
+  if (isHTMLElementNode(active)) {
     const surface = active.closest<HTMLElement>("[data-sidebar-surface]");
     if (surface?.dataset.sidebarSurface === key) active.blur();
   }
@@ -60,7 +68,7 @@ function prepareSurfaceForUnmount(key: string) {
 
 function restoreDisclosureFocus(key: string) {
   queueMicrotask(() => {
-    const surface = [...document.querySelectorAll<HTMLElement>("[data-sidebar-surface]")]
+    const surface = [...mainWindow.document.querySelectorAll<HTMLElement>("[data-sidebar-surface]")]
       .find((element) => element.dataset.sidebarSurface === key);
     surface?.querySelector<HTMLButtonElement>("[data-right-sidebar-item-toggle]")?.focus();
   });
@@ -71,6 +79,19 @@ function restoreDisclosureFocus(key: string) {
  * nodes as the main pane. Hidden state renders nothing. O(visible sidebar
  * blocks) plus page-load latency. */
 export function RightSidebar(): JSX.Element {
+  let body: HTMLDivElement | undefined;
+  createEffect(() => {
+    const request = rightSidebarFocusRequest();
+    if (!request) return;
+    queueMicrotask(() => {
+      if (rightSidebarFocusRequest() !== request || !rightSidebarOpen()) return;
+      if (body) body.scrollTop = 0;
+      const card = body?.querySelector<HTMLElement>("[data-sidebar-surface]");
+      if (card?.dataset.sidebarSurface === `sidebar:${request.key}`) {
+        card.querySelector<HTMLButtonElement>("[data-right-sidebar-item-toggle]")?.focus();
+      }
+    });
+  });
   const [actionsOpen, setActionsOpen] = createSignal(false);
   let actionsButton: HTMLButtonElement | undefined;
   let actionsMenu: HTMLDivElement | undefined;
@@ -81,6 +102,9 @@ export function RightSidebar(): JSX.Element {
     for (const item of rightSidebar()) prepareSurfaceForUnmount(surfaceKey(item));
   };
   onCleanup(registerRightSidebarClosePreparation(prepareAll));
+  // GH #521: the right sidebar's max width keeps the main pane usable beside the
+  // left sidebar; a drawer-mode left sidebar overlays instead of taking room.
+  createEffect(() => setLeftSidebarReserve(sidebarOpen() && !mobileDrawerMode() ? sidebarWidth() : 0));
   createEffect(() => {
     if (!actionsOpen()) return;
     const unregister = registerTransientLayer({
@@ -101,7 +125,7 @@ export function RightSidebar(): JSX.Element {
   };
   const onMenuKeyDown: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent> = (event) => {
     const buttons = [...(actionsMenu?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
-    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const index = buttons.indexOf(mainWindow.document.activeElement as HTMLButtonElement);
     let next = index;
     if (event.key === "ArrowDown") next = (index + 1 + buttons.length) % buttons.length;
     else if (event.key === "ArrowUp") next = (index - 1 + buttons.length) % buttons.length;
@@ -116,7 +140,7 @@ export function RightSidebar(): JSX.Element {
     <Show when={rightSidebarOpen()}>
       <MobileDrawerPanel
         side="right"
-        label="Reference sidebar"
+        label={t("right-sidebar-reference-sidebar")}
         class="right-sidebar"
         style={{
           flex: `0 0 ${rightSidebarWidth()}px`,
@@ -129,25 +153,25 @@ export function RightSidebar(): JSX.Element {
           onMouseDown={(e) => {
             e.preventDefault();
             const onMove = (ev: MouseEvent) =>
-              resizeSidebar("right", window.innerWidth - ev.clientX);
+              resizeSidebar("right", mainWindow.innerWidth - ev.clientX);
             const onUp = () => {
-              window.removeEventListener("mousemove", onMove);
-              window.removeEventListener("mouseup", onUp);
+              mainWindow.removeEventListener("mousemove", onMove);
+              mainWindow.removeEventListener("mouseup", onUp);
               commitSidebarWidth("right");
             };
-            window.addEventListener("mousemove", onMove);
-            window.addEventListener("mouseup", onUp);
+            mainWindow.addEventListener("mousemove", onMove);
+            mainWindow.addEventListener("mouseup", onUp);
           }}
         />
         <div class="right-sidebar-header">
-          <span>Sidebar</span>
+          <span>{t("right-sidebar-sidebar")}</span>
           <div class="rs-header-actions">
             <button
               ref={actionsButton}
               class="rs-actions-button"
               type="button"
-              title="Sidebar item actions"
-              aria-label="Sidebar item actions"
+              title={t("right-sidebar-sidebar-item-actions")}
+              aria-label={t("right-sidebar-sidebar-item-actions")}
               aria-haspopup="menu"
               aria-expanded={actionsOpen()}
               data-right-sidebar-actions
@@ -155,31 +179,29 @@ export function RightSidebar(): JSX.Element {
             >⋯</button>
             <Show when={actionsOpen()}>
               <div ref={actionsMenu} class="rs-actions-menu" role="menu" onKeyDown={onMenuKeyDown}>
-                <button type="button" role="menuitem" data-right-sidebar-action="collapse-all" onClick={() => runBulk("collapse")}>Collapse all</button>
-                <button type="button" role="menuitem" data-right-sidebar-action="expand-all" onClick={() => runBulk("expand")}>Expand all</button>
-                <button type="button" role="menuitem" data-right-sidebar-action="close-all" onClick={() => runBulk("close")}>Close all</button>
+                <button type="button" role="menuitem" data-right-sidebar-action="collapse-all" onClick={() => runBulk("collapse")}>{t("right-sidebar-collapse-all")}</button>
+                <button type="button" role="menuitem" data-right-sidebar-action="expand-all" onClick={() => runBulk("expand")}>{t("right-sidebar-expand-all")}</button>
+                <button type="button" role="menuitem" data-right-sidebar-action="close-all" onClick={() => runBulk("close")}>{t("right-sidebar-close-all")}</button>
               </div>
             </Show>
-            <button class="rs-close" title="Close sidebar (t r)" onClick={() => {
+            <button class="rs-close" title={t("right-sidebar-close-sidebar-t-r")} onClick={() => {
               if (mobileDrawerMode()) dismissDrawerAndRestore("explicit");
               else toggleRightSidebar();
             }}>✕</button>
           </div>
         </div>
-        <div class="right-sidebar-body">
+        <div class="right-sidebar-body" ref={body}>
           <Show
             when={rightSidebar().length > 0}
             fallback={
-              <div class="rs-empty">
-                Nothing open. Shift-click a page or block to open it here.
-              </div>
+              <div class="rs-empty">{t("right-sidebar-nothing-open-shift-click-a-page-or-block")}</div>
             }
           >
             <For each={rightSidebar()}>
               {(item, i) => {
                 const key = surfaceKey(item);
                 const collapse = (control: HTMLButtonElement) => {
-                  const keepFocus = document.activeElement === control;
+                  const keepFocus = mainWindow.document.activeElement === control;
                   const next = !item.collapsed;
                   if (next) prepareSurfaceForUnmount(key);
                   setRightSidebarItemCollapsed(i(), next);
@@ -276,6 +298,96 @@ function SidebarItemView(props: {
   );
 }
 
+/** The per-item "more actions" menu with the item's close button (GH #462).
+ * Close others and Collapse others need a second item; Open as page is page-only.
+ * Item toggles and header bulk actions retain the other operations.
+ * The menu floats out of the item (the
+ * item clips its overflow) and closes on an outside press or Escape. */
+function ItemActions(props: { index: number; surfaceKey: string; page?: { name: string; pageKind: "journal" | "page"; path?: string }; collapsed: boolean; onClose: () => void }): JSX.Element {
+  const [open, setOpen] = createSignal(false);
+  const [pos, setPos] = createSignal({ top: 0, right: 0 });
+  const menuId = `rs-item-menu-${createUniqueId()}`;
+  let button: HTMLButtonElement | undefined;
+  let menu: HTMLDivElement | undefined;
+  const count = () => rightSidebar().length;
+  const prepareOthers = () => rightSidebar().forEach((it, i) => { if (i !== props.index) prepareSurfaceForUnmount(surfaceKey(it)); });
+  const finish = () => {
+    setOpen(false);
+    queueMicrotask(() => { if (button?.isConnected) button.focus(); });
+  };
+  const run = (action: () => void) => () => { action(); finish(); };
+  const toggleOpen = () => {
+    if (!open() && button) {
+      const rect = button.getBoundingClientRect();
+      setPos({ top: rect.bottom + 4, right: Math.max(8, mainWindow.innerWidth - rect.right) });
+    }
+    setOpen(!open());
+  };
+  createEffect(() => {
+    if (!open()) return;
+    queueMicrotask(() => menu?.querySelector<HTMLButtonElement>("button")?.focus());
+    const unregister = registerTransientLayer({
+      id: menuId,
+      root: () => menu ?? null,
+      trigger: () => button ?? null,
+      dismiss: () => { setOpen(false); button?.focus(); return true; },
+    });
+    onCleanup(unregister);
+  });
+  dismissOnOutsidePointer({ open, inside: () => [button, menu], dismiss: () => setOpen(false) });
+  const onKeyDown: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent> = (event) => {
+    const buttons = [...(menu?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+    const index = buttons.indexOf(mainWindow.document.activeElement as HTMLButtonElement);
+    let next = index;
+    if (event.key === "ArrowDown") next = (index + 1 + buttons.length) % buttons.length;
+    else if (event.key === "ArrowUp") next = (index - 1 + buttons.length) % buttons.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = buttons.length - 1;
+    else return; // Escape: the global transient registry owns it
+    event.preventDefault();
+    buttons[next]?.focus();
+  };
+  return (
+    <div class="rs-item-actions">
+      <Show when={count() > 1 || props.page}>
+      <button
+        ref={button}
+        class="rs-actions-button"
+        type="button"
+        title={t("right-sidebar-more-actions")}
+        aria-label={t("right-sidebar-more-actions")}
+        aria-haspopup="menu"
+        aria-expanded={open()}
+        aria-controls={open() ? menuId : undefined}
+        data-right-sidebar-item-actions
+        onClick={toggleOpen}
+      >⋯</button>
+      </Show>
+      <button class="rs-close" onClick={props.onClose} title={t("right-sidebar-close")}>✕</button>
+      <Show when={open()}>
+        <FloatingPortal>
+          <div
+            ref={menu}
+            id={menuId}
+            class="rs-actions-menu rs-item-menu"
+            role="menu"
+            style={{ top: `${pos().top}px`, right: `${pos().right}px` }}
+            onKeyDown={onKeyDown}
+          >
+            <Show when={count() > 1}>
+              <button type="button" role="menuitem" data-right-sidebar-item-action="close-others" onClick={run(() => { prepareOthers(); closeOtherRightSidebarItems(props.index); })}>{t("right-sidebar-close-others")}</button>
+              <button type="button" role="menuitem" data-right-sidebar-item-action="collapse-others" onClick={run(() => { prepareOthers(); collapseOtherRightSidebarItems(props.index); })}>{t("right-sidebar-collapse-others")}</button>
+            </Show>
+            <Show when={props.page}>
+              {(p) => <button type="button" role="menuitem" data-right-sidebar-item-action="open-as-page" onClick={run(() => openPageTarget({ name: p().name, pageKind: p().pageKind, path: p().path }))}>{t("right-sidebar-open-as-page")}</button>}
+            </Show>
+          </div>
+        </FloatingPortal>
+      </Show>
+    </div>
+  );
+}
+
 function PageItem(props: {
   item: { name: string; pageKind: "journal" | "page"; path?: string };
   surfaceKey: string;
@@ -298,7 +410,7 @@ function PageItem(props: {
   return (
     <div class="rs-item" data-sidebar-surface={props.surfaceKey} data-row-index={props.row.index} classList={{ collapsed: props.collapsed, "row-drop-before": props.row.before(), "row-drop-after": props.row.after() }}>
       <div class="rs-item-head" onPointerDown={(event) => startRowDrag(props.row.index, event)}>
-        <button class="rs-item-toggle" type="button" aria-label={props.collapsed ? "Expand sidebar item" : "Collapse sidebar item"} aria-expanded={!props.collapsed} aria-controls={bodyId} data-right-sidebar-item-toggle onClick={(event) => props.onToggle(event.currentTarget)}>
+        <button class="rs-item-toggle" type="button" aria-label={props.collapsed ? t("right-sidebar-expand-sidebar-item") : t("right-sidebar-collapse-sidebar-item")} aria-expanded={!props.collapsed} aria-controls={bodyId} data-right-sidebar-item-toggle onClick={(event) => props.onToggle(event.currentTarget)}>
           <span aria-hidden="true">▸</span>
         </button>
         <a class="rs-item-title" onMouseDown={internalLinkMouseDown} onClick={(e) => {
@@ -312,11 +424,9 @@ function PageItem(props: {
           else openPageTarget(target);
         }} onAuxClick={(e) => internalLinkAuxClick(e, () =>
           openPageTargetInNewTab({ name: props.item.name, pageKind: props.item.pageKind, path: props.item.path }))}>
-          <EmojiText text={props.item.name} />
+          <EmojiText text={pageIconPrefix(props.item.name) + props.item.name} />
         </a>
-        <button class="rs-close" onClick={props.onClose} title="Close">
-          ✕
-        </button>
+        <ItemActions index={props.row.index} surfaceKey={props.surfaceKey} page={props.item} collapsed={props.collapsed} onClose={props.onClose} />
       </div>
       <Show when={!props.collapsed}>
         <Show when={page()} fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ?? ""}</div>}>
@@ -379,13 +489,29 @@ function BlockItem(props: {
   };
   const title = () => {
     const n = node();
-    return n ? visibleBody(n.raw)[0] || props.item.page : props.item.page;
+    return n?.page ?? props.item.page;
+  };
+  // GH #640, OG `breadcrumb` (block.cljs) as the sidebar uses it: the page, then
+  // the block's ancestors (not the block itself), at most the nearest three after
+  // a "⋯" (src/render/blockTrail.ts).
+  const trail = () => { const n = node(); return n ? nearestAncestors(n.id) : null; };
+  const shownAncestors = () => trail()?.ids ?? [];
+  const openCrumb = (aid: string, event: MouseEvent) => {
+    if (rowReorderClickSuppressed()) return;
+    const ref = blockPositionRef(blockRef(aid));
+    const dest = internalLinkDest(event);
+    const where = { ...(ref.path ? { path: ref.path } : {}), ...(ref.blockPos ? { blockPos: [...ref.blockPos] } : {}) };
+    const route = { kind: "page" as const, name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...where };
+    if (dest === "sidebar") openBlockInSidebar(ref);
+    else if (dest === "background") openInNewTab(route);
+    else if (dest === "pane") openRouteInOtherPane(route);
+    else replaceSidebarItem(props.item as SidebarBlock, { kind: "block", uuid: ref.uuid, page: ref.page, pageKind: ref.pageKind, ...where, collapsed: false });
   };
   const bodyId = `rs-item-body-${createUniqueId()}`;
   return (
     <div class="rs-item" data-sidebar-surface={props.surfaceKey} data-row-index={props.row.index} classList={{ collapsed: props.collapsed, "row-drop-before": props.row.before(), "row-drop-after": props.row.after() }}>
       <div class="rs-item-head" onPointerDown={(event) => startRowDrag(props.row.index, event)}>
-        <button class="rs-item-toggle" type="button" aria-label={props.collapsed ? "Expand sidebar item" : "Collapse sidebar item"} aria-expanded={!props.collapsed} aria-controls={bodyId} data-right-sidebar-item-toggle onClick={(event) => props.onToggle(event.currentTarget)}>
+        <button class="rs-item-toggle" type="button" aria-label={props.collapsed ? t("right-sidebar-expand-sidebar-item") : t("right-sidebar-collapse-sidebar-item")} aria-expanded={!props.collapsed} aria-controls={bodyId} data-right-sidebar-item-toggle onClick={(event) => props.onToggle(event.currentTarget)}>
           <span aria-hidden="true">▸</span>
         </button>
         <a
@@ -396,13 +522,29 @@ function BlockItem(props: {
             block: props.item.uuid,
             path: props.item.path,
           })}
-          title={`On ${props.item.page}`}
+          title={t("right-sidebar-on", { page: String(props.item.page) })}
         >
           {title()}
         </a>
-        <button class="rs-close" onClick={props.onClose} title="Close">
-          ✕
-        </button>
+        <Show when={shownAncestors().length}>
+          <span class="rs-item-crumbs">
+            <Show when={trail()?.more}>
+              <span class="crumb-sep">›</span><span class="rs-crumb-more">⋯</span>
+            </Show>
+            <For each={shownAncestors()}>
+              {(aid) => (
+                <>
+                  <span class="crumb-sep">›</span>
+                  <a class="rs-crumb" onMouseDown={internalLinkMouseDown} onClick={(e) => openCrumb(aid, e)}
+                    onAuxClick={(e) => internalLinkAuxClick(e, () => openCrumb(aid, e))}>
+                    <InlineText text={visibleBody(docNode(aid)?.raw ?? "")[0] || "…"} format={formatForBlock(aid)} />
+                  </a>
+                </>
+              )}
+            </For>
+          </span>
+        </Show>
+        <ItemActions index={props.row.index} surfaceKey={props.surfaceKey} collapsed={props.collapsed} onClose={props.onClose} />
       </div>
       <Show when={!props.collapsed}>
         <Show
@@ -412,7 +554,7 @@ function BlockItem(props: {
               when={pageLoaded()}
               fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ?? ""}</div>}
             >
-              <div id={bodyId} class="rs-item-body rs-item-missing">This block is no longer available.</div>
+              <div id={bodyId} class="rs-item-body rs-item-missing">{t("right-sidebar-this-block-is-no-longer-available")}</div>
             </Show>
           }
         >

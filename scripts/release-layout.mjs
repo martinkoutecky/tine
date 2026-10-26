@@ -11,6 +11,7 @@ export const RELEASE_LANES = [
   "windows-x86",
   "windows-arm64",
   "android",
+  "flatpak-x64",
 ];
 
 export function assertReleaseVersion(version) {
@@ -71,8 +72,11 @@ export function releaseLayout(version, identity = IDENTITY) {
       },
     },
     "macos-universal": {
-      assets: [`${product}_${version}_universal.dmg`],
-      platforms: {},
+      assets: [`${product}_${version}_universal.dmg`, `${product}_${version}_universal.app.tar.gz`, `${product}_${version}_universal.app.tar.gz.sig`],
+      platforms: {
+        "darwin-aarch64": [`${product}_${version}_universal.app.tar.gz`, `${product}_${version}_universal.app.tar.gz.sig`],
+        "darwin-x86_64": [`${product}_${version}_universal.app.tar.gz`, `${product}_${version}_universal.app.tar.gz.sig`],
+      },
     },
     "windows-x64": {
       assets: [
@@ -121,13 +125,23 @@ export function releaseLayout(version, identity = IDENTITY) {
       assets: [`${product}_${version}_android-arm64.apk`],
       platforms: {},
     },
+    // The x86_64 Flatpak bundle (flatpak.yml): installed by hand, updated by
+    // downloading the next bundle, so it never enters the updater manifest.
+    "flatpak-x64": {
+      assets: [`${product}_${version}_x86_64.flatpak`],
+      platforms: {},
+    },
   };
   for (const spec of Object.values(lanes)) {
-    // Tauri uses productName verbatim; our own zip/APK are already canonical.
+    // Tauri uses productName verbatim; our own zip/APK/Flatpak are already canonical.
     spec.sourceAssets = Object.fromEntries(spec.assets.map((name) => [name,
-      name.endsWith("-portable.zip") || name.endsWith(".apk") ? name
+      name.endsWith("-portable.zip") || name.endsWith(".apk") || name.endsWith(".flatpak") ? name
         : identity.productName + name.slice(product.length),
     ]));
+  }
+  // Tauri names the macOS updater after the .app, without a version or target.
+  for (const suffix of [".app.tar.gz", ".app.tar.gz.sig"]) {
+    lanes["macos-universal"].sourceAssets[`${product}_${version}_universal${suffix}`] = `${identity.productName}${suffix}`;
   }
   const platformAssets = RELEASE_LANES.flatMap((lane) => lanes[lane].assets);
   return {
@@ -187,11 +201,11 @@ export function candidateProblems(directory, version, channel = "stable") {
         const url = new URL(entry.url);
         const parts = url.pathname.split("/");
         inBeta = url.protocol === "https:" && url.hostname === "github.com"
-          && parts.at(-3) === "download" && parts.at(-2) === BETA_TAG && parts.at(-1) === asset;
+          && parts.at(-3) === "download" && parts.at(-2) === `v${version}` && parts.at(-1) === asset;
       } catch {
         inBeta = false;
       }
-      if (!inBeta) problems.push(`latest.json ${platform} escapes beta`);
+      if (!inBeta) problems.push(`latest.json ${platform} escapes v${version}`);
     }
     if (entry && channel === STABLE_CHANNEL) {
       let stable = false;

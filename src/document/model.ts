@@ -1,9 +1,11 @@
 import { type PageKind, type Format } from "../types";
 import { createStore, produce } from "solid-js/store";
-import { createRoot, createMemo } from "solid-js";
-import { acceptedBlockIdentityClaims } from "../blockIdentity";
+import { batch, createRoot, createMemo, createSignal, untrack } from "solid-js";
+import { acceptedBlockIdentityClaims, existingBlockId } from "../blockIdentity";
 import { graphMeta } from "../graphSession";
 import { sheetConfigFromRaw } from "../sheet/config";
+import { beginResultsChange } from "../queryResultsEpoch";
+import { clearOnBindingInvalidated } from "../binding";
 
 export interface Node {
   id: string;
@@ -51,7 +53,45 @@ export interface DocState {
   loaded: boolean;
 }
 
-export const [doc, setDoc] = createStore<DocState>({ byId: {}, pages: [], feed: [], loaded: false });
+const [doc, writeDoc] = createStore<DocState>({ byId: {}, pages: [], feed: [], loaded: false });
+export { doc };
+/** Invalidate before structural working-set mutations, including producer-based
+ * insert/delete/move/paste/undo and page replacement/rename. Raw-only typing and
+ * folds leave mounted live objects intact; the host gate covers publication. */
+let hydrating = 0;
+/** Working-set hydration that cannot change what an existing live node means: a
+ * first load adds new nodes, and eviction removes whole pages (their rows then
+ * fail to resolve). Neither invalidates other results, so an open Table-cell
+ * draft survives browsing. Replacing a loaded page is not hydration. */
+export function hydrateWorkingSet<T>(write: () => T): T {
+  hydrating++;
+  try { return write(); } finally { hydrating--; }
+}
+export const setDoc: typeof writeDoc = ((...args: unknown[]) => {
+  const fieldOnly = args.length === 4 && ((args[0] === "byId" && ["raw", "loadedRaw", "collapsed"].includes(String(args[2])))
+    || (args[0] === "pages" && ["preBlock", "title"].includes(String(args[2]))));
+  batch(() => {
+    const finish = hydrating || fieldOnly || args[0] === "feed" || args[0] === "loaded" ? null : beginResultsChange();
+    try {
+      (writeDoc as (...args: unknown[]) => void)(...args);
+      untrack(() => {
+        if (args.length === 4 && args[0] === "byId" && args[2] === "raw" && typeof args[1] === "string") {
+          updateAuthoredIdentity(args[1]);
+        } else if (!fieldOnly && args[0] !== "feed" && args[0] !== "loaded") {
+          // Producers can replace/reparent/remove arbitrary nodes. Rebuild on
+          // the next lookup, never on ordinary raw-only typing or folding.
+          authoredIdentityPages.clear();
+          setIdentityStructureRevision(v => v + 1);
+        }
+      });
+    }
+    finally {
+      // A whole-state reset is complete here (workingSet.resetStore); edit
+      // producers stay pending through their following markDirty call.
+      if (finish) { if (typeof args[0] === "object") finish(); else queueMicrotask(finish); }
+    }
+  });
+}) as typeof writeDoc;
 
 // Monotonic per-block count of SOURCE collapse writes (writeCollapsed and the
 // descendants batch). An embed occurrence keeps an ephemeral local fold for
@@ -77,6 +117,74 @@ export function pageRoots(name: string): readonly string[] { return pageByName(n
 export function loadedPage(name: string): ReadonlyFeedPage | undefined { return pageByName(name); }
 export function feedNames(): readonly string[] { return doc.feed; }
 export function isLoaded(name?: string): boolean { return name === undefined ? doc.loaded : !!pageByName(name); }
+
+// GH #248: references and zoom routes need authored-ID precedence and ambiguity
+// checks, but must not walk the page on every render/input. Index membership
+// once, then maintain only the edited node's claim at the shared write boundary.
+// This is scoped to reachable outline nodes, just like the former resolver walk
+// (pre-blocks and orphan store entries are not authored claimants).
+interface AuthoredIdentityPage {
+  byNode: Map<string, string | null>;
+  claims: Map<string, Set<string>>;
+  revision: () => number;
+  changed: () => void;
+}
+const authoredIdentityPages = new Map<string, AuthoredIdentityPage>();
+clearOnBindingInvalidated(() => authoredIdentityPages.clear());
+const [identityStructureRevision, setIdentityStructureRevision] = createSignal(0);
+
+function updateAuthoredIdentity(id: string): void {
+  const node = doc.byId[id];
+  const index = node && authoredIdentityPages.get(node.page);
+  if (!index || !index.byNode.has(id)) return;
+  const before = index.byNode.get(id)!;
+  const after = existingBlockId(node.raw, formatForBlock(id));
+  if (before === after) return;
+  if (before !== null) {
+    const claims = index.claims.get(before)!;
+    claims.delete(id);
+    if (claims.size === 0) index.claims.delete(before);
+  }
+  if (after !== null) {
+    const claims = index.claims.get(after) ?? new Set<string>();
+    claims.add(id);
+    index.claims.set(after, claims);
+  }
+  index.byNode.set(id, after);
+  index.changed();
+}
+
+/** All reachable authored claimants, including duplicates. Reactive to ID and
+ * structural changes; ordinary body edits update just one index entry. */
+export function authoredBlockClaims(page: string, identity: string): ReadonlySet<string> | undefined {
+  identityStructureRevision();
+  let index = authoredIdentityPages.get(page);
+  if (!index) {
+    index = untrack(() => {
+      const [revision, setRevision] = createSignal(0);
+      const next: AuthoredIdentityPage = { byNode: new Map(), claims: new Map(), revision, changed: () => setRevision(v => v + 1) };
+      const stack = [...(pageByName(page)?.roots ?? [])];
+      while (stack.length) {
+        const id = stack.pop()!;
+        if (next.byNode.has(id)) continue;
+        const node = doc.byId[id];
+        if (!node || node.page !== page) continue;
+        const authored = existingBlockId(node.raw, formatForBlock(id));
+        next.byNode.set(id, authored);
+        if (authored !== null) {
+          const claims = next.claims.get(authored) ?? new Set<string>();
+          claims.add(id);
+          next.claims.set(authored, claims);
+        }
+        stack.push(...node.children);
+      }
+      authoredIdentityPages.set(page, next);
+      return next;
+    });
+  }
+  index.revision();
+  return index.claims.get(identity);
+}
 
 // Retain claims with each live node, beyond the bounded render AST cache. A
 // second paste over >8k loaded blocks must not reparse the entire working set.
@@ -218,4 +326,12 @@ export function blockIsOpaqueSheetView(id: string | undefined): boolean {
 let idCounter = 0;
 export function freshId(): string {
   return `b${Date.now().toString(36)}-${idCounter++}`;
+}
+/** The outline kernel's source of fresh keys: the same scheme as {@link freshId}.
+ *  Advance it with {@link keysUsed} by the `Change`'s `keys_used`. */
+export function keySource(): { prefix: string; next: number } {
+  return { prefix: `b${Date.now().toString(36)}-`, next: idCounter };
+}
+export function keysUsed(count: number): void {
+  idCounter += count;
 }

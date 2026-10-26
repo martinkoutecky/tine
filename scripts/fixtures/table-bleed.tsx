@@ -7,6 +7,7 @@ import "../../src/styles/theme.css";
 import "../../src/styles/inter.css";
 import "../../src/styles/app.css";
 import { QueryLegacyTable } from "../../src/components/QueryLegacyTable";
+import { QueryResultsRegion } from "../../src/components/QueryResultParts";
 import { SheetContainer } from "../../src/components/SheetContainer";
 import { SheetTable } from "../../src/components/SheetTable";
 
@@ -19,7 +20,7 @@ export async function mount(raw: string, depth: number, paneWidth: number, forma
   clearSeededFacets();
   document.body.innerHTML = '<div id="fixture"></div>';
   return render(() => <div class="pane-leaf" style={{ width: `${paneWidth}px`, height: "650px", flex: "none", margin: "0 auto" }}>
-    <div class="main-content"><div class="main-content-inner" style={{ "max-width": "720px", width: "100%" }}><h1>Table bleed</h1>{surface === "query" ? <div class="query-block"><QueryLegacyTable cols={["block", "page"]} rows={[{ text: "a".repeat(65), page: "b".repeat(65), kind: "page", props: {}, byKey: {} }]} sortBy={() => {}} arrow={() => ""} /></div>
+    <div class="main-content"><div class="main-content-inner" style={{ "max-width": "720px", width: "100%" }}><h1>Table bleed</h1>{surface === "query" ? <div class="query-block"><QueryResultsRegion><QueryLegacyTable cols={["block", "page"]} rows={[{ text: "a".repeat(65), page: "b".repeat(65), kind: "page", props: {}, byKey: {} }]} sortBy={() => {}} arrow={() => ""} /></QueryResultsRegion></div>
       : surface === "sheet" ? <SheetContainer><SheetTable ownerId="table" rowSource="children" /></SheetContainer>
       : surface === "sidebar" ? <div class="right-sidebar-body"><div class="rs-item-body"><Block id={block.id} /></div></div>
       : surface === "embed" ? <div class="embed-block"><Block id={block.id} /></div>

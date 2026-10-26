@@ -1,3 +1,4 @@
+import { msg, t, render, type Msg } from "../i18n";
 import { For, Show, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingOwner, readOwned, writeOwned } from "../owned";
@@ -12,27 +13,27 @@ import { liveConflictObjects, pendingConflictCount } from "../liveConflicts";
 // is the INVENTORY; resolution happens on the page, next to the blocks. Rows
 // vanish as the queue re-derives after each Apply.
 
-const GROUPS: { source: ConflictSource; title: string }[] = [
-  { source: "live-save", title: "Unsaved drafts" },
-  { source: "sync-copy", title: "Sync conflict copies" },
-  { source: "vcs-markers", title: "Version-control merge markers" },
-  { source: "duplicate-journal", title: "Duplicate journal days" },
+const GROUPS: { source: ConflictSource; title: Msg }[] = [
+  { source: "live-save", title: msg("conflict-overview-unsaved-drafts") },
+  { source: "sync-copy", title: msg("conflict-overview-sync-conflict-copies") },
+  { source: "vcs-markers", title: msg("conflict-overview-version-control-merge-markers") },
+  { source: "duplicate-journal", title: msg("conflict-overview-duplicate-journal-days") },
 ];
 
 export function conflictSourceLabel(conflict: ConflictObject): string {
   const side = (role: "mine" | "theirs") => conflict.sides.find((s) => s.role === role)?.label;
-  if (conflict.source === "live-save") return conflict.live?.restored ? "kept draft from an earlier session" : "unsaved draft";
-  if (conflict.source === "duplicate-journal") return `${conflict.sides.length} files for one day`;
+  if (conflict.source === "live-save") return t("conflicts-prose-unsaved-draft");
+  if (conflict.source === "duplicate-journal") return t("conflicts-prose-day-files", { count: conflict.sides.length });
   return conflict.source === "sync-copy"
-    ? `sync copy · ${side("theirs") ?? "conflict copy"}`
-    : `merge markers · ${side("mine") ?? "local"} vs ${side("theirs") ?? "merged-in"}`;
+    ? t("conflicts-prose-sync-copy", { side: side("theirs") ?? t("conflicts-prose-copy-fallback") })
+    : t("conflicts-prose-merge-sides", { mine: side("mine") ?? t("conflicts-prose-local-fallback"), theirs: side("theirs") ?? t("conflicts-prose-incoming-fallback") });
 }
 
 /** Absent is not zero: a count Tine did not compute shows "—", never "0". */
 export function conflictBlockCount(conflict: ConflictObject): string {
   const count = conflict.block_conflicts;
   if (count === undefined || count === null) return "—";
-  return `${count} block${count === 1 ? "" : "s"}`;
+  return t("conflicts-prose-block-count", { count });
 }
 
 /** The conflict copy's own file, for a sync-copy object. */
@@ -48,17 +49,16 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
     const owner = bindingOwner(() => alive);
     const name = path.split("/").pop() ?? path;
     const confirmed = await readOwned(owner, backend().confirm(
-      `Discard the conflict copy “${name}”?\n\n` +
-        `It moves to logseq/.tine-trash (recoverable). The current “${pageName}” is left as-is.`
+      t("conflict-overview-discard-confirmation", { name, page: pageName })
     ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     try {
       const result = await writeOwned(owner, backend().trashSyncConflict(path, "delete-page"));
       if (result.kind === "stale") return;
-      pushToast(`Discarded ${name}`, "success");
+      pushToast(msg("conflict-overview-discarded", { name: String(name) }), "success");
       await readOwned(owner, refreshSyncConflicts());
     } catch (e) {
-      pushToast(`Couldn’t discard it: ${String(e)}`, "error");
+      pushToast(msg("conflict-overview-couldn-t-discard-it", { error: String(e) }), "error");
     }
   };
   const orphans = (): SyncConflict[] => syncConflicts().filter((c) => !c.base_path);
@@ -71,15 +71,12 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
   const total = pendingConflictCount;
   return (
     <div class="conflict-overview">
-      <h1 class="page-title">Conflicts</h1>
+      <h1 class="page-title">{t("conflict-overview-conflicts")}</h1>
       <Show
         when={total() > 0}
-        fallback={<p class="conflict-overview-empty">No conflicts. Pages that need a decision appear here.</p>}
+        fallback={<p class="conflict-overview-empty">{t("conflict-overview-no-conflicts-pages-that-need-a-decision-appear")}</p>}
       >
-        <p class="conflict-overview-hint">
-          Each page is resolved on the page itself, block by block. Shift-click opens it in the
-          right sidebar so this list stays in view.
-        </p>
+        <p class="conflict-overview-hint">{t("conflict-overview-each-page-is-resolved-on-the-page-itself")}</p>
         <For each={GROUPS}>
           {(group) => {
             // A live draft is not on disk, so it is not in the derived queue.
@@ -87,14 +84,14 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
             const extra = () => (group.source === "sync-copy" ? orphans() : []);
             return (
               <Show when={rows().length || extra().length}>
-                <section class="conflict-overview-group" aria-label={group.title}>
-                  <h2>{group.title}</h2>
+                <section class="conflict-overview-group" aria-label={render(group.title)}>
+                  <h2>{render(group.title)}</h2>
                   <For each={rows()}>
                     {(conflict) => (
                       <div class="conflict-overview-row">
                         <button
                           class="conflict-overview-open"
-                          title="Open the page to resolve it (shift-click: right sidebar)"
+                          title={t("conflict-overview-open-the-page-to-resolve-it-shift-click")}
                           onClick={(event) => open(conflict, event)}
                           onAuxClick={(event) => { if (event.button === 1) open(conflict, event); }}
                         >
@@ -104,9 +101,7 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
                         <span class="conflict-overview-count">{conflictBlockCount(conflict)}</span>
                         <Show when={conflict.source === "sync-copy" && copyPath(conflict)}>
                           {(path) => (
-                            <button class="settings-btn settings-btn-danger" onClick={() => void discardCopy(path(), conflict.page_name)}>
-                              Discard copy
-                            </button>
+                            <button class="settings-btn settings-btn-danger" onClick={() => void discardCopy(path(), conflict.page_name)}>{t("conflict-overview-discard-copy")}</button>
                           )}
                         </Show>
                       </div>
@@ -116,13 +111,9 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
                     {(copy) => (
                       <div class="conflict-overview-row">
                         <span class="conflict-overview-open conflict-overview-orphan">{copy.base_name}</span>
-                        <span class="conflict-overview-source">
-                          sync copy · {copy.tag || "conflict copy"} · its page no longer exists
-                        </span>
+                        <span class="conflict-overview-source">{t("conflict-overview-orphan-source", { tag: copy.tag || t("conflict-overview-conflict-copy") })}</span>
                         <span class="conflict-overview-count">—</span>
-                        <button class="settings-btn settings-btn-danger" onClick={() => void discardCopy(copy.path, copy.base_name)}>
-                          Discard copy
-                        </button>
+                        <button class="settings-btn settings-btn-danger" onClick={() => void discardCopy(copy.path, copy.base_name)}>{t("conflict-overview-discard-copy")}</button>
                       </div>
                     )}
                   </For>

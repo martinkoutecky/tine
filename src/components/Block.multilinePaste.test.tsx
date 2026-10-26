@@ -38,6 +38,25 @@ function keydown(textarea: HTMLTextAreaElement, init: KeyboardEventInit) {
 }
 
 describe("multiline paste into editor-visible empty blocks", () => {
+  it.each(["md", "org"] as const)("GH #759: inserts a copied HTML link at the caret in %s", async (format) => {
+    const block: BlockDto = { id: "75900000-1111-4111-8111-111111111111", raw: "before after", collapsed: false, children: [] };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", format, pre_block: null, blocks: [block] });
+    startEditing(block.id, 7);
+    const { root, dispose } = mount(() => <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
+    try {
+      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      textarea.setSelectionRange(7, 7);
+      const event = paste(textarea, "Example page", '<html><head></head><body><a href="https://example.com/page">Example page</a></body></html>');
+      await Promise.resolve();
+      const link = format === "org" ? "[[https://example.com/page][Example page]]" : "[Example page](https://example.com/page)";
+      expect(event.defaultPrevented).toBe(true);
+      expect(pageByName("Paste")!.roots).toEqual([block.id]);
+      expect(doc.byId[block.id].raw).toBe(`before ${link}after`);
+      expect(textarea.value).toBe(`before ${link}after`);
+      expect(textarea.selectionStart).toBe(7 + link.length);
+    } finally { dispose(); }
+  });
+
   it("I-22: refuses pasted outlines deeper than the UI render limit", () => {
     const block: BlockDto = { id: "aaaa1111-1111-4111-8111-111111111111", raw: "", collapsed: false, children: [] };
     loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });

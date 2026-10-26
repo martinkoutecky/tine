@@ -1,0 +1,42 @@
+/* A resting query keeps its own bounded box (Martin 2026-10-14: remove elements
+   from the box, keep the box); the calm part is what sits inside it. The native
+   disclosure retains keyboard access even while its visual affordance is quiet. */
+.query-block, .query-block.query-sheet-block {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  padding: 6px 12px;
+  margin: 4px 0;
+  min-width: 0;
+}
+.query-header { position: relative; gap: 8px; }
+.query-header .query-count { background: none; font-weight: 400; color: var(--text-muted); }
+.qc-actions { margin-left: auto; position: relative; font-weight: 400; }
+.qc-actions > summary { cursor: pointer; list-style: none; padding: 2px 8px; opacity: 0; }
+.qc-actions > summary::-webkit-details-marker { display: none; }
+.query-block:hover .qc-actions > summary,
+.query-block:focus-within .qc-actions > summary,
+.qc-actions[open] > summary { opacity: 1; }
+.qc-menu {
+  position: absolute; right: 0; top: 100%; z-index: 1000;
+  display: flex; flex-direction: column; min-width: 160px;
+  padding: 6px; border: 1px solid var(--border-color); border-radius: 6px;
+  background: var(--bg-primary); box-shadow: 0 4px 12px #0002;
+}
+.qc-menu button { text-align: left; padding: 6px 10px; background: transparent; border: 0; color: var(--text-primary); }
+.qc-menu button:hover, .qc-menu button:focus-visible { background: var(--bg-secondary); }
+.qc-panel { position: relative; margin: 8px 0; padding-top: 28px; }
+.qc-panel .qs-sheet { position: static; width: 100%; max-height: none; box-shadow: none; }
+.qc-done { position: absolute; right: 0; top: 0; }
+.qc-panel .qd-panel { position: static; min-width: 0; max-width: 100%; max-height: none; overflow: visible; box-shadow: none; }
+.query-result-open { border: 0; background: none; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.query-block .sheet-board { max-width: 100%; overflow-x: auto; }
+@media (hover: none) { .qc-actions > summary { opacity: 1; } }
+.all-pages-head, .all-pages-row { grid-template-columns: minmax(0, 1fr) 10.5em 6em 8em; }
+.all-pages-backlinks { text-align: right; }
+.query-copy-row { display: flex; gap: 8px; padding: 4px; }
+.query-selection-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0; }
+.query-results-selection > button[aria-pressed="true"] { background: var(--bg-tertiary); }
+@media (max-width: 600px) {
+  .all-pages-head, .all-pages-row { grid-template-columns: minmax(0, 1fr) 7em 4em 6em; gap: 4px; }
+}

@@ -14,7 +14,7 @@
 // initialization is pending, deferring structural identity reads until ready.
 
 import { createSignal } from "solid-js";
-import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
+import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, editor_text_join, hide_policy_hides, outline_apply_json, outline_reads_json, outline_max_depth, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
 import type { Block, MacroInline, Inline } from "./ast";
 
@@ -199,6 +199,55 @@ export function editBlock(raw: string, format: "md" | "org", request: object): s
   const regions = blockRegions(raw, format);
   if (regions.quarantined) throw new Error("Structural edit refused: block parsing is quarantined");
   return edit_block_regions_json(raw, format === "org", regions, request);
+}
+
+/** The editor's view of one block (outline kernel `editor_text`, twin 13):
+ * `policy` is a kernel `HidePolicy` as JSON. O(block bytes) once per (raw,
+ * policy) while the block's regions stay cached; warm calls are a map lookup. */
+const editorTextCache = new WeakMap<BlockRegions, Map<string, { visible: string; hidden: string }>>();
+export function editorText(raw: string, format: "md" | "org", policy: string): { visible: string; hidden: string } {
+  const regions = blockRegions(raw, format);
+  let byPolicy = editorTextCache.get(regions);
+  if (!byPolicy) editorTextCache.set(regions, (byPolicy = new Map()));
+  let text = byPolicy.get(policy);
+  if (!text) byPolicy.set(policy, (text = JSON.parse(editor_text_json(raw, format === "org", regions, policy)) as { visible: string; hidden: string }));
+  return { visible: text.visible, hidden: text.hidden };
+}
+/** The editor (UTF-16) offset of raw UTF-16 offset `rawUtf16` under `policy`. */
+export function editorOffsetOfRaw(raw: string, format: "md" | "org", policy: string, rawUtf16: number): number {
+  return editor_offset_of_raw(raw, format === "org", blockRegions(raw, format), policy, Math.max(0, rawUtf16));
+}
+/** The raw UTF-8 byte offset (the kernel verbs' unit) of editor offset `editorUtf16`. */
+export function rawByteOfEditor(raw: string, format: "md" | "org", policy: string, editorUtf16: number): number {
+  return raw_byte_of_editor(raw, format === "org", blockRegions(raw, format), policy, Math.max(0, editorUtf16));
+}
+/** Editor text plus its hidden lines back to raw (`editor_text::join_with`). */
+export function editorTextJoin(visible: string, hidden: string, format: "md" | "org"): string {
+  // Nothing hidden is the only case before the parser is ready (splitProps
+  // hides nothing then), and joining it is the identity.
+  if (!hidden) return visible;
+  if (format !== "org") return editor_text_join(visible, hidden, false, null);
+  const regions = blockRegions(visible, format);
+  if (regions.quarantined) throw new Error("Structural edit refused: block parsing is quarantined");
+  return editor_text_join(visible, hidden, true, regions);
+}
+/** Whether kernel hide `policy` (JSON) hides property `key`. */
+export function hidePolicyHides(policy: string, key: string): boolean {
+  return hide_policy_hides(policy, key);
+}
+/** One outline-kernel verb (`outline::apply`); see `document/kernel.ts`. */
+export function outlineApply(request: string): string {
+  if (!parserReady()) throw new Error("Structural edit refused: parser is not ready");
+  return outline_apply_json(request);
+}
+/** The blocks an outline verb (JSON) reads (`outline::Verb::reads`). */
+export function outlineReads(verb: string): string {
+  if (!parserReady()) throw new Error("Structural edit refused: parser is not ready");
+  return outline_reads_json(verb);
+}
+/** The kernel's outline depth cap (twin 4); null before the parser is ready. */
+export function outlineMaxDepth(): number | null {
+  return parserReady() ? outline_max_depth() : null;
 }
 
 /** Sole visible macro from the native AST policy (standalone_macro::sole_macro).

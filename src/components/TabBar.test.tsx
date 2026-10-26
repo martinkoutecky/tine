@@ -96,6 +96,30 @@ afterEach(() => {
   resetPaneLayoutToSingle(journalsSnapshot());
 });
 
+describe("TabBar same-page tab labels (GH #528)", () => {
+  it("a zoomed tab whose block is not loaded is distinguishable from the plain tab of the same page", () => {
+    restorePaneLayout(
+      { kind: "pane", paneId: "main" },
+      new Map([["main", {
+        tabs: [
+          { history: [{ kind: "page", name: "Projects", pageKind: "page" }], pos: 0, pinned: false },
+          { history: [{ kind: "page", name: "Projects", pageKind: "page", block: "6f1c0000-0000-4000-8000-000000000001" }], pos: 0, pinned: false },
+        ],
+        activeIndex: 0,
+      } as PaneSnapshot]]),
+      "main"
+    );
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <TabBar router={paneRouter("main")} />, root);
+    const labels = Array.from(root.querySelectorAll(".tab .tab-title")).map((n) => n.textContent);
+    expect(labels).toHaveLength(2);
+    expect(new Set(labels).size).toBe(2);
+    expect(labels[1]).toContain("Projects");
+    dispose();
+  });
+});
+
 describe("TabBar close control (GH #340)", () => {
   it("is a real button with its own Close tab name, not the tab's pin tooltip", () => {
     resetPaneLayoutToSingle(pageSnapshot(["A", "B"]));
@@ -179,6 +203,29 @@ describe("TabBar pointer tab drag", () => {
     dispose();
   });
 
+  it.each([false, true])("GH #756: element blur preserves tab dragging, window blur cancels (%s)", (leaveWindow) => {
+    const { root, dispose } = renderSplit(["A", "B", "C"], ["X"]);
+    const editor = document.createElement("textarea");
+    document.body.append(editor);
+    editor.focus();
+    const third = tab(root, "main", 2);
+    setRect(third, 100, 0, 50, 24);
+    const previous = document.elementFromPoint;
+    document.elementFromPoint = () => third;
+    try {
+      tab(root, "main", 0).dispatchEvent(pointer("pointerdown", 10, 10));
+      editor.blur();
+      window.dispatchEvent(pointer("pointermove", 140, 10));
+      if (leaveWindow) window.dispatchEvent(new Event("blur"));
+      window.dispatchEvent(pointer("pointerup", 140, 10, { buttons: 0 }));
+      expect(namesForPane("main")).toEqual(leaveWindow ? ["A", "B", "C"] : ["B", "C", "A"]);
+    } finally {
+      document.elementFromPoint = previous;
+      editor.remove();
+      dispose();
+    }
+  });
+
   it("adopts a dragged tab into another strip at the hit index", () => {
     const { root, dispose } = renderSplit(["A", "B"], ["X", "Y"]);
     const dragged = tab(root, "main", 1);
@@ -193,6 +240,42 @@ describe("TabBar pointer tab drag", () => {
 
     expect(namesForPane("main")).toEqual(["A"]);
     expect(namesForPane("pane-2")).toEqual(["B", "X", "Y"]);
+    document.elementFromPoint = prevElementFromPoint;
+    dispose();
+  });
+
+  it("GH #527: dropping on the empty space of another pane's tab bar places the tab last", () => {
+    const { root, dispose } = renderSplit(["A", "B"], ["X", "Y"]);
+    const dragged = tab(root, "main", 0);
+    const bar = root.querySelector('[data-pane-id="pane-2"] .tab-bar') as HTMLElement;
+    const strip = bar.querySelector(".tab-strip-scroll") as HTMLElement;
+    setRect(tab(root, "pane-2", 1), 260, 0, 60, 24);
+    const prevElementFromPoint = document.elementFromPoint;
+    // The pointer is far right of the last tab: it hits the strip, not any tab.
+    document.elementFromPoint = () => strip;
+
+    dragged.dispatchEvent(pointer("pointerdown", 20, 10));
+    window.dispatchEvent(pointer("pointermove", 480, 10));
+    window.dispatchEvent(pointer("pointerup", 480, 10, { buttons: 0 }));
+
+    expect(namesForPane("main")).toEqual(["B"]);
+    expect(namesForPane("pane-2")).toEqual(["X", "Y", "A"]);
+    document.elementFromPoint = prevElementFromPoint;
+    dispose();
+  });
+
+  it("GH #527: dropping on empty tab-bar space within the same pane moves the tab last", () => {
+    const { root, dispose } = renderSplit(["A", "B", "C"], ["X"]);
+    const dragged = tab(root, "main", 0);
+    const bar = root.querySelector('[data-pane-id="main"] .tab-bar') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => bar;
+
+    dragged.dispatchEvent(pointer("pointerdown", 20, 10));
+    window.dispatchEvent(pointer("pointermove", 400, 10));
+    window.dispatchEvent(pointer("pointerup", 400, 10, { buttons: 0 }));
+
+    expect(namesForPane("main")).toEqual(["B", "C", "A"]);
     document.elementFromPoint = prevElementFromPoint;
     dispose();
   });
@@ -215,6 +298,35 @@ describe("TabBar pointer tab drag", () => {
     expect(tabRoute(paneRouter("pane-2").activeTab())).toMatchObject({ kind: "page", name: "B" });
     document.elementFromPoint = prevElementFromPoint;
     dispose();
+  });
+
+  it.each(["top", "right"] as const)("GH #499: the %s content-edge preview matches the resulting local split", (side) => {
+    const { root, dispose } = renderSplit(["A", "B"], ["X"]);
+    const target = root.querySelector('[data-pane-id="pane-2"]')!;
+    const body = target.querySelector(".pane-main-content")!;
+    setRect(target, 300, 0, 300, 300);
+    setRect(target.querySelector(".tab-bar"), 300, 0, 300, 32);
+    const previous = document.elementFromPoint;
+    document.elementFromPoint = () => body;
+    try {
+      const [x, y] = side === "top" ? [450, 80] : [550, 150];
+      tab(root, "main", 1).dispatchEvent(pointer("pointerdown", 70, 10));
+      window.dispatchEvent(pointer("pointermove", x, y));
+      expect(target.querySelector(`.pane-tab-split-preview-${side}`)).not.toBeNull();
+      window.dispatchEvent(pointer("pointerup", x, y, { buttons: 0 }));
+      const created = layoutPaneIds().find((id) => id !== "main" && id !== "pane-2")!;
+      expect(namesForPane(created)).toEqual(["B"]);
+      expect(namesForPane("pane-2")).toEqual(["X"]);
+      expect(layoutRoot()).toMatchObject({ kind: "split", dir: "row", children: [
+        { kind: "pane", paneId: "main" },
+        { kind: "split", dir: side === "top" ? "col" : "row", children: side === "top"
+          ? [{ kind: "pane", paneId: created }, { kind: "pane", paneId: "pane-2" }]
+          : [{ kind: "pane", paneId: "pane-2" }, { kind: "pane", paneId: created }] },
+      ] });
+    } finally {
+      document.elementFromPoint = previous;
+      dispose();
+    }
   });
 
   it("drops on a seam by creating a split and moving the tab into the new pane", () => {

@@ -1,6 +1,7 @@
-import { For, Show, createResource, createSignal, type JSX } from "solid-js";
+import { t } from "../i18n";
+import { bulkCollapseTarget } from "../collapseToggle";
+import { For, Show, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { dataRev, graphEpoch } from "../graphSession";
 import { openPage, openPageInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
@@ -10,6 +11,8 @@ import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { blockExternalId } from "../document";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
+import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 
 // Block-level "linked references": the blocks that reference THIS block (via
 // `((uuid))` / `[..](((uuid)))` / `{{embed ((uuid))}}`), grouped by page. Toggled
@@ -20,9 +23,11 @@ import { ResourceFailure } from "./ResourceFailure";
  * referrer answer on graph revision changes; disclosure is local to this panel
  * and can be changed for one group or all groups without writing the graph. */
 export function BlockReferences(props: { id: string }): JSX.Element {
-  const [groupsResource, { refetch }] = createResource(
-    () => ({ id: blockExternalId(props.id) ?? props.id, epoch: graphEpoch(), revision: dataRev() }),
-    ({ id }) => backend().getBlockReferrers(id)
+  const [groupsResource, { refetch }] = createMembershipResource(
+    () => blockExternalId(props.id) ?? props.id,
+    () => blockExternalId(props.id) ?? props.id,
+    (id) => backend().getBlockReferrers(id),
+    groupsContainEdit,
   );
   // Unlike the page-level panels this one has no fetcher wrapper, so it owns
   // both halves: readOr keeps a failed read out of the page's render, and the
@@ -50,12 +55,11 @@ export function BlockReferences(props: { id: string }): JSX.Element {
     <Show when={groups() && groups()!.length > 0}>
       <div class="block-references-inner">
         <div class="block-references-header">
-          {count()} Linked Reference{count() === 1 ? "" : "s"}
+          {t("editor-references-linked-reference", { count: count() })}
         </div>
         <Show when={(groups() ?? []).length > 1}>
-          <div class="reference-bulk-controls" aria-label="Reference page groups">
-            <button type="button" onClick={() => setAllGroups(true)}>Collapse all</button>
-            <button type="button" onClick={() => setAllGroups(false)}>Expand all</button>
+          <div class="reference-bulk-controls" aria-label={t("editor-references-reference-page-groups")}>
+            <button type="button" onClick={() => setAllGroups(bulkCollapseTarget(groups() ?? [], groupCollapsed))}>{t(bulkCollapseTarget(groups() ?? [], groupCollapsed) ? "editor-references-collapse-all" : "editor-references-expand-all")}</button>
           </div>
         </Show>
         <For each={groups()}>
@@ -64,9 +68,9 @@ export function BlockReferences(props: { id: string }): JSX.Element {
               <div class="reference-group-header">
               <button type="button" class="reference-group-disclosure"
                 aria-expanded={!groupCollapsed(g)}
-                aria-label={`${groupCollapsed(g) ? "Expand" : "Collapse"} references from ${g.page}`}
+                aria-label={t("editor-references-references-from", { action: groupCollapsed(g) ? "expand" : "collapse", page: g.page })}
                 onClick={() => setGroupCollapsed(g, !groupCollapsed(g))}
-              >{groupCollapsed(g) ? "▸" : "▾"}</button>
+              ><ReferenceDisclosure collapsed={groupCollapsed(g)} /></button>
               <div
                 class="reference-page"
                 onMouseDown={internalLinkMouseDown}

@@ -55,5 +55,5 @@
   background: var(--bg-tertiary);
 }
 .pp-error {
-  color: var(--danger, #c0392b);
+  color: var(--tine-danger-color, var(--palette-danger));
 }

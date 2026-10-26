@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { createSignal } from "solid-js";
 import { CollapseSurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { backend } from "../backend";
-import { extendSelectionTo, node, pageByName, resetStore, selectedIds, selectBlock } from "../document";
+import { extendSelectionTo, node, pageByName, resetStore, selectedIds, selectBlock, outdentBlock } from "../document";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { mainPaneRouter, resetTabsToJournals } from "../router";
 import { resetNearObserverForTests } from "../lazyObserve";
@@ -11,6 +11,8 @@ import { revealOutlineBlock } from "../outlineViewport";
 import { openInPageFind, setInPageFindQuery, inPageFindMatches, closeInPageFind } from "../inpageFind";
 import { installKeybindings } from "../keybindings";
 import { PageView } from "./Page";
+import * as blockIdentity from "../blockIdentity";
+import { setDoc } from "../document/model";
 
 class WindowObserver {
   static observers: WindowObserver[] = [];
@@ -59,6 +61,24 @@ async function mount(count = 2000, nested = false, branched = false, collapse?: 
   await vi.waitFor(() => expect(host.querySelector(".page-title")?.textContent).toContain("Window"));
   return { host, dispose };
 }
+
+it.each([400, 1500])("GH #248: typing in a zoomed block does not read identities of %i page siblings", async count => {
+  const { host, dispose } = await mount(count);
+  try {
+    mainPaneRouter.focusBlock("window-0");
+    await vi.waitFor(() => expect(host.querySelector(".zoomed-page")).not.toBeNull());
+    startEditing("window-0", 0);
+    await vi.waitFor(() => expect(host.querySelector("textarea.block-editor")).not.toBeNull());
+    const identityReads = vi.spyOn(blockIdentity, "existingBlockId");
+    // Exercise the shared raw-write boundary used by input and ID stamping.
+    for (const suffix of ["x", "xy", "x", ""]) {
+      identityReads.mockClear();
+      setDoc("byId", "window-0", "raw", `Row 0 unique content${suffix}`);
+      expect(host.querySelector(".zoomed-page textarea.block-editor")).not.toBeNull();
+      expect(identityReads.mock.calls.length).toBeLessThan(30);
+    }
+  } finally { dispose(); }
+});
 
 it("GH #623: the routed 2,000-block page mounts bounded shells, including its first usable row", async () => {
   const { host, dispose } = await mount();
@@ -109,6 +129,24 @@ it("click-to-edit retains the clicked instance when editor state changes the pag
     content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
     await vi.waitFor(() => expect(host.querySelector('[data-block-id="window-0"] textarea.block-editor')).not.toBeNull());
     expect(editingId()).toBe("window-0");
+  } finally { dispose(); }
+});
+
+it("GH #745: outdenting a distant child retains previously visited windows above it", async () => {
+  const { host, dispose } = await mount(2000, false, true);
+  try {
+    const first = host.querySelector('[data-block-id="branch-0"]')!;
+    const firstWindow = first.closest("[data-outline-window]")!;
+    // It has been measured/visited and left the viewport. A regroup below must
+    // not replace its host or discard its measured spacer.
+    WindowObserver.set(firstWindow, false);
+    const spacer = firstWindow.firstElementChild;
+    startEditing("window-1000", 4);
+    await vi.waitFor(() => expect(host.querySelector('[data-block-id="window-1000"] textarea')).not.toBeNull());
+    outdentBlock("window-1000", 4);
+    expect(node("window-1000")?.parent).toBeNull();
+    expect(firstWindow.isConnected).toBe(true);
+    expect(firstWindow.firstElementChild).toBe(spacer);
   } finally { dispose(); }
 });
 

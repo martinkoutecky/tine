@@ -1,32 +1,36 @@
-// Guard (og storage.qnt mutant MX): a graph switch goes on only after the old
-// graph's late edits are durable in its draft store, or are held in this
-// window (switchHeldDrafts) with a sticky error saying so. Threat: an edit
-// typed while load_graph ran has no durable copy when the working set is reset;
-// a draft-store refusal (disk error, the 64-page / 8 MiB bound) used to drop it
-// with only a toast. Behaviour: src/graph.test.tsx "MX:" tests and
-// src/unsavedRecovery.test.tsx. Exemplar: loadGraphPath in src/graph.ts.
+// Guard (og storage.qnt mutant MX; STEP3-DESIGN §6): a graph switch goes on only
+// after the old graph's input has custody: published by its page host (the
+// awaited `flushAll` barrier, aborting the switch when it fails), or kept by the
+// host's crash draft. Threat: an edit typed while load_graph ran has no copy
+// when the working set is reset. Step 3b P2b deleted the v1 draft store
+// (`keepAtSwitch`, D-1); the page host owns crash drafts, and §6 step 5 says
+// nothing closes over missing custody. Behaviour: src/graph.test.tsx "MX:"
+// tests. Exemplar: loadGraphPath in src/graph.ts.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const graph = readFileSync(new URL("./graph.ts", import.meta.url), "utf8");
-const store = readFileSync(new URL("./draftStore.ts", import.meta.url), "utf8");
-const RULE = "a graph switch awaits keepAtSwitch before it goes on, and a refused draft stays held in the window (storage.qnt mutant MX)";
+const RULE = "a graph switch resets the old working set only after an awaited publication barrier, and never over input "
+  + "the old host has not taken (storage.qnt mutant MX; STEP3-DESIGN §6 step 5)";
 
 describe("graph switch keeps the old graph's late edits", () => {
-  it("loadGraphPath awaits keepAtSwitch right after resetStore, before the new graph's state", () => {
-    const at = graph.indexOf("keepAtSwitch(oldRoot)");
-    const reset = graph.indexOf("resetStore();", at);
-    const awaited = graph.indexOf("await kept", reset);
-    const next = graph.indexOf("clearWorkspaces();", reset);
-    expect(at, RULE).toBeGreaterThan(0);
-    expect(reset > at && awaited > reset && awaited < next, RULE).toBe(true);
-    expect(graph, RULE).not.toMatch(/void kept/);
+  it("loadGraphPath awaits the last flushAll barrier, aborting on failure, before load_graph and resetStore", () => {
+    const flush = graph.indexOf("if (hadGraph && !(await flushAll())) {");
+    const abort = graph.indexOf("return { kind: \"aborted\" };", flush);
+    const load = graph.indexOf("await backend().loadGraph(path)", flush);
+    const reset = graph.indexOf("resetStore();", load);
+    expect(flush, RULE).toBeGreaterThan(0);
+    expect(abort > flush && abort < load && load < reset, RULE).toBe(true);
+    expect(graph, RULE).not.toMatch(/void flushAll\(\)/);
   });
 
-  it("keepAtSwitch hands the snapshot to the window holder before any write, and releases a record only after its write", () => {
-    const body = store.slice(store.indexOf("export function keepAtSwitch"), store.indexOf("/** Retire a record an earlier session kept"));
-    expect(body.indexOf("setHeld("), RULE).toBeGreaterThan(0);
-    expect(body.indexOf("setHeld("), RULE).toBeLessThan(body.indexOf("storeDraft"));
-    expect(body.indexOf("dismissHeldDraft(record.id)"), RULE).toBeGreaterThan(body.indexOf("storeDraft"));
+  it("loadGraphPath does not reset the working set over input its old host never answered", () => {
+    const load = graph.indexOf("await backend().loadGraph(path)");
+    const reset = graph.indexOf("resetStore();", load);
+    const between = graph.slice(load, reset);
+    const late = between.indexOf("unsavedDrafts()");
+    // Late input found after load_graph must keep custody: the switch stops
+    // (or the input is held) before resetStore, never dropped with a notice.
+    expect(late < 0 || /\breturn\b/.test(between.slice(late)), RULE).toBe(true);
   });
 });

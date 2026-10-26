@@ -1,3 +1,4 @@
+import { msg, render } from "../i18n";
 import type { KnownGraph } from "../backend";
 import type { LoadGraphPathOutcome } from "../graph";
 import type { ContextMenuAction } from "../ui";
@@ -26,20 +27,20 @@ export function graphRowMenuActions(graph: KnownGraph, deps: GraphRowMenuDeps): 
   };
   return [
     ...(deps.desktop ? [{
-      label: deps.isCurrent ? "Open in a new window (already open here)" : "Open in a new window",
+      get label() { return render(deps.isCurrent ? msg("graph-row-menu-open-in-a-new-window-already-open-here") : msg("graph-row-menu-open-in-a-new-window")); },
       disabled: deps.isCurrent, run: () => open(true),
     }] : []),
-    { label: deps.isCurrent ? "Open here (current graph)" : "Open here",
+    { get label() { return render(deps.isCurrent ? msg("graph-row-menu-open-here-current-graph") : msg("graph-row-menu-open-here")); },
       disabled: deps.isCurrent, run: () => open(false) },
-    ...(deps.desktop ? [{ label: "Show in folder", run: () => {
-      void writeOwned(owner, deps.reveal(graph.path)).catch((error) => pushToast(`Could not show the graph folder: ${String(error)}`, "error"));
+    ...(deps.desktop ? [{ get label() { return render(msg("graph-row-menu-show-in-folder")); }, run: () => {
+      void writeOwned(owner, deps.reveal(graph.path)).catch((error) => pushToast(msg("graph-row-menu-could-not-show-the-graph-folder", { error: String(error) }), "error"));
     } }] : []),
-    { label: "Copy link", run: () => void copyTineLink({ root: graph.path }) },
-    { label: "Copy path", run: () => {
-      void writeOwned(owner, deps.copyPath(graph.path)).catch((error) => pushToast(`Could not copy graph path: ${String(error)}`, "error"));
+    { get label() { return render(msg("graph-row-menu-copy-link")); }, run: () => void copyTineLink({ root: graph.path }) },
+    { get label() { return render(msg("graph-row-menu-copy-path")); }, run: () => {
+      void writeOwned(owner, deps.copyPath(graph.path)).catch((error) => pushToast(msg("graph-row-menu-could-not-copy-graph-path", { error: String(error) }), "error"));
     } },
-    { label: "Remove from this list", danger: true, run: () => {
-      void writeOwned(owner, deps.forget(graph.path)).catch((error) => pushToast(`Could not remove graph: ${String(error)}`, "error"));
+    { get label() { return render(msg("graph-row-menu-remove-from-this-list")); }, danger: true, run: () => {
+      void writeOwned(owner, deps.forget(graph.path)).catch((error) => pushToast(msg("graph-row-menu-could-not-remove-graph", { error: String(error) }), "error"));
     } },
   ];
 }

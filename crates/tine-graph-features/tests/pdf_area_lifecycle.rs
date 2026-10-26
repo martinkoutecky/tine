@@ -63,6 +63,7 @@ fn area_path(root: &Path, highlight: &Highlight) -> PathBuf {
 
 #[test]
 fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
+    let _integration_guard = crate::integration_lock();
     let failed_root = scratch("failed-pair");
     fs::create_dir_all(failed_root.join("logseq")).unwrap();
     fs::write(
@@ -89,6 +90,7 @@ fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
     .unwrap();
     assert!(pdf::write_highlights(
         &failed_graph,
+        None,
         "paper.pdf",
         "Paper",
         &[],
@@ -116,6 +118,7 @@ fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
     .unwrap();
     pdf::write_highlights(
         &shared_graph,
+        None,
         "paper.pdf",
         "Paper",
         std::slice::from_ref(&keeper),
@@ -142,6 +145,7 @@ fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
     .unwrap();
     pdf::write_highlights(
         &success_graph,
+        None,
         "paper.pdf",
         "Paper",
         &[],

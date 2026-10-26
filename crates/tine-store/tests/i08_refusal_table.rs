@@ -83,6 +83,7 @@ fn assert_table(actual: &BTreeMap<String, usize>, expected: &BTreeMap<String, us
 
 #[test]
 fn all_production_refusals_have_scenarios() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     // The whole `transaction` module: a refusal moved into a `transaction/` child
     // file must stay counted, or splitting the file would silently empty the table.
@@ -99,26 +100,19 @@ fn all_production_refusals_have_scenarios() {
         transaction.push('\n');
         transaction.push_str(&fs::read_to_string(child).unwrap());
     }
-    let store =
-        fs::read_to_string(root.join("crates/tine-store/src/store/save_failure.rs")).unwrap();
-    let store = store
-        .split("    pub fn save(")
-        .nth(1)
-        .unwrap()
-        .split("fn single_page_failure(")
-        .next()
-        .unwrap();
-    let store = format!("    pub fn save({store}");
+    // `store/save_failure.rs` (`Store::save`) is a test oracle since step 3b
+    // (`#[cfg(any(test, feature = "test-faults"))]`): production saves are
+    // the page host's (STEP3 §12).
     let mut actual = constructions("transaction.rs", &transaction);
-    actual.extend(constructions("store.rs", &store));
     let mapping = fs::read_to_string(root.join("crates/tine-store/src/store.rs")).unwrap();
-    let mapping = mapping
+    // The end marker must exist: a missing one would sweep the rest of the
+    // file, tests included, into the production table.
+    let (mapping, _) = mapping
         .split("impl SaveOutcome {")
         .nth(1)
         .unwrap()
-        .split("/// Result of one ordered page-save request.")
-        .next()
-        .unwrap();
+        .split_once("/// Parsed page and the raw-byte revision used for a guarded save.")
+        .expect("the item after `impl SaveOutcome` ends the mapping");
     actual.extend(constructions("store.rs", mapping));
     let contract = fs::read_to_string(root.join("docs/storage-contract.md")).unwrap();
     assert_table(&actual, &contract_rows(&contract));
@@ -126,6 +120,7 @@ fn all_production_refusals_have_scenarios() {
 
 #[test]
 fn planted_refusal_fails_table() {
+    let _integration_guard = crate::integration_lock();
     let mut actual = BTreeMap::new();
     actual.insert("transaction.rs::new_operation::Twin".to_owned(), 1);
     assert!(

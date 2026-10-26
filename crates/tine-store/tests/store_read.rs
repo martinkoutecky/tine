@@ -50,6 +50,7 @@ impl Drop for Fixture {
 
 #[test]
 fn configured_hidden_paths_are_not_page_claimants_or_path_targets() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     std::fs::create_dir_all(f.0.join("logseq")).unwrap();
     std::fs::create_dir_all(f.0.join("archive/private")).unwrap();
@@ -91,6 +92,7 @@ fn configured_hidden_paths_are_not_page_claimants_or_path_targets() {
 /// aliases are inert; an empty entry hides everything.
 #[test]
 fn hidden_prefix_answers_match_master_for_listing_and_discovery() {
+    let _integration_guard = crate::integration_lock();
     let paths = [
         "archive/Page.md",
         "archive-old/Old.md",
@@ -176,6 +178,7 @@ fn hidden_prefix_answers_match_master_for_listing_and_discovery() {
 /// even where a path starts with those exact bytes (ADR 0062 remaining edge).
 #[test]
 fn hidden_entry_with_unicode_edge_whitespace_is_inert() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     std::fs::create_dir_all(f.0.join("logseq")).unwrap();
     for dir in ["archive\u{a0}old", "\u{3000}notes"] {
@@ -203,6 +206,7 @@ fn hidden_entry_with_unicode_edge_whitespace_is_inert() {
 /// which would admit the text the owner excluded.
 #[test]
 fn malformed_hidden_value_hides_all_graph_text() {
+    let _integration_guard = crate::integration_lock();
     let oversized = format!("{{:hidden [\"{}\"]}}", "x".repeat(64 * 1024));
     for config in [
         r#"{:hidden ["archive" "unterminated"#,
@@ -238,6 +242,7 @@ fn malformed_hidden_value_hides_all_graph_text() {
 /// config reload, and the graph text is back without reopening.
 #[test]
 fn a_repaired_hidden_value_restores_the_graph_text() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     std::fs::create_dir_all(f.0.join("logseq")).unwrap();
     f.put("logseq/config.edn", br#"{:hidden ["archive" "unterminated"#);
@@ -266,6 +271,7 @@ fn a_repaired_hidden_value_restores_the_graph_text() {
 
 #[test]
 fn page_reads_and_publishes_external_edit() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     let store = f.store();
     let id = PageId::from("pages/Note.md");
@@ -278,9 +284,15 @@ fn page_reads_and_publishes_external_edit() {
         serde_json::to_string(&first.rev).unwrap(),
         serde_json::to_string(&store.read(&id.file(), None).unwrap().1).unwrap()
     );
-    let _ = store.whole_graph().unwrap().complete_page_names("Note", 10);
+    let _ = store
+        .whole_graph()
+        .unwrap()
+        .complete_page_names("Note", 10, None, false, None)
+        .into_iter()
+        .map(|(page, _)| page)
+        .collect::<Vec<_>>();
     f.put("pages/Note.md", b"- after edit\n");
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let second = store.page(&id).unwrap();
     assert_eq!(second.doc.blocks[0].raw, "after edit");
     assert_ne!(first.rev, second.rev);
@@ -290,6 +302,7 @@ fn page_reads_and_publishes_external_edit() {
             .unwrap()
             .search(
                 &tine_store::SearchRequest {
+                    transliteration: false,
                     text: "after edit".into(),
                     within: None,
                     page_limit: 10,
@@ -310,6 +323,7 @@ fn page_reads_and_publishes_external_edit() {
 
 #[test]
 fn many_unmatched_openers_on_separate_lines_round_trip() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     let source = format!(
         "{}- {} unpaired openers\n",
@@ -343,6 +357,7 @@ fn many_unmatched_openers_on_separate_lines_round_trip() {
 
 #[test]
 fn direct_first_read_publishes_creation_and_updates_name_claimants() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     let store = f.store();
     store.whole_graph().unwrap();
@@ -361,12 +376,15 @@ fn direct_first_read_publishes_creation_and_updates_name_claimants() {
         matches!(view.resolve("Arrived", false), Resolved::Existing { id: found, .. } if found == id)
     );
     assert!(view
-        .inventory()
+        .inventory(tine_store::InventoryScope::All)
         .0
         .iter()
         .any(|entry| entry.name == "Arrived"));
     assert!(view
-        .complete_page_names("Arr", 10)
+        .complete_page_names("Arr", 10, None, false, None)
+        .into_iter()
+        .map(|(page, _)| page)
+        .collect::<Vec<_>>()
         .iter()
         .any(|entry| entry.name == "Arrived"));
     let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
@@ -385,6 +403,7 @@ fn direct_first_read_publishes_creation_and_updates_name_claimants() {
 
 #[test]
 fn direct_first_read_updates_journal_day_and_derived_answers() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     let store = f.store();
     store.whole_graph().unwrap();
@@ -402,18 +421,22 @@ fn direct_first_read_updates_journal_day_and_derived_answers() {
         matches!(view.resolve("Sep 25th, 2026", true), Resolved::Existing { id: found, .. } if found == id)
     );
     assert!(view
-        .inventory()
+        .inventory(tine_store::InventoryScope::All)
         .0
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));
     assert!(view
-        .complete_page_names("Sep 25", 10)
+        .complete_page_names("Sep 25", 10, None, false, None)
+        .into_iter()
+        .map(|(page, _)| page)
+        .collect::<Vec<_>>()
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));
 }
 
 #[test]
 fn page_reports_invalid_missing_and_undecodable() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     let store = f.store();
     assert!(matches!(
@@ -437,6 +460,7 @@ fn page_reports_invalid_missing_and_undecodable() {
 #[cfg(unix)]
 #[test]
 fn page_symlinks_are_not_pages() {
+    let _integration_guard = crate::integration_lock();
     // v0.6.5's walker skips symlinked page files; neither route reads one.
     let f = Fixture::new();
     let outside = f.0.with_extension("outside.md");
@@ -457,6 +481,7 @@ fn page_symlinks_are_not_pages() {
 
 #[test]
 fn byte_reads_streaming_and_os_handoff() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     let store = f.store();
     let id = store.file_id(Area::Assets, "pic.bin").unwrap();
@@ -488,6 +513,7 @@ fn byte_reads_streaming_and_os_handoff() {
 #[cfg(unix)]
 #[test]
 fn streaming_refuses_symlinked_asset() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     std::os::unix::fs::symlink(f.0.join("assets/pic.bin"), f.0.join("assets/link.bin")).unwrap();
     let store = f.store();
@@ -506,6 +532,7 @@ fn streaming_refuses_symlinked_asset() {
 
 #[test]
 fn page_id_keeps_string_wire_form_beside_a_pathless_dto() {
+    let _integration_guard = crate::integration_lock();
     // The file identity travels as `PageRead.id` (a plain string on the wire),
     // not inside the DTO: the DTO no longer carries a `path`.
     let f = Fixture::new();
@@ -529,6 +556,7 @@ fn page_id_keeps_string_wire_form_beside_a_pathless_dto() {
 
 #[test]
 fn graph_meta_omits_layout_directories() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     let (_, meta, _) = Store::open(&f.0, OpenOptions::default()).unwrap();
     let value = serde_json::to_value(meta).unwrap();
@@ -538,6 +566,7 @@ fn graph_meta_omits_layout_directories() {
 
 #[test]
 fn unreadable_files_reports_skipped_non_utf8_page() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     let store = f.store();
     let view = store.whole_graph().unwrap();
@@ -551,7 +580,7 @@ fn unreadable_files_reports_skipped_non_utf8_page() {
         .iter()
         .all(|page| page.id != "pages/Bad.md"));
     f.put("pages/Bad.md", b"- now readable\n");
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(store
         .whole_graph()
         .unwrap()
@@ -567,6 +596,7 @@ fn unreadable_files_reports_skipped_non_utf8_page() {
 #[cfg(unix)]
 #[test]
 fn unreadable_files_reports_unlistable_page_directory() {
+    let _integration_guard = crate::integration_lock();
     use std::os::unix::fs::PermissionsExt;
     let f = Fixture::new();
     let nested = f.0.join("pages/nested");
@@ -584,6 +614,7 @@ fn unreadable_files_reports_unlistable_page_directory() {
 
 #[test]
 fn resolve_then_page_covers_titles_aliases_namespaces_and_journals() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     std::fs::write(
         f.0.join("pages/Title.md"),
@@ -613,6 +644,7 @@ fn resolve_then_page_covers_titles_aliases_namespaces_and_journals() {
 
 #[test]
 fn page_named_accepts_journal_file_stem() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     std::fs::write(f.0.join("journals/2026_09_25.md"), "- journal\n").unwrap();
     let store = f.store();
@@ -629,6 +661,7 @@ fn page_named_accepts_journal_file_stem() {
 
 #[test]
 fn configured_nested_page_directory_keeps_page_identity() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     std::fs::create_dir_all(f.0.join("logseq")).unwrap();
     std::fs::create_dir_all(f.0.join("archive/pages")).unwrap();
@@ -649,6 +682,7 @@ fn configured_nested_page_directory_keeps_page_identity() {
 #[cfg(unix)]
 #[test]
 fn approved_external_assets_reject_retarget() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     let approved = f.0.with_extension("approved-assets");
     let other = f.0.with_extension("other-assets");

@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tine"
 version.workspace = true
 edition.workspace = true
@@ -21,11 +22,11 @@ serde_json = { workspace = true }
 custom-protocol = ["tauri/custom-protocol"]
 
 [dependencies]
-# `image-png` lets `tauri::image::Image::from_bytes` decode the PNG the lightbox
-# sends, so `copy_image_to_clipboard` can write it to the OS clipboard.
+# `image-png` supports the clipboard plugin's PNG image resources.
 # `devtools` ships the WebKit/WebView inspector in RELEASE builds too (it's on by
 # default only in debug), so users can open it for theme/CSS debugging (GH #31).
 tauri = { version = "2", features = ["image-png", "devtools"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
@@ -74,8 +75,14 @@ tine-ios-folder-picker-native = { path = "ios-folder-picker-native" }
 # src/native_integrations.rs.
 tine-ios-native-integrations = { path = "ios-native-integrations" }
 
+# GH #701: SIGTERM/SIGHUP/SIGINT run an orderly Quit (src/quit_signal.rs).
+# Already in Cargo.lock through tokio; pinned to the version it resolves.
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+signal-hook-registry = "=1.4.8"
+
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console", "Win32_Storage_Packaging_Appx"] }
+clipboard-win = "5.4.1"
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console", "Win32_Storage_Packaging_Appx", "Win32_UI_WindowsAndMessaging"] }
 # Windows uses Schannel through native-tls: the default rustls transport does
 # not inherit every Windows network/certificate policy and failed before
 # fetching latest.json on an otherwise-online Windows 11 system (GH #241).
@@ -86,11 +93,20 @@ tauri-plugin-updater = { version = "2", default-features = false, features = ["n
 reqwest = { version = "0.13", default-features = false, features = ["system-proxy"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# System tray (GH #625): desktop only, so the feature is requested only here.
+# `tray-icon` was already in Cargo.lock as tauri's optional dependency; on
+# Linux it dlopens libayatana-appindicator at run time (no link-time need).
+# LOAD-BEARING PLACEMENT: tauri-cli reads only `[dependencies].tauri` features
+# (and `app.trayIcon` in tauri.conf.json). Finding `tray-icon` there makes it add
+# a hard `Depends` on libayatana-appindicator3 to the .deb/.rpm and bundle the
+# .so into the AppImage; this target table is invisible to it, which keeps the
+# library a `recommends` (src/trayPackaging.guard.test.ts fails on a move).
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-window-state = "2"
 tauri-plugin-single-instance = "2"
 # Read OS-native copied-file lists (CF_HDROP / NSPasteboard file URLs /
-# text/uri-list). Image support stays with Tauri's existing clipboard plugin.
-clipboard-rs = { version = "0.3.5", default-features = false }
+# text/uri-list), with a bounded bitmap alongside the original file on copy.
+clipboard-rs = { version = "0.3.5", default-features = false, features = ["image", "wayland"] }
 # In-app self-update (Win/Linux; macOS stays manual — unsigned). The updater
 # verifies each artifact against `plugins.updater.pubkey` (minisign); process lets
 # the frontend relaunch after `downloadAndInstall()`. See docs/adr + release.yml.
@@ -122,3 +138,8 @@ x11 = { version = "2.21.0", features = ["xlib"] }
 # SIGKILL WebKitGTK's helper subprocesses at quit so they don't run their GL/EGL
 # driver atexit teardown (which double-frees → SIGABRT coredump on many Mesa/driver
 # combos). See platform::kill_webkit_children and GH #28.
+
+# Keep all integration cases in one linked executable.
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

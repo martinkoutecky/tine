@@ -83,12 +83,61 @@ pub(crate) struct QueryPlan {
     page_exact: Option<String>,
     regexes: HashMap<u32, Regex>,
     remove_accents: bool,
+    pub(crate) transliteration: bool,
+    transliteration_queries: HashMap<u32, String>,
+    pub(crate) name_keys: Option<std::sync::Arc<crate::model::NameKeyMap>>,
     page_match_scope: FriendlyPageMatchScope,
     page_view: Option<ViewSettings>,
     block_view: Option<ViewSettings>,
+    // Inline completion lists spellings, while graph search lists identities.
+    pub(crate) separate_aliases: bool,
+    pub(crate) editor_reference_baseline: Option<(String, String, String)>,
 }
 
 impl QueryPlan {
+    pub(crate) fn with_transliteration(mut self, enabled: bool) -> Self {
+        self.transliteration = enabled;
+        if enabled {
+            fn collect(expr: &QueryExpr, queries: &mut HashMap<u32, String>) {
+                match expr {
+                    QueryExpr::Text(pred)
+                        if pred.field == TextField::PageName
+                            && pred.mode != TextMatchMode::Regex =>
+                    {
+                        if let Some(query) = crate::transliteration::normalize_query(&pred.value) {
+                            queries.insert(pred.clause_id, query);
+                        }
+                    }
+                    QueryExpr::And(children) | QueryExpr::Or(children) => {
+                        for child in children {
+                            collect(child, queries);
+                        }
+                    }
+                    QueryExpr::Not(child) => collect(child, queries),
+                    _ => {}
+                }
+            }
+            for branch in &self.branches {
+                collect(&branch.predicate, &mut self.transliteration_queries);
+            }
+        }
+        self
+    }
+
+    fn transliteration_score(
+        &self,
+        original: &str,
+        pred: &TextPredicate,
+    ) -> Option<(i32, ObjectiveMatchClass)> {
+        let names = self.name_keys.as_ref()?;
+        let query = self.transliteration_queries.get(&pred.clause_id)?;
+        let key = crate::transliteration::cache_identity(original)?;
+        names
+            .get(&key)?
+            .score(query)
+            .map(|score| (score, ObjectiveMatchClass::Transliteration))
+    }
+
     fn fold(&self, value: &str) -> String {
         if self.remove_accents {
             canonical_fold(value)
@@ -182,9 +231,14 @@ impl QueryPlan {
             page_exact: (!query.trim().is_empty()).then(|| identity_fold(query.trim())),
             regexes,
             remove_accents,
+            transliteration: false,
+            name_keys: None,
+            transliteration_queries: HashMap::new(),
             page_match_scope,
             page_view: None,
             block_view: None,
+            separate_aliases: false,
+            editor_reference_baseline: None,
         }
     }
 
@@ -250,9 +304,14 @@ impl QueryPlan {
             page_exact: Some(identity_fold(&value)),
             regexes: HashMap::new(),
             remove_accents,
+            transliteration: false,
+            name_keys: None,
+            transliteration_queries: HashMap::new(),
             page_match_scope: FriendlyPageMatchScope::Names,
             page_view: None,
             block_view: None,
+            separate_aliases: false,
+            editor_reference_baseline: None,
         }
     }
 
@@ -304,9 +363,14 @@ impl QueryPlan {
             page_exact: None,
             regexes,
             remove_accents,
+            transliteration: false,
+            name_keys: None,
+            transliteration_queries: HashMap::new(),
             page_match_scope: FriendlyPageMatchScope::Names,
             page_view: None,
             block_view: None,
+            separate_aliases: false,
+            editor_reference_baseline: None,
         }
     }
 
@@ -342,9 +406,14 @@ impl QueryPlan {
             page_exact: None,
             regexes: HashMap::new(),
             remove_accents,
+            transliteration: false,
+            name_keys: None,
+            transliteration_queries: HashMap::new(),
             page_match_scope: FriendlyPageMatchScope::Names,
             page_view: None,
             block_view: None,
+            separate_aliases: false,
+            editor_reference_baseline: None,
         }
     }
 
@@ -356,7 +425,7 @@ impl QueryPlan {
     /// Test-only default-policy shorthand; production passes the graph policy.
     #[cfg(test)]
     pub(crate) fn legacy_page_search(query: &str, limit: usize) -> Self {
-        Self::page_name_fuzzy(query, limit)
+        Self::legacy_page_search_with_policy(query, limit, true)
     }
 
     /// Page picker with the graph's explicit accent policy.
@@ -365,7 +434,9 @@ impl QueryPlan {
         limit: usize,
         remove_accents: bool,
     ) -> Self {
-        Self::page_name_fuzzy_with_policy(query, limit, remove_accents)
+        let mut plan = Self::page_name_fuzzy_with_policy(query, limit, remove_accents);
+        plan.separate_aliases = true;
+        plan
     }
 
     pub(crate) fn explanation(&self) -> QueryExplanation {
@@ -438,6 +509,14 @@ impl QueryPlan {
                 has_more: QueryHasMore::default(),
                 cancelled: false,
             };
+        }
+        if self.transliteration
+            && self.name_keys.is_none()
+            && !graph.transliteration_names.is_empty()
+        {
+            let mut expanded = self.clone();
+            expanded.name_keys = Some(std::sync::Arc::clone(&graph.transliteration_names));
+            return expanded.execute_with_explain(graph, cancelled, explain);
         }
         let mut hits = Vec::new();
         let mut has_more = QueryHasMore::default();
@@ -1026,6 +1105,186 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn alias_completion_preserves_case_and_lists_every_matching_name() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("tine-gh675-{nonce}"));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages/Tine.md"),
+            "alias:: TineOutline, [[Tine Outliner]], SSE\n- body\n",
+        )
+        .unwrap();
+        let graph = snapshot_for_dir(&dir);
+        let entries = crate::query::quick_switch(&graph, "tin", 100);
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"Tine"), "{names:?}");
+        assert!(names.contains(&"TineOutline"), "{names:?}");
+        assert!(names.contains(&"Tine Outliner"), "{names:?}");
+        assert!(entries.iter().all(|e| e.rel_path_str() == "pages/Tine.md"));
+        assert_eq!(
+            crate::query::quick_switch(&graph, "sse", 100)[0].name,
+            "SSE"
+        );
+        assert_eq!(crate::query::quick_switch(&graph, "tin", 1).len(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn alias_completion_preserves_authored_case() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("tine-gh675-case-{nonce}"));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        for (name, content) in [
+            ("Owner.md", "alias:: SSE\n- body\n"),
+            ("Bullet.md", "- aliases:: BulletAlias\n- body\n"),
+            ("Org.org", "#+ALIAS: OrgAlias\n* body\n"),
+            ("Drawer.org", ":PROPERTIES:\n:alias: DrawerAlias\n:END:\n"),
+        ] {
+            fs::write(dir.join("pages").join(name), content).unwrap();
+        }
+        let graph = snapshot_for_dir(&dir);
+        assert_eq!(
+            crate::query::quick_switch(&graph, "sse", 100)[0].name,
+            "SSE"
+        );
+        for name in ["BulletAlias", "OrgAlias", "DrawerAlias"] {
+            assert_eq!(
+                crate::query::quick_switch(&graph, &name.to_lowercase(), 100)[0].name,
+                name
+            );
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pinyin_page_names_are_optional_and_rank_below_native_names() {
+        let dir = std::env::temp_dir().join(format!("tine-pinyin-{}", std::process::id()));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        for name in [
+            "北京",
+            "北景",
+            "臺灣",
+            "北京Notes",
+            "東京",
+            "beijing",
+            "beijing notebook",
+            "x beijing",
+            "b_e_i_j_i_n_g",
+        ] {
+            fs::write(
+                dir.join("pages").join(format!("{name}.md")),
+                "- Han body 北京\n",
+            )
+            .unwrap();
+        }
+        fs::write(dir.join("pages/Owner.md"), "alias:: 南京\n- [[上海]]\n").unwrap();
+        fs::write(dir.join("pages/Han body.md"), "- 北京\n").unwrap();
+        let graph = snapshot_for_dir(&dir);
+        let run = |query: &str, enabled| {
+            QueryPlan::friendly(query, 100, 100)
+                .with_transliteration(enabled)
+                .execute(&graph, || false)
+        };
+        let off = page_hits_to_entries(run("beijing", false).hits);
+        assert!(!off.iter().any(|page| page.name == "北京"));
+        let on = run("beijing", true);
+        let classes: Vec<_> = on
+            .hits
+            .iter()
+            .filter_map(|hit| match hit {
+                QueryHit::Page { match_class, .. } => Some(*match_class),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            &classes[..4],
+            &[
+                ObjectiveMatchClass::Exact,
+                ObjectiveMatchClass::Prefix,
+                ObjectiveMatchClass::Substring,
+                ObjectiveMatchClass::Fuzzy
+            ]
+        );
+        assert!(classes[4..]
+            .iter()
+            .all(|class| *class == ObjectiveMatchClass::Transliteration));
+        let names = |query| {
+            page_hits_to_entries(run(query, true).hits)
+                .into_iter()
+                .map(|page| page.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names("beijing"), names("beijing"));
+        let collisions = names("bj");
+        assert!(
+            collisions.iter().position(|n| n == "北京").unwrap()
+                < collisions.iter().position(|n| n == "北景").unwrap()
+        );
+        assert!(names("taiwan").contains(&"臺灣".into()));
+        assert!(names("beijingnotes").contains(&"北京Notes".into()));
+        assert!(names("dongjing").contains(&"東京".into()));
+        assert!(!names("tokyo").contains(&"東京".into()));
+        assert!(run("nanjing", true).hits.iter().any(|hit| matches!(hit,
+            QueryHit::Page { page, matched_alias: Some(alias), .. }
+            if page.name == "Owner" && alias == "南京")));
+        assert!(names("shanghai").contains(&"上海".into()));
+        assert!(!names("bjng").contains(&"北京".into()));
+        assert!(!names("/beijing/").contains(&"北京".into()));
+        assert!(!names("bj -beijing").contains(&"北京".into()));
+        let blocks = |enabled| {
+            run("beijing", enabled)
+                .hits
+                .into_iter()
+                .filter_map(|hit| match hit {
+                    QueryHit::Block { page, block, .. } => Some((page, block.id)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(blocks(true), blocks(false));
+        assert!(
+            !blocks(true).iter().any(|(page, _)| page == "Han body"),
+            "Han-only body cannot match a Pinyin-only query"
+        );
+        assert!(
+            names("beijing").contains(&"北京".into()),
+            "positive page control"
+        );
+        assert!(names("北京").contains(&"北京".into()));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pinyin_or_preserves_a_later_native_match_class() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        fs::write(dir.path().join("pages/北京.md"), "- body\n").unwrap();
+        let graph = snapshot_for_dir(dir.path());
+        let class = |enabled| {
+            QueryPlan::friendly("beijing OR 北京", 10, 0)
+                .with_transliteration(enabled)
+                .execute(&graph, || false)
+                .hits
+                .into_iter()
+                .find_map(|hit| match hit {
+                    QueryHit::Page {
+                        page, match_class, ..
+                    } if page.name == "北京" => Some(match_class),
+                    _ => None,
+                })
+        };
+        let native = class(false).expect("the native OR branch must match");
+        assert_ne!(native, ObjectiveMatchClass::Transliteration);
+        assert_eq!(class(true), Some(native));
+    }
+
+    #[test]
     fn graph_search_obeys_og_accent_switch_on_real_pages_and_blocks() {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1048,6 +1307,7 @@ mod tests {
                 FriendlyPageMatchScope::Names,
                 None,
                 None,
+                false,
             )
         };
         let default = run(snapshot_for_dir(&dir), "cafe");

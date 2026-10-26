@@ -204,8 +204,258 @@ fn page_names(result: &QueryResult) -> Vec<String> {
     pages.iter().map(|page| page.name.clone()).collect()
 }
 
+// GH #628 / docs Advanced Queries examples 1, 3, 6, 14. OG provenance:
+// graph-parser/util/db.cljs::resolve-input, db/rules.cljc::query-dsl-rules,
+// frontend/db/query-react.cljs::get-query-result (DataScript evaluates triples
+// and predicates together, then returns distinct find values).
+#[test]
+fn gh628_tagged_pages_are_page_rows_and_string_inputs_keep_og_case_semantics() {
+    let _integration_guard = crate::integration_lock();
+    let fixture = open(&[
+        (
+            "pages/Flutter.md",
+            "tags:: Programming\n\n- body\n- another block\n",
+        ),
+        ("pages/Rust.md", "tags:: programming, systems\n\n- body\n"),
+        ("pages/Other.md", "- #programming is only a block tag\n"),
+    ]);
+    for (input, expected) in [
+        (r#""programming""#, vec!["Flutter", "Rust"]),
+        (r#""Programming""#, vec![]), // ordinary strings are NOT lowercased by OG
+        (r#""[[Programming]]""#, vec!["Flutter", "Rust"]),
+        (r#""missing""#, vec![]),
+    ] {
+        let source = format!(
+            r#"{{:query [:find ?name :in $ ?tag :where
+            [?t :block/name ?tag] [?p :block/tags ?t] [?p :block/name ?name]]
+            :inputs [{input}] :view (fn [rows] (throw "never execute"))}}"#
+        );
+        let result = run_ir(
+            &fixture.graph,
+            &advanced_query(&source),
+            &ViewSettings::default(),
+            &ExecutionContext::none(),
+        );
+        assert!(result.report.supported, "{input}: {:?}", result.report);
+        let mut names = page_names(&result);
+        names.sort();
+        assert_eq!(names, expected, "{input}");
+    }
+}
+
+#[test]
+fn gh628_date_windows_keep_strict_inclusive_and_disjunctive_semantics() {
+    let _integration_guard = crate::integration_lock();
+    let today = JournalDate::today();
+    let date = |offset| today.add_days(offset).file_stem().replace('_', "-");
+    let tasks = format!("- TODO lower\n  SCHEDULED: <{}>\n- TODO inside\n  SCHEDULED: <{}>\n- TODO upper\n  SCHEDULED: <{}>\n- TODO deadline only\n  DEADLINE: <{}>\n- TODO both outside and inside\n  SCHEDULED: <{}>\n  DEADLINE: <{}>\n- TODO absent\n", date(0), date(1), date(7), date(2), date(9), date(3));
+    let fixture = open(&[("pages/Tasks.md", &tasks)]);
+    for (attribute, lower, upper, inputs, expected) in [
+        (
+            "[?b :block/scheduled ?d]",
+            ">",
+            "<",
+            ":today :7d-after",
+            vec!["TODO inside"],
+        ),
+        (
+            "[?b :block/scheduled ?d]",
+            ">=",
+            "<=",
+            ":today :+7d",
+            vec!["TODO inside", "TODO lower", "TODO upper"],
+        ),
+        (
+            "(or [?b :block/scheduled ?d] [?b :block/deadline ?d])",
+            ">",
+            "<",
+            ":today :7d-after",
+            vec![
+                "TODO both outside and inside",
+                "TODO deadline only",
+                "TODO inside",
+            ],
+        ),
+        (
+            "[?b :block/deadline ?d]",
+            ">",
+            "<",
+            ":1d-before :7d-after",
+            vec!["TODO both outside and inside", "TODO deadline only"],
+        ),
+    ] {
+        let source = format!("{{:query [:find (pull ?b [*]) :in $ ?lo ?hi :where {attribute} [({lower} ?d ?lo)] [({upper} ?d ?hi)]] :inputs [{inputs}]}}");
+        let result = run_ir(
+            &fixture.graph,
+            &advanced_query(&source),
+            &ViewSettings::default(),
+            &ExecutionContext::none(),
+        );
+        assert!(result.report.supported, "{source}: {:?}", result.report);
+        assert_eq!(block_lines(&result), expected, "{source}");
+    }
+    let numeric = format!("{{:query [:find (pull ?b [*]) :in $ ?lo ?hi :where [?b :block/scheduled ?d] [(> ?d ?lo)] [(< ?d ?hi)]] :inputs [{} {}]}}", today.ordinal_key(), today.add_days(7).ordinal_key());
+    let result = run_ir(
+        &fixture.graph,
+        &advanced_query(&numeric),
+        &ViewSettings::default(),
+        &ExecutionContext::none(),
+    );
+    assert_eq!(block_lines(&result), vec!["TODO inside"]);
+    let unscheduled = r#"[:find (pull ?b [*]) :where [?b :block/marker ?m] (not [(contains? #{"DONE" "CANCELED"} ?m)]) [(missing? $ ?b :block/scheduled)] [(missing? $ ?b :block/deadline)]]"#;
+    let result = run_ir(
+        &fixture.graph,
+        &advanced_query(unscheduled),
+        &ViewSettings::default(),
+        &ExecutionContext::none(),
+    );
+    assert!(result.report.supported, "{:?}", result.report);
+    assert_eq!(block_lines(&result), vec!["TODO absent"]);
+}
+
+#[test]
+fn gh628_docs_wildcard_marker_and_page_ref_input_rules_answer_exactly() {
+    let _integration_guard = crate::integration_lock();
+    let today = JournalDate::today();
+    let journal_path = format!("journals/{}.md", today.file_stem());
+    let fixture = open(&[(
+        journal_path.as_str(),
+        "- TODO [[datalog]]\n- DONE finished\n- plain\n",
+    )]);
+    for (source, expected) in [
+        (
+            r#"[:find (pull ?b [*]) :where [?b :block/marker _]]"#,
+            vec!["DONE finished", "TODO [[datalog]]"],
+        ),
+        (
+            r#"{:query [:find (pull ?b [*]) :in $ ?start ?today ?tag :where (between ?b ?start ?today) (page-ref ?b ?tag)] :inputs [:-7d :today "datalog"]}"#,
+            vec!["TODO [[datalog]]"],
+        ),
+        (
+            r#"{:query [:find (pull ?b [*]) :in $ ?start ?end :where (between ?b ?start ?end)] :inputs [:tomorrow :today]}"#,
+            vec![],
+        ),
+    ] {
+        let result = run_ir(
+            &fixture.graph,
+            &advanced_query(source),
+            &ViewSettings::default(),
+            &ExecutionContext::none(),
+        );
+        assert!(result.report.supported, "{source}: {:?}", result.report);
+        assert_eq!(block_lines(&result), expected);
+    }
+}
+
+#[test]
+fn gh628_direct_reference_identity_joins_do_not_inherit_ancestors_or_owning_page() {
+    let _integration_guard = crate::integration_lock();
+    let fixture = open(&[
+        ("pages/Project.md", "- no explicit ref on the owning page\n"),
+        (
+            "pages/Links.md",
+            "- parent [[Project]]\n  - child without reference\n- direct [[Project]]\n- other\n",
+        ),
+    ]);
+    for source in [
+        r#"[:find (pull ?b [*]) :where [?p :block/name "project"] [?b :block/refs ?p]]"#,
+        r#"{:query [:find (pull ?b [*]) :in $ ?name :where [?p :block/name ?name] [?b :block/refs ?p]] :inputs ["project"]}"#,
+        CURRENT_PAGE_QUERY,
+    ] {
+        let result = run_ir(
+            &fixture.graph,
+            &advanced_query(source),
+            &ViewSettings::default(),
+            &ExecutionContext::on_page("Project"),
+        );
+        assert!(result.report.supported, "{source}: {:?}", result.report);
+        assert_eq!(
+            block_lines(&result),
+            vec!["direct [[Project]]", "parent [[Project]]"]
+        );
+    }
+    let physical = r#"{:query [:find (pull ?b [*]) :in $ ?name :where [?p :block/name ?name] [?b :block/page ?p]] :inputs ["[[Project]]"]}"#;
+    let result = run_ir(
+        &fixture.graph,
+        &advanced_query(physical),
+        &ViewSettings::default(),
+        &ExecutionContext::none(),
+    );
+    assert_eq!(
+        block_lines(&result),
+        vec!["no explicit ref on the owning page"]
+    );
+    // The direct relation prints to an executable TQL filter with the same rows.
+    assert_eq!(
+        block_lines(&run_text(
+            &fixture.graph,
+            "direct_ref('project')",
+            QueryDialect::Tql
+        )),
+        vec!["direct [[Project]]", "parent [[Project]]"]
+    );
+    let upper = physical
+        .replace(":block/page", ":block/refs")
+        .replace("[[Project]]", "Project");
+    let result = run_ir(
+        &fixture.graph,
+        &advanced_query(&upper),
+        &ViewSettings::default(),
+        &ExecutionContext::none(),
+    );
+    assert!(result.report.supported);
+    assert!(
+        block_lines(&result).is_empty(),
+        "ordinary input strings retain case in OG"
+    );
+}
+
+#[test]
+fn gh628_direct_refs_include_og_marker_priority_and_namespace_prefixes() {
+    let _integration_guard = crate::integration_lock();
+    let fixture = open(&[("pages/Refs.md", "- TODO [#A] [[project/sub]]\n- plain\n")]);
+    for page in ["todo", "a", "project", "project/sub"] {
+        let source = format!(
+            r#"[:find (pull ?b [*]) :where [?p :block/name "{page}"] [?b :block/refs ?p]]"#
+        );
+        let result = run_ir(
+            &fixture.graph,
+            &advanced_query(&source),
+            &ViewSettings::default(),
+            &ExecutionContext::none(),
+        );
+        assert!(result.report.supported, "{page}: {:?}", result.report);
+        assert_eq!(
+            block_lines(&result),
+            vec!["TODO [#A] [[project/sub]]"],
+            "{page}"
+        );
+    }
+}
+
+#[test]
+fn gh628_docs_simple_query_map_uses_the_existing_simple_engine() {
+    let _integration_guard = crate::integration_lock();
+    let fixture = open(&[(
+        "pages/Tasks.md",
+        "- DOING [#A] chosen\n- DOING [#B] other priority\n- TODO [#A] other marker\n",
+    )]);
+    let tine_core::query_edn::BeginQueryMatch::Supported { query, .. } =
+        tine_core::query_edn::inspect_begin_query(
+            r#"{:title "Tasks" :query (and (todo DOING) (priority A))}"#,
+        )
+    else {
+        panic!("simple map supported");
+    };
+    assert_eq!(
+        block_lines(&run_text(&fixture.graph, &query, QueryDialect::Og)),
+        vec!["DOING [#A] chosen"]
+    );
+}
+
 #[test]
 fn optional_block_attributes_are_two_valued() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     let graph = &fixture.graph;
     case(
@@ -234,19 +484,115 @@ fn optional_block_attributes_are_two_valued() {
         ],
     );
     case(graph, "(deadline)", &["DEADLINE: <2026-08-01 Sat>"]);
-    case(
-        graph,
-        "(between scheduled 2026-07-29 2026-07-31)",
-        &[
-            "SCHEDULED: <2026-07-29 Wed>",
-            "TODO marked and scheduled",
-            "`SCHEDULED: <2026-07-29 Wed>` inside inline code",
-        ],
-    );
+    case(graph, "(between scheduled 2026-07-29 2026-07-31)", &[]);
+}
+
+#[test]
+fn d18_conversion_and_agenda_keep_the_previous_answers() {
+    let _integration_guard = crate::integration_lock();
+    use tine_core::query::print::{query_print, PrintDialect};
+    use tine_core::query::registry::Registry;
+    use tine_core::query::wire_parse::{parse_query_pair, QueryTextDialect};
+    let today = JournalDate::today();
+    let date = |n| today.add_days(n).file_stem().replace('_', "-");
+    let mut text = String::new();
+    for n in [-8, -7, -2, -1, 0, 1, 2, 7, 8] {
+        for (marker, fields) in [
+            ("TODO", vec!["SCHEDULED"]),
+            ("DOING", vec!["DEADLINE"]),
+            ("", vec!["SCHEDULED"]),
+            ("TODO", vec!["SCHEDULED", "DEADLINE"]),
+            ("DONE", vec!["SCHEDULED"]),
+            ("CANCELED", vec!["DEADLINE"]),
+            ("CANCELLED", vec!["SCHEDULED"]),
+        ] {
+            text.push_str(&format!("- {marker} item {n} {}\n", fields.join("+")));
+            for field in fields {
+                text.push_str(&format!("  {field}: <{}>\n", date(n)));
+            }
+        }
+    }
+    text.push_str("- TODO unscheduled\n- [#A] unmarked\n");
+    for format in ["md", "org"] {
+        let content = if format == "org" {
+            text.lines()
+                .map(|l| {
+                    if let Some(body) = l.strip_prefix("- ") {
+                        format!("* {body}")
+                    } else {
+                        l.trim_start().to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            text.clone()
+        };
+        let fixture = open(&[(&format!("pages/Windows.{format}"), &content)]);
+        for field in ["scheduled", "deadline"] {
+            let w = format!("(between {field} today +7d)");
+            for source in [
+                w.clone(),
+                format!("(and {w} (task TODO))"),
+                format!("(or {w} (task TODO))"),
+                format!("(not {w})"),
+                format!("(and (task TODO) (or (not {w}) (priority A)))"),
+                format!("(and (task) {w})"),
+            ] {
+                let parsed =
+                    parse_query_pair(&source, QueryTextDialect::MacroQuery, &[], Registry::none());
+                let refused = run_ir(
+                    &fixture.graph,
+                    &parsed.query,
+                    &parsed.view,
+                    &ExecutionContext::none(),
+                );
+                assert!(block_lines(&refused).is_empty());
+                assert!(!refused.diagnostics.is_empty());
+                // Baseline behavior: the original tree without the new refusal.
+                let mut old = parsed.query.clone();
+                old.diagnostics.clear();
+                let before = block_lines(&run_ir(
+                    &fixture.graph,
+                    &old,
+                    &parsed.view,
+                    &ExecutionContext::none(),
+                ));
+                let converted = &parsed.og_hint.unwrap().rewrites[0].query;
+                let printed =
+                    query_print(converted, &parsed.view, PrintDialect::Tql, false).unwrap();
+                assert_eq!(
+                    before,
+                    block_lines(&run_text(&fixture.graph, &printed, QueryDialect::Tql)),
+                    "{format}: {source}"
+                );
+            }
+        }
+        for ahead in [-2, 0, 2] {
+            let hi = format!("{}{ahead}d", if ahead < 0 { "" } else { "+" });
+            let old_source = format!("(and (or (between scheduled -7d {hi}) (between deadline -7d {hi})) (not (task DONE CANCELED CANCELLED)))");
+            let (mut old, view) = parse_query_text(&old_source, QueryDialect::Og, today);
+            old.diagnostics.clear();
+            let before = block_lines(&run_ir(
+                &fixture.graph,
+                &old,
+                &view,
+                &ExecutionContext::none(),
+            ));
+            let tql = format!("@block and (scheduled between '-7d' and '{hi}' or deadline between '-7d' and '{hi}') and not (task in ('DONE', 'CANCELED', 'CANCELLED'))");
+            let after = block_lines(&run_text(&fixture.graph, &tql, QueryDialect::Tql));
+            assert_eq!(before, after, "agenda {format} ahead={ahead}");
+            assert!(!after.is_empty());
+            assert!(after.iter().all(|s| !s.starts_with("DONE")
+                && !s.starts_with("CANCELED")
+                && !s.starts_with("CANCELLED")));
+        }
+    }
 }
 
 #[test]
 fn property_leaves_are_two_valued_over_atoms() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     let graph = &fixture.graph;
     case(
@@ -269,6 +615,7 @@ fn property_leaves_are_two_valued_over_atoms() {
 
 #[test]
 fn a_leaf_block_satisfies_every_over_its_empty_children() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     let (query, _) = parse_query_text(
         "every(children, task = 'DONE')",
@@ -292,6 +639,7 @@ fn a_leaf_block_satisfies_every_over_its_empty_children() {
 
 #[test]
 fn any_over_children_is_false_on_a_leaf_block() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     let result = run_text(
         &fixture.graph,
@@ -303,6 +651,7 @@ fn any_over_children_is_false_on_a_leaf_block() {
 
 #[test]
 fn the_page_anchor_returns_page_rows() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     let (query, _) = parse_query_text(
         "@page and name like 'proj/%'",
@@ -324,8 +673,35 @@ fn the_page_anchor_returns_page_rows() {
     assert_eq!(page_names(&result).len(), 1, "{:?}", result.rows);
 }
 
+/// GH #619 c6: a `page` hop read from a page row is that row (the OG parser's
+/// `rebase_to_page`). The builder's page conditions (On page, In namespace,
+/// In a journal page) carry the hop at either anchor, and the Pages twin of a
+/// block query keeps it until printed, so the live run, the saved text and
+/// the printed twin must agree on the same pages.
+#[test]
+fn a_page_hop_from_a_page_row_is_the_row_itself() {
+    let _integration_guard = crate::integration_lock();
+    let fixture = truth_graph();
+    let (block, view) = parse_query_text(
+        "page.name like 'proj/%'",
+        QueryDialect::Tql,
+        JournalDate::today(),
+    );
+    assert!(!block.is_invalid(), "{:?}", block.diagnostics);
+    let at_page = Query {
+        anchor: Anchor::Page,
+        ..block
+    };
+    let live = run_ir(&fixture.graph, &at_page, &view, &ExecutionContext::none());
+    assert_eq!(page_names(&live), vec!["Proj/Sub"]);
+    let printed = tine_core::query::print::print_tql(&at_page);
+    let saved = run_text(&fixture.graph, &printed, QueryDialect::Tql);
+    assert_eq!(page_names(&saved), page_names(&live), "{printed}");
+}
+
 #[test]
 fn the_journal_page_attribute_is_a_page_row_leaf() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     let result = run_text(
         &fixture.graph,
@@ -338,6 +714,7 @@ fn the_journal_page_attribute_is_a_page_row_leaf() {
 /// I-12 as a test: the OG and TQL spellings of one filter return the same rows.
 #[test]
 fn the_two_dialects_agree_row_for_row() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     let graph = &fixture.graph;
     for (og, tql) in [
@@ -360,6 +737,7 @@ fn the_two_dialects_agree_row_for_row() {
 /// the tag and is NOT an answer; `Target` is named by it and has no tags itself.
 #[test]
 fn all_page_tags_selects_every_page_some_page_uses_as_a_tag() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[
         ("pages/Alpha.md", "tags:: Target\n\n- a block on Alpha\n"),
         ("pages/Target.md", "- a block on the tag page\n"),
@@ -384,6 +762,7 @@ fn all_page_tags_selects_every_page_some_page_uses_as_a_tag() {
 /// (the one graph-wide read; every other leaf is page-local).
 #[test]
 fn all_page_tags_answer_follows_an_edit_of_another_pages_tags() {
+    let _integration_guard = crate::integration_lock();
     let dir = TempDir::new();
     std::fs::create_dir_all(dir.path().join("pages")).unwrap();
     write(
@@ -442,6 +821,7 @@ fn all_page_tags_answer_follows_an_edit_of_another_pages_tags() {
 /// without a `tags::` of its own).
 #[test]
 fn all_page_tags_round_trips_through_tql() {
+    let _integration_guard = crate::integration_lock();
     use std::collections::BTreeSet;
     use tine_core::query::print::{query_print, PrintDialect};
 
@@ -501,6 +881,7 @@ fn all_page_tags_round_trips_through_tql() {
 /// REG-P0-QUERY-UNKNOWN-HEAD-001.
 #[test]
 fn an_unknown_head_returns_nothing_rather_than_a_shorter_query() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     assert_eq!(rows(&fixture.graph, "(task TODO)").len(), 4);
     case(&fixture.graph, "(and (task TODO) (frobnicate x))", &[]);
@@ -510,6 +891,7 @@ fn an_unknown_head_returns_nothing_rather_than_a_shorter_query() {
 /// the query spells its literal.
 #[test]
 fn property_atoms_compare_by_their_keys_effective_type() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[(
         "pages/Typed.md",
         "\
@@ -558,6 +940,7 @@ fn property_atoms_compare_by_their_keys_effective_type() {
 /// end to end.
 #[test]
 fn two_groups_of_the_same_name_are_ordered_journal_first() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[
         ("journals/2026_07_29.md", "- TODO from the journal\n"),
         ("pages/Jul 29th, 2026.md", "- TODO from the named page\n"),
@@ -585,6 +968,7 @@ fn two_groups_of_the_same_name_are_ordered_journal_first() {
 /// `SCHEDULED:` on the marker's own line.
 #[test]
 fn planning_on_the_markers_own_line() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[(
         "pages/Planning.md",
         "- TODO SCHEDULED: <2026-08-05 Wed>\n- TODO on its own\n  SCHEDULED: <2026-08-06 Thu>\n",
@@ -626,7 +1010,108 @@ fn advanced_query(source: &str) -> Query {
 }
 
 #[test]
+fn advanced_page_property_returns_the_bound_entity() {
+    let _integration_guard = crate::integration_lock();
+    let fixture = open(&[
+        (
+            "pages/Alpha.md",
+            "type:: Program\nstatus:: active\n\n- TODO alpha body\n- other body\n",
+        ),
+        (
+            "pages/Beta.org",
+            "#+type: Program\n#+status: archived\n\n* TODO beta body\n",
+        ),
+        ("pages/Other.md", "type:: Book\n\n- TODO unrelated\n"),
+    ]);
+    for (clauses, expected) in [
+        ("(page-property ?entity :type \"Program\")", vec!["Alpha", "Beta"]),
+        ("(and (page-property ?entity :type \"Program\") (page-property ?entity :status \"active\"))", vec!["Alpha"]),
+        ("(or (page-property ?entity :status \"active\") (page-property ?entity :status \"archived\"))", vec!["Alpha", "Beta"]),
+        ("(page-property ?entity :type \"Program\") (not (page-property ?entity :status \"archived\"))", vec!["Alpha"]),
+    ] {
+        for projection in ["?entity", "(pull ?entity [*])"] {
+            let source = format!("[:find {projection} :where {clauses}]");
+            let result = run_ir(&fixture.graph, &advanced_query(&source), &ViewSettings::default(), &ExecutionContext::none());
+            assert!(result.report.supported, "{source}: {:?}", result.report);
+            assert_eq!(page_names(&result), expected, "{source}");
+        }
+    }
+    for clauses in [
+        "[?b :block/page ?p] (page-property ?p :type \"Program\") (task ?b \"TODO\")",
+        "(task ?b \"TODO\") (page-property ?p :type \"Program\") [?b :block/page ?p]",
+    ] {
+        let source = format!("[:find (pull ?b [*]) :where {clauses}]");
+        let result = run_ir(
+            &fixture.graph,
+            &advanced_query(&source),
+            &ViewSettings::default(),
+            &ExecutionContext::none(),
+        );
+        assert!(result.report.supported, "{source}: {:?}", result.report);
+        assert_eq!(
+            block_lines(&result),
+            vec!["TODO alpha body", "TODO beta body"]
+        );
+    }
+    for clauses in [
+        "(page-property ?p :type \"Program\") (task ?p \"TODO\")",
+        "(page-property ?other :type \"Program\")",
+        "(not (page-property ?p :type \"Program\"))",
+    ] {
+        let source = format!("[:find (pull ?p [*]) :where {clauses}]");
+        let result = run_ir(
+            &fixture.graph,
+            &advanced_query(&source),
+            &ViewSettings::default(),
+            &ExecutionContext::none(),
+        );
+        assert!(!result.report.supported, "{source}");
+    }
+}
+
+#[test]
+fn advanced_page_property_refreshes_after_save_and_reopen() {
+    let _integration_guard = crate::integration_lock();
+    let dir = TempDir::new();
+    std::fs::create_dir_all(dir.path().join("pages")).unwrap();
+    write(
+        dir.path(),
+        "pages/Alpha.md",
+        "type:: Program\n\n- alpha body\n",
+    );
+    let (store, _, _) = Store::open(dir.path(), OpenOptions::default()).unwrap();
+    let query = advanced_query("[:find (pull ?p [*]) :where (page-property ?p :type \"Program\")]");
+    let answer = |store: &Store| {
+        run_ir(
+            &store.whole_graph().unwrap(),
+            &query,
+            &ViewSettings::default(),
+            &ExecutionContext::none(),
+        )
+    };
+    assert_eq!(page_names(&answer(&store)), vec!["Alpha"]);
+    let id = tine_store::PageId::from("pages/Alpha.md");
+    let read = store.page(&id).unwrap();
+    let mut doc = read.doc;
+    doc.pre_block = Some("type:: Book".into());
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::SaveBlock,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &doc
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+    assert!(page_names(&answer(&store)).is_empty());
+    drop(store);
+    let (reopened, _, _) = Store::open(dir.path(), OpenOptions::default()).unwrap();
+    assert!(page_names(&answer(&reopened)).is_empty());
+}
+
+#[test]
 fn one_parse_answers_differently_on_two_current_pages() {
+    let _integration_guard = crate::integration_lock();
     let fixture = binding_graph();
     let graph = &fixture.graph;
     let query = advanced_query(CURRENT_PAGE_QUERY);
@@ -637,14 +1122,8 @@ fn one_parse_answers_differently_on_two_current_pages() {
     let view = ViewSettings::default();
     let on_alpha = run_ir(graph, &query, &view, &ExecutionContext::on_page("Alpha"));
     let on_beta = run_ir(graph, &query, &view, &ExecutionContext::on_page("Beta"));
-    assert_eq!(
-        block_lines(&on_beta),
-        vec!["beta body", "links to [[Beta]] and more"]
-    );
-    assert_eq!(
-        block_lines(&on_alpha),
-        vec!["alpha body", "links to [[Alpha]]"]
-    );
+    assert_eq!(block_lines(&on_beta), vec!["links to [[Beta]] and more"]);
+    assert_eq!(block_lines(&on_alpha), vec!["links to [[Alpha]]"]);
     assert!(on_alpha.report.supported && on_beta.report.supported);
     assert!(on_alpha
         .report
@@ -656,6 +1135,7 @@ fn one_parse_answers_differently_on_two_current_pages() {
 
 #[test]
 fn a_missing_runtime_input_is_strict_no_results_with_a_report() {
+    let _integration_guard = crate::integration_lock();
     let fixture = binding_graph();
     let query = advanced_query(CURRENT_PAGE_QUERY);
     let result = run_ir(
@@ -671,6 +1151,7 @@ fn a_missing_runtime_input_is_strict_no_results_with_a_report() {
 
 #[test]
 fn a_relative_date_query_answers_for_the_execution_day_across_a_rollover() {
+    let _integration_guard = crate::integration_lock();
     let query = advanced_query("[:find (pull ?b [*]) :where (between ?b -7d today)]");
     let context = ExecutionContext::none();
     let thursday = JournalDate {
@@ -692,17 +1173,15 @@ fn a_relative_date_query_answers_for_the_execution_day_across_a_rollover() {
 
 #[test]
 fn run_and_explain_agree_on_results_and_report() {
+    let _integration_guard = crate::integration_lock();
     let fixture = binding_graph();
     let query = advanced_query(CURRENT_PAGE_QUERY);
     let context = ExecutionContext::on_page("Beta");
     let run = run_ir(&fixture.graph, &query, &ViewSettings::default(), &context);
     let explained = explain(&fixture.graph, &query, &context);
     assert_eq!(run.report, explained.report);
-    assert_eq!(run.total, 2, "{:?}", run.rows);
-    assert_eq!(
-        block_lines(&run),
-        vec!["beta body", "links to [[Beta]] and more"]
-    );
+    assert_eq!(run.total, 1, "{:?}", run.rows);
+    assert_eq!(block_lines(&run), vec!["links to [[Beta]] and more"]);
     // The explanation counts the BOUND tree, not the advanced placeholder.
     assert_eq!(explained.rows.len(), 1, "{:?}", explained.rows);
     assert_eq!(explained.rows[0].alone, run.total);
@@ -710,6 +1189,7 @@ fn run_and_explain_agree_on_results_and_report() {
 
 #[test]
 fn explain_empty_reports_a_failed_resolution_without_misleading_counts() {
+    let _integration_guard = crate::integration_lock();
     let fixture = binding_graph();
     let query = advanced_query(CURRENT_PAGE_QUERY);
     let explained = explain(&fixture.graph, &query, &ExecutionContext::none());
@@ -725,6 +1205,7 @@ fn explain_empty_reports_a_failed_resolution_without_misleading_counts() {
 /// an unrelated edit keeps it (memoized, scoped invalidation).
 #[test]
 fn an_edit_moves_the_answer_and_an_unrelated_edit_keeps_it() {
+    let _integration_guard = crate::integration_lock();
     let dir = TempDir::new();
     std::fs::create_dir_all(dir.path().join("pages")).unwrap();
     write(dir.path(), "pages/A.md", "- TODO first\n");
@@ -768,6 +1249,7 @@ fn an_edit_moves_the_answer_and_an_unrelated_edit_keeps_it() {
 /// here) and did not answer.
 #[test]
 fn an_admitted_limit_like_pattern_over_long_blocks_answers_within_a_bound() {
+    let _integration_guard = crate::integration_lock();
     let block = format!("{}c", "a".repeat(128 * 1024));
     let page: String = (0..8).map(|_| format!("- {block}\n")).collect();
     let fixture = open(&[
@@ -801,6 +1283,7 @@ fn an_admitted_limit_like_pattern_over_long_blocks_answers_within_a_bound() {
 /// unsampled query still reports the bound.
 #[test]
 fn a_sampled_page_query_over_the_row_bound_returns_its_sample() {
+    let _integration_guard = crate::integration_lock();
     let dir = TempDir::new();
     std::fs::create_dir_all(dir.path().join("pages")).expect("pages");
     std::fs::create_dir_all(dir.path().join("journals")).expect("journals");
@@ -826,6 +1309,7 @@ fn a_sampled_page_query_over_the_row_bound_returns_its_sample() {
 
 #[test]
 fn hierarchy_relations_select_anchors_through_tql() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[(
         "pages/Outline.md",
         "- project [[RootRef]]\n\t- middle\n\t\t- TODO needle\n\t\t- DONE other\n- outside\n",
@@ -852,6 +1336,7 @@ fn hierarchy_relations_select_anchors_through_tql() {
 
 #[test]
 fn hierarchy_quantifiers_agree_with_strict_tree_sets() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[(
         "pages/Tree.md",
         "- root\n\t- TODO branch\n\t\t- DONE leaf\n\t- DONE sibling\n- TODO outside\n",
@@ -912,6 +1397,7 @@ fn hierarchy_quantifiers_agree_with_strict_tree_sets() {
 
 #[test]
 fn hierarchy_rows_use_their_own_refs_and_refresh_after_an_edit() {
+    let _integration_guard = crate::integration_lock();
     let dir = TempDir::new();
     std::fs::create_dir_all(dir.path().join("pages")).unwrap();
     write(
@@ -969,6 +1455,7 @@ fn hierarchy_rows_use_their_own_refs_and_refresh_after_an_edit() {
 
 #[test]
 fn hierarchy_queries_work_in_org_and_crlf_markdown() {
+    let _integration_guard = crate::integration_lock();
     for (path, text) in [
         (
             "pages/Outline.org",
@@ -994,6 +1481,7 @@ fn hierarchy_queries_work_in_org_and_crlf_markdown() {
 
 #[test]
 fn hierarchy_guide_example_runs_with_search_syntax_inside_relations() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[(
         "pages/Project.md",
         "- project\n\t- branch\n\t\t- budget action\n\t\t- approved\n\t\t- budget draft\n",

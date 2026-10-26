@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { startEditing } from "../editorController";
-import { openPage } from "../router";
+import { openPage, route } from "../router";
 import { resetPaneLayoutToSingle } from "../panes";
 
 vi.mock("../editorController", async (original) => ({ ...(await original<object>()), startEditing: vi.fn() }));
@@ -49,6 +49,17 @@ describe("OccurrenceControls (GH #200: no redundant count/jump for a single ment
   });
 });
 
+describe("OccurrenceControls second gate (GH #200 option A: only what the surface cannot show)", () => {
+  it("hides the circles when the surface already shows every mention, shows them past it", () => {
+    const shown = document.createElement("div");
+    render(() => <OccurrenceControls evidence={evidence(3)} onOccurrence={() => {}} visible={3} />, shown);
+    expect(shown.querySelector(".reference-occurrence-controls")).toBeNull();
+    const past = document.createElement("div");
+    render(() => <OccurrenceControls evidence={evidence(4)} onOccurrence={() => {}} visible={3} />, past);
+    expect(past.querySelectorAll(".reference-occurrence-jump")).toHaveLength(4);
+  });
+});
+
 const WORD = "Books";
 
 function blockWith(mentions: number, gap: number): { block: BlockDto; evidence: ReferenceBlockEvidence } {
@@ -75,43 +86,88 @@ function renderExcerpt(mentions: number, gap: number) {
   return host;
 }
 
-describe("Unlinked reference occurrences (GH #200 round 2: the highlight is the affordance)", () => {
-  it("retires the numbered jump row when the excerpt already shows every mention", () => {
+const marks = (host: HTMLElement) => [...host.querySelectorAll<HTMLButtonElement>(".reference-excerpt-mark")];
+const circle = (host: HTMLElement, ordinal: number) =>
+  host.querySelectorAll<HTMLButtonElement>(".reference-occurrence-jump")[ordinal - 1];
+
+// GH #200 option A (Martin 2026-09-16, re-affirmed 2026-10-17 over GH #556
+// items 1 and 3): the marks are the affordance; numbered circles exist only for
+// mentions the excerpt cannot show (total > what the surface already shows).
+describe("Unlinked reference occurrences (GH #200 option A: the highlight is the affordance)", () => {
+  it("retires the numbered circles when the excerpt already shows every mention", () => {
     // A SHORT block with four mentions used to render four marks AND four
     // numbered circles saying the same thing twice.
     const host = renderExcerpt(4, 4);
-    expect(host.querySelectorAll(".reference-excerpt-mark").length).toBe(4);
+    expect(marks(host)).toHaveLength(4);
+    expect(host.querySelectorAll(".reference-occurrence-jump")).toHaveLength(0);
     expect(host.querySelector(".reference-occurrence-controls")).toBeNull();
     expect(host.textContent ?? "").not.toContain("4 mentions");
   });
 
   it("makes each highlighted mention a real button naming the page and the mention's ordinal", () => {
     const host = renderExcerpt(3, 4);
-    const marks = [...host.querySelectorAll<HTMLButtonElement>(".reference-excerpt-mark")];
-    expect(marks.map((mark) => mark.tagName)).toEqual(["BUTTON", "BUTTON", "BUTTON"]);
-    expect(marks.map((mark) => mark.getAttribute("aria-label"))).toEqual([
+    expect(marks(host).map((mark) => mark.tagName)).toEqual(["BUTTON", "BUTTON", "BUTTON"]);
+    expect(marks(host).map((mark) => mark.getAttribute("aria-label"))).toEqual([
       "Open mention 1 in Journal",
       "Open mention 2 in Journal",
       "Open mention 3 in Journal",
     ]);
   });
 
-  it("keeps the jump row when mentions fall outside the excerpt windows", () => {
-    // The excerpt caps at three windows, so later mentions are unreachable
-    // without the numbered row.
-    const host = renderExcerpt(6, 400);
-    expect(host.querySelectorAll(".reference-excerpt-mark").length).toBeLessThan(6);
-    expect(host.querySelector(".reference-occurrence-controls")).not.toBeNull();
-    expect(host.textContent ?? "").toContain("6 mentions");
+  it("shows no circles at the cap: every mention fits the excerpt", () => {
+    // The excerpt caps at three windows; three far-apart mentions all fit.
+    const host = renderExcerpt(3, 400);
+    expect(marks(host)).toHaveLength(3);
+    expect(host.querySelectorAll(".reference-occurrence-jump")).toHaveLength(0);
   });
 
-  it("marks every mention once the block is expanded, and retires the row with it", () => {
+  it("shows the circles only once mentions fall past the excerpt windows", () => {
+    // One mention more than the cap: the fourth is unreachable without a circle.
+    const host = renderExcerpt(4, 400);
+    expect(marks(host).length).toBeLessThan(4);
+    expect(host.querySelector(".reference-occurrence-controls")).not.toBeNull();
+    expect(host.textContent ?? "").toContain("4 mentions");
+    expect(host.querySelectorAll(".reference-occurrence-jump")).toHaveLength(4);
+  });
+
+  it("a circle jumps to its mention in the source page (it does not re-pick a highlight)", () => {
+    vi.useFakeTimers();
+    const host = renderExcerpt(6, 400);
+    circle(host, 6).click();
+    vi.advanceTimersByTime(200);
+    expect(route()).toMatchObject({ kind: "page", name: "Journal", pageKind: "journal" });
+    expect(startEditing).toHaveBeenCalledOnce();
+    expect(circle(host, 6).getAttribute("aria-pressed")).toBeNull();
+  });
+
+  it("marks every mention once the block is expanded, and retires the circles with it", () => {
     const host = renderExcerpt(6, 400);
     host.querySelector<HTMLButtonElement>(".reference-show-full")!.click();
-    expect(host.querySelectorAll(".reference-excerpt-mark").length).toBe(6);
+    expect(marks(host)).toHaveLength(6);
     expect(host.querySelector(".reference-occurrence-controls")).toBeNull();
+    expect(host.querySelector(".reference-excerpt-text")!.textContent).toBe(blockWith(6, 400).block.raw);
   });
 
+  it("a single mention shows no numbered circles", () => {
+    const host = renderExcerpt(1, 4);
+    expect(host.querySelector(".reference-occurrence-controls")).toBeNull();
+    expect(marks(host)).toHaveLength(1);
+  });
+});
+
+// GH #556 item 7: the block's bullet is the block-level way into the source.
+describe("Unlinked reference rows: the bullet opens the source block (GH #556)", () => {
+  it("clicking the bullet navigates to the block without grabbing the editor", () => {
+    vi.useFakeTimers();
+    const host = renderExcerpt(2, 4);
+    host.querySelector<HTMLButtonElement>(".reference-excerpt-bullet")!.click();
+    vi.advanceTimersByTime(500);
+    expect(route()).toMatchObject({ kind: "page", name: "Journal", pageKind: "journal" });
+    expect(startEditing).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildFullMarkedSegments", () => {
   it("marks every span over the whole block, in order, with no window", () => {
     const segments = buildFullMarkedSegments("aBooksbBooksc", [
       { start: 1, end: 6 },
@@ -124,6 +180,42 @@ describe("Unlinked reference occurrences (GH #200 round 2: the highlight is the 
 });
 
 describe("occurrence jumps land on a selection, not a collapsed caret", () => {
+  it("highlights a bare page-property atom with native source evidence (Kalem parity)", () => {
+    const raw = "related:: Alpha，Beta";
+    const item: ReferenceBlockEvidence = {
+      block_id: "page-property:Page:source",
+      occurrences: [{ matched_name: "Beta", canonical: "beta", kind: "explicit",
+        span: { start: 16, end: 20 }, rule: "implicit_linkable_property" }],
+    };
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <ReferenceExcerptBlocks
+      blocks={[{ id: item.block_id, raw, page_property: true, children: [] } as unknown as BlockDto]}
+      evidence={[item]} page="Source" kind="page" />, host);
+    try {
+      expect(host.querySelector(".reference-excerpt-text")?.textContent).toBe(raw);
+      expect(marks(host).map(mark => mark.textContent)).toEqual(["Beta"]);
+    } finally { dispose(); }
+  });
+
+  it("shows an Org headline tag as an explicit reference and highlights its source name (Kalem parity)", () => {
+    const raw = "Headline :Plugins:";
+    const item: ReferenceBlockEvidence = {
+      block_id: "org-headline",
+      occurrences: [{ matched_name: "Plugins", canonical: "plugins", kind: "explicit",
+        span: { start: 10, end: 17 }, rule: "explicit_tag" }],
+    };
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <ReferenceExcerptBlocks
+      blocks={[{ id: "org-headline", raw, children: [] } as unknown as BlockDto]}
+      evidence={[item]} page="Source" kind="page" />, host);
+    try {
+      expect(host.querySelector(".reference-excerpt-text")?.textContent).toBe(raw);
+      expect(marks(host).map(mark => mark.textContent)).toEqual(["Plugins"]);
+    } finally { dispose(); }
+  });
+
   // iOS paints no caret for a programmatic focus, so jump 1 and jump 4 looked
   // identical there; a selection is drawn everywhere (master GH #200).
   it("selects the whole mention in visible offsets", () => {

@@ -80,6 +80,7 @@ const UNREADABLE_TARGET: &[u8] = b"title:: Target\ntags:: caf\xe9\n\n- body\n";
 
 #[test]
 fn create_refuses_a_name_an_unreadable_file_could_own_and_names_the_file() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph(&[("pages/Other.md", UNREADABLE_TARGET)]);
     assert!(
         store
@@ -108,6 +109,7 @@ fn create_refuses_a_name_an_unreadable_file_could_own_and_names_the_file() {
 
 #[test]
 fn an_unreadable_file_blocks_only_names_it_could_be() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph(&[("pages/Other.md", UNREADABLE_TARGET)]);
     let (id, outcome) = create_by_name(&store, "Unrelated");
     assert!(
@@ -120,13 +122,14 @@ fn an_unreadable_file_blocks_only_names_it_could_be() {
 
 #[test]
 fn a_repaired_file_no_longer_blocks_its_name() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph(&[("pages/Other.md", UNREADABLE_TARGET)]);
     fs::write(
         root.join("pages/Other.md"),
         b"title:: Target\ntags:: cafe\n\n- body\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     // Now readable: Target exists and resolves to Other.md.
     assert!(matches!(
         store.whole_graph().unwrap().resolve("Target", false),
@@ -139,6 +142,7 @@ fn a_repaired_file_no_longer_blocks_its_name() {
 
 #[test]
 fn a_parser_rejected_file_with_a_readable_title_blocks_only_that_title() {
+    let _integration_guard = crate::integration_lock();
     // Too deep for the parser, but the preamble still names the page, so a
     // mere mention of another name in its body blocks nothing.
     let mut bytes = b"title:: Known\n\n".to_vec();
@@ -163,6 +167,7 @@ fn a_parser_rejected_file_with_a_readable_title_blocks_only_that_title() {
 
 #[test]
 fn create_unique_of_a_page_is_refused_too() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph(&[("pages/Other.md", UNREADABLE_TARGET)]);
     let mut tx = store.transaction(Some(tine_store::EditKind::CreatePage));
     tx.create_unique(
@@ -188,6 +193,7 @@ fn create_unique_of_a_page_is_refused_too() {
 #[cfg(unix)]
 #[test]
 fn a_fifo_in_pages_blocks_no_creation() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph(&[]);
     let fifo = root.join("pages/Target-pipe.md");
     let status = std::process::Command::new("mkfifo")
@@ -195,7 +201,7 @@ fn a_fifo_in_pages_blocks_no_creation() {
         .status()
         .unwrap();
     assert!(status.success());
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let (_, outcome) = create_by_name(&store, "Target");
     assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
     let _ = fs::remove_dir_all(root);

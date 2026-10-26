@@ -12,6 +12,14 @@ const label = (name: string, children: FavLayout = []) => ({ ...labelNode(name),
 const names = (layout: FavLayout) => layoutMembers(layout).map((f) => f.name);
 
 describe("page round trip", () => {
+  it("GH #570: block-reference rows retain identity and nesting without entering config page membership", () => {
+    const uuid = "57000000-0000-4000-8000-000000000001";
+    const layout = layoutFromBlocks([block("Work", [block(`((${uuid}))`), block("[[Alpha]]")])]);
+    expect(layout[0].children[0]).toMatchObject({ target: null, blockId: uuid });
+    expect(names(layout)).toEqual(["Alpha"]);
+    expect(layoutToMarkdown(reconcileLayout(layout, ["Alpha", "Beta"]))).toContain(`- ((${uuid}))`);
+    expect(layoutFromBlocks([block(`code \`((${uuid}))\``)])[0].blockId).toBeUndefined();
+  });
   it("reads favorites, labels and nesting to any depth, verbatim", () => {
     const layout = layoutFromBlocks([
       block("[[Alpha]]"),

@@ -17,6 +17,7 @@ import {
   setFocusedPaneId,
   splitLayoutNode,
   splitPane,
+  splitRootAtEdge,
   togglePaneMaximize,
   visibleLayoutNode,
   type LayoutNode,
@@ -47,6 +48,22 @@ beforeEach(() => {
   exitPaneSelect();
   resetPaneLayoutToSingle(journalsSnapshot());
   paneRouter("main").setScrollerElement(null);
+});
+
+it("GH #499 splitting C right preserves the A/B row above it", () => {
+  const leaf = (paneId: string): LayoutNode => ({ kind: "pane", paneId });
+  const top: LayoutNode = { kind: "split", dir: "row", ratio: 0.3, children: [leaf("A"), leaf("B")] };
+  const root: LayoutNode = { kind: "split", dir: "col", ratio: 0.6, children: [top, leaf("C")] };
+  const result = splitLayoutNode(root, "C", "row", "D");
+  expect(result).toEqual({ ...root, children: [top, { kind: "split", dir: "row", ratio: 0.5, children: [leaf("C"), leaf("D")] }] });
+  const b = splitPane("main", "row")!;
+  const c = splitRootAtEdge("bottom", "main")!;
+  const before = layoutRoot();
+  const d = splitPane(c, "row")!;
+  expect(layoutRoot()).toEqual({ ...before, children: [before.kind === "split" ? before.children[0] : before, {
+    kind: "split", dir: "row", ratio: 0.5, children: [leaf(c), leaf(d)],
+  }] });
+  expect(layoutPaneIds()).toEqual(["main", b, c, d]);
 });
 
 describe("PDF workspace routes", () => {

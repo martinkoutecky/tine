@@ -1,3 +1,4 @@
+import { msg, render } from "./i18n";
 // Registry of external media editors (GH #38) — the one generic seam for the
 // "render-as-image + edit-externally + refresh" workflow. Each entry pairs a
 // filename matcher with a persisted command-template setting (Settings → Files),
@@ -56,7 +57,7 @@ function drawioBlankSvg(): string {
 export const MEDIA_EDITORS: MediaEditor[] = [
   {
     id: "drawio",
-    label: "Edit in draw.io",
+    get label() { return render(msg("media-editors-edit-in-draw-io")); },
     settingLabel: "draw.io command",
     match: /\.drawio\.svg$/i,
     settingKey: "media_editor.drawio.command",
@@ -65,7 +66,7 @@ export const MEDIA_EDITORS: MediaEditor[] = [
   },
   {
     id: "excalidraw",
-    label: "Edit in Excalidraw",
+    get label() { return render(msg("media-editors-edit-in-excalidraw")); },
     settingLabel: "Excalidraw command",
     // Excalidraw's editable exports: name.excalidraw.svg / .png (and bare .excalidraw
     // scene JSON, which renders as an attachment chip, not an image).

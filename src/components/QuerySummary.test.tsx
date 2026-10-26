@@ -24,6 +24,7 @@ import { setDoc, type FeedPage, type Node as StoreNode } from "../document/model
 import type { BlockDto, RefGroup } from "../types";
 import type { ParsedQuery, ViewSettings, QueryResult, QueryStatisticsCell } from "../editor/queryIr";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
+import { openCalmQuery } from "../tests/calmQueryActions";
 
 beforeAll(async () => {
   await initParser();
@@ -341,7 +342,9 @@ it.each(["search", "list", "table", "board"] as const)("labels and clears groupi
   const { root, dispose } = await mountQuery();
   try {
     expect(root.textContent).toContain("Grouped by state");
-    root.querySelector<HTMLButtonElement>('[aria-label="Clear grouping"]')!.click();
+    expect(root.querySelector('[aria-label="Clear grouping"]')).toBeNull();
+    const panel = await openCalmQuery(root, "View");
+    [...panel.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "None")!.click();
     await vi.waitFor(() => expect(blockProperty("query", "tine.group-field")).toBe(""));
   } finally { dispose(); }
 });

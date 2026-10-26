@@ -1,9 +1,10 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import { createSignal, type JSX } from "solid-js";
+import { createMemo, createSignal, untrack, type ComponentProps, type JSX } from "solid-js";
 import { Block } from "./Block";
 import { ContextMenu } from "./ContextMenu";
-import { __sheetBoardTestHooks, SheetBoard } from "./SheetBoard";
+import { __sheetBoardTestHooks, SheetBoard as ActualSheetBoard } from "./SheetBoard";
+import * as resultActions from "./QueryResultTask";
 import { initParser } from "../render/parse";
 import { blockProperty, hasSelection, resetStore, setRaw, undo } from "../document";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
@@ -17,8 +18,28 @@ import { backend } from "../backend";
 import { installKeybindings } from "../keybindings";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { clearTransientLayersForTest, registerTransientLayer } from "../transientLayers";
+import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
+import { editingId, startEditing } from "../editorController";
+import { DRAG_SELECTION_CLASS } from "../dragSelectionGuard";
+
+const saveFixture = vi.hoisted(() => ({ actual: null as Record<string, unknown> | null, markDirty: vi.fn(), persistTransfer: vi.fn(async () => true) }));
+vi.mock("../document/host/wiring", () => new Proxy({}, {
+  get: (_target, key) => key === "then" ? undefined : key === "markDirty" ? saveFixture.markDirty
+    : key === "persistTransfer" ? saveFixture.persistTransfer : saveFixture.actual?.[key as string],
+  has: () => true,
+}));
+// These widget fixtures supply engine answers directly and isolate publication.
+function SheetBoard(props: ComponentProps<typeof ActualSheetBoard>): JSX.Element {
+  const groups = createMemo(() => {
+    const next = props.groups;
+    if (next) untrack(() => adoptResults(next, captureResultsTicket()));
+    return next;
+  });
+  return <ActualSheetBoard {...props} groups={groups()} />;
+}
 
 beforeAll(async () => {
+  saveFixture.actual = await vi.importActual("../document/host/wiring");
   await initParser();
 });
 
@@ -37,6 +58,29 @@ afterEach(() => {
 
 beforeEach(() => {
   setWorkflow("todo");
+});
+
+it("keeps a query open after drag motion and opens the source on a genuine click", () => {
+  loadBoardDoc();
+  const open = vi.spyOn(resultActions, "openQueryResult").mockImplementation(() => {});
+  const { root, dispose } = mount(() => <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={queryGroups(["todo"])} />);
+  const oldElementFromPoint = document.elementFromPoint;
+  try {
+    const card = root.querySelector<HTMLElement>('[data-block-id="todo"]')!;
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, writable: true, value: () => card.closest(".sheet-board-column") });
+    card.dispatchEvent(pointer("pointerdown", 10, 10));
+    window.dispatchEvent(pointer("pointermove", 30, 30));
+    window.dispatchEvent(pointer("pointerup", 30, 30));
+    card.click();
+    expect(open).not.toHaveBeenCalled();
+    card.dispatchEvent(pointer("pointerdown", 10, 10));
+    window.dispatchEvent(pointer("pointerup", 10, 10));
+    card.click();
+    expect(open).toHaveBeenCalledTimes(1);
+  } finally {
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, writable: true, value: oldElementFromPoint });
+    dispose();
+  }
 });
 
 function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => void } {
@@ -120,7 +164,7 @@ function tick(): Promise<void> {
 }
 
 function queryGroups(ids: string[]): RefGroup[] {
-  return [{
+  const groups: RefGroup[] = [{
     page: "Sheet",
     kind: "page",
     blocks: ids.map((id) => ({
@@ -130,6 +174,7 @@ function queryGroups(ids: string[]): RefGroup[] {
       children: [],
     })),
   }];
+  return adoptResults(groups, captureResultsTicket()) ?? groups;
 }
 
 function boardColumnBlockIds(root: ParentNode, col: number): string[] {
@@ -155,6 +200,7 @@ describe("SheetBoard", () => {
       { page: "Twin", kind: "page", blocks: [{ id: shared, raw: "TODO Page DTO", collapsed: false, children: [] }] },
       { page: "Twin", kind: "journal", blocks: [{ id: shared, raw: "DOING Journal DTO", marker: "DOING", collapsed: false, children: [] }] },
     ];
+    adoptResults(groups, captureResultsTicket());
     const { root, dispose } = mount(() => (
       <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={groups} />
     ));
@@ -522,6 +568,7 @@ describe("SheetBoard", () => {
     const target = "live-target";
     const blocks = Array.from({ length: 100_000 }, (_, i) => ({
       id: i === 0 ? target : `q${i}`,
+      has_id: false, // Rust query projection's parser-owned absence fact
       raw: `TODO Row ${i}`,
       marker: "TODO",
       collapsed: false,
@@ -636,6 +683,52 @@ describe("SheetBoard", () => {
 
     document.elementFromPoint = prevElementFromPoint;
     dispose();
+  });
+
+  it.each(["textarea", "block editor", "window"])("GH #756: handles %s blur during a card press", async (focusSource) => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    loadBoardDoc();
+    setDoc("byId", "outside", node("outside", "Outside editor", null));
+    setDoc("pages", 0, "roots", ["outside", "board"]);
+    const { root, dispose } = mount(() => <><textarea data-outside-editor /><Block id="outside" /><Block id="board" /></>);
+    const previous = document.elementFromPoint;
+    try {
+      if (focusSource === "block editor") {
+        startEditing("outside");
+        await tick();
+      }
+      const editor = root.querySelector<HTMLTextAreaElement>(focusSource === "block editor" ? "textarea.block-editor" : "[data-outside-editor]")!;
+      editor.focus();
+      expect(document.activeElement).toBe(editor);
+      const card = root.querySelector<HTMLElement>('.sheet-board-card[data-block-id="todo"]')!;
+      const target = root.querySelector<HTMLElement>('[data-board-col="1"]')!;
+      document.elementFromPoint = () => target;
+      card.dispatchEvent(pointer("pointerdown", 0, 0));
+      expect(document.documentElement.classList.contains(DRAG_SELECTION_CLASS)).toBe(false);
+      // Browser default focus transfer happens after pointerdown. jsdom needs
+      // it explicitly; block blur also disposes its actual editing surface.
+      editor.blur();
+      if (focusSource === "block editor") {
+        await tick();
+        expect(editingId()).toBeNull();
+        expect(root.querySelector("textarea.block-editor")).toBeNull();
+      }
+      const range = document.createRange();
+      range.selectNodeContents(card);
+      window.getSelection()!.addRange(range);
+      window.dispatchEvent(pointer("pointermove", 12, 0));
+      expect(document.body.querySelector(".sheet-board-drag-ghost")).not.toBeNull();
+      expect(document.documentElement.classList.contains(DRAG_SELECTION_CLASS)).toBe(true);
+      expect(window.getSelection()!.rangeCount).toBe(0);
+      if (focusSource === "window") window.dispatchEvent(new Event("blur"));
+      window.dispatchEvent(pointer("pointerup", 12, 0));
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe(focusSource === "window" ? "TODO Write tests" : "DOING Write tests");
+      expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
+      expect(document.documentElement.classList.contains(DRAG_SELECTION_CLASS)).toBe(false);
+    } finally {
+      document.elementFromPoint = previous;
+      dispose();
+    }
   });
 
   it("keeps only the latest pointer drag session active across Board instances", () => {

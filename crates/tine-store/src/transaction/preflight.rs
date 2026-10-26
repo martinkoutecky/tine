@@ -4,7 +4,64 @@ use super::*;
 use tine_core::model::Format;
 
 impl<'a> Transaction<'a> {
-    pub(super) fn preflight(&self, step: &Step) -> Result<Prepared, Why> {
+    pub(super) fn preflight_names(&self) -> Result<Vec<FileId>, (usize, Why)> {
+        if self.store.is_closed() {
+            return Err((0, Why::Refused(Refusal::Closed)));
+        }
+        if let Some(TxOutcome::NotCommitted { why, .. }) =
+            self.config_write_failure().or_else(|| self.stale_view())
+        {
+            return Err((0, why));
+        }
+        let mut seen = HashSet::new();
+        let mut names = Vec::new();
+        for (index, step) in self.steps.iter().enumerate() {
+            let ids = match step {
+                Step::Save { id, .. } | Step::Rewrite { id, .. } => vec![id.file()],
+                Step::Create { file, .. }
+                | Step::Replace { file, .. }
+                | Step::Expect { file, .. }
+                | Step::Trash { file, .. } => vec![file.clone()],
+                Step::Move { file, to, .. } => vec![file.clone(), to.clone()],
+                Step::Unique { .. } => Vec::new(),
+            };
+            for id in ids {
+                if !seen.insert(id.clone()) {
+                    return Err((index, Why::Refused(Refusal::RepeatedFile(id))));
+                }
+                names.push(id);
+            }
+        }
+        names.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        Ok(names)
+    }
+
+    pub(super) fn prepare_steps(&self) -> Result<Vec<Prepared>, (usize, Why)> {
+        let mut allocated = HashSet::new();
+        let mut prepared = Vec::new();
+        for (index, step) in self.steps.iter().enumerate() {
+            let next = self
+                .preflight(step, &allocated)
+                .map_err(|why| (index, why))?;
+            if matches!(step, Step::Unique { .. }) {
+                allocated.insert(next.src.clone());
+            }
+            prepared.push(next);
+        }
+        Ok(prepared)
+    }
+
+    pub(super) fn raw_create_slot(&self, file: &FileId) -> Result<(), Why> {
+        self.absent(file)?;
+        self.twin(file, None)?;
+        self.unreadable_owner(file, &[])
+    }
+
+    pub(super) fn preflight(
+        &self,
+        step: &Step,
+        allocated: &HashSet<FileId>,
+    ) -> Result<Prepared, Why> {
         let unsupported_config_step = match step {
             Step::Trash { file, .. } => file.as_str() == "logseq/config.edn",
             Step::Unique {
@@ -36,28 +93,9 @@ impl<'a> Transaction<'a> {
                 markers,
             } => {
                 let file = id.file();
-                if doc.guide {
-                    return Err(Why::Refused(Refusal::InvalidTarget(
-                        "Guide pages are ephemeral".into(),
-                    )));
-                }
-                if !self.page(&file) {
-                    return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
-                }
-                if !crate::model::dto_depth_within_limit(doc) {
-                    return Err(Why::Refused(Refusal::InvalidTarget(
-                        "page content nesting exceeds 512 levels".into(),
-                    )));
-                }
+                self.page_save_target(&file, doc)?;
                 if matches!(base, SaveBase::CreateNew) {
-                    if let Some(existing) = self.disk_twin(&file)? {
-                        return Err(Why::Refused(Refusal::Twin {
-                            existing: PageId::from(existing.as_str()),
-                        }));
-                    }
-                    self.absent(&file)?;
-                    self.twin(&file, None)?;
-                    self.unreadable_owner(&file, &[doc.name.as_str()])?;
+                    self.page_create_checks(&file, doc.name.as_str())?;
                 }
                 let old = match base {
                     // `save_page` maps ResolvingMarkers to Existing + Markers::Resolve.
@@ -66,50 +104,8 @@ impl<'a> Transaction<'a> {
                     }
                     SaveBase::CreateNew => None,
                 };
-                if let Some(old) = old.as_ref() {
-                    crate::model::validate_parse_bytes_for_path(old, &self.path(&file)?)
-                        .map_err(content_refusal)?;
-                }
-                let path = self.path(&file)?;
-                let text = match old.as_deref() {
-                    Some(bytes) => Some(std::str::from_utf8(bytes).map_err(|error| {
-                        content_refusal(io::Error::new(io::ErrorKind::InvalidData, error))
-                    })?),
-                    None => None,
-                };
-                // Refusal R-VCS-MARKERS (docs/storage-contract.md). Threat
-                // scenario: a VCS merge by an external writer left unresolved
-                // markers; a rewrite would re-indent them and silently lose a
-                // side. This is the one place og serializes page bytes for a
-                // save (ordinary, forced, merged and PDF-highlight page saves
-                // all reach it). Only `SaveBase::ResolvingMarkers` passes.
-                let found = text
-                    .map(|text| {
-                        tine_core::concord_queue::vcs_conflict_markers(
-                            text,
-                            Format::from_path(&path),
-                        )
-                    })
-                    .unwrap_or_default();
-                if !found.is_empty() && *markers == Markers::Refuse {
-                    return Err(Why::Refused(Refusal::ReadOnly(format!(
-                        "unresolved VCS merge conflict markers ({}); resolve them first",
-                        found.join(" ")
-                    ))));
-                }
-                let (new, saved_page) = self
-                    .store
-                    .graph
-                    .prepare_page_bytes(doc, &path, text)
-                    .map_err(|error| {
-                        if error.kind() == io::ErrorKind::PermissionDenied {
-                            Why::Refused(Refusal::ReadOnly(error.to_string()))
-                        } else {
-                            Why::Failed(error.into())
-                        }
-                    })?;
-                crate::model::validate_parse_bytes_for_path(&new, &path)
-                    .map_err(content_refusal)?;
+                let (new, saved_page) =
+                    self.serialize_page(&file, doc, old.as_deref(), *markers == Markers::Resolve)?;
                 Ok(Prepared {
                     src: file,
                     dst: None,
@@ -126,9 +122,7 @@ impl<'a> Transaction<'a> {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
                 }
                 self.path(file)?;
-                self.absent(file)?;
-                self.twin(file, None)?;
-                self.unreadable_owner(file, &[])?;
+                self.raw_create_slot(file)?;
                 if file.as_str() == "logseq/config.edn" {
                     validate_config_content(self.store, content)?;
                 }
@@ -177,18 +171,21 @@ impl<'a> Transaction<'a> {
                 } else if let Content::Stream { source, max_bytes } = content {
                     validate_stream(source, *max_bytes)?;
                 }
-                for index in 0usize.. {
-                    let rel = if index == 0 {
+                let candidate = (0usize..).map(|index| {
+                    if index == 0 {
                         first.clone()
                     } else {
                         crate::atomic_file::marked_name(stem, &format!("_{index}"), ext)
-                    };
+                    }
+                });
+                let mut chosen = None;
+                for rel in candidate {
                     let candidate = self
                         .store
                         .file_id(*area, &rel)
                         .map_err(|_| Why::Refused(Refusal::InvalidTarget(rel)))?;
                     // Only occupancy matters here: never read an occupant.
-                    if self.occupied(&candidate)? {
+                    if allocated.contains(&candidate) || self.occupied(&candidate)? {
                         continue;
                     }
                     self.twin(&candidate, None)?;
@@ -196,10 +193,11 @@ impl<'a> Transaction<'a> {
                     if self.fixed_step_names().contains(&candidate) {
                         return Err(Why::Refused(Refusal::RepeatedFile(candidate)));
                     }
+                    chosen = Some(candidate);
                     break;
                 }
                 Ok(Prepared {
-                    src: file,
+                    src: chosen.expect("an unoccupied candidate"),
                     dst: None,
                     old: None,
                     new: None,
@@ -358,4 +356,115 @@ fn refuse_marker_rewrite(old: &[u8], new: &[u8], format: Format) -> Result<(), W
         "unresolved VCS merge conflict markers ({}); resolve them first",
         found.join(" ")
     ))))
+}
+
+/// A page save's checks by precondition (STEP3 §3.2). The transaction's
+/// preflight composes them; the page host runs each where its precondition
+/// holds, so none is added and none runs where it did not before.
+impl Transaction<'_> {
+    /// Every page save, whatever its base: Guide-ephemeral, page target and
+    /// nesting depth.
+    pub(crate) fn page_save_target(&self, file: &FileId, doc: &PageDto) -> Result<(), Why> {
+        if doc.guide {
+            return Err(Why::Refused(Refusal::InvalidTarget(
+                "Guide pages are ephemeral".into(),
+            )));
+        }
+        if !self.page(file) {
+            return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
+        }
+        if !crate::model::dto_depth_within_limit(doc) {
+            return Err(Why::Refused(Refusal::InvalidTarget(
+                "page content nesting exceeds 512 levels".into(),
+            )));
+        }
+        Ok(())
+    }
+
+    /// Create-only: a `CreateNew` save, and the page host's open of a path
+    /// with no file. `name` is the name the new page claims.
+    pub(crate) fn page_create_checks(&self, file: &FileId, name: &str) -> Result<(), Why> {
+        if let Some(existing) = self.disk_twin(file)? {
+            return Err(Why::Refused(Refusal::Twin {
+                existing: PageId::from(existing.as_str()),
+            }));
+        }
+        self.absent(file)?;
+        self.twin(file, None)?;
+        self.unreadable_owner(file, &[name])
+    }
+
+    /// The page host's open of `file` (STEP3 §2): an eligible page target;
+    /// with no file there, the page is being created, so the create-only
+    /// checks run, as they run for a `CreateNew` save. A file that appears
+    /// meanwhile makes it an ordinary open.
+    pub(crate) fn page_open_checks(&self, file: &FileId, name: &str) -> Result<(), Why> {
+        if !self.page(file) {
+            return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
+        }
+        match self.absent(file) {
+            Ok(()) => {}
+            Err(Why::Conflict { .. }) => return Ok(()),
+            Err(why) => return Err(why),
+        }
+        match self.page_create_checks(file, name) {
+            Err(Why::Conflict { .. }) => Ok(()),
+            result => result,
+        }
+    }
+
+    /// Serialize `doc` over `old`, the bytes it replaces (None creates), with
+    /// every content firewall: parse validation of both sides, VCS markers
+    /// (unless `resolving` them), the page-header and Org round-trip
+    /// firewalls in `prepare_page_bytes`.
+    pub(crate) fn serialize_page(
+        &self,
+        file: &FileId,
+        doc: &PageDto,
+        old: Option<&[u8]>,
+        resolving: bool,
+    ) -> Result<(Vec<u8>, Document), Why> {
+        if let Some(old) = old {
+            crate::model::validate_parse_bytes_for_path(old, &self.path(file)?)
+                .map_err(content_refusal)?;
+        }
+        let path = self.path(file)?;
+        let text = match old {
+            Some(bytes) => Some(std::str::from_utf8(bytes).map_err(|error| {
+                content_refusal(io::Error::new(io::ErrorKind::InvalidData, error))
+            })?),
+            None => None,
+        };
+        // Refusal R-VCS-MARKERS (docs/storage-contract.md). Threat
+        // scenario: a VCS merge by an external writer left unresolved
+        // markers; a rewrite would re-indent them and silently lose a
+        // side. This is the one place og serializes page bytes for a
+        // save (ordinary, forced, merged and PDF-highlight page saves
+        // all reach it, and the page host's submits). Only a resolving save
+        // passes.
+        let found = text
+            .map(|text| {
+                tine_core::concord_queue::vcs_conflict_markers(text, Format::from_path(&path))
+            })
+            .unwrap_or_default();
+        if !found.is_empty() && !resolving {
+            return Err(Why::Refused(Refusal::ReadOnly(format!(
+                "unresolved VCS merge conflict markers ({}); resolve them first",
+                found.join(" ")
+            ))));
+        }
+        let (new, saved_page) = self
+            .store
+            .graph
+            .prepare_page_bytes(doc, &path, text)
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::PermissionDenied {
+                    Why::Refused(Refusal::ReadOnly(error.to_string()))
+                } else {
+                    Why::Failed(error.into())
+                }
+            })?;
+        crate::model::validate_parse_bytes_for_path(&new, &path).map_err(content_refusal)?;
+        Ok((new, saved_page))
+    }
 }

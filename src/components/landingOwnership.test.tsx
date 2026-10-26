@@ -18,6 +18,7 @@ import { startEditing } from "../editorController";
 import { Block } from "./Block";
 import { Settings } from "./Settings";
 import type { BlockDto, PageDto } from "../types";
+import { bindTestHost } from "../document/host/wiring.test.support";
 
 beforeAll(async () => { await initParser(); });
 
@@ -34,6 +35,18 @@ afterEach(() => {
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
 async function settle() { for (let i = 0; i < 6; i++) await tick(); }
+
+/** The host took the creation's text and holds its publication (the disk
+ * write) until `finish()`: `save` is the publication wait. */
+function holdPublication() {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const save = vi.spyOn(backend(), "pageWait").mockImplementation(async () => {
+    await held;
+    return true;
+  });
+  return { save, finish: () => release() };
+}
 
 async function typeCreate(root: HTMLElement, name: string) {
   openSwitcher();
@@ -56,8 +69,8 @@ describe("O1 QuickSwitcher create after a graph switch (master QuickSwitcher.tes
     setGraphMeta({ root: "/graphs/A" } as never);
     const gen = { value: 1 };
     vi.spyOn(backend(), "graphBindingGeneration").mockImplementation(() => gen.value);
-    let finish!: (v: { ok: string[] }) => void;
-    const save = vi.spyOn(backend(), "savePages").mockImplementation(() => new Promise((r) => { finish = r as never; }));
+    await bindTestHost();
+    const { save, finish } = holdPublication();
     const root = document.createElement("div"); document.body.append(root);
     const dispose = render(() => <QuickSwitcher />, root);
     try {
@@ -67,7 +80,7 @@ describe("O1 QuickSwitcher create after a graph switch (master QuickSwitcher.tes
       create.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
       switchGraph(gen);
-      finish({ ok: ["created-rev"] });
+      finish();
       await settle();
       expect(route()).toEqual({ kind: "journals" });
       expect(toasts().some((t) => t.message.includes("graph changed"))).toBe(true);
@@ -78,8 +91,8 @@ describe("O1 QuickSwitcher create after a graph switch (master QuickSwitcher.tes
     setGraphMeta({ root: "/graphs/A" } as never);
     const gen = { value: 1 };
     vi.spyOn(backend(), "graphBindingGeneration").mockImplementation(() => gen.value);
-    let finish!: (v: { ok: string[] }) => void;
-    const save = vi.spyOn(backend(), "savePages").mockImplementation(() => new Promise((r) => { finish = r as never; }));
+    await bindTestHost();
+    const { save, finish } = holdPublication();
     const root = document.createElement("div"); document.body.append(root);
     const dispose = render(() => <QuickSwitcher />, root);
     try {
@@ -94,7 +107,7 @@ describe("O1 QuickSwitcher create after a graph switch (master QuickSwitcher.tes
       await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
       const panesBefore = layoutPaneIds().length;
       switchGraph(gen);
-      finish({ ok: ["created-rev"] });
+      finish();
       await settle();
       expect(layoutPaneIds().length).toBe(panesBefore);
     } finally { dispose(); }
@@ -106,8 +119,8 @@ describe("O1 QuickSwitcher create into a new (embryo) pane after a graph switch"
     setGraphMeta({ root: "/graphs/A" } as never);
     const gen = { value: 1 };
     vi.spyOn(backend(), "graphBindingGeneration").mockImplementation(() => gen.value);
-    let finish!: (v: { ok: string[] }) => void;
-    const save = vi.spyOn(backend(), "savePages").mockImplementation(() => new Promise((r) => { finish = r as never; }));
+    await bindTestHost();
+    const { save, finish } = holdPublication();
     const other = splitPane("main", "row")!;
     const root = document.createElement("div"); document.body.append(root);
     const dispose = render(() => <QuickSwitcher />, root);
@@ -123,7 +136,7 @@ describe("O1 QuickSwitcher create into a new (embryo) pane after a graph switch"
         .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
       switchGraph(gen);
-      finish({ ok: ["created-rev"] });
+      finish();
       await settle();
       expect(paneRouter(other).route()).not.toMatchObject({ kind: "page", name: "Embryo page" });
       expect(toasts().some((t) => t.message.includes("graph changed"))).toBe(true);

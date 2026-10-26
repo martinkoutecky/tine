@@ -3,7 +3,8 @@
 //! belong to `tine-store`), no GUI dependencies — fully unit
 //! testable without the Tauri shell.
 
-pub mod block_regions;
+pub mod asset_refs;
+pub use tine_outline::block_regions;
 pub mod concord_queue;
 pub mod config;
 pub mod corpus;
@@ -14,14 +15,17 @@ pub mod edn;
 pub mod graph_paths;
 pub mod guide;
 pub mod html_sanitize;
-pub mod logbook;
+pub mod latency;
+pub use tine_outline::logbook;
 pub mod media_mime;
 pub mod model;
 pub mod org;
 mod outline;
+pub mod page_properties;
 pub mod pdf;
 pub mod projection;
-mod property_line;
+pub use tine_outline::property_line;
+pub use tine_outline::property_refs;
 pub mod query;
 pub mod query_edn;
 pub mod query_plan;

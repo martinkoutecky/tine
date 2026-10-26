@@ -115,7 +115,7 @@ fn external(slot: &GraphSlot, rel: &str, text: &str) {
     let temp = path.with_extension("ext-tmp");
     std::fs::write(&temp, text).unwrap();
     std::fs::rename(temp, path).unwrap();
-    slot.store.scan_refresh().unwrap();
+    slot.store.refresh(tine_store::Depth::Stamps).unwrap();
 }
 
 fn files(dir: &Path) -> LedgerFiles {
@@ -315,6 +315,7 @@ fn a_syncthing_copy_resolves_three_way_with_the_ledger_base() {
     let decisions = preselected(&diff);
     conflicts::resolve_sync_conflict(
         &slot.store,
+        None,
         "pages/Desk.md",
         COPY,
         &decisions,
@@ -435,7 +436,7 @@ fn a_copy_equal_to_the_newest_base_stays_two_way_without_reaching_older_bases() 
     let (slot, _sub) = open_slot(&dir, dir.join("appdata"));
     std::fs::write(dir.join("graph/pages/Desk.md"), body("reverted")).unwrap();
     std::fs::write(dir.join("graph").join(COPY), body("ancestor")).unwrap();
-    slot.store.scan_refresh().unwrap();
+    slot.store.refresh(tine_store::Depth::Stamps).unwrap();
     let bases = vec![body("ancestor"), body("reverted-from")];
     let diff = conflicts::sync_conflict_diff(&slot.store, "pages/Desk.md", COPY, &bases)
         .unwrap()
@@ -474,6 +475,7 @@ fn an_unwritable_ledger_never_blocks_saves_or_resolves() {
         .collect();
     conflicts::resolve_sync_conflict(
         &slot.store,
+        None,
         "pages/Desk.md",
         COPY,
         &decisions,
@@ -522,6 +524,7 @@ fn a_stale_or_foreign_base_never_loses_data_silently() {
     let moved = vec![body("Desktop 4")];
     let err = conflicts::resolve_sync_conflict(
         &slot.store,
+        None,
         "pages/Desk.md",
         COPY,
         &decisions,
@@ -536,6 +539,7 @@ fn a_stale_or_foreign_base_never_loses_data_silently() {
     // A failed ledger read at apply time refuses the merged row the same way.
     let err = conflicts::resolve_sync_conflict(
         &slot.store,
+        None,
         "pages/Desk.md",
         COPY,
         &decisions,
@@ -563,6 +567,7 @@ fn a_stale_or_foreign_base_never_loses_data_silently() {
     // time does not refuse them.
     conflicts::resolve_sync_conflict(
         &slot.store,
+        None,
         "pages/Desk.md",
         COPY,
         &preselected(&diff),
@@ -753,12 +758,12 @@ fn a_master_layout_ledger_tree_is_byte_identical_after_og_opens_saves_and_prunes
 /// og 8e through the ledger the commands read: the editor loaded "Desktop 5"
 /// (a Tine save the ledger recorded) and deleted " 5"; another editor appended
 /// " kk" on disk. The live review finds the editor's base by revision, is
-/// 3-way with a `merged` proposal, and the resolve writes the composed body at
+/// 3-way with a `merged` proposal, and the apply writes the composed body at
 /// the reviewed disk revision. With an unusable ledger the same review is
 /// 2-way and still resolves (the ledger never blocks a resolve).
 #[test]
 fn a_live_draft_conflict_reviews_three_way_against_the_editors_ledger_base() {
-    use tine_graph_features::live_conflict::{live_conflict_diff, resolve_live_conflict};
+    use tine_graph_features::live_conflict::{live_conflict_diff, merge_live_conflict};
     for (label, usable) in [("live-ledger", true), ("live-no-ledger", false)] {
         let dir = scratch(label);
         std::fs::write(dir.join("graph/pages/Desk.md"), body("seed")).unwrap();
@@ -789,11 +794,12 @@ fn a_live_draft_conflict_reviews_three_way_against_the_editors_ledger_base() {
         assert_eq!(diff.three_way, usable, "{label}");
         let decisions = preselected(&diff);
         assert_eq!(decisions.values().any(|d| d == "merged"), usable, "{label}");
-        let resolved = resolve_live_conflict(
+        // Step 3b R6: the merge alone is read-only and composes exactly what
+        // the apply writes, the base found by the review's name for it.
+        let merged = merge_live_conflict(
             &slot.store,
             "pages/Desk.md",
             &draft,
-            Some(&base_rev),
             &diff.conflict_rev,
             diff.merge_base_rev.as_deref(),
             &bases,
@@ -801,6 +807,27 @@ fn a_live_draft_conflict_reviews_three_way_against_the_editors_ledger_base() {
             "union",
         )
         .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("graph/pages/Desk.md")).unwrap(),
+            body("Desktop 5 kk"),
+            "{label}: the merge wrote"
+        );
+        // The apply (STEP3 R6): the window submits the merged page through
+        // its page host guarded by the reviewed disk revision; here the same
+        // guarded write over the transaction.
+        let mut tx = slot
+            .store
+            .transaction(Some(tine_store::EditKind::ReplacePage));
+        tx.save_page(
+            &[tine_store::EditKind::ReplacePage],
+            &PageId::from("pages/Desk.md"),
+            SaveBase::Existing(tine_store::FileRev::from(diff.conflict_rev.clone())),
+            &merged,
+        );
+        assert!(matches!(
+            tx.commit(),
+            tine_store::TxOutcome::Committed { .. }
+        ));
         let written = std::fs::read_to_string(dir.join("graph/pages/Desk.md")).unwrap();
         if usable {
             assert_eq!(written, body("Desktop kk"));
@@ -809,7 +836,11 @@ fn a_live_draft_conflict_reviews_three_way_against_the_editors_ledger_base() {
                 assert!(written.contains(text), "{text:?} lost: {written}");
             }
         }
-        assert!(resolved.rev.is_some());
+        let raws = |page: &tine_core::model::PageDto| -> Vec<String> {
+            page.blocks.iter().map(|block| block.raw.clone()).collect()
+        };
+        let reread = slot.store.page(&PageId::from("pages/Desk.md")).unwrap();
+        assert_eq!(raws(&merged), raws(&reread.doc), "{label}");
         drop(slot);
         let _ = std::fs::remove_dir_all(dir);
     }

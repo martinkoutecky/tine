@@ -1,215 +1,73 @@
-# tine-store public items ON the target surface (rev 5, 01-step1-interface.rs).
-# Counts against 01-arrival.md budget A, extended for batch save and read-only
-# transaction expectation: <=41 Store+Transaction ops,
-# <=26 WholeGraph questions, <=55 pub types. Enforced by tests/shallow_ratchet.rs.
-# Raised 40->41 and 25->26 for QF3b (GH #623 rename I/O: prepare_ref_rewrite, page_files_at_or_under), 2026-10-05.
-const model::PARSE_INPUT_MAX_BYTES
-enum edit_kind::EditKind
-use crate::edit_kind::EditKind
-fn model::parse_input_depth_within_limit
-fn file_kind::is_graph_text
-fn file_kind::is_asset_sidecar
-fn directory_durability::sync_directory_entry
-use crate::file_kind::{is_asset_sidecar,is_graph_text}
-use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
-enum store::Area
-enum store::ChangeKind
-enum store::Origin
+# tine-store public surface, budgeted per concept (og-surface review §6 rule 2).
+# Enforced by tests/shallow_ratchet.rs:
+# - every production public item sits in exactly one `## Concept (ceiling: N)`
+#   section, and N is that section's entry count: a cut lowers it, growth is a
+#   visible edit of it;
+# - the concept list is fixed in shallow_ratchet.rs; a NEW concept needs Martin;
+# - raising a ceiling names, in the commit, the existing item of that concept
+#   that cannot answer the need with a parameter, and why (rule 3: performance
+#   work adds no surface: a cheaper answer is an internal fast path or a
+#   parameter such as `InventoryScope` or `Depth`, never a sibling method);
+# - each `fn`/`const`/`field` has a production caller in graph-features,
+#   src-tauri or a tine-store binary, or carries `# test-oracle: <reason>` and a
+#   `test-faults` gate (rule 4);
+# - no public name, signature or doc promises cache, load or readiness state,
+#   and nothing answers `Option<bool>` (rule 5).
+# Totals (operations, WholeGraph questions, types) are derived from these
+# sections and printed with TINE_SHALLOW_PRINT=1; they are not targets.
+# History: honest baseline 50 ops / 26 questions / 56 types (og-surface step 1,
+# 2026-10-05); after the og-surface cut 40 / 23 / 59.
+# GH #621: create_graph writes a graph and cannot suggest a name for a
+# cancellable prompt without creating anything. suggest_graph_name is the
+# read-only question about the user-picked parent, approved 2026-10-08.
+# Page host: the concept (STEP3 §7, commit 835713dcf, option (a)) was approved
+# by Martin 2026-10-10; A-R1 then cut PageHost::release (13 -> 12).
+# GH #181: read_link_identity_at takes a LinkProbe so a cold link can rule out a closed graph without opening
+# it (rule 3: parameter on the existing link question, not a sibling)
+## Lifecycle (ceiling: 24)
 enum store::WatchMode
-enum store::IrRequest
-enum store::IrAnswer
 enum store::OpenError
-enum transaction::Content
-enum transaction::Refusal
-enum transaction::StepResult
-enum transaction::TxOutcome
-enum transaction::Why
-field transaction::IoError.kind
-field store::ConfigState.config
-field store::ConfigState.problem
-field store::ConfigState.assets_directory_name
 field store::GraphAccessInspection.external_assets
 field store::GraphAccessInspection.root
 field store::OpenOptions.approved_external_assets
 field store::OpenOptions.launch_checkpoint
 field store::OpenOptions.watch
-field store::Change.files
-field store::Change.graph_rev
-field store::Change.origin
-field transaction::IoError.message
-field transaction::IoError.operation
-field transaction::IoError.os_error
-field transaction::Rollback.kept_external
-field transaction::Rollback.undo_failed
-fn transaction::Store::transaction
-fn transaction::Transaction::commit
-fn transaction::Transaction::create
-fn transaction::Transaction::create_unique
-# Read-only revision dependency for a later step; avoids mutating sidecars to force a guard.
-fn transaction::Transaction::expect
-fn transaction::Transaction::move_file
-fn transaction::Transaction::replace
-fn transaction::Transaction::rewrite_refs
-fn transaction::Transaction::save_page
-fn transaction::Transaction::trash
-struct transaction::IoError
-struct transaction::RenameMap
-struct transaction::Rollback
-struct transaction::Transaction
-use crate::transaction::{Content,IoError,Refusal,RenameMap,Rollback,StepResult,Transaction,TxOutcome,Why,}
-# QF3b (GH #623): the rename planner asks the transaction whether a reference
-# rewrite changes a file (the transaction keeps it for preflight, which does not
-# compute it again) and asks for the page files under one key instead of the
-# whole-graph inventory.
-fn transaction::Transaction::prepare_ref_rewrite
-fn store::WholeGraph::page_files_at_or_under
-fn publish::publication_assets
-fn publish::publication_block_ref_counts
-fn publish::publish_site_external
-# R3C2: two bounded publication verbs over existing staged door, no new Store methods/types.
-fn publish::query_publication_destination
-fn publish::publish_query_site
-use crate::publish::{publication_assets,publication_block_ref_counts,publish_site_external,PublishFailed,PublishReceipt,SiteWriter,}
-use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
-enum store::Budget
-enum store::FacetPolicy
-enum store::LoadError
-enum store::QueryDialect
-enum store::QueryError
-enum store::QueryResult
-enum store::Resolved
-enum store::SaveBase
-enum store::SaveOutcome
-enum store::SavePagesOutcome
-enum store::StoreError
-enum store::TrashKind
-field store::PageRead.doc
-field store::PageRead.id
-field store::PageRead.read_only
-field store::PageRead.rev
-field store::SearchRequest.block_limit
-field store::SearchRequest.block_view
-field store::SearchRequest.page_match_scope
-field store::SearchRequest.explain
-field store::SearchRequest.page_limit
-field store::SearchRequest.page_view
-field store::SearchRequest.text
-field store::SearchRequest.within
-field store::InventoryEntry.name
-field store::InventoryEntry.target
-field store::InventoryEntry.is_journal
-field store::InventoryEntry.day
-field store::FileEntry.area
-field store::FileEntry.id
-field store::FileEntry.meta
-field store::FileEntry.page
-field store::FileEntry.day
-field store::FileEntry.rel
-field store::FileMeta.len
-field store::FileMeta.mtime
-field store::Listing.files
-field store::Listing.unreadable
-# og 21a: a live-conflict review finds its Concord-ledger base by the draft's revision.
-fn store::FileRev::from_bytes
-fn store::Store::as_page
-fn store::Store::file_id
-fn store::Store::config
-fn store::Store::diagnostics
-fn store::Store::rebuild_graph
-fn store::Store::vcs_anchor_state
 fn store::Store::close
 fn store::Store::create_graph
+fn store::Store::suggest_graph_name
 fn store::Store::inspect
 fn store::Store::canonical_root
 fn store::GraphAccessInspection::approves_external_assets
 fn store::Store::open
-fn store::Store::scan_refresh
 fn store::Store::set_watch_mode
+struct store::Store
+struct store::GraphAccessInspection
+struct store::OpenOptions
+# og-surface step 1: surface the old scan never saw (H1, a file outside its hand list).
+fn link_identity::Store::ensure_link_identity
+fn link_identity::Store::read_link_identity_at
+enum link_identity::LinkProbe
+struct link_identity::LinkInspection
+field link_identity::LinkInspection.identity
+field link_identity::LinkInspection.target_possible
+
+## Freshness (ceiling: 26)
+enum store::Depth
+enum store::ChangeKind
+enum store::Origin
+field store::Change.files
+field store::Change.graph_rev
+field store::Change.origin
+enum store::LoadError
+fn store::Store::refresh
 fn store::Store::subscribe
 fn store::Change::page
 fn store::Subscription::recv
+# test-oracle: tests drain the change feed without blocking; production waits with `recv`.
 fn store::Subscription::try_recv
 fn store::Subscription::start_rev
 fn store::Subscription::observe_watch_status
-fn store::Store::journal_id
-fn store::Store::is_graph_ready
-fn store::Store::open_read
-fn store::Store::page
-fn store::Store::page_named
-fn store::Store::path_for_os_handoff
-fn store::Store::asset_trash_location_for_user
-fn store::Store::read
-fn store::Store::scan_area
-fn store::Store::save
-fn store::Store::save_pages
-fn store::Store::trash_stats
-fn store::Store::purge_asset_trash
-fn store::Store::whole_graph
-fn publish::Store::publish_site
-fn restore::Store::restore
-fn publish::SiteWriter::write
-struct publish::PublishFailed
-struct publish::PublishReceipt
-struct publish::SiteWriter
-struct restore::RestoreFile
-struct restore::RestoreReport
-struct restore::RestoreFailed
-field restore::RestoreFile.area
-field restore::RestoreFile.rel
-field restore::RestoreFile.source
-field restore::RestoreFile.len
-field restore::RestoreReport.restored
-field restore::RestoreReport.recovery
-field restore::RestoreReport.kept_external
-field restore::RestoreReport.graph_rev
-field restore::RestoreFailed.phase
-field restore::RestoreFailed.cause
-field restore::RestoreFailed.done
-field publish::PublishFailed.cause
-field publish::PublishFailed.previous_kept
-field publish::PublishReceipt.site
-field publish::PublishReceipt.files
-field publish::PublishReceipt.previous_kept
-fn transaction::IoError::kind
-fn store::QueryError::bridge_search_hits
-fn store::WholeGraph::backlink_filter_context
-fn store::WholeGraph::backlinks
-fn store::WholeGraph::block_ref_counts
-fn store::WholeGraph::block_referrers
-fn store::WholeGraph::blocks
-fn store::WholeGraph::complete_page_names
-fn store::WholeGraph::explicit_referrers
-fn store::WholeGraph::export_query_subtrees
-fn store::WholeGraph::find_blocks
-fn store::WholeGraph::inventory
-fn store::WholeGraph::corpus
-fn store::WholeGraph::journal_content_days
-fn store::WholeGraph::page_icons
-fn store::WholeGraph::parsed_page_ids
-fn store::WholeGraph::preview_block
-fn store::WholeGraph::property_facets
-fn store::WholeGraph::query
-fn store::WholeGraph::query_ir
-fn store::WholeGraph::resolve
-fn store::WholeGraph::rev
-fn store::WholeGraph::referenced_assets
-fn store::WholeGraph::search
-fn store::WholeGraph::templates
-fn store::WholeGraph::unlinked_references
-fn store::WholeGraph::unreadable_files
-struct store::Cancel
-struct store::Day
-struct store::FileRev
 struct store::GraphRev
-struct store::FileEntry
-struct store::FileMeta
-struct store::Listing
-struct store::Inventory
-struct store::InventoryEntry
-struct store::PageRead
-struct store::SearchRequest
-struct store::Store
-struct store::ConfigState
 struct store::Change
 enum store::SubscriptionEnd
 struct store::Subscription
@@ -220,9 +78,344 @@ field store::WatchBatch.first_event_at
 field store::WatchBatch.full_diff
 field store::WatchBatch.poll
 field store::WatchBatch.reconcile_started
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SaveBase,SaveOutcome,SavePagesOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
-struct store::GraphAccessInspection
-struct store::OpenOptions
+# og-surface step 1: surface the old scan never saw (H3, a method defined in the
+# private transaction module).
+fn transaction::Store::read_is_current
+
+## Identity (ceiling: 9)
+fn file_kind::is_graph_text
+fn file_kind::is_asset_sidecar
+# og 21a: a live-conflict review finds its Concord-ledger base by the draft's revision.
+fn store::FileRev::from_bytes
+fn store::Store::as_page
+fn store::Store::file_id
+fn store::Store::journal_id
+fn store::Store::path_for_os_handoff
+struct store::Day
+struct store::FileRev
+
+## Reads (ceiling: 17)
+# Audit L8-03: the orphan-asset inventory moved from WholeGraph::referenced_assets
+# (parsed pages only, cannot read set-aside duplicate-day files or fail on an
+# unreadable one) to the store, which can; the WholeGraph question left the surface.
+fn store::Store::referenced_assets
+const model::PARSE_INPUT_MAX_BYTES
+fn model::parse_input_depth_within_limit
+field store::PageRead.doc
+field store::PageRead.id
+field store::PageRead.read_only
+field store::PageRead.rev
+fn store::Store::may_carry_vcs_markers
+fn store::Store::open_read
+fn store::Store::page
+fn store::Store::page_named
+# A-V4b: a write parses the exact bytes its revision guards; `page` reads the
+# file itself, and for a page a host holds answers the host's bytes (A-V4).
+fn store::Store::page_of
+# test-oracle: tests hold a page as a page host does, with no host running (A-V4b).
+fn store::Store::hold_page
+fn store::Store::read
+fn store::Store::whole_graph
+# GH #181: a one-shot lookup (a cold-start link) that misses in a served launch
+# checkpoint asks again after the launch diff, which may have added its target.
+fn store::Store::whole_graph_reconciled
+struct store::PageRead
+
+## Config (ceiling: 6)
+field store::ConfigState.config
+field store::ConfigState.problem
+field store::ConfigState.assets_directory_name
+field store::ConfigState.asset_trash_location
+fn store::Store::config
+struct store::ConfigState
+
+# Step 3b P2b: the old save engine's Store::save_pages and SavePagesOutcome are
+# deleted; page saves are the page host's (STEP3 §12; 7 -> 5).
+# Outline kernel M0: EditKind moved to tine-outline (a leaf crate shared with the
+# window's wasm); tine-store re-exports it below (Save 5 -> 4, Re-exports 9 -> 10).
+## Save (ceiling: 4)
+fn directory_durability::sync_directory_entry
+enum store::SaveBase
+enum store::SaveOutcome
+enum store::StoreError
+
+## Transaction steps (ceiling: 30)
+enum transaction::Content
+enum transaction::Refusal
+enum transaction::StepResult
+enum transaction::TxOutcome
+enum transaction::Why
+# og-surface: trash and orphan-asset trash are one step with a condition.
+enum transaction::TrashIf
+enum transaction::TitleRebind
+enum transaction::RewriteEffect
+field transaction::IoError.kind
+field transaction::IoError.message
+field transaction::Rollback.kept_external
+field transaction::Rollback.undo_failed
+fn transaction::Store::transaction
+fn transaction::Transaction::commit
+# DESIGN §3.1c C1/C5: no existing step plans without publishing; commit publishes.
+# Replaces Store::page_bytes with commit's full preflight and staged effects.
+fn transaction::Transaction::plan
+fn transaction::Transaction::create
+fn transaction::Transaction::create_unique
+# Read-only revision dependency for a later step; avoids mutating sidecars to force a guard.
+fn transaction::Transaction::expect
+# A-W1 (B2): a rename commits only in the view and config it was planned in.
+# `expect` guards one file's revision; a planning context is the whole
+# graph's revision plus the config the plan read, which no file revision names.
+fn transaction::Transaction::expect_view
+fn transaction::Transaction::move_file
+fn transaction::Transaction::replace
+# GH #623: the rename planner asks the transaction whether a reference rewrite
+# changes a file; the transaction keeps the result for preflight. One door for a
+# moved page's title rebind too (og-surface row 6).
+fn transaction::Transaction::rewrite_refs
+fn transaction::Transaction::save_page
+# host-only-writer P3 W8 (28 -> 29): a VCS-marker resolution run as a host operation
+# must stage the marker bytes' conflict-trash copy before the operation, with no
+# transaction to commit. `Transaction::trash` moves an existing file (removing it);
+# no item writes a given byte copy into the conflict trash and keeps the source, and
+# a mode parameter on `trash` would give one step two opposite effects.
+fn store::Store::stage_marker_copy
+fn transaction::Transaction::trash
+struct transaction::IoError
+struct transaction::RenameMap
+struct transaction::Rollback
+struct transaction::Transaction
+fn transaction::IoError::kind
+
+## Trash admin (ceiling: 3)
+enum store::TrashKind
+fn store::Store::trash_stats
+fn store::Store::purge_asset_trash
+
+## Diagnostics (ceiling: 3)
+# Storage A/B bench events (STEP3 §13 gate 2, branch og-bench-events): the
+# app asks once whether `TINE_BENCH_EVENTS` is set (its window then reports
+# `unfreeze`) and forwards that event. `Store::diagnostics` cannot answer
+# either: it is a per-Store pull dump, while these are one process-wide
+# append stream that exists before and without any Store.
+fn bench_events::enabled
+fn bench_events::unfreeze
+fn store::Store::diagnostics
+
+## Listing (ceiling: 15)
+enum store::Area
+field store::FileEntry.area
+field store::FileEntry.id
+field store::FileEntry.meta
+field store::FileEntry.page
+field store::FileEntry.day
+field store::FileEntry.rel
+field store::FileMeta.len
+field store::FileMeta.mtime
+field store::Listing.files
+field store::Listing.unreadable
+fn store::Store::scan_area
+struct store::FileEntry
+struct store::FileMeta
+struct store::Listing
+
+## Publication (ceiling: 12)
+# R3C2: two bounded publication verbs over existing staged door, no new Store methods/types.
+fn publish::query_publication_destination
+fn publish::Store::publish
+fn publish::SiteWriter::write
+enum publish::PublishDest
+struct publish::PublishFailed
+struct publish::PublishReceipt
+struct publish::SiteWriter
+field publish::PublishFailed.cause
+field publish::PublishFailed.previous_kept
+field publish::PublishReceipt.site
+field publish::PublishReceipt.files
+field publish::PublishReceipt.previous_kept
+
+## Restore (ceiling: 15)
+fn restore::Store::restore
+struct restore::RestoreFile
+struct restore::RestoreReport
+struct restore::RestoreFailed
+field restore::RestoreFile.area
+field restore::RestoreFile.rel
+field restore::RestoreFile.source
+field restore::RestoreFile.len
+# test-oracle: tests check how many files a restore copied; the app reports recovery locations only.
+field restore::RestoreReport.restored
+field restore::RestoreReport.recovery
+field restore::RestoreReport.kept_external
+field restore::RestoreReport.graph_rev
+field restore::RestoreFailed.phase
+field restore::RestoreFailed.cause
+field restore::RestoreFailed.done
+
+## WholeGraph: Names (ceiling: 17)
+enum store::InventoryScope
+enum store::Resolved
+field store::InventoryEntry.name
+field store::InventoryEntry.target
+field store::InventoryEntry.is_journal
+field store::InventoryEntry.day
+fn store::WholeGraph::complete_page_names
+# GH #623: the rename planner asks for the page files under one key through
+# `InventoryScope` instead of a sibling method (rule 3).
+fn store::WholeGraph::inventory
+fn store::WholeGraph::corpus
+fn store::WholeGraph::journal_content_days
+fn store::WholeGraph::resolve
+fn store::WholeGraph::rev
+fn store::WholeGraph::unreadable_files
+# GH #335 (All pages "Updated" column): `inventory` answers per NAME (aliases,
+# reference-only names, one entry per spelling) and is re-read on every page-index
+# refresh; a last-modified time is per FILE and wanted once, when the view opens.
+# A field on `InventoryEntry` would put ~10 bytes per entry on every refresh and
+# cover only the canonical file of a spelling twin, and no `InventoryScope` makes
+# it per-file, so this is one read of the mtimes the view already holds.
+fn store::WholeGraph::page_modified
+struct store::Inventory
+struct store::InventoryEntry
 struct store::WholeGraph
+
+## WholeGraph: References (ceiling: 4)
+fn store::WholeGraph::backlink_filter_context
+fn store::WholeGraph::backlinks
+fn store::WholeGraph::explicit_referrers
+fn store::WholeGraph::unlinked_references
+
+## WholeGraph: Block refs (ceiling: 4)
+fn store::WholeGraph::block_ref_counts
+fn store::WholeGraph::block_referrers
+fn store::WholeGraph::blocks
+fn store::WholeGraph::preview_block
+
+## WholeGraph: Search/Query (ceiling: 21)
+# GH #151: SearchRequest has no per-request expansion policy; the new bool is
+# the manager-approved parameter, rather than a sibling search/completion API.
+enum store::IrRequest
+enum store::IrAnswer
+enum store::Budget
+enum store::FacetPolicy
+enum store::QueryError
+field store::SearchRequest.block_limit
+field store::SearchRequest.block_view
+field store::SearchRequest.page_match_scope
+field store::SearchRequest.explain
+field store::SearchRequest.page_limit
+field store::SearchRequest.page_view
+field store::SearchRequest.transliteration
+field store::SearchRequest.text
+field store::SearchRequest.within
+fn store::QueryError::bridge_search_hits
+fn store::WholeGraph::export_query_subtrees
+fn store::WholeGraph::find_blocks
+fn store::WholeGraph::query_ir
+fn store::WholeGraph::search
+struct store::Cancel
+struct store::SearchRequest
+
+## WholeGraph: View meta (ceiling: 4)
+# GH #681: property_facets answers field presence/types, not page-reference
+# membership; a field parameter cannot name a reference target and count its
+# distinct referring blocks. page_modified answers times; block_ref_counts UUIDs.
+# The new All pages column is a domain question, not a faster sibling;
+# its reference rules and configuration belong to the same WholeGraph snapshot.
+fn page_backlinks::WholeGraph::page_backlink_counts
+fn store::WholeGraph::page_icons
+fn store::WholeGraph::property_facets
+fn store::WholeGraph::templates
+
+## Page host (ceiling: 54)
+# Approved by Martin 2026-10-10 (surface concept, STEP3 §7): the binding's page host, exported
+# for its retained-writer callers (census writers in tine-graph-features, backup restore in
+# src-tauri) and, from step 3b P1 (ceiling 12 -> 36), for the window's page commands and
+# their wire types (src-tauri page_commands.rs, one command per verb, STEP3 §3), the mail
+# bridge (PageMail, retarget) and the binding's retirement (orphan_stop, stop_abort,
+# stop_finish, StopState; src-tauri host_retirement.rs, plan v3 §3). Each verb is one
+# host operation the window already performs through the old engine; no item re-exports
+# file I/O. Step 3b P2b (36 -> 37): `start`, the production constructor src-tauri's graph
+# binding calls (graph.rs load_graph_for_label); no existing item starts a host outside
+# tests (`start_for_tests` is test-faults gated and picks a fixed graph id).
+# M6 (37 -> 38): `ReserveRefusal`, `reserve`'s refusal: unsaved pages, or `Busy` once a
+# rename still finishing held them for OPERATION_WAIT. The previous error type (the set
+# of unsaved pages) cannot say Busy, and `RenameRefusal` is a rename's outcome, not a
+# writer's reservation (STEP3-DESIGN manager decisions on REVIEW-progress-plan, R4).
+struct page_host::PageHost
+fn page_host::PageHost::start
+fn page_host::PageHost::reserve
+fn page_host::PageHost::rename
+fn page_host::PageHost::respell
+fn page_host::PageHost::stop_saved
+fn page_host::PageHost::window_reloaded
+fn page_host::PageHost::open
+fn page_host::PageHost::submit
+fn page_host::PageHost::move_blocks
+fn page_host::PageHost::discard
+fn page_host::PageHost::close
+fn page_host::PageHost::delete
+fn page_host::PageHost::wait_published
+fn page_host::PageHost::save_now
+fn page_host::PageHost::owed
+fn page_host::PageHost::draft_status
+fn page_host::PageHost::drafts_retry
+fn page_host::PageHost::orphan_stop
+fn page_host::PageHost::retarget
+fn page_host::PageHost::stop_abort
+fn page_host::PageHost::stop_finish
+struct page_host::Reloaded
+struct page_host::Opened
+struct page_host::PageMail
+struct page_host::DraftStatus
+enum page_host::PageRefusal
+enum page_host::DiskToken
+enum page_host::PageOperation
+enum page_host::StopState
+# test-oracle: tine-graph-features tests bind a host; production starts one through `start`.
+fn page_host::PageHost::start_for_tests
+struct page_host::Reservation
+enum page_host::Input
+enum page_host::RenameRefusal
+enum page_host::ReserveRefusal
+enum page_host::StopMode
+struct page_host::Stopped
+fn page_host::Stopped::relaunch
+# host-only-writer P2 (DESIGN §3.1/3.1a, 38 -> 47): one host operation (`apply` of a `HostOp`
+# with its fields, `Expected` bytes, `Effect`, `ApplyRefusal`) replaces a writer's reservation
+# window. `reserve`/`rename` cannot carry an op's expected bytes and effects: `reserve` fences
+# pages for the caller to write itself, `rename` is one fixed move. `reserve` goes in P4.
+struct page_host::HostOp
+field page_host::HostOp.pages
+field page_host::HostOp.moved
+field page_host::HostOp.policy
+field page_host::HostOp.kinds
+fn page_host::PageHost::apply
+enum page_host::Expected
+enum page_host::Effect
+enum page_host::ApplyRefusal
+# P2 review (47 -> 48): `flush_input`, the save-first half of `apply`'s `Input::Flush` before the
+# feature plans. Store reads answer saved bytes, so a page that exists only as typed input reads
+# as absent and the plan fails "not found" before `apply` could flush it. `apply` cannot carry it:
+# it needs the plan, and the plan needs the saved bytes.
+fn page_host::PageHost::flush_input
+# CLI slice 1 (48 -> 54, CLI PROTOCOL §5): `read`, a page as its host holds it (a held page's
+# buffer, unsaved input included, with its host version; else the file), with `HostRead` and its
+# fields and `HostReadError`. The command line's `page show` must show what the window shows;
+# `Store::read` answers saved bytes only and cannot see a held buffer.
+fn page_host::PageHost::read
+struct page_host::HostRead
+field page_host::HostRead.page
+field page_host::HostRead.bytes
+field page_host::HostRead.revision
+enum page_host::HostReadError
+## Re-exports (ceiling: 10)
+use crate::tine_outline::edit_kind
+use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,ReserveRefusal,StopMode,StopState,Stopped,}
+use crate::edit_kind::EditKind
+use crate::file_kind::{is_asset_sidecar,is_graph_text}
+use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
+use crate::transaction::{Content,IoError,Refusal,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
+use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
+use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SaveOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}
-use crate::launch_diag::LatencyHist

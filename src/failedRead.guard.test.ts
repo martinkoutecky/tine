@@ -90,6 +90,7 @@ const RUST_BASELINE: Record<string, number> = {
   "crates/tine-graph-features/src/journals.rs": 0,
   "crates/tine-graph-features/src/config.rs": 0,
   "crates/tine-graph-features/src/conflicts.rs": 0,
+  "crates/tine-graph-features/src/conflicts/queue.rs": 0,
   "crates/tine-graph-features/src/graph_verification.rs": 0,
   "crates/tine-store/src/transaction/read_checks.rs": 0,
   "crates/tine-store/src/model.rs": 6,
@@ -116,11 +117,22 @@ it("I-2: trash asset checks use the latest publication under the writer; exempla
   const transaction = readFileSync("crates/tine-store/src/transaction.rs", "utf8");
   const preflight = readFileSync("crates/tine-store/src/transaction/preflight.rs", "utf8");
   const checks = readFileSync("crates/tine-store/src/transaction/read_checks.rs", "utf8");
-  expect(transaction.indexOf("let _writer = self.store.writer.lock()")).toBeLessThan(transaction.indexOf("self.preflight("));
+  // Commit and plan both run every step's preflight (`prepare_steps`) after taking the writer.
+  const plan = readFileSync("crates/tine-store/src/transaction/plan.rs", "utf8");
+  for (const source of [transaction, plan]) {
+    const writer = source.indexOf("let _writer = self.store.writer.lock()");
+    expect(writer, RULE).toBeGreaterThan(-1);
+    expect(writer, RULE).toBeLessThan(source.indexOf("self.prepare_steps("));
+  }
+  expect(preflight).toMatch(/fn prepare_steps[\s\S]*?\.preflight\(step/);
   expect(preflight).toContain("self.check_orphan_asset(file)?");
   expect(checks).toContain("self.store.whole_graph()");
-  expect(checks).toContain("view.unreadable_files()");
-  expect(checks).toContain("view.referenced_assets().contains(name)");
+  expect(checks).toContain(".referenced_assets_in(&view)");
+  // The inventory fails on unreadable files and includes set-aside files (audit L8-03).
+  const inventory = readFileSync("crates/tine-store/src/store/asset_inventory.rs", "utf8");
+  expect(inventory).toContain("view.unreadable_files()");
+  expect(inventory).toContain("view.referenced_assets()");
+  expect(inventory).toContain("name_by_path");
   const commands = readFileSync("src-tauri/src/commands.rs", "utf8");
   const trash = commands.slice(commands.indexOf("pub(crate) async fn trash_asset"), commands.indexOf("pub(crate) async fn asset_trash_stats"));
   expect(trash, "I-22: the reference check can wait for initial parsing; keep trash off the UI thread").toContain("spawn_blocking");

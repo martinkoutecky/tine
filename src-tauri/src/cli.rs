@@ -64,6 +64,118 @@ enum Command {
     },
     /// Print the Tine version and exit.
     Version,
+    /// Run a graph's owner for the command line. Read commands start it
+    /// when the app does not have the graph open; it exits after 30 idle
+    /// minutes or when the app opens the graph.
+    Serve {
+        #[arg(value_name = "GRAPH", value_hint = clap::ValueHint::DirPath)]
+        graph: PathBuf,
+        /// Ask the graph's command-line owner to finish its work and exit.
+        #[arg(long)]
+        stop: bool,
+    },
+    /// Show which process owns the graph and what it is doing.
+    Status(ReadArgs),
+    /// Read pages.
+    Page {
+        #[command(subcommand)]
+        action: PageAction,
+    },
+    /// Read blocks.
+    Block {
+        #[command(subcommand)]
+        action: BlockAction,
+    },
+    /// Show a journal page: today, or the given date (YYYY-MM-DD).
+    Journal {
+        #[arg(value_name = "DATE")]
+        date: Option<String>,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+    /// Show the linked references of a page, or of a block with --block.
+    Refs {
+        #[arg(value_name = "PAGE|UUID")]
+        target: String,
+        /// TARGET is a block's id:: UUID.
+        #[arg(long)]
+        block: bool,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+    /// Search page names and block text, as the app's search does.
+    Search {
+        #[arg(value_name = "TEXT")]
+        text: String,
+        /// At most this many page hits.
+        #[arg(long, default_value_t = 20)]
+        pages: usize,
+        /// At most this many block hits.
+        #[arg(long, default_value_t = 50)]
+        blocks: usize,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+    /// Run a query: an OG simple or advanced query, or TQL with --tql.
+    Query {
+        #[arg(value_name = "QUERY")]
+        text: String,
+        /// QUERY is TQL, as in {{tine-query …}}.
+        #[arg(long)]
+        tql: bool,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+    /// List pages, or the pages at or under a namespace.
+    Pages {
+        #[arg(long, value_name = "NAMESPACE")]
+        namespace: Option<String>,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PageAction {
+    /// Show a page's outline (the text a window shows, unsaved edits included).
+    Show {
+        #[arg(value_name = "PAGE")]
+        name: String,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum BlockAction {
+    /// Show a block and its children by its id:: UUID.
+    Show {
+        #[arg(value_name = "UUID")]
+        uuid: String,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+}
+
+/// Which graph a read command asks, and how it prints.
+#[derive(Debug, Args)]
+struct ReadArgs {
+    /// The graph. Defaults to $TINE_GRAPH, else the graph folder around the
+    /// current directory.
+    #[arg(long, short = 'g', value_name = "GRAPH", value_hint = clap::ValueHint::DirPath)]
+    graph: Option<PathBuf>,
+    /// Print the typed result (schema tine.cli/1) as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+impl ReadArgs {
+    fn target(self) -> crate::owner::terminal::Target {
+        crate::owner::terminal::Target {
+            graph: self.graph,
+            json: self.json,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -260,6 +372,19 @@ pub(crate) fn dispatch() -> Option<i32> {
             return Some(0);
         }
         Some(Command::Doctor { graph }) => doctor(&graph),
+        Some(Command::Serve { graph, stop }) => {
+            return Some(crate::owner::terminal::serve(&graph, stop))
+        }
+        Some(
+            command @ (Command::Status(_)
+            | Command::Page { .. }
+            | Command::Block { .. }
+            | Command::Journal { .. }
+            | Command::Refs { .. }
+            | Command::Search { .. }
+            | Command::Query { .. }
+            | Command::Pages { .. }),
+        ) => return Some(read_command(command)),
         Some(Command::Export { format }) => export(format).map(|receipt| {
             terminal_stdout(format_args!(
                 "Published {} pages to {}",
@@ -274,6 +399,53 @@ pub(crate) fn dispatch() -> Option<i32> {
             terminal_stderr(format_args!("tine: {error}"));
             Some(1)
         }
+    }
+}
+
+/// A read command: one request to the graph's owner (CLI PROTOCOL §5).
+fn read_command(command: Command) -> i32 {
+    use crate::owner::terminal::read_verb;
+    use serde_json::json;
+    match command {
+        Command::Status(args) => read_verb(args.target(), "owner.status", json!(null)),
+        Command::Page {
+            action: PageAction::Show { name, read: args },
+        } => read_verb(args.target(), "page.show", json!({ "name": name })),
+        Command::Block {
+            action: BlockAction::Show { uuid, read: args },
+        } => read_verb(args.target(), "block.show", json!({ "uuid": uuid })),
+        Command::Journal { date, read: args } => {
+            read_verb(args.target(), "journal", json!({ "date": date }))
+        }
+        Command::Refs {
+            target,
+            block,
+            read: args,
+        } => read_verb(
+            args.target(),
+            "refs",
+            json!({ "target": target, "block": block }),
+        ),
+        Command::Search {
+            text,
+            pages,
+            blocks,
+            read: args,
+        } => read_verb(
+            args.target(),
+            "search",
+            json!({ "text": text, "pages": pages, "blocks": blocks }),
+        ),
+        Command::Query {
+            text,
+            tql,
+            read: args,
+        } => read_verb(args.target(), "query", json!({ "text": text, "tql": tql })),
+        Command::Pages {
+            namespace,
+            read: args,
+        } => read_verb(args.target(), "pages", json!({ "namespace": namespace })),
+        _ => 2,
     }
 }
 
@@ -317,7 +489,24 @@ fn prepare_console_if_needed(argv: &[OsString]) {
         let gui_flag = matches!(argument.as_ref(), "--debug" | "--capture");
         matches!(
             argument.as_ref(),
-            "help" | "version" | "export" | "doctor" | "-h" | "--help" | "-v" | "-V" | "--version"
+            "help"
+                | "version"
+                | "export"
+                | "doctor"
+                | "serve"
+                | "status"
+                | "page"
+                | "block"
+                | "journal"
+                | "refs"
+                | "search"
+                | "query"
+                | "pages"
+                | "-h"
+                | "--help"
+                | "-v"
+                | "-V"
+                | "--version"
         ) || (argument.starts_with('-') && !gui_flag)
     });
     if headless {
@@ -545,6 +734,23 @@ mod tests {
             ),
             ("tine-doctor.1", include_str!("../../docs/tine-doctor.1")),
             ("tine-version.1", include_str!("../../docs/tine-version.1")),
+            ("tine-serve.1", include_str!("../../docs/tine-serve.1")),
+            ("tine-status.1", include_str!("../../docs/tine-status.1")),
+            ("tine-page.1", include_str!("../../docs/tine-page.1")),
+            (
+                "tine-page-show.1",
+                include_str!("../../docs/tine-page-show.1"),
+            ),
+            ("tine-pages.1", include_str!("../../docs/tine-pages.1")),
+            ("tine-journal.1", include_str!("../../docs/tine-journal.1")),
+            ("tine-block.1", include_str!("../../docs/tine-block.1")),
+            (
+                "tine-block-show.1",
+                include_str!("../../docs/tine-block-show.1"),
+            ),
+            ("tine-refs.1", include_str!("../../docs/tine-refs.1")),
+            ("tine-search.1", include_str!("../../docs/tine-search.1")),
+            ("tine-query.1", include_str!("../../docs/tine-query.1")),
         ];
         if std::env::var_os("TINE_UPDATE_MAN_PAGE").is_some() {
             clap_mangen::generate_to(

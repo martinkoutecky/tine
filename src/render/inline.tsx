@@ -1,21 +1,23 @@
+import { msg, t } from "../i18n";
 import { urlDest } from "./urlDest";
+import { isFavoriteBlock, isFavoritesPage } from "../favorites";
 // Inline markdown -> Solid components. Produces real interactive DOM (clickable
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
 
 import { createExpansionGate, MACRO_EXPANSION_LIMIT_LABEL } from "./expansionBudget";
 import { leadingMarker, matchLeadingMarker } from "../markers";
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
+import { For, Show, createEffect, createRenderEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { assetRelPath, extOf, mediaKind } from "../media";
-import { openPage, openPageInNewTab, openPageAtBlock, openInNewTab, focusBlock } from "../router";
+import { openPage, openPageInNewTab, openPageAtBlock, openInNewTab, zoomToBlock } from "../router";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { refClickZoom } from "../copySettings";
 import { isJournalTitle } from "../journal";
 import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
-import { reportLinkOpenFailure } from "../components/ExternalLink";
+import { openOutboundLink, reportLinkOpenFailure } from "../components/ExternalLink";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
 import { mime_from_path } from "./wasm/lsdoc_wasm";
@@ -23,8 +25,8 @@ import type { Inline, MacroInline, TimestampInline, EmailValue, Block as AstBloc
 import type { PageKind } from "../types";
 import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
-import { rawHtmlPresentation } from "./htmlSanitize";
-import { allowLocalFileImages } from "../localFileSettings";
+import { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
+export { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
 import { resolvedTarget } from "../pageIndex";
 import { pageIcon } from "../pageIconBatch";
 import { typographic } from "./typography";
@@ -34,18 +36,20 @@ import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { parseImageMetaBrace } from "./imageMeta";
 import { AstBody } from "./body";
+import { codeFences } from "../editor/fences";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
 import { writeClipboardText } from "../clipboard";
-import { acquireAssetBlob, acquireLocalImageBlob, assetVersion } from "../assetCache";
+import { acquireAssetBlob, acquireCachedAssetBlob, assetVersion } from "../assetCache";
 import { mediaEditorForAsset } from "../mediaEditors";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { blockRefTarget, resolveBlockBatched } from "../resolveBatch";
-import { setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode } from "../document";
+import { SourceTaskCheckbox } from "../components/SourceTaskCheckbox";
+import { blockRef, setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode, pageHeaderProperties } from "../document";
 import { PaneContext, focusedPaneId, openRouteInOtherPane, openPdf } from "../panes";
 import { isQueryMacroName, queryMacroExtentAtSpan, type MacroExtent } from "../editor/queryMacro";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
@@ -54,12 +58,15 @@ import { guideTargetForLink, isGuidePageName } from "../guide";
 import { PeekPopup, PeekContext, capBlockTree } from "./PeekPopup";
 import { annotationInfoForBlock, pdfAssetFile, pdfFileFromPreBlock } from "../editor/annotation";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
-import { createLongPress } from "./longPress";
+import { createLongPress, isLongPressContextMenu } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
+import { fileLinkTarget, fileUrlTitle } from "./relativeFileLink";
+import { RelativeFileLink } from "./RelativeFileLinkView";
 import { galleryFor } from "../imageGallery";
 import { queryMacroRenderRun } from "./queryMacroRender";
+import { windowOf } from "../windowRealm";
 
 // ===========================================================================
 // AST renderer (lsdoc). Renders an `Inline[]` produced by the Rust parser to
@@ -75,13 +82,15 @@ import { queryMacroRenderRun } from "./queryMacroRender";
 // options map's closing brace and a literal comma.
 function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], rawMacro?: MacroExtent): JSX.Element {
   const body = raw.trimStart();
+  // A preview must not mount a live query editor through an inline macro.
+  if (useContext(PeekContext) && (rawMacro || isQueryMacroName(body.split(" ", 1)[0]))) return <code>{`{{${raw}}}`}</code>;
   if (rawMacro) return <QueryMacro body={`${rawMacro.name} ${rawMacro.argument}`} blockId={blockId} sourceExtent={rawMacro} sourceRaw={blockId ? docNode(blockId)?.raw.slice(rawMacro.start, rawMacro.end) : undefined} />;
   if (isQueryMacroName(/^\S*/.exec(body)![0].replace(/}+$/, ""))) return <QueryMacro body={body} blockId={blockId} />;
   if (/^embed\b/i.test(body)) return <EmbedMacro body={body} blockId={blockId} />;
   if (/^youtube-timestamp\b/i.test(body)) return <YoutubeTimestamp body={body} />;
   if (/^(video|youtube|vimeo|bilibili)\b/i.test(body)) return <VideoMacro body={body} />;
   if (/^(tweet|twitter)\b/i.test(body)) return <TweetMacro body={body} />;
-  if (/^img\b/i.test(body)) return renderImgMacro(body);
+  if (/^img\b/i.test(body)) return renderImgMacro(body, blockId);
   if (/^cloze\b/i.test(body)) return <ClozeMacro body={body} />;
   if (/^zotero-(imported|linked)-file\b/i.test(body)) return <ZoteroMacro body={body} />;
   if (/^namespace\b/i.test(body)) {
@@ -149,7 +158,7 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
       return (
         <span class="inline-copy-wrap">
           <code class="inline-code" {...((spanMode ? literalSpanAttrs(s.text, s.span) : undefined) ?? {})}>{s.text}</code>
-          <CopyButton text={s.text} title="Copy code" class="copy-inline" />
+          <CopyButton text={s.text} title={t("render-copy-code")} class="copy-inline" />
         </span>
       );
     case "break":
@@ -249,6 +258,7 @@ const PEEK_BLOCK_CAP = 50;
 
 function createPeekBridge(disabled: () => boolean) {
   const [open, setOpen] = createSignal(false);
+  let touchOpen = false;
   let openT: ReturnType<typeof setTimeout> | undefined;
   let closeT: ReturnType<typeof setTimeout> | undefined;
   const clearOpen = () => {
@@ -273,6 +283,7 @@ function createPeekBridge(disabled: () => boolean) {
     openT = setTimeout(() => setOpen(true), PEEK_OPEN_MS);
   };
   const anchorLeave = () => {
+    if (touchOpen) return;
     clearOpen();
     if (disabled()) return;
     clearClose();
@@ -283,11 +294,13 @@ function createPeekBridge(disabled: () => boolean) {
     clearClose();
   };
   const popupLeave = () => {
+    if (touchOpen) return;
     if (disabled()) return;
     clearClose();
     closeT = setTimeout(() => setOpen(false), PEEK_CLOSE_MS);
   };
   const dismiss = () => {
+    touchOpen = false;
     clearOpen();
     clearClose();
     setOpen(false);
@@ -296,7 +309,14 @@ function createPeekBridge(disabled: () => boolean) {
     clearOpen();
     clearClose();
   });
-  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss };
+  const hold = () => {
+    if (disabled()) return;
+    clearOpen();
+    clearClose();
+    touchOpen = true;
+    setOpen(true);
+  };
+  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss, hold };
 }
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
@@ -341,10 +361,9 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // read-only RefBlocks tree in a portaled popup. The fetch is lazy and guarded:
   // guide pages and links already inside a peek never arm another preview.
   const peek = createPeekBridge(() => insidePeek || isGuidePageName(targetName()));
-  // Mobile: a deliberate long-press raises the same context menu desktop
-  // right-click gives (GH #231). Quick tap, scroll, and text selection behave
-  // as before; the recognizer cancels on movement/release/cancel and only
-  // arms on primary touch/pen pointers.
+  // GH #655: native mobile holds open the shared page preview. Reuse the
+  // deliberate-hold recognizer and its compatibility-click ownership; desktop
+  // right-click and touch on desktop still use the page context menu.
   const longPress = createLongPress(() => anchorEl);
   onCleanup(longPress.dispose);
   const [previewResource] = createResource(
@@ -381,7 +400,8 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           if (!shouldOpenTextContextMenu(e)) return;
           e.preventDefault();
           e.stopPropagation();
-          if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
+          if (isMobilePlatform && isLongPressContextMenu(e)) peek.hold();
+          else if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
         }}
       >
         <Show when={icon()}>
@@ -395,13 +415,15 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           #{props.name}
         </Show>
       </a>
-      <Show when={peek.open() && preview() && capped().blocks.length > 0}>
+      <Show when={peek.open() && preview()}>
         <PeekPopup
           anchor={() => anchorEl}
-          title={<span class="peek-popup-title-name"><EmojiText text={props.name} /></span>}
+          title={<span class="peek-popup-title-name"><EmojiText text={preview()!.title || preview()!.name} /></span>}
           blocks={() => capped().blocks}
-          page={targetName()}
+          page={preview()!.name}
           pageKind={kind()}
+          properties={pageHeaderProperties(preview()!)}
+          format={preview()!.format}
           truncatedCount={() => capped().truncated}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
@@ -422,8 +444,8 @@ export function CopyButton(props: { text: string; title: string; class?: string 
     e.preventDefault();
     e.stopPropagation();
     void writeClipboardText(props.text)
-      .then(() => pushToast("Copied to clipboard", "success"))
-      .catch(() => pushToast("Couldn’t copy to clipboard", "error"));
+      .then(() => pushToast(msg("render-copied-to-clipboard"), "success"))
+      .catch(() => pushToast(msg("render-couldn-t-copy-to-clipboard"), "error"));
   };
   return (
     <button
@@ -459,12 +481,13 @@ function renderLink(
   }
   if (url.type === "block_ref") {
     const label = s.label && s.label.length ? astText(s.label) : undefined;
-    return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} />;
+    return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} />;
   }
   const dest = urlDest(url);
+  const fileTarget = assetLinkRel(dest) === null ? fileLinkTarget(dest) : null;
   // File URLs use the OS viewer, preserving their full path (GH #577).
   // File URLs must never enter the graph annotation reader.
-  const externalPdf = /^(?:https?:\/\/|file:)/i.test(dest) && /\.pdf$/i.test(dest);
+  const externalPdf = (/^(?:https?:\/\/|file:)/i.test(dest) || fileTarget?.kind === "outside") && /\.pdf$/i.test(dest);
   if (s.image) {
     const { width, height } = parseImageMetaBrace(s.metadata);
     const alt = s.label && s.label.length ? astText(s.label) : "";
@@ -473,6 +496,19 @@ function renderLink(
     if (k === "video" || k === "audio")
       return <MediaEmbed url={dest} kind={k} alt={alt} width={width} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
     if (!externalPdf) return <AssetImage url={dest} alt={alt} width={width} height={height} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
+  }
+  // GH #457: a plain file path resolves from the graph folder, preserving
+  // authored parent traversal (relativeFileLink.ts); an asset link
+  // keeps the asset routes below and a bare `x.pdf` keeps the reader route.
+  if (fileTarget !== null && (!/\.pdf$/i.test(dest) || /[/\\]/.test(dest))) {
+    return (
+      <span class="link-copy-wrap">
+        <RelativeFileLink dest={dest} target={fileTarget} spanAttrs={spanAttrs}>
+          <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
+        </RelativeFileLink>
+        <CopyButton text={dest} title={t("links-copy-title")} class="copy-inline" />
+      </span>
+    );
   }
   if (!externalPdf && /\.pdf$/i.test(dest)) {
     const labelStr = s.label && s.label.length ? astText(s.label) : pdfFilenameFromDest(dest);
@@ -495,6 +531,7 @@ function renderLink(
       <a
         class="external-link"
         href={unsafeHref ? undefined : dest}
+        title={fileUrlTitle(dest)}
         {...(spanAttrs ?? {})}
         onClick={(e) => {
           e.preventDefault();
@@ -502,12 +539,12 @@ function renderLink(
           if (unsafeHref) return;
           const rel = assetLinkRel(dest);
           if (rel !== null) void readOwned(graphOwner(), backend().openAsset(rel, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(dest, error));
-          else void readOwned(graphOwner(), backend().openExternal(dest)).catch((error) => reportLinkOpenFailure(dest, error));
+          else void openOutboundLink(dest);
         }}
       >
         <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
       </a>
-      <CopyButton text={dest} title="Copy link" class="copy-inline" />
+      <CopyButton text={dest} title={t("links-copy-title")} class="copy-inline" />
     </span>
   );
 }
@@ -541,78 +578,6 @@ function renderTimestamp(s: TimestampInline): JSX.Element {
       {text}
     </span>
   );
-}
-
-// Video-embed hosts (youtube/vimeo/loom/bilibili) that reject an embed when it
-// arrives with no referrer — YouTube in particular fails with error 153. For
-// those we send the app origin (`strict-origin-when-cross-origin`), matching OG
-// (og-1.0.0 youtube.cljs:63). Every other pasted `<iframe>` keeps `no-referrer`
-// so an arbitrary third-party embed still can't see where it was opened from.
-const EMBED_REFERRER_HOSTS =
-  /(?:^|\.)(?:youtube\.com|youtube-nocookie\.com|youtu\.be|vimeo\.com|loom\.com|bilibili\.com)$/i;
-function embedReferrerPolicy(src: string): "strict-origin-when-cross-origin" | "no-referrer" {
-  // Extract the host with a regex rather than `new URL()` — the referrer decision
-  // must not depend on a global others can shim, and a malformed src stays private.
-  const host = /^https?:\/\/([^/?#]+)/i.exec(src)?.[1]?.replace(/^[^@]*@/, "").replace(/:.*$/, "") ?? "";
-  return EMBED_REFERRER_HOSTS.test(host) ? "strict-origin-when-cross-origin" : "no-referrer";
-}
-
-// Sandboxed-iframe rendering, reused for inline `inline_html` and block `raw_html`.
-function renderIframe(src: string, width?: string, height?: string, spanAttrs?: SpanDomAttrs): JSX.Element {
-  return (
-    <span class="embed-iframe-wrap" style={{ ...(width ? { width } : {}), ...(height ? { "aspect-ratio": "auto", height } : {}) }} {...(spanAttrs ?? {})}>
-      <iframe class="embed-iframe" src={src} sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerpolicy={embedReferrerPolicy(src)} title="embed" />
-    </span>
-  );
-}
-// Raw HTML (inline_html / raw_html): the https `<iframe>` subset renders as a
-// SANDBOXED iframe (a deliberate embed feature, kept above the allowlist); all
-// other raw HTML is sanitized to the shared allowlist (html_sanitize.ts, mirrored
-// by the Rust export) and rendered LIVE. Handlers/`style`/`<script>` are stripped,
-// so `innerHTML` is XSS-safe here. See ADR 0019.
-export function renderRawHtml(text: string, spanAttrs?: SpanDomAttrs): JSX.Element {
-  return <RawHtmlContent text={text} spanAttrs={spanAttrs} allowIframe />;
-}
-
-/** The sanitizer-only HTML insertion path. Unlike `renderRawHtml`, this helper
- * never performs iframe dispatch; macro-expanded Hiccup must enter here. */
-export function renderSanitizedHtml(text: string, spanAttrs?: SpanDomAttrs): JSX.Element {
-  return <RawHtmlContent text={text} spanAttrs={spanAttrs} />;
-}
-
-// Renders sanitized raw HTML, and — when the user has opted into local-file images
-// (Settings → "Load local-file images") — swaps a blob URL into any `<img>` whose
-// `src` was a local path (the sanitizer strips those, so we re-attach them by
-// document-order match to the scanned paths). Off by default; see ADR 0019.
-function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs; allowIframe?: boolean }): JSX.Element {
-  const presentation = createMemo(() => rawHtmlPresentation(props.text, props.allowIframe));
-  let host: HTMLSpanElement | undefined;
-  createEffect(() => {
-    const shown = presentation(); // one projection for HTML, iframe and local resources
-    if (!host || !allowLocalFileImages()) return;
-    const locals = shown.localImages;
-    if (!locals.some(Boolean)) return;
-    let active = true;
-    const releases: (() => void)[] = [];
-    host.querySelectorAll("img").forEach((img, idx) => {
-      const path = locals[idx];
-      if (path) void acquireLocalImageBlob(path).then((lease) => {
-        if (!active) {
-          lease.release();
-          return;
-        }
-        releases.push(lease.release);
-        if (lease.url) img.src = lease.url;
-      });
-    });
-    onCleanup(() => {
-      active = false;
-      releases.forEach((release) => release());
-    });
-  });
-  return <Show when={presentation().iframe} fallback={<span ref={host} class="raw-html" innerHTML={presentation().html} {...(props.spanAttrs ?? {})} />}>
-    {(frame) => renderIframe(frame().src, frame().width, frame().height, props.spanAttrs)}
-  </Show>;
 }
 
 function renderEmail(text: EmailValue, spanAttrs?: SpanDomAttrs): JSX.Element {
@@ -783,14 +748,15 @@ function mediaResizeGrip(
     const owner = bindingOwner(() => alive && docNode(id) === original);
     event.preventDefault(); event.stopPropagation();
     const grip = event.currentTarget as HTMLElement;
+    const dragWindow = windowOf(event); // the drag's own window (P1)
     const refW = blockRefWidth(wrap), startX = event.clientX, startW = wrap.getBoundingClientRect().width;
     const oldWidth = wrap.style.width, element = media(), oldMediaWidth = element?.style.width ?? "";
     if (element) element.style.width = "100%";
     const stop = (restore = true) => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      window.removeEventListener("pointercancel", cancelled);
-      window.removeEventListener("blur", cancel);
+      dragWindow.removeEventListener("pointermove", move);
+      dragWindow.removeEventListener("pointerup", up);
+      dragWindow.removeEventListener("pointercancel", cancelled);
+      dragWindow.removeEventListener("blur", cancel);
       grip.removeEventListener("lostpointercapture", cancelled);
       if (restore) { wrap.style.width = oldWidth; if (element) element.style.width = oldMediaWidth; }
       cancel = () => {};
@@ -809,10 +775,10 @@ function mediaResizeGrip(
     };
     const cancelled = (next: PointerEvent) => { if (next.pointerId === event.pointerId) cancel(); };
     cancel = () => stop();
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    window.addEventListener("pointercancel", cancelled);
-    window.addEventListener("blur", cancel);
+    dragWindow.addEventListener("pointermove", move);
+    dragWindow.addEventListener("pointerup", up);
+    dragWindow.addEventListener("pointercancel", cancelled);
+    dragWindow.addEventListener("blur", cancel);
     grip.addEventListener("lostpointercapture", cancelled);
   };
 }
@@ -852,7 +818,9 @@ function AssetImage(props: {
   // which bumps that version after invalidating the cache — re-runs this resource
   // and the <img> re-reads the new bytes from disk.
   const [diskSrc, setDiskSrc] = createSignal("");
-  createEffect(() => {
+  const [previewUnavailable, setPreviewUnavailable] = createSignal(false);
+  createRenderEffect(() => {
+    setPreviewUnavailable(false);
     const r = rel();
     if (!r) {
       setDiskSrc("");
@@ -862,13 +830,16 @@ function AssetImage(props: {
     assetVersion(r);
     let active = true;
     let release: (() => void) | undefined;
-    setDiskSrc("");
-    void acquireAssetBlob(r).then((lease) => {
+    const cached = acquireCachedAssetBlob(r);
+    setDiskSrc(cached?.url ?? "");
+    release = cached?.release;
+    if (!cached) void acquireAssetBlob(r).then((lease) => {
       if (!active) {
         lease.release();
         return;
       }
       release = lease.release;
+      setPreviewUnavailable(!!lease.failure && lease.failure !== "not-found");
       setDiskSrc(lease.url);
     });
     onCleanup(() => {
@@ -889,10 +860,10 @@ function AssetImage(props: {
   const onCopyAsset = (e: MouseEvent) => {
     e.stopPropagation();
     const s = src();
-    if (!s) return;
-    copyImageFromSrc(s)
-      .then(() => pushToast("Image copied to clipboard", "success"))
-      .catch(() => pushToast("Couldn't copy the image", "error"));
+    if (!s && !rel()) return;
+    copyImageFromSrc(s, rel() || undefined)
+      .then(() => pushToast(msg("render-image-copied-to-clipboard"), "success"))
+      .catch(() => pushToast(msg("render-couldn-t-copy-the-image"), "error"));
   };
   const onTrashAsset = async (e: MouseEvent) => {
     e.stopPropagation();
@@ -901,7 +872,7 @@ function AssetImage(props: {
     const name = assetRelPath(props.url);
     if (!name || !props.blockId) return;
     const confirmed = await readOwned(owner, backend().confirm(
-      `Move "${name}" to the trash and remove it from this block? It stays recoverable in logseq/.tine-trash.`,
+      t("render-move-to-the-trash-and-remove-it-from-this-block-it-stays-recoverable-in-logseq-tine-trash", { name: String(name) }),
       "Trash asset",
     ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
@@ -909,7 +880,7 @@ function AssetImage(props: {
     // reference is actually gone: otherwise the block keeps pointing at a file
     // that was moved away (C3 L16).
     if (!removeMediaToken(props.blockId, props.token)) {
-      pushToast("Couldn't find this image in the block's text; nothing was trashed", "error");
+      pushToast(msg("render-couldn-t-find-this-image-in-the-block-s-text-nothing-was-trashed"), "error");
       return;
     }
     // The backend trashes only a file the PUBLISHED graph no longer references,
@@ -923,7 +894,7 @@ function AssetImage(props: {
       saved = flushed?.value === true;
     } catch { /* reported below as an unsaved edit */ }
     if (!saved) {
-      pushToast("Couldn't save this block, so the image file was not moved to the trash.", "error");
+      pushToast(msg("render-couldn-t-save-this-block-so-the-image-file-was-not-moved-to-the-trash"), "error");
       return;
     }
     try {
@@ -932,12 +903,12 @@ function AssetImage(props: {
       if (result.value === "referenced") {
         // Typed outcome: another place still uses the file. The block edit
         // stands and the file stays in assets/.
-        pushToast("Image removed from this block. The file stays in assets because it is still used elsewhere.", "info");
+        pushToast(msg("render-image-removed-from-this-block-the-file-stays-in-assets-because-it-is-still-used-elsewhere"), "info");
         return;
       }
-      pushToast("Asset moved to trash", "success");
+      pushToast(msg("render-asset-moved-to-trash"), "success");
     } catch (err) {
-      pushToast(`Image removed from this block, but its file couldn't be moved to the trash (${String(err)})`, "error");
+      pushToast(msg("render-image-removed-from-this-block-but-its-file-couldn-t-be-moved-to-the-trash", { detail: String(err) }), "error");
     }
   };
 
@@ -957,24 +928,28 @@ function AssetImage(props: {
     const command = await readOwned(owner, resolveMediaEditorCommand(ed));
     if (command.kind === "stale") return;
     void writeOwned(owner, backend().editAssetExternal(name, command.value, binding.backendGeneration))
-      .catch(() => { pushToast(`Couldn't open ${ed.label.replace(/^Edit in /, "")}`, "error"); });
+      .catch(() => { pushToast(msg("render-couldn-t-open", { label: String(ed.label.replace(/^Edit in /, "")) }), "error"); });
     refreshAssetOnReturn(name);
   };
 
   return (
     <Show
-      when={external || src()}
+      when={external || src() || previewUnavailable()}
       fallback={<span class="inline-image-missing">🖼 {props.alt || assetRelPath(props.url)}</span>}
     >
       <span ref={wrapEl} class="inline-image-wrap" style={wrapStyle()} {...(props.spanAttrs ?? {})}>
-        <img
-          ref={imgEl}
-          class="inline-image"
-          src={src()!}
-          alt={props.alt}
-          style={imgStyle()}
-          onClick={(e) => { e.stopPropagation(); openLightbox(src()!, galleryFor(e.currentTarget)); }}
-        />
+        <Show when={src()} fallback={
+          <span class="inline-image-unavailable">🖼 {props.alt || rel()} — {t("render-image-preview-unavailable")}</span>
+        }>
+          <img
+            ref={imgEl}
+            class="inline-image"
+            src={src()!}
+            alt={props.alt}
+            style={imgStyle()}
+            onClick={(e) => { e.stopPropagation(); openLightbox(src()!, galleryFor(e.currentTarget)); }}
+          />
+        </Show>
         <Show when={assetActions()}>
           <span class="asset-action-bar" aria-hidden="true">
             <Show when={editor()}>
@@ -985,21 +960,23 @@ function AssetImage(props: {
                 </svg>
               </button>
             </Show>
-            <button class="asset-action-btn" title="Copy image" onClick={onCopyAsset}>
+            <button class="asset-action-btn" title={t("render-copy-image")} onClick={onCopyAsset}>
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="9" y="9" width="11" height="11" rx="2" />
                 <path d="M5 15V5a2 2 0 0 1 2-2h10" />
               </svg>
             </button>
-            <button class="asset-action-btn asset-action-trash" title="Trash image" onClick={onTrashAsset}>
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-              </svg>
-            </button>
+            <Show when={props.token}>
+              <button class="asset-action-btn asset-action-trash" title={t("render-trash-image")} onClick={onTrashAsset}>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                </svg>
+              </button>
+            </Show>
           </span>
         </Show>
-        <Show when={props.blockId}>
-          <span class="img-resize-grip" title="Drag to resize" onPointerDown={onGripDown} />
+        <Show when={props.blockId && props.token?.full.startsWith("![") && src()}>
+          <span class="img-resize-grip" title={t("render-drag-to-resize")} onPointerDown={onGripDown} />
         </Show>
       </span>
     </Show>
@@ -1010,7 +987,7 @@ function AssetImage(props: {
 // `{{img url left|right|center}}` (OG). Numeric W/H → px; left/right/center wrap
 // the image in an alignment span (float / centered block); a 4th non-align token is
 // treated as a user CSS class. Reuses AssetImage (graph assets + external URLs).
-function renderImgMacro(body: string): JSX.Element {
+function renderImgMacro(body: string, blockId?: string): JSX.Element {
   const toks = body.replace(/^img\s*/i, "").trim().split(/\s+/).filter(Boolean);
   const url = toks[0] ?? "";
   const ALIGN = new Set(["left", "right", "center"]);
@@ -1026,7 +1003,7 @@ function renderImgMacro(body: string): JSX.Element {
     if (toks[3]) (ALIGN.has(toks[3].toLowerCase()) ? (align = toks[3].toLowerCase()) : (cls = toks[3]));
   }
   const px = (v?: string) => (v ? (/^\d+$/.test(v) ? `${v}px` : v) : undefined);
-  const img = <AssetImage url={url} alt="" width={px(width)} height={px(height)} />;
+  const img = <AssetImage url={url} alt="" width={px(width)} height={px(height)} blockId={blockId} />;
   if (!align && !cls) return img;
   const classes: Record<string, boolean> = {};
   if (align) classes[`img-align-${align}`] = true;
@@ -1080,7 +1057,7 @@ function MediaEmbed(props: {
     e.stopPropagation();
     const r = rel();
     if (r && !external) void readOwned(graphOwner(), backend().openAsset(r, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(props.url, error));
-    else void readOwned(graphOwner(), backend().openExternal(props.url)).catch((error) => reportLinkOpenFailure(props.url, error));
+    else void openOutboundLink(props.url);
   };
   let tryingBlobFallback = false;
   let blobLease: MediaBlobLease | null = null;
@@ -1141,7 +1118,7 @@ function MediaEmbed(props: {
     <Show
       when={!failed() && src()}
       fallback={
-        <a class="media-chip" classList={{ audio: props.kind === "audio" }} onClick={open} title="Open in the default player">
+        <a class="media-chip" classList={{ audio: props.kind === "audio" }} onClick={open} title={t("render-open-in-the-default-player")}>
           <span class="media-chip-icon">{props.kind === "audio" ? "♪" : "▶"}</span>
           {label()}
         </a>
@@ -1169,23 +1146,22 @@ function MediaEmbed(props: {
           onError={onMediaError}
           onClick={(e: MouseEvent) => e.stopPropagation()}
         />
-        <button class="media-open-external" onClick={open} title="Open in the default player (if playback here is broken)">
+        <button class="media-open-external" onClick={open} title={t("render-open-in-the-default-player-if-playback-here-is-broken")}>
           <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
             <path d="M14 4h6v6M20 4l-8 8M18 13v6a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h6"
               fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
         <Show when={props.kind === "video" && props.blockId}>
-          <span class="img-resize-grip media-resize-grip" title="Drag to resize" onPointerDown={onGripDown} />
+          <span class="img-resize-grip media-resize-grip" title={t("render-drag-to-resize")} onPointerDown={onGripDown} />
         </Show>
         <Show when={props.kind === "audio"}>
           <button
             class="media-audio-widen"
             onClick={(e) => { e.stopPropagation(); setAudioPlayer({ url: props.url, name: label() }); }}
-            title="Open the expanded player — waveform + precise seeking"
+            title={t("render-open-the-expanded-player-waveform-precise-seeking")}
           >
-            ⤢ Expand
-          </button>
+            {t("render-expand")}</button>
         </Show>
       </span>
     </Show>
@@ -1297,10 +1273,10 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
 // navigate to the source page on click and show a hover preview of the full
 // referenced block (mirrors OG); a missing target, or an id that is not a
 // UUID, shows its source `((id))` in full, as OG does (GH #589).
-function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs; blockId?: string }): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   if (linkDepth >= MAX_DEPTH_OF_LINKS) {
-    return <span class="link-depth-warning">Reference depth is too deep</span>;
+    return <span class="link-depth-warning">{t("render-reference-depth-is-too-deep")}</span>;
   }
   const pane = useContext(PaneContext);
   const insidePeek = useContext(PeekContext);
@@ -1346,8 +1322,16 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
     const raw = targetRaw();
     return raw ? leadingMarker(raw) : null;
   };
+  // Where the checkbox writes: the same exact owner the click navigates to.
+  const checkboxTarget = () => {
+    const g = grp();
+    if (g) return blockRefTarget(props.id, g);
+    // Still resolving, but painted from the loaded node: that node's owner.
+    return liveTarget() ? blockRef(props.id) : null;
+  };
   // Parse the referenced block's text with ITS page's format (org refs render org).
   const fmt = () => liveTarget() ? formatForBlock(props.id) : formatForPage(grp()?.page);
+  const hasCodeBody = createMemo(() => props.label === undefined && codeFences(targetRaw() ?? "", fmt()).some(f => f.closed));
   const annotation = () => {
     const block = grp()?.blocks[0];
     return block ? annotationInfoForBlock(block, fmt()) : null;
@@ -1373,9 +1357,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         class="block-ref"
         classList={{ "block-ref-missing": !grp() }}
         {...(props.spanAttrs ?? {})}
-        title={annotation()
-          ? "Click to open the highlight in its PDF; shift-click → sidebar; right-click for more"
-          : "Click to go to the block; shift-click → sidebar; right-click for more"}
+        title={annotation() ? t("render-click-to-open-the-highlight-in-its-pdf-shift-click-sidebar-right-click-for-more") : t("render-click-to-go-to-the-block-shift-click-sidebar-right-click-for-more")}
         onMouseDown={internalLinkMouseDown}
         onAuxClick={(e) => {
           if (e.button !== 1) return;
@@ -1414,9 +1396,9 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
                 const page = result.value;
                 const file = pdfFileFromPreBlock(page?.pre_block, page?.format);
                 if (file) openPdf(file, file, ann.hlPage, props.id);
-                else pushToast("Couldn't find the PDF for this highlight", "error");
+                else pushToast(msg("render-couldn-t-find-the-pdf-for-this-highlight"), "error");
               })
-              .catch(() => { pushToast("Couldn't open the PDF for this highlight", "error"); });
+              .catch(() => { pushToast(msg("render-couldn-t-open-the-pdf-for-this-highlight"), "error"); });
             return;
           }
           // Shift-click opens the referenced block in the right sidebar, Ctrl/Cmd+click
@@ -1432,23 +1414,32 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
               { kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) },
               pane?.paneId ?? focusedPaneId()
             );
-          else if (refClickZoom()) focusBlock(props.id);
+          else if (refClickZoom()) zoomToBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
           else openPageAtBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
         }}
       >
         <Show when={lines() !== undefined} fallback={<>(({props.id}))</>}>
+          <Show when={isFavoriteBlock(props.id) && isFavoritesPage(props.blockId ? docNode(props.blockId)?.page : undefined)}><EmojiText text="⭐" />{" "}</Show>
           <LinkDepthContext.Provider value={linkDepth + 1}>
             <Show when={marker()}>
-              {(m) => <><span class={`block-marker marker-${m().toLowerCase()}`}>{m()}</span>{" "}</>}
+              {(m) => <>
+                {/* GH #518: OG's block-checkbox inside a reference ticks the
+                    referenced block (block.cljs build-block-title). No text node
+                    before the chip, so the reference's text stays the source's. */}
+                <Show when={!insidePeek}><SourceTaskCheckbox marker={m()} target={checkboxTarget} style={{ "margin-right": "0.3em" }} /></Show>
+                <span class={`block-marker marker-${m().toLowerCase()}`}>{m()}</span>{" "}
+              </>}
             </Show>
-            <For each={lines()!}>
+            <Show when={hasCodeBody()} fallback={<For each={lines()!}>
               {(line, index) => (
                 <>
                   <Show when={index() > 0}><br /></Show>
                   <InlineText text={line} format={fmt()} preserveMarker={props.label === undefined} />
                 </>
               )}
-            </For>
+            </For>}>
+              <AstBody raw={lines()!.join("\n")} format={fmt()} />
+            </Show>
           </LinkDepthContext.Provider>
         </Show>
       </span>
@@ -1459,6 +1450,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           blocks={() => capped().blocks}
           page={preview()!.group.page}
           pageKind={preview()!.group.kind}
+          blockId={props.id}
           truncatedCount={previewTruncated}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}

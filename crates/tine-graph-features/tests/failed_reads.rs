@@ -11,6 +11,7 @@ fn graph(tag: &str) -> (PathBuf, Store) {
 }
 #[test]
 fn config_failure_opens_but_never_creates_in_default_directories() {
+    let _integration_guard = crate::integration_lock();
     let (root, first) = graph("config");
     first.close();
     fs::create_dir_all(root.join("logseq/config.edn")).unwrap();
@@ -33,7 +34,7 @@ fn config_failure_opens_but_never_creates_in_default_directories() {
         "{:pages-directory \"notes\"}\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(store.config().problem.is_none());
     let id = store.file_id(Area::Pages, "Recovered.md").unwrap();
     let mut tx = store.transaction(Some(EditKind::CreatePage));
@@ -46,10 +47,11 @@ fn config_failure_opens_but_never_creates_in_default_directories() {
 }
 #[test]
 fn discovery_read_failure_is_reported_and_good_pages_survive() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph("discovery");
     fs::write(root.join("pages/Good.md"), "- good\n").unwrap();
     fs::write(root.join("pages/Bad.md"), b"title:: \xff\n- bad\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let view = store.whole_graph().unwrap();
     assert!(view
         .unreadable_files()
@@ -64,17 +66,18 @@ fn discovery_read_failure_is_reported_and_good_pages_survive() {
 }
 #[test]
 fn trash_rechecks_references_after_an_external_publication() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph("trash");
     fs::create_dir_all(root.join("assets")).unwrap();
     fs::write(root.join("assets/kept.png"), b"asset").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(assets::orphan_assets(&store).unwrap().len(), 1);
     fs::write(
         root.join("pages/Arrived.md"),
         "- ![kept](../assets/kept.png)\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(
         assets::trash_asset(&store, "kept.png").unwrap(),
         assets::TrashOutcome::Referenced,
@@ -87,6 +90,7 @@ fn trash_rechecks_references_after_an_external_publication() {
 
 #[test]
 fn cold_title_discovery_failure_never_blocks_other_names() {
+    let _integration_guard = crate::integration_lock();
     let (root, old) = graph("cold-title");
     old.close();
     fs::write(root.join("pages/Bad.md"), b"title:: Claimed \xff\n- bad\n").unwrap();
@@ -109,6 +113,7 @@ fn cold_title_discovery_failure_never_blocks_other_names() {
 
 #[test]
 fn journal_scan_failure_never_reports_a_completed_empty_feed() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph("journal-scan");
     store.close();
     let error = tine_graph_features::journals::feed_page(&store, 10, None)
@@ -120,6 +125,7 @@ fn journal_scan_failure_never_reports_a_completed_empty_feed() {
 
 #[test]
 fn journal_preview_failure_is_reported_instead_of_an_empty_preview() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph("journal-preview");
     fs::write(root.join("journals/2026_06_19.md"), "- good\n").unwrap();
     fs::write(root.join("journals/2026_06_19.org"), b"- bad \xff\n").unwrap();
@@ -141,6 +147,7 @@ fn journal_preview_failure_is_reported_instead_of_an_empty_preview() {
 
 #[test]
 fn oversized_css_and_directory_read_failure_are_not_css_absence() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph("css-errors");
     fs::create_dir_all(root.join("logseq")).unwrap();
     let path = root.join("logseq/custom.css");

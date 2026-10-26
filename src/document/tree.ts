@@ -1,7 +1,7 @@
 import { doc, blockIsOpaqueSheetView, mainPages, formatForBlock } from "./model";
 import { createRoot, createMemo } from "solid-js";
-import { splitProps, isBuiltinHidden } from "../editor/properties";
-import { OUTLINE_MAX_DEPTH } from "../editor/outline";
+import { splitProps, BUILTIN_HIDE } from "../editor/properties";
+import { outlineMaxDepth } from "../editor/outline";
 
 // ---------------------------------------------------------------------------
 // Tree helpers
@@ -97,7 +97,7 @@ export function trailingVisibleEmptyLeaf(scope: OutlineScope): string | null {
   if (!id) return null;
   const node = doc.byId[id];
   if (!node || node.children.length !== 0) return null;
-  return splitProps(node.raw, isBuiltinHidden, formatForBlock(id)).visible.trim() === "" ? id : null;
+  return splitProps(node.raw, BUILTIN_HIDE, formatForBlock(id)).visible.trim() === "" ? id : null;
 }
 
 export function prevVisible(id: string, scope: OutlineScope | null = null): string | null {
@@ -149,7 +149,7 @@ export function existingSubtreeFits(id: string, newParent: string | null): boole
   const pending: Array<[string, number]> = [[id, firstDepth]];
   while (pending.length) {
     const [current, depth] = pending.pop()!;
-    if (depth >= OUTLINE_MAX_DEPTH) return false;
+    if (depth >= outlineMaxDepth()) return false;
     for (const child of doc.byId[current].children) pending.push([child, depth + 1]);
   }
   return true;

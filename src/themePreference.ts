@@ -1,5 +1,6 @@
+import { msg } from "./i18n";
 import { createSignal } from "solid-js";
-import { backend } from "./backend";
+import { syncSystemBarAppearance } from "./systemBars";
 import { pushToast } from "./toasts";
 import { persistThemePreference } from "./ui";
 
@@ -11,7 +12,7 @@ function loadThemePreference(): ThemePreference {
     const value = localStorage.getItem(THEME_KEY);
     if (value === "dark" || value === "light" || value === "system") return value;
   } catch {
-    if (typeof localStorage !== "undefined") pushToast("Could not load theme preference.", "error");
+    if (typeof localStorage !== "undefined") pushToast(msg("theme-preference-could-not-load-theme-preference"), "error");
   }
   return "light";
 }
@@ -52,8 +53,8 @@ export function applyTheme() {
   const resolved = resolveTheme(appearancePreference());
   setTheme(resolved);
   document.documentElement.setAttribute("data-theme", resolved);
-  void backend().setSystemBarAppearance(resolved === "dark")
-    .catch(() => pushToast("Could not update system bar appearance.", "error"));
+  syncSystemBarAppearance(resolved === "dark",
+    () => pushToast(msg("theme-preference-could-not-update-system-bar-appearance"), "error"));
   syncColorSchemeListener(appearancePreference());
 }
 

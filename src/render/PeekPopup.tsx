@@ -1,8 +1,13 @@
-import { Show, createContext, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createContext, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
+import { openInNewTab } from "../router";
+import { t } from "../i18n";
+import { contextMenu, openPageContextMenu } from "../ui";
+import { PagePropertyValue } from "../components/PagePropertyValue";
 import { FloatingPortal } from "../components/FloatingPortal";
 import { RefBlocks } from "../components/RefBlocks";
 import type { BlockDto } from "../types";
-import { registerTransientLayer } from "../transientLayers";
+import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
+import { useOwnerWindow, viewportOf } from "../windowRealm";
 
 export const PeekContext = createContext(false);
 
@@ -68,34 +73,60 @@ export function PeekPopup(props: {
   blocks: () => BlockDto[];
   page?: string;
   pageKind?: "journal" | "page";
+  blockId?: string;
+  properties?: [string, string][];
+  format?: "md" | "org";
   truncatedCount?: () => number;
   onPointerEnter: () => void;
   onPointerLeave: () => void;
   onDismiss: () => void;
 }): JSX.Element {
   let popupEl: HTMLDivElement | undefined;
+  const ownerWindow = useOwnerWindow();
   const layerId = `peek-popup-${createUniqueId()}`;
   const [style, setStyle] = createSignal<Record<string, string>>({});
+  // Page menus live outside the preview DOM. Identify this preview's menu by
+  // its exact opener, so unrelated menus retain normal outside dismissal.
+  const ownsMenu = () => {
+    const menu = contextMenu();
+    return menu?.kind === "page" && !!menu.focusOwner && !!popupEl?.contains(menu.focusOwner);
+  };
+  let menuWasOpen = false;
+  let pointerInside = false;
+  createEffect(() => {
+    const open = ownsMenu();
+    if (open) props.onPointerEnter(); // cancel any pending hover-close timer
+    else if (menuWasOpen && !pointerInside) props.onPointerLeave(); // resume the ordinary grace period
+    menuWasOpen = open;
+  });
+  const openSource = (block?: string) => {
+    if (!props.page) return;
+    openInNewTab({ kind: "page", name: props.page, pageKind: props.pageKind ?? "page", ...(block ? { block } : {}) }, true);
+    props.onDismiss();
+  };
 
   const updatePosition = () => {
     const anchor = props.anchor();
     if (!anchor) return;
 
     const rect = anchor.getBoundingClientRect();
-    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || POPUP_FALLBACK_WIDTH;
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || POPUP_FALLBACK_HEIGHT;
+    const viewport = viewportOf(anchor);
+    const root = anchor.ownerDocument.documentElement;
+    const viewportWidth = viewport.width || root.clientWidth || POPUP_FALLBACK_WIDTH;
+    const viewportHeight = viewport.height || root.clientHeight || POPUP_FALLBACK_HEIGHT;
     const width = Math.min(
       popupEl?.offsetWidth || POPUP_FALLBACK_WIDTH,
       Math.max(0, viewportWidth - POPUP_MARGIN * 2),
     );
-    const height = popupEl?.offsetHeight || POPUP_FALLBACK_HEIGHT;
+    const maxHeight = Math.max(0, viewportHeight - POPUP_MARGIN * 2);
+    const height = Math.min(popupEl?.offsetHeight || POPUP_FALLBACK_HEIGHT, maxHeight);
     const maxLeft = Math.max(POPUP_MARGIN, viewportWidth - width - POPUP_MARGIN);
     const left = Math.min(Math.max(rect.left, POPUP_MARGIN), maxLeft);
     const openAbove = rect.bottom + POPUP_OFFSET + height > viewportHeight - POPUP_MARGIN && rect.top > height;
 
-    setStyle(openAbove
-      ? { left: `${left}px`, bottom: `${viewportHeight - rect.top + POPUP_OFFSET}px` }
-      : { left: `${left}px`, top: `${rect.bottom + POPUP_OFFSET}px` });
+    const desiredTop = openAbove ? rect.top - POPUP_OFFSET - height : rect.bottom + POPUP_OFFSET;
+    const top = Math.max(POPUP_MARGIN, Math.min(desiredTop, viewportHeight - height - POPUP_MARGIN));
+    setStyle({ left: `${left}px`, top: `${top}px`, "max-height": `${maxHeight}px` });
   };
 
   createEffect(() => {
@@ -113,22 +144,24 @@ export function PeekPopup(props: {
     });
     onCleanup(unregister);
   });
+  dismissOnOutsidePointer({ open: () => !ownsMenu(), inside: () => [popupEl, props.anchor()], dismiss: props.onDismiss });
 
   onMount(() => {
-    const close = () => props.onPointerLeave();
+    const close = () => props.onDismiss();
     // Dismiss when the PAGE BEHIND scrolls, but NOT when the user scrolls the
     // popup's own overflow body (or drags its scrollbar) — capture-phase scroll
     // fires for every scroller, so filter out events originating inside the popup.
     const onScroll = (e: Event) => {
+      if (ownsMenu()) return;
       const t = e.target as Node | null;
       if (popupEl && t && (popupEl === t || popupEl.contains(t))) return;
       close();
     };
-    window.addEventListener("scroll", onScroll, true);
-    window.addEventListener("resize", close);
+    ownerWindow.addEventListener("scroll", onScroll, true);
+    ownerWindow.addEventListener("resize", close);
     onCleanup(() => {
-      window.removeEventListener("scroll", onScroll, true);
-      window.removeEventListener("resize", close);
+      ownerWindow.removeEventListener("scroll", onScroll, true);
+      ownerWindow.removeEventListener("resize", close);
     });
   });
 
@@ -141,19 +174,35 @@ export function PeekPopup(props: {
         tabIndex={-1}
         data-lenis-prevent
         style={style()}
-        onMouseEnter={props.onPointerEnter}
-        onMouseLeave={props.onPointerLeave}
+        onMouseEnter={() => { pointerInside = true; props.onPointerEnter(); }}
+        onMouseLeave={() => { pointerInside = false; if (!ownsMenu()) props.onPointerLeave(); }}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <Show when={props.title}>
-          <div class="peek-popup-title">{props.title}</div>
+          <div class="peek-popup-title">
+            <button type="button" class="peek-source-title" onClick={() => openSource()}>{props.title}</button>
+            <Show when={props.page}>
+              <button type="button" class="peek-open-source" aria-label={t("preview-open-source")} onClick={() => openSource(props.blockId)}>{t("preview-open-source")}</button>
+              <button type="button" class="peek-page-actions" aria-label={t("preview-page-actions")} aria-haspopup="menu"
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  const page = props.page!;
+                  const kind = props.pageKind ?? "page";
+                  openPageContextMenu(rect.left, rect.bottom, page, kind, false, event.currentTarget);
+                }}>…</button>
+            </Show>
+          </div>
         </Show>
         <PeekContext.Provider value={true}>
-          <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} />
+          <Show when={props.properties?.length}>
+            <div class="peek-page-properties">
+              <For each={props.properties}>{([key, value]) => <div><span class="prop-key">{key}</span>{" "}<PagePropertyValue propertyKey={key} value={value} format={props.format ?? "md"} /></div>}</For>
+            </div>
+          </Show>
+          <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} readOnly onOpenBlock={openSource} />
         </PeekContext.Provider>
         <Show when={(props.truncatedCount?.() ?? 0) > 0}>
-          <div class="peek-popup-more">{props.truncatedCount!() > MAX_PEEK_COUNT
-            ? `${MAX_PEEK_COUNT}+ more blocks` : `${props.truncatedCount!()} more blocks`}</div>
+          <div class="peek-popup-more">{props.truncatedCount!() > MAX_PEEK_COUNT ? t("render-more-blocks", { count: MAX_PEEK_COUNT }) : t("render-more-blocks-exact", { count: props.truncatedCount!() })}</div>
         </Show>
       </div>
     </FloatingPortal>

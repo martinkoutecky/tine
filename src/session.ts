@@ -1,3 +1,4 @@
+import { msg, t, renderEnglish } from "./i18n";
 import { reportUiFailure } from "./uiFailure";
 import { backend } from "./backend";
 import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
@@ -17,16 +18,19 @@ import {
 } from "./router";
 import { applySidebarSession, favoritesSectionExpanded, clearLegacyRecentSource, legacyRecentPages, recentSectionExpanded, recentPages, rightSidebar, rightSidebarOpen, sidebarOpen, type SidebarItem, type RecentItem, type SidebarSessionState, sanitizeRecent, setRecentPages } from "./ui";
 import {
+  allPaneIds,
   feedPaneId,
   focusedPaneId,
   layoutPaneIds,
   layoutRoot,
+  layoutWindowIds,
   mainRouter,
   paneRouter,
   resetPaneLayoutToSingle,
   restorePaneLayout,
   type LayoutNode,
 } from "./panes";
+import { MAIN_WINDOW_ID, MAX_WORKSPACE_WINDOWS } from "./windowRealm";
 
 export type PersistedLayoutNode =
   | {
@@ -53,17 +57,62 @@ export interface PersistedSession extends PaneSnapshot {
   layout?: PersistedLayoutNode;
   focusedPaneId?: string;
   recentPages?: RecentItem[];
+  /** OG-MULTIWINDOW P6: open workspace windows, in opening order. Absent when
+   * none is open, so a one-window session is byte-identical to before. */
+  windows?: PersistedWindow[];
+}
+
+/** A saved window rectangle in logical pixels. The native side re-places it
+ * on the monitors present at restore (src-tauri/src/workspace_windows.rs). */
+export interface WindowGeometry { x: number; y: number; width: number; height: number }
+
+/** One saved workspace window: its own pane tree (pane ids unique across the
+ * whole session), focused pane and last native rectangle. */
+export interface PersistedWindow {
+  layout: PersistedLayoutNode;
+  focusedPaneId?: string;
+  geometry?: WindowGeometry;
+}
+
+/** A workspace window ready to reopen. */
+export interface ParsedWindow {
+  layout: LayoutNode;
+  snapshots: Map<string, PaneSnapshot>;
+  focusedPaneId: string;
+  geometry: WindowGeometry | null;
+}
+
+/** src/workspaceWindows.ts: the open windows' ids and rectangles, and the
+ * doors that close every open window and reopen a saved list. Installed at
+ * startup; without it a session carries and restores no windows. */
+export interface WorkspaceWindowSession {
+  list(): { id: string; geometry: WindowGeometry | null }[];
+  closeAll(): void;
+  open(windows: ParsedWindow[]): void;
+}
+let windowSession: WorkspaceWindowSession | undefined;
+export function installWorkspaceWindowSession(handlers: WorkspaceWindowSession): () => void {
+  windowSession = handlers;
+  return () => { if (windowSession === handlers) windowSession = undefined; };
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let currentWorkspaceId: string | null = null;
 let restoredWorkspaceId: string | null = null;
 let restoredSessionPresent: boolean | null = null;
+let restoredSessionOwner: WriteOwner | null = null;
+
+/** A readable saved session owns the graph's landing, including a single
+ * Journals tab. A rebind retires this evidence; repeated startup probes do not.
+ * App/session state only, with no extra persisted fields or graph writes. */
+export function hasRestoredSession(): boolean {
+  return restoredSessionOwner?.() ?? false;
+}
 let sessionIntentRevision = 0;
 let restoreEvidence: { owner: WriteOwner; snapshot: string; intent: string; present: boolean | null; workspaceId: string | null } | null = null;
 
 function intentToken(): string {
-  return JSON.stringify([sessionIntentRevision, ...layoutPaneIds().map((id) => [id, paneRouter(id).routeIntentRevision()])]);
+  return JSON.stringify([sessionIntentRevision, ...allPaneIds().map((id) => [id, paneRouter(id).routeIntentRevision()])]);
 }
 
 export function setSessionWorkspaceId(id: string | null): void { currentWorkspaceId = id; }
@@ -89,13 +138,16 @@ export function prepareWorkspaceRecovery(): (activeId: string, parked: Persisted
       || intervened;
     const wantsParked = !!evidence && (evidence.present === false || !!evidence.workspaceId && evidence.workspaceId !== activeId);
     if (changed && wantsParked) {
-      pushToastUnique("Live changes were kept; workspace recovery was skipped.", "warn"); // a decision, not a failure
+      pushToastUnique(msg("session-live-changes-were-kept-workspace-recovery-was-skipped"), "warn"); // a decision, not a failure
       return buildPersistedSession();
     }
     if (wantsParked) {
       const parsed = parsePersistedSession(JSON.stringify(parked));
       if (!parsed) throw new Error("The active workspace snapshot is invalid");
       applyParsedSession(parsed);
+      // A missing registry is synthesized as a fresh Journals landing. Only
+      // recovered navigation should displace home in that no-session case.
+      if (!pristineDefault()) restoredSessionOwner = bindingOwner();
       scheduleSessionSave();
     }
     return buildPersistedSession();
@@ -107,6 +159,7 @@ function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
   const o = r as Record<string, unknown>;
   if (o.kind === "journals") return { kind: "journals" };
   if (o.kind === "conflicts") return { kind: "conflicts" };
+  if (o.kind === "all-pages") return { kind: "all-pages" };
   if (o.kind === "query") {
     const presentation = normalizeQueryPresentation(o.presentation);
     if (!(typeof o.id === "string" && o.id.length > 0 && o.id.length <= 128
@@ -141,7 +194,7 @@ function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
       && (o.page === undefined || (Number.isSafeInteger(o.page) && Number(o.page) > 0 && Number(o.page) <= 5000))
       && (o.scale === undefined || (typeof o.scale === "number" && Number.isFinite(o.scale)
         && o.scale >= 0.05 && o.scale <= 20)));
-    if (malformed) return { kind: "invalid", title: "Unavailable PDF",
+    if (malformed) return { kind: "invalid", get title() { return t("session-unavailable-pdf"); },
       message: "This saved PDF tab is malformed and was not opened." };
     const viewId = seenViewIds.has(o.viewId as string) ? mintPdfViewId(seenViewIds) : o.viewId as string;
     seenViewIds.add(viewId);
@@ -315,10 +368,61 @@ function serializeLayout(node: LayoutNode): PersistedLayoutNode {
   };
 }
 
+/** A geometry as saved, or null when any side is not a finite positive-size
+ * rectangle (the native side applies the real monitor bounds). */
+function sanitizeGeometry(raw: unknown): WindowGeometry | null {
+  if (!raw || typeof raw !== "object") return null;
+  const g = raw as Record<string, unknown>;
+  const values = [g.x, g.y, g.width, g.height];
+  if (!values.every((v) => typeof v === "number" && Number.isFinite(v))) return null;
+  const [x, y, width, height] = values as number[];
+  return width > 0 && height > 0 ? { x, y, width, height } : null;
+}
+
+function persistedWindows(): PersistedWindow[] {
+  if (!windowSession) return [];
+  const owned = new Set(layoutWindowIds());
+  return windowSession.list().filter((w) => owned.has(w.id)).map((w) => {
+    const geometry = sanitizeGeometry(w.geometry);
+    return {
+      layout: serializeLayout(layoutRoot(w.id)),
+      focusedPaneId: focusedPaneId(w.id),
+      ...(geometry ? { geometry } : {}),
+    };
+  });
+}
+
+/** Parse the saved windows (I-22): at most MAX_WORKSPACE_WINDOWS; each pane
+ * tree under the same depth/node bounds as the main tree. A malformed window,
+ * or one whose pane ids collide with main's or an earlier window's (or name
+ * "main"), is dropped; the rest still restore. A bad geometry is dropped and
+ * the window opens at the default size. O(saved bytes). */
+function parseWindows(raw: unknown, claimed: Set<string>, seenViewIds: Set<string>): ParsedWindow[] {
+  if (!Array.isArray(raw)) return [];
+  const windows: ParsedWindow[] = [];
+  for (const entry of raw.slice(0, MAX_WORKSPACE_WINDOWS)) {
+    if (!entry || typeof entry !== "object") continue;
+    const o = entry as Record<string, unknown>;
+    const snapshots = new Map<string, PaneSnapshot>();
+    const views = new Set(seenViewIds);
+    const layout = parseLayoutNode(o.layout, snapshots, { value: false }, views);
+    if (!layout || !snapshots.size) continue;
+    const ids = layoutPaneIds(layout);
+    if (ids.includes("main") || ids.some((id) => claimed.has(id))) continue;
+    for (const id of ids) claimed.add(id);
+    for (const view of views) seenViewIds.add(view);
+    const focused = typeof o.focusedPaneId === "string" && ids.includes(o.focusedPaneId) ? o.focusedPaneId : ids[0];
+    windows.push({ layout, snapshots, focusedPaneId: focused, geometry: sanitizeGeometry(o.geometry) });
+  }
+  return windows;
+}
+
 export function buildPersistedSession(): PersistedSession {
-  const ids = layoutPaneIds();
-  const mirrorId = feedPaneId() ?? (ids.includes(focusedPaneId()) ? focusedPaneId() : ids[0]) ?? "main";
+  const ids = layoutPaneIds(layoutRoot(MAIN_WINDOW_ID));
+  const focused = focusedPaneId(MAIN_WINDOW_ID);
+  const mirrorId = feedPaneId(MAIN_WINDOW_ID) ?? (ids.includes(focused) ? focused : ids[0]) ?? "main";
   const mirror = persistedSnapshot(paneRouter(mirrorId).snapshot());
+  const windows = persistedWindows();
   return {
     ...mirror,
     ...(currentWorkspaceId ? { workspaceId: currentWorkspaceId } : {}),
@@ -327,9 +431,10 @@ export function buildPersistedSession(): PersistedSession {
     rightSidebarItems: rightSidebar().map(persistedSidebarItem),
     favoritesSectionExpanded: favoritesSectionExpanded(),
     recentSectionExpanded: recentSectionExpanded(),
-    layout: serializeLayout(layoutRoot()),
-    focusedPaneId: focusedPaneId(),
+    layout: serializeLayout(layoutRoot(MAIN_WINDOW_ID)),
+    focusedPaneId: focused,
     recentPages: recentPages(),
+    ...(windows.length ? { windows } : {}),
   };
 }
 
@@ -339,6 +444,7 @@ export function parsePersistedSession(raw: string): {
   focusedPaneId: string;
   sidebar: SidebarSessionState;
   recent: RecentItem[];
+  windows: ParsedWindow[];
 } | null {
   try {
     const s = JSON.parse(raw) as PersistedSession;
@@ -362,6 +468,7 @@ export function parsePersistedSession(raw: string): {
           focusedPaneId: typeof s.focusedPaneId === "string" ? s.focusedPaneId : "main",
           sidebar,
           recent,
+          windows: parseWindows(s.windows, new Set(layoutPaneIds(layout)), seenViewIds),
         };
       }
     }
@@ -379,6 +486,7 @@ export function parsePersistedSession(raw: string): {
           focusedPaneId: "main",
           sidebar,
           recent,
+          windows: [], // the single-pane (phone) shell has no workspace windows
         };
       }
     }
@@ -390,6 +498,7 @@ export function parsePersistedSession(raw: string): {
       focusedPaneId: "main",
       sidebar,
       recent,
+      windows: singlePane ? [] : parseWindows(s.windows, new Set(["main"]), seenViewIds),
     };
   } catch {
     return null;
@@ -397,13 +506,16 @@ export function parsePersistedSession(raw: string): {
 }
 
 function pristineDefault(): boolean {
-  const ids = layoutPaneIds();
+  if (layoutWindowIds().length > 1) return false;
+  const ids = layoutPaneIds(layoutRoot(MAIN_WINDOW_ID));
   if (ids.length !== 1 || ids[0] !== "main") return false;
   const snap = mainRouter().snapshot();
   return snap.tabs.length === 1 && snap.tabs[0].history.length === 1 && snap.tabs[0].history[0].kind === "journals";
 }
 
 export function applyParsedSession(parsed: NonNullable<ReturnType<typeof parsePersistedSession>>) {
+  // The open windows go first: their pane ids must not block the main tree.
+  windowSession?.closeAll();
   applySidebarSession(parsed.sidebar);
   setRecentPages(parsed.recent);
   if (parsed.layout.kind === "pane" && parsed.layout.paneId === "main") {
@@ -411,6 +523,7 @@ export function applyParsedSession(parsed: NonNullable<ReturnType<typeof parsePe
   } else {
     restorePaneLayout(parsed.layout, parsed.snapshots, parsed.focusedPaneId);
   }
+  windowSession?.open(parsed.windows);
 }
 
 let sessionSaveFailure: { id: number; message: string } | null = null;
@@ -423,11 +536,11 @@ let sessionSaveFailure: { id: number; message: string } | null = null;
 const windowUnbound = () => backend().graphBindingGeneration() === 0;
 
 function reportSessionSaveFailure(error: unknown): void {
-  const message = `Could not save session: ${String(error)}`;
+  const message = renderEnglish(msg("session-save-failed", { detail: String(error) }));
   const priorMessage = sessionSaveFailure?.message;
   if (sessionSaveFailure && priorMessage !== message) dismissToast(sessionSaveFailure.id);
   sessionSaveFailure = {
-    id: pushToastUnique(message, "error", { sticky: true, action: { label: "Retry", run: () => { void flushSession().catch(() => console.error("Session retry failed")); } } }),
+    id: pushToastUnique(msg("session-save-failed", { detail: String(error) }), "error", { sticky: true, action: { label: msg("session-retry"), run: () => { void flushSession().catch(() => console.error("Session retry failed")); } } }),
     message,
   };
 }
@@ -507,6 +620,9 @@ export async function restoreSession(): Promise<void> {
     } catch { /* invalid session is handled below */ }
     const parsed = parsePersistedSession(raw);
     if (!parsed) return;
+    // The early main.tsx probe may already have restored these tabs. They still
+    // win over :default-home when there is nothing to apply a second time.
+    restoredSessionOwner = owner;
     if (!pristineDefault()) return;
     applyParsedSession(parsed);
   } finally {
@@ -520,7 +636,7 @@ export async function restoreSession(): Promise<void> {
       if (!owner()) return;
       await initializeWorkspaces();
     } catch (error) {
-      if (owner()) pushToastUnique(`Could not restore workspaces: ${String(error)}`, "error");
+      if (owner()) pushToastUnique(msg("session-could-not-restore-workspaces", { error: String(error) }), "error");
     }
   }
 }

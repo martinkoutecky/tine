@@ -7,14 +7,14 @@
 #   flatpak/node-sources.json   <- flatpak-node-generator npm   (from package-lock.json)
 # See flatpak/README.md for regeneration and verification commands.
 #
-# Runtime: org.gnome.Platform//48 — a Tauri Linux app needs webkit2gtk-4.1, which
-# ships in the GNOME runtime (not the bare freedesktop runtime). GNOME 48 is the
-# current stable branch and is built on the freedesktop 24.08 base, so the SDK
-# extensions are pinned to //24.08.
+# Runtime: org.gnome.Platform//49 — a Tauri Linux app needs webkit2gtk-4.1, which
+# ships in the GNOME runtime (not the bare freedesktop runtime). GNOME 49 is built
+# on the freedesktop 25.08 base, so the SDK extensions resolve to //25.08. Tauri
+# 2.12 needs rustc 1.90, newer than the 24.08 rust-stable extension (1.89).
 
 id: page.tine.Tine
 runtime: org.gnome.Platform
-runtime-version: "48"
+runtime-version: "49"
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
@@ -42,12 +42,21 @@ finish-args:
   - --share=network
   # Desktop notifications (if used at runtime).
   - --talk-name=org.freedesktop.Notifications
+  # System tray (GH #625): lets the tray code see the session's
+  # StatusNotifierWatcher. The library half is the libayatana-appindicator
+  # module below (the GNOME runtime does not ship it); without either half the
+  # build reports "no tray" and shows its window.
+  - --talk-name=org.kde.StatusNotifierWatcher
 
 build-options:
   # Put the SDK-extension toolchains (cargo/rustc, node/npm) on PATH.
   append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node20/bin
 
 modules:
+  # libayatana-appindicator3 (+ libdbusmenu, ayatana-ido, libayatana-indicator,
+  # intltool), loaded at run time by the tray (src-tauri/src/tray.rs). Vendored
+  # byte-for-byte from flathub/shared-modules; see flatpak/README.md.
+  - shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json
   - name: tine
     buildsystem: simple
     build-options:

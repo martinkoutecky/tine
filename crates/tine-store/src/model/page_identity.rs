@@ -65,53 +65,6 @@ impl Graph {
         }
     }
 
-    pub(crate) fn find_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
-        let key = (kind, tine_core::refs::page_key(name));
-        loop {
-            let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
-            if let Some(found) = self.cached_claimants(&key, gen) {
-                return found;
-            }
-
-            let mut built = FindEntryIndex::new();
-            built.entries = page_claimants(self, &list_graph_pages_kind(self, Some(kind)));
-            built.mark_kind_loaded(kind);
-
-            let found = {
-                let mut guard = self.find_entry_cache.write().unwrap();
-                match guard.as_mut() {
-                    Some((g, index)) if *g == gen => {
-                        if !index.has_kind(kind) {
-                            index
-                                .entries
-                                .retain(|(loaded_kind, _), _| *loaded_kind != kind);
-                            index.entries.extend(built.entries);
-                            index.mark_kind_loaded(kind);
-                        }
-                        index.entries.get(&key).cloned().unwrap_or_default()
-                    }
-                    _ => {
-                        let found = built.entries.get(&key).cloned().unwrap_or_default();
-                        *guard = Some((gen, built));
-                        found
-                    }
-                }
-            };
-            if self.cache_gen.load(std::sync::atomic::Ordering::Acquire) == gen {
-                return found;
-            }
-        }
-    }
-
-    /// The claimant index's answer for `key` at cache generation `gen`, if
-    /// it has one; `None` means only a walk can answer.
-    fn cached_claimants(&self, key: &(PageKind, String), gen: u64) -> Option<Vec<PageEntry>> {
-        let cache = self.find_entry_cache.read().unwrap();
-        let (g, index) = cache.as_ref()?;
-        (*g == gen && (index.has_kind(key.0) || index.entries.contains_key(key)))
-            .then(|| index.entries.get(key).cloned().unwrap_or_default())
-    }
-
     /// [`Self::find_entry`] that answers a name some file is named for from
     /// that file (GH #623 BR3). While the claimant index cannot answer, an
     /// ordinary page tries [`filename_claimants`] (a listing of file names
@@ -131,84 +84,10 @@ impl Graph {
         }
         self.find_entry(name, kind)
     }
-
-    /// A direct path read can observe a new or retitled file before the watcher.
-    /// Rebuild claimant ordering if that live file is missing from its bucket;
-    /// a proposed destination that does not exist must not become a claimant.
-    pub(super) fn observe_name_entry(&self, entry: &PageEntry) {
-        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
-        let mut cache = self.find_entry_cache.write().unwrap();
-        if let Some((g, index)) = cache.as_ref() {
-            let key = (entry.kind, tine_core::refs::page_key(&entry.name));
-            let known = index.entries.get(&key).is_some_and(|entries| {
-                entries.iter().any(|candidate| candidate.path == entry.path)
-            });
-            if *g == gen
-                && !known
-                && fs::symlink_metadata(&entry.path).is_ok_and(|meta| meta.is_file())
-            {
-                *cache = None;
-            }
-        }
-    }
-
-    /// Cold journal inventory and its complete claimant index share one walk.
-    /// Only called at open, before the watcher and load worker start.
-    pub(crate) fn scan_journal_names(&self) -> Vec<PageEntry> {
-        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
-        let entries = list_graph_pages_kind(self, Some(PageKind::Journal));
-        let mut index = FindEntryIndex::new();
-        index.entries = page_claimants(self, &entries);
-        index.mark_kind_loaded(PageKind::Journal);
-        *self.find_entry_cache.write().unwrap() = Some((gen, index));
-        entries
-    }
-
-    /// Build the page list and effective-name claimants from one cold walk.
-    pub(crate) fn snapshot_name_index(
-        &self,
-    ) -> (
-        Arc<Vec<PageEntry>>,
-        HashMap<(PageKind, String), Vec<PageEntry>>,
-    ) {
-        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
-        let format = self.current_journal_format();
-        // The build that produced this generation already listed and named
-        // every file from its own reads (GH #623: one read per file); a
-        // later generation walks again.
-        let launch = self
-            .launch_listing
-            .write()
-            .unwrap()
-            .take()
-            .filter(|(listed_gen, _)| *listed_gen == gen);
-        let entries = match launch {
-            Some((_, entries)) => Arc::unwrap_or_clone(entries),
-            None => list_graph_pages(self),
-        };
-        let claimants = page_claimants(self, &entries);
-        *self.find_entry_cache.write().unwrap() = Some((
-            gen,
-            FindEntryIndex {
-                entries: claimants.clone(),
-                // Reuse known claims, but a first miss must discover files
-                // that arrived after this published snapshot.
-                pages_loaded: false,
-                journals_loaded: false,
-            },
-        ));
-        let list = Arc::new(dedup_journal_days(
-            entries,
-            &format,
-            self.current_config().file_name_format,
-        ));
-        *self.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&list)));
-        (list, claimants)
-    }
 }
 
 /// The same claimant ordering for cold direct reads, journal open and snapshots.
-fn page_claimants(
+pub(super) fn page_claimants(
     graph: &Graph,
     entries: &[PageEntry],
 ) -> HashMap<(PageKind, String), Vec<PageEntry>> {
@@ -307,7 +186,11 @@ mod cold_index_tests {
         let view = store
             .whole_graph()
             .expect("one page's title panic stopped the initial load");
-        assert!(view.inventory().0.iter().any(|entry| entry.name == "Links"));
+        assert!(view
+            .inventory(crate::InventoryScope::All)
+            .0
+            .iter()
+            .any(|entry| entry.name == "Links"));
         assert!(
             view.unreadable_files().iter().any(|(id, reason)| {
                 id.as_str() == "pages/Bad.md" && reason.contains("parser panicked")
@@ -430,13 +313,16 @@ mod cold_index_tests {
     }
 }
 
-fn portable_component(name: &str) -> bool {
+pub(crate) fn portable_component(name: &str) -> bool {
     if name.is_empty()
         || matches!(name, "." | "..")
         || name.ends_with([' ', '.'])
         || name.chars().any(|character| {
             character.is_control()
-                || matches!(character, '<' | '>' | ':' | '"' | '\\' | '|' | '?' | '*')
+                || matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
         })
     {
         return false;
@@ -662,6 +548,61 @@ fn read_effective_page_name(
 }
 
 impl Graph {
+    pub(crate) fn link_target_may_exist(
+        &self,
+        block: Option<&str>,
+        page: Option<&str>,
+    ) -> io::Result<bool> {
+        let config = self.current_config();
+        let format = self.current_journal_format();
+        let journals = self.journals_path();
+        let mut possible = false;
+        let mut failure = None;
+        let errors = walk_graph_page_files(&self.root, &self.root, &config, |path| {
+            if possible || failure.is_some() {
+                return;
+            }
+            let probe = if let Some(id) = block {
+                file_contains_link_id(&path, id)
+            } else if let Some(name) = page {
+                let entry = listed_entry(
+                    self,
+                    (&format, &journals, config.file_name_format),
+                    path.clone(),
+                );
+                match entry {
+                    Some(entry) if entry.kind == PageKind::Journal => {
+                        let lookup = format
+                            .parse(name)
+                            .map(|date| format.title(date))
+                            .unwrap_or_else(|| name.to_owned());
+                        Ok(tine_core::refs::page_key(&entry.name)
+                            == tine_core::refs::page_key(&lookup))
+                    }
+                    Some(_) => effective_page_name(
+                        &path,
+                        path.file_stem().unwrap().to_str().unwrap(),
+                        config.file_name_format,
+                    )
+                    .map(|found| {
+                        tine_core::refs::page_key(&found) == tine_core::refs::page_key(name)
+                    }),
+                    None => Ok(false),
+                }
+            } else {
+                Ok(true)
+            };
+            match probe {
+                Ok(found) => possible |= found,
+                Err(error) => failure = Some(error),
+            }
+        });
+        if let Some(error) = failure.or_else(|| errors.into_iter().next().map(|(_, error)| error)) {
+            return Err(error);
+        }
+        Ok(possible)
+    }
+
     pub(super) fn discover_page_name(
         &self,
         path: &Path,
@@ -675,24 +616,90 @@ impl Graph {
         };
         match name {
             Ok(name) => {
-                let id = crate::FileId::from(self.rel_path(path));
-                self.discovery_errors
-                    .write()
-                    .unwrap()
-                    .retain(|(failed, _)| *failed != id);
+                self.record_name_discovery(path, None);
                 Some(name)
             }
             Err(error) => {
-                self.discovery_errors
-                    .write()
-                    .unwrap()
-                    .push((crate::FileId::from(self.rel_path(path)), error.into()));
+                self.record_name_discovery(path, Some(error));
                 // Physical access remains possible; page reads still return
                 // their typed decode/size error. No complete name inventory
                 // may use this tentative filename while discovery is partial.
                 Some(decode_page_name(stem, fmt))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod link_prefilter_tests {
+    use super::*;
+    #[test]
+    fn link_id_prefilter_spans_chunks_and_uses_graph_discovery_scope() {
+        let temp = tempfile::tempdir().unwrap();
+        let id = "abcdefab-1111-4111-8111-111111111111";
+        fs::create_dir_all(temp.path().join("archive/nested")).unwrap();
+        fs::create_dir(temp.path().join("assets")).unwrap();
+        fs::write(temp.path().join("assets/ignored.md"), id).unwrap();
+        assert!(
+            !crate::Store::read_link_identity_at(
+                temp.path(),
+                crate::link_identity::LinkProbe::Block {
+                    id,
+                    approved_external_assets: None
+                }
+            )
+            .target_possible
+        );
+        let mut source = "x".repeat(64 * 1024 + 20);
+        source.push_str(&id.to_uppercase());
+        fs::write(temp.path().join("archive/nested/Note.MARKDOWN"), source).unwrap();
+        assert!(
+            crate::Store::read_link_identity_at(
+                temp.path(),
+                crate::link_identity::LinkProbe::Block {
+                    id,
+                    approved_external_assets: None
+                }
+            )
+            .target_possible
+        );
+    }
+}
+
+// A substring is deliberately only a prefilter: parser-owned id:: / Org
+// drawers and exact authored spelling remain the full Store lookup's job.
+// Keep one chunk plus the UUID overlap; never allocate a whole page or parse
+// its blocks. Oversize files and read failures make the probe uncertain.
+fn file_contains_link_id(path: &Path, id: &str) -> io::Result<bool> {
+    use std::io::Read;
+    if id.len() != 36 {
+        return Ok(true);
+    }
+    let mut file = fs::File::open(path)?;
+    if file.metadata()?.len() > PARSE_INPUT_MAX_BYTES {
+        return Err(io::Error::other("link prefilter input exceeds parse limit"));
+    }
+    let mut buffer = vec![0; 64 * 1024 + id.len() - 1];
+    let mut carried = 0;
+    let mut total = 0;
+    loop {
+        let read = file.read(&mut buffer[carried..])?;
+        if read == 0 {
+            return Ok(false);
+        }
+        total += read as u64;
+        if total > PARSE_INPUT_MAX_BYTES {
+            return Err(io::Error::other("link prefilter input exceeds parse limit"));
+        }
+        let end = carried + read;
+        if buffer[..end]
+            .windows(id.len())
+            .any(|candidate| candidate.eq_ignore_ascii_case(id.as_bytes()))
+        {
+            return Ok(true);
+        }
+        carried = end.min(id.len() - 1);
+        buffer.copy_within(end - carried..end, 0);
     }
 }
 
@@ -800,13 +807,7 @@ fn list_pages(graph: &Graph, kind: Option<PageKind>, stem_key: Option<&str>) -> 
             .into_iter()
             .map(|(path, error)| (crate::FileId::from(graph.rel_path(&path)), error.into())),
     );
-    let mut known = graph.discovery_errors.write().unwrap();
-    known.retain(|(id, _)| match kind {
-        None => false,
-        Some(PageKind::Journal) => !root.join(id.as_str()).starts_with(&journals),
-        Some(PageKind::Page) => root.join(id.as_str()).starts_with(&journals),
-    });
-    known.extend(failures);
+    graph.replace_discovery_errors(kind, failures);
     entries
 }
 
@@ -852,30 +853,40 @@ pub(crate) fn launch_listing_walk(graph: &Graph) -> LaunchListing {
             tracked_only.push(path);
             return;
         }
-        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-            return;
-        };
-        let (name, kind, date_key) = if path.starts_with(&journals) {
-            match format.parse(stem) {
-                Some(date) => (
-                    format.title(date),
-                    PageKind::Journal,
-                    Some(date.ordinal_key()),
-                ),
-                None => (stem.to_owned(), PageKind::Journal, None),
-            }
-        } else {
-            (decode_page_name(stem, name_format), PageKind::Page, None)
-        };
-        entries.push(PageEntry {
-            name,
-            kind,
-            date_key,
-            rel_path: Some(graph.rel_path(&path).into()),
-            path,
-        });
+        entries.extend(listed_entry(graph, (&format, &journals, name_format), path));
     });
     (entries, tracked_only, errors, stamps)
+}
+
+/// The listing's entry for the graph text file `path`, named from its file
+/// name alone (no file opened): a journal by its date, an ordinary page by
+/// its decoded stem. `formats`: the journal format, the journals
+/// directory and the file name format, read once per listing.
+pub(super) fn listed_entry(
+    graph: &Graph,
+    (format, journals, name_format): (&JournalFormat, &Path, FileNameFormat),
+    path: PathBuf,
+) -> Option<PageEntry> {
+    let stem = path.file_stem().and_then(|stem| stem.to_str())?;
+    let (name, kind, date_key) = if path.starts_with(journals) {
+        match format.parse(stem) {
+            Some(date) => (
+                format.title(date),
+                PageKind::Journal,
+                Some(date.ordinal_key()),
+            ),
+            None => (stem.to_owned(), PageKind::Journal, None),
+        }
+    } else {
+        (decode_page_name(stem, name_format), PageKind::Page, None)
+    };
+    Some(PageEntry {
+        name,
+        kind,
+        date_key,
+        rel_path: Some(graph.rel_path(&path).into()),
+        path,
+    })
 }
 
 /// What [`launch_listing_walk`] returns: page entries, tracked-only files,

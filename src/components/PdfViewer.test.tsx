@@ -1468,6 +1468,169 @@ describe("PdfViewer OG state and reference behavior", () => {
     }
   });
 
+  it.each([false, true])("does not replay navigation on scroll or route updates (highlight=%s)", async (withHighlight) => {
+    vi.useFakeTimers();
+    const id = "11111111-1111-4111-8111-111111111111";
+    const rect = { top: 40, left: 20, width: 80, height: 12 };
+    vi.spyOn(backend(), "readHighlights").mockResolvedValue(withHighlight ? [{
+      id, page: 1, position: { page: 1, bounding: rect, rects: [rect] },
+      color: "yellow", text: "target", image: null,
+    }] : []);
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792), page(612, 792)])) });
+    const initial = makePdfRoute("paper.pdf", "Paper", { page: 1 });
+    const [route, setRoute] = createSignal<PdfRoute | null>(initial);
+    const intent = { page: 1, ...(withHighlight ? { highlightId: id } : {}) };
+    publishPdfNavigationIntent(initial.viewId, intent);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <OwnedKeyedPdfViewer route={route} owner={testPdfOwner}
+      onViewState={(state) => setRoute((current) => current ? { ...current, ...state } : null)} />, host);
+    try {
+      await flush();
+      await vi.advanceTimersByTimeAsync(150);
+      await flush();
+      const scrollIntoView = vi.mocked(HTMLElement.prototype.scrollIntoView);
+      expect(scrollIntoView).toHaveBeenCalled();
+      scrollIntoView.mockClear();
+      const scroll = host.querySelector(".pdf-scroll") as HTMLElement;
+      for (const [index, element] of [...host.querySelectorAll(".pdf-page")].entries()) {
+        Object.defineProperty(element, "offsetTop", { configurable: true, value: index * 800 });
+      }
+      scroll.scrollTop = 900;
+      scroll.dispatchEvent(new Event("scroll"));
+      await vi.advanceTimersByTimeAsync(50);
+      await flush();
+      expect(route()?.page).toBe(2);
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      setRoute((current) => current ? { ...current, scale: 1.5 } : null);
+      window.dispatchEvent(new Event("resize"));
+      await flush();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      publishPdfNavigationIntent(initial.viewId, intent);
+      await flush();
+      expect(route()?.page).toBe(1);
+      expect(scrollIntoView).toHaveBeenCalled();
+      expect(getDocumentMock).toHaveBeenCalledOnce();
+    } finally {
+      dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  // GH #672 late replay: opening a reader at a saved zoom arms the zoom-settle
+  // timer (the scale signal starts at a placeholder). That pending settle used to
+  // write the zoom anchor (the top of the page) 120 ms later, over the backlink's
+  // exact-highlight scroll or over the reader's own scrolling.
+  it.each(["highlight scroll", "reader scroll"] as const)("a mount-time zoom settle does not move the reader after the %s", async (kind) => {
+    vi.useFakeTimers();
+    const id = "11111111-1111-4111-8111-111111111111";
+    const rect = { top: 500, left: 20, width: 80, height: 12 };
+    vi.spyOn(backend() as any, "openPdf").mockResolvedValue({
+      highlights: [{ id, page: 1, position: { page: 1, bounding: rect, rects: [rect] },
+        color: "yellow", text: "target", image: null }],
+      page: 1, scale: 1.25,
+    });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792), page(612, 792)])) });
+    const initial = makePdfRoute("paper.pdf", "Paper", { page: 1 });
+    publishPdfNavigationIntent(initial.viewId, { page: 1, highlightId: id });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <OwnedKeyedPdfViewer route={() => initial} owner={testPdfOwner} />, host);
+    try {
+      const scroll = () => host.querySelector(".pdf-scroll") as HTMLElement;
+      // The exact-highlight scroll lands mid-page, as a real browser would do.
+      vi.mocked(HTMLElement.prototype.scrollIntoView).mockImplementation(function (this: HTMLElement) {
+        if (this.classList.contains("pdf-hl")) scroll().scrollTop = 514;
+      });
+      await flush();
+      for (const [index, element] of [...host.querySelectorAll(".pdf-page")].entries()) {
+        Object.defineProperty(element, "offsetTop", { configurable: true, value: 80 + index * 1006 });
+      }
+      expect(scroll().scrollTop).toBe(514);
+      if (kind === "reader scroll") {
+        scroll().scrollTop = 1086;
+        scroll().dispatchEvent(new Event("scroll"));
+      }
+      await vi.advanceTimersByTimeAsync(400);
+      await flush();
+      expect(scroll().scrollTop).toBe(kind === "highlight scroll" ? 514 : 1086);
+    } finally {
+      dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  // Card hCAoxs: a backlink into a PDF that is not open yet opened it and marked
+  // the highlight but left it off-screen. The navigation's own raster of the target
+  // page is superseded by the observer's request for the same page (the page scrolls
+  // into view), so its `await renderPage` returned before the overlay was painted
+  // and the exact-highlight scroll was skipped.
+  async function mountUnopenedWithSupersededRaster(pageNumber: number, userScroll?: (scroll: HTMLElement) => void) {
+    const id = "33333333-3333-4333-8333-333333333333";
+    const rect = { top: 500, left: 20, width: 80, height: 12 };
+    vi.spyOn(backend() as any, "openPdf").mockResolvedValue({
+      highlights: [{ id, page: pageNumber, position: { page: pageNumber, bounding: rect, rects: [rect] },
+        color: "yellow", text: "target", image: null }],
+      page: 1, scale: 1,
+    });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const pdf = documentWithPages([page(612, 792), page(612, 792), page(612, 792)]);
+    const resolvers: Array<() => void> = [];
+    const realGetPage = pdf.getPage.getMockImplementation()!;
+    // Page 1 is measured immediately; every later request waits, so the
+    // observer's request can arrive while the navigation's raster is in flight.
+    let first = true;
+    pdf.getPage.mockImplementation((number: number) => {
+      if (first) { first = false; return realGetPage(number); }
+      return new Promise((resolve) => { resolvers.push(() => resolve(realGetPage(number))); });
+    });
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(pdf) });
+    const initial = makePdfRoute("paper.pdf", "Paper", { page: pageNumber });
+    publishPdfNavigationIntent(initial.viewId, { page: pageNumber, highlightId: id });
+    const calls: string[] = [];
+    vi.mocked(HTMLElement.prototype.scrollIntoView).mockImplementation(function (this: HTMLElement) {
+      calls.push(this.classList.contains("pdf-hl") ? `hl:${this.dataset.highlightId}` : `page:${this.dataset.page}`);
+    });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <OwnedKeyedPdfViewer route={() => initial} owner={testPdfOwner} />, host);
+    await flush();
+    const target = host.querySelector(`.pdf-page[data-page="${pageNumber}"]`)!;
+    TestIntersectionObserver.instances[0].show(target);
+    await flush();
+    if (userScroll) userScroll(host.querySelector(".pdf-scroll") as HTMLElement);
+    while (resolvers.length) resolvers.shift()!();
+    await flush();
+    return { id, host, calls, dispose };
+  }
+
+  it.each([1, 3])("scrolls to the highlight on page %i of a PDF that was not open yet", async (pageNumber) => {
+    const { id, host, calls, dispose } = await mountUnopenedWithSupersededRaster(pageNumber);
+    try {
+      expect(host.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id")).toBe(id);
+      expect(calls.filter((call) => call === `hl:${id}`)).toHaveLength(1);
+      // Scrolled once: a later raster of the same page does not scroll again.
+      TestIntersectionObserver.instances[0].show(host.querySelector(`.pdf-page[data-page="${pageNumber}"]`)!);
+      await flush();
+      expect(calls.filter((call) => call === `hl:${id}`)).toHaveLength(1);
+    } finally { dispose(); }
+  });
+
+  it("does not pull the reader back to a pending highlight after they scrolled away", async () => {
+    const { id, host, calls, dispose } = await mountUnopenedWithSupersededRaster(1, (scroll) => {
+      scroll.dispatchEvent(new WheelEvent("wheel", { deltaY: 200, bubbles: true }));
+    });
+    try {
+      expect(calls).not.toContain(`hl:${id}`);
+      expect(host.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id")).toBe(id);
+    } finally { dispose(); }
+  });
+
   it("keeps one PDF mounted and scrolls repeated references to the exact highlight", async () => {
     const firstId = "11111111-1111-4111-8111-111111111111";
     const secondId = "22222222-2222-4222-8222-222222222222";

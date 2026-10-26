@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Detect — and loudly surface — when Tine is painting on the CPU. Speed is the
 // whole pitch; a silent software-rendering fallback (e.g. an AppImage whose
 // bundled GL stack doesn't match the host driver, or WebKitGTK's DMABUF/EGL init
@@ -55,13 +56,13 @@ export async function warnIfSoftwareRendering(): Promise<void> {
     // message (was it forced on purpose? are we in an AppImage?).
     const env = await backend()
       .gpuEnv()
-      .catch(() => ({ software_forced: false, appimage: false, packaged: null }));
+      .catch(() => ({ software_forced: false, appimage: false, flatpak: false, packaged: null }));
 
     if (env.software_forced) {
       // The user (or our TINE_GPU=0 escape hatch) turned GPU compositing off —
       // expected, but still worth a reminder that it costs scroll smoothness.
       pushToast(
-        "Software rendering is on (TINE_GPU=0 / WEBKIT_DISABLE_DMABUF_RENDERER) — scrolling may feel slow. Unset it to use your GPU.",
+        msg("gpu-software-rendering-is-on-tine-gpu-0-webkit"),
         "info",
         { sticky: true }
       );
@@ -69,13 +70,13 @@ export async function warnIfSoftwareRendering(): Promise<void> {
       // The surprise case: GPU was requested but the AppImage's bundled graphics
       // libraries don't match the host driver, so WebKit fell back to the CPU.
       pushToast(
-        "This AppImage is rendering on the CPU (its bundled graphics libraries don't match your system), so scrolling may feel slow. The .deb / .rpm packages use your system's GPU drivers and are noticeably faster.",
+        msg("gpu-this-app-image-is-rendering-on-the-cpu"),
         "warn",
         { sticky: true }
       );
     } else {
       pushToast(
-        "Tine is rendering on the CPU — your GPU's accelerated path is unavailable, so scrolling may feel slow. Check that your graphics drivers / hardware acceleration are working.",
+        msg("gpu-tine-is-rendering-on-the-cpu-your-gpu"),
         "warn",
         { sticky: true }
       );

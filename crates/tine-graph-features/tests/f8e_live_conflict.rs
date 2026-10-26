@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::model::PageDto;
 use tine_core::sync_diff::{DiffRow, RowKind};
-use tine_graph_features::live_conflict::{live_conflict_diff, resolve_live_conflict, ABSENT};
-use tine_store::{FileRev, PageId, Store};
+use tine_graph_features::live_conflict::{live_conflict_diff, merge_live_conflict, ABSENT};
+use tine_store::{EditKind, FileRev, PageId, SaveBase, SaveOutcome, Store};
 
 const PAGE: &str = "pages/Desk.md";
 const BASE: &str = "- the shared intro line\n- the plan for today\n";
@@ -41,6 +41,54 @@ fn draft(store: &Store, index: usize, text: &str) -> (PageDto, String) {
     page.blocks[index].raw = text.to_owned();
     let rev: String = read.rev.into();
     (page, rev)
+}
+
+/// The review's apply as the window does it (STEP3 R6): the read-only merge,
+/// then one write guarded by the reviewed disk revision. The window submits
+/// through its page host with `resolve` = that revision; this test writes
+/// through the store's guarded save oracle, the same revision guard. A guard
+/// that fails is the moved-disk refusal. Returns the written page with its
+/// new revision.
+#[allow(clippy::too_many_arguments)]
+fn apply(
+    store: &Store,
+    path: &str,
+    draft: &PageDto,
+    conflict_rev: &str,
+    merge_base_rev: Option<&str>,
+    bases: &[String],
+    decisions: &HashMap<String, String>,
+    pre_choice: &str,
+) -> std::io::Result<PageDto> {
+    let mut merged = merge_live_conflict(
+        store,
+        path,
+        draft,
+        conflict_rev,
+        merge_base_rev,
+        bases,
+        decisions,
+        pre_choice,
+    )?;
+    let (kind, base) = if conflict_rev == ABSENT {
+        (EditKind::CreatePage, SaveBase::CreateNew)
+    } else {
+        (
+            EditKind::ReplacePage,
+            SaveBase::Existing(FileRev::from(conflict_rev.to_owned())),
+        )
+    };
+    match store.save(kind, &PageId::from(path), base, &merged) {
+        SaveOutcome::Saved(rev) | SaveOutcome::Unchanged(rev) => {
+            merged.rev = Some(rev.into());
+            Ok(merged)
+        }
+        SaveOutcome::Conflict { .. } | SaveOutcome::Deleted => Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "live conflict changed on disk",
+        )),
+        other => Err(std::io::Error::other(format!("{other:?}"))),
+    }
 }
 
 fn external(root: &Path, text: &str) {
@@ -77,6 +125,7 @@ fn decisions(diff: &tine_core::sync_diff::SyncConflictDiff) -> HashMap<String, S
 /// guarded save at the reviewed disk revision.
 #[test]
 fn a_live_conflict_uses_the_editor_base_and_guarded_resolution() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("three-way");
     fs::write(root.join(PAGE), BASE).unwrap();
     let store = open(&root);
@@ -91,11 +140,10 @@ fn a_live_conflict_uses_the_editor_base_and_guarded_resolution() {
         FileRev::from_bytes(fs::read(root.join(PAGE)).unwrap().as_slice()).into();
     assert_eq!(diff.conflict_rev, disk_rev);
     let chosen = decisions(&diff);
-    let resolved = resolve_live_conflict(
+    let resolved = apply(
         &store,
         PAGE,
         &page,
-        Some(&base_rev),
         &diff.conflict_rev,
         diff.merge_base_rev.as_deref(),
         &bases,
@@ -117,6 +165,7 @@ fn a_live_conflict_uses_the_editor_base_and_guarded_resolution() {
 /// pre-selected (keep both), and a forged `"merged"` decision refuses.
 #[test]
 fn without_the_editor_base_the_review_is_two_way_and_keeps_both() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("two-way");
     fs::write(root.join(PAGE), BASE).unwrap();
     let store = open(&root);
@@ -130,11 +179,10 @@ fn without_the_editor_base_the_review_is_two_way_and_keeps_both() {
     for value in forged.values_mut().filter(|v| *v == "both") {
         *value = "merged".into();
     }
-    assert!(resolve_live_conflict(
+    assert!(apply(
         &store,
         PAGE,
         &page,
-        Some(&base_rev),
         &diff.conflict_rev,
         None,
         &foreign,
@@ -142,11 +190,10 @@ fn without_the_editor_base_the_review_is_two_way_and_keeps_both() {
         "union",
     )
     .is_err());
-    resolve_live_conflict(
+    apply(
         &store,
         PAGE,
         &page,
-        Some(&base_rev),
         &diff.conflict_rev,
         None,
         &foreign,
@@ -169,6 +216,7 @@ fn without_the_editor_base_the_review_is_two_way_and_keeps_both() {
 /// review of the newer disk then resolves.
 #[test]
 fn a_newer_external_write_refuses_and_writes_nothing_until_rereviewed() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("newer");
     fs::write(root.join(PAGE), BASE).unwrap();
     let store = open(&root);
@@ -176,11 +224,10 @@ fn a_newer_external_write_refuses_and_writes_nothing_until_rereviewed() {
     external(&root, "- shared intro\n- first outside edit\n");
     let diff = live_conflict_diff(&store, PAGE, &page, Some(&base_rev), &[]).unwrap();
     external(&root, "- shared intro\n- second outside edit\n");
-    let err = resolve_live_conflict(
+    let err = apply(
         &store,
         PAGE,
         &page,
-        Some(&base_rev),
         &diff.conflict_rev,
         None,
         &[],
@@ -195,11 +242,10 @@ fn a_newer_external_write_refuses_and_writes_nothing_until_rereviewed() {
     );
     let fresh = live_conflict_diff(&store, PAGE, &page, Some(&base_rev), &[]).unwrap();
     assert_ne!(fresh.conflict_rev, diff.conflict_rev);
-    resolve_live_conflict(
+    apply(
         &store,
         PAGE,
         &page,
-        Some(&base_rev),
         &fresh.conflict_rev,
         None,
         &[],
@@ -220,6 +266,7 @@ fn a_newer_external_write_refuses_and_writes_nothing_until_rereviewed() {
 /// against a base the user did not see; the draft and disk are untouched.
 #[test]
 fn a_stale_ledger_base_refuses_a_merged_row_and_loses_nothing() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("stale-base");
     const ID: &str = "aaaaaaaa-0000-0000-0000-0000000000e8";
     let body = |text: &str| format!("- shared intro\n- {text}\n  id:: {ID}\n");
@@ -233,11 +280,10 @@ fn a_stale_ledger_base_refuses_a_merged_row_and_loses_nothing() {
     let chosen = decisions(&diff);
     assert!(chosen.values().any(|d| d == "merged"), "{:?}", diff.rows);
     for moved in [vec![], vec!["- shared intro\n- other\n".to_owned()]] {
-        let err = resolve_live_conflict(
+        let err = apply(
             &store,
             PAGE,
             &page,
-            Some(&base_rev),
             &diff.conflict_rev,
             diff.merge_base_rev.as_deref(),
             &moved,
@@ -252,11 +298,10 @@ fn a_stale_ledger_base_refuses_a_merged_row_and_loses_nothing() {
         body("Desktop 5 kk")
     );
     assert!(page.blocks[1].raw.starts_with("Desktop\n"));
-    resolve_live_conflict(
+    apply(
         &store,
         PAGE,
         &page,
-        Some(&base_rev),
         &diff.conflict_rev,
         diff.merge_base_rev.as_deref(),
         &bases,
@@ -271,10 +316,57 @@ fn a_stale_ledger_base_refuses_a_merged_row_and_loses_nothing() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// Step 3b R6: the merge the page host's client submits is read-only. A
+/// `"merged"` row reads the retained text the review named, wherever the
+/// ledger now lists it among newer texts; the disk is untouched.
+#[test]
+fn a_merge_reads_the_reviewed_base_by_its_name_and_writes_nothing() {
+    let _integration_guard = crate::integration_lock();
+    let root = scratch("merge-read-only");
+    const ID: &str = "aaaaaaaa-0000-0000-0000-0000000000e9";
+    let body = |text: &str| format!("- shared intro\n- {text}\n  id:: {ID}\n");
+    let base = body("Desktop 5");
+    fs::write(root.join(PAGE), &base).unwrap();
+    let store = open(&root);
+    let (page, base_rev) = draft(&store, 1, &format!("Desktop\nid:: {ID}"));
+    external(&root, &body("Desktop 5 kk"));
+    let diff = live_conflict_diff(
+        &store,
+        PAGE,
+        &page,
+        Some(&base_rev),
+        std::slice::from_ref(&base),
+    )
+    .unwrap();
+    let chosen = decisions(&diff);
+    assert!(chosen.values().any(|d| d == "merged"), "{:?}", diff.rows);
+    let grown = vec![body("Desktop 6"), base];
+    let merged = merge_live_conflict(
+        &store,
+        PAGE,
+        &page,
+        &diff.conflict_rev,
+        diff.merge_base_rev.as_deref(),
+        &grown,
+        &chosen,
+        "union",
+    )
+    .unwrap();
+    assert_eq!(merged.blocks[1].raw, format!("Desktop kk\nid:: {ID}"));
+    assert_eq!(merged.rev, None, "a merge has no written revision");
+    assert_eq!(
+        fs::read_to_string(root.join(PAGE)).unwrap(),
+        body("Desktop 5 kk"),
+        "the merge wrote"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 /// A deleted file reviews as `absent` without recreating it; Apply creates it,
 /// and a file that reappeared meanwhile (even empty) refuses the apply.
 #[test]
 fn an_absent_file_review_is_read_only_and_apply_recreates_only_if_still_absent() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("absent");
     fs::write(root.join(PAGE), BASE).unwrap();
     let store = open(&root);
@@ -287,11 +379,10 @@ fn an_absent_file_review_is_read_only_and_apply_recreates_only_if_still_absent()
         "the review must not recreate the file"
     );
     fs::write(root.join(PAGE), "").unwrap();
-    let err = resolve_live_conflict(
+    let err = apply(
         &store,
         PAGE,
         &page,
-        Some(&base_rev),
         ABSENT,
         None,
         &[],
@@ -302,11 +393,10 @@ fn an_absent_file_review_is_read_only_and_apply_recreates_only_if_still_absent()
     assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
     assert_eq!(fs::read_to_string(root.join(PAGE)).unwrap(), "");
     fs::remove_file(root.join(PAGE)).unwrap();
-    let resolved = resolve_live_conflict(
+    let resolved = apply(
         &store,
         PAGE,
         &page,
-        Some(&base_rev),
         ABSENT,
         None,
         &[],

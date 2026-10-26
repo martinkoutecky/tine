@@ -42,3 +42,34 @@ describe("stable desktop startup reveal (GH #132)", () => {
     expect(setup).toContain("defers graph open to the visible webview");
   });
 });
+
+describe("start minimized to the tray (GH #625)", () => {
+  const tray = fs.readFileSync(path.join(root, "src-tauri/src/tray.rs"), "utf8");
+  const windows = fs.readFileSync(path.join(root, "src-tauri/src/workspace_windows.rs"), "utf8");
+
+  it("the frontend reveal stands down for a window native created hidden on purpose", () => {
+    const reveal = main.slice(main.indexOf("async function revealMainWindowAfterStableFrame"));
+    expect(reveal.indexOf("__TINE_START_HIDDEN__")).toBeGreaterThan(-1);
+    expect(reveal.indexOf("__TINE_START_HIDDEN__")).toBeLessThan(reveal.indexOf(".show()"));
+  });
+
+  it("the native fallback stands down only while main is deliberately hidden", () => {
+    const fallback = native.slice(native.indexOf("fn schedule_main_window_reveal_fallback"));
+    expect(fallback.indexOf("main_start_hidden_pending")).toBeGreaterThan(-1);
+    expect(fallback.indexOf("main_start_hidden_pending")).toBeLessThan(fallback.indexOf("window.show()"));
+  });
+
+  it("only a created tray can hide main: the decision is behaviour(prefs, tray_present)", () => {
+    // The hidden decision still goes through behaviour(prefs, tray_present):
+    // the only other branch is the provisional wait for a LATE host.
+    expect(tray).toContain("behaviour(prefs, tray_present(handle))");
+    expect(tray).toContain("let hidden = starts_hidden(behaviour, &launch);");
+    expect(windows).toContain("__TINE_START_HIDDEN__");
+    expect(native).toContain("let start_hidden = tray::init(app);");
+  });
+
+  it("a second launch surfaces main through the single-instance path", () => {
+    const focus = native.slice(native.indexOf("cli::LaunchRequest::Focus =>"));
+    expect(focus.slice(0, 400)).toContain("tray::reveal_main_if_hidden(app)");
+  });
+});

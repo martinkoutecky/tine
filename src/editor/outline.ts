@@ -1,4 +1,4 @@
-import { blockRegions } from "../render/parse";
+import { blockRegions, outlineMaxDepth as kernelOutlineMaxDepth } from "../render/parse";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import type { Format } from "../render/ast";
 
@@ -19,10 +19,21 @@ export interface OutlineNode {
   children: OutlineNode[];
 }
 
-/** One-based outline nesting ceiling shared with Rust page admission and save.
+/** One-based outline nesting ceiling: the outline kernel's
+ *  `outlineMaxDepth()`, which tine-store page admission also uses (twin 4).
  *  Inserters, indent and reparenting refuse a deeper result. Callouts, quote
- *  markers and inline delimiters have independent parser safety ceilings. */
-export const OUTLINE_MAX_DEPTH = 128;
+ *  markers and inline delimiters have independent parser safety ceilings. Read
+ *  from the kernel once; structural edits need the parser, so before it is
+ *  ready this refuses as they do. */
+let maxDepth: number | null = null;
+export function outlineMaxDepth(): number {
+  if (maxDepth === null) {
+    const depth = kernelOutlineMaxDepth();
+    if (depth === null) throw new Error("Structural edit refused: parser is not ready");
+    maxDepth = depth;
+  }
+  return maxDepth;
+}
 /** Longest outline text parsed (UTF-16 units). A UTF-8 file is never shorter in
  *  bytes, so this cannot refuse anything the 64 MiB file admission accepts. */
 export const OUTLINE_MAX_SOURCE_CHARS = 64 * 1024 * 1024;

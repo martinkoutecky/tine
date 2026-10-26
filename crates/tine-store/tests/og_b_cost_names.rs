@@ -3,6 +3,7 @@ use std::fs;
 use tine_store::{cost_counters, EditKind, OpenOptions, PageId, SaveBase, SaveOutcome, Store};
 #[test]
 fn created_page_patches_reference_tables() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("pages")).unwrap();
     for i in 0..128 {

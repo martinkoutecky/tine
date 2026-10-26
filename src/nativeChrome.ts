@@ -71,6 +71,15 @@ export const platformKind: PlatformKind = detectPlatformKind();
  *  True on iPad too; ask `isSinglePaneShell()` for phone-shaped layout. */
 export const isMobilePlatform: boolean = platformKind !== "desktop";
 
+/** Whether this build can show a folder in the system file manager. The native
+ *  `reveal_*` commands are compiled for the desktop targets (Linux, Windows,
+ *  macOS: `cfg(desktop)`, the predicate the injected platform reports) and
+ *  refuse on iOS and Android, which have no file manager to hand a folder to;
+ *  callers hide the action there instead of offering one that can only fail. */
+export function canRevealInFileManager(): boolean {
+  return platformKind === "desktop";
+}
+
 /** Which touch OS the gesture layer (edge swipe, block swipe, image viewer)
  *  should behave as: the real mobile platform, or - only in the native E2E
  *  harness - the platform named by TINE_E2E_TOUCH_GESTURES. Null on desktop.

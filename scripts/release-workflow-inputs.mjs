@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { IDENTITY } from "./lib/app-identity.mjs";
 import { releaseLayout } from "./release-layout.mjs";
-import { zsyncReleaseName, releaseVersion } from "./release-policy.mjs";
+import { appImageUpdateInformation, releaseVersion } from "./release-policy.mjs";
 
 export function workflowInputs(lane, conf, repository, identity = IDENTITY) {
   const spec = releaseLayout(conf.version, identity).lanes[lane];
@@ -15,11 +15,12 @@ export function workflowInputs(lane, conf, repository, identity = IDENTITY) {
   if (appimage) {
     values.RELEASE_APPIMAGE = spec.sourceAssets[appimage];
     values.RELEASE_ZSYNC = spec.sourceAssets[`${appimage}.zsync`];
-    values.UPDATE_INFORMATION = `gh-releases-zsync|${repository.replace("/", "|")}|${zsyncReleaseName(conf)}|${appimage.replace(conf.version, "*")}.zsync`;
+    values.UPDATE_INFORMATION = appImageUpdateInformation(conf, repository, appimage);
     values.LDAI_UPDATE_INFORMATION = values.UPDATE_INFORMATION;
   }
   if (find("-portable.zip")) values.RELEASE_PORTABLE = find("-portable.zip");
   if (find(".apk")) values.RELEASE_APK = find(".apk");
+  if (find(".flatpak")) values.RELEASE_FLATPAK = find(".flatpak");
   return values;
 }
 

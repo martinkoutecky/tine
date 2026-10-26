@@ -34,7 +34,7 @@ fn print_counts(unrelated: usize) -> cost_counters::Counts {
     // Finish the launch reconciliation first: its by-path stamps must not be
     // billed to the print.
     store.whole_graph().unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     cost_counters::reset();
     let html = print::page_print_html(&store, "Target", Default::default())
         .unwrap()
@@ -50,6 +50,7 @@ fn print_counts(unrelated: usize) -> cost_counters::Counts {
 /// every graph file to find out what it was asked to print.
 #[test]
 fn single_page_print_does_no_graph_wide_disk_work() {
+    let _integration_guard = crate::integration_lock();
     let few = print_counts(20);
     let many = print_counts(200);
     eprintln!("print cost: 20 pages {few:?}\n200 pages {many:?}");

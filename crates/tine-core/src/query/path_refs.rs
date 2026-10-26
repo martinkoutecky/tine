@@ -1,8 +1,8 @@
 //! The ONE `:block/path-refs` closure (SPEC §5.8, K22) and the ONE depth-first
 //! walk that maintains it.
 //!
-//! OG materializes `:block/path-refs` per block: the block's own references,
-//! every ancestor's, and the page it lives on. Two consumers need exactly
+//! OG materializes `:block/path-refs` per block: the block's own references
+//! (including namespace ancestors), every ancestor block's, and the page it lives on. Two consumers need exactly
 //! that set — the document walk's `refs` leaf and Direct Files'
 //! `block_path_refs` rows — and a second implementation of it would be a
 //! parity defect waiting to happen (I-19, I-12). So the counted ancestor
@@ -20,14 +20,20 @@ pub type PathRefCounts = HashMap<String, usize>;
 
 /// Enter a node: its normalized references join the ancestor multiset.
 pub fn push_refs(refs: &[String], counts: &mut PathRefCounts) {
-    for reference in refs {
-        *counts.entry(reference.clone()).or_default() += 1;
+    for reference in refs
+        .iter()
+        .flat_map(|name| crate::refs::namespace_refs(name))
+    {
+        *counts.entry(reference.to_owned()).or_default() += 1;
     }
 }
 
 /// Leave a node: its normalized references leave the ancestor multiset.
 pub fn pop_refs(refs: &[String], counts: &mut PathRefCounts) {
-    for reference in refs {
+    for reference in refs
+        .iter()
+        .flat_map(|name| crate::refs::namespace_refs(name))
+    {
         let remove = if let Some(count) = counts.get_mut(reference) {
             *count -= 1;
             *count == 0
@@ -42,7 +48,8 @@ pub fn pop_refs(refs: &[String], counts: &mut PathRefCounts) {
 
 /// Whether `normalized` is in one block's path-refs closure.
 ///
-/// The closure is the block's own normalized refs, its ancestors', and the
+/// The closure is the block's own normalized refs and their namespace ancestors,
+/// its ancestors' expanded refs, and the
 /// normalized name of the page it lives on. `page_key` is that page name
 /// already put through [`crate::refs::normalize`] by the caller, because every
 /// caller has it hoisted out of its own loop.
@@ -52,7 +59,9 @@ pub fn closure_contains(
     ancestors: &PathRefCounts,
     normalized: &str,
 ) -> bool {
-    own.iter().any(|name| name == normalized)
+    own.iter()
+        .flat_map(|name| crate::refs::namespace_refs(name))
+        .any(|name| name == normalized)
         || ancestors.contains_key(normalized)
         || page_key == normalized
 }
@@ -65,7 +74,8 @@ pub fn closure_contains(
 pub fn closure_names(page_key: &str, own: &[String], ancestors: &PathRefCounts) -> Vec<String> {
     let mut names: Vec<String> = own
         .iter()
-        .cloned()
+        .flat_map(|name| crate::refs::namespace_refs(name))
+        .map(str::to_owned)
         .chain(ancestors.keys().cloned())
         .chain(std::iter::once(page_key.to_owned()))
         .filter(|name| !name.is_empty())
@@ -237,6 +247,29 @@ fn build_flat_node<'a, Id: Copy>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn namespace_closure_membership_rows_and_counted_pop_agree() {
+        let own = names(&["a/b/c", "a/b"]);
+        let mut counts = PathRefCounts::new();
+        push_refs(&own, &mut counts);
+        push_refs(&names(&["a/d"]), &mut counts);
+        pop_refs(&own, &mut counts);
+        assert_eq!(
+            closure_names("home", &[], &counts),
+            names(&["a", "a/d", "home"])
+        );
+        assert!(closure_contains("home", &[], &counts, "a"));
+        assert!(!closure_contains("home", &[], &counts, "a/b"));
+        assert_eq!(
+            closure_names("home", &own, &counts),
+            names(&["a", "a/b", "a/b/c", "a/d", "home"])
+        );
+        assert!(closure_contains("home", &own, &counts, "a/b"));
+        assert!(!closure_contains("home", &own, &counts, "a/bb"));
+        // Owning-page identity does not itself imply namespace ancestry.
+        assert!(!closure_contains("a/b", &[], &PathRefCounts::new(), "a"));
+    }
 
     fn names(refs: &[&str]) -> Vec<String> {
         refs.iter().map(|name| (*name).to_owned()).collect()

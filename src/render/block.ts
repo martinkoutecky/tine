@@ -8,6 +8,7 @@ import { blockRegions, parserReady } from "./parse";
 import { utf8ToUtf16Cursor } from "./utf16Cursor";
 import {
   split_linkable_property as splitLinkableProperty,
+  linkable_property_names,
   is_render_hidden_prop as isRenderHiddenPropNative,
 } from "./wasm/lsdoc_wasm.js";
 import { propertyKeyNorm } from "../propertyKey";
@@ -50,18 +51,16 @@ export function pageProperties(
 }
 
 /** The alias names declared in already-read `[key, value]` page properties
- *  (`alias::` in markdown, `#+ALIAS:` / `:alias:` in org), comma-separated.
+ *  (`alias::` in markdown, `#+ALIAS:` / `:alias:` in org), parser-tokenized.
  *  Empty if none. Read the properties through the one answerer
  *  (`pageHeaderProperties` for a loaded page). */
-export function aliasNamesOf(properties: [string, string][]): string[] {
+export function aliasNamesOf(properties: [string, string][], format: Format = "md"): string[] {
   const out: string[] = [];
   for (const [k, v] of properties) {
     const key = propertyKeyNorm(k);
     if (key !== "alias" && key !== "aliases") continue;
     if (isQuotedPagePropertyValue(v)) continue;
-    out.push(...splitLinkableProperty(v)
-      .map(normalizeImplicitPageName)
-      .filter(Boolean));
+    out.push(...linkable_property_names(v, format === "org"));
   }
   return out;
 }

@@ -1,3 +1,4 @@
+import { activeLocale, msg, render, t, type Msg } from "../i18n";
 // Pure autocomplete logic for the block editor: detect a `[[`, `#`, `/`, `<`, or property
 // trigger at the caret, and apply a chosen completion. No DOM — unit-testable.
 
@@ -10,6 +11,91 @@ import { pageIdentityKey } from "../pageIdentity";
 import { isEditablePropertyKey } from "./properties";
 import { codeFences, lineStartsInFence } from "./fences";
 import type { Format } from "../render/ast";
+import type { ObjectiveMatchClass } from "../types";
+
+// Deferred catalog messages; property getters resolve in the consuming computation.
+const UI_MESSAGES = {
+  "editor-completion-javascript": msg("editor-completion-javascript"),
+  "editor-completion-typescript": msg("editor-completion-typescript"),
+  "editor-completion-python": msg("editor-completion-python"),
+  "editor-completion-bash": msg("editor-completion-bash"),
+  "editor-completion-json": msg("editor-completion-json"),
+  "editor-completion-markdown": msg("editor-completion-markdown"),
+  "editor-completion-html-xml": msg("editor-completion-html-xml"),
+  "editor-completion-css": msg("editor-completion-css"),
+  "editor-completion-sql": msg("editor-completion-sql"),
+  "editor-completion-java": msg("editor-completion-java"),
+  "editor-completion-go": msg("editor-completion-go"),
+  "editor-completion-rust": msg("editor-completion-rust"),
+  "editor-completion-kotlin": msg("editor-completion-kotlin"),
+  "editor-completion-swift": msg("editor-completion-swift"),
+  "editor-completion-php": msg("editor-completion-php"),
+  "editor-completion-ruby": msg("editor-completion-ruby"),
+  "editor-completion-yaml": msg("editor-completion-yaml"),
+  "editor-completion-plain-text": msg("editor-completion-plain-text"),
+  "editor-completion-diff": msg("editor-completion-diff"),
+  "editor-completion-graphql": msg("editor-completion-graphql"),
+  "editor-completion-toml-also-ini": msg("editor-completion-toml-also-ini"),
+  "editor-completion-less": msg("editor-completion-less"),
+  "editor-completion-lua": msg("editor-completion-lua"),
+  "editor-completion-makefile": msg("editor-completion-makefile"),
+  "editor-completion-perl": msg("editor-completion-perl"),
+  "editor-completion-objective-c": msg("editor-completion-objective-c"),
+  "editor-completion-php-template": msg("editor-completion-php-template"),
+  "editor-completion-python-repl": msg("editor-completion-python-repl"),
+  "editor-completion-scss": msg("editor-completion-scss"),
+  "editor-completion-shell-session": msg("editor-completion-shell-session"),
+  "editor-completion-visual-basic-net": msg("editor-completion-visual-basic-net"),
+  "editor-completion-webassembly": msg("editor-completion-webassembly"),
+  "editor-completion-priority-a": msg("editor-completion-priority-a"),
+  "editor-completion-priority-b": msg("editor-completion-priority-b"),
+  "editor-completion-priority-c": msg("editor-completion-priority-c"),
+  "editor-completion-scheduled": msg("editor-completion-scheduled"),
+  "editor-completion-deadline": msg("editor-completion-deadline"),
+  "editor-completion-grid": msg("editor-completion-grid"),
+  "editor-completion-table": msg("editor-completion-table"),
+  "editor-completion-board": msg("editor-completion-board"),
+  "editor-completion-heading-auto": msg("editor-completion-heading-auto"),
+  "editor-completion-heading-1": msg("editor-completion-heading-1"),
+  "editor-completion-heading-2": msg("editor-completion-heading-2"),
+  "editor-completion-heading-3": msg("editor-completion-heading-3"),
+  "editor-completion-heading-4": msg("editor-completion-heading-4"),
+  "editor-completion-page-reference": msg("editor-completion-page-reference"),
+  "editor-completion-link": msg("editor-completion-link"),
+  "editor-completion-upload-an-asset": msg("editor-completion-upload-an-asset"),
+  "editor-completion-voice-recording": msg("editor-completion-voice-recording"),
+  "editor-completion-draw-io-diagram": msg("editor-completion-draw-io-diagram"),
+  "editor-completion-code-block": msg("editor-completion-code-block"),
+  "editor-completion-calculator": msg("editor-completion-calculator"),
+  "editor-completion-quote": msg("editor-completion-quote"),
+  "editor-completion-divider": msg("editor-completion-divider"),
+  "editor-completion-query": msg("editor-completion-query"),
+  "editor-completion-embed": msg("editor-completion-embed"),
+  "editor-completion-embed-youtube-timestamp": msg("editor-completion-embed-youtube-timestamp"),
+  "editor-completion-math-block": msg("editor-completion-math-block"),
+  "editor-completion-current-time": msg("editor-completion-current-time"),
+  "editor-completion-today": msg("editor-completion-today"),
+  "editor-completion-tomorrow": msg("editor-completion-tomorrow"),
+  "editor-completion-yesterday": msg("editor-completion-yesterday"),
+  "editor-completion-date-picker": msg("editor-completion-date-picker"),
+  "editor-completion-that-day": msg("editor-completion-that-day"),
+  "editor-completion-page-properties": msg("editor-completion-page-properties"),
+  "editor-completion-template-var-date": msg("editor-completion-template-var-date"),
+  "editor-completion-src": msg("editor-completion-src"),
+  "editor-completion-latex-export": msg("editor-completion-latex-export"),
+  "editor-completion-note": msg("editor-completion-note"),
+  "editor-completion-tip": msg("editor-completion-tip"),
+  "editor-completion-important": msg("editor-completion-important"),
+  "editor-completion-caution": msg("editor-completion-caution"),
+  "editor-completion-pinned": msg("editor-completion-pinned"),
+  "editor-completion-warning": msg("editor-completion-warning"),
+  "editor-completion-example": msg("editor-completion-example"),
+  "editor-completion-export": msg("editor-completion-export"),
+  "editor-completion-verse": msg("editor-completion-verse"),
+  "editor-completion-ascii": msg("editor-completion-ascii"),
+  "editor-completion-center": msg("editor-completion-center"),
+  "editor-completion-comment": msg("editor-completion-comment"),
+};
 
 export type TriggerKind =
   | "page"
@@ -25,6 +111,7 @@ export interface CodeLanguageItem {
   /** Canonical highlight.js/common identifier written to the fence. */
   id: string;
   label: string;
+  matchLabel?: string;
   aliases: readonly string[];
 }
 
@@ -32,42 +119,42 @@ export interface CodeLanguageItem {
 // mirror so opening the editor does not eagerly pull the highlighter into the
 // main bundle; a drift test compares it with the pinned dependency's registry.
 export const COMMON_CODE_LANGUAGES: readonly CodeLanguageItem[] = [
-  { id: "javascript", label: "JavaScript", aliases: ["js", "jsx", "mjs", "cjs"] },
-  { id: "typescript", label: "TypeScript", aliases: ["ts", "tsx", "mts", "cts"] },
-  { id: "python", label: "Python", aliases: ["py", "gyp", "ipython"] },
-  { id: "bash", label: "Bash", aliases: ["sh", "zsh"] },
-  { id: "json", label: "JSON", aliases: ["jsonc"] },
-  { id: "markdown", label: "Markdown", aliases: ["md", "mkdown", "mkd"] },
-  { id: "xml", label: "HTML, XML", aliases: ["html", "xhtml", "rss", "atom", "xjb", "xsd", "xsl", "plist", "wsf", "svg"] },
-  { id: "css", label: "CSS", aliases: [] },
-  { id: "sql", label: "SQL", aliases: [] },
-  { id: "java", label: "Java", aliases: ["jsp"] },
+  { id: "javascript", matchLabel: "JavaScript", get label() { return render(UI_MESSAGES["editor-completion-javascript"]); }, aliases: ["js", "jsx", "mjs", "cjs"] },
+  { id: "typescript", matchLabel: "TypeScript", get label() { return render(UI_MESSAGES["editor-completion-typescript"]); }, aliases: ["ts", "tsx", "mts", "cts"] },
+  { id: "python", matchLabel: "Python", get label() { return render(UI_MESSAGES["editor-completion-python"]); }, aliases: ["py", "gyp", "ipython"] },
+  { id: "bash", matchLabel: "Bash", get label() { return render(UI_MESSAGES["editor-completion-bash"]); }, aliases: ["sh", "zsh"] },
+  { id: "json", matchLabel: "JSON", get label() { return render(UI_MESSAGES["editor-completion-json"]); }, aliases: ["jsonc"] },
+  { id: "markdown", matchLabel: "Markdown", get label() { return render(UI_MESSAGES["editor-completion-markdown"]); }, aliases: ["md", "mkdown", "mkd"] },
+  { id: "xml", matchLabel: "HTML, XML", get label() { return render(UI_MESSAGES["editor-completion-html-xml"]); }, aliases: ["html", "xhtml", "rss", "atom", "xjb", "xsd", "xsl", "plist", "wsf", "svg"] },
+  { id: "css", matchLabel: "CSS", get label() { return render(UI_MESSAGES["editor-completion-css"]); }, aliases: [] },
+  { id: "sql", matchLabel: "SQL", get label() { return render(UI_MESSAGES["editor-completion-sql"]); }, aliases: [] },
+  { id: "java", matchLabel: "Java", get label() { return render(UI_MESSAGES["editor-completion-java"]); }, aliases: ["jsp"] },
   { id: "c", label: "C", aliases: ["h"] },
   { id: "cpp", label: "C++", aliases: ["cc", "c++", "h++", "hpp", "hh", "hxx", "cxx"] },
   { id: "csharp", label: "C#", aliases: ["cs", "c#"] },
-  { id: "go", label: "Go", aliases: ["golang"] },
-  { id: "rust", label: "Rust", aliases: ["rs"] },
-  { id: "kotlin", label: "Kotlin", aliases: ["kt", "kts"] },
-  { id: "swift", label: "Swift", aliases: [] },
-  { id: "php", label: "php", aliases: [] },
-  { id: "ruby", label: "Ruby", aliases: ["rb", "gemspec", "podspec", "thor", "irb"] },
-  { id: "yaml", label: "YAML", aliases: ["yml"] },
-  { id: "plaintext", label: "Plain text", aliases: ["text", "txt"] },
-  { id: "diff", label: "Diff", aliases: ["patch"] },
-  { id: "graphql", label: "GraphQL", aliases: ["gql"] },
-  { id: "ini", label: "TOML, also INI", aliases: ["toml"] },
-  { id: "less", label: "Less", aliases: [] },
-  { id: "lua", label: "Lua", aliases: ["pluto"] },
-  { id: "makefile", label: "Makefile", aliases: ["mk", "mak", "make"] },
-  { id: "perl", label: "Perl", aliases: ["pl", "pm"] },
-  { id: "objectivec", label: "Objective-C", aliases: ["mm", "objc", "obj-c", "obj-c++", "objective-c++"] },
-  { id: "php-template", label: "PHP template", aliases: [] },
-  { id: "python-repl", label: "python-repl", aliases: ["pycon"] },
+  { id: "go", matchLabel: "Go", get label() { return render(UI_MESSAGES["editor-completion-go"]); }, aliases: ["golang"] },
+  { id: "rust", matchLabel: "Rust", get label() { return render(UI_MESSAGES["editor-completion-rust"]); }, aliases: ["rs"] },
+  { id: "kotlin", matchLabel: "Kotlin", get label() { return render(UI_MESSAGES["editor-completion-kotlin"]); }, aliases: ["kt", "kts"] },
+  { id: "swift", matchLabel: "Swift", get label() { return render(UI_MESSAGES["editor-completion-swift"]); }, aliases: [] },
+  { id: "php", matchLabel: "php", get label() { return render(UI_MESSAGES["editor-completion-php"]); }, aliases: [] },
+  { id: "ruby", matchLabel: "Ruby", get label() { return render(UI_MESSAGES["editor-completion-ruby"]); }, aliases: ["rb", "gemspec", "podspec", "thor", "irb"] },
+  { id: "yaml", matchLabel: "YAML", get label() { return render(UI_MESSAGES["editor-completion-yaml"]); }, aliases: ["yml"] },
+  { id: "plaintext", matchLabel: "Plain text", get label() { return render(UI_MESSAGES["editor-completion-plain-text"]); }, aliases: ["text", "txt"] },
+  { id: "diff", matchLabel: "Diff", get label() { return render(UI_MESSAGES["editor-completion-diff"]); }, aliases: ["patch"] },
+  { id: "graphql", matchLabel: "GraphQL", get label() { return render(UI_MESSAGES["editor-completion-graphql"]); }, aliases: ["gql"] },
+  { id: "ini", matchLabel: "TOML, also INI", get label() { return render(UI_MESSAGES["editor-completion-toml-also-ini"]); }, aliases: ["toml"] },
+  { id: "less", matchLabel: "Less", get label() { return render(UI_MESSAGES["editor-completion-less"]); }, aliases: [] },
+  { id: "lua", matchLabel: "Lua", get label() { return render(UI_MESSAGES["editor-completion-lua"]); }, aliases: ["pluto"] },
+  { id: "makefile", matchLabel: "Makefile", get label() { return render(UI_MESSAGES["editor-completion-makefile"]); }, aliases: ["mk", "mak", "make"] },
+  { id: "perl", matchLabel: "Perl", get label() { return render(UI_MESSAGES["editor-completion-perl"]); }, aliases: ["pl", "pm"] },
+  { id: "objectivec", matchLabel: "Objective-C", get label() { return render(UI_MESSAGES["editor-completion-objective-c"]); }, aliases: ["mm", "objc", "obj-c", "obj-c++", "objective-c++"] },
+  { id: "php-template", matchLabel: "PHP template", get label() { return render(UI_MESSAGES["editor-completion-php-template"]); }, aliases: [] },
+  { id: "python-repl", matchLabel: "python-repl", get label() { return render(UI_MESSAGES["editor-completion-python-repl"]); }, aliases: ["pycon"] },
   { id: "r", label: "R", aliases: [] },
-  { id: "scss", label: "SCSS", aliases: [] },
-  { id: "shell", label: "Shell Session", aliases: ["console", "shellsession"] },
-  { id: "vbnet", label: "Visual Basic .NET", aliases: ["vb"] },
-  { id: "wasm", label: "WebAssembly", aliases: [] },
+  { id: "scss", matchLabel: "SCSS", get label() { return render(UI_MESSAGES["editor-completion-scss"]); }, aliases: [] },
+  { id: "shell", matchLabel: "Shell Session", get label() { return render(UI_MESSAGES["editor-completion-shell-session"]); }, aliases: ["console", "shellsession"] },
+  { id: "vbnet", matchLabel: "Visual Basic .NET", get label() { return render(UI_MESSAGES["editor-completion-visual-basic-net"]); }, aliases: ["vb"] },
+  { id: "wasm", matchLabel: "WebAssembly", get label() { return render(UI_MESSAGES["editor-completion-webassembly"]); }, aliases: [] },
 ];
 
 export interface Trigger {
@@ -285,11 +372,28 @@ export function autoPairEdit(
   return null;
 }
 
-/** Normalize Chinese IME full-width page-ref openers to the existing ASCII
- *  auto-paired ref form. `value`/`caret` are the post-input textarea state. */
+/** Normalize Chinese IME reference and command openers to their ASCII forms.
+ *  `value`/`caret` are the finalized post-input textarea state. The caller then
+ *  uses ordinary trigger detection, just as for ASCII input. */
 export function fullWidthRefReplace(value: string, caret: number): { value: string; caret: number } | null {
-  if (caret >= 2 && value.slice(caret - 2, caret) === "【【") {
-    return { value: value.slice(0, caret - 2) + "[[]]" + value.slice(caret), caret };
+  if (caret < 2) return null;
+  const opener = value.slice(caret - 2, caret);
+  const replacement = opener === "【【" ? "[[]]" : opener === "（（" ? "(())" : opener === "《〈" ? "<" : null;
+  if (replacement) {
+    // OG default-case-for-keyup-handler skips conversion when already wrapped
+    // by the matching ASCII ref. Compare the neighboring delimiters, like
+    // frontend/util/text.cljs wrapped-by?, without interpreting authored text.
+    if (opener !== "《〈") {
+      const open = replacement.slice(0, 2), close = replacement.slice(2);
+      const before = value.slice(0, caret), after = value.slice(caret);
+      const nextClose = after.indexOf(close), nextOpen = after.indexOf(open);
+      if (before.lastIndexOf(open) > before.lastIndexOf(close) &&
+          nextClose !== -1 && (nextOpen === -1 || nextClose < nextOpen)) return null;
+    }
+    return {
+      value: value.slice(0, caret - 2) + replacement + value.slice(caret),
+      caret: opener === "《〈" ? caret - 1 : caret,
+    };
   }
   return null;
 }
@@ -361,6 +465,7 @@ export type LinkAutocompletePolicy = "adaptive" | "existing" | "typed";
 export interface NamedAutocompleteItem<T> {
   name: string;
   item: T;
+  matchClass?: ObjectiveMatchClass;
 }
 
 function canonicalName(name: string): string {
@@ -386,6 +491,13 @@ export function orderAcItems<T>(
   const removeAccents = opts.removeAccents !== false;
   const foldedQuery = searchFold(opts.query.trim(), removeAccents);
   if (!query) return [];
+  // Keep the existing Create policy entirely inside the native band. Both
+  // inline completion and Capture pass the backend's explicit expansion class.
+  const expansions = matches.filter((match) => match.matchClass === "transliteration");
+  if (expansions.length) {
+    return [...orderAcItems(matches.filter((match) => match.matchClass !== "transliteration"), createItem, opts),
+      ...expansions.map((match) => match.item)];
+  }
   const exact = matches.filter((match) => canonicalName(match.name) === query).sort(canonicalCompare);
   const remaining = exact.length
     ? matches.filter((match) => canonicalName(match.name) !== query)
@@ -438,6 +550,7 @@ export type CommandAction =
   | "youtube-timestamp";
 
 export interface Command {
+  readonly matchLabel?: string;
   label: string;
   /** Text to insert in place of `/query` (omitted for action commands). */
   insert?: string;
@@ -460,68 +573,75 @@ export interface Command {
   readonly bareOrder: number;
 }
 
-type CommandDefinition = Omit<Command, "matchTieOrder" | "bareOrder">;
+type CommandDefinition = Omit<Command, "matchTieOrder" | "bareOrder" | "label"> & { label?: string; labelMessage?: Msg };
 
 const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
-  { label: "TODO", action: "task-marker", taskMarker: "TODO" },
-  { label: "DOING", action: "task-marker", taskMarker: "DOING" },
-  { label: "LATER", action: "task-marker", taskMarker: "LATER" },
-  { label: "NOW", action: "task-marker", taskMarker: "NOW" },
-  { label: "DONE", action: "task-marker", taskMarker: "DONE" },
-  { label: "WAITING", action: "task-marker", taskMarker: "WAITING" },
-  { label: "WAIT", action: "task-marker", taskMarker: "WAIT" },
-  { label: "IN-PROGRESS", action: "task-marker", taskMarker: "IN-PROGRESS" },
-  { label: "CANCELED", action: "task-marker", taskMarker: "CANCELED" },
-  { label: "Priority A", action: "priority-a", key: "A" },
-  { label: "Priority B", action: "priority-b", key: "B" },
-  { label: "Priority C", action: "priority-c", key: "C" },
-  { label: "Scheduled", action: "scheduled" },
-  { label: "Deadline", action: "deadline" },
-  { label: "Grid", action: "sheet-grid" },
-  { label: "Table", action: "sheet-table" },
+  { matchLabel: "TODO", labelMessage: msg("editor-completion-todo"), action: "task-marker", taskMarker: "TODO" },
+  { matchLabel: "DOING", labelMessage: msg("editor-completion-doing"), action: "task-marker", taskMarker: "DOING" },
+  { matchLabel: "LATER", labelMessage: msg("editor-completion-later"), action: "task-marker", taskMarker: "LATER" },
+  { matchLabel: "NOW", labelMessage: msg("editor-completion-now"), action: "task-marker", taskMarker: "NOW" },
+  { matchLabel: "DONE", labelMessage: msg("editor-completion-done"), action: "task-marker", taskMarker: "DONE" },
+  { matchLabel: "WAITING", labelMessage: msg("editor-completion-waiting"), action: "task-marker", taskMarker: "WAITING" },
+  { matchLabel: "WAIT", labelMessage: msg("editor-completion-wait"), action: "task-marker", taskMarker: "WAIT" },
+  { matchLabel: "IN-PROGRESS", labelMessage: msg("editor-completion-in-progress"), action: "task-marker", taskMarker: "IN-PROGRESS" },
+  { matchLabel: "CANCELED", labelMessage: msg("editor-completion-canceled"), action: "task-marker", taskMarker: "CANCELED" },
+  { matchLabel: "Priority A", labelMessage: UI_MESSAGES["editor-completion-priority-a"], action: "priority-a", key: "A" },
+  { matchLabel: "Priority B", labelMessage: UI_MESSAGES["editor-completion-priority-b"], action: "priority-b", key: "B" },
+  { matchLabel: "Priority C", labelMessage: UI_MESSAGES["editor-completion-priority-c"], action: "priority-c", key: "C" },
+  { matchLabel: "Scheduled", labelMessage: UI_MESSAGES["editor-completion-scheduled"], action: "scheduled" },
+  { matchLabel: "Deadline", labelMessage: UI_MESSAGES["editor-completion-deadline"], action: "deadline" },
+  { matchLabel: "Grid", labelMessage: UI_MESSAGES["editor-completion-grid"], action: "sheet-grid" },
+  { matchLabel: "Table", labelMessage: UI_MESSAGES["editor-completion-table"], action: "sheet-table" },
   // "Kanban" alias: the fuzzy matcher scores label + key, so /kanban (and /kan)
   // surfaces the Board command even though its display name stays "Board".
-  { label: "Board", action: "sheet-board", key: "Kanban" },
-  { label: "Heading (Auto)", action: "heading-auto" },
-  { label: "Heading 1", action: "heading-1" },
-  { label: "Heading 2", action: "heading-2" },
-  { label: "Heading 3", action: "heading-3" },
-  { label: "Heading 4", action: "heading-4" },
-  { label: "Page reference", action: "page-reference" },
-  { label: "Link", action: "insert-link" },
-  { label: "Upload an asset", action: "upload-asset" },
-  { label: "Voice recording", action: "record" },
-  { label: "Draw.io diagram", action: "drawio" },
-  { label: "Code block", action: "code-block" },
-  { label: "Calculator", insert: "```calc\n\n```", caret: 8 },
-  { label: "Quote", insert: "> " },
+  { matchLabel: "Board", labelMessage: UI_MESSAGES["editor-completion-board"], action: "sheet-board", key: "Kanban" },
+  { matchLabel: "Heading (Auto)", labelMessage: UI_MESSAGES["editor-completion-heading-auto"], action: "heading-auto" },
+  { matchLabel: "Heading 1", labelMessage: UI_MESSAGES["editor-completion-heading-1"], action: "heading-1" },
+  { matchLabel: "Heading 2", labelMessage: UI_MESSAGES["editor-completion-heading-2"], action: "heading-2" },
+  { matchLabel: "Heading 3", labelMessage: UI_MESSAGES["editor-completion-heading-3"], action: "heading-3" },
+  { matchLabel: "Heading 4", labelMessage: UI_MESSAGES["editor-completion-heading-4"], action: "heading-4" },
+  { matchLabel: "Page reference", labelMessage: UI_MESSAGES["editor-completion-page-reference"], action: "page-reference" },
+  { matchLabel: "Link", labelMessage: UI_MESSAGES["editor-completion-link"], action: "insert-link" },
+  { matchLabel: "Upload an asset", labelMessage: UI_MESSAGES["editor-completion-upload-an-asset"], action: "upload-asset" },
+  { matchLabel: "Voice recording", labelMessage: UI_MESSAGES["editor-completion-voice-recording"], action: "record" },
+  { matchLabel: "Draw.io diagram", labelMessage: UI_MESSAGES["editor-completion-draw-io-diagram"], action: "drawio" },
+  { matchLabel: "Code block", labelMessage: UI_MESSAGES["editor-completion-code-block"], action: "code-block" },
+  { matchLabel: "Calculator", labelMessage: UI_MESSAGES["editor-completion-calculator"], insert: "```calc\n\n```", caret: 8 },
+  { matchLabel: "Quote", labelMessage: UI_MESSAGES["editor-completion-quote"], insert: "> " },
   // Org-mode admonitions (Logseq's colored callouts). Caret lands on the empty
   // content line between BEGIN/END.
-  ...["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"].map((t) => ({
-    label: `Admonition: ${t.toLowerCase()}`,
-    insert: `#+BEGIN_${t}\n\n#+END_${t}`,
-    caret: `#+BEGIN_${t}\n`.length,
-  })),
-  { label: "Divider", insert: "---" },
+  ...["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"].map((type) => {
+    const label = msg("editor-completion-admonition", { type: type.toLowerCase() });
+    return {
+      matchLabel: `Admonition: ${type.toLowerCase()}`,
+      labelMessage: label,
+      insert: `#+BEGIN_${type}\n\n#+END_${type}`,
+      caret: `#+BEGIN_${type}\n`.length,
+    };
+  }),
+  { matchLabel: "Divider", labelMessage: UI_MESSAGES["editor-completion-divider"], insert: "---" },
   // One query command (master 2617ff194, SPEC §7.3): it inserts the scaffold
   // AND flags the block, so the sheet opens with the field chooser focused.
-  { label: "Query", insert: QUERY_MACRO_SCAFFOLD, caret: QUERY_MACRO_SCAFFOLD_CARET, action: "query-builder" },
-  { label: "Embed", insert: "{{embed }}", caret: 8 },
+  { matchLabel: "Query", labelMessage: UI_MESSAGES["editor-completion-query"], insert: QUERY_MACRO_SCAFFOLD, caret: QUERY_MACRO_SCAFFOLD_CARET, action: "query-builder" },
+  { matchLabel: "Embed", labelMessage: UI_MESSAGES["editor-completion-embed"], insert: "{{embed }}", caret: 8 },
   // OG's slash entry is named "Embed Youtube timestamp" (og-1.0.0
   // 6e7afa8eb, commands.cljs:294-300).
-  { label: "Embed Youtube timestamp", action: "youtube-timestamp" },
-  { label: "Math block", insert: "$$$$", caret: 2 },
-  { label: "Current time", action: "now-time" },
-  { label: "Today", action: "today" },
-  { label: "Tomorrow", action: "tomorrow" },
-  { label: "Yesterday", action: "yesterday" },
-  { label: "Date picker", action: "date-picker" },
-  { label: "That day", action: "thatday" },
-  { label: "Page properties", action: "page-props" },
+  { matchLabel: "Embed Youtube timestamp", labelMessage: UI_MESSAGES["editor-completion-embed-youtube-timestamp"], action: "youtube-timestamp" },
+  { matchLabel: "Math block", labelMessage: UI_MESSAGES["editor-completion-math-block"], insert: "$$$$", caret: 2 },
+  { matchLabel: "Current time", labelMessage: UI_MESSAGES["editor-completion-current-time"], action: "now-time" },
+  { matchLabel: "Today", labelMessage: UI_MESSAGES["editor-completion-today"], action: "today" },
+  { matchLabel: "Tomorrow", labelMessage: UI_MESSAGES["editor-completion-tomorrow"], action: "tomorrow" },
+  { matchLabel: "Yesterday", labelMessage: UI_MESSAGES["editor-completion-yesterday"], action: "yesterday" },
+  { matchLabel: "Date picker", labelMessage: UI_MESSAGES["editor-completion-date-picker"], action: "date-picker" },
+  { matchLabel: "That day", labelMessage: UI_MESSAGES["editor-completion-that-day"], action: "thatday" },
+  { matchLabel: "Page properties", labelMessage: UI_MESSAGES["editor-completion-page-properties"], action: "page-props" },
   // Template variables: insert the `<% … %>` placeholder (expanded when the
   // template is inserted). The list is shared with the "Make a template" hint.
-  ...TEMPLATE_VARS.map((v) => ({ label: `Template var: ${v.label}`, insert: v.insert })),
-  { label: "Template var: date…", insert: "<% date:  %>", caret: 9 },
+  ...TEMPLATE_VARS.map((v) => {
+    const label = msg("editor-completion-template-var", { label: v.label });
+    return { matchLabel: `Template var: ${v.label}`, labelMessage: label, insert: v.insert };
+  }),
+  { matchLabel: "Template var: date…", labelMessage: UI_MESSAGES["editor-completion-template-var-date"], insert: "<% date:  %>", caret: 9 },
 ];
 
 const BARE_ORDER = new Map<string, number>([
@@ -541,8 +661,13 @@ const BARE_ORDER = new Map<string, number>([
 export const COMMANDS: readonly Command[] = Object.freeze(COMMAND_DEFINITIONS.map((command, matchTieOrder) =>
   Object.freeze({
     ...command,
+    get label() {
+      const translated = command.labelMessage ? render(command.labelMessage) : command.label!;
+      return activeLocale() === "zh-CN" ? `${command.matchLabel ?? command.label} (${translated})`
+        : command.taskMarker ? command.matchLabel! : translated;
+    },
     matchTieOrder,
-    bareOrder: BARE_ORDER.get(command.label) ?? 1000 + matchTieOrder,
+    bareOrder: BARE_ORDER.get(command.matchLabel ?? command.label!) ?? 1000 + matchTieOrder,
   }),
 ));
 
@@ -608,7 +733,7 @@ export function codeLanguageItems(query: string): CodeLanguageItem[] {
       index,
       score: Math.max(
         fuzzyScore(query, item.id),
-        fuzzyScore(query, item.label),
+        fuzzyScore(query, item.matchLabel ?? item.label),
         ...item.aliases.map((alias) => fuzzyScore(query, alias)),
       ),
     }))
@@ -620,7 +745,8 @@ export function codeLanguageItems(query: string): CodeLanguageItem[] {
 /** Fuzzy score for a command against `query`: the best of its label and its
  *  optional short `key` (so a one-letter query can surface it first). */
 export function commandScore(query: string, c: Command): number {
-  return Math.max(fuzzyScore(query, c.label), c.key ? fuzzyScore(query, c.key) : 0);
+  return Math.max(fuzzyScore(query, c.matchLabel ?? c.label), c.key ? fuzzyScore(query, c.key) : 0,
+    activeLocale() === "zh-CN" && /[^\x00-\x7f]/.test(query) ? fuzzyScore(query, c.label) : 0);
 }
 
 /** Slash-command matches for `query`, ranked best-first (OG-style). An empty
@@ -634,6 +760,7 @@ export function filterCommands(query: string): Command[] {
 }
 
 export interface AdvancedBlockCommand {
+  readonly matchLabel?: string;
   label: string;
   /** Paired Org section text replacing the active `<query` span. */
   insert: string;
@@ -643,19 +770,21 @@ export interface AdvancedBlockCommand {
 }
 
 type AdvancedBlockDefinition = {
-  label: string;
+  labelMessage: Msg;
   type: string;
   optional?: string;
+  matchLabel?: string;
 };
 
-function advancedBlockDefinition({ label, type, optional }: AdvancedBlockDefinition): Omit<AdvancedBlockCommand, "matchTieOrder"> {
+function advancedBlockDefinition(definition: AdvancedBlockDefinition): Omit<AdvancedBlockCommand, "matchTieOrder"> {
+  const { type, optional, matchLabel } = definition;
   const suffix = optional ? ` ${optional}` : "";
   const opening = `#+BEGIN_${type}${suffix}\n`;
   // OG ->block (commands.cljs:175-177): for Src the caret lands at the END of
   // the opening line (to type the language); every other type lands on the
   // blank middle line.
   const caret = type === "SRC" ? opening.length - 1 : opening.length;
-  return { label, insert: `${opening}\n#+END_${type}`, caret };
+  return { get label() { return render(definition.labelMessage); }, matchLabel, insert: `${opening}\n#+END_${type}`, caret };
 }
 
 /** OG ->block (commands.cljs:159-177): on a MARKDOWN page the Src command
@@ -666,7 +795,7 @@ export function advancedBlockInsertion(
   command: AdvancedBlockCommand,
   format: "md" | "org",
 ): { insert: string; caret: number } {
-  if (format === "md" && command.label === "Src") {
+  if (format === "md" && (command.matchLabel ?? command.label) === "Src") {
     return { insert: "```\n\n```", caret: 3 };
   }
   return { insert: command.insert, caret: command.caret };
@@ -677,32 +806,38 @@ export function advancedBlockInsertion(
 // `Properties` is intentionally absent: OG's org-only row invokes ->properties,
 // not ->block, so it is not a BEGIN/END advanced section.
 export const ADVANCED_BLOCK_COMMANDS: readonly AdvancedBlockCommand[] = Object.freeze([
-  { label: "Quote", type: "QUOTE" },
-  { label: "Src", type: "SRC" },
-  { label: "Query", type: "QUERY" },
-  { label: "Latex export", type: "EXPORT", optional: "latex" },
-  { label: "Note", type: "NOTE" },
-  { label: "Tip", type: "TIP" },
-  { label: "Important", type: "IMPORTANT" },
-  { label: "Caution", type: "CAUTION" },
-  { label: "Pinned", type: "PINNED" },
-  { label: "Warning", type: "WARNING" },
-  { label: "Example", type: "EXAMPLE" },
-  { label: "Export", type: "EXPORT" },
-  { label: "Verse", type: "VERSE" },
-  { label: "Ascii", type: "EXPORT", optional: "ascii" },
-  { label: "Center", type: "CENTER" },
-  { label: "Comment", type: "COMMENT" },
-].map((definition, matchTieOrder) => Object.freeze({
-  ...advancedBlockDefinition(definition),
-  matchTieOrder,
-})));
+  { matchLabel: "Quote", labelMessage: UI_MESSAGES["editor-completion-quote"], type: "QUOTE" },
+  { matchLabel: "Src", labelMessage: UI_MESSAGES["editor-completion-src"], type: "SRC" },
+  { matchLabel: "Query", labelMessage: UI_MESSAGES["editor-completion-query"], type: "QUERY" },
+  { matchLabel: "Latex export", labelMessage: UI_MESSAGES["editor-completion-latex-export"], type: "EXPORT", optional: "latex" },
+  { matchLabel: "Note", labelMessage: UI_MESSAGES["editor-completion-note"], type: "NOTE" },
+  { matchLabel: "Tip", labelMessage: UI_MESSAGES["editor-completion-tip"], type: "TIP" },
+  { matchLabel: "Important", labelMessage: UI_MESSAGES["editor-completion-important"], type: "IMPORTANT" },
+  { matchLabel: "Caution", labelMessage: UI_MESSAGES["editor-completion-caution"], type: "CAUTION" },
+  { matchLabel: "Pinned", labelMessage: UI_MESSAGES["editor-completion-pinned"], type: "PINNED" },
+  { matchLabel: "Warning", labelMessage: UI_MESSAGES["editor-completion-warning"], type: "WARNING" },
+  { matchLabel: "Example", labelMessage: UI_MESSAGES["editor-completion-example"], type: "EXAMPLE" },
+  { matchLabel: "Export", labelMessage: UI_MESSAGES["editor-completion-export"], type: "EXPORT" },
+  { matchLabel: "Verse", labelMessage: UI_MESSAGES["editor-completion-verse"], type: "VERSE" },
+  { matchLabel: "Ascii", labelMessage: UI_MESSAGES["editor-completion-ascii"], type: "EXPORT", optional: "ascii" },
+  { matchLabel: "Center", labelMessage: UI_MESSAGES["editor-completion-center"], type: "CENTER" },
+  { matchLabel: "Comment", labelMessage: UI_MESSAGES["editor-completion-comment"], type: "COMMENT" },
+].map((definition, matchTieOrder) => {
+  const command = advancedBlockDefinition(definition);
+  return Object.freeze({
+    insert: command.insert,
+    caret: command.caret,
+    matchLabel: definition.matchLabel,
+    get label() { return render(definition.labelMessage); },
+    matchTieOrder,
+  });
+}));
 
 /** Fuzzy `<` menu matching uses the same OG-style scorer as slash commands. */
 export function filterAdvancedBlockCommands(query: string): AdvancedBlockCommand[] {
   if (!query) return ADVANCED_BLOCK_COMMANDS.slice();
   return ADVANCED_BLOCK_COMMANDS
-    .map((command) => ({ command, score: fuzzyScore(query, command.label) }))
+    .map((command) => ({ command, score: fuzzyScore(query, command.matchLabel ?? command.label) }))
     .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score || a.command.matchTieOrder - b.command.matchTieOrder)
     .map(({ command }) => command);
@@ -714,5 +849,5 @@ export function filterAdvancedBlockCommands(query: string): AdvancedBlockCommand
  *  the page index resolves (an existing page wins), so an ordinary page gets
  *  no label. */
 export function aliasOfLabel(name: string, owner: string): string | undefined {
-  return pageIdentityKey(owner) === pageIdentityKey(name) ? undefined : `alias of ${owner}`;
+  return pageIdentityKey(owner) === pageIdentityKey(name) ? undefined : t("editor-completion-prose-alias-of", { owner });
 }

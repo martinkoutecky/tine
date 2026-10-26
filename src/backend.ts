@@ -1,14 +1,14 @@
+import { t } from "./i18n";
 // Backend abstraction. In the Tauri app we call Rust via `invoke`. In a plain
 // browser (Vite dev / Playwright screenshots) we fall back to an in-memory mock
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
 
-import { readSavePlatformStep } from "./savePlatformStep";
 import { markCommandSlow } from "./slowBackend";
 import { orderedLane } from "./orderedWrites";
+import { REFRESH_READ_COMMANDS, trackRefreshRead } from "./refreshReads";
 import { timingNamesForCommand } from "./focusTiming";
 import type { GraphVerificationProgress, GraphVerificationReport } from "./graphVerification";
 import type {
-  Diagnostic,
   ExecutionContext,
   ExplainEmptyResult,
   ParsedQuery,
@@ -27,6 +27,7 @@ import type {
   GuidePage,
   Highlight,
   PageDto,
+  PageKind,
   PageEntry,
   RefGroup,
   BlockPreview,
@@ -47,51 +48,19 @@ import type {
   QueryPublicationRequest,
   QueryPublicationPlan,
   PublicationReceipt,
-  DraftRecord,
 } from "./types";
-import type { GraphSources, GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
+import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, TrayStatus } from "./backendTypes";
 import { dbg } from "./debug";
 import type { EditKinds } from "./editKind";
 import { mockBackend } from "./mock";
 import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import { isPublishedExport, publishedBackend } from "./publishedBackend";
 
-import { nativeTineLinks, type NativeTineLinks } from "./nativeTineLinks";
+import { nativeTineLinks } from "./nativeTineLinks";
+import { ASSET_INGRESS_MAX_BYTES, clipboardImageToPng } from "./clipboardImage";
 
-/** Typed result of `trashAsset`: `referenced` = another reference remains, file kept. */
-export type TrashAssetOutcome = "trashed" | "referenced";
-
-export interface SavePageEntry {
-  id: string;
-  page: PageDto;
-  baseRev: string | null;
-  force: boolean;
-  kinds: EditKinds;
-}
-
-/** Native publication delta, shared by save acknowledgements and watcher events.
- * Values are final counts for only the changed targets; zero clears a badge. */
-export interface GraphAnswersChange {
-  rev: string;
-  inventoryChanged: boolean;
-  blockRefCounts: Record<string, number>;
-}
-
-export type SavePagesResult =
-  | { ok: string[]; changes?: GraphAnswersChange | null }
-  | { failed: { index: number; family: string; diskRev?: string | null; undoFailed: string[]; publicationErrors?: string[]; unreadableOwner?: string; operation?: string; osError?: number } };
-
-/** Adapt a one-page intent to the shared request while preserving its refusal.
- * Calls observed with its native answer delta before returning the revision;
- * the observer owns graph-binding validation. Cost follows save plus targets. */
-export async function saveOnePage(api: Backend, entry: SavePageEntry, bindingGeneration?: number, observed?: (change: GraphAnswersChange | null | undefined) => void): Promise<string> {
-  const result = await api.savePages([entry], bindingGeneration);
-  if ("failed" in result) throw Object.assign(new Error(result.failed.family), { diskRev: result.failed.diskRev, platformStep: readSavePlatformStep(result.failed), unreadableOwner: result.failed.unreadableOwner });
-  observed?.(result.changes);
-  return result.ok[0];
-}
-
-// Encode asset bytes as one base64 string for the save_*/copy_image IPC. The old
+// Encode asset bytes as one base64 string for save_* and Android image-copy
+// IPC (Android cannot receive raw InvokeBody). The old
 // `Array.from(bytes)` produced a JSON number[] — ~4-5x the payload + a multi-MB
 // per-element parse and a giant throwaway array on the webview thread for every
 // image paste / PDF crop. base64 is ~1.33x the byte size, a single string the
@@ -106,641 +75,20 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export const CLIPBOARD_IMAGE_MAX_PIXELS = 32 * 1024 * 1024;
-export const CLIPBOARD_IMAGE_MAX_RGBA_BYTES = 128 * 1024 * 1024;
-export const ASSET_INGRESS_MAX_BYTES = 64 * 1024 * 1024;
+export type { Backend } from "./backendInterface";
+import type { Backend } from "./backendInterface";
 
-type ClipboardImage = {
-  size(): Promise<{ width: number; height: number }>;
-  rgba(): Promise<Uint8Array>;
-};
 
-export async function clipboardImageToPng(img: ClipboardImage): Promise<Uint8Array | null> {
-  // Dimensions are metadata: validate them before asking the native plugin to
-  // materialize an attacker-controlled RGBA allocation on the WebView thread.
-  const { width, height } = await img.size();
-  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) return null;
-  const pixels = width * height;
-  const rgbaBytes = pixels * 4;
-  if (!Number.isSafeInteger(pixels) || pixels > CLIPBOARD_IMAGE_MAX_PIXELS
-      || rgbaBytes > CLIPBOARD_IMAGE_MAX_RGBA_BYTES) {
-    return null;
-  }
-  const rgba = await img.rgba();
-  if (rgba.byteLength !== rgbaBytes) return null;
-  const clamped = new Uint8ClampedArray(rgba.buffer as ArrayBuffer, rgba.byteOffset, rgba.byteLength);
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
-  ctx.putImageData(new ImageData(clamped, width, height), 0, 0);
-  const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-  if (!blob || blob.size > ASSET_INGRESS_MAX_BYTES) return null;
-  const encoded = await blob.arrayBuffer();
-  return encoded.byteLength <= ASSET_INGRESS_MAX_BYTES ? new Uint8Array(encoded) : null;
-}
-
-export interface Backend {
-  graphBindingGeneration(): number;
-  inspectGraphAccess(path: string): Promise<GraphAccessInspection>;
-  approveExternalAssets(graphRoot: string, assetsPath: string): Promise<void>;
-  loadGraph(path: string): Promise<LoadGraphResult>;
-  openGraphWindow(path: string): Promise<LoadGraphResult>;
-  startupGraphPath(): Promise<string | null>;
-  tineLinks?: NativeTineLinks;
-  captureTarget(): Promise<string>;
-  /** Lease the graph selected for this Quick Capture show before issuing
-   * graph-scoped reads from its independent WebView. */
-  bindCaptureGraph(): Promise<void>;
-  listKnownGraphs(): Promise<KnownGraph[]>;
-  forgetKnownGraph(path: string): Promise<void>;
-  /** Reveal a remembered graph's folder in the desktop file manager. */
-  revealKnownGraph(path: string): Promise<void>;
-  appPlatform(): Promise<"android" | "ios" | "desktop">;
-  /** Immutable, app-local plugin packages. Installation stores bytes but never
-   * executes them; enabling is an explicit second step after host validation. */
-  listInstalledPlugins(): Promise<InstalledPluginRecord[]>;
-  installPlugin(manifestJson: string, wasm: Uint8Array): Promise<InstalledPluginRecord>;
-  /** Remove one immutable local plugin package. This never touches graph data. */
-  uninstallPlugin(id: string, version: string): Promise<void>;
-  readPluginEntry(id: string, version: string): Promise<Uint8Array>;
-  setPluginEnabled(id: string, version: string, enabled: boolean): Promise<void>;
-  verifyPluginRegistry(indexJson: string, signatureB64: string): Promise<void>;
-  loadPluginRegistryCache(): Promise<PluginRegistryCacheLoad>;
-  storePluginRegistryCache(
-    indexJson: string,
-    signature: string
-  ): Promise<void>;
-  /** Keep Android's edge-to-edge status/navigation icon appearance readable
-   *  against Tine's explicit in-app theme. Other platforms are a no-op. */
-  setSystemBarAppearance(dark: boolean): Promise<void>;
-  defaultGraphParent(): Promise<string>;
-  /** Quit the app. On Linux this first SIGKILLs WebKitGTK's helper subprocesses so
-   *  they don't dump a SIGABRT core on exit (GH #28 — GL driver atexit double-free);
-   *  the caller MUST have flushed pending edits first. Does not resolve — the
-   *  process exits. */
-  quit(): Promise<void>;
-  closeGraphWindow(): Promise<void>;
-  /** Toggle the WebView developer tools (WebKit Web Inspector) for theme/CSS
-   *  debugging. No-op on a build without devtools compiled in. */
-  openDevtools(): Promise<void>;
-  /** Scaffold a brand-new demo graph (onboarding "create new graph"); returns
-   *  the created graph's root path to then `loadGraph`. Creates the graph in
-   *  `dir` if empty, else in a fresh `tine-demo` subfolder. */
-  createGraph(dir: string): Promise<string | { root: string; display_root: string }>;
-  /** The whole name inventory (physical pages/journals, aliases, reference-only
-   *  names), each with the backend's resolved target. Cached only by
-   *  `pageIndex.ts` holds the full inventory; `store.ts` separately indexes
-   *  loaded pages in its working set. */
-  pageInventory(): Promise<import("./types").PageInventory>;
-  journalFeedPage(limit: number, beforeDay: number | null): Promise<import("./types").JournalFeedPage>;
-  /** Journal date-keys (yyyymmdd) whose page has real content. */
-  journalContentDays(): Promise<number[]>;
-  getPage(name: string, kind: "journal" | "page"): Promise<import("./types").PageRead | null>;
-  resolvePage(name: string, kind: "journal" | "page"): Promise<import("./types").ResolvedPage>;
-  /** Raw source text of every md/org file in the open graph (+journals when
-   *  asked), for the "Help improve Tine" diff panel. Read-only, local. */
-  graphSourceFiles(includeJournals: boolean): Promise<GraphSources>;
-  /** Native backend: require a current graph binding, prepare bases (force
-   * reads current UTF-8 bytes), and save ordered entries in one guarded
-   * transaction. Success strings are file revisions; failure paths are
-   * graph-relative. Transaction refusals resolve as failed; binding/invoke
-   * failures reject. An empty request resolves as failed. The mock returns
-   * "mock-rev" per entry without saving or validating. */
-  savePages(entries: SavePageEntry[], bindingGeneration?: number): Promise<SavePagesResult>;
-  /** Bundled read-only Guide pages, compiled from the same templates as the demo graph. */
-  guidePages(): Promise<GuidePage[]>;
-  /** Copy the bundled Guide into the real graph under `tine-guide/`. */
-  copyGuideIntoGraph(title: string, kind: "replace-page"): Promise<GuideCopyResult>;
-  /** Persist the graph-local one-time Guide announcement flag. */
-  setGuideAnnounced(announced: boolean): Promise<void>;
-  getBacklinks(name: string): Promise<RefGroup[]>;
-  /** Parser-owned visible-subtree/facet index for only the roots in an open
-   *  Linked References filter. Ordinary backlink DTOs stay shallow. */
-  getBacklinkFilterContext(name: string, targets: BacklinkFilterTarget[]): Promise<BacklinkFilterContext>;
-  getUnlinkedRefs(name: string): Promise<RefGroup[]>;
-  /** True once the background whole-graph warm has built derived graph-open caches. */
-  warmDone(): Promise<boolean>;
-  /** Map of block uuid → number of blocks that reference it (the count badge). */
-  getBlockRefCounts(): Promise<Record<string, number>>;
-  /** Blocks that reference block `uuid`, grouped by page (the referrers panel). */
-  getBlockReferrers(uuid: string): Promise<RefGroup[]>;
-  deletePage(name: string, kind: "journal" | "page", expectedPath?: string): Promise<void>;
-  /** Rename a page and update all [[refs]]/#tags across the graph. `mergeInto`
-   *  is the confirmed path of the one page `next` reaches (its file or alias
-   *  owner); the backend merges into it in one transaction and refuses if that
-   *  changed. Without it, a `next` another page already has is refused.
-   *  `unsavedPaths`: page files whose edits could not be saved; the rename
-   *  refuses, writing nothing, if it would move or rewrite one (GH #535). */
-  renamePage(old: string, next: string, kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]): Promise<import("./types").RenameDone>;
-  publishHtml(): Promise<[string, number]>;
-  /** Resolve a query's complete owner pages without writing. O(graph query +
-   * selected source bytes); the fingerprint binds the reviewed selection. */
-  publishQueryPlan(request: QueryPublicationRequest): Promise<QueryPublicationPlan>;
-  /** Recheck sources and commit a graph query leaf. Replace preserves/reports
-   * prior output; create refuses collisions. Asset-budget refusal is typed as
-   * {kind: "assetBudget", message}; missing assets are receipt warnings. */
-  publishQuery(request: QueryPublicationRequest, fingerprint: string, sheets: SheetExport[]): Promise<PublicationReceipt>;
-  /** Publish a whole-graph read-only app plus static fallback under a picked
-   * folder. `allPages` explicitly includes private pages; default public only. */
-  publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[]): Promise<PublicationReceipt>;
-  /** The `tine.view` sheet blocks of the named pages (every page when omitted)
-   * with the data the sheet evaluator needs to compute each for a static export.
-   * The `sheets` argument of publishLive/publishQuery/pagePrintHtml answers it
-   * (see sheet/exportSheets.ts); without it a sheet exports as its plain outline. */
-  sheetExportInputs(pages?: string[], scope?: SheetScope): Promise<SheetInput[]>;
-  /** Render one page to a self-contained HTML document (assets inlined, no
-   *  sidebar) for the print-to-PDF export, with the dialog's options. Rejects if
-   *  the page doesn't exist. */
-  pagePrintHtml(name: string, opts: PrintOpts, sheets: SheetExport[]): Promise<string>;
-  /** Resolve all Copy / Export query macros under one cumulative native budget. */
-  exportQuerySubtrees(specs: QueryExportSpec[]): Promise<QueryExportBatch>;
-  /** Parse text and host `tine.*` properties through the Rust query engine.
-   *  Syntax errors resolve as raw nodes with diagnostics. Cost: waits for graph
-   *  load; first registry use is O(pages + blocks), then O(text). Rejects an
-   *  over-64-KiB UTF-8 source, excessive nesting, or a missing/stale/failed graph. */
-  parseQuery(text: string, dialect: QueryTextDialect, blockProperties?: [string, string][]): Promise<ParsedQuery>;
-  /** Print a macro argument (`og`, `tql_macro`, `advanced_macro`) or TQL pane text.
-   *  Pure. `preserveForm` keeps authored text/options, but refuses builder or
-   *  wrong-dialect sources. OG prints one sort and sample; other view fields
-   *  need `tine.*` properties. TQL ignores view. Rejects with
-   *  {@link QueryPrintRefusedError} for inexpressible or macro-unsafe text. */
-  printQuery(query: Query, view: ViewSettings, dialect: QueryPrintDialect, preserveForm?: boolean): Promise<string>;
-  /** Precondition for OG printing, not a guarantee: macro safety can still
-   *  refuse. Pure O(IR); rejects on transport failure. */
-  queryOgExpressible(query: Query, view: ViewSettings): Promise<boolean>;
-  /** One row per normalized property key, at most eight top values. Built once
-   *  per generation, O(pages + blocks); waits for graph load. Rejects a missing,
-   *  stale, closed or failed graph. */
-  queryRegistry(): Promise<RegistrySnapshot>;
-  /** Evaluate in memory, O(pages + blocks) cold, memoized per snapshot. Invalid
-   *  input resolves with diagnostics and zero rows. An answer over 20,000 rows
-   *  or 32 MiB, or over the statistics budget, rejects; no truncated answer is
-   *  returned. Context binds only advanced `:current-page`; OG/TQL ignore it. */
-  queryRun(query: Query, view: ViewSettings, context?: ExecutionContext): Promise<QueryResult>;
-  /** On-demand empty explanation: roughly two full evaluations per conjunct,
-   *  O(conjuncts × (pages + blocks)), without result rows or memoization. Ignores
-   *  view; no `result-too-large` refusal. Waits for graph load. */
-  queryExplainEmpty(query: Query, view: ViewSettings, context?: ExecutionContext): Promise<ExplainEmptyResult>;
-  /** Property keys (each with their distinct values) for query-builder
-   *  autocomplete. */
-  queryFacets(autocomplete?: boolean): Promise<[string, string[]][]>;
-  /** `icon::` property for each named page that has one (page-name → icon). */
-  pageIcons(names: string[]): Promise<Record<string, string>>;
-  /** Persist favorited page names to config.edn `:favorites` and, when given,
-   *  the arrangement page to `:tine/favorites-page`, in one config write. */
-  setFavorites(names: string[], page?: string | null): Promise<void>;
-  /** Persist (or clear) `:default-home {:page "…"}` through the graph config writer. */
-  setDefaultHome(name: string | null): Promise<void>;
-  /** Persist the task workflow to config.edn `:preferred-workflow`. */
-  setPreferredWorkflow(workflow: "now" | "todo"): Promise<void>;
-  /** Persist `:feature/enable-timetracking?` (default on when absent). */
-  setTimetrackingEnabled(enabled: boolean): Promise<void>;
-  /** Persist `:ui/show-brackets?` (default on when absent). */
-  setShowBrackets(enabled: boolean): Promise<void>;
-  /** Persist document-mode Enter's structural escape hatch to config.edn. */
-  setDocModeEnterForNewBlock(enabled: boolean): Promise<void>;
-  /** Persist `:editor/logical-outdenting?` (default off when absent). */
-  setLogicalOutdenting(enabled: boolean): Promise<void>;
-  /** Persist the format new pages/journals are created in to config.edn
-   *  `:preferred-format` ("md" | "org"). */
-  setPreferredFormat(format: "md" | "org"): Promise<void>;
-  /** Persist the journal display-title format to config.edn
-   *  `:journal/page-title-format` (e.g. "MMM do, yyyy"). Display-only — does not
-   *  rename journal files (`:journal/file-name-format` is separate). */
-  setJournalTitleFormat(format: string, kinds: EditKinds): Promise<void>;
-  /** Set (or clear, with null) the new-journal default template in config.edn
-   *  `:default-templates {:journals "Name"}`. */
-  setDefaultJournalTemplate(name: string | null): Promise<void>;
-  /** Persist the first day of week to config.edn `:start-of-week` (Logseq
-   *  convention: 0=Monday … 6=Sunday). */
-  setStartOfWeek(n: number): Promise<void>;
-  /** The graph's logseq/custom.css (empty string if none). */
-  readCustomCss(): Promise<string>;
-  /** Open an http(s)/mailto URL in the OS default app. */
-  openExternal(url: string): Promise<void>;
-  // Graph binding: every asset/PDF method that takes `bindingGeneration` needs
-  // a positive safe-integer generation for this window's current graph. The frontend
-  // rejects missing/invalid generations with missing-graph-binding; after IPC, a
-  // missing graph rejects with `no graph loaded for window …`, and a stale generation
-  // against a bound graph rejects with stale-graph-binding. Pre-IPC null and size-limit
-  // paths may return or reject first.
-  /** Open an existing regular assets-relative file in the desktop OS default app.
-   * In-area symlinks may resolve; invalid/escaped paths, missing files, I/O, and
-   * unsupported mobile handoff reject. Cost O(path components). */
-  openAsset(name: string, bindingGeneration: number): Promise<void>;
-  openPageFile(name: string, kind: "page" | "journal", path: string | undefined, reveal: boolean): Promise<void>;
-  /** Launch a desktop editor for an existing assets-relative file. Blank command
-   * uses the OS opener; otherwise argv is parsed without a shell, replacing `{}`
-   * with the path or appending it. Resolves on spawn, before editing completes.
-   * Invalid/missing assets, command, spawn, or platform errors reject.
-   * Cost O(path components + command bytes). */
-  editAssetExternal(name: string, command: string, bindingGeneration: number): Promise<void>;
-  /** Best-effort autodetect of an installed editor's launch command (probes disk,
-   *  never executes). Returns a command template or "" if not found. */
-  detectMediaEditor(id: string): Promise<string>;
-  /** Top-level `assets/` files no block references (orphans), for cleanup. */
-  listOrphanAssets(): Promise<AssetInfo[]>;
-  /** Move one top-level asset to the recoverable trash unless the published
-   * graph still references it: that resolves `"referenced"` with the file kept
-   * (GH #623; the caller reports it, never matching error text). Reads the whole
-   * file per attempt and retries revision conflicts up to four times. Missing
-   * assets and exhausted conflicts reject. Cost O(file bytes + graph references)
-   * per attempt. */
-  trashAsset(name: string, bindingGeneration: number): Promise<TrashAssetOutcome>;
-  /** Count + total bytes of the recoverable asset trash (logseq/.tine-trash). */
-  assetTrashStats(): Promise<TrashStats>;
-  /** Permanently purge asset trash and return completed entry count. A failure
-   * can follow partial deletion; its error reports entries and bytes removed.
-   * Cost O(asset trash entries + bytes removed). */
-  emptyAssetTrash(bindingGeneration: number): Promise<number>;
-  /** Journal days that resolve to >1 file (date-stem + title-named, or md/org
-   *  twin) — for the user to reconcile. */
-  listJournalConflicts(): Promise<JournalConflict[]>;
-  /** Move one journal file (by exact filename) to the recoverable trash. */
-  trashJournalFile(name: string, kind: "delete-page"): Promise<void>;
-  /** Title-named journal files and the date names they would get. Opening a
-   *  graph only proposes these renames (master e6f9b6e1ceae). */
-  listJournalFilenameMigrations(): Promise<import("./types").JournalFilenameMigration[]>;
-  /** Apply the proposed renames after a snapshot of the graph. */
-  /** Renames only these confirmed proposals; stale ones come back as skipped. */
-  applyJournalFilenameMigrations(migrations: import("./types").JournalFilenameMigration[]): Promise<import("./types").JournalMigrationResult>;
-  /** Raw contents of one journal file (by exact filename), for inspecting a
-   *  duplicate day's files before reconciling. */
-  readJournalFile(name: string): Promise<string>;
-  /** Load a page from a SPECIFIC file by its graph-root-relative path — reaches a
-   *  duplicate-day stray that shares a (kind,name) with the canonical file (#21). */
-  getPageByPath(path: string): Promise<import("./types").PageRead | null>;
-  /** Append the blocks of `src` (graph-root-relative path) onto `dst`, then trash
-   *  `src` — fold a duplicate-day stray into the canonical day (#21). */
-  mergePages(src: string, dst: string, kinds: EditKinds): Promise<void>;
-  /** Move a stray file (graph-root-relative path) to a uniquely-named page so it
-   *  stops colliding and becomes normally navigable (#21). */
-  renameFileToPage(path: string, newName: string, kind: "rename-page"): Promise<void>;
-  /** Sync-tool conflict copies (Syncthing/Dropbox) sitting in the graph — for the
-   *  user to review + merge instead of them showing as garbage pages. */
-  listSyncConflicts(): Promise<SyncConflict[]>;
-  /** Block-level diff of a conflict copy against its winner (graph-root-relative
-   *  paths). Read-only; null if a path is invalid or the file is gone. */
-  syncConflictDiff(winner: string, conflict: string): Promise<SyncConflictDiff | null>;
-  /** Merge a conflict copy into its winner per the user's per-row decisions
-   *  (row id → mine/theirs/both), via the normal save path, then trash the copy.
-   *  `baseRev` guards against the winner changing under the merge (throws
-   *  "conflict" if it did). `preChoice`: "mine" | "theirs" | "union". */
-  resolveSyncConflict(
-    winner: string,
-    conflict: string,
-    decisions: Record<string, MergeDecision>,
-    baseRev: string,
-    conflictRev: string,
-    kinds: EditKinds,
-    preChoice?: "mine" | "theirs" | "union",
-    mergeBaseRev?: string
-  ): Promise<void>;
-  /** Discard a conflict copy without merging (move it to the recoverable trash). */
-  trashSyncConflict(conflict: string, kind: "delete-page"): Promise<void>;
-  /** Two-way diff of a duplicate journal day's canonical file against one
-   *  stray; null for a cross-format pair, which cannot be folded. Read-only. */
-  duplicateJournalDiff(canonical: string, stray: string): Promise<SyncConflictDiff | null>;
-  /** Fold one stray of a duplicate journal day into the day's canonical file
-   *  per the reviewed decisions and trash the stray (recoverable). Throws
-   *  "conflict" when either file changed since the review. */
-  resolveDuplicateJournalDay(
-    canonical: string,
-    stray: string,
-    decisions: Record<string, MergeDecision>,
-    baseRev: string,
-    strayRev: string,
-    kinds: EditKinds,
-    preChoice?: "mine" | "theirs" | "union"
-  ): Promise<void>;
-  /** The conflict listings and the derived queue, one answer; never stored.
-   *  Cost: the first call per graph walks every page file (O(graph text
-   *  bytes)); later calls answer from the backend's change-fed queue. */
-  conflictInventory(): Promise<ConflictInventory>;
-  /** A marker-bearing page's own sides as a block diff (3-way when the markers
-   *  carry a common ancestor). Read-only; null when it carries no markers. */
-  vcsMarkerConflictDiff(path: string): Promise<MarkerConflictDiff | null>;
-  /** Rewrite a marker-bearing page per the user's decisions, guarded by the
-   *  file's `baseRev` ("conflict" if it changed); the pre-resolution bytes are
-   *  first staged in the recoverable trash. */
-  resolveVcsMarkerConflict(
-    path: string,
-    decisions: Record<string, MergeDecision>,
-    baseRev: string,
-    kinds: EditKinds,
-    preChoice?: "mine" | "theirs" | "union"
-  ): Promise<void>;
-  /** Review an editor draft whose save was refused against the file as it is
-   *  now (og 8e); 3-way when the Concord ledger retains the draft's `baseRev`.
-   *  Read-only; `conflict_rev` is the disk revision shown, or "absent". */
-  liveConflictDiff(path: string, page: PageDto, baseRev: string | null): Promise<SyncConflictDiff>;
-  /** Write the reviewed live resolution in one guarded transaction at
-   *  `conflictRev` ("conflict" if the disk or the reviewed ledger base moved).
-   *  Returns the written page with its new revision. */
-  resolveLiveConflict(path: string, page: PageDto, baseRev: string | null, conflictRev: string,
-    mergeBaseRev: string | undefined, decisions: Record<string, MergeDecision>,
-    preChoice: "mine" | "theirs" | "union"): Promise<PageDto>;
-  /** Subscribe to the backend's `conflicts-changed` event (the derived
-   *  conflict queue changed). Returns an unlisten fn. */
-  onConflictsChanged(cb: () => void): Promise<() => void>;
-  search(query: string, limit: number, lane?: string): Promise<RefGroup[]>;
-  /** One Rust-authoritative graph scan for bounded page and block hits. Page
-   * membership defaults to names/aliases; content and both scan block text.
-   * Each Display view sorts before its section limit, then sample caps that
-   * limit; omitted views keep relevance order. Cost O(graph text) off the UI
-   * thread, plus O(matches log matches) for authored sorts. Native errors reject. */
-  runGraphSearch(
-    source: string,
-    pageLimit: number,
-    blockLimit: number,
-    lane?: string,
-    explain?: boolean,
-    scope?: QueryPageScope,
-    pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope,
-    views?: { page: ViewSettings; block: ViewSettings }
-  ): Promise<QueryExecution>;
-  quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
-  /** Capture-only page/tag completion capability. It is intentionally not the
-   * general graph command route used by the main WebView. */
-  captureQuickSwitch(query: string, limit: number): Promise<PageEntry[]>;
-  listTemplates(): Promise<TemplateDto[]>;
-  resolveBlock(uuid: string): Promise<RefGroup | null>;
-  resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]>;
-  /** Explicit bounded subtree; ordinary resolution is intentionally shallow. */
-  previewBlock(uuid: string, maxNodes: number): Promise<BlockPreview | null>;
-  readAsset(name: string, maxBytes?: number): Promise<Uint8Array>;
-  /** Native range-aware URL for audio/video. Unlike `readAsset`, this never
-   *  copies the whole media file through IPC. */
-  streamAsset(name: string): Promise<string>;
-  /** Read an image from an absolute path OUTSIDE the graph (raw-HTML `<img>` the
-   *  user opted into via Settings). Rejects when the opt-in is off or the path
-   *  isn't a permitted image. */
-  readLocalImage(path: string): Promise<Uint8Array>;
-  /** Save up to 64 MiB under a unique top-level asset name, without overwriting.
-   * Return the chosen assets-relative name. Invalid names and writes reject.
-   * Cost O(bytes + collision candidates). */
-  saveAsset(name: string, bytes: Uint8Array, bindingGeneration: number): Promise<string>;
-  /** Read the OS clipboard image, convert to PNG, and save under a unique name.
-   * Return null if clipboard access/conversion yields no image; save failures
-   * reject. A saved image returns its assets-relative name. Cost O(image bytes +
-   * collision candidates). */
-  /** Decode an image off the OS clipboard to PNG bytes WITHOUT saving (the
-   *  caller seeds the render cache + writes to disk in the background, so the
-   *  pasted image appears instantly). Null if the clipboard has no image. */
-  readClipboardImage(): Promise<Uint8Array | null>;
-  /** Stream a device file into assets under a nonempty explicit top-level name,
-   * or its source basename. Collisions choose a unique name; return that name.
-   * No source-byte cap. Bad source/name or write failures reject.
-   * Cost O(source bytes + collision candidates). */
-  importAsset(path: string, name: string | undefined, bindingGeneration: number): Promise<string>;
-  /** Import an app-cache tine_photo_*.jpg (64 MiB max) or tine_memo_*.m4a
-   * (32 MiB max) capability into a unique asset. Reject empty/invalid sources,
-   * bad names, size limits, and writes. After commit, attempt temp removal;
-   * cleanup failure does not reject. Cost O(source bytes + collision candidates).
-   * `graphRoot` names the graph the capture was started in (og H1b); Rust refuses one that is not a known graph. */
-  importNativeCapture(path: string, name: string, bindingGeneration: number, graphRoot?: string): Promise<string>;
-  /** Paths explicitly copied in the OS file manager. Empty when the clipboard
-   *  has no native file-list flavor or the platform cannot expose one. */
-  clipboardFiles(): Promise<ClipboardFileList>;
-  /** Read a dropped UTF-8 text file by absolute path. Used only for explicit
-   *  local file drops such as CSV/TSV import. */
-  readTextFile(path: string): Promise<string>;
-  /** Native yes/no confirmation dialog. Returns true if the user confirms.
-   *  Uses the GTK dialog plugin, NOT window.confirm — the latter silently
-   *  returns true without showing anything in this WebKitGTK build, which would
-   *  bypass destructive-action and close-tab prompts. */
-  confirm(message: string, title?: string): Promise<boolean>;
-  /** Native folder picker (graph open). Null if cancelled / unsupported.
-   *  `title` overrides the dialog title (e.g. for "create new graph"). */
-  pickFolder(title?: string): Promise<string | null>;
-  /** Android native graph-folder picker. Returns a real filesystem path when
-   *  picked; never a content URI. */
-  pickGraphFolder(): Promise<GraphFolderPickResult>;
-  /** iOS only: make an app-container (local/iCloud) graph readable before Rust enumerates it. */
-  prepareGraphFolder(path: string): Promise<PreparedGraphFolder>;
-  /** Native file picker (asset upload). Null if cancelled / unsupported. */
-  pickFile(): Promise<string | null>;
-  /** Android: take a photo with the camera (or pick an existing image) → base64
-   *  bytes + ext. `status: "cancelled"` if dismissed. */
-  capturePhoto(): Promise<MediaCaptureResult>;
-  /** Android: start a voice-memo recording (prompts for mic permission on first
-   *  use). `status: "recording"` on success. */
-  startRecording(): Promise<MediaCaptureResult>;
-  /** Android: stop the active recording → native cache-file path + ext. */
-  stopRecording(): Promise<MediaCaptureResult>;
-  /** Android: discard an in-progress recording without inserting anything. */
-  cancelRecording(): Promise<MediaCaptureResult>;
-  writeText(text: string): Promise<void>;
-  /** Copy with text/plain (markdown) + text/html flavors; degrades to text/plain. */
-  writeRich(text: string, html: string): Promise<void>;
-  /** Write a PNG image (bytes) to the OS clipboard. Goes through the Rust
-   *  clipboard plugin, not WebKitGTK's native "Copy Image" (which doesn't
-   *  actually populate the clipboard, so paste yielded nothing). */
-  copyImageToClipboard(bytes: Uint8Array): Promise<void>;
-  readHighlights(pdf: string): Promise<Highlight[]>;
-  /** Read PDF highlights and view state without creating, rewriting or moving
-   * graph files. Prefer the OG-key sidecar; only when absent, consult legacy
-   * unless another PDF owns its key. An unavailable asset listing permits legacy
-   * lookup. Missing files return empty state; malformed nonblank EDN and sidecar
-   * read failures reject. A stale graph binding rejects; label does not affect
-   * this read.
-   * Annotation pages are created by writeHighlights on annotation actions.
-   * Cost O(asset entries + sidecar bytes), with no graph refresh. */
-  openPdf(pdf: string, label: string, bindingGeneration: number): Promise<PdfState>;
-  /** Native backend: merge caller changes by highlight ID against the current
-   * sidecar. Changed color, text and image values win locally; unchanged values
-   * follow disk. Page and position form one geometry value: changing either
-   * locally selects both local values. Unchanged highlights follow disk,
-   * including deletion, and disk-only additions survive. An edit versus an
-   * external deletion, or a deletion versus an external edit, rejects before
-   * either artifact is written.
-   * Return the committed set for the next baseline only on success.
-   * A blank sidecar or valid top-level EDN map is accepted; malformed nonblank
-   * EDN rejects. Malformed highlight entries within a valid map are skipped,
-   * and duplicate IDs are not rejected. Sidecar and annotation
-   * page use one guarded transaction. A failure with incomplete undo or
-   * publication can leave disk uncertain: retain edits and inspect disk.
-   * Crop/legacy trash moves after commit are best effort and do not reject.
-   * Invalid or stale bindings reject. Cost O(asset entries + sidecar + page +
-   * deleted crop bytes + deleted crops × sidecar bytes) per retry, plus up to
-   * O(P) refresh if the page is absent.
-   * The mock stores caller values directly without merge, files, or these failures. */
-  writeHighlights(pdf: string, label: string, highlights: Highlight[], baseHighlights: Highlight[], kind: "replace-page", bindingGeneration: number): Promise<Highlight[]>;
-  /** Save a cropped area-highlight PNG to OG's layout `assets/<key>/<page>_<id>_<stamp>.png`
-   *  (non-dedup — the filename links the `.edn` `:image <stamp>` to the file).
-   *  Returns the assets-relative path; a repeated save replaces that crop.
-   *  Rejects payloads over 64 MiB before IPC and Store failures. Each of up to
-   *  four attempts reads the existing crop; cost O(existing + input bytes). */
-  savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, bytes: Uint8Array, bindingGeneration: number): Promise<string>;
-  /** Trash a crop only when the current primary sidecar does not reference its
-   * ID/stamp. A whitespace-only sidecar rewrite and crop trash share one
-   * revision-guarded transaction.
-   * Cost O(sidecar + crop bytes) per attempt, up to four attempts. Missing or
-   * malformed sidecar, referenced/missing crop, I/O, and conflicts reject. */
-  rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number, bindingGeneration: number): Promise<void>;
-  /** Subscribe to external file changes (file watcher). Returns an unsubscribe. */
-  onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;
-  /** Watcher freshness (family 10), native only: a checkout-sized batch as one
-   *  event, a refused/restored OS watch, and a focus rescan (one full stat
-   *  diff) whose returned sequence completes after its page events. */
-  onGraphChangedBulk?(cb: (bulk: { changes: GraphChange[]; binding_generation?: number; answers?: GraphAnswersChange | null }) => void): Promise<() => void>;
-  onGraphWatchStatus?(cb: (status: { refused: boolean; message: string; binding_generation?: number }) => void): Promise<() => void>;
-  onGraphRescanComplete?(cb: (sequence: number) => void): Promise<() => void>;
-  /** `rebuild` (Settings only) ignores every stamp and re-parses every file. */
-  rescanGraphNow?(rebuild?: boolean): Promise<number>;
-  /** Subscribe to graph assets changed by an outside actor (editor, Syncthing,
-   *  another window): cache observation only, never page or config state. */
-  onAssetChanged(cb: (batch: AssetChangedBatch) => void): Promise<() => void>;
-  /** Subscribe to effective config.edn changes for this window. The event
-   * carries a fresh graph meta snapshot after the store reloaded the file. */
-  onGraphConfigChanged(cb: (change: GraphConfigChange) => void): Promise<() => void>;
-  /** How many launch snapshots to keep. */
-  getBackupKeep(): Promise<number>;
-  setBackupKeep(keep: number): Promise<void>;
-  /** Quick-capture Enter behaviour: true → Enter files; false → Enter = new block. */
-  getCaptureEnterFiles(): Promise<boolean>;
-  setCaptureEnterFiles(value: boolean): Promise<void>;
-  /** `[[`/`#` autocomplete default: true → Enter links the first match; false
-   *  (default, OG) → Enter creates a new page/tag unless an exact match exists. */
-  getLinkFirstMatch(): Promise<boolean>;
-  /** How the file-watcher detects external edits: "inotify" (default, no idle
-   *  wakeups) or "poll" (3s scan, for filesystems where inotify is flaky). */
-  getWatchMode(): Promise<string>;
-  setWatchMode(mode: string): Promise<void>;
-  /** Available snapshots for the current graph, newest first. */
-  listBackups(): Promise<BackupInfo[]>;
-  /** Restore a snapshot (graph text at original paths, config, and sidecars; snapshots current
-   *  state first). Destructive — confirm before calling. */
-  restoreBackup(stamp: string, kind: "replace-page"): Promise<void>;
-  /** Load the persisted UI session JSON (open tabs / active tab / zoom), or null.
-   *  Stored atomically in a backend file so structured session state is independent
-   *  of a particular WebView/origin and can be shared across windows. */
-  loadSession(): Promise<string | null>;
-  /** Persist the UI session JSON. */
-  saveSession(data: string): Promise<void>;
-  /** This graph's crash-surviving draft records (og ADR 0061). A corrupt store
-   *  loads empty; absent where drafts cannot be kept (published export). */
-  loadDrafts?(): Promise<DraftRecord[]>;
-  /** Replace one draft record; refused past the store's bound. `graphRoot`
-   *  names another graph's store (a graph switch keeping the old graph's edit). */
-  storeDraft?(record: DraftRecord, graphRoot?: string): Promise<void>;
-  /** Remove one draft record by id; a missing id is not an error. */
-  retireDraft?(id: string): Promise<void>;
-  /** Load the current graph's device-local named-workspace registry JSON. */
-  loadWorkspaces(): Promise<string>;
-  /** Replace the registry atomically. A failed post-rename directory sync reports
-   * a visible, unsynced publication. */
-  saveWorkspaces(data: string): Promise<"durable" | "published-unsynced">;
-  /** What the backend knows about the rendering path, for the CPU-rendering
-   *  warning (see `gpu.ts`). A silent driver fallback is detected in the webview
-   *  (WebGL renderer); this just supplies why/where context for the message. */
-  gpuEnv(): Promise<GpuEnv>;
-  /** The fallback app-data folder iff this launch had to relocate an unwritable
-   *  one (desktop Linux), delivered once; `null` otherwise. */
-  takeDataHomeFallbackNotice(): Promise<string | null>;
-  /** Experimental smooth-scrolling preference (Lenis), app-level, default off. */
-  getSmoothScroll(): Promise<boolean>;
-  setSmoothScroll(value: boolean): Promise<void>;
-  /** Generic device-local boolean preference (tine-settings.json); caller supplies
-   *  the key + default. Used by the copy-behavior options. */
-  getAppBool(key: string, fallback: boolean): Promise<boolean>;
-  setAppBool(key: string, value: boolean): Promise<void>;
-  /** GH #623: should the Windows Defender hint show for the open graph? Always
-   *  `{show:false}` off Windows. Per-graph dismissal lives in the backend. */
-  defenderHint(): Promise<{ show: boolean }>;
-  dismissDefenderHint(): Promise<void>;
-  /** Runs the UAC-elevated `Add-MpPreference` for the open graph's folder; only
-   *  ever called from the user's click on the hint. */
-  addDefenderExclusion(): Promise<
-    { outcome: "added" } | { outcome: "declined" } | { outcome: "failed"; code: number | null; message: string }
-  >;
-  /** Generic device-local STRING preference (tine-settings.json); caller supplies
-   *  the key + default. Used by the asset-filename format template. */
-  getAppString(key: string, fallback: string): Promise<string>;
-  setAppString(key: string, value: string): Promise<void>;
-  /** Push the spellcheck prefs onto the native webview(s) live (no restart):
-   *  `enabled` toggles WebKitGTK's checker; `languages` (locale codes, empty ⇒ OS
-   *  locale) sets the dictionaries checked simultaneously. */
-  applySpellcheck(enabled: boolean, languages: string[]): Promise<void>;
-  /** Locale codes of the spell-check dictionaries installed on this machine, so
-   *  the UI can offer them instead of asking the user to type codes. */
-  listSpellcheckDictionaries(): Promise<string[]>;
-  /** Startup debug logging (TINE_DEBUG=1 / --debug): whether it's on and where the
-   *  log file is, so the UI can forward errors + show the path. */
-  debugInfo(): Promise<DebugInfo>;
-  /** Forward a frontend milestone / error into the backend debug log. */
-  debugLog(line: string): Promise<void>;
-  /** The privacy-safe diagnostic report of this run (GH #343): fixed-shape
-   *  events only. Build commit/time that are not a hex commit and an ISO
-   *  timestamp are dropped by the backend. Never contains graph content. */
-  diagnosticReport(buildCommit: string, buildTime: string): Promise<DiagnosticReport>;
-  /** Build the report and save it where the user picks (desktop save
-   *  dialog); `false` when cancelled. Mobile rejects: use Copy report. */
-  saveDiagnosticReport(buildCommit: string, buildTime: string): Promise<boolean>;
-  /** Drop every recorded diagnostic event of this run and the previous one. */
-  clearDiagnostics(): Promise<void>;
-  /** Exact-byte manifest of the open graph's Markdown/Org files; rejects with `{ kind: "cancelled" }` after a cancel. */
-  createGraphVerification(operationId: string): Promise<GraphVerificationReport>;
-  cancelGraphVerification(operationId: string): Promise<void>;
-  /** Save a report where the user picks (desktop); `false` when cancelled. */
-  saveGraphVerificationReport(text: string): Promise<boolean>;
-  onGraphVerificationProgress(cb: (progress: GraphVerificationProgress) => void): Promise<() => void>;
-  /** Mobile only (GH #426): whether the recorded session counts as live, so an
-   *  OS reap of a hidden app is not reported as an unclean exit. */
-  diagnosticSessionActive(active: boolean): Promise<void>;
-  /** Record one fixed-kind frontend event. The backend drops the event when a
-   *  token is outside its closed vocabulary; fields carry no free text. */
-  diagnosticFrontendEvent(kind: DiagnosticFrontendKind, fields?: DiagnosticFrontendFields): Promise<void>;
-  /** Count one duration under a registered timing name (focus phases, page-load
-   *  commands; see focusTiming.ts). Numbers only; native builds only. */
-  diagnosticTimingEvent?(name: string, elapsedMs: number): Promise<void>;
-  /** The backend's current UTC offset and sample instant: the app's calendar
-   * authority (see `appNow` in journal.ts, GH #607). */
-  localClock(): Promise<{ offset_minutes: number; unix_ms: number }>;
-  /** The CPU architecture of this binary (`x86`, `x86_64`, `aarch64`, …). */
-  appArchitecture(): Promise<string>;
-  /** The last 64 external-change latency receipts, oldest first: counts and
-   *  milliseconds only, no path. O(64). Backs the devtools helper
-   *  `window.__tineWatcherLatency()` (GH #337). */
-  watcherLatencyRecent(): Promise<unknown[]>;
-}
-
-export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, GraphSourceFile, GraphSources, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
-import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange } from "./backendTypes";
+export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
+import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange } from "./backendTypes";
+import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed } from "./document";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-/** `query_print` refused this IR in the requested dialect. `isNotApplicable` is
- *  the expected "OG cannot say this" answer the save path turns into
- *  `{{tine-query}}`; every other refusal is surfaced, never swallowed (I-9). */
-export class QueryPrintRefusedError extends Error {
-  constructor(readonly reasonCode: string, readonly diagnostic: Diagnostic | null) {
-    super(diagnostic?.message ?? `The query could not be printed (reason code: ${reasonCode}).`);
-    this.name = "QueryPrintRefusedError";
-  }
-  get isNotApplicable(): boolean {
-    return this.reasonCode === "not_applicable";
-  }
-}
-
-/** Decode og's `query-print-refused:<reason>:<diagnostic JSON>` envelope. */
-export function queryPrintRefusal(error: unknown): QueryPrintRefusedError | null {
-  const text = error instanceof Error ? error.message : String(error);
-  const match = /^query-print-refused:([a-z_]+):([\s\S]*)$/.exec(text);
-  if (!match) return null;
-  let diagnostic: Diagnostic | null = null;
-  try {
-    const value = JSON.parse(match[2]) as Record<string, unknown> | null;
-    if (value && typeof value["message"] === "string" && typeof value["kind"] === "string") diagnostic = value as unknown as Diagnostic;
-  } catch {
-    diagnostic = null; // a malformed detail still refuses; the reason code carries it
-  }
-  return new QueryPrintRefusedError(match[1], diagnostic);
-}
+export { QueryPrintRefusedError, queryPrintRefusal } from "./queryPrintRefusal";
+import { queryPrintRefusal } from "./queryPrintRefusal";
 
 /** Commands whose timing would only describe the diagnostics channel. */
 const DIAGNOSTIC_COMMANDS = new Set([
@@ -763,6 +111,12 @@ class TauriBackend implements Backend {
   private bindingGeneration = 0;
   private ipcDiagnosticsUnavailable = false;
   private readonly ordered = orderedLane();
+  /** Issue order of lane searches. The native handlers reach their lane in
+   *  scheduler order, so a keystroke's older search can land after the newer
+   *  and cancel it; the lane keeps the highest order and refuses an older one.
+   *  Seeded from the clock so a reloaded WebView never restarts below a
+   *  request the native side still holds. */
+  private laneSeq = Date.now() * 1000;
 
   constructor() {
     this.ready = import("@tauri-apps/api/core").then((m) => {
@@ -773,9 +127,11 @@ class TauriBackend implements Backend {
 
   graphBindingGeneration() { return this.bindingGeneration; }
 
-  /** R3: write commands keep their call order (src/orderedWrites.ts). */
+  /** R3: write commands keep their call order (src/orderedWrites.ts). A
+   *  refresh read is counted until it settles (src/refreshReads.ts). */
   private call<T>(cmd: string, args?: Record<string, unknown>, bindingGeneration = this.bindingGeneration): Promise<T> {
-    return this.ordered(cmd, () => this.issue<T>(cmd, args, bindingGeneration));
+    const issued = this.ordered(cmd, () => this.issue<T>(cmd, args, bindingGeneration));
+    return REFRESH_READ_COMMANDS.has(cmd) ? trackRefreshRead(issued) : issued;
   }
 
   private async issue<T>(cmd: string, args: Record<string, unknown> | undefined, bindingGeneration: number): Promise<T> {
@@ -910,14 +266,14 @@ class TauriBackend implements Backend {
       signature,
     });
   }
-  setSystemBarAppearance(dark: boolean) {
-    return this.call<void>("set_system_bar_appearance", { dark });
-  }
-  quit() {
-    return this.call<void>("tine_quit");
+  setSystemBarAppearance(dark: boolean, background?: string) {
+    return this.call<void>("set_system_bar_appearance", { dark, background });
   }
   closeGraphWindow() {
     return this.call<void>("close_graph_window");
+  }
+  trayApply() {
+    return this.call<TrayStatus>("tray_apply");
   }
   openDevtools() {
     return this.call<void>("tine_open_devtools");
@@ -925,11 +281,18 @@ class TauriBackend implements Backend {
   defaultGraphParent() {
     return this.call<string>("default_graph_parent");
   }
-  createGraph(dir: string) {
-    return this.call<{ root: string; display_root: string }>("create_graph", { dir });
+  createGraph(dir: string, name: string) {
+    return this.call<{ root: string; display_root: string }>("create_graph", { dir, name });
   }
+  suggestGraphName(dir: string) { return this.call<string>("suggest_graph_name", { dir }); }
   pageInventory() {
     return this.call<import("./types").PageInventory>("page_inventory");
+  }
+  pageModified() {
+    return this.call<import("./types").PageModified>("page_modified");
+  }
+  pageBacklinkCounts() {
+    return this.call<[string, number][]>("page_backlink_counts");
   }
   journalFeedPage(limit: number, beforeDay: number | null) {
     return this.call<import("./types").JournalFeedPage>("journal_feed_page", { limit, beforeDay });
@@ -943,11 +306,61 @@ class TauriBackend implements Backend {
   resolvePage(name: string, kind: "journal" | "page") {
     return this.call<import("./types").ResolvedPage>("resolve_page", { name, kind });
   }
-  graphSourceFiles(includeJournals: boolean) {
-    return this.call<GraphSources>("graph_source_files", { includeJournals });
+  pageWindowReloaded() {
+    return this.call<{ session: number; nextId: number }>("page_window_reloaded");
   }
-  savePages(entries: SavePageEntry[], bindingGeneration = this.bindingGeneration) {
-    return this.call<SavePagesResult>("save_pages", { entries }, bindingGeneration);
+  pageOpen(session: number, id: number, page: { name: string; kind: "journal" | "page"; path: string | null }) {
+    const generation = this.bindingGeneration;
+    type Reply = { key: string; baselineEntry: boolean } | PageRefusal;
+    // PERF-FIXES D3: opens issued back to back (a carry-over's sources) share
+    // one `page_open` call, still in id order and in their lane place.
+    return this.ordered.joined(`page_open:${session}:${generation}`, { id, page }, async (items): Promise<Reply[]> => {
+      const paths = await Promise.all(items.map(async ({ page }): Promise<string | PageRefusal> => {
+        if (page.path !== null) return page.path;
+        const resolved = await this.issue<import("./types").ResolvedPage>("resolve_page", { name: page.name, kind: page.kind }, generation);
+        return resolved.kind === "alias" ? { reason: "alias", owners: resolved.owners } : resolved.id;
+      }));
+      const sent = items.flatMap(({ id, page }, i) => {
+        const path = paths[i];
+        return typeof path === "string" ? [{ id, path, name: page.name }] : [];
+      });
+      const answers = sent.length ? await this.issue<Reply[]>("page_open", { session, pages: sent }, generation) : [];
+      let next = 0;
+      return paths.map((path) => typeof path === "string" ? answers[next++] : path);
+    });
+  }
+  pageSubmit(session: number, id: number, key: string, dto: PageDto, version: number, resolve: DiskToken | null, kinds: EditKinds) {
+    return this.call<PageRefusal | null>("page_submit", { session, id, key, dto, version, resolve, kinds });
+  }
+  pageMove(session: number, id: number, source: [string, PageDto, number], receiver: [string, PageDto, number], kinds: EditKinds) {
+    return this.call<PageRefusal | null>("page_move", { session, id, source, receiver, kinds });
+  }
+  pageDiscard(session: number, id: number, key: string) {
+    return this.call<PageRefusal | null>("page_discard", { session, id, key });
+  }
+  pageClose(session: number, id: number, key: string) {
+    return this.call<PageRefusal | null>("page_close", { session, id, key });
+  }
+  pageDelete(session: number, name: string, kind: PageKind, expectedPath?: string) {
+    return this.call<PageOperation>("page_delete", { session, name, kind, expectedPath });
+  }
+  pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number) {
+    return this.call<boolean | null>("page_wait", { session, needs, boundMs });
+  }
+  pageSaveNow(session: number, keys: readonly string[]) {
+    return this.call<void>("page_save_now", { session, keys });
+  }
+  pageOwed(session: number, paths: readonly string[] | null) {
+    return this.call<OwedPage[] | null>("page_owed", { session, paths });
+  }
+  pageDraftsRetry() {
+    return this.call<void>("page_drafts_retry");
+  }
+  onPageMail(cb: (mail: PageMail) => void) { return this.on("page-mail", cb); }
+  onGraphOpenWaiting(cb: (saving: string) => void) { return this.on("graph-open-waiting", cb); }
+  onGraphOpenOwnerWaiting(cb: (progress: string) => void) { return this.on("graph-open-owner-waiting", cb); }
+  legacyDraftsFile() {
+    return this.call<string | null>("legacy_drafts_file");
   }
   guidePages() {
     return this.call<GuidePage[]>("guide_pages");
@@ -975,9 +388,6 @@ class TauriBackend implements Backend {
   }
   getBlockReferrers(uuid: string) {
     return this.call<RefGroup[]>("block_referrers", { uuid });
-  }
-  deletePage(name: string, kind: "journal" | "page", expectedPath?: string) {
-    return this.call<void>("delete_page", { name, kind, expectedPath });
   }
   renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]) {
     return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto, unsavedPaths });
@@ -1068,11 +478,14 @@ class TauriBackend implements Backend {
   readCustomCss() {
     return this.call<string>("read_custom_css");
   }
-  openExternal(url: string) {
-    return this.call<void>("open_external", { url });
+  openExternal(url: string, confirmedScheme?: string) {
+    return this.call<void>("open_external", { url, confirmedScheme: confirmedScheme ?? null });
   }
   openAsset(name: string, bindingGeneration: number) {
     return this.assetCall<void>("open_asset", { name }, bindingGeneration);
+  }
+  openGraphFile(path: string, bindingGeneration: number) {
+    return this.assetCall<void>("open_graph_file", { path }, bindingGeneration);
   }
   openPageFile(name: string, kind: "page" | "journal", path: string | undefined, reveal: boolean) {
     return this.call<void>("open_page_file", { name, kind, path: path || null, reveal });
@@ -1090,20 +503,20 @@ class TauriBackend implements Backend {
     return this.assetCall<TrashAssetOutcome>("trash_asset", { name }, bindingGeneration);
   }
   search(query: string, limit: number, lane?: string) {
-    return this.call<RefGroup[]>("search", { query, limit, lane });
+    return this.call<RefGroup[]>("search", { query, limit, lane, laneSeq: ++this.laneSeq });
   }
-  async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope, pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, views?: { page: ViewSettings; block: ViewSettings }) {
-    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null, pageMatchScope: pageMatchScope ?? null, pageView: views?.page ?? null, blockView: views?.block ?? null });
+  async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope, pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, views?: { page: ViewSettings; block: ViewSettings }, transliteration = false) {
+    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, laneSeq: ++this.laneSeq, explain, scope: scope ?? null, pageMatchScope: pageMatchScope ?? null, pageView: views?.page ?? null, blockView: views?.block ?? null, transliteration });
     return {
       ...execution,
       has_more: execution.has_more ?? { pages: false, blocks: false },
     };
   }
-  quickSwitch(query: string, limit: number) {
-    return this.call<PageEntry[]>("quick_switch", { query, limit });
+  quickSwitch(query: string, limit: number, editor?: { pageName: string; blockId: string; originalRaw: string; session?: string }, transliteration = false) {
+    return this.call<PageEntry[]>("quick_switch", { query, limit, editorPageName: editor?.pageName, editorBlockId: editor?.blockId, editorOriginalRaw: editor?.originalRaw, editorSession: editor?.session, transliteration });
   }
-  captureQuickSwitch(query: string, limit: number) {
-    return this.call<PageEntry[]>("capture_quick_switch", { query, limit });
+  captureQuickSwitch(query: string, limit: number, transliteration = false) {
+    return this.call<PageEntry[]>("capture_quick_switch", { query, limit, transliteration });
   }
   listTemplates() {
     return this.call<TemplateDto[]>("list_templates");
@@ -1117,7 +530,7 @@ class TauriBackend implements Backend {
   previewBlock(uuid: string, maxNodes: number) {
     return this.call<BlockPreview | null>("preview_block", { uuid, maxNodes });
   }
-  async readAsset(name: string, maxBytes?: number) {
+  async readAsset(name: string, maxBytes: number) {
     // read_asset now returns raw bytes (tauri::ipc::Response) → an ArrayBuffer,
     // not a JSON number[] — far cheaper for large PDFs/images.
     const buf = await this.call<ArrayBuffer>("read_asset", { name, maxBytes });
@@ -1137,6 +550,11 @@ class TauriBackend implements Backend {
   }
   async readClipboardImage(): Promise<Uint8Array | null> {
     try {
+      if (await this.appPlatform() === "android") {
+        const buf = await this.call<ArrayBuffer>("read_android_clipboard_image");
+        const bytes = new Uint8Array(buf);
+        return bytes.length ? bytes : null;
+      }
       const { readImage } = await import("@tauri-apps/plugin-clipboard-manager");
       const img = await readImage();
       return await clipboardImageToPng(img);
@@ -1237,9 +655,9 @@ class TauriBackend implements Backend {
   liveConflictDiff(path: string, page: PageDto, baseRev: string | null) {
     return this.call<SyncConflictDiff>("live_conflict_diff", { path, page, baseRev });
   }
-  resolveLiveConflict(path: string, page: PageDto, baseRev: string | null, conflictRev: string,
-    mergeBaseRev: string | undefined, decisions: Record<string, MergeDecision>, preChoice: "mine" | "theirs" | "union") {
-    return this.call<PageDto>("resolve_live_conflict", { path, page, baseRev, conflictRev, mergeBaseRev, decisions, preChoice });
+  mergeLiveConflict(path: string, page: PageDto, conflictRev: string, mergeBaseRev: string | undefined,
+    decisions: Record<string, MergeDecision>, preChoice: "mine" | "theirs" | "union") {
+    return this.call<PageDto>("merge_live_conflict", { path, page, conflictRev, mergeBaseRev, decisions, preChoice });
   }
   async onConflictsChanged(cb: () => void): Promise<() => void> {
     const { listen } = await import("@tauri-apps/api/event");
@@ -1259,13 +677,16 @@ class TauriBackend implements Backend {
   }
   async confirm(message: string, title?: string): Promise<boolean> {
     const { ask } = await import("@tauri-apps/plugin-dialog");
-    return ask(message, { title: title ?? "Tine", kind: "warning" });
+    return ask(message, { title: title ?? t("backend-backend-tine"), kind: "warning" });
   }
-  async pickFolder(title?: string): Promise<string | null> {
+  async pickFolder(title?: string, defaultPath?: string): Promise<string | null> {
     const { open } = await import("@tauri-apps/plugin-dialog");
-    const res = await open({ directory: true, multiple: false, title: title ?? "Open graph folder" });
+    const res = await open({ directory: true, multiple: false, title: title ?? t("backend-backend-open-graph-folder"), defaultPath });
     return typeof res === "string" ? res : null;
   }
+  revealExport(path: string) { return this.call<void>("reveal_export", { path }); }
+  readCssFile(global: boolean) { return this.call<{ text: string; revision: string | null }>("read_css_file", { global }); }
+  saveCssFile(global: boolean, text: string, revision: string | null) { return this.call<string>("save_css_file", { global, text, revision }); }
   pickGraphFolder(): Promise<GraphFolderPickResult> {
     return this.call<GraphFolderPickResult>("pick_graph_folder");
   }
@@ -1286,7 +707,7 @@ class TauriBackend implements Backend {
   }
   async pickFile(): Promise<string | null> {
     const { open } = await import("@tauri-apps/plugin-dialog");
-    const res = await open({ multiple: false, title: "Choose a file" });
+    const res = await open({ multiple: false, title: t("backend-backend-choose-a-file") });
     return typeof res === "string" ? res : null;
   }
   async writeText(text: string): Promise<void> {
@@ -1322,9 +743,22 @@ class TauriBackend implements Backend {
     }
     await this.writeText(text);
   }
-  copyImageToClipboard(bytes: Uint8Array): Promise<void> {
-    if (bytes.byteLength > ASSET_INGRESS_MAX_BYTES) return Promise.reject(new Error("image exceeds 64 MiB clipboard limit"));
-    return this.call<void>("copy_image_to_clipboard", { bytesB64: bytesToBase64(bytes) });
+  async copyAssetFileToClipboard(name: string): Promise<boolean> {
+    const generation = this.bindingGeneration;
+    const platform = await this.appPlatform();
+    if (platform === "android" || platform === "ios") return false;
+    await this.assetCall<void>("copy_asset_file_to_clipboard", { name }, generation);
+    return true;
+  }
+  async copyImageToClipboard(bytes: Uint8Array): Promise<void> {
+    if (bytes.byteLength > ASSET_INGRESS_MAX_BYTES) throw new Error("image exceeds 64 MiB clipboard limit");
+    // Binary InvokeBody avoids base64, JSON and a large UI-thread string build.
+    await this.ready;
+    const { invoke } = await import("@tauri-apps/api/core");
+    if (await this.appPlatform() === "android") {
+      return invoke<void>("copy_image_to_clipboard", { bytesB64: bytesToBase64(bytes) });
+    }
+    return invoke<void>("copy_image_to_clipboard", bytes);
   }
   readHighlights(pdf: string) {
     return this.call<Highlight[]>("read_highlights", { pdf });
@@ -1361,6 +795,8 @@ class TauriBackend implements Backend {
   rescanGraphNow(rebuild?: boolean) { return this.call<number>("rescan_graph_now", rebuild ? { rebuild: true } : undefined); }
   onAssetChanged(cb: (batch: AssetChangedBatch) => void) { return this.on("asset-changed", cb); }
   onGraphConfigChanged(cb: (change: GraphConfigChange) => void) { return this.on("graph-config-changed", cb); }
+  onCustomCssChanged(cb: (change: CustomCssChange) => void) { return this.on("graph-custom-css-changed", cb); }
+  editCustomCss() { return this.call<void>("edit_custom_css"); }
   getBackupKeep() {
     return this.call<number>("get_backup_keep");
   }
@@ -1385,23 +821,15 @@ class TauriBackend implements Backend {
   listBackups() {
     return this.call<BackupInfo[]>("list_backups");
   }
-  restoreBackup(stamp: string) {
-    return this.call<void>("restore_backup", { stamp });
+  restoreBackup(stamp: string, _kind: "replace-page", consumedLastId: number) {
+    return this.call<{ error: string | null; reloaded: { session: number; nextId: number } | null }>(
+      "restore_backup", { stamp, consumedLastId });
   }
   loadSession() {
     return this.call<string | null>("load_session");
   }
   saveSession(data: string) {
     return this.call<void>("save_session", { data });
-  }
-  loadDrafts() {
-    return this.call<DraftRecord[]>("load_drafts");
-  }
-  storeDraft(record: DraftRecord, graphRoot?: string) {
-    return this.call<void>("store_draft", graphRoot === undefined ? { record } : { record, graphRoot });
-  }
-  retireDraft(id: string) {
-    return this.call<void>("retire_draft", { id });
   }
   loadWorkspaces() {
     return this.call<string>("load_workspaces");
@@ -1472,6 +900,9 @@ class TauriBackend implements Backend {
   }
   setAppString(key: string, value: string) {
     return this.call<void>("set_app_string", { key, value });
+  }
+  setUiLocale(locale: string) {
+    return this.call<void>("set_ui_locale", { locale });
   }
   applySpellcheck(enabled: boolean, languages: string[]) {
     return this.call<void>("apply_spellcheck", { enabled, languages });

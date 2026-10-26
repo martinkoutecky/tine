@@ -83,7 +83,151 @@ fn fit_name(prefix: &str, stem: &str, tail: &str, limit: usize) -> String {
 /// Shared replace-allowed platform rename (rename(2) / MoveFileExW with
 /// REPLACE_EXISTING). The caller owns its guard and directory durability.
 pub(crate) fn rename_replace(src: &Path, dst: &Path) -> io::Result<()> {
-    fs::rename(src, dst)
+    #[cfg(target_os = "windows")]
+    {
+        // std's own call plus MOVEFILE_WRITE_THROUGH, on the shared native
+        // path form. Any failure takes std's rename itself, so its long-path
+        // handling and ACCESS_DENIED -> FileRenameInfoEx retry stay Beta's
+        // behaviour (REVIEW-2b F10).
+        use windows_sys::Win32::Storage::FileSystem::{
+            MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+        };
+        let moved = unsafe {
+            MoveFileExW(
+                native_path(src).as_ptr(),
+                native_path(dst).as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            ) != 0
+        };
+        if moved {
+            Ok(())
+        } else {
+            fs::rename(src, dst)
+        }
+    }
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios"
+    ))]
+    {
+        fs::rename(src, dst)
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "windows"
+    )))]
+    {
+        let _ = (src, dst);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "replace unavailable on this target",
+        ))
+    }
+}
+
+/// The one Windows path form for Tine's native moves (`rename_replace` and
+/// `no_replace::move_windows`; REVIEW-2b-r2 R2), NUL-terminated. A path that is
+/// already verbatim, or whose absolute form (`std::path::absolute`, i.e.
+/// GetFullPathNameW) is shorter than the 248-unit legacy limit, is passed
+/// exactly as spelled, which is what these calls received before. Only a
+/// longer one becomes `\\?\` + absolute (`\\.\` → `\\?\`, `\\server` →
+/// `\\?\UNC\server`), so the only change is failure → success past MAX_PATH.
+/// This is std's `get_long_path` prefix table, not its exact algorithm: std
+/// also converts short relative paths and skips GetFullPathNameW for short
+/// absolute ones.
+#[cfg(windows)]
+pub(crate) fn native_path(path: &Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    const LEGACY_MAX_PATH: usize = 248;
+    let spelled: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let absolute: Vec<u16> = match std::path::absolute(path) {
+        Ok(absolute)
+            if !spelled.starts_with(&[0x5c, 0x5c, 0x3f, 0x5c])
+                && !spelled.starts_with(&[0x5c, 0x3f, 0x3f, 0x5c]) =>
+        {
+            absolute.as_os_str().encode_wide().collect()
+        }
+        _ => vec![],
+    };
+    if absolute.len() < LEGACY_MAX_PATH {
+        return spelled.into_iter().chain(Some(0)).collect();
+    }
+    let (prefix, rest): (&str, &[u16]) = match absolute.as_slice() {
+        [_, 0x3a, 0x5c, ..] => ("\\\\?\\", &absolute),
+        [0x5c, 0x5c, 0x2e, 0x5c, rest @ ..] => ("\\\\?\\", rest),
+        [0x5c, 0x5c, rest @ ..] => ("\\\\?\\UNC\\", rest),
+        _ => ("", &absolute),
+    };
+    prefix
+        .encode_utf16()
+        .chain(rest.iter().copied())
+        .chain(Some(0))
+        .collect()
+}
+
+/// The existing atomic-write protocol split at its synced-temp barrier. The
+/// caller retains its base guard and page lock through publication and sync.
+pub(crate) struct PreparedWrite {
+    temporary: PathBuf,
+    target: PathBuf,
+}
+
+impl PreparedWrite {
+    pub(crate) fn with_hooks(
+        path: &Path,
+        bytes: &[u8],
+        on_write: impl FnOnce(),
+        on_file_sync: impl FnOnce(),
+    ) -> io::Result<Self> {
+        let temporary = temp_path(path, WRITE_TMP_SEQ.fetch_add(1, Ordering::Relaxed), "");
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(at("create temporary file"))?;
+        let prepared = Self {
+            temporary,
+            target: path.to_path_buf(),
+        };
+        file.write_all(bytes).map_err(at("write temporary file"))?;
+        #[cfg(test)]
+        TEMP_WRITES.with(|count| {
+            let (files, written) = count.get();
+            count.set((files + 1, written + bytes.len() as u64));
+        });
+        on_write();
+        sync_file_handle(&file).map_err(at("fsync temporary file"))?;
+        on_file_sync();
+        Ok(prepared)
+    }
+
+    pub(crate) fn publish(&self, create: bool) -> io::Result<()> {
+        if create {
+            super::no_replace::move_file_noreplace(&self.temporary, &self.target)
+        } else {
+            rename_replace(&self.temporary, &self.target)
+                .map_err(at("rename temporary file over target"))
+        }
+    }
+}
+
+impl Drop for PreparedWrite {
+    fn drop(&mut self) {
+        // Only this protocol's unpublished scratch file; never the target.
+        let _ = fs::remove_file(&self.temporary);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static FAIL_FILE_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(crate) static FILE_SYNCS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    pub(crate) static TEMP_WRITES: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -108,6 +252,39 @@ pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     res
 }
 
+/// Make the bytes already at `path` durable: fsync the file, then its
+/// directory entry. A save whose bytes equal the disk reports success without
+/// a rename, and success retires the editor's crash copy, so those bytes must
+/// be as durable as a rename would have made them. Scenario: another program
+/// (Syncthing) writes the user's unsaved text without fsync, Tine's save finds
+/// equal bytes, and a power cut then reverts the file (storage.qnt mutant MQ).
+/// Windows needs a writable handle for FlushFileBuffers.
+pub(crate) fn sync_existing(path: &Path) -> io::Result<()> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    sync_file_bytes(path)?;
+    super::directory_durability::sync_directory_entry(dir)
+}
+
+/// File part of the existing durability recipe.
+fn sync_file_bytes(path: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    let file = fs::OpenOptions::new().write(true).open(path);
+    #[cfg(not(windows))]
+    let file = fs::File::open(path);
+    file.and_then(|file| sync_file_handle(&file))
+        .map_err(at("fsync unchanged file"))
+}
+
+fn sync_file_handle(file: &fs::File) -> io::Result<()> {
+    #[cfg(test)]
+    FILE_SYNCS.with(|count| count.set(count.get() + 1));
+    #[cfg(test)]
+    if FAIL_FILE_SYNC.with(|fail| fail.replace(false)) {
+        return Err(io::Error::other("injected file sync failure"));
+    }
+    file.sync_all()
+}
+
 pub(crate) fn atomic_write_with_check(
     path: &Path,
     bytes: &[u8],
@@ -117,33 +294,122 @@ pub(crate) fn atomic_write_with_check(
     on_dir_sync: impl FnOnce(),
 ) -> io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let tmp = temp_path(path, WRITE_TMP_SEQ.fetch_add(1, Ordering::Relaxed), "");
-    let res = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-            .map_err(at("create temporary file"))?;
-        file.write_all(bytes).map_err(at("write temporary file"))?;
-        on_write();
-        file.sync_all().map_err(at("fsync temporary file"))?;
-        on_file_sync();
-        drop(file);
-        check()?;
-        rename_replace(&tmp, path).map_err(at("rename temporary file over target"))
-    })();
-    if res.is_err() {
-        let _ = fs::remove_file(&tmp);
-    } else {
-        super::directory_durability::sync_directory_entry(dir)?;
-        on_dir_sync();
-    }
-    res
+    let prepared = PreparedWrite::with_hooks(path, bytes, on_write, on_file_sync)?;
+    check()?;
+    prepared.publish(false)?;
+    super::directory_durability::sync_directory_entry(dir)?;
+    on_dir_sync();
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// REVIEW-2b F10, hosted Windows only: a path past MAX_PATH takes the
+    /// write-through call on std's verbatim form and replaces the target.
+    #[cfg(windows)]
+    #[test]
+    fn windows_replace_handles_long_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let mut dir = root.path().to_path_buf();
+        while dir.as_os_str().len() < 300 {
+            dir.push("a-directory-name-that-makes-the-path-long");
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        let (src, dst) = (dir.join("src.md"), dir.join("dst.md"));
+        std::fs::write(&src, b"new").unwrap();
+        std::fs::write(&dst, b"old").unwrap();
+        super::rename_replace(&src, &dst).unwrap();
+        assert_eq!(std::fs::read(&dst).unwrap(), b"new");
+        assert!(!src.exists());
+    }
+
+    /// REVIEW-2b F10, hosted Windows only: a read-only destination gets
+    /// exactly std's outcome (its ACCESS_DENIED -> FileRenameInfoEx retry).
+    #[cfg(windows)]
+    #[test]
+    fn windows_replace_matches_std_on_a_read_only_destination() {
+        let mut outcomes = vec![];
+        for ours in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let (src, dst) = (root.path().join("src.md"), root.path().join("dst.md"));
+            std::fs::write(&src, b"new").unwrap();
+            std::fs::write(&dst, b"old").unwrap();
+            let mut permissions = std::fs::metadata(&dst).unwrap().permissions();
+            permissions.set_readonly(true);
+            std::fs::set_permissions(&dst, permissions).unwrap();
+            let result = if ours {
+                super::rename_replace(&src, &dst)
+            } else {
+                std::fs::rename(&src, &dst)
+            };
+            outcomes.push((result.is_ok(), std::fs::read(&dst).unwrap(), src.exists()));
+        }
+        assert_eq!(outcomes[0], outcomes[1]);
+    }
+
+    /// REVIEW-2b-r2 R2, hosted Windows only: the shared form keeps every
+    /// spelling under the legacy limit exactly and extends only long ones.
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_path_keeps_short_spellings_and_extends_long_ones() {
+        let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+        for short in [
+            r"C:\g\pages\a.md",
+            r"pages\a.md",
+            r"\\server\share\a.md",
+            r"\\?\C:\g\a.md",
+        ] {
+            assert_eq!(native_path(Path::new(short)), wide(short), "{short}");
+        }
+        let long = format!(r"C:\{}\a.md", "d".repeat(300));
+        assert_eq!(native_path(Path::new(&long)), wide(&format!(r"\\?\{long}")));
+        let unc = format!(r"\\server\share\{}\a.md", "d".repeat(300));
+        assert_eq!(
+            native_path(Path::new(&unc)),
+            wide(&format!(r"\\?\UNC\{}", &unc[2..]))
+        );
+    }
+
+    /// REVIEW-2b-r2 R2, hosted Windows only: no-replace and replace moves on
+    /// short absolute, short relative, long (>300) and, where the admin
+    /// share is reachable, UNC paths.
+    #[cfg(windows)]
+    #[test]
+    fn windows_moves_short_relative_long_and_unc_paths() {
+        fn both(dir: &Path) {
+            let (src, dst) = (dir.join("src.md"), dir.join("dst.md"));
+            fs::write(&src, b"one").unwrap();
+            super::super::no_replace::move_file_noreplace(&src, &dst).unwrap();
+            fs::write(&src, b"two").unwrap();
+            let refused = super::super::no_replace::move_file_noreplace(&src, &dst).unwrap_err();
+            assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists, "{dir:?}");
+            rename_replace(&src, &dst).unwrap();
+            assert_eq!(fs::read(&dst).unwrap(), b"two", "{dir:?}");
+            assert!(!src.exists());
+            fs::remove_file(&dst).unwrap();
+        }
+        let root = tempfile::tempdir().unwrap();
+        both(root.path());
+        let here = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        both(Path::new(here.path().file_name().unwrap()));
+        let mut long = root.path().to_path_buf();
+        while long.as_os_str().len() < 300 {
+            long.push("a-directory-name-that-makes-the-path-long");
+        }
+        fs::create_dir_all(&long).unwrap();
+        both(&long);
+        let absolute = root.path().to_string_lossy().into_owned();
+        if let [drive, b':', ..] = absolute.as_bytes() {
+            let unc = format!(r"\\localhost\{}$\{}", *drive as char, &absolute[3..]);
+            if Path::new(&unc).is_dir() {
+                both(Path::new(&unc));
+            } else {
+                eprintln!("UNC admin share unavailable: {unc}");
+            }
+        }
+    }
 
     #[test]
     fn temp_name_never_outgrows_a_long_target_and_keeps_the_page_extension() {

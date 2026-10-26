@@ -11,11 +11,6 @@ fn check(query: &str, sheet: bool) {
     let out = dir.path().join("output");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(&out).unwrap();
-    let query = if sheet {
-        query.trim_end_matches('}')
-    } else {
-        query
-    };
     let host = format!(
         "public:: true\n- {{{{query {query}}}}}\n{}",
         if sheet { "  tine.view:: table\n" } else { "" }
@@ -116,16 +111,25 @@ fn check(query: &str, sheet: bool) {
 
 #[test]
 fn current_page_queries_match_baked_publication_context() {
+    let _integration_guard = crate::integration_lock();
     check("{:query [:find (pull ?b [*]) :in $ ?current-page :where [?p :block/name ?current-page] [?b :block/refs ?p] [?b :block/marker \"TODO\"]] :inputs [:current-page]}", false);
 }
 
 #[test]
 fn current_page_sheets_match_baked_publication_context() {
+    let _integration_guard = crate::integration_lock();
     check("(and (task TODO) <% current page %>)", true);
 }
 
 #[test]
+fn current_page_advanced_map_sheets_match_baked_publication_context() {
+    let _integration_guard = crate::integration_lock();
+    check("{:query [:find (pull ?b [*]) :in $ ?current-page :where [?p :block/name ?current-page] [?b :block/refs ?p] [?b :block/marker \"TODO\"]] :inputs [:current-page]}", true);
+}
+
+#[test]
 fn current_page_template_substitution_is_shared_by_lists_sheets_and_baked_queries() {
+    let _integration_guard = crate::integration_lock();
     for sheet in [false, true] {
         check("(and (task TODO) <% current page %>)", sheet);
     }

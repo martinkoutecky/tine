@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { sheetClickOffset, sheetCellMenu } from "../sheet/interactions";
 import { cellIsSelected, cellIsInLegacyRange } from "../sheet/selection";
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js";
@@ -33,7 +34,7 @@ import {
   sheetGridIdFromEventTarget,
 } from "../sheet/pointerSelection";
 import { setColumnWidth } from "../sheet/mutations";
-import { isSheetCellHidden, splitProps } from "../editor/properties";
+import { SHEET_CELL_HIDE, splitProps } from "../editor/properties";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { editingId, editingOwner, startEditing } from "../editorController";
 import { openSheetContextMenu } from "../ui";
@@ -43,6 +44,7 @@ import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { SheetAggregateFooterCell, useSheetFooterCorner } from "./SheetAggregateFooter";
 import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
+import { isElementNode, isKeyboardEventValue, requestFrame, windowOf } from "../windowRealm";
 
 const MAX_GRID_DEPTH = 5;
 export const GRID_RENDER_PAGE = 200;
@@ -363,7 +365,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
       setSeamStyle(seamStyleFor(gridRef, sel, { rows: renderedRows(), cols: renderedCols(), rowStart: rowStart(), colStart: columnStart() }));
     };
     update();
-    if (typeof requestAnimationFrame === "function") requestAnimationFrame(update);
+    if (typeof requestAnimationFrame === "function") requestFrame(gridRef, update);
   });
 
   const previewColumn = (col: number, px: number) => {
@@ -381,7 +383,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     // rendered children) belongs to that block's own click-to-edit handler. The
     // parent grid must not begin a cell selection here — doing so preventDefaults
     // the pointerdown and the nested block can never be clicked into edit.
-    if (e.target instanceof Element && e.target.closest(".sheet-nested-lines")) return;
+    if (isElementNode(e.target) && e.target.closest(".sheet-nested-lines")) return;
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
     const grid = e.currentTarget as HTMLDivElement;
     const hit = e.shiftKey ? null : hitRuling(
@@ -409,6 +411,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     }
 
     const resizeCol = hit.at - 1;
+    const dragWindow = windowOf(grid); // the drag's own window (P1)
     const anchor = cellInGrid(grid, 0, resizeCol);
     const startWidth = anchor?.getBoundingClientRect().width ?? 40;
     const startX = e.clientX;
@@ -425,9 +428,9 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
       me.preventDefault();
     };
     const finish = (me: PointerEvent) => {
-      window.removeEventListener("pointermove", onMove, true);
-      window.removeEventListener("pointerup", finish, true);
-      window.removeEventListener("pointercancel", cancel, true);
+      dragWindow.removeEventListener("pointermove", onMove, true);
+      dragWindow.removeEventListener("pointerup", finish, true);
+      dragWindow.removeEventListener("pointercancel", cancel, true);
       if (dragging) {
         setColumnWidth(props.id, resizeCol, lastWidth);
         setResizing(false);
@@ -437,15 +440,15 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
       me.preventDefault();
     };
     const cancel = () => {
-      window.removeEventListener("pointermove", onMove, true);
-      window.removeEventListener("pointerup", finish, true);
-      window.removeEventListener("pointercancel", cancel, true);
+      dragWindow.removeEventListener("pointermove", onMove, true);
+      dragWindow.removeEventListener("pointerup", finish, true);
+      dragWindow.removeEventListener("pointercancel", cancel, true);
       setResizing(false);
       restoreColumns();
     };
-    window.addEventListener("pointermove", onMove, true);
-    window.addEventListener("pointerup", finish, true);
-    window.addEventListener("pointercancel", cancel, true);
+    dragWindow.addEventListener("pointermove", onMove, true);
+    dragWindow.addEventListener("pointerup", finish, true);
+    dragWindow.addEventListener("pointercancel", cancel, true);
   };
 
   const onDoubleClick = (e: MouseEvent) => {
@@ -480,7 +483,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 
   const activateEmptyGrid = (e: MouseEvent | KeyboardEvent) => {
     if (readOnly()) return;
-    if (e instanceof KeyboardEvent && e.key !== "Enter" && e.key !== " ") return;
+    if (isKeyboardEventValue(e) && e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
     e.stopPropagation();
     growAndEdit("row");
@@ -565,9 +568,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
                 const capacity = Math.max(1, Math.floor(GRID_RENDER_CELL_LIMIT / Math.max(1, renderedCols())));
                 setRowStart(Math.max(0, rowStart() - capacity));
               }}
-            >
-              Show previous rows
-            </button>
+            >{t("sheet-grid-show-previous-rows")}</button>
           </Show>
           <Show when={rowStart() + renderedRows() < rowIds().length}>
             <button
@@ -585,8 +586,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
                 else setRowStart(rowStart() + renderedRows());
               }}
             >
-              {renderedRows() * renderedCols() < GRID_RENDER_CELL_LIMIT ? "Load more rows" : "Show next rows"}
-              ({rowStart() + 1}-{rowStart() + renderedRows()} of {rowIds().length})
+              {t("sheet-grid-more-rows", { load: renderedRows() * renderedCols() < GRID_RENDER_CELL_LIMIT ? 1 : 0, start: String(rowStart() + 1), end: String(rowStart() + renderedRows()), total: String(rowIds().length) })}
             </button>
           </Show>
           <Show when={columnStart() > 0}>
@@ -600,9 +600,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
                 const capacity = Math.max(1, Math.floor(GRID_RENDER_CELL_LIMIT / Math.max(1, renderedRows())));
                 setColumnStart(Math.max(0, columnStart() - capacity));
               }}
-            >
-              Show previous columns
-            </button>
+            >{t("sheet-grid-show-previous-columns")}</button>
           </Show>
           <Show when={columnStart() + renderedCols() < fullColumnCount()}>
             <button
@@ -620,8 +618,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
                 else setColumnStart(columnStart() + renderedCols());
               }}
             >
-              {renderedCols() * renderedRows() < GRID_RENDER_CELL_LIMIT ? "Load more columns" : "Show next columns"}
-              ({columnStart() + 1}-{columnStart() + renderedCols()} of {fullColumnCount()})
+              {t("sheet-grid-more-columns", { load: renderedCols() * renderedRows() < GRID_RENDER_CELL_LIMIT ? 1 : 0, start: String(columnStart() + 1), end: String(columnStart() + renderedCols()), total: String(fullColumnCount()) })}
             </button>
           </Show>
           <Show when={showFooter()}>
@@ -646,7 +643,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
               type="button"
               class="sheet-grid-add-col"
               classList={{ "sheet-grid-add-visible": sheetHovering() }}
-              title="Add column"
+              title={t("sheet-grid-add-column")}
               onPointerDown={stopGrowPointer}
               onMouseDown={stopGrowPointer}
               onClick={(e) => {
@@ -660,7 +657,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
               type="button"
               class="sheet-grid-add-row"
               classList={{ "sheet-grid-add-visible": sheetHovering() }}
-              title="Add row"
+              title={t("sheet-grid-add-row")}
               onPointerDown={stopGrowPointer}
               onMouseDown={stopGrowPointer}
               onClick={(e) => {
@@ -705,7 +702,7 @@ function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixC
     const blockId = props.cell.blockId;
     if (!blockId) return;
     const node = docNode(blockId);
-    const offset = node ? sheetClickOffset(e, contentRef, node.raw, isSheetCellHidden) : null;
+    const offset = node ? sheetClickOffset(e, contentRef, node.raw, SHEET_CELL_HIDE) : null;
     startCellEditing(sel(), offset ?? undefined);
   };
   const removeCtx = () => ({
@@ -746,7 +743,7 @@ function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixC
       <Show when={props.cell.blockId}>
         <button
           class="sheet-cell-handle"
-          title="Cell menu"
+          title={t("sheet-grid-cell-menu")}
           onPointerDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -810,9 +807,9 @@ function SheetBlock(props: {
     e.stopPropagation();
     const n = node();
     if (!n) return;
-    const fallback = splitProps(n.raw, isSheetCellHidden).visible.length;
+    const fallback = splitProps(n.raw, SHEET_CELL_HIDE).visible.length;
     setCellSel(props.cell);
-    startEditing(props.id, sheetClickOffset(e, contentRef, n.raw, isSheetCellHidden) ?? fallback, cellOwner(props.cell));
+    startEditing(props.id, sheetClickOffset(e, contentRef, n.raw, SHEET_CELL_HIDE) ?? fallback, cellOwner(props.cell));
   };
 
   return (

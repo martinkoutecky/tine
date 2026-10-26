@@ -44,6 +44,7 @@ fn graph() -> (tempfile::TempDir, Store) {
 
 fn page_hits(store: &Store, text: &str) -> Vec<(String, String, Option<String>)> {
     let request = SearchRequest {
+        transliteration: false,
         text: text.into(),
         within: None,
         page_limit: 100,
@@ -77,6 +78,7 @@ fn page_hits(store: &Store, text: &str) -> Vec<(String, String, Option<String>)>
 
 #[test]
 fn alias_reference_is_never_a_phantom_alias_page() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, store) = graph();
     for (query, alias, owner) in [
         ("book", "book", "Research Hub"),
@@ -101,7 +103,10 @@ fn alias_reference_is_never_a_phantom_alias_page() {
         let names: Vec<_> = store
             .whole_graph()
             .unwrap()
-            .complete_page_names(query, 100)
+            .complete_page_names(query, 100, None, false, None)
+            .into_iter()
+            .map(|(page, _)| page)
+            .collect::<Vec<_>>()
             .into_iter()
             .filter(|entry| entry.rel_path.is_none())
             .map(|entry| entry.name.to_lowercase())

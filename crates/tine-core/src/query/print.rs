@@ -111,7 +111,7 @@ pub fn query_print(
         }
         // The pane is not a document: no options, no view directives, no
         // macro-safety check.
-        return Ok(print_tql(query));
+        return Ok(print_tql(&tql_reading(query)));
     }
     let argument = if preserve_form || dialect == PrintDialect::AdvancedMacro {
         preserved_form(query, dialect)?
@@ -121,9 +121,10 @@ pub fn query_print(
                 let options = query.source.og_options();
                 with_options(print_og(query, view, !options.is_empty())?, options)
             }
-            PrintDialect::TqlMacro => {
-                with_options(print_tql_macro(query), query.source.og_options())
-            }
+            PrintDialect::TqlMacro => with_options(
+                print_tql_macro(&tql_reading(query)),
+                query.source.og_options(),
+            ),
             PrintDialect::Tql | PrintDialect::AdvancedMacro => unreachable!("handled above"),
         }
     };
@@ -132,6 +133,32 @@ pub fn query_print(
         macro_text::recognizable_macro(name, &argument)?;
     }
     Ok(argument)
+}
+
+/// **The OG query as Tine's dialect must spell it (D-18, GH #422).** An OG
+/// source's dropped bare `(task)` / `(priority)` ([`Filter::is_dropped_clause`])
+/// adds no condition, but TQL reads `task in ()` literally as an empty set. So
+/// a crossing to TQL leaves the dropped clauses out, by OG's own structural
+/// rule ([`Filter::without_og_dropped_clauses`]; `Off` subtrees stay, I-4); the
+/// remaining clauses mean exactly
+/// what they meant. A tree with nothing left is the builder's blank slate
+/// ([`Filter::True`]), as an empty OG query crossing already is. Any other
+/// source prints as it is.
+fn tql_reading(query: &Query) -> std::borrow::Cow<'_, Query> {
+    if !matches!(query.source, Source::Og { .. }) {
+        return std::borrow::Cow::Borrowed(query);
+    }
+    let filter = query
+        .filter
+        .without_og_dropped_clauses()
+        .unwrap_or(Filter::True);
+    if filter == query.filter {
+        return std::borrow::Cow::Borrowed(query);
+    }
+    std::borrow::Cow::Owned(Query {
+        filter,
+        ..query.clone()
+    })
 }
 
 /// The source-preserving argument: `source.original` plus the changed options
@@ -187,13 +214,23 @@ fn print_tql_macro(query: &Query) -> String {
         Anchor::Block => "@block",
         Anchor::Page => "@page",
     };
-    if tql_root_is_true(&query.filter) {
+    let filter = tql_filter(query);
+    if tql_root_is_true(&filter) {
         return anchor.to_string();
     }
-    macro_text::guard_page_ref_arguments(&format!(
-        "{anchor} and {}",
-        tql_expr(&query.filter, Prec::Or)
-    ))
+    macro_text::guard_page_ref_arguments(&format!("{anchor} and {}", tql_expr(&filter, Prec::Or)))
+}
+
+/// The filter as TQL spells it under the query's anchor. A `page` hop from a
+/// block row is the row itself at `@page` ([`super::og::rebase_to_page`]),
+/// and `@page` accepts only the bare page attribute (`name`, not
+/// `page.name`): Pages and blocks prints a block query under `@page` to read
+/// its page family, as does the builder's Find switch (GH #619 c6).
+fn tql_filter(query: &Query) -> std::borrow::Cow<'_, Filter> {
+    match query.anchor {
+        Anchor::Block => std::borrow::Cow::Borrowed(&query.filter),
+        Anchor::Page => std::borrow::Cow::Owned(super::og::rebase_to_page(query.filter.clone())),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -217,17 +254,18 @@ pub fn print_tql(query: &Query) -> String {
         Anchor::Block => "",
         Anchor::Page => "@page",
     };
-    if tql_root_is_true(&query.filter) {
+    let filter = tql_filter(query);
+    if tql_root_is_true(&filter) {
         return if anchor.is_empty() {
             "@block".to_string()
         } else {
             anchor.to_string()
         };
     }
-    let body = if root_operands(&query.filter).iter().any(contains_off) {
-        print_tql_layered(&query.filter)
+    let body = if root_operands(&filter).iter().any(contains_off) {
+        print_tql_layered(&filter)
     } else {
-        tql_expr(&query.filter, Prec::Or)
+        tql_expr(&filter, Prec::Or)
     };
     if anchor.is_empty() {
         body
@@ -394,6 +432,14 @@ fn tql_rel(rel: Rel, quant: Quant, pred: &Filter, through_page: bool) -> String 
         Rel::Refs => match pred.ref_name() {
             Some(name) => format!("[[{name}]]"),
             None => format!("any(refs, {})", tql_expr(pred, Prec::Or)),
+        },
+        Rel::DirectRefs => match pred.ref_name() {
+            Some(name) if quant == Quant::Any => format!("direct_ref({})", sql_string(&name)),
+            _ => format!(
+                "{}(direct_refs, {})",
+                quant_name(quant),
+                tql_expr(pred, Prec::Or)
+            ),
         },
         Rel::Tags => match pred.ref_name() {
             Some(name) => format!("tag({})", sql_string(&name)),
@@ -716,8 +762,9 @@ fn og_attr(attr: Attr, op: CmpOp, value: &Value, on_page: bool) -> Option<String
         }
         (Attr::Task, CmpOp::In) => Some(og_words("task", list_of(value)?)),
         (Attr::Priority, CmpOp::In) => Some(og_words("priority", list_of(value)?)),
-        (Attr::Scheduled, CmpOp::Between) => og_between("scheduled", value),
-        (Attr::Deadline, CmpOp::Between) => og_between("deadline", value),
+        // OG build-between-three-arg accepts timestamp properties only;
+        // scheduled/deadline return nil, so these windows must save as TQL.
+        (Attr::Scheduled | Attr::Deadline, CmpOp::Between) => None,
         (Attr::CreatedAt, CmpOp::Between) => og_timestamp_between("created-at", value),
         (Attr::LastModifiedAt, CmpOp::Between) => og_timestamp_between("last-modified-at", value),
         (Attr::Day, CmpOp::Between) if on_page => og_between("journal", value),
@@ -763,7 +810,8 @@ fn og_rel(
         Rel::Props => og_props(pred, through_page || anchor == Anchor::Page),
         // Inline tags and structural block relations are Tine-only:
         // OG's simple-query DSL has no head for any of them.
-        Rel::Tags
+        Rel::DirectRefs
+        | Rel::Tags
         | Rel::Children
         | Rel::Parent
         | Rel::Ancestors

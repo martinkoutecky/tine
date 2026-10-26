@@ -1,3 +1,6 @@
+import { focusOnMount } from "../focusOnMount";
+import { t, msg, render, type Msg } from "../i18n";
+import { Rich } from "../i18n/Rich";
 import { isLeafLike } from "../editor/queryIr";
 // The query sheet's parts: the resting sentence, the node model, the row
 // controls, value editors, the anchor line and the add-condition flow (SPEC
@@ -16,6 +19,7 @@ import {
   type JSX,
 } from "solid-js";
 import { backend } from "../backend";
+import { pinyinMatchingEnabled } from "../launcherRanking";
 import {
   MAX_QUERY_BUILDER_DEPTH,
   anyTaskFilter,
@@ -30,7 +34,6 @@ import {
   onPageFilter,
   pageRefFilter,
   pageTagsFilter,
-  planningFilter,
   priorityFilter,
   propertyOperatorArity,
   propertyOperators,
@@ -54,6 +57,7 @@ import { QueryVocabularyPicker, type VocabularyChoice } from "./QueryVocabularyP
 import { PropertyType } from "./PropertyType";
 import { registryRowFor, effectiveTypeOf } from "../editor/queryPropertyType";
 import { DATE_PRESETS, previewDate } from "../editor/dateExpr";
+import { PlanningDatePick } from "./QueryPlanningDatePick";
 import type { QuerySheetDropTarget } from "./querySheetReorder";
 import { dismissOnOutsidePointer, registerTransientLayer, type TransientLayer } from "../transientLayers";
 import { readOr } from "../resourceRead";
@@ -202,7 +206,7 @@ export function QuerySentence(props: {
         role="button"
         tabindex="0"
         aria-expanded={props.open ? "true" : "false"}
-        title="Click to edit this query"
+        title={t("query-query-sheet-parts-click-to-edit-this-query")}
         onClick={(e) => {
           stop(e);
           props.onOpen();
@@ -237,9 +241,9 @@ export function QuerySentence(props: {
       <button
         type="button"
         class="qs-gear"
-        aria-label="Edit query filter"
+        aria-label={t("query-query-sheet-parts-edit-query-filter")}
         aria-expanded={props.open ? "true" : "false"}
-        title="Edit query filter"
+        title={t("query-query-sheet-parts-edit-query-filter")}
         onClick={(e) => {
           stop(e);
           props.onOpen();
@@ -254,55 +258,56 @@ export function QuerySentence(props: {
 // Row and group model — the tree, as the sheet draws it
 
 /** The 13 field types a row can be (§7.4's P3 vocabulary). */
-export const FILTER_TYPES: { kind: BuilderLeafKind; label: string }[] = [
-  { kind: "page", label: "Page / tag reference" },
-  { kind: "task", label: "Task marker" },
-  { kind: "priority", label: "Priority" },
-  { kind: "property", label: "Property" },
-  { kind: "scheduled", label: "Scheduled" },
-  { kind: "deadline", label: "Deadline" },
-  { kind: "journal", label: "In a journal page" },
-  { kind: "between", label: "Between dates" },
-  { kind: "content", label: "Full-text search" },
-  { kind: "onPage", label: "On page" },
-  { kind: "namespace", label: "In namespace" },
-  { kind: "pageProperty", label: "Page property" },
-  { kind: "pageTags", label: "Page tags" },
+export const FILTER_TYPES: { kind: BuilderLeafKind; label: import("../i18n").Msg }[] = [
+  { kind: "page", label: msg("query-query-sheet-parts-page-tag-reference") },
+  { kind: "task", label: msg("query-query-sheet-parts-task-marker") },
+  { kind: "priority", label: msg("query-query-sheet-parts-priority") },
+  { kind: "property", label: msg("query-query-sheet-parts-property") },
+  { kind: "scheduled", label: msg("query-query-sheet-parts-scheduled") },
+  { kind: "deadline", label: msg("query-query-sheet-parts-deadline") },
+  { kind: "journal", label: msg("query-query-sheet-parts-in-a-journal-page") },
+  { kind: "between", label: msg("query-query-sheet-parts-between-dates") },
+  { kind: "content", label: msg("query-query-sheet-parts-full-text-search") },
+  { kind: "onPage", label: msg("query-query-sheet-parts-on-page") },
+  { kind: "namespace", label: msg("query-query-sheet-parts-in-namespace") },
+  { kind: "pageProperty", label: msg("query-query-sheet-parts-page-property") },
+  { kind: "pageTags", label: msg("query-query-sheet-parts-page-tags") },
 ];
 
-export const FIELD_LABELS: Record<BuilderLeafKind, string> = {
-  page: "Page / tag reference",
-  task: "Task marker",
-  priority: "Priority",
-  property: "Property",
-  scheduled: "Scheduled",
-  deadline: "Deadline",
-  journal: "In a journal page",
-  between: "Between dates",
-  content: "Full-text search",
-  onPage: "On page",
-  namespace: "In namespace",
-  pageProperty: "Page property",
-  pageTags: "Page tags",
-  search: "Full-text search",
+export const FIELD_LABELS: Record<BuilderLeafKind, import("../i18n").Msg> = {
+  page: msg("query-filter-page-tag-reference"),
+  task: msg("query-filter-task-marker"),
+  priority: msg("query-filter-priority"),
+  property: msg("query-filter-property"),
+  scheduled: msg("query-filter-scheduled"),
+  deadline: msg("query-filter-deadline"),
+  journal: msg("query-filter-in-a-journal-page"),
+  between: msg("query-filter-between-dates"),
+  content: msg("query-filter-full-text-search"),
+  // GH #619 c6: the row reads "Page is X", never "On page on page X".
+  onPage: msg("query-filter-page"),
+  namespace: msg("query-filter-page"),
+  pageProperty: msg("query-filter-page-property"),
+  pageTags: msg("query-filter-page-tags"),
+  search: msg("query-filter-full-text-search"),
 };
 
 /** The fixed operator phrase for a non-property row, and its negation. */
-export const KIND_PHRASE: Record<BuilderLeafKind, { positive: string; negative: string }> = {
-  page: { positive: "references", negative: "does not reference" },
-  task: { positive: "is any of", negative: "is none of" },
-  priority: { positive: "is any of", negative: "is none of" },
-  property: { positive: "is", negative: "is not" },
-  scheduled: { positive: "is set", negative: "is not set" },
-  deadline: { positive: "is set", negative: "is not set" },
-  journal: { positive: "is a journal page", negative: "is not a journal page" },
-  between: { positive: "between", negative: "not between" },
-  content: { positive: "contains", negative: "does not contain" },
-  onPage: { positive: "on page", negative: "not on page" },
-  namespace: { positive: "in namespace", negative: "not in namespace" },
-  pageProperty: { positive: "is", negative: "is not" },
-  pageTags: { positive: "is any of", negative: "is none of" },
-  search: { positive: "matches", negative: "does not match" },
+export const KIND_PHRASE: Record<BuilderLeafKind, { positive: import("../i18n").Msg; negative: import("../i18n").Msg }> = {
+  page: { positive: msg("query-filter-references"), negative: msg("query-filter-does-not-reference") },
+  task: { positive: msg("query-filter-is-any-of"), negative: msg("query-filter-is-none-of") },
+  priority: { positive: msg("query-filter-is-any-of"), negative: msg("query-filter-is-none-of") },
+  property: { positive: msg("query-filter-is"), negative: msg("query-filter-is-not") },
+  scheduled: { positive: msg("query-filter-is-set"), negative: msg("query-filter-is-not-set") },
+  deadline: { positive: msg("query-filter-is-set"), negative: msg("query-filter-is-not-set") },
+  journal: { positive: msg("query-filter-is-a-journal-page"), negative: msg("query-filter-is-not-a-journal-page") },
+  between: { positive: msg("query-filter-between"), negative: msg("query-filter-not-between") },
+  content: { positive: msg("query-filter-contains"), negative: msg("query-filter-does-not-contain") },
+  onPage: { positive: msg("query-filter-is"), negative: msg("query-filter-is-not") },
+  namespace: { positive: msg("query-operator-in-namespace"), negative: msg("query-filter-not-in-namespace") },
+  pageProperty: { positive: msg("query-filter-is"), negative: msg("query-filter-is-not") },
+  pageTags: { positive: msg("query-filter-is-any-of"), negative: msg("query-filter-is-none-of") },
+  search: { positive: msg("query-filter-matches"), negative: msg("query-filter-does-not-match") },
 };
 
 /** One thing the sheet draws. */
@@ -488,7 +493,7 @@ export function DragHandle(props: { pos: SiblingPos; label: string; controls: Sh
       data-qs-handle={locKey(loc())}
       aria-label={props.label}
       aria-keyshortcuts="ArrowUp ArrowDown"
-      title="Drag to reorder or into another group, or use the up and down arrow keys"
+      title={t("query-query-sheet-parts-drag-to-reorder-or-into-another-group-or-use-the")}
       onPointerDown={(event) => props.controls.startDrag(event, props.pos)}
       onKeyDown={(event) => {
         if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
@@ -546,11 +551,7 @@ export function EnabledSwitch(props: {
       aria-label={props.label}
       aria-checked={props.disabled ? "false" : "true"}
       title={
-        props.inherited
-          ? "The group above is disabled, so this does not run"
-          : props.disabled
-            ? "Disabled — kept in the query, not run"
-            : "Running — press to disable without removing it"
+        props.inherited ? t("query-query-sheet-parts-the-group-above-is-disabled-so-this-does-not-run") : props.disabled ? t("query-query-sheet-parts-disabled-kept-in-the-query-not-run") : t("query-query-sheet-parts-running-press-to-disable-without-removing-it")
       }
       onClick={(event) => {
         stop(event);
@@ -564,8 +565,8 @@ export function EnabledSwitch(props: {
 
 /** Why this item is greyed, in the sheet's own words. `null` when it runs. */
 export function offLabel(node: { disabled: boolean; inherited: boolean }): string | null {
-  if (node.inherited) return "disabled by group";
-  return node.disabled ? "disabled" : null;
+  if (node.inherited) return t("query-prose-disabled-by-group");
+  return node.disabled ? t("query-prose-disabled") : null;
 }
 
 /** The move entries every item's ⋮ menu carries, offered only where they mean
@@ -573,13 +574,13 @@ export function offLabel(node: { disabled: boolean; inherited: boolean }): strin
 *  below. They move the SAME siblings the drag does, through the same helper. */
 export function moveOptions(pos: SiblingPos): ListboxOption[] {
   const options: ListboxOption[] = [];
-  if (pos.index > 0) options.push({ key: "move-up", label: "Move up" });
-  if (pos.index < pos.count - 1) options.push({ key: "move-down", label: "Move down" });
+  if (pos.index > 0) options.push({ key: "move-up", label: t("query-query-sheet-parts-move-up") });
+  if (pos.index < pos.count - 1) options.push({ key: "move-down", label: t("query-query-sheet-parts-move-down") });
   if (pos.index > 0) {
     options.push(
-      { key: "group-above-all", label: "Group with row above — all of" },
-      { key: "group-above-any", label: "Group with row above — any of" },
-      { key: "group-above-none", label: "Group with row above — none of" },
+      { key: "group-above-all", label: t("query-query-sheet-parts-group-with-row-above-all-of") },
+      { key: "group-above-any", label: t("query-query-sheet-parts-group-with-row-above-any-of") },
+      { key: "group-above-none", label: t("query-query-sheet-parts-group-with-row-above-none-of") },
     );
   }
   return options;
@@ -658,7 +659,7 @@ export function TextInput(props: {
     <div class="qs-value-editor">
       <input
         class="qs-input"
-        autofocus
+        ref={(input) => focusOnMount(input)}
         placeholder={props.placeholder}
         value={v()}
         onInput={(e) => setV(e.currentTarget.value)}
@@ -685,14 +686,14 @@ export function PageInput(props: {
     dqTimer = setTimeout(() => setDq(s), 120);
   });
   onCleanup(() => clearTimeout(dqTimer));
-  const [matchesResource] = createResource(dq, (s) => backend().quickSwitch(s, 8));
+  const [matchesResource] = createResource(dq, (s) => backend().quickSwitch(s, 8, undefined, pinyinMatchingEnabled()));
   // A failed lookup offers no completions; the next keystroke re-runs it.
   const matches = () => (readOr(matchesResource, undefined, "value completions"));
   return (
     <div class="qs-value-editor">
       <input
         class="qs-input"
-        autofocus
+        ref={(input) => focusOnMount(input)}
         placeholder={props.placeholder}
         value={q()}
         onInput={(e) => setQ(e.currentTarget.value)}
@@ -742,8 +743,7 @@ export function MultiPick(props: {
         disabled={picked().length === 0}
         onClick={() => props.onCommit(picked())}
       >
-        Apply
-      </button>
+        {t("query-query-sheet-parts-apply")}</button>
     </div>
   );
 }
@@ -754,14 +754,14 @@ export function DateBoundInput(props: {
   value: string;
   onInput: (v: string) => void;
   onEnter: () => void;
-  autofocus?: boolean;
+  focused?: boolean;
 }): JSX.Element {
   const preview = createMemo(() => previewDate(props.value));
   return (
     <div class="qs-bound">
       <input
         class="qs-input"
-        autofocus={props.autofocus}
+        ref={(input) => { if (props.focused) focusOnMount(input); }}
         placeholder={props.placeholder}
         value={props.value}
         onInput={(e) => props.onInput(e.currentTarget.value)}
@@ -774,11 +774,11 @@ export function DateBoundInput(props: {
   );
 }
 
-export const BETWEEN_FIELD_LABEL: Record<BetweenField, string> = {
-  journal: "Journal date",
-  scheduled: "Scheduled",
-  deadline: "Deadline",
-  any: "Any date",
+export const BETWEEN_FIELD_LABEL: Record<BetweenField, Msg> = {
+  journal: msg("query-prose-journal-date"),
+  scheduled: msg("query-prose-scheduled"),
+  deadline: msg("query-prose-deadline"),
+  any: msg("query-prose-any-date"),
 };
 
 /** Date-range editor: which date, one-click relative presets, and two bound
@@ -805,7 +805,7 @@ export function BetweenPick(props: {
               classList={{ active: field() === f }}
               onClick={() => setField(f)}
             >
-              {BETWEEN_FIELD_LABEL[f]}
+              {render(BETWEEN_FIELD_LABEL[f])}
             </button>
           )}
         </For>
@@ -828,21 +828,20 @@ export function BetweenPick(props: {
         </For>
       </div>
       <DateBoundInput
-        placeholder="Start — today, -30d, 2026-06-01, or a page"
+        placeholder={t("query-query-sheet-parts-start-today-30d-2026-06-01-or-a-page")}
         value={start()}
         onInput={setStart}
         onEnter={submit}
-        autofocus
+        focused
       />
       <DateBoundInput
-        placeholder="End — today, +7d, 2026-06-30, or a page"
+        placeholder={t("query-query-sheet-parts-end-today-7d-2026-06-30-or-a-page")}
         value={end()}
         onInput={setEnd}
         onEnter={submit}
       />
       <button type="button" class="qs-commit" disabled={!ready()} onClick={submit}>
-        Apply
-      </button>
+        {t("query-query-sheet-parts-apply")}</button>
     </div>
   );
 }
@@ -850,17 +849,21 @@ export function BetweenPick(props: {
 /** The value collector for a filter kind, and the IR leaf `og.rs` builds for the same intent. */
 export function ValueEditor(props: {
   kind: BuilderLeafKind;
+  initial?: Filter;
   onCommit: (filter: Filter) => void;
 }): JSX.Element {
   return (
     <>
+      <Show when={props.kind === "scheduled" || props.kind === "deadline"}>
+        <PlanningDatePick field={props.kind as "scheduled" | "deadline"} initial={props.initial} onCommit={props.onCommit} />
+      </Show>
       <Show when={props.kind === "page"}>
-        <PageInput placeholder="Page or tag name" onCommit={(name) => props.onCommit(pageRefFilter(name))} />
+        <PageInput placeholder={t("query-query-sheet-parts-page-or-tag-name")} onCommit={(name) => props.onCommit(pageRefFilter(name))} />
       </Show>
       <Show when={props.kind === "task"}>
         <MultiPick
           options={MARKERS}
-          any={{ label: "Any status", onPick: () => props.onCommit(anyTaskFilter()) }}
+          any={{ label: t("query-query-sheet-parts-any-status"), onPick: () => props.onCommit(anyTaskFilter()) }}
           onCommit={(markers) => props.onCommit(taskFilter(markers))}
         />
       </Show>
@@ -871,19 +874,19 @@ export function ValueEditor(props: {
         <BetweenPick onCommit={(field, start, end) => props.onCommit(betweenFilter(field, start, end))} />
       </Show>
       <Show when={props.kind === "onPage"}>
-        <PageInput placeholder="Page name" onCommit={(name) => props.onCommit(onPageFilter(name))} />
+        <PageInput placeholder={t("query-query-sheet-parts-page-name")} onCommit={(name) => props.onCommit(onPageFilter(name))} />
       </Show>
       <Show when={props.kind === "namespace"}>
-        <PageInput placeholder="Namespace (parent page)" onCommit={(ns) => props.onCommit(namespaceFilter(ns))} />
+        <PageInput placeholder={t("query-query-sheet-parts-namespace-parent-page")} onCommit={(ns) => props.onCommit(namespaceFilter(ns))} />
       </Show>
       <Show when={props.kind === "content"}>
-        <TextInput placeholder="Text to search for" onCommit={(text) => props.onCommit(contentFilter(text))} />
+        <TextInput placeholder={t("query-query-sheet-parts-text-to-search-for")} onCommit={(text) => props.onCommit(contentFilter(text))} />
       </Show>
       <Show when={props.kind === "search"}>
-        <TextInput placeholder="Search words and operators" onCommit={(source) => props.onCommit(searchFilter(source))} />
+        <TextInput placeholder={t("query-query-sheet-parts-search-words-and-operators")} onCommit={(source) => props.onCommit(searchFilter(source))} />
       </Show>
       <Show when={props.kind === "pageTags"}>
-        <TextInput placeholder="Tag (one)" onCommit={(t) => props.onCommit(pageTagsFilter([t]))} />
+        <TextInput placeholder={t("query-query-sheet-parts-tag-one")} onCommit={(t) => props.onCommit(pageTagsFilter([t]))} />
       </Show>
     </>
   );
@@ -904,9 +907,9 @@ export interface AnchorPrompt {
   onCancel: () => void;
 }
 
-export const ANCHOR_OPTIONS: { key: Anchor; label: string; hint: string }[] = [
-  { key: "block", label: "blocks", hint: "individual bullets, anywhere in the graph" },
-  { key: "page", label: "pages", hint: "whole pages" },
+export const ANCHOR_OPTIONS: { key: Anchor; label: import("../i18n").Msg; hint: import("../i18n").Msg }[] = [
+  { key: "block", label: msg("query-query-sheet-parts-blocks"), hint: msg("query-query-sheet-parts-individual-bullets-anywhere-in-the-graph") },
+  { key: "page", label: msg("query-query-sheet-parts-pages"), hint: msg("query-query-sheet-parts-whole-pages") },
 ];
 
 /** GH #619 item 9: the macro's third result choice, "pages and blocks". It is a
@@ -958,22 +961,22 @@ export function AnchorLine(props: {
   const menuId = `qs-anchor-${createUniqueId()}`;
   const open = () => props.openMenu() === "anchor";
   const bothOn = () => props.both?.on() === true;
-  const label = () => (bothOn() ? "pages and blocks" : props.anchor() === "page" ? "pages" : "blocks");
+  const label = () => t("query-anchor-label", { anchor: bothOn() ? "both" : props.anchor() });
   const options = () => [
     ...ANCHOR_OPTIONS.map((option) => ({
       key: option.key as string,
-      label: option.label,
-      hint: option.hint,
+      label: render(option.label),
+      hint: render(option.hint),
       active: !bothOn() && option.key === props.anchor(),
     })),
     ...(props.both
-      ? [{ key: BOTH_KINDS_OPTION, label: "pages and blocks", hint: "pages above, matching blocks below", active: bothOn() }]
+      ? [{ key: BOTH_KINDS_OPTION, label: t("query-query-sheet-parts-pages-and-blocks"), hint: t("query-query-sheet-parts-pages-above-matching-blocks-below"), active: bothOn() }]
       : []),
   ];
   return (
     <div class="qs-anchor">
       {/* Not a row and not deletable: it is the sentence's subject (§7.4). */}
-      <span class="qs-anchor-lead">Find</span>
+      <span class="qs-anchor-lead">{t("query-query-sheet-parts-find")}</span>
       <span class="qs-anchor-wrap">
         <button
           ref={triggerEl}
@@ -982,7 +985,7 @@ export function AnchorLine(props: {
           aria-haspopup="listbox"
           aria-expanded={open() ? "true" : "false"}
           aria-controls={menuId}
-          title="What this query selects"
+          title={t("query-query-sheet-parts-what-this-query-selects")}
           onClick={(e) => {
             stop(e);
             props.setOpenMenu(open() ? null : "anchor");
@@ -999,7 +1002,7 @@ export function AnchorLine(props: {
           {(rootRef) => (
             <Listbox
               id={menuId}
-              label="What this query selects"
+              label={t("query-prose-what-this-query-selects")}
               rootRef={rootRef}
               options={options()}
               onPick={(key) => {
@@ -1019,7 +1022,7 @@ export function AnchorLine(props: {
         </Popover>
       </span>
       <Show when={props.empty}>
-        <span class="qs-anchor-tail">where …</span>
+        <span class="qs-anchor-tail">{t("query-query-sheet-parts-where")}</span>
       </Show>
     </div>
   );
@@ -1028,43 +1031,24 @@ export function AnchorLine(props: {
 export function AnchorPromptPanel(props: { prompt: AnchorPrompt }): JSX.Element {
   let panelEl: HTMLDivElement | undefined;
   onMount(() => panelEl?.focus());
-  const row = () => (props.prompt.anchor === "page" ? "pages" : "blocks");
   return (
     <div
       ref={panelEl}
       class="qs-anchor-prompt"
       role="alertdialog"
-      aria-label="Switching what this query selects"
+      aria-label={t("query-query-sheet-parts-switching-what-this-query-selects")}
       tabindex="-1"
     >
       <p class="qs-anchor-prompt-text">
-        Switching to <strong>{row()}</strong> — {props.prompt.count} of your {props.prompt.total}{" "}
-        conditions don't apply to {row()}
-        <Show when={props.prompt.names.length > 0}>
-          {" "}
-          (
-          <For each={props.prompt.names}>
-            {(name, index) => (
-              <>
-                <Show when={index() > 0}>, </Show>
-                <code>{name}</code>
-              </>
-            )}
-          </For>
-          )
-        </Show>
-        .
+        <Rich message={msg("query-anchor-switch", { anchor: props.prompt.anchor, count: props.prompt.count, total: props.prompt.total, names: props.prompt.names.join(", "), hasNames: props.prompt.names.length ? 1 : 0 })} />
       </p>
       <div class="qs-anchor-prompt-actions">
         <button type="button" class="qs-commit" onClick={() => props.prompt.onRemove()}>
-          Remove them
-        </button>
+          {t("query-query-sheet-parts-remove-them")}</button>
         <button type="button" class="qs-conn" onClick={() => props.prompt.onKeep()}>
-          Keep anyway
-        </button>
+          {t("query-query-sheet-parts-keep-anyway")}</button>
         <button type="button" class="qs-conn" onClick={() => props.prompt.onCancel()}>
-          Cancel
-        </button>
+          {t("query-query-sheet-parts-cancel")}</button>
       </div>
     </div>
   );
@@ -1091,15 +1075,15 @@ export function SelectionBar(props: {
   const open = () => props.sheet.openMenu() === GROUP_SELECTED_MENU_KEY;
   const count = () => props.selection.indices.length;
   return (
-    <div class="qs-selection" role="group" aria-label="Selected conditions">
-      <span class="qs-selection-count">{count()} selected</span>
+    <div class="qs-selection" role="group" aria-label={t("query-query-sheet-parts-selected-conditions")}>
+      <span class="qs-selection-count">{t("query-selected-count", { count: count() })}</span>
       <span class="qs-menu-wrap">
         <button
           ref={trigger}
           type="button"
           class="qs-group-selected"
           disabled={count() < 2}
-          title={count() < 2 ? "Select two or more conditions to group them" : undefined}
+          title={count() < 2 ? t("query-query-sheet-parts-select-two-or-more-conditions-to-group-them") : undefined}
           aria-haspopup="listbox"
           aria-expanded={open() ? "true" : "false"}
           aria-controls={menuId}
@@ -1108,8 +1092,7 @@ export function SelectionBar(props: {
             props.sheet.setOpenMenu(open() ? null : GROUP_SELECTED_MENU_KEY);
           }}
         >
-          Group selected ▾
-        </button>
+          {t("query-query-sheet-parts-group-selected")}</button>
         <Popover
           open={open}
           close={() => props.sheet.setOpenMenu(null)}
@@ -1119,9 +1102,9 @@ export function SelectionBar(props: {
           {(rootRef) => (
             <Listbox
               id={menuId}
-              label="Group the selected conditions"
+              label={t("query-prose-group-the-selected-conditions")}
               rootRef={rootRef}
-              options={GROUP_CHOICES}
+              options={GROUP_CHOICES.map((option) => ({ ...option, label: render(option.label) }))}
               onPick={(key) => props.onGroup(key as GroupChoice)}
             />
           )}
@@ -1131,17 +1114,16 @@ export function SelectionBar(props: {
         stop(e);
         props.controls.clearSelection();
       }}>
-        Clear
-      </button>
+        {t("query-query-sheet-parts-clear")}</button>
     </div>
   );
 }
 
 /** The three group headers, in the order the sheet's own menus use. */
-export const GROUP_CHOICES: ListboxOption[] = [
-  { key: "all", label: "All of" },
-  { key: "any", label: "Any of" },
-  { key: "none", label: "None of" },
+export const GROUP_CHOICES: { key: string; label: import("../i18n").Msg }[] = [
+  { key: "all", label: msg("query-query-sheet-parts-all-of") },
+  { key: "any", label: msg("query-query-sheet-parts-any-of") },
+  { key: "none", label: msg("query-query-sheet-parts-none-of") },
 ];
 
 /** The effective type of the key a property row tests, from the ONE registry read. */
@@ -1184,8 +1166,8 @@ export function PropertyValueCell(props: {
       <Show when={arity() > 0}>
         <input
           class="qs-input"
-          aria-label={arity() === 2 ? "From" : "Value"}
-          placeholder={arity() === 2 ? "From" : "Value"}
+          aria-label={arity() === 2 ? t("query-query-sheet-parts-from") : t("query-query-sheet-parts-value")}
+          placeholder={arity() === 2 ? t("query-query-sheet-parts-from") : t("query-query-sheet-parts-value")}
           disabled={props.disabled}
           value={low()}
           onInput={(e) => setLow(e.currentTarget.value)}
@@ -1198,8 +1180,8 @@ export function PropertyValueCell(props: {
       <Show when={arity() === 2}>
         <input
           class="qs-input"
-          aria-label="To"
-          placeholder="To"
+          aria-label={t("query-query-sheet-parts-to")}
+          placeholder={t("query-query-sheet-parts-to")}
           disabled={props.disabled}
           value={high()}
           onInput={(e) => setHigh(e.currentTarget.value)}
@@ -1265,7 +1247,6 @@ export function AddCondition(props: {
   const choose = (choice: VocabularyChoice) => {
     if (choice.kind === "builtin") {
       const next = choice.leaf;
-      if (next === "scheduled" || next === "deadline") return props.onAdd(planningFilter(next));
       if (next === "journal") return props.onAdd(journalFilter());
       setChosen(choice);
       return;
@@ -1295,8 +1276,7 @@ export function AddCondition(props: {
           props.open() ? close() : props.setOpen(true);
         }}
       >
-        + Add condition
-      </button>
+        {t("query-query-sheet-parts-add-condition")}</button>
       <Popover open={props.open} close={close} parentId={props.sheet.layerId} trigger={() => triggerEl ?? null}>
         {(rootRef) => (
           <Show
@@ -1309,7 +1289,7 @@ export function AddCondition(props: {
                 pending={props.sheet.registry.pending}
                 failure={props.sheet.registry.failure}
                 onRetry={props.sheet.registry.retry}
-                placeholder="Type to add a condition"
+                placeholder={t("query-query-sheet-parts-type-to-add-a-condition")}
                 rootRef={rootRef}
                 onPick={choose}
               />
@@ -1335,7 +1315,7 @@ export function AddCondition(props: {
                       <div class="qs-menu-title">
                         {pick().key}
                         <Show when={pick().throughPage}>
-                          <span class="qs-menu-scope"> (page property)</span>
+                          <span class="qs-menu-scope"> {t("query-query-sheet-parts-page-property-2")}</span>
                         </Show>
                       </div>
                       {/* Q4b seam: the key\'s type badge + "declare type…" (PropertyType) mounts here. */}
@@ -1349,14 +1329,13 @@ export function AddCondition(props: {
                             when={registryFailure()}
                             fallback={
                               <div class="qs-registry-pending" role="status">
-                                Reading this graph's properties…
-                              </div>
+                                {t("query-query-sheet-parts-reading-this-graph-s-properties")}</div>
                             }
                           >
                             {(failure) => (
                               <div class="qs-registry-failure" role="alert">
                                 <span class="qs-registry-failure-message">
-                                  This graph's properties could not be read. {failure().message}
+                                  {t("query-registry-failed", { detail: failure().message })}
                                 </span>
                                 <button
                                   type="button"
@@ -1366,8 +1345,7 @@ export function AddCondition(props: {
                                     props.sheet.registry.retry();
                                   }}
                                 >
-                                  Try again
-                                </button>
+                                  {t("query-query-sheet-parts-try-again")}</button>
                               </div>
                             )}
                           </Show>
@@ -1376,7 +1354,7 @@ export function AddCondition(props: {
                         <Listbox
                           class="qs-inline-list"
                           id={`${chooserId}-op`}
-                          label="Condition operator"
+                          label={t("query-prose-condition-operator")}
                           options={propertyOperators(effective()).map((operator) => ({
                             key: operator.id,
                             label: operator.label,
@@ -1393,9 +1371,9 @@ export function AddCondition(props: {
                       <Show when={propertyOperatorArity(propertyId()) > 0}>
                         <input
                           class="qs-input"
-                          autofocus
-                          aria-label={propertyOperatorArity(propertyId()) === 2 ? "From" : "Value"}
-                          placeholder={propertyOperatorArity(propertyId()) === 2 ? "From" : "Value"}
+                          ref={(input) => focusOnMount(input)}
+                          aria-label={propertyOperatorArity(propertyId()) === 2 ? t("query-query-sheet-parts-from") : t("query-query-sheet-parts-value")}
+                          placeholder={propertyOperatorArity(propertyId()) === 2 ? t("query-query-sheet-parts-from") : t("query-query-sheet-parts-value")}
                           disabled={registryUnavailable()}
                           value={propertyValues()[0] ?? ""}
                           onInput={(e) => setPropertyValues([e.currentTarget.value, propertyValues()[1] ?? ""])}
@@ -1407,8 +1385,8 @@ export function AddCondition(props: {
                       <Show when={propertyOperatorArity(propertyId()) === 2}>
                         <input
                           class="qs-input"
-                          aria-label="To"
-                          placeholder="To"
+                          aria-label={t("query-query-sheet-parts-to")}
+                          placeholder={t("query-query-sheet-parts-to")}
                           disabled={registryUnavailable()}
                           value={propertyValues()[1] ?? ""}
                           onInput={(e) => setPropertyValues([propertyValues()[0] ?? "", e.currentTarget.value])}
@@ -1421,8 +1399,7 @@ export function AddCondition(props: {
                         disabled={registryUnavailable()}
                         onClick={commitProperty}
                       >
-                        Add
-                      </button>
+                        {t("query-query-sheet-parts-add")}</button>
                     </div>
                   )}
                 </Show>

@@ -1,0 +1,3 @@
+* The plugins of [[Kalem]] :plugins:
+* DOING [#B] The graph plugin, see ((6512c0de-0002-4000-8000-000000000001))
+* A file link: [[file:./kalem.org][Kalem]] and a web one [[https://example.com][site]]

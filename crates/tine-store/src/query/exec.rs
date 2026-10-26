@@ -448,7 +448,7 @@ fn cost(filter: &Filter) -> u8 {
             } => 4,
             Leaf::Attr { .. } => 0,
             Leaf::Rel { rel, .. } => match rel {
-                Rel::Refs | Rel::Tags => 1,
+                Rel::Refs | Rel::DirectRefs | Rel::Tags => 1,
                 Rel::Page => 2,
                 Rel::Props => 3,
                 Rel::Children | Rel::Parent | Rel::Ancestors | Rel::Descendants | Rel::Blocks => 6,
@@ -716,8 +716,11 @@ pub(crate) fn execute(
         statistics: None,
         exceeded: false,
     };
-    // §3.5: an invalid query returns nothing plus its diagnostics.
-    if query.is_invalid() {
+    // §3.5: an invalid query returns nothing plus its diagnostics. A filter
+    // that is constantly false (OG's nil query: `{{query }}`, or one whose
+    // every clause is a dropped bare `(task)` / `(priority)`, D-18) can match
+    // nothing either, so it answers without visiting a page.
+    if query.is_invalid() || plan.filter == Filter::False {
         return Ok(result);
     }
     let wants_recency = view
@@ -1013,8 +1016,16 @@ pub(crate) fn query_ir(
     graph: &crate::model::ReadSnapshot,
     request: crate::IrRequest<'_>,
 ) -> Result<crate::IrAnswer, StatisticsResourceLimit> {
+    query_ir_on_day(graph, request, tine_core::date::JournalDate::today())
+}
+
+/// Same production entry body, with the sampled day explicit for conformance.
+pub(crate) fn query_ir_on_day(
+    graph: &crate::model::ReadSnapshot,
+    request: crate::IrRequest<'_>,
+    today: tine_core::date::JournalDate,
+) -> Result<crate::IrAnswer, StatisticsResourceLimit> {
     use crate::query::memo::Answer;
-    let today = tine_core::date::JournalDate::today();
     let (query, view, context) = match request {
         crate::IrRequest::Registry => {
             let index = graph.query_index();
@@ -1176,7 +1187,9 @@ pub(crate) fn run_advanced_query_at(
     max_bytes: usize,
     today: JournalDate,
 ) -> ((AdvancedResult, bool, usize), Option<Arc<Plan>>) {
-    let (query, _) = parse_query_input(source, QueryInput::Advanced, today, Registry::none());
+    // The view carries a recognised result transform's sort (Martin
+    // 2026-10-11), so this bridge orders as the macro does.
+    let (query, view) = parse_query_input(source, QueryInput::Advanced, today, Registry::none());
     let resolved = resolve_for_execution(&query, &ExecutionContext::none(), today);
     let report = resolved.report().clone();
     if !resolved.is_executable() {
@@ -1188,13 +1201,7 @@ pub(crate) fn run_advanced_query_at(
         };
         return ((result, false, 0), None);
     }
-    let (bounded, plan) = run_block_groups(
-        graph,
-        &resolved,
-        &ViewSettings::default(),
-        max_rows,
-        max_bytes,
-    );
+    let (bounded, plan) = run_block_groups(graph, &resolved, &view, max_rows, max_bytes);
     let result = AdvancedResult {
         groups: bounded.groups,
         ran: report.ran,

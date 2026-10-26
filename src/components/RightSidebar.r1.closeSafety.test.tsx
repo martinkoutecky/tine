@@ -16,6 +16,8 @@ import { clearTransientLayersForTest } from "../transientLayers";
 import type { PageDto } from "../types";
 import { applySidebarSession, closeRightSidebarSafely, dismissMobileDrawer, rightSidebarOpen, setLeftSidebarOpen, setRightSidebar, setRightSidebarOpen, toggleRightSidebar } from "../ui";
 import { MobileDrawerController } from "./MobileDrawerShell";
+import { bindTestHost } from "../document/host/wiring.test.support";
+import { openAsLoaded } from "./hostConflict.test.support";
 import { RightSidebar } from "./RightSidebar";
 
 const PAGE_NAME = "R1 close safety";
@@ -243,10 +245,11 @@ describe("GH #161 R1 right-sidebar close safety", () => {
   });
 
   it("is idempotent and does not dirty or save a page when the editor did not change", async () => {
+    openAsLoaded(await bindTestHost());
     const root = mountRightSidebar(false);
     await beginEdit(root, "Original right-sidebar text");
     const before = pageToDto(PAGE_NAME);
-    const save = vi.spyOn(backend(), "savePages");
+    const save = vi.spyOn(backend(), "pageSubmit");
 
     root.querySelector<HTMLButtonElement>(".rs-close")!.click();
     expect(closeRightSidebarSafely()).toBe(false);
@@ -261,9 +264,12 @@ describe("GH #161 R1 right-sidebar close safety", () => {
     const dir = mkdtempSync(join(tmpdir(), "tine-r1-close-"));
     tempDirs.push(dir);
     const diskPage = join(dir, "page.json");
-    vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => { const { id: _id, page: dto } = entries[0];
-      writeFileSync(diskPage, JSON.stringify(dto));
-      return { ok: ["r1-disk-rev"] };
+    openAsLoaded(await bindTestHost());
+    // The host takes the submitted text and publishes it to this fixture file.
+    const submit = backend().pageSubmit.bind(backend());
+    vi.spyOn(backend(), "pageSubmit").mockImplementation(async (...args) => {
+      writeFileSync(diskPage, JSON.stringify(args[3]));
+      return submit(...args);
     });
     const text = "Pending edit persisted across right close";
     await beginEdit(root, text);

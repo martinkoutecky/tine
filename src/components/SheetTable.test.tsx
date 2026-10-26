@@ -1,9 +1,9 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import { createSignal, type JSX } from "solid-js";
+import { createMemo, createSignal, untrack, type ComponentProps, type JSX } from "solid-js";
 import { Block, SurfaceContext } from "./Block";
 import { ContextMenu } from "./ContextMenu";
-import { __sheetTableTestHooks, SheetTable } from "./SheetTable";
+import { __sheetTableTestHooks, SheetTable as ActualSheetTable } from "./SheetTable";
 import { DatePicker } from "./DatePicker";
 import { initParser } from "../render/parse";
 import { blockProperty, pageByName, readPageProperty, redo, resetStore, setRaw, undo } from "../document";
@@ -23,12 +23,33 @@ import { editingId, editingOwner } from "../editorController";
 import type { RefGroup } from "../types";
 import { installKeybindings } from "../keybindings";
 import { setToasts, toasts } from "../toasts";
+import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
+const saveFixture = vi.hoisted(() => ({ actual: null as Record<string, unknown> | null, markDirty: vi.fn(), persistTransfer: vi.fn(async () => true) }));
+const draftHandoffDisposers: (() => void)[] = [];
+vi.mock("../document/host/wiring", () => new Proxy({}, {
+  get: (_target, key) => key === "then" ? undefined : key === "markDirty" ? saveFixture.markDirty
+    : key === "persistTransfer" ? saveFixture.persistTransfer : saveFixture.actual?.[key as string],
+  has: () => true,
+}));
+
+// Directly supplied query groups stand in for newly adopted engine answers.
+// Stamp only when the fixture supplies a groups object, not on epoch changes.
+function SheetTable(props: ComponentProps<typeof ActualSheetTable>): JSX.Element {
+  const groups = createMemo(() => {
+    const next = props.groups;
+    if (next) untrack(() => adoptResults(next, captureResultsTicket()));
+    return next;
+  });
+  return <ActualSheetTable {...props} groups={groups()} />;
+}
 
 beforeAll(async () => {
+  saveFixture.actual = await vi.importActual("../document/host/wiring");
   await initParser();
 });
 
 afterEach(() => {
+  for (const dispose of draftHandoffDisposers.splice(0)) dispose();
   __sheetTableTestHooks.onIndexRow = undefined;
   resetCellSelectionForTests();
   resetStore();
@@ -413,6 +434,7 @@ describe("SheetTable", () => {
     const target = "live-target";
     const blocks = Array.from({ length: 100_000 }, (_, i) => ({
       id: i === 0 ? target : `q${i}`,
+      has_id: false, // Rust query projection's parser-owned absence fact
       raw: `Row ${i}`,
       collapsed: false,
       children: [],
@@ -1237,6 +1259,98 @@ describe("SheetTable", () => {
     dispose();
   });
 
+  const draftHandoffs = ["property double-click", "title double-click", "grid double-click", "board double-click", "keyboard Enter", "keyboard overtype", "keyboard title"] as const;
+
+  function mountDraftHandoff(surface: string) {
+    setToasts([]);
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.fields:: amount=number;other=text", null, ["r1"]),
+        r1: node("r1", "Task\namount:: 1\nother:: old", "table"),
+        grid: node("grid", "Grid\ntine.view:: grid", null, ["gr1"]),
+        gr1: node("gr1", "", "grid", ["gc"]),
+        gc: node("gc", "Grid cell", "gr1"),
+        board: node("board", "Board\ntine.view:: board\ntine.group-by:: state", null, ["bc"]),
+        bc: node("bc", "TODO Card", "board"),
+      },
+      pages: [page(["table", "grid", "board"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const mounted = mount(() => <SurfaceContext.Provider value={surface}>
+      <Block id="table" /><Block id="grid" /><Block id="board" />
+    </SurfaceContext.Provider>);
+    draftHandoffDisposers.push(mounted.dispose);
+    return mounted;
+  }
+
+  function handoff(root: HTMLElement, method: typeof draftHandoffs[number], surface: string) {
+    if (method === "property double-click") doubleClick(cell(root, 0, 2));
+    else if (method === "title double-click") doubleClick(cell(root, 0, 0));
+    else if (method === "grid double-click") doubleClick(cell(root, 0, 0, "grid"));
+    else if (method === "board double-click") doubleClick(root.querySelector(".sheet-board-card")!);
+    else {
+      const title = method === "keyboard title";
+      setCellSel({ gridId: "table", surfaceId: surface, rowId: "r1", columnId: title ? "title" : "prop:other", row: 0, col: title ? 0 : 2 });
+      handleCellSelectionKey(new KeyboardEvent("keydown", { key: method === "keyboard overtype" ? "x" : "Enter" }));
+    }
+  }
+
+  it.each([false, true])("saves a cell before double-clicking its neighbor, delayed blur=%s (GH #754)", async (delayedBlur) => {
+    const { root, dispose } = mountDraftHandoff("main");
+    doubleClick(cell(root, 0, 1));
+    const first = root.querySelector<HTMLInputElement>("input.sheet-prop-input")!;
+    first.value = "7.5";
+    input(first);
+    doubleClick(cell(root, 0, 2));
+    if (delayedBlur) first.dispatchEvent(new FocusEvent("blur"));
+    expect(blockProperty("r1", "amount")).toBe("7.5");
+    const next = cell(root, 0, 2).querySelector<HTMLInputElement>("input.sheet-prop-input")!;
+    expect(next).not.toBeNull();
+    next.value = "next";
+    input(next);
+    keydown(next, "Enter");
+    expect(blockProperty("r1", "other")).toBe("next");
+    await tick();
+    expect(toasts()).toEqual([]);
+    dispose();
+  });
+
+  describe.each(["main", "sidebar:test"])("cell draft handoffs in %s (GH #754)", (surface) => {
+    it.each(draftHandoffs)("saves before %s without needing blur", async (method) => {
+      const { root, dispose } = mountDraftHandoff(surface);
+      doubleClick(cell(root, 0, 1));
+      const first = root.querySelector<HTMLInputElement>("input.sheet-prop-input")!;
+      first.value = "7.5";
+      input(first);
+      handoff(root, method, surface);
+      expect(blockProperty("r1", "amount")).toBe("7.5");
+      await tick();
+      const target = method === "property double-click" || method === "keyboard Enter" || method === "keyboard overtype"
+        ? cell(root, 0, 2).querySelector("input.sheet-prop-input")
+        : root.querySelector("textarea.block-editor");
+      expect(target).not.toBeNull();
+      dispose();
+    });
+
+    it.each(draftHandoffs)("keeps an invalid number in its original editor on %s", async (method) => {
+      const { root, dispose } = mountDraftHandoff(surface);
+      doubleClick(cell(root, 0, 1));
+      const first = root.querySelector<HTMLInputElement>("input.sheet-prop-input")!;
+      first.value = "invalid";
+      input(first);
+      handoff(root, method, surface);
+      await tick();
+      expect(blockProperty("r1", "amount")).toBe("1");
+      expect(cell(root, 0, 1).querySelector("input.sheet-prop-input")).toBe(first);
+      expect(first.value).toBe("invalid");
+      expect(first.classList.contains("sheet-input-invalid")).toBe(true);
+      expect(root.querySelector("textarea.block-editor")).toBeNull();
+      expect(document.activeElement).toBe(first);
+      dispose();
+    });
+  });
+
   it("shows a refused cell edit (page turned read-only) instead of silently discarding the typed value", () => {
     setToasts([]);
     const layout = {
@@ -1259,7 +1373,8 @@ describe("SheetTable", () => {
     keydown(input!, "Enter");
 
     expect(doc.byId.r1.raw).toBe("Task\nbody line\nowner:: old");
-    expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("typed value"))).toBe(true);
+    expect(toasts().some((toast) => toast.kind === "error")).toBe(true);
+    expect(root.querySelector<HTMLInputElement>("input.sheet-prop-input")?.value).toBe("typed value");
     dispose();
   });
 

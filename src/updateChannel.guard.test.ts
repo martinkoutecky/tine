@@ -4,7 +4,7 @@
 //
 // Each build's channel is named in exactly ONE machine-read place: the updater
 // endpoint in src-tauri/tauri.conf.json (stable: releases/latest; Beta: the
-// fixed-tag release `beta`), chosen by the identity switch. src/update.ts learns
+// manifest at tine.page/updates/beta/), chosen by the identity switch. src/update.ts learns
 // what the channel offers from the Tauri updater plugin's check() (a Rust-side
 // request); it never fetch()es a channel URL, because GitHub release-asset
 // downloads send no Access-Control-Allow-Origin and a webview fetch would fail
@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 const RULE =
   "the updater must read only this build's channel, and only through the updater plugin's check(): " +
   "the one channel URL is the tauri.conf.json updater endpoint chosen by the identity switch " +
-  "(stable: releases/latest; Beta: releases/download/beta), never the other channel's " +
+  "(stable: releases/latest; Beta: tine.page/updates/beta/latest.json), never the other channel's " +
   "(installing it would replace one app with the other); " +
   "src/update.ts must not fetch() a channel URL (GitHub release assets send no CORS headers).";
 
@@ -33,7 +33,7 @@ describe("update channel", () => {
     const urls = code.match(/https?:\/\/[^\s"'`]+/g) ?? [];
     expect(urls, RULE).toEqual([
       "https://github.com/martinkoutecky/tine/releases/latest",
-      "https://github.com/martinkoutecky/tine/releases/tag/beta",
+      "https://github.com/martinkoutecky/tine/releases",
     ]);
     // The offered version comes from the updater plugin.
     expect(code, RULE).toMatch(/import\("@tauri-apps\/plugin-updater"\)/);
@@ -42,12 +42,12 @@ describe("update channel", () => {
   it("the Tauri updater endpoint is the switch's channel manifest", () => {
     const conf = JSON.parse(read("../src-tauri/tauri.conf.json"));
     // Identity is spelled only in the switch (src/appIdentity.guard.test.ts): the released
-    // identity reads releases/latest, the experiment reads only the beta release.
+    // identity reads releases/latest, the experiment reads only the Beta manifest on tine.page.
     const sw = JSON.parse(read("../src-tauri/app-identity.json"));
     const endpoints: string[] = conf.plugins.updater.endpoints;
     expect(endpoints, RULE).toEqual([sw.ship === "release"
       ? "https://github.com/martinkoutecky/tine/releases/latest/download/latest.json"
-      : "https://github.com/martinkoutecky/tine/releases/download/beta/latest.json"]);
+      : "https://tine.page/updates/beta/latest.json"]);
   });
 
   it("I-4/I-12: notification and installation acquire updates through checkedChannelUpdate (src/update.ts)", () => {

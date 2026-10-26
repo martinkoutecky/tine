@@ -1,8 +1,9 @@
 # Assemble immutable release candidates by manual dispatch. publish=false
 # writes workflow artifacts only. The updater endpoint in tauri.conf.json picks
-# the channel (scripts/release-policy.mjs): a Beta build publishes only to the
-# moving beta tag as a prerelease, never latest; a stable build publishes only
-# to v<version>, which must already point at the commit, marked latest.
+# the channel (scripts/release-policy.mjs). Every build publishes only to
+# v<version>, which must already point at the commit: a Beta as a prerelease,
+# never latest, then served on tine.page/updates/beta/ by pages.yml; a stable
+# build marked latest.
 #
 # Signing: the macOS lane fails closed unless it can sign with Tine's Developer
 # ID certificate, notarize with a short-lived App Store Connect API token, and
@@ -21,7 +22,7 @@ on:
         default: build
         required: true
       publish:
-        description: Publish after verification (Beta to the moving beta tag; stable to v<version>, marked latest)
+        description: Publish after verification to v<version> (Beta as a prerelease served on tine.page; stable marked latest)
         type: boolean
         default: false
         required: true
@@ -36,8 +37,8 @@ concurrency:
 
 jobs:
   # Cheap deterministic guards run before any expensive release build.
-  # PV1 scope: Linux, Windows NSIS, macOS and Android. Flatpak stays in
-  # its dedicated CI workflow; it is not a Beta release prerequisite.
+  # Scope: Linux, Windows NSIS, macOS, Android and the x86_64 Flatpak bundle
+  # (a manual-update download; the updater manifest never references it).
   preflight:
     runs-on: ubuntu-22.04
     steps:
@@ -325,6 +326,25 @@ jobs:
           xcrun stapler validate "$app"
           spctl --assess --type execute --verbose=2 "$app"
 
+          # Verify the application users will actually install through the
+          # updater as well; a valid DMG alone cannot authorize that archive.
+          updater=$(find target -type f -path '*/bundle/macos/*.app.tar.gz' -print -quit)
+          [ -n "$updater" ] && [ -s "$updater.sig" ] || {
+            echo "::error::signed macOS updater archive is missing"
+            exit 1
+          }
+          updater_dir="$RUNNER_TEMP/tine-updater-verify"
+          mkdir -p "$updater_dir"
+          tar -xzf "$updater" -C "$updater_dir"
+          updater_app=$(find "$updater_dir" -maxdepth 2 -type d -name '*.app' -print -quit)
+          [ -n "$updater_app" ] || exit 1
+          codesign --verify --deep --strict --verbose=2 "$updater_app"
+          codesign -dv --verbose=4 "$updater_app" 2> "$RUNNER_TEMP/tine-updater-codesign.txt"
+          grep -Fq 'Authority=Developer ID Application:' "$RUNNER_TEMP/tine-updater-codesign.txt"
+          grep -Fq "TeamIdentifier=$APPLE_TEAM_ID" "$RUNNER_TEMP/tine-updater-codesign.txt"
+          xcrun stapler validate "$updater_app"
+          spctl --assess --type execute --verbose=2 "$updater_app"
+
       - name: Verify Linux AppImage update information
         if: startsWith(matrix.platform, 'ubuntu-')
         run: |
@@ -356,7 +376,9 @@ jobs:
             echo "::error::AppImage or update metadata is not staged beside the bundle"
             exit 1
           fi
-          if ! readelf --string-dump=.upd_info "$appimage" | grep -Fq 'gh-releases-zsync|'; then
+          # Stable reads GitHub's latest release (gh-releases-zsync); Beta reads
+          # zsync|https://tine.page/updates/beta/<arch>.AppImage.zsync
+          if ! readelf --string-dump=.upd_info "$appimage" | grep -Eq 'gh-releases-zsync\||zsync\|https://tine\.page/updates/beta/'; then
             echo "::error::AppImage is missing embedded update information"
             exit 1
           fi
@@ -371,8 +393,11 @@ jobs:
 
       # Portable Windows build: the compiled Tauri exe is already self-contained
       # (frontend + lsdoc-wasm are embedded; WebView2Loader is statically linked),
-      # so "portable" is just that one exe, zipped. The NSIS installer we also
-      # ship wraps this same binary; the portable zip skips the installer AND its
+      # so "portable" is that one exe plus a `tine-data` folder, zipped. The
+      # folder beside the exe is what makes it portable (GH #719,
+      # src-tauri/src/portable.rs): settings and WebView2 data stay in it, not
+      # in the host's AppData. The NSIS installer we also ship wraps this same
+      # binary without the folder; the portable zip skips the installer AND its
       # WebView2 bootstrapper — WebView2 is preinstalled on Windows 10/11, so this
       # runs for ~everyone, but a machine without the runtime won't launch it.
       - name: Package portable Windows zip
@@ -389,7 +414,12 @@ jobs:
             Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $exe) { throw "portable: main Tine exe not found under $dir" }
           $zip = $env:RELEASE_PORTABLE
-          Compress-Archive -Path $exe -DestinationPath $zip -Force
+          $stage = Join-Path $env:RUNNER_TEMP "tine-portable-stage"
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          New-Item -ItemType Directory -Path (Join-Path $stage "tine-data") | Out-Null
+          Copy-Item $exe $stage
+          Copy-Item "src-tauri/portable/README.txt" (Join-Path $stage "tine-data/README.txt")
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip -Force
 
       # The expensive Linux build above is also the exact binary under test and
       # is a hard publication gate. Windows advisory evidence runs independently
@@ -554,6 +584,52 @@ jobs:
           path: test-results/e2e/windows-smoke
           if-no-files-found: warn
           retention-days: 14
+
+  # The Flatpak bundle builds concurrently from the same offline manifest the
+  # dedicated "Flatpak build test" workflow uses, packaged under the Beta
+  # identity so it installs beside a stable Tine Flatpak. A build failure fails
+  # this job, which blocks assembly like any other platform. The identity is the
+  # one the tree ships (src-tauri/app-identity.json); flipping the switch to the
+  # released identity makes the derivation refuse until this line follows it
+  # (src/flatpakPackaging.guard.test.ts pins that).
+  flatpak:
+    needs: preflight
+    uses: ./.github/workflows/flatpak.yml
+    with:
+      identity: release
+
+  # Name the bundle by the release layout and stage it as an immutable lane,
+  # exactly like the other platforms.
+  stage-flatpak:
+    needs: [preflight, flatpak]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/download-artifact@v4
+        with:
+          name: tine-flatpak-x86_64
+          path: flatpak-bundle
+      - name: Derive release filenames
+        run: node scripts/release-workflow-inputs.mjs flatpak-x64 >> "$GITHUB_ENV"
+      - name: Stage immutable Flatpak artifact
+        run: |
+          if [ ! -f flatpak-bundle/tine.flatpak ]; then
+            echo "::error::the Flatpak build produced no bundle"
+            exit 1
+          fi
+          mv flatpak-bundle/tine.flatpak "$RELEASE_FLATPAK"
+          node scripts/stage-release-lane.mjs flatpak-x64 release-candidate "${{ github.sha }}"
+      - name: Upload Flatpak release lane
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-flatpak-x64
+          path: release-candidate/flatpak-x64
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
 
   # Android builds concurrently and contributes another immutable workflow
   # artifact. Signed Android output is mandatory for every release smoke/tag.
@@ -759,7 +835,7 @@ jobs:
   # dispatch stops after uploading this verified candidate and never touches a
   # GitHub Release.
   assemble:
-    needs: [preflight, build, android]
+    needs: [preflight, build, android, stage-flatpak]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -789,6 +865,8 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
+      # Dispatch pages.yml on master so tine.page serves a new Beta's manifest.
+      actions: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -801,3 +879,23 @@ jobs:
           RELEASE_MODE: ${{ inputs.mode }}
           RELEASE_PUBLISH: ${{ inputs.publish }}
         run: node scripts/publish-release-candidate.mjs "$(node --input-type=module -e 'import { releaseTag } from "./scripts/release-policy.mjs"; import fs from "node:fs"; process.stdout.write(releaseTag(JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"))))')" release-candidate
+      # Installed Betas read tine.page/updates/beta/latest.json. tine.page
+      # deploys from master (its github-pages environment allows only master),
+      # so dispatch that deploy and wait until it serves this version.
+      - name: Serve a published Beta on tine.page
+        timeout-minutes: 25
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node -p 'require("./src-tauri/tauri.conf.json").version')
+          case "$version" in *-beta.*) ;; *) echo "stable $version: nothing to serve"; exit 0;; esac
+          gh workflow run pages.yml --ref master
+          deadline=$((SECONDS + 1200)) attempt=0 served=""
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            attempt=$((attempt + 1))
+            served=$(curl -fsSL --connect-timeout 10 --max-time 30 "https://tine.page/updates/beta/latest.json?run=${{ github.run_id }}-$attempt" | jq -r .version 2>/dev/null || true)
+            if [ "$served" = "$version" ]; then echo "tine.page serves Beta $version"; exit 0; fi
+            sleep 15
+          done
+          echo "::error::tine.page does not serve Beta $version after 20 minutes (serves '${served}'); the release is published, so re-dispatch pages.yml on master and check its log"
+          exit 1

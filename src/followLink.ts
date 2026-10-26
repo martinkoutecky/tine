@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // GH #274: open the link at the caret without reaching for the mouse.
 //
 // OG bindings this reproduces (`frontend/modules/shortcut/config.cljs`):
@@ -15,10 +16,11 @@ import type { Format } from "./render/ast";
 import { openPage, openPageAtBlock } from "./router";
 import { openPageInSidebar, openBlockInSidebar } from "./ui";
 import { pushToast } from "./toasts";
-import { backend } from "./backend";
+import { openOutboundLink } from "./components/ExternalLink";
 import { blockRefTarget, resolveBlockBatched } from "./resolveBatch";
-import { ownedWhen, readOwned } from "./owned";
+import { readOwned } from "./owned";
 import { focusedSurfaceOwner } from "./focusedSurface";
+import { activeElement, isElementTag } from "./windowRealm";
 
 type CaretContext = { text: string; caret: number; format: Format };
 
@@ -27,8 +29,8 @@ type CaretContext = { text: string; caret: number; format: Format };
  *  disagree on what is literal (e.g. `~[[x]]~` is Org code). */
 function caretContext(): CaretContext | null {
   if (typeof document === "undefined") return null;
-  const active = document.activeElement;
-  if (!(active instanceof HTMLTextAreaElement)) return null;
+  const active = activeElement();
+  if (!isElementTag(active, "textarea")) return null;
   const id = editingId();
   const node = id ? docNode(id) : undefined;
   const format: Format = node && pageByName(node.page)?.format === "org" ? "org" : "md";
@@ -70,9 +72,7 @@ function dispatch(link: NearestLink, where: "here" | "sidebar"): boolean {
   if (link.kind === "url") {
     // Not graph-scoped: opening a URL stays meaningful across graph switches,
     // so the owner is always live and a failure is always surfaced (I-9).
-    void readOwned(ownedWhen(), backend().openExternal(link.value)).catch(() => {
-      pushToast(`Couldn't open ${link.value}`, "error");
-    });
+    void openOutboundLink(link.value, false);
     return true;
   }
   if (link.kind === "block") {
@@ -89,7 +89,7 @@ function dispatch(link: NearestLink, where: "here" | "sidebar"): boolean {
       if (result.kind === "stale") return;
       const g = result.value;
       if (g === undefined) return;
-      if (!g) { pushToast("Couldn't find the referenced block", "error"); return; }
+      if (!g) { pushToast(msg("follow-link-couldn-t-find-the-referenced-block"), "error"); return; }
       const ref = blockRefTarget(uuid, g);
       if (where === "sidebar") openBlockInSidebar(ref);
       else openPageAtBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });

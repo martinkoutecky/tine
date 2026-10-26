@@ -5,6 +5,7 @@ use tine_store::{Cancel, SearchRequest, Store};
 
 #[test]
 fn b_query_cross_row_atom_uniqueness_and_prefix_matching_reach_the_store() {
+    let _integration_guard = crate::integration_lock();
     use tine_core::query::ir::{
         Anchor, Attr, CmpOp, ExecutionContext, Filter, Quant, Query, QueryRows, Rel, Source, Value,
         ViewSettings,
@@ -83,6 +84,7 @@ fn b_query_cross_row_atom_uniqueness_and_prefix_matching_reach_the_store() {
 
 #[test]
 fn b_query_org_template_metadata_is_removed_by_the_copy_door() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     std::fs::write(dir.path().join("pages/Templates.org"), "* Root\n:PROPERTIES:\n:template: Demo\n:template-including-parent: true\n:END:\n** Child\n#+BEGIN_SRC text\n:template: literal\n#+END_SRC\n").unwrap();
@@ -97,6 +99,7 @@ fn b_query_org_template_metadata_is_removed_by_the_copy_door() {
 #[test]
 #[ignore = "manual before/after 10k search benchmark"]
 fn b_query_search_10k_bench() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     for i in 0..10_000 {
@@ -109,6 +112,7 @@ fn b_query_search_10k_bench() {
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
     let graph = store.whole_graph().unwrap();
     let request = SearchRequest {
+        transliteration: false,
         text: "searchable".into(),
         within: None,
         page_limit: 20,

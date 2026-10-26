@@ -1,3 +1,4 @@
+import { msg } from "../i18n";
 // Device-local policy for the `[[…]]` / `#…` completion default action. This is
 // deliberately app UI state (tine-settings.json), not graph configuration.
 import { createSignal } from "solid-js";
@@ -60,16 +61,16 @@ export async function initLinkDefault(): Promise<void> {
       if (result.kind === "stale") return;
       legacy = result.value;
     } catch {
-      if (owner()) pushToast("Could not load legacy link preference.", "error");
+      if (owner()) pushToast(msg("editor-could-not-load-legacy-link-preference"), "error");
     }
     const migrated = migrateLinkAutocompletePolicy(stored, legacy);
     applyIfCurrent(migrated);
     if (legacy !== undefined && owner()) {
       void backend().setAppString(POLICY_KEY, migrated)
-        .catch(() => pushToast("Could not save migrated link autocomplete policy.", "error"));
+        .catch(() => pushToast(msg("editor-could-not-save-migrated-link-autocomplete-policy"), "error"));
     }
   } catch {
     applyIfCurrent("adaptive");
-    pushToast("Could not load link autocomplete policy.", "error");
+    pushToast(msg("editor-could-not-load-link-autocomplete-policy"), "error");
   }
 }

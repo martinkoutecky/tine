@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 pub enum Rel {
     /// OG `:block/path-refs`: this block's refs, every ancestor's, and its page.
     Refs,
+    /// OG `:block/refs`: only references authored on this block.
+    DirectRefs,
     /// The block's own inline `#tag` / Org headline tags (Tine-only leaf, Q2).
     Tags,
     /// Property elements of the owner (block or page).
@@ -31,6 +33,7 @@ impl Rel {
     pub fn tql_name(self) -> &'static str {
         match self {
             Rel::Refs => "refs",
+            Rel::DirectRefs => "direct_refs",
             Rel::Tags => "tags",
             Rel::Props => "props",
             Rel::Children => "children",

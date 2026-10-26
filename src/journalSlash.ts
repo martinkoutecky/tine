@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 import { pageByName } from "./document";
 import { applyCompletion, pageInsert, withRefCompletionSpace } from "./editor/autocomplete";
 import { journalTitle, parseJournalTitle, appNow } from "./journal";
@@ -21,7 +22,7 @@ export function runJournalSlash(
   const date = action === "thatday" ? page?.kind === "journal" ? parseJournalTitle(page.name) : null : appNow();
   if (date && (action === "tomorrow" || action === "yesterday")) date.setDate(date.getDate() + (action === "tomorrow" ? 1 : -1));
   replaceTrigger(date ? pageInsert(journalTitle(date)) : "");
-  if (!date) pushToast("/thatday is only available on journal pages.", "info");
+  if (!date) pushToast(msg("journal-slash-thatday-is-only-available-on-journal-pages"), "info");
 }
 
 /** Open an arbitrary journal-date completion after consuming the slash trigger.
@@ -40,7 +41,7 @@ export function openJournalDatePicker(textarea: HTMLTextAreaElement, commit: (ra
   const rect = textarea.getBoundingClientRect();
   openDatePicker(token.editingBlockId, { insertJournal: title => {
     if (!assetEditorIsCurrent(token, textarea, mounted()) || textarea.value !== before) {
-      pushToast("The date was not inserted because the graph or block changed.", "info"); return;
+      pushToast(msg("journal-slash-the-date-was-not-inserted-because-the-graph"), "info"); return;
     }
     const text = pageInsert(title);
     const inserted = applyCompletion(before, caret, caret, text);

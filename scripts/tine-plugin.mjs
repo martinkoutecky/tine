@@ -3,6 +3,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { acceptsPluginColor } from "../src/plugins/color.mjs";
 
 const CAPABILITIES = new Set([
   "commands.register",
@@ -109,7 +110,7 @@ function checkPortGap(root, report) {
   report.portGap.status = report.errors.some((item) => item.code.startsWith("port-gap.")) ? "failed" : "passed";
 }
 
-function checkSettings(settings, capabilities, report) {
+function checkSettings(settings, capabilities, apiVersion, report) {
   if (settings === undefined) return;
   if (!Array.isArray(settings) || settings.length > 64) {
     add(report, "errors", "manifest.settings", "settings must be an array of at most 64 definitions");
@@ -150,6 +151,11 @@ function checkSettings(settings, capabilities, report) {
           setting.default < setting.min || setting.default > setting.max ||
           (setting.step !== undefined && (!Number.isFinite(setting.step) || setting.step <= 0))) {
         add(report, "errors", "manifest.settings-bounds", `${where} has invalid numeric bounds`);
+      }
+    } else if (setting.type === "color") {
+      if (apiVersion === "0.2") add(report, "errors", "manifest.settings-color-api", `${where}.type color needs apiVersion 0.3`);
+      if (!acceptsPluginColor(setting.default)) {
+        add(report, "errors", "manifest.settings-color", `${where}.default must be a literal color or empty`);
       }
     } else if (setting.type === "string") {
       if (!Number.isInteger(setting.maxLength) || setting.maxLength < 1 || setting.maxLength > 4096 ||
@@ -210,7 +216,8 @@ function checkManifest(manifest, report) {
     }
   }
   if (manifest.schemaVersion !== 1) add(report, "errors", "manifest.schema", "schemaVersion must be 1");
-  if (manifest.apiVersion !== "0.2") add(report, "errors", "manifest.api", "apiVersion must be 0.2");
+  // Mirrors SUPPORTED_PLUGIN_API_VERSIONS in src/plugins/manifest.ts (pinned by its test).
+  if (manifest.apiVersion !== "0.2" && manifest.apiVersion !== "0.3") add(report, "errors", "manifest.api", "apiVersion must be 0.2 or 0.3");
   if (typeof manifest.id !== "string" || !/^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])$/.test(manifest.id) || !manifest.id.includes(".")) {
     add(report, "errors", "manifest.id", "id must be a lowercase dotted identifier");
   }
@@ -239,7 +246,7 @@ function checkManifest(manifest, report) {
     add(report, "errors", "manifest.capabilities", "capabilities contains an unsupported authority");
   }
   const capabilities = Array.isArray(manifest.capabilities) ? manifest.capabilities : [];
-  checkSettings(manifest.settings, capabilities, report);
+  checkSettings(manifest.settings, capabilities, manifest.apiVersion, report);
   checkPortedFrom(manifest.portedFrom, report);
   if (!manifest.aiDevelopment) {
     add(report, "warnings", "manifest.ai", "declare aiDevelopment as none, assisted, or primary");

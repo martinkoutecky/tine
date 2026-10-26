@@ -1,3 +1,5 @@
+import { Rich } from "../i18n/Rich";
+import { msg, t } from "../i18n";
 import { createEffect, createResource, createSignal, onCleanup, Show, type JSX } from "solid-js";
 import { switchGraph, createNewGraph, loadGraphPath } from "../graph";
 import { graphMeta, startupOpenFailure, setStartupOpenFailure } from "../graphSession";
@@ -7,6 +9,7 @@ import { isTauri } from "../backend";
 import { WindowControls } from "./WindowChrome";
 import { osDrawsWindowControls } from "../nativeChrome";
 import { registerTransientLayer } from "../transientLayers";
+import { queryAllWindows } from "../windowRealm";
 import { platformKind } from "../platform";
 import { readOr } from "../resourceRead";
 
@@ -50,7 +53,7 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
     const failed = failure();
     if (!failed) return;
     void writeClipboardText(`Could not open ${failed.path}\n${failed.message}`)
-      .catch((e) => pushToast(`Could not copy: ${String(e)}`, "error"));
+      .catch((e) => pushToast(msg("welcome-could-not-copy", { error: String(e) }), "error"));
   };
 
   return (
@@ -66,7 +69,7 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
       </Show>
       <div class="welcome-card">
         <Show when={props.onClose}>
-          <button class="welcome-close" title="Close welcome" onClick={() => props.onClose?.()}>
+          <button class="welcome-close" title={t("welcome-close-welcome")} onClick={() => props.onClose?.()}>
             x
           </button>
         </Show>
@@ -75,34 +78,23 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
             <path d="M16 14 V36" /><path d="M32 14 V36" /><path d="M48 14 V36" />
             <path d="M16 36 H48" /><path d="M32 36 V70" />
           </g>
-        </svg>
-        <h1 class="welcome-title">Welcome to Tine</h1>
-        <p class="welcome-lede">
-          A fast, local outliner for your <strong>Logseq</strong> graph. Tine reads and writes the
-          same Markdown files — so you can keep using Logseq too, on the same notes.
-        </p>
+        </svg><h1 class="welcome-title">{t("welcome-welcome-to-tine")}</h1>
+        <p class="welcome-lede"><Rich message={msg("welcome-a-fast-local-outliner-for-your-logseq")} slots={{ "strong": (children) => <strong>{children}</strong> }} /></p>
 
         <Show when={failure()}>
           {(failed) => (
-            <div class="welcome-recovery" role="alert">
-              <p class="welcome-recovery-title">Tine could not open your last graph</p>
+            <div class="welcome-recovery" role="alert"><p class="welcome-recovery-title">{t("welcome-tine-could-not-open-your-last-graph")}</p>
               <p class="welcome-recovery-path">{failed().path}</p>
               <p class="welcome-recovery-reason">{failed().message}</p>
-              <div class="welcome-recovery-actions">
-                <button disabled={!!busy()} onClick={retry}>Try again</button>
-                <button onClick={copyDetails}>Copy details</button>
-              </div>
-              <p class="welcome-recovery-note">Nothing was changed on disk. You can also open another graph below.</p>
+              <div class="welcome-recovery-actions"><button class="settings-btn" type="button" disabled={!!busy()} onClick={retry}>{t("welcome-try-again")}</button><button class="settings-btn" type="button" onClick={copyDetails}>{t("welcome-copy-details")}</button>
+              </div><p class="welcome-recovery-note">{t("welcome-nothing-was-changed-on-disk-you-can")}</p>
             </div>
           )}
         </Show>
 
         <div class="welcome-actions">
           <Show when={ios()}>
-            <p class="welcome-busy">
-              On iPhone and iPad, graphs can live in On My iPhone → TineOutline or iCloud Drive → TineOutline.
-              Other apps' folders (such as Logseq's) and Files providers aren't supported yet.
-            </p>
+            <p class="welcome-busy">{t("welcome-on-iphone-and-ipad-graphs-can-live")}</p>
           </Show>
           <button
             class="welcome-choice"
@@ -113,9 +105,7 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
               <path d="M3 7a2 2 0 0 1 2-2h3.6l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
                 fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
             </svg>
-            <span class="welcome-choice-text">
-              <span class="welcome-choice-title">Open an existing graph</span>
-              <span class="welcome-choice-sub">Point Tine at a Logseq graph folder you already have.</span>
+            <span class="welcome-choice-text"><span class="welcome-choice-title">{t("welcome-open-an-existing-graph")}</span><span class="welcome-choice-sub">{t("welcome-point-tine-at-a-logseq-graph-folder")}</span>
             </span>
           </button>
 
@@ -128,25 +118,18 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
               <path d="M12 3.5l1.9 5.6 5.6 1.9-5.6 1.9L12 18.5l-1.9-5.6L4.5 11l5.6-1.9z"
                 fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
             </svg>
-            <span class="welcome-choice-text">
-              <span class="welcome-choice-title">Create a new graph</span>
-              <span class="welcome-choice-sub">
-                New to this? We'll set up a small demo graph that shows you around.
-              </span>
+            <span class="welcome-choice-text"><span class="welcome-choice-title">{t("welcome-create-a-new-graph")}</span>
+              <span class="welcome-choice-sub">{t("welcome-new-to-this-we-ll-set-up-a")}</span>
             </span>
           </button>
         </div>
 
-        <Show when={busy() === "create"}>
-          <p class="welcome-busy">Setting up your graph…</p>
+        <Show when={busy() === "create"}><p class="welcome-busy">{t("welcome-setting-up-your-graph")}</p>
         </Show>
-        <Show when={busy() === "open"}>
-          <p class="welcome-busy">Opening…</p>
+        <Show when={busy() === "open"}><p class="welcome-busy">{t("welcome-opening")}</p>
         </Show>
 
-        <p class="welcome-foot">
-          Free &amp; open source · your notes stay plain Markdown files you own.
-        </p>
+        <p class="welcome-foot">{t("welcome-free-open-source-your-notes")}</p>
       </div>
     </div>
   );
@@ -168,7 +151,7 @@ export function WelcomeLayer(props: {
     if (!dismissible()) return;
     const unregister = registerTransientLayer({
       id: "welcome",
-      root: () => document.querySelector<HTMLElement>(".welcome-card"),
+      root: () => queryAllWindows<HTMLElement>(".welcome-card"),
       dismiss: () => { props.onClose(); return true; },
     });
     onCleanup(unregister);

@@ -24,6 +24,8 @@ export const DEFAULT_FAVORITES_PAGE = "Favorites";
 export interface FavNode {
   /** The page a link-only bullet points at; `null` for a label. */
   target: string | null;
+  /** A block-reference row in the ordinary Favorites page; never config.edn. */
+  blockId?: string;
   raw: string;
   /** In-session kind of a favorite; on disk kind is re-derived from the name. */
   kind?: PageKind;
@@ -39,17 +41,23 @@ export interface FavRow { path: number[]; node: FavNode; depth: number }
  *  (its own properties, such as `id::`, aside); `null` makes it a label. lsdoc
  *  decides (I-12): `[[a]b]]` names page "a]b", while asset links, code and
  *  `TODO`/heading bullets are labels. O(bullet bytes), cached parse. */
-export function linkOnlyTarget(raw: string, format: Format = "md"): string | null {
-  if (!raw.includes("[[")) return null; // admission only: no link opener, no link
+function onlyLink(raw: string, format: Format = "md") {
+  if (!raw.includes("[[") && !raw.includes("((")) return null;
   const [head, ...rest] = parseBlock(raw, format === "org");
   if (head?.kind !== "bullet" || head.marker || head.priority || head.size || head.htags?.length
     || rest.some((block) => block.kind !== "properties")) return null;
   const parts = head.inline.filter((inline) => inline.k !== "plain" || inline.text.trim() !== "");
   const link = parts.length === 1 && parts[0].k === "link" ? parts[0] : null;
   if (!link || link.image || link.label?.length) return null;
+  return link;
+}
+export function linkOnlyTarget(raw: string, format: Format = "md"): string | null {
+  const link = onlyLink(raw, format);
+  if (!link) return null;
   const url = link.url;
   return reference_target_name(url.type, "v" in url ? url.v : "", "", format === "org", false)?.trim() || null;
 }
+export const blockFavoriteNode = (id: string): FavNode => ({ target: null, blockId: id, raw: `((${id}))`, children: [] });
 export const itemKind = (name: string): PageKind => (isJournalTitle(name) ? "journal" : "page");
 export const favoriteNode = (name: string, kind?: PageKind): FavNode =>
   ({ target: name, raw: `[[${name}]]`, ...(kind && kind !== itemKind(name) ? { kind } : {}), children: [] });
@@ -60,7 +68,9 @@ export function layoutFromBlocks(roots: readonly BlockDto[], format: Format = "m
     const children = layoutFromBlocks(block.children, format);
     if (!block.raw.trim()) return children;
     // raw stays verbatim: it is written back byte for byte.
-    return [{ target: linkOnlyTarget(block.raw, format), raw: block.raw, collapsed: block.collapsed || undefined, children }];
+    const link = onlyLink(block.raw, format);
+    const blockId = link?.url.type === "block_ref" ? link.url.v : undefined;
+    return [{ target: blockId ? null : linkOnlyTarget(block.raw, format), ...(blockId ? { blockId } : {}), raw: block.raw, collapsed: block.collapsed || undefined, children }];
   });
 }
 

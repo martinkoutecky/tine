@@ -1,9 +1,10 @@
+import { msg } from "../i18n";
 import { batch } from "solid-js";
 import { backend } from "../backend";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "../owned";
 import type { PageTarget } from "../router";
 import { endEdit } from "../editorController";
-import { conflicts, dirtyPages, flushAll, savingPages } from "./save/engine";
+import { flushAll, unpublishedPages } from "./host/wiring";
 import { forgetPage, reloadDisposition, reloadPageIfStillSafe } from "./workingSet";
 import { doc, pageByName } from "./model";
 import { invalidateUndoForPage } from "./history";
@@ -15,6 +16,7 @@ import { pageRefsInText } from "../render/pageRefs";
 import type { Format } from "../render/ast";
 import type { RenameDone, RenameTouchedPage } from "../types";
 import { graphMeta, setGraphMeta } from "../graphSession";
+import { activeElement, isHTMLElementNode } from "../windowRealm";
 
 let refreshRenamedNavigation: ((from: string, to: string, target?: PageTarget) => void) | null = null;
 
@@ -60,8 +62,8 @@ export async function renamePageOnDisk(
   if (graphRewriteFrozen()) return "busy";
   // Blur is synchronous: commit the current editor buffer before closing the
   // write gate, with no await or input event between the two steps.
-  if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement)
-    document.activeElement.blur();
+  const focused = typeof document !== "undefined" ? activeElement() : null;
+  if (isHTMLElementNode(focused)) focused.blur();
   const release = tryFreezeGraphRewrite();
   if (!release) return "busy";
   const owner = bindingOwner();
@@ -75,14 +77,14 @@ export async function renamePageOnDisk(
     try {
       result = await writeOwned(owner, backend().renamePage(from, to, "rename-page", target?.path, mergeInto, prepared));
     } catch (error) {
-      if (!owner()) pushToast(`Rename failed: ${String(error)}`, "error");
+      if (!owner()) pushToast(msg("graph-rewrite-rename-failed", { error: String(error) }), "error");
       throw error;
     }
     if (result.kind === "stale") return "uncertain";
     if (result.value.outcome === "unchanged") return "unchanged";
     // og 21a (master a8fd4230d): files mid-merge keep their old references.
     const skipped = result.value.skipped_conflicted_referrers ?? [];
-    if (skipped.length) pushToast(`${skipped.length === 1 ? "One page still mid-merge keeps" : `${skipped.length} pages still mid-merge keep`} ${skipped.length === 1 ? "its" : "their"} references to “${from}”: ${skipped.join(", ")}. Resolve the merge, then update them.`, "warn", { sticky: true });
+    if (skipped.length) pushToast(msg("graph-rewrite-conflicted-referrers", { count: skipped.length, page: from, files: skipped.join(", ") }), "warn", { sticky: true });
     // The rename moved `:default-home` in its own transaction (OG
     // `rename-page-aux`); an own write raises no config event, so take it in.
     const home = result.value.home_page;
@@ -103,12 +105,13 @@ export async function renamePageOnDisk(
 
 /** Save every pending edit. The rename reads referring pages from disk, so an
  * edit that cannot be saved matters only on a page the rename would change:
- * the renamed page, a namespace child, or one whose unsaved text references
+ * the renamed page, a namespace child, or one whose unpublished text references
  * the renamed page or a namespace child (a reference that exists only in
  * memory would be missed). References are the ones the backend rewrites, read
  * off the lsdoc parse and compared by page key; prose that merely contains the
  * name does not count. Those refuse; every other stuck page's file is returned
- * for the backend to leave alone. O(stuck pages' blocks) parses after the flush. */
+ * for the backend to leave alone; unknown host debt refuses. O(stuck pages'
+ * blocks) parses after the flush. */
 async function unsavedPathsFor(from: string): Promise<string[] | { unsaved: string; mentions: boolean }> {
   if (await flushAll()) return [];
   const renamed = pageIdentityKey(from);
@@ -117,11 +120,17 @@ async function unsavedPathsFor(from: string): Promise<string[] | { unsaved: stri
     return key === renamed || key.startsWith(`${renamed}/`);
   };
   const paths: string[] = [];
-  for (const name of new Set([...dirtyPages(), ...savingPages(), ...conflicts()])) {
+  const unpublished = await unpublishedPages();
+  // The host could not say what it owes (stale binding, stopped host): any
+  // page may be unsaved, so the rename refuses.
+  if (!unpublished) return { unsaved: "a page", mentions: false };
+  for (const { key, name } of unpublished) {
+    // Host debt this window cannot read the text of: it may mention anything.
+    if (!name) return { unsaved: key ?? "a page", mentions: false };
     if (rewritten(name)) return { unsaved: name, mentions: false };
     if (pageTexts(name).some((text) => pageRefsInText(text.raw, text.format).some(rewritten)))
       return { unsaved: name, mentions: true };
-    const path = pageByName(name)?.id;
+    const path = pageByName(name)?.id ?? key;
     if (path) paths.push(path);
   }
   return paths;

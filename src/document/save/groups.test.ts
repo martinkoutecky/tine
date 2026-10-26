@@ -1,13 +1,25 @@
+// Multi-page edits on the page host (STEP3 §8). Save groups are gone: a page
+// edit is one host submit; a block move between pages is a planned sequence of
+// two-page host moves (`pageMove`), each one host transaction carrying both
+// endpoints, with the endpoints frozen while it runs. A refused move writes
+// nothing and the display shows the host's text; a crash between moves can
+// leave a block in both pages, never in neither. The save-group mechanics
+// these tests used to pin (seal points, successor groups, waiting lists,
+// released/repeated reasons) left with engine.ts; the ledger names carriers.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { backend, type SavePageEntry, type SavePagesResult } from "../../backend";
-import { loadFeed, resetStore, pageByName, moveBlock, undo, setRaw, insertEmptyChildBlock, flushAll, flushPage, isConflicted, ensurePageLoaded, deletePage, selectBlock, extendSelectionTo, cycleSelectionTasks, deleteSelection } from "../index";
-import { conflictReason, group, markConflict, persistTogether, resolveConflict, waitingOn } from "./engine";
+import { backend } from "../../backend";
+import { cycleSelectionTasks, deleteSelection, ensurePageLoaded, extendSelectionTo, flushAll, flushPage, insertEmptyChildBlock,
+  isConflicted, loadFeed, moveBlock, pageByName, resetStore, selectBlock, setRaw, undo } from "../index";
 import { doc } from "../model";
 import { carryUnfinished } from "../edits/carry";
 import { journalTitle } from "../../journal";
 import { setToasts, toasts } from "../../toasts";
 import { initParser } from "../../render/parse";
-import type { BlockDto, PageRead } from "../../types";
+import { startEditing } from "../../editorController";
+import { bindTestHost, mailPage, type TestHost } from "../host/wiring.test.support";
+import type { EditKinds } from "../../editKind";
+import type { BlockDto, PageDto, PageRead } from "../../types";
+import type { PageRefusal } from "../host/protocol";
 
 let serial = 0;
 const block = (raw: string): BlockDto => ({ id: `group-${++serial}`, raw, collapsed: false, children: [] });
@@ -15,453 +27,326 @@ const page = (name: string, raws: string[], id = `pages/${name}.md`): PageRead =
   id, name, title: name, kind: "page", pre_block: null, rev: `initial-${name}`, blocks: raws.map(block),
 });
 const memory = (name: string) => pageByName(name)?.roots.map((id) => doc.byId[id].raw) ?? [];
+const raws = (dto: PageDto) => dto.blocks.map((b) => b.raw);
 const deferred = <T,>() => {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => { resolve = done; });
   return { promise, resolve };
 };
+/** A page as a test loads it: `id` absent for a page with no file yet. */
+type Loaded = PageDto & { id?: string };
+const refusedMove = (): PageRefusal => ({ reason: "failed", message: "disk full" });
 
-function diskBackend(initial: Record<string, string[]>) {
-  const disk = new Map(Object.entries(initial).map(([name, raws]) => [name, raws.slice()]));
-  const requests: SavePageEntry[][] = [];
-  const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => {
-    requests.push(structuredClone(entries));
-    for (const entry of entries) disk.set(entry.page.name, entry.page.blocks.map((b) => b.raw));
-    return { ok: entries.map((_, i) => `rev-${requests.length}-${i}`) };
+interface Request { request: "submit" | "move"; pages: PageDto[]; kinds: EditKinds; refused: boolean }
+
+/** A host over the test's files: an open serves the file the window names, a
+ * taken submit or move writes its pages, a refused request (`control.refuse`,
+ * at admission) writes nothing. `log` is every page request, in order; `disk`
+ * replays the first `count` taken requests (a crash after that prefix). */
+function hostRequests(host: TestHost, initial: Loaded[] = []) {
+  const api = backend();
+  const open = api.pageOpen.bind(api);
+  const files = new Map<string, { dto: PageDto; version: number }>(initial.filter((p) => p.id).map((p) => [p.id!, { dto: p, version: 1 }]));
+  const log: Request[] = [];
+  const control: { refuse: ((request: Request) => boolean) | null; hold: Promise<void> | null } = { refuse: null, hold: null };
+  const record = async (entry: Omit<Request, "refused">) => {
+    const refused = !!control.refuse?.({ ...entry, refused: false });
+    log.push({ ...entry, refused });
+    const hold = control.hold;
+    control.hold = null;
+    if (hold) await hold;
+    return refused;
+  };
+  const write = (key: string, dto: PageDto, version: number, id: number) => {
+    const next = Math.max(files.get(key)?.version ?? 1, version) + 1;
+    files.set(key, { dto: { ...dto, rev: `${dto.name}-${next}` }, version: next });
+    queueMicrotask(() => host.deliver({ key, page: { version: next, conflict: false, risk: false, text: { kind: "unchanged" } },
+      answer: { id, version: next, took: true, outcome: { kind: "applied" } } }));
+  };
+  vi.spyOn(api, "pageOpen").mockImplementation(async (session, id, target) => {
+    const file = target.path === null ? undefined : files.get(target.path);
+    if (!file) return open(session, id, target);
+    queueMicrotask(() => host.deliver({ key: target.path!, page: mailPage(file.version, file.dto),
+      answer: { id, version: file.version, took: false, outcome: { kind: "applied" } } }));
+    return { key: target.path!, baselineEntry: true };
   });
-  return { disk, requests, save };
+  const submit = vi.spyOn(api, "pageSubmit").mockImplementation(async (_session, id, key, dto, version, _resolve, kinds) => {
+    if (await record({ request: "submit", pages: [dto], kinds })) return refusedMove();
+    write(key, dto, version, id);
+    return null;
+  });
+  const move = vi.spyOn(api, "pageMove").mockImplementation(async (_session, id, source, receiver, kinds) => {
+    if (await record({ request: "move", pages: [source[1], receiver[1]], kinds })) return refusedMove();
+    write(source[0], source[1], source[2], id);
+    write(receiver[0], receiver[1], receiver[2], id);
+    return null;
+  });
+  const disk = (count = Infinity) => {
+    const state = new Map(initial.map((p) => [p.name, p.blocks.map((b) => b.raw)]));
+    for (const entry of log.filter((request) => !request.refused).slice(0, count))
+      for (const dto of entry.pages) state.set(dto.name, raws(dto));
+    return Object.fromEntries(state);
+  };
+  return { log, submit, move, control, disk };
 }
 
 beforeAll(() => initParser());
 beforeEach(() => { serial = 0; resetStore(); setToasts([]); });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); resetStore(); });
 
-describe("save groups", () => {
-  it("carries distinct edit kinds in first-seen order through one debounced save", async () => {
+/** Load `pages`, bind the window and put the test host over their files. */
+async function load(pages: Loaded[]) {
+  loadFeed(pages);
+  const host = await bindTestHost();
+  return { host, ...hostRequests(host, pages) };
+}
+
+describe("multi-page edits on the page host", () => {
+  it("carries distinct edit kinds in first-seen order through one debounced send", async () => {
     const root = block("initial");
-    loadFeed([{ ...page("A", []), blocks: [root] }]);
-    const { requests } = diskBackend({ A: ["initial"] });
+    const { log } = await load([{ ...page("A", []), blocks: [root] }]);
     setRaw(root.id, "first");
     insertEmptyChildBlock(root.id, 0);
     setRaw(root.id, "second");
     expect(await flushPage("A")).toBe(true);
-    expect(requests[0][0].kinds).toEqual(["save-block", "insert-blocks"]);
+    expect(log.map((request) => request.kinds)).toEqual([["save-block", "insert-blocks"]]);
     setRaw(root.id, "third");
     expect(await flushPage("A")).toBe(true);
-    expect(requests[1][0].kinds).toEqual(["save-block"]);
-  });
-  it("B1: choosing disk for a conflicted destination releases its source without removing the disk copy", async () => {
-    const moved = block("X");
-    loadFeed([page("A", []), { ...page("B", []), blocks: [moved] }]);
-    const { disk, save } = diskBackend({ A: [], B: ["X"] });
-    save.mockResolvedValue({ failed: { index: 0, family: "conflict", undoFailed: [] } });
-    await moveBlock(moved.id, null, 0, "A");
-    expect(await flushAll()).toBe(false);
-    expect(isConflicted("A")).toBe(true);
-    vi.spyOn(backend(), "getPage").mockResolvedValue(page("A", []));
-    expect(await resolveConflict("A", "disk")).toBe(true);
-    expect(conflictReason("B")).toEqual({ kind: "released", partner: "A" });
-    expect(disk.get("B")).toContain("X");
-    expect(disk.get("A")).not.toContain("X");
-    expect(memory("B")).not.toContain("X");
+    expect(log[1].kinds).toEqual(["save-block"]);
   });
 
-  it("B2: keeping a conflicted source writes the destination in the same request", async () => {
+  // The second move starts while the first is in flight, on its endpoint B.
+  // STEP3 §8: endpoints are read-only during a sequence, so the window may
+  // refuse the second move or run it after the first; either way the display
+  // ends equal to the files, and the block is in some page at every crash
+  // prefix and in exactly one at the end.
+  it("B3/N2: chained moves keep the block in exactly one page, the display matching the files", async () => {
     const moved = block("X");
-    loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", [])]);
-    const { disk, save } = diskBackend({ A: ["X"], B: [] });
-    save.mockResolvedValueOnce({ failed: { index: 1, family: "conflict", undoFailed: [] } });
-    await moveBlock(moved.id, null, 0, "B");
-    expect(await flushPage("B")).toBe(false);
-    expect(isConflicted("A")).toBe(true);
-    expect(await resolveConflict("A", "mine")).toBe(true);
-    expect(save.mock.calls.at(-1)![0].map((entry) => entry.page.name)).toEqual(["B", "A"]);
-    expect(save.mock.calls.at(-1)![0][1].force).toBe(false);
-    expect(save.mock.calls.at(-1)![0][1].baseRev).toBe("initial-A");
-    expect(save.mock.calls.at(-1)![0][1].kinds).toContain("replace-page");
-    expect(disk.get("B")).toContain("X");
-    expect(disk.get("A")).not.toContain("X");
-  });
-
-  it("B3/N2: chained moves merge and order C, B, A; every crash prefix retains X", async () => {
-    const moved = block("X");
-    loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", []), page("C", [])]);
-    const { requests } = diskBackend({ A: ["X"], B: [], C: [] });
+    const { log, disk } = await load([{ ...page("A", []), blocks: [moved] }, page("B", []), page("C", [])]);
     await moveBlock(moved.id, null, 0, "B");
     await moveBlock(moved.id, null, 0, "C");
-    expect(group("A")).toBe(group("C"));
     expect(await flushAll()).toBe(true);
-    expect(requests).toHaveLength(1);
-    expect(requests[0].map((entry) => entry.page.name)).toEqual(["C", "B", "A"]);
-    for (let count = 0; count <= 3; count++) {
-      const crashDisk = new Map([["A", ["X"]], ["B", [] as string[]], ["C", [] as string[]]]);
-      for (const entry of requests[0].slice(0, count)) crashDisk.set(entry.page.name, entry.page.blocks.map((b) => b.raw));
-      expect([...crashDisk.values()].flat()).toContain("X");
+    await vi.waitFor(() => expect(log.filter((request) => !request.refused).length).toBeGreaterThanOrEqual(1));
+    await vi.waitFor(() => expect({ A: memory("A"), B: memory("B"), C: memory("C") }).toEqual(disk()));
+    expect(log.every((request) => request.request === "move")).toBe(true);
+    for (let count = 0; count <= log.length; count++) expect(Object.values(disk(count)).flat()).toContain("X");
+    expect(Object.values(disk()).flat().filter((raw) => raw === "X")).toHaveLength(1);
+    expect(disk().A).toEqual([]);
+  });
+
+  it("S1: a single send in flight finishes before the move snapshots that page", async () => {
+    const moved = block("X");
+    const { log, control, disk } = await load([{ ...page("A", []), blocks: [moved] }, page("B", [])]);
+    const prior = deferred<void>();
+    control.hold = prior.promise;
+    setRaw(moved.id, "X edited");
+    const first = flushPage("A");
+    await vi.waitFor(() => expect(log).toHaveLength(1));
+    const moving = moveBlock(moved.id, null, 0, "B");
+    await Promise.resolve();
+    expect(log).toHaveLength(1);
+    prior.resolve();
+    expect(await first).toBe(true);
+    await moving;
+    expect(await flushAll()).toBe(true);
+    await vi.waitFor(() => expect(log).toHaveLength(2));
+    expect(log.map((request) => request.request)).toEqual(["submit", "move"]);
+    const [source, receiver] = log[1].pages;
+    expect([source.name, raws(source)]).toEqual(["A", []]);
+    expect([receiver.name, raws(receiver)]).toEqual(["B", ["X edited"]]);
+    expect(disk()).toEqual({ A: [], B: ["X edited"] });
+  });
+
+  // STEP3 §8 step 1: a move's endpoints are read-only while it runs, so "no
+  // ordinary input exists to lose". Whether the window refuses the edit or
+  // sends it after the move, it is never silently dropped.
+  it("X3: an edit typed on an endpoint while its move is in flight is refused or saved, never dropped", async () => {
+    const moved = block("X"), keeper = block("keeper");
+    const { log, control, disk } = await load([{ ...page("A", []), blocks: [moved, keeper] }, page("B", [])]);
+    const pending = deferred<void>();
+    control.hold = pending.promise;
+    const moving = moveBlock(moved.id, null, 0, "B");
+    await vi.waitFor(() => expect(log).toHaveLength(1));
+    setRaw(keeper.id, "later");
+    const accepted = memory("A").includes("later");
+    pending.resolve();
+    await moving;
+    expect(await flushAll()).toBe(true);
+    expect(disk().B).toEqual(["X"]);
+    if (accepted) {
+      expect(memory("A"), "an accepted edit on a move endpoint stays on screen").toEqual(["later"]);
+      expect(disk().A, "an accepted edit on a move endpoint reaches the file").toEqual(["later"]);
+    } else {
+      expect(disk().A).toEqual(["keeper"]);
     }
   });
 
-  it("S1: a preexisting single save finishes before the group snapshots that page", async () => {
+  it("X1/X2/N3: an undo during an in-flight move waits, and the later undo moves the block back in one request", async () => {
     const moved = block("X");
-    loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", [])]);
-    const prior = deferred<SavePagesResult>();
-    const save = vi.spyOn(backend(), "savePages").mockImplementationOnce(() => prior.promise)
-      .mockImplementation(async (entries) => ({ ok: entries.map(() => "group-rev") }));
-    setRaw(moved.id, "X edited");
-    const first = flushPage("A");
-    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
-    await moveBlock(moved.id, null, 0, "B");
-    const all = flushAll();
-    expect(save).toHaveBeenCalledTimes(1);
-    prior.resolve({ ok: ["prior-rev"] });
-    expect(await first).toBe(true);
-    expect(await all).toBe(true);
-    expect(save.mock.calls[1][0].find((entry) => entry.page.name === "A")?.baseRev).toBe("prior-rev");
-    expect(save.mock.calls[1][0].map((entry) => entry.page.name)).toEqual(["B", "A"]);
-  });
-
-  it("S1: a queued single save defers at snapshot after its page joins a group", async () => {
-    const moved = block("X");
-    loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", [])]);
-    const prior = deferred<SavePagesResult>();
-    const save = vi.spyOn(backend(), "savePages").mockImplementationOnce(() => prior.promise)
-      .mockImplementation(async (entries) => ({ ok: entries.map(() => "rev") }));
-    setRaw(moved.id, "X edited");
-    const first = flushPage("A");
-    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
-    setRaw(moved.id, "X latest");
-    const queued = flushPage("A");
-    await moveBlock(moved.id, null, 0, "B");
-    const grouped = flushPage("B");
-    prior.resolve({ ok: ["prior-rev"] });
-    expect(await first).toBe(true);
-    expect(await grouped).toBe(true);
-    expect(await queued).toBe(true);
-    expect(save).toHaveBeenCalledTimes(2);
-    expect(save.mock.calls[1][0].map((entry) => entry.page.name)).toEqual(["B", "A"]);
-    expect(save.mock.calls[1][0][0].page.blocks.map((b) => b.raw)).toContain("X latest");
-  });
-
-  it("S2: recovery locations conflict their member; repeated conflicts all members with one toast", async () => {
-    const moved = block("X");
-    loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", [])]);
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ failed: { index: 0, family: "io", undoFailed: ["pages/A.md"] } });
-    await moveBlock(moved.id, null, 0, "B");
-    expect(await flushPage("B")).toBe(false);
-    expect(isConflicted("A")).toBe(true);
-    resetStore(); setToasts([]);
-    loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", [])]);
-    save.mockResolvedValue({ failed: { index: 0, family: "publication-incomplete", undoFailed: [], publicationErrors: ["pages/A.md"] } });
-    await moveBlock(moved.id, null, 0, "B");
-    expect(await flushPage("B")).toBe(false);
-    expect(isConflicted("A")).toBe(true);
-    expect(toasts().some((toast) => toast.message.includes("pages/A.md"))).toBe(true);
-    resetStore(); setToasts([]);
-    loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", [])]);
-    save.mockResolvedValue({ failed: { index: 0, family: "repeated", undoFailed: [] } });
-    await moveBlock(moved.id, null, 0, "B");
-    expect(await flushPage("B")).toBe(false);
-    expect(conflictReason("A")?.kind).toBe("repeated");
-    expect(conflictReason("B")?.kind).toBe("repeated");
-    expect(toasts().filter((toast) => toast.kind === "error")).toHaveLength(1);
-  });
-
-  it("P4/F1: waiting pages are listed and two mine decisions produce one request", async () => {
-    loadFeed([page("A", ["a"]), page("B", ["b"])]);
-    const { save } = diskBackend({ A: ["a"], B: ["b"] });
-    markConflict("A"); markConflict("B");
-    void persistTogether(["A", "B"], "move-blocks");
-    expect(waitingOn("A")).toEqual([]);
-    expect(await resolveConflict("A", "mine")).toBe(true);
-    expect(save).not.toHaveBeenCalled();
-    expect(await resolveConflict("B", "mine")).toBe(true);
-    expect(save).toHaveBeenCalledTimes(1);
-    expect(save.mock.calls[0][0].map((entry) => entry.force)).toEqual([false, false]);
-  });
-
-  it("P4: a conflicted member lists the pages waiting on it", () => {
-    loadFeed([page("A", ["a"]), page("B", ["b"]), page("C", ["c"])]);
-    void persistTogether(["A", "B", "C"], "move-blocks");
-    markConflict("A");
-    expect(waitingOn("A")).toEqual(["B", "C"]);
-  });
-
-  it("X3/X4: an edit during a request lands later and an external conflict remains visible", async () => {
-    const moved = block("X"), keeper = block("keeper");
-    loadFeed([{ ...page("A", []), blocks: [moved, keeper] }, page("B", [])]);
-    const pending = deferred<SavePagesResult>();
-    const { save, disk } = diskBackend({ A: ["X", "keeper"], B: [] });
-    save.mockImplementationOnce(() => pending.promise);
-    await moveBlock(moved.id, null, 0, "B");
-    const first = flushPage("B");
-    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
-    setRaw(keeper.id, "later");
-    markConflict("B");
-    pending.resolve({ ok: ["first-b", "first-a"] });
-    expect(await first).toBe(true);
-    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
-    expect(save.mock.calls[1][0]).toHaveLength(1);
-    expect(save.mock.calls[1][0][0].page.blocks.map((b) => b.raw)).toEqual(["later"]);
-    expect(disk.get("A")).toEqual(["later"]);
-    expect(isConflicted("B")).toBe(true);
-  });
-
-  it("X1/X2/N3: an undo during an in-flight move remains grouped after the first request", async () => {
-    const moved = block("X");
-    loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", [])]);
-    const pending = deferred<SavePagesResult>();
-    const { save } = diskBackend({ A: ["X"], B: [] });
-    save.mockImplementationOnce(() => pending.promise);
-    await moveBlock(moved.id, null, 0, "B");
-    const first = flushPage("B");
-    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
-    undo();
-    expect(group("A")?.state).toBe("open");
-    const all = flushAll();
-    pending.resolve({ ok: ["first-b", "first-a"] });
-    expect(await first).toBe(true);
-    expect(await all).toBe(true);
-    expect(save.mock.calls[1][0]).toHaveLength(2);
-    expect(save.mock.calls[1][0].map((entry) => entry.page.name)).toEqual(["A", "B"]);
-    expect(memory("A")).toContain("X");
+    const { log, control, disk } = await load([{ ...page("A", []), blocks: [moved] }, page("B", [])]);
+    const pending = deferred<void>();
+    control.hold = pending.promise;
+    const moving = moveBlock(moved.id, null, 0, "B");
+    await vi.waitFor(() => expect(log).toHaveLength(1));
+    expect(undo()).toBe(false);
+    pending.resolve();
+    await moving;
+    expect(await flushAll()).toBe(true);
+    await vi.waitFor(() => expect(memory("B")).toEqual(["X"]));
+    expect(undo()).toBe(true);
+    await vi.waitFor(() => expect(log).toHaveLength(2));
+    expect(await flushAll()).toBe(true);
+    expect(log.map((request) => request.request)).toEqual(["move", "move"]);
+    expect(log[1].pages.map((dto) => [dto.name, raws(dto)]).sort()).toEqual([["A", ["X"]], ["B", []]]);
+    expect(disk()).toEqual({ A: ["X"], B: [] });
+    await vi.waitFor(() => expect(memory("A")).toEqual(["X"]));
   });
 
   // master 0.6.984 "Undoing a move between pages can no longer lose the moved
-  // blocks": og replays a multi-page undo as one save group, so the page that
-  // regains the blocks and the page that loses them land in one guarded request
-  // or not at all (og 20b, contract 4).
+  // blocks": the page that regains the blocks and the page that loses them land
+  // in one host request or not at all (og 20b, contract 4).
   it("undo of a landed cross-page move writes both pages in one request, and a refusal writes neither", async () => {
     const moved = block("X");
-    loadFeed([{ ...page("A", ["a"]), blocks: [moved, block("a")] }, page("B", ["b"])]);
-    const { disk, save } = diskBackend({ A: ["X", "a"], B: ["b"] });
+    const { log, control, disk } = await load([{ ...page("A", []), blocks: [moved, block("a")] }, page("B", ["b"])]);
     await moveBlock(moved.id, null, 0, "B");
     expect(await flushAll()).toBe(true);
-    expect(disk.get("A")).toEqual(["a"]);
-    expect(disk.get("B")).toEqual(["X", "b"]);
+    await vi.waitFor(() => expect(disk()).toEqual({ A: ["a"], B: ["X", "b"] }));
 
-    save.mockResolvedValueOnce({ failed: { index: 0, family: "conflict", undoFailed: [] } });
-    undo();
-    expect(group("A")).toBeTruthy();
-    await flushAll();
-    const refused = save.mock.calls.at(-1)![0];
-    expect(refused.map((entry) => entry.page.name).sort()).toEqual(["A", "B"]);
-    // Refused as a whole: the blocks are still in B on disk and in A in memory.
-    expect(disk.get("A")).toEqual(["a"]);
-    expect(disk.get("B")).toEqual(["X", "b"]);
-    expect(memory("A")).toEqual(["X", "a"]);
-    expect(isConflicted("A") || isConflicted("B")).toBe(true);
+    control.refuse = (request) => request.request === "move";
+    expect(undo()).toBe(true);
+    await vi.waitFor(() => expect(toasts().some((t) => t.message.startsWith("The move did not happen"))).toBe(true));
+    const refused = log.at(-1)!;
+    expect(refused).toMatchObject({ request: "move", refused: true });
+    expect(refused.pages.map((dto) => [dto.name, raws(dto)]).sort()).toEqual([["A", ["X", "a"]], ["B", ["b"]]]);
+    // Refused as a whole: the files are as the first move left them, and the
+    // display shows them (the block is in B, not lost).
+    expect(disk()).toEqual({ A: ["a"], B: ["X", "b"] });
+    expect(memory("A")).toEqual(["a"]);
+    expect(memory("B")).toEqual(["X", "b"]);
   });
 
-  it("X1: a new intent during a sealed request saves in a successor group", async () => {
-    const moved = block("X");
-    loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", []), page("C", [])]);
-    const pending = deferred<SavePagesResult>();
-    const { save } = diskBackend({ A: ["X"], B: [], C: [] });
-    save.mockImplementationOnce(() => pending.promise);
-    await moveBlock(moved.id, null, 0, "B");
-    const first = flushPage("B");
-    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
-    await moveBlock(moved.id, null, 0, "C");
-    expect(group("B")?.state).toBe("open");
-    const all = flushAll();
-    pending.resolve({ ok: ["b-rev", "a-rev"] });
-    expect(await first).toBe(true);
-    expect(await all).toBe(true);
-    expect(save.mock.calls[1][0].map((entry) => entry.page.name)).toEqual(["C", "B"]);
-    expect(isConflicted("B")).toBe(false);
-  });
-
-  it("seal point: a failed predecessor merges into its open successor before sealing", async () => {
-    const moved = block("X");
-    loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", []), page("C", [])]);
-    const pending = deferred<SavePagesResult>();
-    const { save } = diskBackend({ A: ["X"], B: [], C: [] });
-    save.mockImplementationOnce(() => pending.promise);
-    await moveBlock(moved.id, null, 0, "B");
-    const first = flushPage("B");
-    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
-    await moveBlock(moved.id, null, 0, "C");
-    const later = flushPage("C");
-    pending.resolve({ failed: { index: 0, family: "conflict", undoFailed: [] } });
-    expect(await first).toBe(false);
-    expect(await later).toBe(false);
-    expect(group("A")).toBe(group("C"));
-    expect(group("C")?.state).toBe("open");
-    expect(await resolveConflict("B", "mine")).toBe(true);
-    expect(save.mock.calls[1][0].map((entry) => entry.page.name)).toEqual(["C", "B", "A"]);
-  });
-
-  it("S3: carry to a pathless today creates today in its grouped request", async () => {
+  it("S3: carry to a pathless today creates today in its move", async () => {
     const today = journalTitle(new Date()), old = "2026-09-20";
-    loadFeed([
+    const { log } = await load([
       { ...page(today, []), kind: "journal", id: undefined, rev: undefined },
       { ...page(old, ["TODO X"]), kind: "journal" },
     ]);
-    const resolve = vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: `journals/${today}.md` });
-    const { save } = diskBackend({ [today]: [], [old]: ["TODO X"] });
-    expect(carryUnfinished([old], false, null)).toBe(1);
-    expect(await flushPage(today)).toBe(true);
-    expect(resolve).toHaveBeenCalledWith(today, "journal");
-    expect(save.mock.calls[0][0].map((entry) => entry.page.name)).toEqual([today, old]);
-    expect(save.mock.calls[0][0][0].baseRev).toBeNull();
+    const open = vi.mocked(backend().pageOpen);
+    expect(carryUnfinished([old], false, null).moved).toBe(1);
+    expect(await flushAll()).toBe(true);
+    await vi.waitFor(() => expect(log).toHaveLength(1));
+    // Today has no file yet: the host resolves its name at open (path null).
+    expect(open.mock.calls.some((call) => call[2].name === today && call[2].path === null)).toBe(true);
+    expect(log.map((request) => request.request)).toEqual(["move"]);
+    expect(log[0].pages.map((dto) => [dto.name, raws(dto)])).toEqual([[old, []], [today, ["TODO X"]]]);
+    expect(memory(today)).toEqual(["TODO X"]);
   });
 
-  it("R2: a failed carry followed by disk choice keeps the task on its source disk", async () => {
+  it("R2: a refused carry keeps the task on its source", async () => {
     const today = journalTitle(new Date()), old = "2026-09-20";
-    loadFeed([{ ...page(today, []), kind: "journal" }, { ...page(old, ["TODO X", "keeper"]), kind: "journal" }]);
-    const { disk, save } = diskBackend({ [today]: [], [old]: ["TODO X", "keeper"] });
-    save.mockResolvedValue({ failed: { index: 0, family: "conflict", undoFailed: [] } });
-    expect(carryUnfinished([old], false, null)).toBe(1);
-    expect(await flushPage(today)).toBe(false);
-    setRaw(pageByName(old)!.roots[0], "edited");
-    vi.spyOn(backend(), "getPage").mockResolvedValue({ ...page(today, []), kind: "journal" });
-    expect(await resolveConflict(today, "disk")).toBe(true);
-    expect(disk.get(old)).toContain("TODO X");
-    expect(conflictReason(old)).toEqual({ kind: "released", partner: today });
+    const { log, control, disk } = await load([{ ...page(today, []), kind: "journal" },
+      { ...page(old, ["TODO X", "keeper"]), kind: "journal" }]);
+    control.refuse = (request) => request.request === "move";
+    expect(carryUnfinished([old], false, null).moved).toBe(1);
+    await vi.waitFor(() => expect(toasts().some((t) => t.message.startsWith("The move did not happen"))).toBe(true));
+    expect(log).toHaveLength(1);
+    expect(disk()).toEqual({ [today]: [], [old]: ["TODO X", "keeper"] });
+    expect(memory(old)).toEqual(["TODO X", "keeper"]);
+    expect(memory(today)).toEqual([]);
   });
 
   it("P2: a conflicted destination refuses a move before memory changes", async () => {
-    const moved = block("X");
-    loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", [])]);
-    markConflict("B");
-    const save = vi.spyOn(backend(), "savePages");
+    const moved = block("X"), there = block("b");
+    const { host, log } = await load([{ ...page("A", []), blocks: [moved] }, { ...page("B", []), blocks: [there] }]);
+    // The user is editing B (the window holds it) when the host finds B's file
+    // changed under the user's text.
+    startEditing(there.id);
+    setRaw(there.id, "b typed");
+    await vi.waitFor(() => expect(log).toHaveLength(1));
+    host.notice("pages/B.md", { conflictReported: true }, { version: 9, conflict: true, risk: true, disk: { kind: "file", rev: "ext" } });
+    await vi.waitFor(() => expect(isConflicted("B")).toBe(true));
     await moveBlock(moved.id, null, 0, "B");
-    expect(memory("A")).toContain("X");
-    expect(memory("B")).not.toContain("X");
-    expect(save).not.toHaveBeenCalled();
+    expect(memory("A")).toEqual(["X"]);
+    expect(memory("B")).toEqual(["b typed"]);
+    expect(await flushPage("A")).toBe(true);
+    expect(log).toHaveLength(1);
     expect(toasts().some((toast) => toast.message === "Resolve the conflict on “B” first.")).toBe(true);
   });
 
-  it("N1: both members of one debounced group finish with one request", async () => {
-    vi.useFakeTimers();
-    try {
-      loadFeed([page("A", ["a"]), page("B", ["b"])]);
-      const { save } = diskBackend({ A: ["a"], B: ["b"] });
-      const settled = persistTogether(["A", "B"], "move-blocks");
-      await vi.advanceTimersByTimeAsync(400);
-      expect(await settled).toBe(true);
-      expect(save).toHaveBeenCalledTimes(1);
-      expect(save.mock.calls[0][0]).toHaveLength(2);
-    } finally { vi.useRealTimers(); }
-  });
-
-  it("F3: a group member stays loaded while its request is in flight", async () => {
-    loadFeed([page("View", [])]);
-    ensurePageLoaded(page("A", ["a"]));
-    ensurePageLoaded(page("B", ["b"]));
-    const pending = deferred<SavePagesResult>();
-    const save = vi.spyOn(backend(), "savePages").mockImplementation(() => pending.promise);
-    void persistTogether(["A", "B"], "move-blocks");
+  it("F3: a page whose request is in flight stays loaded", async () => {
+    const pages = [page("View", []), page("A", ["a"]), page("B", ["b"])];
+    loadFeed([pages[0]]);
+    ensurePageLoaded(pages[1]);
+    ensurePageLoaded(pages[2]);
+    const host = await bindTestHost();
+    const { log, control } = hostRequests(host, pages);
+    const pending = deferred<void>();
+    control.hold = pending.promise;
+    setRaw(pageByName("A")!.roots[0], "a edited");
+    setRaw(pageByName("B")!.roots[0], "b edited");
     const first = flushPage("A");
-    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(log).toHaveLength(1));
     for (let i = 0; i < 85; i++) ensurePageLoaded(page(`Extra ${i}`, []));
-    expect(pageByName("A")).toBeTruthy();
-    expect(pageByName("B")).toBeTruthy();
-    pending.resolve({ ok: ["a-rev", "b-rev"] });
+    expect(memory("A")).toEqual(["a edited"]);
+    expect(memory("B")).toEqual(["b edited"]);
+    pending.resolve();
     expect(await first).toBe(true);
+    expect(await flushAll()).toBe(true);
   });
 
-  it("P1: deleting a grouped destination first lands the whole group", async () => {
-    const moved = block("X");
-    loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", [])]);
-    const save = vi.spyOn(backend(), "savePages");
-    vi.spyOn(backend(), "deletePage").mockResolvedValue(undefined);
-    await moveBlock(moved.id, null, 0, "B");
-    expect(await deletePage("B", "page")).toBe(true);
-    expect(save).toHaveBeenCalledTimes(1);
-    expect(save.mock.calls[0][0].map((entry) => entry.page.name)).toEqual(["B", "A"]);
-    expect(conflictReason("A")).toBeUndefined();
-  });
-
-  it("F4: a grouped page cannot be replaced by a later path-pinned load", async () => {
-    loadFeed([page("A", ["local"], "pages/original.md"), page("B", ["b"])]);
-    void persistTogether(["A", "B"], "move-blocks");
+  it("F4: a page with unsent input cannot be replaced by a later path-pinned load", async () => {
+    await load([page("A", ["local"], "pages/original.md"), page("B", ["b"])]);
+    setRaw(pageByName("A")!.roots[0], "local edited");
     ensurePageLoaded(page("A", ["stray"], "pages/stray.md"));
     expect(pageByName("A")?.id).toBe("pages/original.md");
-    expect(memory("A")).toEqual(["local"]);
-    resetStore();
-    expect(group("A")).toBeUndefined();
+    expect(memory("A")).toEqual(["local edited"]);
   });
 
-  it("R7: a pathless alias whose loaded owner is busy stays conflicted without a write", async () => {
-    loadFeed([{ ...page("Draft", ["X"]), id: undefined, rev: undefined }, page("Other", ["other"]), page("Owner", ["owner"])]);
-    vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "alias", owners: ["pages/Owner.md"] });
-    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(page("Owner", ["owner"]));
-    const save = vi.spyOn(backend(), "savePages");
+  it("R7: an alias draft whose loaded owner has unsent input lands after that input, keeping it", async () => {
+    const owner = page("Owner", ["owner"]);
+    const api = backend();
+    vi.spyOn(api, "getPageByPath").mockResolvedValue(owner);
+    const { log } = await load([{ ...page("Draft", ["X"]), id: undefined, rev: undefined }, owner]);
+    const open = vi.mocked(api.pageOpen).getMockImplementation()!;
+    vi.mocked(api.pageOpen).mockImplementation(async (session, id, target) =>
+      target.name === "Draft" && target.path === null ? { reason: "alias" as const, owners: ["pages/Owner.md"] } : open(session, id, target));
     setRaw(pageByName("Owner")!.roots[0], "owner edited");
-    void persistTogether(["Draft", "Other"], "move-blocks");
-    expect(await flushPage("Draft")).toBe(false);
-    expect(conflictReason("Draft")?.kind).toBe("alias-owner-busy");
-    expect(save).not.toHaveBeenCalled();
+    setRaw(pageByName("Draft")!.roots[0], "X typed");
+    await vi.waitFor(() => expect(pageByName("Draft")).toBeUndefined(), { timeout: 2000 });
+    const texts = log.filter((request) => request.pages[0].name === "Owner").map((request) => raws(request.pages[0]));
+    expect(texts.at(-1)).toEqual(["owner edited", "X typed"]);
+    expect(texts.every((text) => text[0] === "owner edited")).toBe(true);
   });
 
-  it("Keep mine on an alias draft refuses an owner revision newer than the banner", async () => {
-    loadFeed([{ ...page("Draft", ["draft"]), id: undefined, rev: undefined }, page("Other", ["other"])]);
-    const draft = pageByName("Draft")!.roots[0];
-    setRaw(draft, "my draft");
-    vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "alias", owners: ["pages/Owner.md"] });
-    let ownerRev = "seen";
-    vi.spyOn(backend(), "getPageByPath").mockImplementation(async () => ({
-      ...page("Owner", ["owner"]), rev: ownerRev,
-    }));
-    const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => {
-      const baseline = entries.find((entry) => entry.page.name === "Owner")?.baseRev;
-      if (save.mock.calls.length > 1 && baseline === ownerRev) return { ok: entries.map(() => "clobbered") };
-      return { failed: { index: 0, family: "conflict", diskRev: ownerRev, undoFailed: [] } };
-    });
-    void persistTogether(["Draft", "Other"], "move-blocks");
-    expect(await flushPage("Draft")).toBe(false);
-    ownerRev = "newer";
-    expect(await resolveConflict("Draft", "mine")).toBe(false);
-    expect(save.mock.calls[1][0].find((entry) => entry.page.name === "Owner")?.baseRev).toBe("seen");
-    expect(isConflicted("Draft")).toBe(true);
-  });
-
-  it("P3: cycle and delete selection across pages each use one group", async () => {
+  it("P3: cycle and delete selection across pages send one request per page", async () => {
     const a = block("TODO A"), b = block("TODO B");
-    loadFeed([{ ...page("A", []), blocks: [a] }, { ...page("B", []), blocks: [b] }]);
-    const { save } = diskBackend({ A: ["TODO A"], B: ["TODO B"] });
+    const { log } = await load([{ ...page("A", []), blocks: [a] }, { ...page("B", []), blocks: [b] }]);
     selectBlock(a.id);
     extendSelectionTo(b.id);
     expect(cycleSelectionTasks()).toBe(true);
     expect(await flushAll()).toBe(true);
-    expect(save.mock.calls[0][0]).toHaveLength(2);
+    expect(log.map((request) => [request.request, request.pages[0].name]).sort()).toEqual([["submit", "A"], ["submit", "B"]]);
     deleteSelection();
     expect(await flushAll()).toBe(true);
-    expect(save.mock.calls[1][0]).toHaveLength(2);
+    expect(log.slice(2).map((request) => [request.request, request.pages[0].name]).sort()).toEqual([["submit", "A"], ["submit", "B"]]);
   });
 
   it("unit cost: measures page bytes and request count for 1 and 60 block drag and carry", async () => {
+    const bytes = (dtos: PageDto[]) => dtos.reduce((sum, dto) => sum + new TextEncoder().encode(JSON.stringify(dto)).length, 0);
     for (const count of [1, 60]) for (const intent of ["drag", "carry"] as const) {
       resetStore(); vi.restoreAllMocks(); serial = 0;
-      let destination: string;
-      if (intent === "drag") {
-        destination = "B";
-        const sourceBlocks = Array.from({ length: count }, (_, i) => block(`source ${i}`));
-        const destBlocks = Array.from({ length: count }, (_, i) => block(`destination ${i}`));
-        loadFeed([{ ...page("A", []), blocks: sourceBlocks }, { ...page("B", []), blocks: destBlocks }]);
-        const { save } = diskBackend({});
-        await moveBlock(sourceBlocks[0].id, null, 0, "B");
-        expect(await flushPage("B")).toBe(true);
-        const entries = save.mock.calls[0][0];
-        const bytes = entries.reduce((sum, entry) => sum + new TextEncoder().encode(JSON.stringify(entry.page)).length, 0);
-        expect(save).toHaveBeenCalledTimes(1);
-        expect(entries).toHaveLength(2);
-        console.info(`save-groups unit cost ${intent} ${count} blocks: before=${bytes} page bytes/2 requests; after=${bytes} page bytes/1 request`);
-      } else {
-        destination = journalTitle(new Date());
-        const old = "2026-09-20";
-        const sourceBlocks = Array.from({ length: count }, (_, i) => block(i === 0 ? "TODO X" : `source ${i}`));
-        const destBlocks = Array.from({ length: count }, (_, i) => block(`today ${i}`));
-        loadFeed([{ ...page(destination, []), kind: "journal", blocks: destBlocks }, { ...page(old, []), kind: "journal", blocks: sourceBlocks }]);
-        const { save } = diskBackend({});
-        expect(carryUnfinished([old], false, null)).toBe(1);
-        expect(await flushPage(destination)).toBe(true);
-        const entries = save.mock.calls[0][0];
-        const bytes = entries.reduce((sum, entry) => sum + new TextEncoder().encode(JSON.stringify(entry.page)).length, 0);
-        expect(save).toHaveBeenCalledTimes(1);
-        expect(entries).toHaveLength(2);
-        console.info(`save-groups unit cost ${intent} ${count} blocks: before=${bytes} page bytes/2 requests; after=${bytes} page bytes/1 request`);
-      }
+      const many = (prefix: string, first = prefix) => Array.from({ length: count }, (_, i) => block(i === 0 ? first : `${prefix} ${i}`));
+      const today = journalTitle(new Date()), old = "2026-09-20";
+      const source = many("source", intent === "carry" ? "TODO X" : "source");
+      const { log } = intent === "drag"
+        ? await load([{ ...page("A", []), blocks: source }, { ...page("B", []), blocks: many("destination") }])
+        : await load([{ ...page(today, []), kind: "journal", blocks: many("today") }, { ...page(old, []), kind: "journal", blocks: source }]);
+      if (intent === "drag") await moveBlock(source[0].id, null, 0, "B");
+      else expect(carryUnfinished([old], false, null).moved).toBe(1);
+      expect(await flushAll()).toBe(true);
+      await vi.waitFor(() => expect(log).toHaveLength(1));
+      expect(log.map((request) => request.request)).toEqual(["move"]);
+      console.info(`page-host unit cost ${intent} ${count} blocks: ${bytes(log[0].pages)} page bytes in 1 move request (2 pages)`);
     }
   });
 });

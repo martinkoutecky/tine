@@ -1,6 +1,6 @@
 //! I-22 (og C3 L03): a property value is reparsed for its references. That
 //! reparse called raw `lsdoc::parse_format`, bypassing the depth-bounded
-//! block-parse boundary (`crates/lsdoc-block-parse.rs`), and walked/dropped
+//! block-parse boundary (`crates/tine-outline/src/lsdoc_block_parse.rs`), and walked/dropped
 //! the tree recursively. A synced or imported `foo:: >>>>…` (≥5000 `>`)
 //! builds a ~2500-deep quote staircase and aborted the process as soon as the
 //! query index was built (first backlinks/search/query) — on every launch.
@@ -22,6 +22,7 @@ fn run_small_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
 
 #[test]
 fn a_deep_property_value_does_not_abort_the_index_build() {
+    let _integration_guard = crate::integration_lock();
     let dir: PathBuf =
         std::env::temp_dir().join(format!("tine-i22-prop-depth-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

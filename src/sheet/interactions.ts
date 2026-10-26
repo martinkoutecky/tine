@@ -1,3 +1,4 @@
+import type { HidePolicy } from "../editor/properties";
 import { editorOffsetFromRenderedRange } from "../render/spans";
 import { openSheetCellContextMenu } from "../ui";
 
@@ -7,7 +8,7 @@ export function displayLimitThrough(row: number, visible: number, total: number,
 }
 
 /** Browser caret-to-source mapping; caller supplies its hidden-property policy. */
-export function sheetClickOffset(e: MouseEvent, content: HTMLDivElement | undefined, raw: string, hidden: (key: string) => boolean): number | null {
+export function sheetClickOffset(e: MouseEvent, content: HTMLDivElement | undefined, raw: string, hidden: HidePolicy): number | null {
   if (!content) return null;
   const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
   const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);

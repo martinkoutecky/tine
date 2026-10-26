@@ -19,12 +19,24 @@ export interface DiagnosticReport {
 
 export type DiagnosticFrontendKind =
   | "uncaught_error" | "unhandled_rejection" | "heartbeat_delay"
-  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved" | "error_toast";
+  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved" | "error_toast" | "journal_feed";
+
+/** Closed tokens only: journal names, paths and backend error text never enter
+ * the always-on report (I-5). These describe the read/publication boundary. */
+export type JournalFeedReason =
+  | "template-deferred" | "template-stale" | "template-error" | "template-day-changed"
+  | "active-edit" | "owner-retired" | "window-unbound" | "read-stale"
+  | "day-mismatch" | "generation-changed" | "admission-stale" | "admission-refused"
+  | "feed-error" | "route-unpublished";
+
+export type JournalFeedCause = "empty-rejection" | "other-rejection";
 
 /** Why a close discarded drafts: a save failed, or saves were still running. */
 export type DiscardReason = "failed" | "still-saving";
 
 export interface DiagnosticFrontendFields {
+  journalFeedReason?: JournalFeedReason;
+  journalFeedCause?: JournalFeedCause;
   line?: number;
   column?: number;
   delayMs?: number;
@@ -43,7 +55,14 @@ export interface GpuEnv {
   /** Running from an AppImage (`$APPIMAGE` set) — its bundled GL stack is the
    *  usual culprit for a silent CPU fallback; steer the user to the deb/rpm. */
   appimage: boolean;
+  /** Running inside a Flatpak sandbox: it cannot update itself in place, so the
+   *  updater offers a manual download there. */
+  flatpak: boolean;
   packaged: boolean | null;
+  /** A portable Windows instance (`tine-data` beside the exe, GH #719): the
+   *  updater's installer would add a second, installed copy, so it updates by
+   *  download. Absent from an older backend. */
+  portable: boolean;
 }
 
 export interface BackupInfo {
@@ -75,24 +94,11 @@ export interface GraphConfigChange {
   meta: GraphMeta;
 }
 
-/** One raw graph file, as returned by `graphSourceFiles` — the input to the
- *  in-app lsdoc↔mldoc diff panel. `text` is the file's bytes exactly as on disk. */
-export interface GraphSourceFile {
-  rel: string;
-  text: string;
-  format: "md" | "org";
-  bytes: number;
-}
-
-/** The parser-comparison input: every eligible file, and `path: reason` for
- *  each file left out (unreadable, undecodable, over the size limit). */
-export interface GraphSources {
-  files: GraphSourceFile[];
-  skipped: string[];
-}
-
 export type GraphFolderPickResult =
   | { status: "picked"; path: string }
+  // Android could not resolve the selected provider folder to local files.
+  // A status survives the Rust bridge, which stringifies plugin rejections.
+  | { status: "local-folder-required"; path?: undefined }
   | { status: "permission-requested" | "permission-needed" | "cancelled" | "refused"; path?: string };
 
 export type PreparedGraphFolder =
@@ -118,6 +124,16 @@ export interface MediaCaptureResult {
   status: "ok" | "recording" | "cancelled";
   path?: string | null;
   ext?: string | null;
+}
+
+/** The desktop system tray's state after `tray_apply` (src-tauri/src/tray.rs).
+ *  `supported` is false on mobile (and the mock): the tray settings are absent.
+ *  `problem` is a fixed sentence when an icon was requested and the desktop has
+ *  no tray to show it (the options are then off for this run). */
+export interface TrayStatus {
+  supported: boolean;
+  active: boolean;
+  problem: string | null;
 }
 
 export interface KnownGraph {
@@ -147,7 +163,9 @@ export type PluginRegistryCacheLoad =
   | { kind: "unsafe"; reason: string };
 
 export type LoadGraphResult =
-  | { kind: "loaded" | "already_current"; meta: GraphMeta; binding_generation: number; config_problem?: { kind: "config-read"; message: string } | null }
+  | { kind: "loaded" | "already_current"; meta: GraphMeta; binding_generation: number; config_problem?: { kind: "config-read"; message: string } | null;
+      /** Crash-draft storage status (STEP3 §4); null with no page host. */
+      draft_status?: import("./document").DraftStatus | null }
   | { kind: "focused_existing"; window_label: string };
 
 export interface CaptureGraphBindingResult {
@@ -161,4 +179,22 @@ export interface GraphAccessInspection {
   wsl_rootfs?: boolean;
   external_assets_path: string | null;
   approved: boolean;
+}
+
+/** Typed result of `trashAsset`: `referenced` = another reference remains, file kept. */
+export type TrashAssetOutcome = "trashed" | "referenced";
+
+/** Native publication delta of a watcher event.
+ * Values are final counts for only the changed targets; zero clears a badge. */
+export interface GraphAnswersChange {
+  rev: string;
+  inventoryChanged: boolean;
+  blockRefCounts: Record<string, number>;
+}
+
+/** `graph-custom-css-changed`: an outside actor created, replaced or deleted
+ *  `logseq/custom.css`. Carries only the binding; the window re-reads it. */
+export interface CustomCssChange {
+  global?: boolean;
+  binding_generation?: number;
 }

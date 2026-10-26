@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "version": "0.8.0-beta.12",
+  "baseTag": "v0.8.0-beta.11",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "Pasting a copied link keeps its URL and inserts it at the caret, preserving surrounding text. Inline HTML formatting is retained, with links in the page's Markdown or Org format (GH #759).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH759-HTML-LINK-PASTE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH759-HTML-LINK-PASTE. Fail-before: proven. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "src/editor/htmlPaste.test.tsx",
+          "src/components/Block.multilinePaste.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Following a backlink or block reference to a highlight of a PDF that was not open yet now scrolls to that highlight, as Logseq does, instead of opening the PDF with the highlight marked but off-screen. The scroll waits for the page to finish drawing, happens once, and is dropped if you scroll yourself first (card hCAoxs).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-UNOPENED-HIGHLIGHT-SCROLL"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-PDF-UNOPENED-HIGHLIGHT-SCROLL. Fail-before: proven. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "src/components/PdfViewer.test.tsx",
+          "scripts/e2e-pdf-logseq.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Opening a PDF no longer pulls the reader back to the top of the page about a tenth of a second later: following a backlink to a highlight of a PDF that was not open yet, or scrolling right after opening one, could be undone by a leftover zoom adjustment from opening (GH #672).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH672-PDF-MOUNT-ZOOM-SETTLE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH672-PDF-MOUNT-ZOOM-SETTLE. Fail-before: proven. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "src/components/PdfViewer.test.tsx",
+          "scripts/e2e-pdf-logseq.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Editing a multiline Org block no longer adds permanent blank lines at the end of the file when autosave runs just after Shift+Enter (GH #741).",
+      "userVisible": true,
+      "regressions": [
+        "REG-ORG-AUTOSAVE-EOF-NEWLINE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-ORG-AUTOSAVE-EOF-NEWLINE. Fail-before: proven. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "crates/tine-core/src/org.rs",
+          "crates/tine-store/src/model.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Editing a Markdown block that has its own properties keeps the hidden `id::` and `collapsed::` lines in the same property group, as Logseq writes them. Before, they moved below the body text, where Logseq ignores them, so references to the block could break in Logseq (internal: REG-HIDDEN-PROPS-STAY-IN-THE-GROUP).",
+      "userVisible": true,
+      "regressions": [
+        "REG-HIDDEN-PROPS-STAY-IN-THE-GROUP"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-HIDDEN-PROPS-STAY-IN-THE-GROUP. Fail-before: proven. Gated on og and release/0.8 (Linux native journeys).",
+        "refs": [
+          "crates/tine-outline/src/editor_text.rs::tests::hidden_rows_rejoin_the_visible_property_group",
+          "src/editor/reattachProperties.test.tsx",
+          "src/components/Block.quoteCollapse.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}

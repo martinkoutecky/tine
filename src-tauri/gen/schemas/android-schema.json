@@ -459,6 +459,12 @@
           "markdownDescription": "Enables the default_window_icon command without any pre-configured scope."
         },
         {
+          "description": "Enables the exit command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:app:allow-exit",
+          "markdownDescription": "Enables the exit command without any pre-configured scope."
+        },
+        {
           "description": "Enables the fetch_data_store_identifiers command without any pre-configured scope.",
           "type": "string",
           "const": "core:app:allow-fetch-data-store-identifiers",
@@ -547,6 +553,12 @@
           "type": "string",
           "const": "core:app:deny-default-window-icon",
           "markdownDescription": "Denies the default_window_icon command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the exit command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:app:deny-exit",
+          "markdownDescription": "Denies the exit command without any pre-configured scope."
         },
         {
           "description": "Denies the fetch_data_store_identifiers command without any pre-configured scope.",
@@ -1809,6 +1821,12 @@
           "markdownDescription": "Enables the set_fullscreen command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_fullscreen_on_monitor command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:allow-set-fullscreen-on-monitor",
+          "markdownDescription": "Enables the set_fullscreen_on_monitor command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_icon command without any pre-configured scope.",
           "type": "string",
           "const": "core:window:allow-set-icon",
@@ -2277,6 +2295,12 @@
           "markdownDescription": "Denies the set_fullscreen command without any pre-configured scope."
         },
         {
+          "description": "Denies the set_fullscreen_on_monitor command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:deny-set-fullscreen-on-monitor",
+          "markdownDescription": "Denies the set_fullscreen_on_monitor command without any pre-configured scope."
+        },
+        {
           "description": "Denies the set_icon command without any pre-configured scope.",
           "type": "string",
           "const": "core:window:deny-set-icon",
@@ -2505,6 +2529,48 @@
           "markdownDescription": "Denies the save command without any pre-configured scope."
         },
         {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-registerListener`\n- `allow-removeListener`\n- `allow-showKeyboard`",
+          "type": "string",
+          "const": "native-integrations:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-registerListener`\n- `allow-removeListener`\n- `allow-showKeyboard`"
+        },
+        {
+          "description": "Enables the registerListener command without any pre-configured scope.",
+          "type": "string",
+          "const": "native-integrations:allow-registerListener",
+          "markdownDescription": "Enables the registerListener command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the removeListener command without any pre-configured scope.",
+          "type": "string",
+          "const": "native-integrations:allow-removeListener",
+          "markdownDescription": "Enables the removeListener command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the showKeyboard command without any pre-configured scope.",
+          "type": "string",
+          "const": "native-integrations:allow-showKeyboard",
+          "markdownDescription": "Enables the showKeyboard command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the registerListener command without any pre-configured scope.",
+          "type": "string",
+          "const": "native-integrations:deny-registerListener",
+          "markdownDescription": "Denies the registerListener command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the removeListener command without any pre-configured scope.",
+          "type": "string",
+          "const": "native-integrations:deny-removeListener",
+          "markdownDescription": "Denies the removeListener command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the showKeyboard command without any pre-configured scope.",
+          "type": "string",
+          "const": "native-integrations:deny-showKeyboard",
+          "markdownDescription": "Denies the showKeyboard command without any pre-configured scope."
+        },
+        {
           "description": "This permission set allows opening `mailto:`, `tel:`, `https://` and `http://` urls using their default application\nas well as reveal file in directories using default file explorer\n#### This default permission set includes:\n\n- `allow-open-url`\n- `allow-reveal-item-in-dir`\n- `allow-default-urls`",
           "type": "string",
           "const": "opener:default",
@@ -2581,6 +2647,36 @@
           "type": "string",
           "const": "process:deny-restart",
           "markdownDescription": "Denies the restart command without any pre-configured scope."
+        },
+        {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-registerListener`\n- `allow-removeListener`",
+          "type": "string",
+          "const": "safe-back:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-registerListener`\n- `allow-removeListener`"
+        },
+        {
+          "description": "Enables the registerListener command without any pre-configured scope.",
+          "type": "string",
+          "const": "safe-back:allow-registerListener",
+          "markdownDescription": "Enables the registerListener command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the removeListener command without any pre-configured scope.",
+          "type": "string",
+          "const": "safe-back:allow-removeListener",
+          "markdownDescription": "Enables the removeListener command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the registerListener command without any pre-configured scope.",
+          "type": "string",
+          "const": "safe-back:deny-registerListener",
+          "markdownDescription": "Denies the registerListener command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the removeListener command without any pre-configured scope.",
+          "type": "string",
+          "const": "safe-back:deny-removeListener",
+          "markdownDescription": "Denies the removeListener command without any pre-configured scope."
         }
       ]
     },

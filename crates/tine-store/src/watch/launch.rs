@@ -19,7 +19,7 @@ use crate::store::{ChangeKind, FileId, FileRev, LoadError};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Baseline {
     /// A stat walk when the watcher starts (a store built ready, in tests).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     Walk,
     /// The load pass's own observations, installed before the launch diff.
     FromLoad,
@@ -57,7 +57,7 @@ impl Core {
     pub(crate) fn install_walked_baseline(&self) {
         let began = Instant::now();
         let (walked, _, times) =
-            collect_with_errors(&self.dirs.read().unwrap(), &self.graph.current_config());
+            collect_with_errors(&self.graph.root, &self.graph.current_config());
         self.graph.diag.baseline(times, began.elapsed());
         {
             let mut snapshot = self.snapshot.lock().unwrap();

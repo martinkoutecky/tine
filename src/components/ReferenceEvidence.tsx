@@ -1,5 +1,10 @@
+import { t } from "../i18n";
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
-import { openPageAtBlock } from "../router";
+import { openInNewTab, openPageAtBlock } from "../router";
+import { openRouteInOtherPane } from "../panes";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
+import { openBlockInSidebar, openContextMenu } from "../ui";
+import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { focusedSurfaceOwner } from "../focusedSurface";
 import { formatForPage, resolveBlockRef, node as docNode } from "../document";
 import { startEditing, type EditorSelection } from "../editorController";
@@ -7,7 +12,7 @@ import type { BlockDto, MatchSpan, PageKind, ReferenceBlockEvidence } from "../t
 import { blockDtoExternalId } from "../blockIdentity";
 import { EmojiText } from "../render/emoji";
 import { buildSearchExcerpt, type Segment } from "./SearchResultRow";
-import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../editor/properties";
+import { BUILTIN_HIDE, rawOffsetToVisibleOffset } from "../editor/properties";
 
 /**
  * Land on the occurrence as a SELECTION, not a collapsed caret. Every jump for
@@ -17,8 +22,8 @@ import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../editor/properties"
  */
 export function occurrenceSelection(raw: string, span: MatchSpan, page: string): EditorSelection {
   const format = formatForPage(page);
-  const start = rawOffsetToVisibleOffset(raw, span.start, isBuiltinHidden, format);
-  const end = rawOffsetToVisibleOffset(raw, span.end, isBuiltinHidden, format);
+  const start = rawOffsetToVisibleOffset(raw, span.start, BUILTIN_HIDE, format);
+  const end = rawOffsetToVisibleOffset(raw, span.end, BUILTIN_HIDE, format);
   return { start, end: Math.max(start, end), direction: "forward" };
 }
 
@@ -69,22 +74,23 @@ export function OccurrenceControls(props: {
   // occurrence is actually useful. Gate on the true total (GH #137), not the
   // capped occurrence list, so an honest ">1" is what shows the controls.
   //
-  // Second gate (master GH #200): only when the surface cannot already show the
-  // occurrences itself. Derived from the excerpt, not a tuned constant: only the
-  // mentions beyond its window need a numbered jump.
+  // Second gate (GH #200 option A, Martin 2026-09-16; kept over GH #556 on
+  // 2026-10-17): only when the surface cannot already show the occurrences
+  // itself. Derived from the excerpt, not a tuned constant: only the mentions
+  // beyond its window need a numbered jump.
   return (
     <Show when={total() > 1 && total() > (props.visible ?? 0)}>
     <span class="reference-occurrence-controls">
       <span class="reference-mention-count">
-        {total()} {total() === 1 ? "mention" : "mentions"}
+        {t("reference-evidence-mention-count", { count: total() })}
       </span>
       <For each={props.evidence.occurrences}>
         {(occurrence, index) => (
           <button
             type="button"
             class="reference-occurrence-jump"
-            title={`Jump to ${occurrence.kind} mention ${index() + 1}`}
-            aria-label={`Jump to mention ${index() + 1} of ${total()}`}
+            title={t("reference-evidence-jump-to-mention", { kind: String(occurrence.kind), index: String(index() + 1) })}
+            aria-label={t("reference-evidence-occurrence-label", { index: String(index() + 1), total: String(total()) })}
             onClick={() => props.onOccurrence(occurrence.span)}
           >
             {index() + 1}
@@ -135,8 +141,8 @@ export function ReferenceExcerptBlocks(props: {
           if (!evidence()) return [{ text: block.raw, marked: false }];
           return full()[block.id] ? buildFullMarkedSegments(block.raw, spans()) : buildSearchExcerpt(block.raw, spans());
         };
-        // What the reader can already see and click; drives the jump row's second
-        // gate, so expanding a block retires the row on its own.
+        // What the reader can already see and click; drives the circles' second
+        // gate, so expanding a block retires them on its own.
         const shownOccurrences = () => new Set(
           segments().filter((segment) => segment.marked && segment.span).map((segment) => `${segment.span!.start}:${segment.span!.end}`),
         ).size;
@@ -145,10 +151,45 @@ export function ReferenceExcerptBlocks(props: {
           const index = spans().findIndex((candidate) => candidate.start === span.start && candidate.end === span.end);
           return index < 0 ? 1 : index + 1;
         };
+        const sourceRoute = () => ({
+          kind: "page" as const, name: props.page, pageKind: props.kind, block: blockDtoExternalId(block),
+          ...(props.path ? { path: props.path } : {}),
+        });
         const jumpTo = (span: MatchSpan) => focusMainOccurrence(props.page, props.kind, blockDtoExternalId(block), span, props.path);
         return (
-          <div class="reference-excerpt-row" data-reference-block={block.id}>
-            <span class="reference-excerpt-bullet" aria-hidden="true">•</span>
+          <div
+            class="reference-excerpt-row"
+            data-reference-block={block.id}
+            onContextMenu={(event) => {
+              // The block's own context menu, once its page is loaded (the row
+              // is a bounded excerpt until then and has no runtime block).
+              if (!docNode(block.id) || !shouldOpenBlockContextMenu(event.target)) return;
+              event.preventDefault();
+              openContextMenu(event.clientX, event.clientY, block.id);
+            }}
+          >
+            {/* GH #556 item 7: the bullet is the block-level way into the source
+                block, as in Linked References and the outline; the highlighted
+                text locates a mention. Same modified-click contract as every
+                internal link (linkGesture.ts). */}
+            <button
+              type="button"
+              class="reference-excerpt-bullet"
+              title={t("reference-evidence-open-this-block-in", { page: String(props.page) })}
+              aria-label={t("reference-evidence-open-this-block-in", { page: String(props.page) })}
+              onMouseDown={internalLinkMouseDown}
+              onClick={(event) => {
+                switch (internalLinkDest(event)) {
+                  case "sidebar":
+                    openBlockInSidebar({ page: props.page, pageKind: props.kind, uuid: blockDtoExternalId(block), ...(props.path ? { path: props.path } : {}) });
+                    break;
+                  case "background": openInNewTab(sourceRoute()); break;
+                  case "pane": openRouteInOtherPane(sourceRoute()); break;
+                  default: openPageAtBlock(props.page, props.kind, blockDtoExternalId(block), props.path);
+                }
+              }}
+              onAuxClick={(event) => internalLinkAuxClick(event, () => openInNewTab(sourceRoute()))}
+            >•</button>
             <div class="reference-excerpt-content">
               <div class="reference-excerpt-text" aria-label={block.raw}>
                 <For each={segments()}>
@@ -160,8 +201,8 @@ export function ReferenceExcerptBlocks(props: {
                         // A control, but its text is the excerpt's text: in-page
                         // find must still see it (src/inpageFind.ts).
                         data-inpage-find-text=""
-                        title={`Open this mention in ${props.page}`}
-                        aria-label={`Open mention ${ordinalOf(segment.span!)} in ${props.page}`}
+                        title={t("reference-evidence-open-this-mention-in", { page: String(props.page) })}
+                        aria-label={t("reference-evidence-open-mention-in", { span: String(ordinalOf(segment.span!)), page: String(props.page) })}
                         onClick={() => jumpTo(segment.span!)}
                       >
                         <EmojiText text={segment.text} />
@@ -188,7 +229,7 @@ export function ReferenceExcerptBlocks(props: {
                   aria-expanded={!!full()[block.id]}
                   onClick={() => setFull((state) => ({ ...state, [block.id]: !state[block.id] }))}
                 >
-                  {full()[block.id] ? "Show excerpt" : "Show full block"}
+                  {full()[block.id] ? t("reference-evidence-show-excerpt") : t("reference-evidence-show-full-block")}
                 </button>
               </div>
             </div>

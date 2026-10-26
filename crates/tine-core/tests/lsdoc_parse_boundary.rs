@@ -1,5 +1,5 @@
 //! I-22: every production lsdoc parse goes through the bounded boundary in
-//! `crates/lsdoc-block-parse.rs` (the exemplar: `parse_block`,
+//! `crates/tine-outline/src/lsdoc_block_parse.rs` (the exemplar: `parse_block`,
 //! `parse_projection`, `parse_text_bounded`, `parse_inline_bounded`). lsdoc
 //! recurses while parsing a quote staircase and returns trees whose drop and
 //! walk recurse, so a raw call on synced or imported text (a property value,
@@ -27,7 +27,10 @@ const ENTRIES: &[&str] = &[
 
 /// Files allowed to call lsdoc directly, each with its reason.
 const EXEMPT: &[(&str, &str)] = &[
-    ("crates/lsdoc-block-parse.rs", "the bounded boundary itself"),
+    (
+        "crates/tine-outline/src/lsdoc_block_parse.rs",
+        "the bounded boundary itself",
+    ),
     (
         "crates/tine-core/src/query/conformance.rs",
         "a #[cfg(test)] module (asserted below)",
@@ -99,7 +102,7 @@ fn every_production_lsdoc_parse_goes_through_the_bounded_boundary() {
     scan(&root, &root.join("src-tauri/src"), &mut hits);
     assert!(
         hits.is_empty(),
-        "I-22: call lsdoc only through crates/lsdoc-block-parse.rs (exemplar: \
+        "I-22: call lsdoc only through crates/tine-outline/src/lsdoc_block_parse.rs (exemplar: \
          `parse_text_bounded` / `parse_inline_bounded`, reached via tine_core::render), \
          which refuses a quote staircase before lsdoc recurses and drains too-deep \
          trees iteratively:\n{}",

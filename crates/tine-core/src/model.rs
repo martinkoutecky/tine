@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-#[path = "page_filename.rs"]
-mod page_filename;
+use tine_outline::page_filename;
 
 /// Encode a page title as a reversible Windows-safe file stem using the
 /// graph's configured Logseq format. Existing file paths are never recoded.
@@ -837,6 +836,15 @@ fn default_linked_references_collapsed_threshold() -> u32 {
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphMeta {
+    /// Ordered Logseq default journal queries.
+    pub default_journal_queries: Vec<crate::config::JournalQuery>,
+    /// Hide the built-in scheduled/deadline agenda.
+    pub disable_scheduled_and_deadline_query: bool,
+    /// Signed future agenda horizon from config.edn; None = not set there, so
+    /// the device's Settings value (default 7, OG's default) applies.
+    pub scheduled_future_days: Option<i32>,
+    /// Visible journal config parse diagnostics.
+    pub journal_config_diagnostics: Vec<String>,
     /// Canonical graph root for identity, persistence and OS handoff.
     pub root: String,
     /// Presentable spelling, never used for graph identity or filesystem access.
@@ -974,6 +982,10 @@ impl GraphMeta {
         Self {
             display_root: crate::graph_paths::normalize_graph_path(&root),
             root,
+            default_journal_queries: config.default_journal_queries.clone(),
+            disable_scheduled_and_deadline_query: config.disable_scheduled_and_deadline_query,
+            scheduled_future_days: config.scheduled_future_days,
+            journal_config_diagnostics: config.journal_config_diagnostics.clone(),
             preferred_workflow: match config.preferred_workflow {
                 crate::config::Workflow::Todo => "todo".into(),
                 crate::config::Workflow::Now => "now".into(),

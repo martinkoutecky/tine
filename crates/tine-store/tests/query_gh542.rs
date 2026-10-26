@@ -44,7 +44,7 @@ impl Drop for Graph {
 fn open(name: &str, pages: &[(&str, &str)]) -> Graph {
     let dir = std::env::temp_dir().join(format!("tine-gh542-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    for sub in ["pages", "journals"] {
+    for sub in ["pages", "journals", "logseq"] {
         std::fs::create_dir_all(dir.join(sub)).unwrap();
     }
     for (path, text) in pages {
@@ -95,6 +95,7 @@ fn tasks_graph(name: &str) -> Graph {
 
 #[test]
 fn gh542_reporter_advanced_queries_answer_like_logseq() {
+    let _integration_guard = crate::integration_lock();
     let graph = tasks_graph("reporter");
 
     let (raws, result) = answer(
@@ -146,15 +147,25 @@ fn gh542_reporter_advanced_queries_answer_like_logseq() {
         sorted(&["NOW doing it", "DOING in progress", "NOW page now"])
     );
 
-    // The same query with the Clojure result transform is REFUSED whole: it
-    // only orders in OG, but Tine cannot run it, and an answer that silently
-    // skipped it would be a different query's answer (Martin, 2026-10-03).
+    // The same query with OG's shipped NOW transform runs: the transform only
+    // orders, and Tine runs that exact sort (Martin 2026-10-11). Any other
+    // transform is still refused whole (Martin 2026-10-03).
     let (raws, result) = answer(
         &graph,
         &format!(
             r#"{{:title "NOW" {now_query}
             :result-transform (fn [result] (sort-by (fn [h] (get h :block/priority "Z")) result))}}"#
         ),
+    );
+    assert!(result.supported, "{:?}", result.ignored);
+    assert!(result.ignored.is_empty(), "{:?}", result.ignored);
+    assert_eq!(
+        raws,
+        sorted(&["NOW doing it", "DOING in progress", "NOW page now"])
+    );
+    let (raws, result) = answer(
+        &graph,
+        &format!(r#"{{:title "NOW" {now_query} :result-transform (fn [xs] (take 1 xs))}}"#),
     );
     assert!(!result.supported);
     assert!(raws.is_empty(), "{raws:?}");
@@ -246,6 +257,7 @@ fn gh542_reporter_advanced_queries_answer_like_logseq() {
 /// may run as the part Tine understood.
 #[test]
 fn gh542_a_clause_tine_cannot_lower_refuses_the_whole_query() {
+    let _integration_guard = crate::integration_lock();
     let graph = open("partial", &[("journals/2026_06_20.md", TASKS)]);
 
     for query in [
@@ -274,6 +286,7 @@ fn gh542_a_clause_tine_cannot_lower_refuses_the_whole_query() {
 /// narrower or wider question.
 #[test]
 fn gh542_joins_are_not_lowered() {
+    let _integration_guard = crate::integration_lock();
     let graph = tasks_graph("join");
     let (raws, result) = answer(
         &graph,
@@ -286,4 +299,96 @@ fn gh542_joins_are_not_lowered() {
         result.supported,
         result.ignored
     );
+}
+
+/// OG's default NOW query orders its rows by priority, a missing one as "Z"
+/// (`config.edn` `:default-queries`, Martin 2026-10-11): A before B before
+/// none, stable among equals.
+#[test]
+fn ogs_now_transform_orders_by_priority_with_missing_last() {
+    let _integration_guard = crate::integration_lock();
+    let graph = open(
+        "now-order",
+        &[(
+            "pages/Now.md",
+            "- NOW c no priority\n- NOW [#B] b first\n- DOING [#A] a\n- NOW [#B] b second\n",
+        )],
+    );
+    let QueryResult::Advanced(result) = graph
+        .graph
+        .query(
+            r#"{:title "NOW"
+                :query [:find (pull ?h [*])
+                        :where [?h :block/marker ?marker]
+                               [(contains? #{"NOW" "DOING"} ?marker)]]
+                :result-transform (fn [result] (sort-by (fn [h] (get h :block/priority "Z")) result))}"#,
+            QueryDialect::Advanced,
+        )
+        .expect("advanced query")
+    else {
+        panic!("advanced result")
+    };
+    assert!(result.supported, "{:?}", result.ignored);
+    let order: Vec<&str> = result
+        .groups
+        .iter()
+        .flat_map(|group| group.blocks.iter())
+        .map(|block| block.raw.lines().next().unwrap_or(""))
+        .collect();
+    assert_eq!(
+        order,
+        [
+            "DOING [#A] a",
+            "NOW [#B] b first",
+            "NOW [#B] b second",
+            "NOW c no priority"
+        ]
+    );
+}
+
+#[test]
+fn gh690_stock_next_uses_direct_refs_and_one_exclusive_date_range() {
+    let _integration_guard = crate::integration_lock();
+    let today = tine_core::date::JournalDate::today();
+    let title = |offset| today.add_days(offset).title();
+    let tasks = format!("- TODO inside [[{}]]\n- NOW start [[{}]]\n- LATER end [[{}]]\n- TODO split [[{}]] [[{}]]\n- DONE closed [[{}]]\n- Parent [[{}]]\n  - TODO inherited only\n- TODO named [[Ordinary]]\n", title(3), title(0), title(14), title(-1), title(15), title(3), title(3));
+    let graph = open("gh690", &[("pages/Tasks.md", &tasks)]);
+    let (raws, result) = answer(
+        &graph,
+        r#"{:title "📅 NEXT"
+        :query [:find (pull ?h [*]) :in $ ?start ?next :where
+        [?h :block/marker ?marker] [?h :block/ref-pages ?p]
+        [?p :block/journal? true] [?p :block/journal-day ?d]
+        [(> ?d ?start)] [(< ?d ?next)]
+        [(contains? #{"NOW" "LATER" "TODO"} ?marker)]]
+        :inputs [:today :14d-after] :collapsed? false}"#,
+    );
+    assert!(result.supported, "{:?}", result.ignored);
+    assert_eq!(raws, vec![format!("TODO inside [[{}]]", title(3))]);
+}
+
+#[test]
+fn gh690_referenced_journals_follow_title_format_before_safe_defaults() {
+    let _integration_guard = crate::integration_lock();
+    let graph = open(
+        "gh690-formats",
+        &[
+            (
+                "logseq/config.edn",
+                r#"{:journal/page-title-format "yyyy_dd_MM" :journal/file-name-format "dd.MM.yyyy"}"#,
+            ),
+            (
+                "pages/Tasks.md",
+                "- TODO title [[2026_10_11]]\n- TODO filename only [[10.11.2026]]\n",
+            ),
+        ],
+    );
+    let (raws, result) = answer(
+        &graph,
+        r#"{:query [:find (pull ?h [*]) :in $ ?start ?next :where
+        [?h :block/ref-pages ?p] [?p :block/journal? true] [?p :block/journal-day ?d]
+        [(> ?d ?start)] [(< ?d ?next)]] :inputs [2026-11-01 2026-11-20]}"#,
+    );
+    assert!(result.supported, "{:?}", result.ignored);
+    assert_eq!(raws, ["TODO title [[2026_10_11]]"]);
 }

@@ -31,6 +31,8 @@ use crate::query::ir::{
 
 use super::QUERY_NESTING_MAX;
 
+pub(crate) const DATE_WINDOW_REFUSAL: &str = "Logseq ignores scheduled/deadline date windows in this query form, so this query cannot run here as written. Convert it to a Tine query to keep its date-window meaning.";
+
 // ---------------------------------------------------------------------------
 // pre-transform (OG query_dsl.cljs:452-472), transcribed
 // ---------------------------------------------------------------------------
@@ -447,8 +449,9 @@ fn through_page(filter: Filter) -> Filter {
 
 /// `@page` anchor: the page row IS the current row, so every `page` hop the
 /// parser inserted collapses away. OG's DSL has no `children`/`blocks`
-/// relation, so this only ever meets boolean nodes and page hops.
-fn rebase_to_page(filter: Filter) -> Filter {
+/// relation, so this only ever meets boolean nodes and page hops. The TQL
+/// printer applies the same collapse to a block filter shown under `@page`.
+pub(crate) fn rebase_to_page(filter: Filter) -> Filter {
     match filter {
         Filter::Leaf {
             leaf:
@@ -692,31 +695,21 @@ impl<'a> OgParse<'a> {
                     _ => Filter::not(Filter::and(operands)),
                 }
             }
+            // OG `build-task` / `build-priority` (`query_dsl.cljs:279-296`)
+            // return nil when no marker is given, and `build-and-or-not`
+            // (`:174-182`) drops a nil clause from its group; `blocks?` is set
+            // before the dispatch (`:394-397`), so the anchor still flips. The
+            // bare form is kept in the tree as a membership test against an
+            // EMPTY list so it prints back as written; evaluation removes it
+            // structurally ([`Filter::is_dropped_clause`], D-18, GH #422).
             "task" | "todo" => {
                 self.blocks = true;
                 let markers = self.vector_or_names();
-                // OG drops `(task)` with no markers; Tine's shipped behaviour
-                // reads it as "any open task" and the corpus depends on it.
-                let markers = if markers.is_empty() {
-                    vec![
-                        "TODO".to_string(),
-                        "DOING".to_string(),
-                        "NOW".to_string(),
-                        "LATER".to_string(),
-                    ]
-                } else {
-                    markers
-                };
                 Filter::attr(Attr::Task, CmpOp::In, text_list(markers))
             }
             "priority" => {
                 self.blocks = true;
                 let levels = self.vector_or_names();
-                let levels = if levels.is_empty() {
-                    vec!["A".to_string(), "B".to_string(), "C".to_string()]
-                } else {
-                    levels
-                };
                 Filter::attr(Attr::Priority, CmpOp::In, text_list(levels))
             }
             // Tine-only spellings of a bare `[[x]]` / `#x`. OG's `blocks?` rule
@@ -894,9 +887,9 @@ impl<'a> OgParse<'a> {
         }
     }
 
-    /// `(between [FIELD] START END)`. OG's fieldless form is journal-only; the
-    /// optional leading field keyword is Tine's extension and `any` keeps its
-    /// journal-or-planning reading.
+    /// `(between [FIELD] START END)`. OG's fieldless form is journal-only.
+    /// Scheduled/deadline windows retain their old tree for explicit conversion,
+    /// but refuse execution: OG `build-between-three-arg` (:214-229) ignores them.
     fn between(&mut self) -> Filter {
         #[derive(Clone, Copy, PartialEq)]
         enum BetweenField {
@@ -943,6 +936,13 @@ impl<'a> OgParse<'a> {
             },
             _ => BetweenField::Journal,
         };
+        if matches!(field, BetweenField::Scheduled | BetweenField::Deadline) {
+            self.diagnose(
+                DiagnosticKind::Syntax,
+                DATE_WINDOW_REFUSAL.to_string(),
+                None,
+            );
+        }
         // OG's `pre-transform` keywordizes a signed or unit-suffixed bound
         // (`-7d` → `:-7d`) before its own reader sees it, and a query saved by
         // OG carries the keyword form on disk. Tine parses the original text,
@@ -1240,7 +1240,7 @@ mod tests {
             "{:?}",
             query.diagnostics
         );
-        assert!(!parse("(between scheduled -7d today)").is_invalid());
+        assert!(!parse("(between -7d today)").is_invalid());
     }
 
     fn parse(source: &str) -> Query {
@@ -1369,6 +1369,74 @@ mod tests {
                 "{form:?} rewrote to {:?}",
                 pre_transform(form)
             );
+        }
+    }
+
+    /// GH #422, D-18: a bare `(task)` / `(todo)` / `(priority)` reads as OG's
+    /// dropped clause — kept in the tree (so it prints back as written), still
+    /// flipping OG's `blocks?` anchor, and removed by the evaluable filter, so
+    /// alone it matches nothing and beside other clauses it adds nothing.
+    #[test]
+    fn bare_task_and_priority_are_ogs_dropped_clause() {
+        for form in [
+            "(task)",
+            "(todo)",
+            "(TASK)",
+            "(task [])",
+            "(priority)",
+            "(priority #{})",
+        ] {
+            let query = parse(form);
+            assert_eq!(query.anchor, Anchor::Block, "{form}: OG sets blocks? first");
+            assert!(
+                query.filter.is_dropped_clause(),
+                "{form}: {:?}",
+                query.filter
+            );
+            assert!(!query.is_invalid(), "{form}");
+            assert_eq!(
+                query.evaluable_filter(),
+                Filter::False,
+                "{form} alone runs nothing"
+            );
+        }
+        let evaluated = |form: &str| {
+            let query = parse(form);
+            Query::new(query.anchor, query.evaluable_filter(), Source::Builder)
+                .normalized()
+                .filter
+        };
+        let without = evaluated("[[project]]");
+        for form in [
+            "(and (task) [[project]])",
+            "(or (priority) [[project]])",
+            "(and [[project]] (not (todo)))",
+            "(and (and (task)) [[project]])",
+        ] {
+            assert_eq!(evaluated(form), without, "{form}");
+        }
+        // Explicit forms are unchanged.
+        for marker in crate::doc::MARKERS {
+            let filter = parse(&format!("(task {marker})")).filter;
+            assert_eq!(
+                filter,
+                Filter::attr(Attr::Task, CmpOp::In, text_list(vec![marker.to_string()]))
+            );
+            assert!(!filter.is_dropped_clause());
+        }
+        assert_eq!(
+            parse("(priority A)").filter,
+            Filter::attr(Attr::Priority, CmpOp::In, text_list(vec!["A".to_string()]))
+        );
+    }
+
+    /// D-18: an OG query with no condition at all is OG's nil query (`parse`
+    /// returns nil for a blank string), not "every page".
+    #[test]
+    fn a_blank_og_query_runs_nothing() {
+        for form in ["", "   "] {
+            let query = parse(form);
+            assert_eq!(query.evaluable_filter(), Filter::False, "{form:?}");
         }
     }
 

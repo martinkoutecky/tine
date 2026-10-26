@@ -11,6 +11,7 @@ use tine_store::{OpenOptions, Store};
 
 #[test]
 fn export_runs_each_query_through_the_engine_the_macro_reader_chose() {
+    let _integration_guard = crate::integration_lock();
     let dir =
         std::env::temp_dir().join(format!("tine-export-discriminator-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
@@ -64,6 +65,7 @@ fn export_runs_each_query_through_the_engine_the_macro_reader_chose() {
 /// source as the OG dialect.
 #[test]
 fn export_expands_a_tine_query_macro_through_the_tql_dialect() {
+    let _integration_guard = crate::integration_lock();
     let dir = std::env::temp_dir().join(format!("tine-export-tql-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("pages")).unwrap();

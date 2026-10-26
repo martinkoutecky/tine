@@ -7,7 +7,7 @@ import { attachBlockSwipe, blockSwipeDisabledTarget, swipeDisabledByTags } from 
 import { setGraphMeta } from "./graphSession";
 import type { GraphMeta } from "./types";
 import { wireBlockSwipe } from "./components/blockSwipeWiring";
-import { OUTLINE_MAX_DEPTH } from "./editor/outline";
+import { outlineMaxDepth } from "./editor/outline";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
 import { doc } from "./document/model";
@@ -173,7 +173,7 @@ describe("block swipe commands (real store)", () => {
 
   it("an indent that would exceed the subtree depth cap has no cue", () => {
     let deep = blk("leaf");
-    for (let i = 1; i < OUTLINE_MAX_DEPTH; i++) deep = blk("branch", [deep]);
+    for (let i = 1; i < outlineMaxDepth(); i++) deep = blk("branch", [deep]);
     loadPage([blk("a"), deep]);
     wire(doc.pages[0].roots[1]);
     fire(row, "touchstart", 200, 300, 0);

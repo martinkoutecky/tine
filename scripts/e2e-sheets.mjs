@@ -9,9 +9,13 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const G = "/tmp/sheets-e2e";
+const TMP_ROOT = path.resolve(process.env.E2E_TMP_ROOT || process.env.TMPDIR || "/tmp");
+fs.mkdirSync(TMP_ROOT, { recursive: true });
+const TMP = fs.mkdtempSync(path.join(TMP_ROOT, "tine-sheets-e2e-"));
+const G = `${TMP}/graph`;
 const APP = process.env.TINE_APP || `${repo}/target/release/tine`;
 const TD =
   process.env.TAURI_DRIVER ||
@@ -33,6 +37,7 @@ const GRID_MD = [
   "\t-",
   "\t\t- gamma",
   "\t\t- delta",
+  "- Drag focus editor",
   "- ## 4 · Task kanban",
   "  {{query (todo TODO DOING DONE)}}",
   "  tine.view:: board",
@@ -68,26 +73,28 @@ const GRID_MD = [
   "",
 ].join("\n");
 
-fs.rmSync(G, { recursive: true, force: true });
 fs.mkdirSync(`${G}/pages`, { recursive: true });
 fs.mkdirSync(`${G}/journals`, { recursive: true });
+fs.mkdirSync(`${G}/logseq`, { recursive: true });
+// One config write: the board drag needs the TODO/DOING workflow, and the one-time Guide announcement
+// toast sits bottom-right and can cover the query panel's Done button.
+fs.writeFileSync(`${G}/logseq/config.edn`, "{:preferred-workflow :todo :tine/guide-announced? true}\n");
 fs.writeFileSync(JFILE, GRID_MD);
 
-fs.rmSync("/tmp/sheets-e2e-xdg", { recursive: true, force: true });
-for (const d of ["data", "config", "cache"]) fs.mkdirSync(`/tmp/sheets-e2e-xdg/${d}`, { recursive: true });
+for (const d of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${d}`, { recursive: true });
 const env = {
   ...process.env,
   TINE_GRAPH: G,
-  XDG_DATA_HOME: "/tmp/sheets-e2e-xdg/data",
-  XDG_CONFIG_HOME: "/tmp/sheets-e2e-xdg/config",
-  XDG_CACHE_HOME: "/tmp/sheets-e2e-xdg/cache",
+  XDG_DATA_HOME: `${TMP}/xdg/data`,
+  XDG_CONFIG_HOME: `${TMP}/xdg/config`,
+  XDG_CACHE_HOME: `${TMP}/xdg/cache`,
   WEBKIT_DISABLE_DMABUF_RENDERER: "1",
   LIBGL_ALWAYS_SOFTWARE: "1",
   WEBKIT_DISABLE_COMPOSITING_MODE: "1",
   GDK_BACKEND: "x11",
 };
 
-const tdLog = fs.openSync("/tmp/sheets-e2e-td.log", "w");
+const tdLog = fs.openSync(`${TMP}/tauri-driver.log`, "w");
 const td = spawn(
   TD,
   ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"],
@@ -118,6 +125,7 @@ try {
     connectionRetryCount: 1,
     connectionRetryTimeout: 60000,
   });
+  await ensureMainWindow(browser);
   await browser.$(".ls-block").waitForExist({ timeout: 20000 });
 
   // The journals feed shows today's journal — the grid should be rendered.
@@ -187,11 +195,9 @@ try {
   await sleep(2500);
   const disk = fs.readFileSync(JFILE, "utf8");
   check("edited text saved to disk", disk.includes("alpha-edited"), JSON.stringify(disk));
-  // Seeded file has 17 bullets (the original 14 plus the query-filter owner and
-  // its two result rows) —
-  // an Enter-split would add one.
+  // Seeded file has 18 bullets; an Enter-split would add one.
   const bulletCount = (disk.match(/^\s*-/gm) || []).length;
-  check("no block was split/created (17 bullets)", bulletCount === 17, `got ${bulletCount}: ${JSON.stringify(disk)}`);
+  check("no block was split/created (18 bullets)", bulletCount === 18, `got ${bulletCount}: ${JSON.stringify(disk)}`);
   check("grid config intact", disk.includes("tine.view:: grid"), JSON.stringify(disk));
 
   // Esc from selection → outline selection on the grid block (no doc change).
@@ -217,7 +223,7 @@ try {
   await sleep(2500);
   const disk3 = fs.readFileSync(JFILE, "utf8");
   const bullets3 = (disk3.match(/^\s*-/gm) || []).length;
-  check("seam-typing inserted a row on disk (19 bullets: +row +cell)", bullets3 === 19, `got ${bullets3}: ${JSON.stringify(disk3)}`);
+  check("seam-typing inserted a row on disk (20 bullets: +row +cell)", bullets3 === 20, `got ${bullets3}: ${JSON.stringify(disk3)}`);
   check("inserted cell holds the typed char", /-\s*z\s*$/m.test(disk3), JSON.stringify(disk3));
   // The typed char rides the editor's own undo entry; the structural insert is
   // its own atomic unit — so TWO undos fully revert (text, then structure).
@@ -386,6 +392,32 @@ try {
     check("typed Table Tab commits then advances", false, "no Table cell (0,4)");
   }
 
+  // GH #754: type into a property and literally double-click its neighbor.
+  // Assert the first value reaches the graph file while the second editor is open.
+  const amountCell = await browser.$('.sheet-table .sheet-cell[data-row="0"][data-sheet-column-id="prop:severity"]');
+  const adjacentCell = await browser.$('.sheet-table .sheet-cell[data-row="0"][data-sheet-column-id="prop:occurrence"]');
+  await amountCell.scrollIntoView({ block: "center", inline: "nearest" });
+  await amountCell.doubleClick();
+  const amountInput = await amountCell.$("input.sheet-prop-input");
+  await amountInput.waitForExist({ timeout: 5000 });
+  await browser.keys(["Control", "a"]);
+  await browser.keys(["7.5"]);
+  await adjacentCell.doubleClick();
+  await adjacentCell.$("input.sheet-prop-input").waitForExist({ timeout: 5000 });
+  await browser.waitUntil(() => fs.readFileSync(JFILE, "utf8").includes("severity:: 7.5"),
+    { timeout: 10_000, timeoutMsg: "GH #754: first cell draft did not reach the file after double-clicking its neighbor" });
+  check("double-clicking another cell saves the first draft to disk",
+    fs.readFileSync(JFILE, "utf8").includes("severity:: 7.5"));
+  await browser.saveScreenshot(`${TMP}/gh754-cell-handoff.png`);
+  await browser.keys(["Escape"]);
+  // Restore the formula fixture for the rename/undo/reload journey below.
+  await amountCell.doubleClick();
+  await amountCell.$("input.sheet-prop-input").waitForExist({ timeout: 5000 });
+  await browser.keys(["Control", "a"]);
+  await browser.keys(["2"]);
+  await browser.keys(["Enter"]);
+  await browser.waitUntil(() => fs.readFileSync(JFILE, "utf8").includes("severity:: 2"), { timeout: 10_000 });
+
   // GH #175: a declared, children-backed property field is a local schema
   // identity. Rename it through the literal header menu and prove that every
   // local dependency (schema, row keys, formula field refs, filter field AST,
@@ -477,15 +509,21 @@ try {
       !redoneDisk.includes("prop:occurrence"),
       JSON.stringify(redoneDisk));
 
+    const beforeReload = await browser.execute(() => performance.timeOrigin);
     await browser.refresh();
-    await browser.$(".sheet-table").waitForExist({ timeout: 15_000 });
-    const reloaded = await browser.execute(() => {
-      const headers = [...document.querySelectorAll(".sheet-table .sheet-field-header")]
-        .map((el) => (el.textContent ?? "").trim());
-      const formula = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="7"]')
-        ?.textContent?.replace("⋮", "").trim() ?? null;
-      return { headers, formula };
-    });
+    // WebKit can briefly answer with the old document, then the new table's
+    // empty shell. Observe the new document and hydrated values together.
+    let reloaded;
+    await browser.waitUntil(async () => {
+      reloaded = await browser.execute(() => {
+        const headers = [...document.querySelectorAll(".sheet-table .sheet-field-header")]
+          .map((el) => (el.textContent ?? "").trim());
+        const formula = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="7"]')
+          ?.textContent?.replace("⋮", "").trim() ?? null;
+        return { headers, formula, timeOrigin: performance.timeOrigin };
+      });
+      return reloaded.timeOrigin !== beforeReload && reloaded.headers.includes("OCC") && reloaded.formula === "24";
+    }, { timeout: 15_000, timeoutMsg: "renamed table did not hydrate after reload" });
     const reloadedDisk = fs.readFileSync(JFILE, "utf8");
     check("renamed field and every dependency survive a real app reload",
       reloaded.headers.filter((h) => h === "OCC").length === 1 && reloaded.formula === "24" &&
@@ -567,6 +605,40 @@ try {
     }));
     check("clicking a board card selects without editing", cardClick.selected === 1 && !cardClick.editing, JSON.stringify(cardClick));
 
+    // GH #756: a genuine block-editor focus transfer happens after the card's
+    // pointerdown has armed its drag. That element blur must not cancel it.
+    const editorBlockId = await browser.execute(() => {
+      const content = [...document.querySelectorAll(".block-content")].find((el) => el.textContent?.trim() === "Drag focus editor");
+      return content?.closest(".ls-block")?.getAttribute("data-block-id");
+    });
+    if (!editorBlockId) throw new Error("GH #756: missing focus editor fixture");
+    await browser.$(`.ls-block[data-block-id="${editorBlockId}"] .block-content`).click();
+    await browser.$("textarea.block-editor").waitForDisplayed({ timeout: 5000 });
+    check("GH #756: block editor has focus before card drag", await browser.execute(() => document.activeElement?.matches("textarea.block-editor") === true));
+    const dragPoints = await browser.execute(() => {
+      const source = [...document.querySelectorAll(".sheet-board-card")].find((el) => el.textContent?.includes("buy milk"));
+      const board = source?.closest(".sheet-board");
+      board?.scrollIntoView({ block: "center" });
+      const target = [...(board?.querySelectorAll(".sheet-board-column") ?? [])].find((el) => el.querySelector(".sheet-board-header")?.textContent?.startsWith("DOING"));
+      if (!source || !target) return { missing: true, boards: [...document.querySelectorAll(".sheet-board")].map((b) => ({
+        columns: [...b.querySelectorAll(".sheet-board-header")].map((h) => h.textContent?.trim()),
+        cards: [...b.querySelectorAll(".sheet-board-card")].map((c) => c.textContent?.trim().slice(0, 40)) })) };
+      const a = source.getBoundingClientRect(), b = target.getBoundingClientRect();
+      return { x: Math.round(a.left + a.width / 2), y: Math.round(a.top + a.height / 2), toX: Math.round(b.left + b.width / 2), toY: Math.round(b.top + Math.min(b.height / 2, 65)) };
+    });
+    if (!dragPoints || dragPoints.missing) throw new Error(`GH #756: missing card/drop column ${JSON.stringify(dragPoints)}`);
+    await browser.performActions([{ type: "pointer", id: "board-card", parameters: { pointerType: "mouse" }, actions: [
+      { type: "pointerMove", duration: 0, origin: "viewport", x: dragPoints.x, y: dragPoints.y },
+      { type: "pointerDown", button: 0 },
+      { type: "pointerMove", duration: 400, origin: "viewport", x: dragPoints.toX, y: dragPoints.toY },
+      { type: "pointerUp", button: 0 },
+    ] }]);
+    await browser.releaseActions();
+    await browser.waitUntil(() => fs.readFileSync(JFILE, "utf8").includes("DOING buy milk"), { timeout: 10000, timeoutMsg: "GH #756: card did not save DOING after dragging from editor focus" });
+    check("GH #756: dragging from block-editor focus writes the card marker", fs.readFileSync(JFILE, "utf8").includes("DOING buy milk"));
+    check("GH #756: the outside editor closed and drag cleanup restored selection", await browser.execute(() => !document.querySelector("textarea.block-editor, .sheet-board-drag-ghost") && !document.documentElement.classList.contains("drag-selection-suppressed")));
+    await browser.$('//article[contains(@class,"sheet-board-card")][contains(.,"buy milk")]').click();
+
     await browser.execute(() => {
       const block = [...document.querySelectorAll(".ls-block")].find((el) =>
         (el.querySelector(".heading-text")?.textContent ?? "").includes("Task kanban")
@@ -574,7 +646,7 @@ try {
       block?.scrollIntoView({ block: "center", inline: "nearest" });
     });
     await sleep(300);
-    await browser.saveScreenshot("/tmp/sheets-e2e-query-board.png");
+    await browser.saveScreenshot(path.join(TMP_ROOT, "sheets-e2e-query-board.png"));
     const queryBoardContainment = await browser.execute(() => {
       const visible = (el) => {
         const r = el.getBoundingClientRect();
@@ -632,9 +704,11 @@ try {
     // every move, so step one column at a time toward DOING, re-reading the
     // card's position each step (a precomputed step count goes stale).
     const readPos = () => browser.execute(() => {
-      const headers = [...document.querySelectorAll(".sheet-board-header")].map((h) => h.textContent ?? "");
-      const cardCol = document.querySelector(".sheet-board-card")?.closest(".sheet-board-column");
-      const cols = [...document.querySelectorAll(".sheet-board-column")];
+      const card = [...document.querySelectorAll(".sheet-board-card")].find((el) => el.textContent?.includes("buy milk"));
+      const board = card?.closest(".sheet-board");
+      const headers = [...(board?.querySelectorAll(".sheet-board-header") ?? [])].map((h) => h.textContent ?? "");
+      const cardCol = card?.closest(".sheet-board-column");
+      const cols = [...(board?.querySelectorAll(".sheet-board-column") ?? [])];
       // The duplicate-board regression guard: the QUERY block must render one
       // board (the seed's tags board is a separate block — exclude it by content).
       const boards = [...document.querySelectorAll(".sheet-board")].filter((b) =>
@@ -721,6 +795,7 @@ try {
     const grid = document.querySelector(".sheet-grid");
     const container = grid?.closest(".block-sheet-container");
     if (!container) return { ok: false, reason: "no grid container" };
+    grid.scrollIntoView({ block: "center" });
     container.dispatchEvent(new Event("pointerenter", { bubbles: false }));
     return { ok: true };
   });
@@ -763,6 +838,17 @@ try {
   // proof: the backend must materialize both coarse rows, the formula editor
   // must persist tine.filter, and the same filtered identity must survive the
   // actual Table -> Board view switch without rewriting the coarse query.
+  const queryFilterBlockId = await browser.execute(() => [...document.querySelectorAll(".ls-block")]
+    .find((el) => (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof"))
+    ?.getAttribute("data-block-id"));
+  if (!queryFilterBlockId) throw new Error("missing query-filter block");
+  const queryFilterSelector = `[data-block-id="${queryFilterBlockId}"] .query-block`;
+  const openQueryView = async () => {
+    await browser.$(`${queryFilterSelector} .qc-actions > summary`).click();
+    await browser.$("//*[@class='qc-menu']//button[normalize-space()='View']").click();
+    await browser.$(`${queryFilterSelector} .qc-panel [aria-label="Query view"]`).waitForExist({ timeout: 5_000 });
+  };
+  await openQueryView();
   const queryFilterInitial = await browser.execute(() => {
     const block = [...document.querySelectorAll(".ls-block")].find((el) =>
       (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
@@ -772,18 +858,20 @@ try {
       .map((el) => (el.textContent ?? "").trim());
     return {
       found: true,
-      active: block.querySelector(".query-view-switcher button.active")?.textContent?.trim() ?? null,
+      active: block.querySelector('.qc-panel [aria-label="Query view"] button.active')?.textContent?.trim() ?? null,
       count: block.querySelector(".query-count")?.textContent?.trim() ?? null,
       titles,
     };
   });
   check(
     "query-sourced Table starts from both coarse numeric rows",
-    queryFilterInitial.found && queryFilterInitial.active === "Table" &&
+    queryFilterInitial.found && queryFilterInitial.active === "table" &&
       queryFilterInitial.count === "2" &&
       queryFilterInitial.titles.includes("Low score") && queryFilterInitial.titles.includes("High score"),
     JSON.stringify(queryFilterInitial)
   );
+  await browser.$(`${queryFilterSelector} .qc-done`).click();
+  await browser.$(`${queryFilterSelector} .qc-panel`).waitForExist({ reverse: true, timeout: 5_000 });
 
   const filterMenuOpened = await browser.execute(() => {
     const block = [...document.querySelectorAll(".ls-block")].find((el) =>
@@ -854,17 +942,12 @@ try {
       JSON.stringify(tableDisk)
     );
 
-    const boardClicked = await browser.execute(() => {
-      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
-        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
-      );
-      const button = [...(block?.querySelectorAll(".query-view-switcher button") ?? [])]
-        .find((el) => (el.textContent ?? "").trim() === "Board");
-      if (!(button instanceof HTMLButtonElement)) return false;
-      button.click();
-      return true;
-    });
-    check("query filter proof switches through the real Board control", boardClicked);
+    await openQueryView();
+    const viewChoices = await browser.$(`${queryFilterSelector} .qc-panel [aria-label="Query view"]`);
+    await viewChoices.$(".//button[normalize-space()='board']").click();
+    const boardSelected = await browser.waitUntil(async () => (await browser.$(`${queryFilterSelector} .qc-panel [aria-label="Query view"] button.active`).getText()) === "board",
+      { timeout: 5_000, timeoutMsg: "View panel did not select board" });
+    check("query filter proof switches through the real Board control", boardSelected);
     await browser.waitUntil(async () => browser.execute(() => {
       const block = [...document.querySelectorAll(".ls-block")].find((el) =>
         (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
@@ -878,7 +961,7 @@ try {
         (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
       );
       return {
-        active: block?.querySelector(".query-view-switcher button.active")?.textContent?.trim() ?? null,
+        active: block?.querySelector('.qc-panel [aria-label="Query view"] button.active')?.textContent?.trim() ?? null,
         count: block?.querySelector(".query-count")?.textContent?.trim() ?? null,
         titles: [...(block?.querySelectorAll(".sheet-board-card-title") ?? [])]
           .map((el) => (el.textContent ?? "").trim()),
@@ -886,10 +969,12 @@ try {
     });
     check(
       "query-sourced Board retains the same filtered subset and coarse count",
-      filteredBoard.active === "Board" && filteredBoard.count === "2" &&
+      filteredBoard.active === "board" && filteredBoard.count === "2" &&
         JSON.stringify(filteredBoard.titles) === JSON.stringify(["High score"]),
       JSON.stringify(filteredBoard)
     );
+    await browser.$(`${queryFilterSelector} .qc-done`).click();
+    await browser.$(`${queryFilterSelector} .qc-panel`).waitForExist({ reverse: true, timeout: 5_000 });
     await sleep(2400);
     const boardDisk = fs.readFileSync(JFILE, "utf8");
     check(
@@ -905,9 +990,12 @@ try {
 } catch (e) {
   failures++;
   console.error("E2E error:", e && e.message);
+  console.error("E2E artifacts:", TMP);
+  try { await browser?.saveScreenshot(path.join(TMP_ROOT, "sheets-e2e-failure.png")); } catch {}
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}
+  if (failures === 0 && process.env.E2E_KEEP_TMP !== "1") fs.rmSync(TMP, { recursive: true, force: true });
 }
 console.log(failures === 0 ? `\nALL PASS (${checks} checks)` : `\n${failures} FAILURES (${checks} checks)`);
 process.exit(failures === 0 ? 0 : 1);

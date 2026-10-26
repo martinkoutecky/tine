@@ -23,9 +23,12 @@ describe("OG-P11 parser ownership", () => {
     expect(structuralRegexes("const key = /^([A-Za-z0-9_]+)::/.exec(raw);")).toHaveLength(1);
   });
   it("I-12: asset targets come from tine_core::render::parse_inline_bounded, never delimiter scanning", () => {
-    const source = readFileSync("crates/tine-store/src/model.rs", "utf8");
-    const collector = source.slice(source.indexOf("pub(crate) fn collect_asset_refs("), source.indexOf("fn insert_asset_path("));
-    expect(collector).toContain("tine_core::render::parse_inline_bounded");
+    // og-surface (3d3d32bc9) moved the one collector from tine-store's model.rs
+    // to tine-core, where Corpus::asset_refs and the store both call it.
+    expect(readFileSync("crates/tine-store/src/model.rs", "utf8")).not.toContain("fn collect_asset_refs(");
+    const source = readFileSync("crates/tine-core/src/asset_refs.rs", "utf8");
+    const collector = source.slice(source.indexOf("pub fn collect_asset_refs("), source.indexOf("fn insert_asset_path("));
+    expect(collector).toContain("crate::render::parse_inline_bounded");
     expect(collector).toContain("Inline::Link");
     expect(collector).not.toMatch(/\.find\(|\.lines\(|Regex|regex/);
     expect(collector).toContain("conservative_asset_mentions(text, into)");
@@ -187,8 +190,13 @@ describe("OG-P12B one answerer for page headers, fences and task markers", () =>
     expect(store, "I-12: the Rust page-header answer is tine_core::block_regions::page_header_only").toContain("tine_core::block_regions::page_header_only(");
     expect(store).not.toMatch(/fn page_header_property_line|fn page_header_properties_only/);
     const query = readFileSync("crates/tine-store/src/query.rs", "utf8");
-    expect(query).toContain("tine_core::block_regions::page_header_only(");
-    const conflicts = readFileSync("crates/tine-graph-features/src/conflicts.rs", "utf8");
+    // query.rs asks the ONE shared predicate (model.rs is_page_header_candidate: the parser's
+    // page_header_only minus the block-scoped keys), never a parallel header check (GH #210).
+    expect(query).toContain("is_page_header_candidate(");
+    expect(query).not.toMatch(/page_header_only\(/);
+    expect(store).toMatch(/fn is_page_header_candidate[\s\S]{0,200}tine_core::block_regions::page_header_only\(/);
+    const conflicts = readFileSync("crates/tine-graph-features/src/conflicts.rs", "utf8")
+      + readFileSync("crates/tine-graph-features/src/conflicts/queue.rs", "utf8");
     expect(conflicts, "I-12: conflict preambles are read through block_regions::parse_document").toContain("tine_core::block_regions::parse_document(");
     expect(conflicts).not.toMatch(/fn pre_property\(/);
   });
@@ -200,7 +208,7 @@ describe("OG-P12B one answerer for page headers, fences and task markers", () =>
     const fences = readFileSync("src/editor/fences.ts", "utf8");
     expect(fences).toContain("literal_blocks");
     expect(fences).toContain("open_fence");
-    const rust = readFileSync("crates/tine-core/src/block_regions.rs", "utf8");
+    const rust = readFileSync("crates/tine-outline/src/block_regions.rs", "utf8");
     expect(rust, "the unclosed-fence editor policy has exactly one home").toMatch(/fn open_fence\(/);
   });
   it("I-12: marker and priority spans come from markers.ts headerTokens (the parser's header)", () => {

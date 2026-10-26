@@ -28,6 +28,7 @@ fn scratch() -> PathBuf {
 
 #[test]
 fn every_provider_suffix_is_parsed_from_the_end_of_the_stem() {
+    let _integration_guard = crate::integration_lock();
     for (stem, base) in [
         (
             "Meeting (draft) (Martin's conflicted copy 2026-09-29)",
@@ -61,6 +62,7 @@ fn every_provider_suffix_is_parsed_from_the_end_of_the_stem() {
 
 #[test]
 fn a_copy_of_a_parenthesised_page_is_listed_against_it_and_never_merged_elsewhere() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch();
     let copy = "pages/Meeting (draft) (Martin's conflicted copy 2026-09-29).md";
     fs::write(root.join("pages/Meeting.md"), "- unrelated meeting\n").unwrap();
@@ -84,6 +86,7 @@ fn a_copy_of_a_parenthesised_page_is_listed_against_it_and_never_merged_elsewher
     let decisions: HashMap<String, String> = HashMap::new();
     let refused = conflicts::resolve_sync_conflict(
         &store,
+        None,
         "pages/Meeting.md",
         copy,
         &decisions,

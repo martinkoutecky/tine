@@ -1,3 +1,4 @@
+import { msg, render } from "./i18n";
 // Browser-mock Concord surface: sync-conflict copies and the derived conflict
 // queue. Split out of mock.ts (over the size ratchet); nothing here writes.
 import type { BlockDto, ConflictInventory, ConflictObject, MarkerConflictDiff, PageDto, SyncConflict, SyncConflictDiff } from "./types";
@@ -49,7 +50,7 @@ function conflictInventory(): ConflictInventory {
     page_path: copy.base_path,
     kind: copy.kind,
     sides: [
-      { role: "mine" as const, label: "This device", path: copy.base_path },
+      { role: "mine" as const, get label() { return render(msg("mock-conflicts-this-device")); }, path: copy.base_path },
       { role: "theirs" as const, label: copy.tag, path: copy.path },
     ],
     block_conflicts: 3,
@@ -104,12 +105,12 @@ export const mockConflictApi = {
     // no-op in the browser mock
   },
   // The browser mock never refuses a save, so a live conflict arises only in
-  // tests (which stub these): the review is 2-way and Apply echoes the draft.
+  // tests (which stub these): the review is 2-way and the merge echoes the draft.
   async liveConflictDiff(_path: string, _page: PageDto, baseRev: string | null): Promise<SyncConflictDiff> {
     return { base_rev: baseRev ?? "", conflict_rev: "absent", rows: [], mine_pre: null, theirs_pre: null,
       pre_differs: false, blocks_identical: true };
   },
-  async resolveLiveConflict(_path: string, page: PageDto): Promise<PageDto> {
-    return { ...page, rev: `mock-live-${Date.now()}` };
+  async mergeLiveConflict(_path: string, page: PageDto): Promise<PageDto> {
+    return page;
   },
 };

@@ -1,11 +1,15 @@
-import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
-import { toasts, dismissToast, pushToast } from "../toasts";
+import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, untrack, type JSX } from "solid-js";
+import { toasts, dismissToast, pushToast, toUiText } from "../toasts";
+import { t, msg, render, t as tr } from "../i18n";
 import { writeClipboardText } from "../clipboard";
 import { lightbox, setLightbox, lightboxGallery, lightboxIndex, setLightboxIndex } from "../ui";
 import { createImageViewerGestures, type Transform } from "../imageViewerGestures";
 import { stepIndex } from "../imageGallery";
 import { copyImageFromSrc as copyLightboxImage } from "../copyImage";
 import { registerTransientLayer } from "../transientLayers";
+import { queryAllWindows } from "../windowRealm";
+import { assetNameForBlobUrl } from "../assetCache";
+import { bindingOwner } from "../owned";
 
 // Bottom-right transient notifications.
 export function Toasts(): JSX.Element {
@@ -19,9 +23,9 @@ export function Toasts(): JSX.Element {
             // Transient toasts dismiss on any click; sticky ones only via the ✕.
             onClick={() => !t.sticky && dismissToast(t.id)}
           >
-            <span class="toast-msg">{t.message}</span>
+            <span class="toast-msg">{render(t.text)}</span>
             <Show when={(t.count ?? 1) > 1}>
-              <span class="toast-count" aria-label={`shown ${t.count} times`}>×{t.count}</span>
+              <span class="toast-count" aria-label={tr("toast-repeat-count", { count: t.count ?? 1 })}>×{t.count}</span>
             </Show>
             <Show when={t.action}>
               <button
@@ -32,28 +36,28 @@ export function Toasts(): JSX.Element {
                   dismissToast(t.id);
                 }}
               >
-                {t.action!.label}
+                {render(toUiText(t.action!.label))}
               </button>
             </Show>
             <Show when={t.kind === "error"}>
               <button
                 class="toast-action toast-copy"
-                title="Copy the full message"
+                title={tr("toast-copy-title")}
                 onClick={(e) => {
                   e.stopPropagation();
                   // The error toast stays open; the copy result is a separate note.
-                  void writeClipboardText(t.message).then(
-                    () => pushToast("Error message copied", "success"),
-                    () => pushToast("Couldn't copy the message; select its text instead.", "warn"),
+                  void writeClipboardText(t.copyText ?? t.message).then(
+                    () => pushToast(msg("toast-copied"), "success"),
+                    () => pushToast(msg("toast-copy-failed"), "warn"),
                   );
                 }}
               >
-                Copy
+                {tr("toast-copy")}
               </button>
             </Show>
             <button
               class="toast-close"
-              aria-label="Dismiss"
+              aria-label={tr("toast-dismiss")}
               onClick={(e) => {
                 e.stopPropagation();
                 dismissToast(t.id);
@@ -79,18 +83,20 @@ export function Lightbox(): JSX.Element {
     setMenu(null);
     const src = lightbox();
     if (!src) return;
+    const files = assetFiles();
+    if (!files.current()) return;
     try {
-      await copyLightboxImage(src);
-      pushToast("Image copied", "success");
+      await copyLightboxImage(src, files.names[slot()]);
+      pushToast(msg("toasts-image-copied"), "success");
     } catch {
-      pushToast("Couldn't copy the image", "error");
+      pushToast(msg("toasts-couldn-t-copy-the-image"), "error");
     }
   };
   createEffect(() => {
     if (!lightbox()) return;
     const unregister = registerTransientLayer({
       id: "image-lightbox",
-      root: () => document.querySelector<HTMLElement>(".lightbox-overlay"),
+      root: () => queryAllWindows<HTMLElement>(".lightbox-overlay"),
       dismiss: () => {
         if (menu()) { setMenu(null); return true; }
         setLightbox(null);
@@ -106,6 +112,12 @@ export function Lightbox(): JSX.Element {
     const at = lightboxIndex();
     return list[at] !== undefined && list[at] === lightbox() ? list : lightbox() ? [lightbox()!] : [];
   });
+  // Keep file identities for this viewer session even if a live asset refresh
+  // revokes the inline preview URLs and removes their cache entries.
+  const assetFiles = createMemo(() => ({
+    names: gallery().map(assetNameForBlobUrl),
+    current: untrack(bindingOwner),
+  }));
   const slot = () => (gallery().length === 1 ? 0 : lightboxIndex());
   const [controls, setControls] = createSignal(true);
   const [view, setView] = createSignal<{ t: Transform; dx: number; dy: number }>({ t: { scale: 1, x: 0, y: 0 }, dx: 0, dy: 0 });
@@ -194,8 +206,8 @@ export function Lightbox(): JSX.Element {
         </Show>
         <button
           class="lightbox-close"
-          title="Close"
-          aria-label="Close image viewer"
+          title={t("toasts-close")}
+          aria-label={t("toasts-close-image-viewer")}
           onClick={(e) => {
             e.stopPropagation();
             setMenu(null);
@@ -206,21 +218,19 @@ export function Lightbox(): JSX.Element {
         </button>
         <button
           class="lightbox-copy"
-          title="Copy image to clipboard"
+          title={t("toasts-copy-image-to-clipboard")}
           onClick={(e) => {
             e.stopPropagation();
             void copy();
           }}
-        >
-          Copy
-        </button>
+        >{t("toasts-copy")}</button>
         <Show when={menu()}>
           <div
             class="lightbox-menu"
             style={{ left: `${menu()!.x}px`, top: `${menu()!.y}px` }}
             onClick={(e) => e.stopPropagation()}
           >
-            <button onClick={() => void copy()}>Copy image</button>
+            <button onClick={() => void copy()}>{t("toasts-copy-image")}</button>
           </div>
         </Show>
       </div>

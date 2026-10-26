@@ -14,6 +14,7 @@ use tine_store::{Cancel, OpenOptions, PageId, SearchRequest, Store};
 
 #[test]
 fn a_page_scoped_block_search_is_not_consumed_by_out_of_scope_matches() {
+    let _integration_guard = crate::integration_lock();
     let dir = std::env::temp_dir().join(format!("tine-scoped-window-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("pages")).unwrap();
@@ -33,6 +34,7 @@ fn a_page_scoped_block_search_is_not_consumed_by_out_of_scope_matches() {
         graph
             .search(
                 &SearchRequest {
+                    transliteration: false,
                     text: "needle".into(),
                     within: within.map(PageId::from),
                     page_limit: 0,

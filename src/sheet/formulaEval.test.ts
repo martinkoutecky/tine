@@ -6,6 +6,7 @@ import { initParser } from "../render/parse";
 import { resetStore } from "../document";
 import { type FeedPage, type Node } from "../document/model";
 import { setDoc } from "../document/model";
+import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
 import {
   createFormulaResultsMemo,
   fieldValueToFormulaValue,
@@ -87,7 +88,7 @@ describe("formula eval context", () => {
     });
   });
 
-  it("keeps same-UUID page and journal rows distinct and only reads the matching live node", () => {
+  it("keeps same-UUID page and journal rows distinct and only reads the matching live node", async () => {
     const loaded: Node = {
       id: "same-id",
       raw: "Loaded page row\nscore:: 1",
@@ -107,6 +108,7 @@ describe("formula eval context", () => {
       guide: false,
     };
     setDoc({ byId: { [loaded.id]: loaded }, pages: [page], feed: [page.name], loaded: true });
+    await Promise.resolve();
 
     const pageRow = {
       id: loaded.id,
@@ -120,6 +122,7 @@ describe("formula eval context", () => {
       kind: "journal" as const,
       dto: { id: loaded.id, raw: "Journal DTO\nscore:: 9", collapsed: false, children: [], properties: [["score", "9"] as [string, string]] },
     };
+    adoptResults([pageRow, journalRow], captureResultsTicket());
 
     expect(formulaRowKey(pageRow)).not.toBe(formulaRowKey(journalRow));
     expect(liveFormulaRowNode(pageRow)?.raw).toBe(loaded.raw);

@@ -1,15 +1,31 @@
 import { type BlockDto, type Format, type PageDto, type RefGroup } from "../types";
-import { Node, FeedPage, DocState, doc } from "./model";
+import { Node, FeedPage, DocState, doc, freshId } from "./model";
 import { seedFacets, facetsFromDto } from "../render/facets";
 import { trimBlockTrailingSpace } from "../editor/format";
-import { isPageHeaderPropertiesOnly, pageHeaderKeys } from "../editor/properties";
+import { BLOCK_SCOPED_PROPERTY_KEYS, canonicalPageHeaderDraft, isPropertiesOnly } from "../editor/properties";
 import { journalTitle, appNow } from "../journal";
-import { rawWithCollapsed } from "./edits/properties";
+import { pageHeaderDraftProblem, rawWithCollapsed } from "./edits/properties";
 import { existingBlockId, orgRawWithProperty } from "./edits/identity";
 
 /** Wire DTO constructors live here; callers choose the intent and supply content. */
-export function emptyPage(name: string, kind: "journal" | "page"): PageDto {
-  return { name, kind, title: name, pre_block: null, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }] };
+export function emptyPage(name: string, kind: "journal" | "page", format?: Format): PageDto {
+  return { name, kind, title: name, pre_block: null, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }],
+    ...(format ? { format } : {}) };
+}
+
+/** The format of the graph text file `path` names, by extension, as the store
+ * reads and serializes it (`tine_core::model::Format::from_path`): `.org` is
+ * Org, anything else (`.md`, `.markdown`) Markdown. */
+export function formatOfFile(path: string): Format {
+  return /\.org$/i.test(path) ? "org" : "md";
+}
+
+/** `dto` held in the format of the file it is written to (ORG-CREATED-FORMAT):
+ * the store serializes by the target's extension, so a created page whose DTO
+ * named no format (or another) would have later edits spelled for the wrong
+ * syntax, e.g. a Markdown `id::` line in an `.org` file. */
+export function inFileFormat(dto: PageDto, path: string): PageDto {
+  return { ...dto, format: formatOfFile(path) };
 }
 
 export function withToday(js: PageDto[]): PageDto[] {
@@ -72,6 +88,12 @@ export function favoritesArrangementBlocks(blocks: readonly BlockDto[], format: 
   return blocks.map((b) => ({ ...b, raw: rawWithCollapsed(b.raw, false, format), children: favoritesArrangementBlocks(b.children, format) }));
 }
 
+/** Today's sections use an ordinary page, published through createPage. The
+ * caller supplies the marker in the graph's preferred format and seeded blocks. */
+export function journalSectionsPage(name: string, marker: string, blocks: BlockDto[]): PageDto {
+  return { name, kind: "page", title: name, pre_block: marker, blocks };
+}
+
 export function appendAliasDraft(owner: PageDto, draft: PageDto): PageDto {
   return { ...owner, blocks: [...owner.blocks, ...aliasDraftBlocks(draft)] };
 }
@@ -117,8 +139,11 @@ function flatten(
     // serializes the other's content. The block's raw (incl. its id:: line) is
     // untouched, so the file on disk is unchanged. Rust dedups ids WITHIN a page,
     // so this only fires across pages.
-    const existing = byId[d.id];
-    const key = existing && existing.page !== pageName ? `dup~${crypto.randomUUID()}` : d.id;
+    // A DTO built in the window (a created page, a template, the welcome
+    // journal) has no runtime ids yet: each such block gets a fresh one, or
+    // they would all collapse into one node.
+    const existing = d.id ? byId[d.id] : undefined;
+    const key = !d.id ? freshId() : existing && existing.page !== pageName ? `dup~${crypto.randomUUID()}` : d.id;
     const childIds = flatten(d.children, key, pageName, byId, format);
     byId[key] = {
       id: key,
@@ -175,19 +200,8 @@ function toDto(id: string): BlockDto {
   return { id: n.id, raw, collapsed: n.collapsed, children: n.children.map(toDto) };
 }
 
-/** Properties that describe the block they sit on, never a page: a first
- *  bullet carrying one stays an outline block. An empty numbered-list item is
- *  exactly `logseq.order-list-type:: number`, and folding it into the page
- *  header turned the list into page properties and jammed every later save
- *  (GH #540). Mirror of Rust `BLOCK_SCOPED_PROPERTY_KEYS` (tine-store
- *  model.rs), which carries the OG provenance. */
-export const BLOCK_SCOPED_PROPERTY_KEYS: readonly string[] = [
-  "id",
-  "heading",
-  "collapsed",
-  "background-color",
-  "logseq.order-list-type",
-];
+/** Re-exported from `editor/properties` (the shared predicate's home). */
+export { BLOCK_SCOPED_PROPERTY_KEYS };
 
 /** Mirror of Rust `first_root_is_promotable_page_header` (model.rs): a childless
  *  first root whose raw is exactly canonical page-header properties and carries
@@ -196,11 +210,25 @@ export const BLOCK_SCOPED_PROPERTY_KEYS: readonly string[] = [
  *  leave them as bullets). */
 function isPromotablePageHeaderRoot(node: Node): boolean {
   const canonicalRaw = node.raw.replace(/\n+$/, "");
-  return (
-    node.children.length === 0 &&
-    isPageHeaderPropertiesOnly(canonicalRaw) &&
-    !pageHeaderKeys(canonicalRaw).some((key) => BLOCK_SCOPED_PROPERTY_KEYS.includes(key))
-  );
+  return node.children.length === 0 && isPropertiesOnly(canonicalRaw);
+}
+
+/** Page `p`'s pre-block and outline roots as its file holds them: a marked
+ *  page-header root (`beginPageHeaderEdit`) folds back into the pre-block,
+ *  with the terminal newlines Enter leaves in the live editor removed. Null
+ *  for an invalid header draft, which never reaches the disk. O(1). */
+export function foldMarkedPageHeader(p: FeedPage): { preBlock: string | null; rootIds: string[] } | null {
+  const first = doc.byId[p.roots[0]];
+  if (!first?.originatedFromPageHeader) return { preBlock: p.preBlock, rootIds: p.roots };
+  // Tolerate only Enter's authoring artifacts (blank edge lines) at the disk firewall; keep the
+  // strict shared display predicate and live raw intact. The exit toast reports
+  // this same predicate (`pageHeaderDraftProblem`).
+  if (pageHeaderDraftProblem(first)) return null;
+  const canonicalRaw = canonicalPageHeaderDraft(first.raw);
+  // Exact raw is authoritative here: ordinary toDto trimming must never eat a
+  // page-header value or its separator trivia. An empty draft deletes the
+  // header and emits no stray outline bullet.
+  return { preBlock: canonicalRaw ? canonicalRaw + (p.preBlock ?? "") : p.preBlock, rootIds: p.roots.slice(1) };
 }
 
 /** Project one loaded page for guarded save. Cost: O(loaded pages + blocks and
@@ -213,23 +241,11 @@ function isPromotablePageHeaderRoot(node: Node): boolean {
 export function pageToDto(pageName: string): PageDto | null {
   const p = doc.pages.find((x) => x.name === pageName);
   if (!p) return null;
-  let rootIds = p.roots;
-  let preBlock = p.preBlock;
-  const first = doc.byId[rootIds[0]];
-  if (first?.originatedFromPageHeader) {
-    // Enter temporarily leaves one or more trailing newlines in the live
-    // page-header editor. Tolerate only that authoring artifact at the disk
-    // firewall; keep the strict shared display predicate and live raw intact.
-    const canonicalRaw = first.raw.replace(/\n+$/, "");
-    if (first.children.length > 0 || (first.raw !== "" && !isPageHeaderPropertiesOnly(canonicalRaw))) {
-      return null;
-    }
-    // Exact raw is authoritative here: ordinary toDto trimming must never eat a
-    // page-header value or its separator trivia. An empty draft deletes the
-    // header and emits no stray outline bullet.
-    preBlock = canonicalRaw ? canonicalRaw + (p.preBlock ?? "") : p.preBlock;
-    rootIds = rootIds.slice(1);
-  } else if (first && !p.preBlock && isPromotablePageHeaderRoot(first)) {
+  const folded = foldMarkedPageHeader(p);
+  if (!folded) return null;
+  let { rootIds, preBlock } = folded;
+  const first = doc.byId[p.roots[0]];
+  if (first && !first.originatedFromPageHeader && !p.preBlock && isPromotablePageHeaderRoot(first)) {
     // GH #198: a flagless "properties-only first bullet" (empty preBlock) IS the
     // page header — the same shape setPageProperty/beginPageHeaderEdit already
     // treat as the header. Fold it into pre_block so the DTO is honest, instead

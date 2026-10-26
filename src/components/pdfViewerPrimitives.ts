@@ -3,6 +3,7 @@ import type { PdfOwnership } from "../pdfOwnership";
 import type { Rect } from "../types";
 import { isMobilePlatform } from "../nativeChrome";
 import { PDF_THEMES, type PdfTheme } from "./pdfViewerPalette";
+import { viewportOf } from "../windowRealm";
 
 export const PDF_THEME_KEY = "ls-pdf-viewer-theme";
 
@@ -85,9 +86,9 @@ export function pageDimensionsError(page: number, width: number, height: number)
 }
 
 /** Bound a full-page backing canvas by dimension and aggregate pixel budget. */
-export function safeCanvasSize(width: number, height: number, maxPixels = MAX_CANVAS_PIXELS) {
+export function safeCanvasSize(width: number, height: number, maxPixels = MAX_CANVAS_PIXELS, realm?: Node) {
   const pixelLimit = Math.max(1, Math.min(MAX_CANVAS_PIXELS, maxPixels));
-  const requestedRatio = Math.min(window.devicePixelRatio || 1, 2);
+  const requestedRatio = Math.min(viewportOf(realm).dpr, 2);
   const ratio = Math.min(
     requestedRatio,
     MAX_CANVAS_DIMENSION / width,

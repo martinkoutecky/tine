@@ -1,6 +1,8 @@
+import { t } from "../i18n";
 import { Show, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { blockProperty, blockWritable, node, pageByName, readPageProperty, setBlockProperty, setPageProperty, withUndoUnit } from "../document";
 import { parseTableColumnWidths, serializeTableColumnWidths, TABLE_COLUMN_MAX_WIDTH } from "./config";
+import { windowOf } from "../windowRealm";
 
 type Home = { kind: "block"; id: string; page: string; widths: ReadonlyMap<string, number> }
   | { kind: "page"; page: string; widths: ReadonlyMap<string, number> };
@@ -48,13 +50,14 @@ export function createTableColumnResize(ownerId: string, schemaPage?: string): {
     const startWidth = measured || widths().get(column) || minWidth(column);
     const startX = event.clientX;
     const pointerId = event.pointerId;
+    const dragWindow = windowOf(event); // the drag's own window (P1)
     let moved = false;
     setResizing(column);
     const cleanup = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      window.removeEventListener("pointercancel", abort);
-      window.removeEventListener("keydown", keydown);
+      dragWindow.removeEventListener("pointermove", move);
+      dragWindow.removeEventListener("pointerup", up);
+      dragWindow.removeEventListener("pointercancel", abort);
+      dragWindow.removeEventListener("keydown", keydown);
       cancelActive = undefined;
     };
     const finish = (commit: boolean) => {
@@ -73,10 +76,10 @@ export function createTableColumnResize(ownerId: string, schemaPage?: string): {
     const abort = (next: PointerEvent) => { if (next.pointerId === pointerId) finish(false); };
     const keydown = (next: KeyboardEvent) => { if (next.key === "Escape") { next.preventDefault(); finish(false); } };
     cancelActive = () => finish(false);
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    window.addEventListener("pointercancel", abort);
-    window.addEventListener("keydown", keydown);
+    dragWindow.addEventListener("pointermove", move);
+    dragWindow.addEventListener("pointerup", up);
+    dragWindow.addEventListener("pointercancel", abort);
+    dragWindow.addEventListener("keydown", keydown);
   };
   const reset = (column: string, event: MouseEvent) => {
     event.preventDefault(); event.stopPropagation();
@@ -87,8 +90,8 @@ export function createTableColumnResize(ownerId: string, schemaPage?: string): {
   onCleanup(() => cancelActive?.());
   const handle = (column: string, label: string) => <Show when={writable()}>
     <button type="button" class="sheet-table-column-resize-handle"
-      data-sheet-resize-handle={column} aria-label={`Resize ${label} column`}
-      title="Drag to resize; double-click to reset"
+      data-sheet-resize-handle={column} aria-label={t("sheet-resize-column", { label: String(label) })}
+      title={t("sheet-drag-to-resize-double-click-to-reset")}
       onPointerDown={(event) => begin(column, event)}
       onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
       onDblClick={(event) => reset(column, event)} />

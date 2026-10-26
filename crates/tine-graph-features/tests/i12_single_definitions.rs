@@ -26,7 +26,7 @@ fn violations(file: &str, source: &str) -> Vec<String> {
     {
         found.push("graph-text client does not use file_kind".to_owned());
     }
-    if ["journals.rs", "pages.rs", "conflicts.rs", "sources.rs"]
+    if ["journals.rs", "pages.rs", "conflicts.rs"]
         .iter()
         .any(|name| file.ends_with(name))
         && !source.contains("tine_store::is_graph_text(")
@@ -79,6 +79,7 @@ fn assert_clean(file: &str, source: &str) {
 
 #[test]
 fn shared_answers_have_one_definition() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for file in [
         "crates/tine-graph-features/src/pages.rs",
@@ -91,7 +92,6 @@ fn shared_answers_have_one_definition() {
         "crates/tine-store/src/query_plan.rs",
         "crates/tine-graph-features/src/journals.rs",
         "crates/tine-graph-features/src/conflicts.rs",
-        "crates/tine-graph-features/src/sources.rs",
         "crates/tine-graph-features/src/pdf.rs",
     ] {
         let mut source = fs::read_to_string(root.join(file)).unwrap();
@@ -100,6 +100,14 @@ fn shared_answers_have_one_definition() {
             // check over the whole answerer, including that module.
             source.push_str(
                 &fs::read_to_string(root.join("crates/tine-store/src/query_plan/blocks.rs"))
+                    .unwrap(),
+            );
+        }
+        if file.ends_with("graph-features/src/conflicts.rs") {
+            // The derived conflict queue moved into a child module. Keep the
+            // classifier and admission checks over the whole Concord module.
+            source.push_str(
+                &fs::read_to_string(root.join("crates/tine-graph-features/src/conflicts/queue.rs"))
                     .unwrap(),
             );
         }
@@ -151,6 +159,7 @@ fn shared_answers_have_one_definition() {
 
 #[test]
 fn planted_duplicate_classifier_fails() {
+    let _integration_guard = crate::integration_lock();
     let fake = "fn is_graph_text(p: &Path) -> bool { true }";
     assert!(
         std::panic::catch_unwind(|| assert_clean("restore.rs", fake)).is_err(),
@@ -199,6 +208,7 @@ fn sheet_semantics(source: &str) -> Vec<String> {
 
 #[test]
 fn static_export_sheets_compute_nothing() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let source =
         fs::read_to_string(root.join("crates/tine-graph-features/src/render_sheets.rs")).unwrap();
@@ -211,6 +221,7 @@ fn static_export_sheets_compute_nothing() {
 
 #[test]
 fn planted_sheet_semantics_in_the_static_export_fail() {
+    let _integration_guard = crate::integration_lock();
     for planted in [
         "fn aggregate(values: &[f64]) -> f64 { values.iter().sum() }",
         "let g = props.get(\"tine.group-by\");",

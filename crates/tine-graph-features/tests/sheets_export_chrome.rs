@@ -89,6 +89,7 @@ fn publish() -> (Scratch, String, String) {
 /// must not also print as prose chips (master asserts `!html.contains("tine.view::")`).
 #[test]
 fn a_sheet_owners_view_config_is_not_printed_as_property_chips() {
+    let _integration_guard = crate::integration_lock();
     let (_b, html, _) = publish();
     let g = html.find("<table class=\"sheet-grid\">").unwrap();
     let grid_end = g + html[g..].find("</table>").unwrap();
@@ -110,6 +111,7 @@ fn a_sheet_owners_view_config_is_not_printed_as_property_chips() {
 
 #[test]
 fn sheet_rows_stay_searchable_and_board_follows_workflow() {
+    let _integration_guard = crate::integration_lock();
     let (_b, html, index) = publish();
     for row in ["Second", "Write tests", "Implement"] {
         assert!(index.contains(row), "row {row} missing from search index");

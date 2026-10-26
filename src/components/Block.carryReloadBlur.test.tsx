@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { For, Show } from "solid-js";
 import { pageByName } from "../document";
 import { doc } from "../document/model";
-import { loadSingle, reloadPage } from "../document/workingSet";
+import { installPageContent, loadSingle } from "../document/workingSet";
 import { editingId, startEditing } from "../editorController";
 import type { PageDto } from "../types";
 import { Block } from "./Block";
@@ -48,7 +48,7 @@ async function carryAcross(before: string, after: string) {
   const { root, dispose } = mountOutline();
   const old = root.querySelector("textarea")!;
   expect(old).not.toBeNull();
-  reloadPage(external([blk("a", "Alpha"), blk("b", after)]));
+  installPageContent(NAME, external([blk("a", "Alpha"), blk("b", after)]));
   old.dispatchEvent(new FocusEvent("blur"));
   await Promise.resolve();
   return { root, dispose };
@@ -96,7 +96,7 @@ describe("an editor carried across an external reload", () => {
       const old = root.querySelector("textarea")!;
       // The external change deletes the edited block (no `id::`): the editor
       // is carried by outline position, and position 1 no longer exists.
-      reloadPage(external([blk("a", "Alpha EXTERNAL")]));
+      installPageContent(NAME, external([blk("a", "Alpha EXTERNAL")]));
       // A listener's throw is reported to the window, not to dispatchEvent.
       const thrown: unknown[] = [];
       const onError = (e: ErrorEvent) => { thrown.push(e.error); e.preventDefault(); };

@@ -10,7 +10,7 @@ use tine_core::guide::{
     guide_copy_page_name, guide_link_renames, rewrite_bundled_guide_links, CONFIG_EDN,
     GUIDE_ASSETS, GUIDE_TEMPLATES, QUICK_CAPTURE_PNG,
 };
-use tine_store::{Area, Content, OpenError, Resolved, Store, TxOutcome, Why};
+use tine_store::{Area, Content, Input, OpenError, PageHost, Resolved, Store, TxOutcome, Why};
 
 use crate::{store_error, tx_error};
 
@@ -24,7 +24,10 @@ pub struct GuideCopyResult {
 }
 
 /// Seed and scaffold the onboarding graph; returns its chosen root.
-pub fn create_demo_graph(parent: &std::path::Path) -> Result<std::path::PathBuf, OpenError> {
+pub fn create_demo_graph(
+    parent: &std::path::Path,
+    name: &str,
+) -> Result<std::path::PathBuf, OpenError> {
     let config = tine_core::config::Config::parse(CONFIG_EDN);
     let mut seed = vec![
         (
@@ -48,35 +51,88 @@ pub fn create_demo_graph(parent: &std::path::Path) -> Result<std::path::PathBuf,
             template.markdown.as_bytes().to_vec(),
         ));
     }
-    Store::create_graph(parent, &seed)
+    Store::create_graph(parent, name, &seed)
 }
 
-fn create_if_absent(store: &Store, area: Area, rel: &str, bytes: &[u8]) -> io::Result<bool> {
+/// A retained writer (STEP3 §7, A-K2): a page the host holds as a fileless
+/// draft is saved first, so the Guide meets it as an existing page and skips it.
+fn create_if_absent(
+    store: &Store,
+    host: Option<&PageHost>,
+    area: Area,
+    rel: &str,
+    bytes: &[u8],
+) -> io::Result<bool> {
     let id = store.file_id(area, rel).map_err(store_error)?;
-    let mut tx = if area == Area::Pages {
-        store.transaction(Some(tine_store::EditKind::ReplacePage))
-    } else {
-        store.transaction(None)
+    let transaction = || {
+        let mut tx = if area == Area::Pages {
+            store.transaction(Some(tine_store::EditKind::ReplacePage))
+        } else {
+            store.transaction(None)
+        };
+        tx.create(&id, Content::Bytes(bytes.to_vec()));
+        tx
     };
-    tx.create(&id, Content::Bytes(bytes.to_vec()));
-    let outcome = tx.commit();
-    match &outcome {
-        TxOutcome::Committed { .. } => Ok(true),
-        TxOutcome::NotCommitted {
-            why: Why::Conflict { .. } | Why::Refused(tine_store::Refusal::Twin { .. }),
-            ..
-        } => Ok(false),
-        TxOutcome::NotCommitted {
-            why: Why::Failed(error),
-            ..
-        } if error.kind == io::ErrorKind::IsADirectory => Ok(false),
-        _ => tx_error(outcome).map(|_| true),
-    }
+    let (Some(running), Some(page)) = (host, store.as_page(&id)) else {
+        // No host, or an asset: the transaction under the retained-writer route, as before P3.
+        let discover = || Ok(crate::retained::pages(store, [&id]));
+        return crate::retained::reserved(
+            host,
+            Input::Flush,
+            discover,
+            crate::retained::unsaved,
+            |_| {
+                let outcome = transaction().commit();
+                match &outcome {
+                    TxOutcome::Committed { .. } => Ok(true),
+                    TxOutcome::NotCommitted {
+                        why: Why::Conflict { .. } | Why::Refused(tine_store::Refusal::Twin { .. }),
+                        ..
+                    } => Ok(false),
+                    TxOutcome::NotCommitted {
+                        why: Why::Failed(error),
+                        ..
+                    } if error.kind == io::ErrorKind::IsADirectory => Ok(false),
+                    _ => tx_error(outcome).map(|_| true),
+                }
+            },
+        );
+    };
+    let mut created = false;
+    let plan = || match transaction().plan() {
+        Ok(op) => {
+            created = true;
+            Ok(Some(op))
+        }
+        Err(Why::Conflict { .. } | Why::Refused(tine_store::Refusal::Twin { .. })) => {
+            created = false;
+            Ok(None)
+        }
+        Err(Why::Failed(error)) if error.kind == io::ErrorKind::IsADirectory => {
+            created = false;
+            Ok(None)
+        }
+        Err(why) => Err(crate::why_error(why)),
+    };
+    crate::retained::operation(
+        running,
+        Input::Flush,
+        std::slice::from_ref(&page),
+        "copying the Guide",
+        "a Guide page changed repeatedly during the copy",
+        crate::retained::unsaved,
+        plan,
+    )?;
+    Ok(created)
 }
 
 /// Copy every Guide page in template order and the bundled assets in manifest
 /// (sorted) order. Each file commits independently; an existing page or asset is skipped.
-pub fn copy_guide_into_graph(store: &Store, title: &str) -> io::Result<GuideCopyResult> {
+pub fn copy_guide_into_graph(
+    store: &Store,
+    host: Option<&PageHost>,
+    title: &str,
+) -> io::Result<GuideCopyResult> {
     let Some(viewed) = GUIDE_TEMPLATES
         .iter()
         .find(|template| tine_core::refs::same_page(template.title, title))
@@ -92,7 +148,7 @@ pub fn copy_guide_into_graph(store: &Store, title: &str) -> io::Result<GuideCopy
     let mut skipped_pages = Vec::new();
     for template in GUIDE_TEMPLATES {
         store
-            .scan_refresh()
+            .refresh(tine_store::Depth::Stamps)
             .map_err(|error| io::Error::other(format!("{error:?}")))?;
         let graph = store
             .whole_graph()
@@ -111,7 +167,7 @@ pub fn copy_guide_into_graph(store: &Store, title: &str) -> io::Result<GuideCopy
             .strip_prefix(&format!("title:: {}\n", template.title))
             .map(|rest| format!("title:: {name}\n{rest}"))
             .unwrap_or(markdown);
-        if create_if_absent(store, Area::Pages, &rel, markdown.as_bytes())? {
+        if create_if_absent(store, host, Area::Pages, &rel, markdown.as_bytes())? {
             created_pages.push(name);
         } else {
             skipped_pages.push(name);
@@ -119,7 +175,7 @@ pub fn copy_guide_into_graph(store: &Store, title: &str) -> io::Result<GuideCopy
     }
     let mut copied_assets = Vec::new();
     for asset in GUIDE_ASSETS {
-        if create_if_absent(store, Area::Assets, asset.name, asset.bytes)? {
+        if create_if_absent(store, host, Area::Assets, asset.name, asset.bytes)? {
             copied_assets.push(asset.name.to_string());
         }
     }

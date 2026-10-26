@@ -1,3 +1,4 @@
+import { documentOf, registeredWindows, selectionOf } from "./windowRealm";
 // A drag that MOVES something is not a text gesture.
 //
 // WebKit will happily start a text selection from wherever the pointer went
@@ -20,13 +21,19 @@
 export const DRAG_SELECTION_CLASS = "drag-selection-suppressed";
 
 /** Discard whatever the press already selected. */
-export function dropSelection(): void {
-  const selection = document.getSelection?.();
+export function dropSelection(realm?: Node | Event): void {
+  const selection = selectionOf(realm);
   if (selection && selection.rangeCount > 0) selection.removeAllRanges();
 }
 
-/** Make the whole document unselectable for the duration of a move-drag. */
-export function setDragSelectionSuppressed(on: boolean): void {
-  document.documentElement.classList.toggle(DRAG_SELECTION_CLASS, on);
-  if (on) dropSelection();
+/** Make the whole document of `realm`'s window unselectable for the duration
+ * of a move-drag. Releasing clears every Tine window, so a drag that ended in
+ * another window never leaves one stuck unselectable. */
+export function setDragSelectionSuppressed(on: boolean, realm?: Node | Event): void {
+  if (on) {
+    documentOf(realm).documentElement.classList.add(DRAG_SELECTION_CLASS);
+    dropSelection(realm);
+    return;
+  }
+  for (const win of registeredWindows()) win.document.documentElement.classList.remove(DRAG_SELECTION_CLASS);
 }

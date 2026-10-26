@@ -64,6 +64,29 @@ describe("page index: the one frontend name answerer", () => {
     expect(backendMock.pageInventory).toHaveBeenCalledTimes(3);
   });
 
+  // PERF-FIXES D2: a rename publishes each referrer separately, and each
+  // publication bumps the inventory signal. While one read is in flight the
+  // rest coalesce into one trailing read, which sees the burst's last state.
+  it("coalesces an inventory burst during an in-flight read into one trailing read", async () => {
+    let release: (value: PageInventory) => void = () => {};
+    backendMock.pageInventory.mockResolvedValueOnce(inventory(1, file("old")));
+    const { installPageIndex, navigationName, bumpPageInventoryRev } = await load();
+    installPageIndex();
+    await vi.waitFor(() => expect(navigationName("OLD")).toBe("old"));
+    backendMock.pageInventory.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    backendMock.pageInventory.mockResolvedValueOnce(inventory(3, file("new")));
+    bumpPageInventoryRev();
+    await vi.waitFor(() => expect(backendMock.pageInventory).toHaveBeenCalledTimes(2));
+    for (let i = 0; i < 50; i++) {
+      bumpPageInventoryRev();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(backendMock.pageInventory).toHaveBeenCalledTimes(2);
+    release(inventory(2, file("mid")));
+    await vi.waitFor(() => expect(navigationName("NEW")).toBe("new"));
+    expect(backendMock.pageInventory).toHaveBeenCalledTimes(3);
+  });
+
   // Ported from graph.test "refreshes real-page precedence after a same-session
   // page creation".
   it("follows a same-session page creation that takes over an alias name", async () => {
@@ -245,4 +268,7 @@ it("keeps readable names and reports unreadable files once when a file name can'
   const errors = toasts().filter((t) => t.kind === "error");
   expect(errors).toHaveLength(1);
   expect(errors[0].message).toContain("couldn't be read");
+  // GH #727: the toast itself names the file, and does not point at the opt-in debug log.
+  expect(errors[0].message).toContain("pages/Bad.md");
+  expect(errors[0].message).not.toContain("debug log");
 });

@@ -1,10 +1,9 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "./render/parse";
-import { blockSubtreeMarkdown, clearSelection, deleteBlock, deleteSelection, moveSelection, flushPage, markDirty, resetStore, selectBlock, selectedIds, setBlockProperty, splitBlock, toggleCollapse } from "./document";
-import { forceSave } from "./document/save/engine";
+import { blockSubtreeMarkdown, clearSelection, deleteBlock, deleteSelection, moveSelection, flushPage, isDirty, markDirty, resetStore, selectBlock, selectedIds, setBlockProperty, splitBlock, toggleCollapse } from "./document";
 import { type FeedPage, type Node } from "./document/model";
 import { doc, setDoc } from "./document/model";
-import { dirtyPages } from "./document/save/engine";
+import { bindTestHost } from "./document/host/wiring.test.support";
 import { backend } from "./backend";
 
 beforeAll(() => initParser());
@@ -42,7 +41,7 @@ describe("editing/collapse boundary regressions", () => {
     selectBlock("c");
     deleteSelection();
     expect(JSON.stringify(doc)).toBe(before);
-    expect([...dirtyPages()]).not.toContain("Org");
+    expect(isDirty("Org")).toBe(false);
   });
 
   it("read-only pages cannot enter the dirty/save pipeline even through a direct call", async () => {
@@ -50,12 +49,14 @@ describe("editing/collapse boundary regressions", () => {
       byId: { p: node("p", "Parent", "Org") },
       pages: [page("Org", ["p"], "org", true)], feed: ["Org"], loaded: true,
     });
-    const save = vi.spyOn(backend(), "savePages");
+    await bindTestHost();
+    const open = vi.spyOn(backend(), "pageOpen");
+    const save = vi.spyOn(backend(), "pageSubmit");
     markDirty("Org", "save-block");
-    expect([...dirtyPages()]).not.toContain("Org");
+    expect(isDirty("Org")).toBe(false);
     expect(await flushPage("Org")).toBe(true);
-    expect(save).not.toHaveBeenCalled();
-    expect(await forceSave("Org")).toBe(false);
+    // Not even opened in the page host: the host never holds a read-only page for this window.
+    expect(open).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
   });
 

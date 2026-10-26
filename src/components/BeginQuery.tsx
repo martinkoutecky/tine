@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { type JSX } from "solid-js";
 import type { Block as AstBlock, Format } from "../render/ast";
 import { parseBody } from "../render/facets";
@@ -45,11 +46,10 @@ export function inspectBeginQuery(
 /** Read-only BEGIN_QUERY presentation. OG presents the authored title and query
  * result table in its normal custom-query shell (og/src/main/frontend/components/query.cljs:184-247).
  * Tine reuses QueryMacro so execution retains the existing native result bounds. */
-export function BeginQuery(props: { match: BeginQueryMatch; currentPage?: string }): JSX.Element {
+export function BeginQuery(props: { match: BeginQueryMatch; currentPage?: string; hideWhenEmpty?: boolean }): JSX.Element {
   if (props.match.kind === "unsupported") {
     return (
-      <div class="query-unsupported begin-query-unsupported" role="alert">
-        Unsupported BEGIN_QUERY: {props.match.reason}.
+      <div class="query-unsupported begin-query-unsupported" role="alert">{t("begin-query-unsupported", { reason: props.match.reason })}
       </div>
     );
   }
@@ -58,6 +58,7 @@ export function BeginQuery(props: { match: BeginQueryMatch; currentPage?: string
       body={`query ${props.match.query} {:table-view? true}`}
       title={props.match.title}
       currentPage={props.currentPage}
+      hideWhenEmpty={props.hideWhenEmpty}
       strictAdvanced
       unsupportedLabel="Unsupported BEGIN_QUERY"
     />

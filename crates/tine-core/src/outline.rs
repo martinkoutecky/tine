@@ -2,7 +2,7 @@
 //! open a block, and at which structural level.
 //!
 //! lsdoc owns the recognition (`lsdoc::parse_outline`, reached through the
-//! bounded boundary `crates/lsdoc-block-parse.rs`), exactly as mldoc decides it
+//! bounded boundary `crates/tine-outline/src/lsdoc_block_parse.rs`), exactly as mldoc decides it
 //! for OG: dash bullets, unbulleted ATX headings, Org headlines, and every
 //! literal region (fences, `#+BEGIN_…` blocks) that hides a look-alike line.
 //! This module owns no Markdown or Org grammar. It checks the parser's events

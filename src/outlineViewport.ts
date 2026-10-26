@@ -16,12 +16,13 @@
  */
 import { createRoot, createSignal } from "solid-js";
 import { clearOnBindingInvalidated } from "./binding";
+import { mainWindow } from "./windowRealm";
 
 type Window = { host: HTMLElement; reveal: () => void };
 const windows = new Map<string, Set<Window>>();
 const [printing, setPrintingOutline] = createRoot(() => createSignal(false));
 export const printingOutline: () => boolean = printing;
-let printWindow: typeof window | undefined;
+let printWindow: typeof mainWindow | undefined;
 const printOwners = new Set<object>();
 const beforePrint = () => setPrintingOutline(true);
 const afterPrint = () => setPrintingOutline(false);
@@ -37,9 +38,10 @@ export function listenForOutlinePrint(): () => void {
   const owner = {};
   printOwners.add(owner);
   if (!printWindow && typeof window !== "undefined") {
-    printWindow = window;
-    window.addEventListener("beforeprint", beforePrint);
-    window.addEventListener("afterprint", afterPrint);
+    // Printing is the main window's (src/print.ts prints from a frame in main).
+    printWindow = mainWindow;
+    mainWindow.addEventListener("beforeprint", beforePrint);
+    mainWindow.addEventListener("afterprint", afterPrint);
   }
   return () => {
     printOwners.delete(owner);

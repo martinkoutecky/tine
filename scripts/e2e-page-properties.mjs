@@ -15,6 +15,8 @@ import {
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
@@ -52,9 +54,16 @@ const deletion = "alias:: Delete Me\ncustom/key:: transient\n\n- Body survives\n
 fs.writeFileSync(`${GRAPH}/pages/Property detailed.md`, detailed);
 fs.writeFileSync(`${GRAPH}/pages/Property simple.md`, simple);
 fs.writeFileSync(`${GRAPH}/pages/Property deletion.md`, deletion);
+// GH #210: a table block whose view is set before its title is typed, first on a
+// page with no page properties.
+const tableConfig = "tine.view:: table\n  tine.table-widths:: prop%3Atest=171";
+fs.writeFileSync(`${GRAPH}/pages/Property table.md`, `- ${tableConfig}\n- Other block\n`);
+// GH #210 F1: Enter at the start of a page's properties.
+const headEnter = "tags:: reading\nicon:: 📚\n\n- Body block\n";
+fs.writeFileSync(`${GRAPH}/pages/Property head enter.md`, headEnter);
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
-fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- [[Property detailed]]\n- [[Property simple]]\n- [[Property deletion]]\n");
+fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- [[Property detailed]]\n- [[Property simple]]\n- [[Property deletion]]\n- [[Property table]]\n- [[Property head enter]]\n");
 
 const env = {
   ...process.env,
@@ -89,22 +98,14 @@ await sleep(2500);
 let browser;
 
 async function openPage(name) {
-  if ((await browser.$$(".nav-page")).length === 0) {
-    const toggled = await browser.execute(() => {
-      const header = [...document.querySelectorAll(".nav-section-header")]
-        .find((element) => element.textContent?.includes("ALL PAGES"));
-      if (!header) return false;
-      header.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
-      return true;
-    });
-    if (!toggled) throw new Error("missing ALL PAGES sidebar section");
-    await browser.waitUntil(async () => (await browser.$$(".nav-page")).length >= 2, {
-      timeout: 5_000,
-      timeoutMsg: "ALL PAGES did not reveal fixture pages",
-    });
-  }
+  await browser.$(".nav-all-pages-open").click();
+  await browser.$(".all-pages-filter").waitForExist({ timeout: 10_000 });
+  await browser.$(".all-pages-filter").setValue(name);
+  await browser.waitUntil(async () => (await browser.$$(".all-pages-open")).length > 0, {
+    timeout: 5_000, timeoutMsg: "All pages did not reveal fixture pages",
+  });
   const opened = await browser.execute((target) => {
-    const rows = [...document.querySelectorAll(".nav-page")];
+    const rows = [...document.querySelectorAll(".all-pages-open")];
     const row = rows.find((element) => element.textContent?.trim() === target);
     if (!row) return { ok: false, rows: rows.map((element) => element.textContent?.trim()) };
     row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
@@ -265,11 +266,9 @@ async function preparePageHeaderArrowDown(expectedValue) {
             ?? null,
         } : null,
       };
-      // A microtask queued from a capture listener runs before the app's
-      // delegated bubble handler; read defaultPrevented after dispatch ends.
-      setTimeout(() => {
+      queueMicrotask(() => {
         window.__tinePageArrowDownKeyWitness = { ...witness, defaultPrevented: event.defaultPrevented };
-      }, 0);
+      });
     }, { capture: true, once: true });
     return preKey;
   }, expectedValue);
@@ -446,12 +445,6 @@ try {
   if ((await headerEditor.getValue()) !== editedHeader) {
     throw new Error(`native page-header replacement did not preserve the intended value: ${JSON.stringify({ replacementTrace, actual: await headerEditor.getValue() })}`);
   }
-  // Typing inside [[...]] opens page completion after a short debounce, and a
-  // programmatic caret move does not close it, so ArrowDown would go to the
-  // popup. Wait for it and dismiss it like a user before moving the caret.
-  await browser.$(".autocomplete .ac-item").waitForExist({ timeout: 5_000 });
-  await browser.keys(["Escape"]);
-  await browser.$(".autocomplete").waitForExist({ reverse: true, timeout: 5_000 });
   const arrowDownPreKey = await preparePageHeaderArrowDown(editedHeader);
   if (
     !arrowDownPreKey.isPageHeader
@@ -578,6 +571,113 @@ try {
   await openPage("Property deletion");
   if ((await browser.$$(".page-properties .prop-row")).length !== 0) {
     throw new Error("deleted page-header properties reappeared after real-app reopen");
+  }
+  // GH #210: the table block stays a block through a save, and its title (typed
+  // next) neither raises the page-header toast nor stops the page saving.
+  await openPage("Property table");
+  // The title-less table block is an ordinary block (no page-properties row).
+  const openTableBlock = () => browser.execute(() => {
+    const content = document.querySelector(".page-blocks .ls-block .block-content");
+    if (!content) return false;
+    content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    return true;
+  });
+  if ((await browser.$$(".page-properties .prop-row")).length !== 0) {
+    throw new Error("the table block was shown as page properties");
+  }
+  if (!await openTableBlock()) throw new Error("missing rendered first-bullet table block");
+  headerEditor = await browser.$(".page-blocks textarea.block-editor");
+  await headerEditor.waitForExist({ timeout: 5_000 });
+  const tableHeader = await headerEditor.getValue();
+  const widthAt = tableHeader.indexOf("171");
+  await replaceHeaderLikeUser(headerEditor, "200", { start: widthAt, end: widthAt + 3 });
+  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  const tableSaved = await waitForFile(
+    `${GRAPH}/pages/Property table.md`,
+    (text) => text.includes("prop%3Atest=200"),
+    "table block width edit",
+  );
+  if (!tableSaved.startsWith("- tine.view:: table") || !tableSaved.includes("- Other block")) {
+    throw new Error(`the table block was rewritten as page properties: ${JSON.stringify(tableSaved)}`);
+  }
+  if (!await openTableBlock()) throw new Error("missing table block for the title edit");
+  headerEditor = await browser.$(".page-blocks textarea.block-editor");
+  await headerEditor.waitForExist({ timeout: 5_000 });
+  // The reporter typed the title on its own line above the config: text at
+  // offset 0, then Shift+Enter (a newline inside the block, not a new block).
+  // (browser.keys goes to the focused editor without moving its caret, unlike
+  // addValue, which jumps a collapsed caret to the end.)
+  await headerEditor.click();
+  await browser.keys(["Control", "Home"]);
+  await browser.keys("test table");
+  await browser.keys(["Shift", "Enter"]);
+  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  const titled = await waitForFile(
+    `${GRAPH}/pages/Property table.md`,
+    (text) => text.startsWith("- test table\n  tine.view:: table"),
+    "table block title",
+  );
+  if (!titled.includes("- Other block")) throw new Error(`the table page lost its other block: ${JSON.stringify(titled)}`);
+  const tableToasts = await browser.execute(() => [...document.querySelectorAll(".toast-error .toast-msg")].map((node) => node.textContent ?? ""));
+  if (tableToasts.length) throw new Error(`typing a table block's title raised an error toast: ${JSON.stringify(tableToasts)}`);
+  await browser.$(".page-blocks .sheet-table").waitForExist({
+    timeout: 5_000,
+    timeoutMsg: "the titled table block no longer renders as a table",
+  });
+  // GH #210 F1: click the page properties, caret to the start, Enter. OG takes
+  // it as a newline in the properties field and its save drops it; before the
+  // fix the page stopped saving (the header draft started with a blank line,
+  // or a split put an empty block above it, which the store refuses). The
+  // page's later edits must still reach the disk.
+  await openPageByName(browser, "Property head enter", { entry: process.platform === "win32" ? "button" : "shortcut" });
+  const headTarget = await browser.execute(() => {
+    const row = [...document.querySelectorAll(".page-properties .prop-row")]
+      .find((element) => element.querySelector(".prop-key")?.textContent?.trim() === "tags");
+    if (!row) return false;
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    return true;
+  });
+  if (!headTarget) throw new Error("missing rendered page-properties row on the head-enter page");
+  headerEditor = await browser.$(".page-blocks textarea.block-editor");
+  await headerEditor.waitForExist({ timeout: 5_000 });
+  await headerEditor.click();
+  await browser.keys(["Control", "Home"]);
+  await browser.keys(["Enter"]);
+  const afterEnter = await browser.execute(() => ({
+    editors: [...document.querySelectorAll(".page-blocks textarea.block-editor")].map((t) => t.value),
+    blocks: [...document.querySelectorAll(".page-blocks .ls-block")].length,
+  }));
+  if (afterEnter.editors.length !== 1 || afterEnter.editors[0] !== "\ntags:: reading\nicon:: 📚") {
+    throw new Error(`Enter at the start of the page properties did not stay a newline in them: ${JSON.stringify(afterEnter)}`);
+  }
+  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  // A later edit on the same page: the body block.
+  const openBody = await browser.execute(() => {
+    const block = [...document.querySelectorAll(".page-blocks .ls-block")]
+      .find((element) => element.textContent?.includes("Body block"));
+    const content = block?.querySelector(".block-content");
+    if (!content) return false;
+    content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    return true;
+  });
+  if (!openBody) throw new Error("missing body block on the head-enter page");
+  const bodyEditor = await browser.$(".page-blocks textarea.block-editor");
+  await bodyEditor.waitForExist({ timeout: 5_000 });
+  await browser.keys(["Control", "End"]);
+  await browser.keys(" edited");
+  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  const headSaved = await waitForFileText(
+    `${GRAPH}/pages/Property head enter.md`,
+    (text) => text.includes("- Body block edited"),
+    { timeoutMs: 10_000 },
+  );
+  if (headSaved !== "tags:: reading\nicon:: 📚\n\n- Body block edited\n") {
+    throw new Error(`Enter at the start of the page properties changed the page: ${JSON.stringify(headSaved)}`);
+  }
+  const headToasts = await browser.execute(() => [...document.querySelectorAll(".toast-error .toast-msg")].map((node) => node.textContent ?? ""));
+  if (headToasts.length) throw new Error(`Enter at the start of the page properties raised an error toast: ${JSON.stringify(headToasts)}`);
+  if ((await browser.$$(".page-properties .prop-row")).length !== 2) {
+    throw new Error("the page properties no longer render as the page header after Enter at their start");
   }
   console.log(`PASS: page-header click/edit/navigation, native replacements (${replacementTrace.length}+${selectAllTrace.length} input events), deletion, disk bytes, and real-app reopen are canonical`);
 } finally {

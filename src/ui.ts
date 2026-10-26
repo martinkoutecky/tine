@@ -1,6 +1,7 @@
+import { msg } from "./i18n";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { reportUiFailure } from "./uiFailure";
+import { reportUiFailure, reportUnreadableFiles } from "./uiFailure";
 import { graphMeta, setGraphMeta, bumpGraphEpoch } from "./graphSession";
 import { pushToast } from "./toasts";
 import { isMobilePlatform } from "./nativeChrome";
@@ -29,6 +30,7 @@ import { changeGraphSetting, writeGraphSignal } from "./graphPreferences";
 export { appearancePreference, theme, resolveTheme, applyTheme, setAppearancePreference } from "./themePreference";
 export type { ThemePreference } from "./themePreference";
 import { theme, setAppearancePreference } from "./themePreference";
+import { isHTMLElementNode, onEachWindow, windowOf } from "./windowRealm";
 
 // Task workflow from config.edn (:preferred-workflow): drives mod+enter cycling.
 export const [workflow, setWorkflow] = createSignal<"now" | "todo">("now");
@@ -87,17 +89,17 @@ function loadStr(key: string): string | null {
   try {
     return localStorage.getItem(key);
   } catch {
-    if (typeof localStorage !== "undefined") pushToast("Could not load display preference.", "error");
+    if (typeof localStorage !== "undefined") pushToast(msg("ui-ui-could-not-load-display-preference"), "error");
     return null;
   }
 }
-function saveStr(key: string, val: string | null, what = "display preference"): boolean {
+function saveStr(key: string, val: string | null, what: "display preference" | "keyboard shortcuts" = "display preference"): boolean {
   try {
     if (val === null) localStorage.removeItem(key);
     else localStorage.setItem(key, val);
     return true;
   } catch {
-    pushToast(`Could not save ${what}.`, "error");
+    pushToast(msg("ui-save-preference-failed", { preference: what === "keyboard shortcuts" ? "keyboard" : "display" }), "error");
     return false;
   }
 }
@@ -146,21 +148,22 @@ export function toggleDocumentMode() {
 // --- typographic replacements (a "Differs from Logseq" opinion): render `->` as
 // `→`, `--` as `–`, `---` as `—`, etc.
 //   "render" = source keeps the ASCII, only the rendered view shows glyphs
-//              (default; mirrors how \Delta→Δ works).
+//              (opt-in; mirrors how \Delta→Δ works).
 //   "type"   = rewrite the SOURCE as you type (the .md itself gets the glyphs);
 //              the render pass is then off since the source already holds them.
-//   "off"    = leave the ASCII everywhere.
+//   "off"    = leave the ASCII everywhere (default: text renders as typed, as in
+//              Logseq, GH #583. Only the non-default modes are stored).
 // Local appearance pref, like wide/document mode. ---
 export type TypographyMode = "off" | "render" | "type";
 const TYPO_KEY = "logseq-claude.typography";
 function loadTypographyMode(): TypographyMode {
   const v = loadStr(TYPO_KEY);
-  return v === "off" ? "off" : v === "type" ? "type" : "render";
+  return v === "render" ? "render" : v === "type" ? "type" : "off";
 }
 export const [typographyMode, setTypographyModeSig] =
   createSignal<TypographyMode>(loadTypographyMode());
 export function setTypographyMode(m: TypographyMode) {
-  if (!saveStr(TYPO_KEY, m === "render" ? null : m)) return;
+  if (!saveStr(TYPO_KEY, m === "off" ? null : m)) return;
   setTypographyModeSig(m);
   bumpGraphEpoch(); // re-render open pages so the change is immediate
 }
@@ -230,7 +233,7 @@ export function changeJournalTitleFormat(fmt: string) {
         setJournalTitleFormat(m.journal_page_title_format);
         bumpGraphEpoch();
       }
-      pushToast(`Could not save journal title format: ${String(error)}`, "error");
+      pushToast(msg("ui-ui-could-not-save-journal-title-format", { value1: String(error) }), "error");
     });
 }
 
@@ -260,7 +263,7 @@ export async function refreshJournalConflicts(): Promise<void> {
   } catch (error) {
     // A failed listing must not read as "no duplicate days": say so, but only
     // for the graph that asked (a switch already emptied the list).
-    if (owner()) pushToast(`Could not check for duplicate journal days: ${String(error)}`, "error");
+    if (owner()) pushToast(msg("ui-ui-could-not-check-for-duplicate-journal-days", { value1: String(error) }), "error");
   }
 }
 
@@ -279,14 +282,14 @@ export async function refreshSyncConflicts(notify: "new" | false = false): Promi
     if (result.kind === "stale" || !conflictRefreshCurrent(episode)) return;
     const previous = new Set(conflictQueue().map((conflict) => conflict.id));
     setConflictInventory(result.value);
-    if (result.value.unreadable?.length) reportUiFailure("unreadable-files", result.value.unreadable.join(", "));
+    if (result.value.unreadable?.length) reportUnreadableFiles(result.value.unreadable);
     const arrived = result.value.queue.filter((c) => c.source === "sync-copy" && !previous.has(c.id));
     if (notify === "new" && arrived.length) {
       const first = arrived[0];
       const toastId = pushToast(
-        `${arrived.length} new sync conflict${arrived.length === 1 ? " needs" : "s need"} review`,
+        msg("ui-sync-conflicts", { count: arrived.length }),
         "info",
-        { sticky: true, action: { label: "Review", run: () => openPageTarget({ name: first.page_name, pageKind: first.kind, path: first.page_path }) },
+        { sticky: true, action: { label: msg("ui-review"), run: () => openPageTarget({ name: first.page_name, pageKind: first.kind, path: first.page_path }) },
           onDismiss: () => forgetArrivalNotice(toastId) }
       );
       trackArrivalNotice(toastId, arrived.map((conflict) => conflict.id));
@@ -299,8 +302,10 @@ export async function refreshSyncConflicts(notify: "new" | false = false): Promi
 // --- which content pane is focused. Drives Ctrl+/- zoom routing (notes → whole
 // interface, pdf → the PDF's own scale). Transient session state, not persisted. ---
 export const [activePane, setActivePane] = createSignal<"notes" | "pdf">("notes");
-let paneFocusSetter: ((paneId: string) => void) | undefined;
-export function registerPaneFocusSetter(setter: (paneId: string) => void) {
+/** `paneId` null = an interaction outside every pane of `win` (the window it
+ * happened in decides the default pane, src/panes.ts). */
+let paneFocusSetter: ((paneId: string | null, win: Window) => void) | undefined;
+export function registerPaneFocusSetter(setter: (paneId: string | null, win: Window) => void) {
   paneFocusSetter = setter;
 }
 /** Track the focused pane from clicks / focus moves. Capture-phase so it sees
@@ -347,10 +352,11 @@ export function installPaneTracker(): () => void {
     // "?? main" default reset pane focus on EVERY switcher open, so palette
     // splits and Ctrl+K picks always landed in "main" (Martin's Jul 8
     // wrong-pane report). Deliberate pointer clicks outside keep the old
-    // main default.
+    // default: "main" in the main window, the window's own first pane in a
+    // workspace window.
     if (e.type === "focusin" && !container) return;
-    const paneId = container?.getAttribute("data-pane-id") ?? "main";
-    paneFocusSetter?.(paneId);
+    const paneId = container?.getAttribute("data-pane-id") ?? null;
+    paneFocusSetter?.(paneId, windowOf(e));
     setActivePane(paneId === "pdf" ? "pdf" : "notes");
   };
   const pointerdown = (e: Event) => {
@@ -372,14 +378,19 @@ export function installPaneTracker(): () => void {
     if (target?.closest?.("[data-pane-focus-neutral]")) return;
     update(e);
   };
-  window.addEventListener("pointerdown", pointerdown, true);
-  window.addEventListener("focusin", update, true);
+  const stopWindows = onEachWindow((win) => {
+    win.addEventListener("pointerdown", pointerdown, true);
+    win.addEventListener("focusin", update, true);
+    return () => {
+      win.removeEventListener("pointerdown", pointerdown, true);
+      win.removeEventListener("focusin", update, true);
+    };
+  });
   return () => {
     alive = false;
     stopBackup?.();
     stopPending();
-    window.removeEventListener("pointerdown", pointerdown, true);
-    window.removeEventListener("focusin", update, true);
+    stopWindows();
   };
 }
 
@@ -486,10 +497,15 @@ export function setAgendaDaysAhead(n: number) {
  * `:block/marker "NIL"` default).
  */
 export function agendaQuery(): string {
+  return `tine-query ${agendaTql()}`;
+}
+
+/** Shared by the journal agenda and persisted agenda sections. */
+export function agendaTql(): string {
   const lo = `-${agendaDaysBack()}d`;
-  const hi = `+${agendaDaysAhead()}d`;
-  const window = `(or (between scheduled ${lo} ${hi}) (between deadline ${lo} ${hi}))`;
-  return `query (and ${window} (not (task DONE CANCELED CANCELLED)))`;
+  const ahead = graphMeta()?.scheduled_future_days ?? agendaDaysAhead();
+  const hi = `${ahead < 0 ? "" : "+"}${ahead}d`;
+  return `@block and (scheduled between '${lo}' and '${hi}' or deadline between '${lo}' and '${hi}') and not (task in ('DONE', 'CANCELED', 'CANCELLED'))`;
 }
 
 // Block id of a "/Query" block whose QueryBuilder opens its add-filter picker once on mount.
@@ -546,7 +562,7 @@ export async function enterFocusMode() {
   try {
     await setFocusFullscreen(true);
   } catch {
-    pushToast("Could not enter fullscreen focus mode.", "error");
+    pushToast(msg("ui-ui-could-not-enter-fullscreen-focus-mode"), "error");
   }
 }
 /** Disable focus and request fullscreen exit. Failure toasts without rollback; resolves after request. O(1) plus native latency. */
@@ -557,7 +573,7 @@ export async function exitFocusMode() {
   try {
     await setFocusFullscreen(false);
   } catch {
-    pushToast("Could not leave fullscreen focus mode.", "error");
+    pushToast(msg("ui-ui-could-not-leave-fullscreen-focus-mode"), "error");
   }
 }
 
@@ -829,10 +845,10 @@ export type DatePickerTarget =
   | { insertJournal: (title: string) => void }
   | { field: `prop:${string}`; fieldType: "date" | "datetime" };
 export const [datePicker, setDatePicker] = graphScopedSignal<
-  { blockId: string; which: DatePickerTarget; x: number; y: number }
+  { blockId: string; which: DatePickerTarget; x: number; y: number; resolveWriteTarget?: () => string | null }
 >();
-export function openDatePicker(blockId: string, which: DatePickerTarget, x: number, y: number) {
-  setDatePicker({ blockId, which, x, y });
+export function openDatePicker(blockId: string, which: DatePickerTarget, x: number, y: number, resolveWriteTarget?: () => string | null) {
+  setDatePicker({ blockId, which, x, y, resolveWriteTarget });
 }
 export function closeDatePicker() {
   setDatePicker(null);
@@ -974,6 +990,11 @@ function loadRsItems(): SidebarItem[] {
 }
 const [rightSidebar, setRightSidebarRaw] = createSignal<SidebarItem[]>(loadRsItems());
 export { rightSidebar };
+export const [rightSidebarFocusRequest, setRightSidebarFocusRequest] = graphScopedSignal<{ key: string }>();
+function focusOpenedSidebarItem() {
+  const item = rightSidebar()[0];
+  if (item) setRightSidebarFocusRequest({ key: sidebarItemKey(item) });
+}
 
 // The right sidebar has its own open/closed state (persisted), independent of
 // whether it currently holds items — so it can be toggled (icon / `t r`) and
@@ -1099,13 +1120,16 @@ export function openPageInSidebar(
     const replaced = rightSidebar().map((item, i) =>
       i === existing ? { ...item, name, pageKind, path, collapsed: false } : item
     );
-    setRightSidebar(replaced.filter((item, i) => {
+    const compatible = replaced.filter((item, i) => {
       if (i === existing) return true;
       const sameOwnerName = item.kind === "page"
         ? item.name === name && item.pageKind === pageKind
         : item.page === name && item.pageKind === pageKind;
       return !sameOwnerName || item.path === path;
-    }));
+    });
+    const promoted = replaced[existing];
+    setRightSidebar([promoted, ...compatible.filter((item) => item !== promoted)]);
+    focusOpenedSidebarItem();
     return;
   }
   const compatible = rightSidebar().filter((item) => {
@@ -1115,6 +1139,7 @@ export function openPageInSidebar(
     return !sameOwnerName || item.path === path;
   });
   setRightSidebar([{ kind: "page", name, pageKind, path }, ...compatible]);
+  focusOpenedSidebarItem();
 }
 export function openBlockInSidebar(ref: {
   uuid: string;
@@ -1128,13 +1153,16 @@ export function openBlockInSidebar(ref: {
     const updated = rightSidebar().map((item, i) =>
       i === existing ? { ...item, ...ref, collapsed: false } : item
     );
-    setRightSidebar(updated.filter((item, i) => {
+    const compatible = updated.filter((item, i) => {
       if (i === existing) return true;
       const sameOwnerName = item.kind === "page"
         ? item.name === ref.page && item.pageKind === ref.pageKind
         : item.page === ref.page && item.pageKind === ref.pageKind;
       return !sameOwnerName || item.path === ref.path;
-    }));
+    });
+    const promoted = updated[existing];
+    setRightSidebar([promoted, ...compatible.filter((item) => item !== promoted)]);
+    focusOpenedSidebarItem();
     return;
   }
   // A pathful duplicate selection must evict incompatible same-name items. The
@@ -1149,6 +1177,7 @@ export function openBlockInSidebar(ref: {
     return itemPath === ref.path;
   });
   setRightSidebar([{ kind: "block", ...ref }, ...compatible]);
+  focusOpenedSidebarItem();
 }
 
 /** Restored desktop state can contain both panels.  Entering drawer mode has a
@@ -1198,6 +1227,16 @@ export function closeRightSidebarItem(idx: number) {
 export function closeAllRightSidebarItems() {
   setRightSidebar([]);
 }
+/** Keep only item `idx`, expanded (GH #462; og-1.0.0 state.cljs `sidebar-remove-rest!`). */
+export function closeOtherRightSidebarItems(idx: number) {
+  const item = rightSidebar()[idx];
+  if (item) setRightSidebar([{ ...item, collapsed: false }]);
+}
+/** Collapse every item except `idx`, which is left as it is (GH #462; og-1.0.0
+ *  state.cljs `sidebar-block-collapse-rest!`). */
+export function collapseOtherRightSidebarItems(idx: number) {
+  setRightSidebar(rightSidebar().map((item, i) => i === idx ? item : { ...item, collapsed: true }));
+}
 /** Move a right-sidebar item to a new position (GH #211 drag-reorder). Order
  *  persists through the same setRightSidebar owner (localStorage + session). */
 export function moveRightSidebarItem(from: number, to: number) {
@@ -1240,7 +1279,7 @@ export async function pruneSidebarBlocks(): Promise<void> {
   const dead = new Set(blocks.filter((_, i) =>
     resolved[i].status === "fulfilled" && !resolved[i].value));
   if (resolved.some((result) => result.status === "rejected")) {
-    pushToast("Could not check some sidebar blocks. Try again after the graph loads.", "error");
+    pushToast(msg("ui-ui-could-not-check-some-sidebar-blocks-try-again-after-the"), "error");
   }
   if (dead.size) {
     setRightSidebar(rightSidebar().filter((i) => i.kind !== "block" || !dead.has(i)));
@@ -1324,7 +1363,7 @@ export function openPageContextMenu(
     : (typeof pageKindOrFileActions === "boolean" ? pageKindOrFileActions : false);
   const owner = typeof targetOrName === "string"
     ? focusOwner
-    : (fileActionsOrFocus instanceof HTMLElement ? fileActionsOrFocus : undefined);
+    : (isHTMLElementNode(fileActionsOrFocus) ? fileActionsOrFocus : undefined);
   setContextMenu({ x, y, kind: "page", ...target, fileActions, focusOwner: owner });
 }
 export function openBlockRefContextMenu(
@@ -1439,14 +1478,14 @@ export const [switcherOpen, setSwitcherOpen] = createSignal(false);
 export const [switcherPluginBlock, setSwitcherPluginBlock] = createSignal<OwnedPluginBlockSnapshot | null>(null);
 // "all" = full Ctrl-K (pages/create/commands/blocks); "commands" = command
 // palette (⌘⇧P), commands only.
-export type SwitcherMode = "all" | "commands" | "current-page";
+export type SwitcherMode = "all" | "commands" | "current-page" | "pages" | "content";
 export const [switcherMode, setSwitcherMode] = createSignal<SwitcherMode>("all");
 export const [switcherEmbryo, setSwitcherEmbryo] =
   createSignal<{ paneId: string; prefill: string } | null>(null);
 /** The query an ordinary switcher opens with (`tine://search?q=`, ADR 0073). */
 export const [switcherPrefill, setSwitcherPrefill] = createSignal("");
-export function openSwitcher(opts?: { mode?: "embryo" | "current-page"; paneId?: string; prefill?: string; pluginBlock?: OwnedPluginBlockSnapshot | null }) {
-  setSwitcherMode(opts?.mode === "current-page" ? "current-page" : "all");
+export function openSwitcher(opts?: { mode?: "embryo" | "current-page" | "pages" | "content"; paneId?: string; prefill?: string; pluginBlock?: OwnedPluginBlockSnapshot | null }) {
+  setSwitcherMode(opts?.mode && opts.mode !== "embryo" ? opts.mode : "all");
   setSwitcherPrefill(opts?.mode === "embryo" ? "" : opts?.prefill ?? "");
   setSwitcherPluginBlock(opts?.pluginBlock ?? null);
   setSwitcherEmbryo(opts?.mode === "embryo" && opts.paneId
@@ -1478,7 +1517,7 @@ export function closeSwitcher() {
 export const [pdfExportPage, setPdfExportPage] = graphScopedSignal<string>();
 export function openPdfExport(name: string) {
   if (isMobilePlatform) {
-    pushToast("PDF export needs the desktop app: a mobile WebView cannot print.", "info");
+    pushToast(msg("ui-ui-pdf-export-needs-the-desktop-app-a-mobile-webview-cannot"), "info");
     return;
   }
   setPdfExportPage(name);

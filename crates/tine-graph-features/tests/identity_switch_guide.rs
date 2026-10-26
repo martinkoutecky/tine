@@ -1,5 +1,6 @@
 #[test]
 fn switching_instructions_keep_existing_graphs_and_explain_rollback() {
+    let _integration_guard = crate::integration_lock();
     let guide = include_str!("../../tine-core/src/templates/troubleshooting-recovery.md");
     for outcome in [
         "Close Tine before switching",
@@ -20,6 +21,7 @@ fn switching_instructions_keep_existing_graphs_and_explain_rollback() {
 
 #[test]
 fn update_guide_explains_device_opt_out_and_manual_checks() {
+    let _integration_guard = crate::integration_lock();
     let guide = tine_core::guide::bundled_guide_pages()
         .into_iter()
         .find(|page| page.title == "Reference/Platforms and mobile")

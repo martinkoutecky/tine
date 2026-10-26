@@ -1,5 +1,6 @@
 import type { Rect } from "../types";
 import type { PdfPageDimensions } from "../pdf";
+import { elementFromPointIn, isElementNode, selectionOf } from "../windowRealm";
 
 export interface PdfTextSelection {
   page: number;
@@ -17,17 +18,17 @@ export function pdfTextSelection(
   dims: readonly PdfPageDimensions[],
   scale: number,
 ): PdfTextSelection | null {
-  const selection = window.getSelection();
+  const selection = selectionOf(target);
   if (!selection || selection.isCollapsed || !selection.toString().trim()) return null;
   const range = selection.getRangeAt(0);
   const clientRects = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0);
   if (!clientRects.length) return null;
   const first = clientRects[0];
   const common = range.commonAncestorContainer;
-  const commonElement = common instanceof Element ? common : common?.parentElement;
-  const targetElement = target instanceof Element ? target : null;
+  const commonElement = isElementNode(common) ? common : common?.parentElement;
+  const targetElement = isElementNode(target) ? target : null;
   const wrap = (commonElement?.closest(".pdf-page") ?? targetElement?.closest(".pdf-page")
-    ?? document.elementFromPoint(first.left, first.top)?.closest(".pdf-page")) as HTMLElement | null;
+    ?? elementFromPointIn(common, first.left, first.top)?.closest(".pdf-page")) as HTMLElement | null;
   if (!wrap) return null;
   const page = Number(wrap.dataset.page);
   if (!Number.isSafeInteger(page) || !dims[page]) return null;

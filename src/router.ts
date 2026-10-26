@@ -1,3 +1,4 @@
+import { t as translate } from "./i18n";
 import { revealOutlineBlock } from "./outlineViewport";
 // Tab-based routing with per-tab navigation history. Each tab holds a back/
 // forward stack of routes; the active tab's current route drives the page view.
@@ -8,7 +9,7 @@ import { revealOutlineBlock } from "./outlineViewport";
 
 import { createSignal, type Accessor } from "solid-js";
 import { pushRecent } from "./ui";
-import { navigationName } from "./pageIndex";
+import { navigationName, resolvedTarget } from "./pageIndex";
 import { blockRef, resolveBlockRef, settleBlockRef, expandAncestors, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
@@ -22,6 +23,7 @@ import { retirePdfNavigationIntent } from "./pdfNavigation";
 import { VIEW_KINDS } from "./editor/queryIr";
 import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
 import type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
+import { mainWindow, requestFrame } from "./windowRealm";
 export type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 
 /** The one reader of a query presentation; null is "unreadable". */
@@ -160,6 +162,7 @@ export interface PaneRouter {
   openPageTarget(target: PageTarget, opts?: { inPlace?: boolean }): void;
   openJournals(opts?: { inPlace?: boolean }): void;
   openConflicts(opts?: { inPlace?: boolean }): void;
+  openAllPages(opts?: { inPlace?: boolean }): void;
   /** Navigate this pane to a PDF tab. Cost O(tabs); no file read until mounted. */
   openPdf(route: PdfRoute, opts?: { inPlace?: boolean }): void;
   /** Save the active reader's page/zoom in its route; invalid values are ignored. */
@@ -178,6 +181,7 @@ export interface PaneRouter {
     opts?: { inPlace?: boolean }
   ): void;
   focusBlock(id: string | null): void;
+  zoomToBlock(target: BlockTarget): void;
   openPageAtBlock(target: BlockTarget): void;
   openPageAtBlock(name: string, pageKind: PageKind, blockId: string, path?: string): void;
   openInNewTab(r: Route, foreground?: boolean): void;
@@ -215,16 +219,17 @@ export function tabRoute(t: Tab): Route {
 }
 
 export function routeTitle(r: Route): string {
-  if (r.kind === "journals") return "Journals";
-  if (r.kind === "conflicts") return "Conflicts";
+  if (r.kind === "journals") return translate("navigation-prose-journals");
+  if (r.kind === "conflicts") return translate("navigation-prose-conflicts");
+  if (r.kind === "all-pages") return translate("navigation-prose-all-pages");
   if (r.kind === "pdf") return r.label.trim() || r.filename;
   if (r.kind === "invalid") return r.title;
   if (r.kind === "query") {
     const source = r.source.trim().replace(/\s+/g, " ");
-    return source ? `Search: ${source.slice(0, 36)}${source.length > 36 ? "…" : ""}` : "Search";
+    return source ? translate("navigation-prose-search-source", { source: source.slice(0, 36) + (source.length > 36 ? "…" : "") }) : translate("navigation-prose-search");
   }
   if (r.name.startsWith("hls__")) return r.name.slice(5);
-  if (r.name === `${GUIDE_DISPLAY_PREFIX}Tine Guide`) return "Guide";
+  if (r.name === `${GUIDE_DISPLAY_PREFIX}Tine Guide`) return translate("navigation-prose-guide");
   if (isGuideRouteName(r.name)) return r.name.slice(GUIDE_DISPLAY_PREFIX.length);
   return r.name;
 }
@@ -245,7 +250,7 @@ export function resolveRouteBlock(r: Route): string | null {
 
 export function sameRoute(a: Route, b: Route): boolean {
   if (a.kind !== b.kind) return false;
-  if (a.kind === "journals" || a.kind === "conflicts") return true;
+  if (a.kind === "journals" || a.kind === "conflicts" || a.kind === "all-pages") return true;
   if (a.kind === "query") return a.id === (b as QueryRoute).id;
   if (a.kind === "pdf") return a.viewId === (b as PdfRoute).viewId;
   if (a.kind === "invalid") return a === b;
@@ -253,6 +258,23 @@ export function sameRoute(a: Route, b: Route): boolean {
   return (
     a.name === bb.name && a.pageKind === bb.pageKind && a.block === bb.block && a.path === bb.path
   );
+}
+
+/** Reuse compares destinations, while history/session equality stays exact.
+ * Name routes and file routes can reach the same canonical file (GH #711).
+ * Ask the shared inventory; never equate a same-name stray with its owner. */
+function sameNavigationRoute(a: Route, b: Route): boolean {
+  if (sameRoute(a, b)) return true;
+  if (a.kind !== "page" || b.kind !== "page" || a.pageKind !== b.pageKind
+    || a.block !== b.block || a.blockPos !== b.blockPos) return false;
+  const physicalPath = (r: typeof a): string | undefined => {
+    if (r.path) return r.path;
+    const target = resolvedTarget(r.name, r.pageKind);
+    return target?.kind === "existing" ? target.id
+      : target?.kind === "alias" ? target.owners[0] : undefined;
+  };
+  const path = physicalPath(a);
+  return path !== undefined && path === physicalPath(b);
 }
 
 const CLOSED_CAP = 10;
@@ -403,7 +425,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       !!window.history &&
       typeof window.history.pushState === "function" &&
       typeof window.history.back === "function" &&
-      typeof window.addEventListener === "function"
+      typeof mainWindow.addEventListener === "function"
     );
   }
 
@@ -413,7 +435,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       scrollerElement = null;
     }
     if (typeof document === "undefined") return null; // no-DOM (unit tests)
-    return document.querySelector(".main-content");
+    // The journal feed scroller exists only in the main window.
+    return mainWindow.document.querySelector(".main-content");
   }
 
   /** Record the current scroll offset against the active tab's current route.
@@ -510,13 +533,13 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
         void extendFeedForScroll().then((grew) => {
           extending = false;
           if (!current()) return;
-          if (grew ? tries++ < 400 : tries++ < 60) requestAnimationFrame(tick);
+          if (grew ? tries++ < 400 : tries++ < 60) requestFrame(mainScroller(), tick);
         });
         return;
       }
-      if (tries++ < 60) requestAnimationFrame(tick);
+      if (tries++ < 60) requestFrame(mainScroller(), tick);
     };
-    requestAnimationFrame(tick);
+    requestFrame(mainScroller(), tick);
   }
 
   // Navigate the active tab to a new route, pushing it onto the history stack
@@ -534,7 +557,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     rememberScroll(); // capture where we are before leaving this entry
     const active = activeTab();
     if (opts.sticky && navReuseTabs()) {
-      const existing = tabs().find((t) => sameRoute(tabRoute(t), r));
+      const existing = tabs().find((t) => sameNavigationRoute(tabRoute(t), r));
       if (existing) {
         if (existing.id !== active.id) {
           setActiveTab(existing.id);
@@ -588,6 +611,10 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   function openConflicts(opts: { inPlace?: boolean } = {}) {
     navigate({ kind: "conflicts" }, { sticky: !opts.inPlace });
+  }
+
+  function openAllPages(opts: { inPlace?: boolean } = {}) {
+    navigate({ kind: "all-pages" }, { sticky: !opts.inPlace });
   }
 
   function openPdf(pdfRoute: PdfRoute, opts: { inPlace?: boolean } = {}) {
@@ -737,6 +764,13 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     if (!docNode(id)) return; // block no longer loaded - nothing to zoom into
     const ref = blockRef(id);
     navigate({ kind: "page", ...pageTargetFromBlockRef(ref), block: ref.uuid });
+  }
+
+  /** Zoom into a block named by its page target, loaded or not (GH #708: a
+   *  block reference's target usually lives on another page, which
+   *  `focusBlock` cannot see). Navigates in place, like `focusBlock`. */
+  function zoomToBlock(target: BlockTarget) {
+    navigate({ kind: "page", name: target.name, pageKind: target.pageKind, block: target.block, ...(target.path ? { path: target.path } : {}) });
   }
 
   /** Open a page and scroll the given block into view (block search results jump
@@ -923,7 +957,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // this WebKitGTK build, so the tab would close without ever asking. Unpinned
     // tabs skip the await and close synchronously (no behaviour change there).
     if (t?.pinned) {
-      const confirmation = await readOwned(owner, backend().confirm(`Close pinned tab “${routeTitle(tabRoute(t))}”?`));
+      const confirmation = await readOwned(owner, backend().confirm(translate("router-close-pinned-tab", { title: String(routeTitle(tabRoute(t))) })));
       if (confirmation.kind === "stale" || !confirmation.value) return;
     }
     if (!owner()) return;
@@ -1142,6 +1176,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     openPageTarget,
     openJournals,
     openConflicts,
+    openAllPages,
     openPdf,
     updateActivePdfViewState,
     closePdf,
@@ -1152,6 +1187,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     resetTabsToJournals,
     openFile,
     focusBlock,
+    zoomToBlock,
     openPageAtBlock,
     openInNewTab,
     openPageTargetInNewTab,
@@ -1272,6 +1308,10 @@ export function openConflicts(opts: { inPlace?: boolean } = {}) {
   focusedRouterInstance().openConflicts(opts);
 }
 
+export function openAllPages(opts: { inPlace?: boolean } = {}) {
+  focusedRouterInstance().openAllPages(opts);
+}
+
 export function openQueryInNewTab(
   source: string,
   presentation: QueryPresentation = "search",
@@ -1309,6 +1349,10 @@ export function openFile(
 
 export function focusBlock(id: string | null) {
   focusedRouterInstance().focusBlock(id);
+}
+
+export function zoomToBlock(target: BlockTarget) {
+  focusedRouterInstance().zoomToBlock(target);
 }
 
 export function openPageAtBlock(target: BlockTarget): void;

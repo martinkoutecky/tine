@@ -29,6 +29,11 @@ pub const MARKERS: &[&str] = &[
     "IN-PROGRESS",
 ];
 
+/// Finished task markers, left out of the query hint's **Open tasks** rewrite
+/// (`query::wire_parse::og_query_hint`, GH #422) and of carry-over.
+/// `src/markers.test.ts` checks parity with the frontend's finished-marker set.
+pub const DONE_MARKERS: &[&str] = &["DONE", "CANCELED", "CANCELLED"];
+
 /// A parsed Markdown or Org document: an optional page-property pre-block plus a forest
 /// of blocks.
 #[deny(missing_docs)]
@@ -64,6 +69,9 @@ pub struct DocBlock {
     /// parse time. `#[serde(default)]` → false on any legacy deserialize.
     #[serde(default)]
     pub(crate) is_org: bool,
+    /// Graph property parsing policy for synthetic page-header blocks only.
+    #[serde(skip)]
+    pub(crate) property_ref_config: Option<Box<crate::query::atom::ParseConfig>>,
     /// Derived projection of the current block body.
     // set_raw clears this memo; cloning starts with an empty memo.
     #[serde(skip)]
@@ -190,7 +198,7 @@ impl BlockProjection {
         self.refs_norm().iter().any(|r| r == normalized)
     }
 
-    /// Normalized page references (`[[..]]` / `#tag`) — for backlinks / `(page-ref)`.
+    /// Normalized page references (`[[..]]` / `#tag` / Org headline tags).
     pub fn refs_norm(&self) -> &[String] {
         self.extra().map_or(&[], |e| &e.refs_norm)
     }
@@ -284,6 +292,7 @@ impl Clone for DocBlock {
             children: self.children.clone(),
             uuid: self.uuid.clone(),
             is_org: self.is_org,
+            property_ref_config: self.property_ref_config.clone(),
             proj: std::sync::OnceLock::new(),
         }
     }
@@ -296,6 +305,7 @@ impl DocBlock {
             children: Vec::new(),
             uuid: String::new(),
             is_org: false,
+            property_ref_config: None,
             proj: std::sync::OnceLock::new(),
         }
     }
@@ -324,6 +334,12 @@ impl DocBlock {
         }
     }
 
+    /// Set the graph policy used to project a synthetic page-property block.
+    pub fn set_property_ref_config(&mut self, config: &crate::query::atom::ParseConfig) {
+        self.property_ref_config = Some(Box::new(config.clone()));
+        self.proj = std::sync::OnceLock::new();
+    }
+
     /// Visible text, references, and facets derived from the current raw body.
     /// [`Self::set_raw`] clears this cache when the body changes.
     pub fn projection(&self) -> &BlockProjection {
@@ -345,13 +361,30 @@ impl DocBlock {
                 .expect("parsed regions");
             let regions = shared_regions(regions);
             let visible_lower = crate::search_query::canonical_fold(&visible);
-            let refs_page = proj.refs.page;
+            let reference_source = crate::reference_evidence::project_with_config(
+                &self.raw,
+                self.is_org,
+                &proj.blocks,
+                self.property_ref_config
+                    .as_deref()
+                    .unwrap_or_else(|| crate::query::atom::ParseConfig::default_ref()),
+            );
+            // OG 0.10.9 with-page-refs includes headline tags and linkable
+            // property atoms. Queries use the same evidence as backlinks.
+            let mut refs_page = proj.refs.page;
+            let tag_refs = reference_source
+                .explicit
+                .iter()
+                .filter(|r| r.rule == "explicit_tag" || r.rule == "implicit_linkable_property");
+            if tag_refs.clone().next().is_some() {
+                refs_page.extend(tag_refs.map(|r| r.name.clone()));
+                refs_page.sort();
+                refs_page.dedup();
+            }
             let refs_norm = refs_page
                 .iter()
                 .map(|r| crate::refs::normalize(r))
                 .collect();
-            let reference_source =
-                crate::reference_evidence::project(&self.raw, self.is_org, &proj.blocks);
             let mut plain_ranges = reference_source.plain_ranges;
             plain_ranges.shrink_to_fit();
             let mut extra = ProjectionExtra {
@@ -470,7 +503,7 @@ fn push_tag(out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>,
     }
 }
 
-fn tag_text(inlines: &[lsdoc::ast::Inline], out: &mut String) {
+pub(crate) fn tag_text(inlines: &[lsdoc::ast::Inline], out: &mut String) {
     use lsdoc::ast::{Inline, Url};
     for i in inlines {
         match i {
@@ -1531,6 +1564,7 @@ impl CheckpointBlock {
             children: children.into_iter().map(Self::into_block).collect(),
             uuid: String::new(),
             is_org,
+            property_ref_config: None,
             proj,
         }
     }

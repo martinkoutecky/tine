@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { createContext, type JSX } from "solid-js";
 
 // OG Logseq's max-depth-of-links / :link-depth invariant. A top-level macro
@@ -6,5 +7,5 @@ export const MAX_DEPTH_OF_LINKS = 5;
 export const LinkDepthContext = createContext(0);
 
 export function LinkDepthWarning(): JSX.Element {
-  return <p class="warning text-sm link-depth-warning">Embed depth is too deep</p>;
+  return <p class="warning text-sm link-depth-warning">{t("link-depth-embed-depth-is-too-deep")}</p>;
 }

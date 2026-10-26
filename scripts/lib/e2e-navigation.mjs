@@ -29,7 +29,13 @@ export async function openJournals(browser) {
 
 /** The routed page title, or "" when no page is open. Never throws. */
 export async function currentPageTitle(browser) {
-  return nfc(await browser.execute(() => document.querySelector("h1.page-title")?.textContent ?? ""));
+  return nfc(await browser.execute(() => {
+    const title = document.querySelector("h1.page-title")?.cloneNode(true);
+    // Icons are a decoration, including raw text when an image is refused.
+    // Navigation readiness compares the page name, not that decoration.
+    title?.querySelectorAll(".page-icon").forEach(icon => icon.remove());
+    return title?.textContent ?? "";
+  }));
 }
 
 async function waitForTitle(browser, name, timeout, what) {

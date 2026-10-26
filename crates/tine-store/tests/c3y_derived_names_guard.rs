@@ -64,6 +64,7 @@ fn literals(line: &str) -> Vec<&str> {
 
 #[test]
 fn c3y_every_derived_file_name_goes_through_atomic_file() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut files = Vec::new();
     sources(&root.join("src"), &mut files);

@@ -1,8 +1,9 @@
 import { createStore, reconcile } from "solid-js/store";
 import { backend } from "./backend";
 import { dbg } from "./debug";
-import { errorFamily } from "./errorFamily";
+import { errorFamily, type ErrorFamily } from "./errorFamily";
 import { graphOwner } from "./owned";
+import { clearOnBindingInvalidated } from "./binding";
 import { reportUiFailure } from "./uiFailure";
 import { mime_from_path } from "./render/wasm/lsdoc_wasm";
 
@@ -16,17 +17,27 @@ import { mime_from_path } from "./render/wasm/lsdoc_wasm";
 // same asset share one read. Bound both count and retained backing bytes: Blob
 // URLs keep their Blob alive even after every image unmounts.
 interface CacheEntry {
+  url?: string;
+  failure?: ErrorFamily;
   promise: Promise<string>;
   bytes: number;
   leases: number;
   evicted: boolean;
+  cleanupQueued?: boolean;
 }
-export interface BlobLease { url: string; release: () => void }
+export interface BlobLease { url: string; release: () => void; failure?: ErrorFamily }
 const cache = new Map<string, CacheEntry>();
 // Entries evicted from the retained LRU while still displayed remain keyed here
 // (but do not count toward the idle cache cap), so a repeated reference shares
 // the same live Blob instead of rereading/duplicating it.
 const liveEntries = new Map<string, CacheEntry>();
+const assetNamesByUrl = new Map<string, string>();
+clearOnBindingInvalidated(() => assetNamesByUrl.clear());
+
+/** Only URLs minted for this graph qualify for native file copy. */
+export function assetNameForBlobUrl(url: string): string | undefined {
+  return assetNamesByUrl.get(url);
+}
 const MAX_CACHE_ENTRIES = 128;
 const MAX_CACHE_BYTES = 128 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
@@ -68,7 +79,10 @@ function touch(key: string, entry: CacheEntry) {
 function ignoreEvictedAssetCleanupFailure(_error: unknown): void {}
 
 function revokeEvictedUrl(promise: Promise<string>): void {
-  void promise.then((url) => { if (url) URL.revokeObjectURL(url); }).catch(ignoreEvictedAssetCleanupFailure);
+  void promise.then((url) => {
+    assetNamesByUrl.delete(url);
+    if (url) URL.revokeObjectURL(url);
+  }).catch(ignoreEvictedAssetCleanupFailure);
 }
 
 function evictEntry(key: string, entry: CacheEntry, reusable = true) {
@@ -121,8 +135,13 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
       // not start an IPC allocation for a URL nobody is waiting to cache.
       if (cache.get(key) !== entry) return "";
       const bytes = await read();
-      if (!bytes.length) return "";
+      if (!bytes.length) {
+        entry.failure = "unknown";
+        return "";
+      }
       const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mime_from_path(typePath) }));
+      entry.url = url;
+      if (kind === "graph" && owner()) assetNamesByUrl.set(url, key);
       if (cache.get(key) === entry) {
         entry.bytes = bytes.byteLength;
         cacheBytes += entry.bytes;
@@ -130,6 +149,7 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
       }
       return url;
     } catch (error) {
+      entry.failure = errorFamily(error);
       if (cache.get(key) === entry) cache.delete(key);
       if (kind === "graph" && errorFamily(error) !== "not-found" && owner()) reportUiFailure("asset-read", error);
       else dbg(`asset read failed (${kind}) ${key}: ${String(error)}`);
@@ -139,23 +159,46 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
   return entry;
 }
 
-async function acquire(entry: CacheEntry): Promise<BlobLease> {
+function retain(entry: CacheEntry): () => void {
   entry.leases++;
   let released = false;
   const release = () => {
     if (released) return;
     released = true;
     entry.leases = Math.max(0, entry.leases - 1);
-    if (entry.evicted && entry.leases === 0) {
-      for (const [key, candidate] of liveEntries) {
-        if (candidate === entry) liveEntries.delete(key);
-      }
-      revokeEvictedUrl(entry.promise);
+    if (entry.evicted && entry.leases === 0 && !entry.cleanupQueued) {
+      // Solid can dispose the last instance immediately before remounting it
+      // in another window. Keep the live lookup through that synchronous turn;
+      // a new lease cancels cleanup without retaining idle blobs beyond it.
+      entry.cleanupQueued = true;
+      queueMicrotask(() => {
+        entry.cleanupQueued = false;
+        if (entry.leases !== 0) return;
+        for (const [key, candidate] of liveEntries) {
+          if (candidate === entry) liveEntries.delete(key);
+        }
+        revokeEvictedUrl(entry.promise);
+      });
     }
   };
+  return release;
+}
+
+async function acquire(entry: CacheEntry): Promise<BlobLease> {
+  const release = retain(entry);
   const url = await entry.promise;
   if (!url) release();
-  return { url, release };
+  return { url, release, ...(entry.failure ? { failure: entry.failure } : {}) };
+}
+
+/** Lease an already loaded graph asset synchronously, before a remounted
+ * editor can measure/focus on a placeholder layout. O(1), no read or new URL.
+ * Acquiring a lease (rather than peeking) also protects live evicted entries. */
+export function acquireCachedAssetBlob(rel: string): BlobLease | undefined {
+  const entry = cache.get(rel) ?? liveEntries.get(rel);
+  if (!entry?.url) return;
+  if (cache.get(rel) === entry) touch(rel, entry);
+  return { url: entry.url, release: retain(entry) };
 }
 
 /** A blob URL for the asset at `rel` (relative to `assets/`), reading it over IPC
@@ -189,14 +232,16 @@ export function seedAssetBlob(rel: string, bytes: Uint8Array): string {
     }
   }
   const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mime_from_path(rel) }));
+  assetNamesByUrl.set(url, rel);
   if (bytes.byteLength > MAX_CACHE_BYTES) {
     // The caller already owns these bytes (paste/capture), so this is not a read
     // amplification path. Avoid graph-lifetime retention; revoke after the
     // mounted image has had ample time to consume the URL.
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    setTimeout(() => { assetNamesByUrl.delete(url); URL.revokeObjectURL(url); }, 60_000);
     return url;
   }
   const entry: CacheEntry = {
+    url,
     promise: Promise.resolve(url),
     bytes: bytes.byteLength,
     leases: 0,
@@ -211,6 +256,7 @@ export function seedAssetBlob(rel: string, bytes: Uint8Array): string {
 /** Revoke every cached blob URL and empty the cache. Call on graph switch so the
  *  next graph's images aren't served stale blobs from the previous one. */
 export function clearAssetBlobCache(): void {
+  assetNamesByUrl.clear();
   for (const [key, entry] of [...cache.entries()]) evictEntry(key, entry, false);
   for (const entry of liveEntries.values()) entry.evicted = true;
   liveEntries.clear();

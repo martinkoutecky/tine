@@ -1,6 +1,8 @@
 import { TableWrap } from "./TableWrap";
+import { t, msg, render } from "../i18n";
+import { Rich } from "../i18n/Rich";
 import { For, Match, Show, Switch, createMemo, type JSX } from "solid-js";
-import { pageRowFieldValue, type PageRow, type QueryStatistics, type ViewKind } from "../editor/queryIr";
+import { pageRowFieldValue, type OgQueryHint, type PageRow, type Query, type QueryStatistics, type ViewKind } from "../editor/queryIr";
 import { openPageTarget, openPageTargetInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkDest } from "../linkGesture";
@@ -9,8 +11,17 @@ import { fieldLabel, isFieldId } from "../sheet/fields";
 import { querySummary } from "../editor/queryAggregate";
 import { openPagePropertiesFromRow } from "../queryPageProps";
 
-// Presentation parts of a query block's answer: page rows and the engine's
-// statistics. Neither decides membership or computes an answer (I-12).
+// Presentation parts of a query block's answer: page rows, the engine's
+// statistics and the engine's Logseq-form hint. None decides membership or
+// computes an answer (I-12).
+
+/** GH #726: the results draw OTHER blocks; a right click in here never opens the
+ *  host block's menu (contextMenuPolicy reads `data-block-surface`). A real box,
+ *  not `display: contents`: TableWrap measures its parent, and a contents box has
+ *  no geometry, which pushed wide result tables off the pane (GH #749). */
+export function QueryResultsRegion(props: { children: JSX.Element }): JSX.Element {
+  return <div class="query-results-region" data-block-surface="query">{props.children}</div>;
+}
 
 export type QueryView = ViewKind;
 
@@ -30,7 +41,7 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
   };
   const fieldName = (field: string) => field.replace(/^prop:/, "");
   const value = (row: PageRow, field: string): string => pageRowFieldValue(row, row, field);
-  const columns = createMemo(() => props.columns?.length
+  const columns = createMemo(() => props.columns !== undefined
     ? props.columns
     : [...new Set(props.rows.flatMap((row) => row.properties.map(([key]) => key)))]);
   const board = createMemo(() => {
@@ -60,8 +71,8 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
     <button
       type="button"
       class="query-page-props-edit"
-      aria-label={`Edit properties of ${row.name}`}
-      title="Edit page properties"
+      aria-label={t("query-query-result-parts-edit-properties-of", { value1: row.name })}
+      title={t("query-query-result-parts-edit-page-properties")}
       onClick={(event) => {
         event.stopPropagation();
         const rect = event.currentTarget.getBoundingClientRect();
@@ -72,7 +83,7 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
   return (
     <Switch
       fallback={
-        <ul class="query-results-list" aria-label="Page results">
+        <ul class="query-results-list" aria-label={t("query-query-result-parts-page-results")}>
           <For each={props.rows}>{(row) => <li>{link(row)}{propertyEditor(row)}</li>}</For>
         </ul>
       }
@@ -81,7 +92,7 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
         <TableWrap><table class="md-table query-table query-page-table">
           <thead>
             <tr>
-              <th>Page</th>
+              <th>{t("query-query-workspace-page")}</th>
               <For each={columns()}>{(column) => <th>{fieldName(column)}</th>}</For>
             </tr>
           </thead>
@@ -96,10 +107,10 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
         </table></TableWrap>
       </Match>
       <Match when={props.view === "board"}>
-        <div class="query-results-board" aria-label="Page results grouped">
+        <div class="query-results-board" aria-label={t("query-query-result-parts-page-results-grouped")}>
           <For each={board()}>{([key, rows]) => (
-            <section class="query-board-column" aria-label={key || "No value"}>
-              <h4>{key || "No value"}<span class="query-board-count">{rows.length}</span></h4>
+            <section class="query-board-column" aria-label={key || t("query-query-result-parts-no-value")}>
+              <h4>{key || t("query-query-result-parts-no-value")}<span class="query-board-count">{rows.length}</span></h4>
               <For each={rows}>{(row) => <div class="query-board-card">{link(row)}</div>}</For>
             </section>
           )}</For>
@@ -129,9 +140,9 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics; onC
     <>
       <Show when={props.statistics.group_by}>
         <div class="query-summary" onClick={stop}>
-          <span class="qs-label">Grouped by {groupLabel()}</span>
+          <span class="qs-label">{t("query-grouped-by", { field: groupLabel() ?? "" })}</span>
           <Show when={props.onClearGrouping}>
-            <button type="button" class="query-grouping-clear" aria-label="Clear grouping" onClick={() => props.onClearGrouping?.()}>Clear</button>
+            <button type="button" class="query-grouping-clear" aria-label={t("query-query-result-parts-clear-grouping")} onClick={() => props.onClearGrouping?.()}>{t("query-query-sheet-parts-clear")}</button>
           </Show>
         </div>
       </Show>
@@ -147,7 +158,7 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics; onC
                 <span class="qs-label">{column.label}:</span>{" "}
                 <span class="qs-value">{summary().overall[i()]?.text}</span>
                 <Show when={(summary().overall[i()]?.skipped ?? 0) > 0}>
-                  <span class="qs-skip"> ({summary().overall[i()]!.skipped} non-numeric skipped)</span>
+                  <span class="qs-skip">{t("query-skipped-non-numeric", { count: summary().overall[i()]!.skipped })}</span>
                 </Show>
               </span>
             )}</For>
@@ -170,7 +181,7 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics; onC
                     <For each={group.cells}>{(cell) => (
                       <td>
                         {cell.text}
-                        <Show when={cell.skipped > 0}><span class="qs-skip"> ({cell.skipped} skipped)</span></Show>
+                        <Show when={cell.skipped > 0}><span class="qs-skip">{t("query-skipped", { count: cell.skipped })}</span></Show>
                       </td>
                     )}</For>
                   </tr>
@@ -179,12 +190,63 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics; onC
             </table></TableWrap>
             <Show when={summary().multiMembership}>
               <p class="query-summary-note" onClick={stop}>
-                A row with several tags appears in every matching group, so these counts can add up to more than the result.
-              </p>
+                {t("query-query-result-parts-a-row-with-several-tags-appears-in-every-matching-group")}</p>
             </Show>
           </>
         )}
       </Show>
     </>
+  );
+}
+
+const OG_REWRITE_LABEL = {
+  open_tasks: msg("query-prose-open-tasks"),
+  any_task: msg("query-prose-any-task"),
+  priorities: msg("query-prose-a-b-or-c"),
+};
+
+/** **The on-query cue for Logseq's "no condition" forms (D-18, GH #422).** A
+ *  bare `(task)` / `(priority)` adds no condition, and a query with no
+ *  condition shows nothing — in Logseq, and so in Tine. The engine detects it
+ *  and supplies each rewrite as a whole query (`wire_parse.rs` `OgQueryHint`);
+ *  this only says so and hands the chosen query to the host's ordinary save.
+ *  It sits beside the results and never replaces them. A host that cannot
+ *  write (read-only page, published export) passes no `onRewrite`, and the
+ *  buttons are not offered. Styled as the crossing notice's inline region. */
+export function QueryOgHint(props: { hint: OgQueryHint; onRewrite?: (query: Query) => void }): JSX.Element {
+  const has = (head: "task" | "priority") => props.hint.bare.includes(head);
+  return (
+    <div class="query-og-hint" role="note" onClick={(e) => e.stopPropagation()}>
+      <p class="query-og-hint-text">
+        <Show when={props.hint.date_windows}>{t("query-date-window-refusal")}</Show>
+        <Show when={has("task")}><Rich message={msg("query-og-bare-task", { syntax: "(task)" })} /></Show>
+        <Show when={has("priority")}><Rich message={msg("query-og-bare-priority", { syntax: "(priority)" })} /></Show>
+        <Show
+          when={props.hint.bare.length > 0}
+          fallback={<Show when={props.hint.no_conditions}>{t("query-query-result-parts-this-query-has-no-conditions-so-it-shows-nothing-as")}</Show>}
+        >
+          <Show when={props.hint.no_conditions}>{t("query-query-result-parts-on-its-own-it-matches-nothing")}</Show>
+        </Show>
+      </p>
+      <Show when={props.onRewrite && props.hint.rewrites.length > 0}>
+        <div class="query-og-hint-actions">
+          <For each={props.hint.rewrites}>
+            {(rewrite) => (
+              <button
+                type="button"
+                class="query-og-hint-rewrite"
+                data-rewrite={rewrite.rewrite}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  props.onRewrite?.(rewrite.query);
+                }}
+              >
+                {rewrite.rewrite === "convert" ? t("query-convert") : render(OG_REWRITE_LABEL[rewrite.rewrite])}
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
   );
 }

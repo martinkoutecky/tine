@@ -201,6 +201,7 @@ impl<'de> Deserialize<'de> for IndexState {
                 let page_property_block = page_property_block.map(|(raw, is_org, uuid)| {
                     let mut block = DocBlock::new(raw);
                     block.set_org(is_org);
+                    block.set_property_ref_config(&parts.parse_config);
                     block.uuid = uuid;
                     block
                 });

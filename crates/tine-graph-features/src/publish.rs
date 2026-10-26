@@ -7,14 +7,10 @@ use crate::render::{self, RenderGraph, SheetInput};
 
 /// Export public pages and return the published folder and page count.
 pub fn publish_html(store: &Store) -> io::Result<(String, usize)> {
-    let whole = store
-        .whole_graph()
-        .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?;
-    for file in whole.parsed_page_ids() {
-        store.page(&file).map_err(crate::store_error)?;
-    }
+    // An export must see every byte on disk, including a file a sync client
+    // or restore tool rewrote with its stamp put back.
     store
-        .scan_refresh()
+        .refresh(tine_store::Depth::Bytes)
         .map_err(|error| io::Error::other(format!("graph refresh failed: {error:?}")))?;
     let whole = store
         .whole_graph()
@@ -24,7 +20,7 @@ pub fn publish_html(store: &Store) -> io::Result<(String, usize)> {
     let graph = RenderGraph::new(&corpus, &whole, store, None);
     let mut count = 0;
     let receipt = store
-        .publish_site(&mut |writer| {
+        .publish(tine_store::PublishDest::GraphSite, &mut |writer| {
             count = render::publish_graph(
                 &graph,
                 render::PageSelection::every_page(config.all_pages_public),
@@ -74,7 +70,7 @@ pub fn sheet_export_inputs(
     scope: Option<&SheetScope>,
 ) -> io::Result<Vec<SheetInput>> {
     store
-        .scan_refresh()
+        .refresh(tine_store::Depth::Stamps)
         .map_err(|error| io::Error::other(format!("graph refresh failed: {error:?}")))?;
     let whole = store
         .whole_graph()

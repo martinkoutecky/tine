@@ -88,9 +88,9 @@ pub fn parse(input: &str) -> Option<Edn> {
         depth: 0,
         nodes: 0,
     };
-    p.skip_ws();
+    p.skip_ws()?;
     let v = p.value()?;
-    p.skip_ws();
+    p.skip_ws()?;
     Some(v)
 }
 
@@ -108,9 +108,9 @@ pub fn parse_strict(input: &str) -> Option<Edn> {
         depth: 0,
         nodes: 0,
     };
-    p.skip_ws();
+    p.skip_ws()?;
     let value = p.value()?;
-    p.skip_ws();
+    p.skip_ws()?;
     (p.i == p.s.len()).then_some(value)
 }
 
@@ -123,7 +123,7 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn skip_ws(&mut self) {
+    fn skip_ws(&mut self) -> Option<()> {
         while self.i < self.s.len() {
             let c = self.s[self.i];
             if c == b',' || c.is_ascii_whitespace() {
@@ -132,14 +132,26 @@ impl<'a> Parser<'a> {
                 while self.i < self.s.len() && self.s[self.i] != b'\n' {
                     self.i += 1;
                 }
+            } else if c == b'#' && self.s.get(self.i + 1) == Some(&b'_') {
+                // EDN's reader discard consumes one form without becoming a
+                // collection member. Nested discards share the depth budget.
+                self.i += 2;
+                if self.depth >= MAX_DEPTH {
+                    return None;
+                }
+                self.depth += 1;
+                let discarded = self.value();
+                self.depth -= 1;
+                discarded?;
             } else {
                 break;
             }
         }
+        Some(())
     }
 
     fn value(&mut self) -> Option<Edn> {
-        self.skip_ws();
+        self.skip_ws()?;
         if self.i >= self.s.len() {
             return None;
         }
@@ -165,7 +177,7 @@ impl<'a> Parser<'a> {
         self.i += 1; // {
         let mut pairs = Vec::new();
         loop {
-            self.skip_ws();
+            self.skip_ws()?;
             if self.i >= self.s.len() {
                 return None;
             }
@@ -192,7 +204,7 @@ impl<'a> Parser<'a> {
         self.i += 1; // opener
         let mut items = Vec::new();
         loop {
-            self.skip_ws();
+            self.skip_ws()?;
             if self.i >= self.s.len() {
                 return None;
             }
@@ -212,7 +224,7 @@ impl<'a> Parser<'a> {
         self.i += 1; // (
         let mut items = Vec::new();
         loop {
-            self.skip_ws();
+            self.skip_ws()?;
             if self.i >= self.s.len() {
                 return None;
             }
@@ -478,6 +490,22 @@ fn write_edn(e: &Edn, out: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reader_discards_preserve_collection_membership_and_limits() {
+        assert_eq!(parse_strict("{#_ :ignored :a 1}"), parse_strict("{:a 1}"));
+        assert_eq!(
+            parse_strict("#_ [unused] {:a #_ 0 1}"),
+            parse_strict("{:a 1}")
+        );
+        assert_eq!(parse_strict("[#_ 0 1 #_ 2]"), parse_strict("[1]"));
+        assert_eq!(parse_strict("(1 #_ 2)"), parse_strict("(1)"));
+        assert_eq!(parse_strict("{:a #_}"), None);
+        assert_eq!(
+            parse_strict(&format!("{}nil", "#_ ".repeat(MAX_DEPTH + 1))),
+            None
+        );
+    }
 
     #[test]
     fn roundtrip_basic() {

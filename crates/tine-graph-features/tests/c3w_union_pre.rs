@@ -50,6 +50,7 @@ fn resolve_union(ext: &str, winner: &str, copy: &str) -> (std::io::Result<()>, S
     all_rows(&diff.rows, &mut decisions);
     let result = conflicts::resolve_sync_conflict(
         &store,
+        None,
         &win,
         &conf,
         &decisions,
@@ -71,6 +72,7 @@ fn resolve_union(ext: &str, winner: &str, copy: &str) -> (std::io::Result<()>, S
 
 #[test]
 fn w5_union_keeps_the_copys_free_text_and_tag_members() {
+    let _integration_guard = crate::integration_lock();
     let (result, out) = resolve_union(
         "md",
         "tags:: x\nicon:: 🙂\n\n- block\n",
@@ -89,6 +91,7 @@ fn w5_union_keeps_the_copys_free_text_and_tag_members() {
 
 #[test]
 fn w5_union_never_drops_a_conflicting_value_silently() {
+    let _integration_guard = crate::integration_lock();
     let winner = "icon:: 🙂\n\n- block\n";
     let (result, out) = resolve_union("md", winner, "icon:: 🎉\n\n- block\n");
     match result {
@@ -102,6 +105,7 @@ fn w5_union_never_drops_a_conflicting_value_silently() {
 
 #[test]
 fn w5_org_union_keeps_the_copys_pre_block_lines() {
+    let _integration_guard = crate::integration_lock();
     let (result, out) = resolve_union(
         "org",
         "#+title: A\n\n* block\n",
@@ -117,6 +121,7 @@ fn w5_org_union_keeps_the_copys_pre_block_lines() {
 // property, and a container is one atomic unit.
 #[test]
 fn p12b_property_shaped_fence_content_is_not_a_clashing_property() {
+    let _integration_guard = crate::integration_lock();
     // `icon:: 🎉` sits inside the copy's fence. As a property it would clash
     // with mine's `icon:: 🙂` and refuse the merge; as code it is just kept.
     let (result, out) = resolve_union(
@@ -131,6 +136,7 @@ fn p12b_property_shaped_fence_content_is_not_a_clashing_property() {
 
 #[test]
 fn p12b_different_containers_are_kept_whole_mine_first_and_identical_ones_dedupe() {
+    let _integration_guard = crate::integration_lock();
     let (result, out) = resolve_union(
         "md",
         "tags:: x\n```\nmine line\nshared\n```\n\n- block\n",
@@ -150,6 +156,7 @@ fn p12b_different_containers_are_kept_whole_mine_first_and_identical_ones_dedupe
 
 #[test]
 fn p12b_org_directive_inside_src_is_code_not_a_clashing_property() {
+    let _integration_guard = crate::integration_lock();
     let (result, out) = resolve_union(
         "org",
         "#+alias: Real\n\n* block\n",
@@ -165,6 +172,7 @@ fn p12b_org_directive_inside_src_is_code_not_a_clashing_property() {
 
 #[test]
 fn p12b_a_real_clash_outside_a_container_still_refuses() {
+    let _integration_guard = crate::integration_lock();
     let winner = "icon:: 🙂\n```\nx\n```\n\n- block\n";
     let (result, out) = resolve_union("md", winner, "icon:: 🎉\n```\nx\n```\n\n- block\n");
     let error = result.expect_err("an un-keepable property value still refuses");

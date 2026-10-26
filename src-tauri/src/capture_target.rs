@@ -5,8 +5,9 @@
 //! finishes after the window switched to graph B must therefore be kept, and
 //! kept in A: the frontend names the graph the capture was STARTED in, and it is
 //! written there through the ordinary audited asset transaction, never into B.
-//! This is the asset counterpart of og-T's `keepAtSwitch`, which writes a draft
-//! for an explicit root after the binding moved (`drafts::store_draft`).
+//! This is the asset counterpart of og-T's `keepAtSwitch`, which wrote a draft
+//! for an explicit root after the binding moved (the deleted v1 draft store;
+//! drafts are now the page host's).
 //!
 //! The caller is still a live bound window (`slot_for_context` in the command).
 //! Resolution, cheapest first: the window's own graph; another window that has

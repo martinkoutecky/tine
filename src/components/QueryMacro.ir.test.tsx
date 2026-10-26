@@ -1,3 +1,4 @@
+import { openCalmQuery } from "../tests/calmQueryActions";
 // Ported from master src/components/QueryMacro.ir.test.tsx.
 // The seam between the block and the ONE query engine (SPEC §4.3.1, §7.1;
 // I-9, I-12, I-20, I-4).
@@ -34,8 +35,19 @@ import { tryFreezeGraphRewrite } from "../document/graphRewriteState";
 import { toasts, setToasts } from "../toasts";
 import { bumpDataRev } from "../graphSession";
 import { resetQueryTextOpenForTests } from "../navSettings";
+import { startEditing } from "../editorController";
 
+// These component fixtures do not bind a page host. Their source edits update
+// the working set; native coverage exercises actual publication and the epoch
+// suite separately pins refusal while publication is pending.
+const saveFixture = vi.hoisted(() => ({ actual: null as Record<string, unknown> | null, markDirty: vi.fn(), persistTransfer: vi.fn(async () => true) }));
+vi.mock("../document/host/wiring", () => new Proxy({}, {
+  get: (_target, key) => key === "then" ? undefined : key === "markDirty" ? saveFixture.markDirty
+    : key === "persistTransfer" ? saveFixture.persistTransfer : saveFixture.actual?.[key as string],
+  has: () => true,
+}));
 beforeAll(async () => {
+  saveFixture.actual = await vi.importActual("../document/host/wiring");
   await initParser();
 });
 
@@ -97,8 +109,68 @@ function load(raw: string, { readOnly = false }: { readOnly?: boolean } = {}): v
   });
 }
 
+it.each(["(and)", "(sort-by created-at)"])("restores the empty state after removing the last builder condition (%s)", async (blank) => {
+  load("{{query (task TODO)}}");
+  vi.spyOn(backend(), "parseQuery").mockImplementation(async text => ({
+    query: { anchor: "block", filter: text === "(task TODO)"
+      ? { kind: "leaf", leaf: { kind: "attr", attr: "task", op: "in", value: { kind: "list", items: [{ kind: "text", text: "TODO" }] } } }
+      : { kind: "and", items: [] }, source: { kind: "og", original: text, og_options: "" } },
+    view: {},
+    ...(text === "(task TODO)" ? {} : { og_hint: { bare: [], no_conditions: true, rewrites: [] } }),
+  }));
+  const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+  vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+  vi.spyOn(backend(), "printQuery").mockResolvedValue(blank);
+  const { root, dispose } = mount(() => <Block id="query" />);
+  try {
+    await openCalmQuery(root);
+    await vi.waitFor(() => expect(root.querySelector(".qs-row-remove")).not.toBeNull());
+    run.mockClear();
+    root.querySelector<HTMLButtonElement>(".qs-row-remove")!.click();
+    await vi.waitFor(() => expect(doc.byId.query.raw).toContain(blank));
+    await settle();
+    expect(root.textContent).toContain("Add a condition to see results.");
+    expect(run).not.toHaveBeenCalled();
+    expect(root.querySelector(".query-group")).toBeNull();
+  } finally { dispose(); }
+});
+
+it.each(["(and)", "(sort-by created-at)"])("authored no-condition query %s also shows the empty prompt", async blank => {
+  load(`{{query ${blank}}}`);
+  vi.spyOn(backend(), "parseQuery").mockResolvedValue({
+    query: { anchor: "page", filter: { kind: "and", items: [] }, source: { kind: "og", original: blank, og_options: "" } },
+    view: {}, og_hint: { bare: [], no_conditions: true, rewrites: [] },
+  });
+  const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+  const { root, dispose } = mount(() => <Block id="query" />);
+  try {
+    await settle();
+    expect(root.textContent).toContain("Add a condition to see results.");
+    expect(run).not.toHaveBeenCalled();
+  } finally { dispose(); }
+});
+
 /** A `{{tine-query …}}` block: TQL, which ONLY the IR evaluator can read. */
 const TQL_MACRO = "{{tine-query -- task TODO}}";
+
+it.each(["block", "page"] as const)("derives %s column choices from results before a table mounts (GH #680)", async anchor => {
+  load(TQL_MACRO);
+  vi.spyOn(backend(), "parseQuery").mockResolvedValue({
+    query: { anchor, filter: { kind: "true" }, source: { kind: "tql", original: "-- task TODO", og_options: "" } },
+    view: {},
+  });
+  vi.spyOn(backend(), "queryRun").mockResolvedValue(anchor === "block" ? blockRunResult(groups()) : {
+    anchor: "page", pages: [{ path: "pages/Result.md", name: "Result", kind: "page", properties: [["owner", "Ada"]] }],
+    diagnostics: [], report: { supported: true, ran: [], ignored: [] }, total: 1, exceeded: false,
+  });
+  const { root, dispose } = mount(() => <Block id="query" />);
+  try {
+    await vi.waitFor(() => expect(root.querySelector(anchor === "page" ? ".query-page-link" : ".query-group")).not.toBeNull());
+    await openCalmQuery(root, "View");
+    expect([...root.querySelectorAll('[aria-label="Columns"] input[type="checkbox"][aria-label]')]
+      .map(input => input.getAttribute("aria-label"))).toEqual(anchor === "block" ? ["state", "page"] : ["owner"]);
+  } finally { dispose(); }
+});
 
 describe("B1: a TQL block executes through query_run", () => {
   it("renders a scoped block board without a singular tine.view property", async () => {
@@ -164,6 +236,26 @@ describe("B1: a TQL block executes through query_run", () => {
     } finally {
       dispose();
     }
+  });
+  it("renders an advanced page-property pull as a page link", async () => {
+    const source = '[:find (pull ?p [*]) :where (page-property ?p :type "Program")]';
+    load(`#+BEGIN_QUERY\n{:query ${source}}\n#+END_QUERY`);
+    vi.spyOn(backend(), "parseQuery").mockResolvedValue({
+      query: { anchor: "page", filter: { kind: "true" }, source: { kind: "advanced", original: source, og_options: "" } },
+      view: {},
+    });
+    vi.spyOn(backend(), "queryRun").mockResolvedValue({
+      anchor: "page", pages: [{ path: "pages/Kalem.md", name: "Kalem", kind: "page", properties: [["type", "Program"]] }],
+      diagnostics: [], report: { supported: true, ran: ["page-property"], ignored: [] }, total: 1, exceeded: false,
+    });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".query-page-link")?.textContent).toContain("Kalem"));
+      expect(root.querySelector(".query-count")?.textContent).toBe("1");
+      expect(root.querySelector(".query-group")).toBeNull();
+      (root.querySelector(".query-page-link") as HTMLButtonElement).click();
+      expect(route()).toMatchObject({ kind: "page", name: "Kalem", path: "pages/Kalem.md" });
+    } finally { dispose(); }
   });
   it("uses the exact page count and physical path returned by the shared page reader", async () => {
     load("{{tine-query @page and journal = false}}");
@@ -341,17 +433,7 @@ describe("why empty? describes an answer, not the absence of one", () => {
  *  The sheet is portalled to <body>, so its contents are queried from the
  *  document rather than from the block's own element. */
 async function openSheet(root: HTMLElement): Promise<HTMLElement> {
-  const gear = await vi.waitFor(() => {
-    const found = root.querySelector<HTMLButtonElement>(".qs-gear");
-    if (!found) throw new Error("the query sentence never appeared");
-    return found;
-  });
-  if (!document.querySelector(".qs-sheet")) gear.click();
-  return await vi.waitFor(() => {
-    const sheet = document.querySelector<HTMLElement>(".qs-sheet");
-    if (!sheet) throw new Error("the sheet never opened");
-    return sheet;
-  });
+  return openCalmQuery(root, "View");
 }
 
 describe("Q4b: Display saves through the query block", () => {
@@ -363,7 +445,6 @@ describe("Q4b: Display saves through the query block", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       const sheet = await openSheet(root);
-      sheet.querySelector<HTMLButtonElement>(".qd-trigger")!.click();
       [...sheet.querySelectorAll<HTMLButtonElement>(".qd-panel button")]
         .find((button) => button.textContent === "+ count")!.click();
       await vi.waitFor(() => expect(blockProperty("query", "tine.col-aggregates")).toBe("count"));
@@ -379,7 +460,6 @@ describe("Q4b: Display saves through the query block", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       const sheet = await openSheet(root);
-      sheet.querySelector<HTMLButtonElement>(".qd-trigger")!.click();
       await vi.waitFor(() => expect(sheet.querySelector(".qd-panel")).not.toBeNull());
       [...sheet.querySelectorAll<HTMLButtonElement>(".qd-panel button")]
         .find((button) => button.textContent === "None")!.click();
@@ -395,7 +475,6 @@ describe("Q4b: Display saves through the query block", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       const sheet = await openSheet(root);
-      sheet.querySelector<HTMLButtonElement>(".qd-trigger")!.click();
       await vi.waitFor(() => expect(sheet.querySelector(".qd-panel")).not.toBeNull());
       const column = [...sheet.querySelectorAll<HTMLButtonElement>(".qd-add")]
         .find((button) => button.textContent?.includes("column"));
@@ -404,7 +483,7 @@ describe("Q4b: Display saves through the query block", () => {
         .find((button) => button.textContent?.trim() === "Page");
       expect(page).toBeDefined();
       page!.click();
-      await vi.waitFor(() => expect(blockProperty("query", "tine.columns")).toBe("page"));
+      await vi.waitFor(() => expect(blockProperty("query", "tine.columns")).toBe("state;page"));
       expect(blockProperty("query", "tine.fields")).toBeNull();
     } finally {
       dispose();
@@ -436,7 +515,7 @@ describe("Q4b: Display saves through the query block", () => {
  *  inside an open sheet the pane is visible and editable, so opening the sheet
  *  IS opening the pane (§7.5). The resting sentence still mounts none of it. */
 async function openPane(root: HTMLElement): Promise<HTMLTextAreaElement> {
-  const sheet = await openSheet(root);
+  const sheet = await openCalmQuery(root, "Edit as text");
   return await vi.waitFor(() => {
     const input = sheet.querySelector<HTMLTextAreaElement>(".query-text-pane-input");
     if (!input) throw new Error("the pane has no input");
@@ -602,6 +681,139 @@ async function saveThroughPane(root: HTMLElement, text: string): Promise<void> {
 }
 
 describe("B5: the save path chooses the name and answers NotApplicable", () => {
+  it("keeps another block editor's focus when a delayed crossing notice arrives", async () => {
+    load("{{query (task TODO)}}");
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
+    let finish: ((text: string) => void) | undefined;
+    vi.spyOn(backend(), "printQuery").mockImplementation(async (_query, _view, dialect) => dialect === "tql_macro"
+      ? new Promise<string>(resolve => { finish = resolve; }) : "-- task TODO");
+    const { root, dispose } = mount(() => <><Block id="query" /><Block id="todo" /></>);
+    try {
+      const input = await openPane(root);
+      vi.spyOn(backend(), "parseQuery").mockImplementation(async source => parsedAs(source));
+      type(input, "@block and any(children, task = 'TODO')");
+      const save = await vi.waitFor(() => {
+        const found = root.querySelector<HTMLButtonElement>(".query-text-pane-save");
+        expect(found?.disabled).toBe(false); return found!;
+      });
+      save.focus(); save.click();
+      await vi.waitFor(() => expect(finish).toBeDefined());
+      startEditing("todo"); await settle();
+      const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+      expect(editor).not.toBeNull(); editor.focus();
+      finish!("@block and any(children, task = 'TODO')"); await settle();
+      expect(root.querySelector(".query-crossing-notice")).not.toBeNull();
+      expect(document.activeElement).toBe(editor);
+    } finally { finish?.("-- task DONE"); dispose(); }
+  });
+  it("keeps Escape's query focus when a pending dialect-crossing save finishes after the editor closes", async () => {
+    load("{{query (task TODO)}}");
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
+    let finish: ((text: string) => void) | undefined;
+    vi.spyOn(backend(), "printQuery").mockImplementation(async (_query, _view, dialect) => dialect === "tql_macro"
+      ? new Promise<string>(resolve => { finish = resolve; }) : "-- task TODO");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const input = await openPane(root);
+      vi.spyOn(backend(), "parseQuery").mockImplementation(async source => parsedAs(source));
+      type(input, "-- task DONE");
+      const save = await vi.waitFor(() => {
+        const found = root.querySelector<HTMLButtonElement>(".query-text-pane-save");
+        if (!found || found.disabled) throw new Error("save unavailable"); return found;
+      });
+      save.focus(); save.click();
+      await vi.waitFor(() => expect(finish).toBeDefined());
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(root.querySelector(".qc-panel")).toBeNull();
+      const trigger = root.querySelector(".qc-actions > summary");
+      expect(document.activeElement).toBe(trigger);
+      finish!("-- task DONE");
+      await settle();
+      expect(root.querySelector(".query-crossing-notice")).not.toBeNull();
+      expect(document.activeElement).toBe(trigger);
+    } finally { finish?.("-- task DONE"); dispose(); }
+  });
+  it("keeps Apply in the inline panel when its condition rows are replaced", async () => {
+    load('{{query (task TODO) {:title "Tasks"}}}');
+    vi.spyOn(backend(), "parseQuery").mockResolvedValue({
+      query: { anchor: "block", filter: { kind: "leaf", leaf: { kind: "attr", attr: "task", op: "in", value: { kind: "list", items: [{ kind: "text", text: "TODO" }] } } },
+        source: { kind: "og", original: "(task TODO)", og_options: '{:title "Tasks"}' } }, view: {},
+    });
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue('(task DONE) {:title "Tasks"}');
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await openCalmQuery(root);
+      root.querySelector<HTMLButtonElement>(".qs-value")!.click();
+      const apply = await vi.waitFor(() => {
+        const found = document.querySelector<HTMLButtonElement>(".qs-value-editor .qs-commit");
+        expect(found).not.toBeNull(); return found!;
+      });
+      [...document.querySelectorAll<HTMLLabelElement>(".qs-check")].find(label => label.textContent?.trim() === "DONE")!
+        .querySelector<HTMLInputElement>("input")!.click();
+      apply.focus(); apply.click();
+      await vi.waitFor(() => expect(doc.byId.query.raw).toContain("task DONE"));
+      await settle();
+      expect(root.querySelector(".qc-panel")?.contains(document.activeElement)).toBe(true);
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(root.querySelector(".qc-panel")).toBeNull();
+      expect(document.activeElement).toBe(root.querySelector(".qc-actions > summary"));
+    } finally { dispose(); }
+  });
+  it.each([[true, ""], [false, ""], [true, "Notes: "]] as const)("keeps keyboard focus after Save query text (OG expressible: %s, prefix: %s), then Escape returns to the query", async (expressible, prefix) => {
+    load(`${prefix}{{query (task TODO)}}`);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(expressible);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("(task DONE)");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const input = await openPane(root);
+      vi.spyOn(backend(), "parseQuery").mockImplementation(async source => parsedAs(source));
+      type(input, "-- task DONE");
+      const save = await vi.waitFor(() => {
+        const found = root.querySelector<HTMLButtonElement>(".query-text-pane-save");
+        if (!found || found.disabled) throw new Error("save unavailable");
+        return found;
+      });
+      save.focus(); save.click();
+      await settle();
+      if (expressible) expect(document.activeElement).toBe(root.querySelector(".query-text-pane-input"));
+      else expect(root.querySelector(".qc-panel")?.contains(document.activeElement)).toBe(true);
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(root.querySelector(".qc-panel")).toBeNull();
+      expect(document.activeElement).toBe(root.querySelector('[aria-label="Query actions"]'));
+      const panel = await openCalmQuery(root, "View");
+      const done = panel.querySelector<HTMLButtonElement>(".qc-done")!;
+      done.focus(); done.click();
+      expect(document.activeElement).toBe(root.querySelector('[aria-label="Query actions"]'));
+    } finally { dispose(); }
+  });
+  it("switching the view from the View panel keeps the authored query text", async () => {
+    load("{{query (todo TODO)}}");
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    // The reading as the Rust bridge serializes it: empty lists are present, not absent.
+    vi.spyOn(backend(), "parseQuery").mockResolvedValue({
+      query: { anchor: "block", filter: { kind: "true" }, diagnostics: [],
+        source: { kind: "og", original: "(todo TODO)", og_options: "" } },
+      view: { sort: [], columns: [], aggregates: [] },
+    } as unknown as ParsedQuery);
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+    const print = vi.spyOn(backend(), "printQuery").mockImplementation(async (_q, _v, _d, preserveForm) =>
+      preserveForm ? "(todo TODO)" : "(task TODO)");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const panel = await openCalmQuery(root, "View");
+      [...panel.querySelectorAll<HTMLButtonElement>('[aria-label="Query view"] button')]
+        .find(button => button.textContent?.trim() === "board")!.click();
+      await vi.waitFor(() => expect(blockProperty("query", "tine.view")).toBe("board"));
+      await settle();
+      expect(doc.byId.query.raw).toContain("{{query (todo TODO)}}");
+      expect(print.mock.calls.every(call => call[3] === true)).toBe(true);
+    } finally { dispose(); }
+  });
   it("reports a frozen rewrite refusal without changing the block or showing a crossing notice", async () => {
     load("{{query (task TODO)}}");
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
@@ -637,11 +849,11 @@ describe("B5: the save path chooses the name and answers NotApplicable", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       const gears = await vi.waitFor(() => {
-        const found = root.querySelectorAll<HTMLButtonElement>(".qs-gear");
+        const found = root.querySelectorAll<HTMLButtonElement>(".qc-actions summary");
         if (found.length !== 2) throw new Error(`expected two query sheets, got ${found.length}`);
         return found;
       });
-      gears[1].click();
+      await openCalmQuery(gears[1].closest(".query-block")!, "Edit as text");
       const input = await vi.waitFor(() => {
         const found = document.querySelector<HTMLTextAreaElement>(".query-text-pane-input");
         if (!found) throw new Error("second query pane is absent");
@@ -671,11 +883,11 @@ describe("B5: the save path chooses the name and answers NotApplicable", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       const gears = await vi.waitFor(() => {
-        const found = root.querySelectorAll<HTMLButtonElement>(".qs-gear");
+        const found = root.querySelectorAll<HTMLButtonElement>(".qc-actions summary");
         if (found.length !== 2) throw new Error("two macros not rendered");
         return found;
       });
-      gears[1].click();
+      await openCalmQuery(gears[1].closest(".query-block")!, "Edit as text");
       const input = await vi.waitFor(() => {
         const found = document.querySelector<HTMLTextAreaElement>(".query-text-pane-input");
         if (!found) throw new Error("pane not open");
@@ -1159,7 +1371,7 @@ describe("item 9: a query can show pages and blocks together", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
-      root.querySelector<HTMLButtonElement>(".qs-gear")!.click();
+      await openCalmQuery(root);
       await vi.waitFor(() => expect(document.querySelector(".qs-anchor-button")).not.toBeNull());
       document.querySelector<HTMLButtonElement>(".qs-anchor-button")!.click();
       const options = [...document.querySelectorAll<HTMLButtonElement>(".qs-option")];

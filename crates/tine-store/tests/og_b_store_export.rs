@@ -3,6 +3,7 @@ use tine_store::Store;
 
 #[test]
 fn export_targets_use_real_ids_in_markdown_and_org() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(dir.path().join("pages")).unwrap();
     fs::create_dir_all(dir.path().join("logseq")).unwrap();

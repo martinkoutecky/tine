@@ -12,7 +12,8 @@ import { BETA_ENDPOINT } from "./release-policy.mjs";
 // signed byte payloads and binary zsync checksums, under both identity switches.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "tine-release-identity-"));
 const commit = "a".repeat(40);
-const version = "0.5.6";
+// A Beta version: this fixture drives the Beta channel for both identities.
+const version = "0.5.0-beta.6";
 const payload = Buffer.from([0, 128, 255, 10, 13]);
 try {
   for (const file of ["release-layout.mjs", "release-policy.mjs", "stage-release-lane.mjs",
@@ -52,14 +53,18 @@ try {
         const bytes = fs.readFileSync(path.join(root, "candidate-input", lane, name));
         if (name.endsWith(".zsync")) {
           const appimage = name.slice(0, -6);
-          assert.ok(bytes.includes(Buffer.from(`Filename: ${appimage}\nURL: ${appimage}\n\n`)));
+          // A Beta's zsync names its AppImage absolutely, inside its own release.
+          assert.ok(bytes.includes(Buffer.from(`Filename: ${appimage}\nURL: https://github.com/owner/repo/releases/download/v${version}/${appimage}\n\n`)));
           assert.deepEqual(bytes.subarray(-payload.length), payload, "zsync binary payload changed");
         } else assert.deepEqual(bytes, payload, "signed artifact changed while renaming");
       }
       const inputs = workflowInputs(lane, conf, "owner/repo", identity);
+      if (lane === "flatpak-x64") {
+        assert.equal(inputs.RELEASE_FLATPAK, spec.assets[0], "the workflow names the bundle by the layout");
+      }
       if (lane.startsWith("linux")) {
         assert.equal(inputs.UPDATE_INFORMATION,
-          `gh-releases-zsync|owner|repo|beta|${spec.assets[0].replace(version, "*")}.zsync`);
+          `zsync|https://tine.page/updates/beta/${lane === "linux-x64" ? "amd64" : "aarch64"}.AppImage.zsync`);
         assert.equal(inputs.LDAI_UPDATE_INFORMATION, inputs.UPDATE_INFORMATION);
         assert.ok(!/\s/.test(inputs.UPDATE_INFORMATION));
         assert.equal(inputs.RELEASE_APPIMAGE, spec.sourceAssets[spec.assets[0]]);
@@ -76,7 +81,7 @@ try {
     assert.ok(!Object.keys(updater.platforms).some((platform) => /^windows-(i686|x86)(-|$)/.test(platform)),
       "assembled latest.json must keep experimental x86 updates manual");
     for (const [platform, entry] of Object.entries(updater.platforms)) {
-      assert.equal(entry.url, `https://github.com/owner/repo/releases/download/beta/${layout.updaterPlatforms[platform][0]}`);
+      assert.equal(entry.url, `https://github.com/owner/repo/releases/download/v${version}/${layout.updaterPlatforms[platform][0]}`);
     }
     // Stable layout preserves every previous asset name, including RPM separators.
     if (ship === "release") {

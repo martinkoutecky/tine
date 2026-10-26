@@ -1,13 +1,15 @@
+import { Rich } from "./i18n/Rich";
 import { installTineLinks } from "./deepLinkNavigation";
 import { installShareIngest } from "./shareIngest";
 import { DeepLinkGraphChoice } from "./components/DeepLinkGraphChoice";
 import { resizeSidebar, commitSidebarWidth } from "./sidebarSizing";
 import { Match, Show, Suspense, Switch, createEffect, createSignal, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
+import { JournalsIcon } from "./components/JournalsIcon";
 import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
 import { ConflictOverview } from "./components/ConflictOverview";
-import { QuickSwitcher } from "./components/QuickSwitcher";
+import { AllPages } from "./components/AllPages";
 // pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
 // the viewer only when one is opened.
 const KeyedPdfViewer = lazy(() =>
@@ -16,18 +18,14 @@ const KeyedPdfViewer = lazy(() =>
 import { TabBar, tabDropHighlightsPane, tabSplitPreviewSideForPane } from "./components/TabBar";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { TopbarOverflowMenu } from "./components/TopbarOverflowMenu";
-import { ContextMenu } from "./components/ContextMenu";
-import { Toasts, Lightbox } from "./components/Toasts";
-import { AudioOverlay } from "./components/AudioOverlay";
+import { WindowOverlays } from "./components/WindowOverlays";
+import { closeAllWorkspaceWindows } from "./workspaceWindows";
 import { CalendarJump } from "./components/CalendarJump";
 import { ConflictBar } from "./components/ConflictBar";
 import { installReloadOnFocus, refreshingFromDisk, subscribeWatcherFreshness, trackGraphChangeApplication } from "./reloadOnFocus";
 import { subscribeAssetChanges } from "./assetRefresh";
 import { initConflictPolicy } from "./conflictPolicy";
 import { RightSidebar } from "./components/RightSidebar";
-import { HelpPopup } from "./components/HelpShortcuts";
-import { DatePicker } from "./components/DatePicker";
-import { FormulaEditor } from "./components/FormulaEditor";
 import { MobileKeyboardToolbar } from "./components/MobileKeyboardToolbar";
 import {
   DrawerBackground,
@@ -35,22 +33,19 @@ import {
   MobileDrawerPanel,
   dismissDrawerAndRestore,
 } from "./components/MobileDrawerShell";
-import { PageProps } from "./components/PageProps";
-import { ExportModal } from "./components/ExportModal";
-import { PdfExportDialog } from "./components/PdfExportDialog";
-import { QueryExportDialog } from "./components/QueryExportDialog";
-import { queryExportRequest } from "./ui";
 import { InPageFind } from "./components/InPageFind";
 import { installKeybindings } from "./keybindings";
 import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
-import { applyGraphConfigChange, loadGraphPath, persistedGraphPath } from "./graph";
+import { applyCustomCssChange, applyGraphConfigChange, loadGraphPath, persistedGraphPath } from "./graph";
 import { installPageIndex } from "./pageIndex";
+import { t, msg } from "./i18n";
 import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
+import { flushCssEditor } from "./cssEditor";
 import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
-import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
+import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
 import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch, setStartupOpenFailure } from "./graphSession";
 import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
 
@@ -71,7 +66,7 @@ import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
 import { initCopySettings } from "./copySettings";
 import { initRefCompletionSettings } from "./refCompletionSettings";
-import { initNavSettings } from "./navSettings";
+import { initNavSettings, mobileNavigationAtBottom } from "./navSettings";
 import { initLocalFileSettings } from "./localFileSettings";
 import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
@@ -83,6 +78,7 @@ import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls, touch
 import {
   PaneContext,
   closePane,
+  currentLayoutWindowId,
   firstPaneId,
   focusedPaneId,
   layoutHasMultiplePanes,
@@ -91,6 +87,7 @@ import {
   paneRouter,
   openPdfNotes,
   layoutPaneIds,
+  allPaneIds,
   setSplitRatio,
   type LayoutNode,
 } from "./panes";
@@ -103,7 +100,6 @@ import { installEdgeSwipe } from "./edgeSwipe";
 import { createSafeCloseCoordinator } from "./safeClose";
 import { openUnsavedRecovery } from "./unsavedRecovery";
 import { UnsavedRecovery } from "./components/UnsavedRecovery";
-import { installDraftStore, writeAtRisk } from "./draftStore";
 import { currentPdfOwnership, drainPdfWork } from "./pdfOwnership";
 import { hlsPageName } from "./pdf";
 import type { InvalidRoute } from "./routeTypes";
@@ -111,46 +107,52 @@ import { installBackgroundFlush } from "./backgroundFlush";
 import { installSessionActivity } from "./sessionActivity";
 import { initSettingsLayout } from "./settingsLayout";
 import { initCodeDisplay } from "./codeDisplay";
+import { initStickyParents } from "./stickyParents";
 import { initContentWidths } from "./contentWidth";
+import { MAIN_WINDOW_ID, isElementNode, isHTMLElementNode, isNodeValue, mainWindow, newResizeObserver, registeredWindows, requestFrame, useWindowId, windowOf } from "./windowRealm";
 
-const Settings = lazy(() => import("./components/Settings").then((module) => ({ default: module.Settings })));
 
 /** The single persistence transaction used by both desktop close and Android
  * root Back.  Callers choose only the final platform action. */
 export const safeClose = createSafeCloseCoordinator({
   blurActive() {
-    const active = document.activeElement;
-    if (active instanceof HTMLElement) active.blur();
+    // Every Tine window: an editor focused in a workspace popup commits too.
+    for (const win of registeredWindows()) {
+      const active = win.document.activeElement;
+      if (isHTMLElementNode(active)) active.blur();
+    }
   },
   endEdit() {
     endEdit("graph-switch");
   },
   flushPdfWork: drainPdfWork,
-  flushAll,
+  flushAll: async () => {
+    const cssSaved = await flushCssEditor();
+    const pagesSaved = await flushAll();
+    return cssSaved && pagesSaved;
+  },
   // GH #540: name the pages at risk; "No" opens the recovery panel.
   confirmDiscard: (reason) => {
-    const explanation = reason === "still-saving"
-      ? "Tine is still writing your changes and is taking longer than expected — a slow or network drive can do this."
-      : "Tine has changes that could not be saved (a conflict or a stuck save).";
-    const inventory = unsavedDrafts().map((p) => `• ${p.name} — ${p.state}`).join("\n") || "Pending attachments or storage work; no page draft identified.";
+    const inventory = unsavedDrafts().map((p) => `• ${p.name} — ${p.state}`).join("\n");
     return backend().confirm(
-      `${explanation}\n\n${inventory}\n\nChoose No to review, retry saving, or copy your drafts. Close this window anyway and lose them?`,
-      "Unsaved changes",
+      t("app-choose-no-to-review-retry-saving", { reason, inventory: inventory || "empty" }),
+      t("app-unsaved-changes"),
     );
   },
   onDiscardDeclined: openUnsavedRecovery,
   recordDiscard: (reason) => recordDiagnostic("close_discarded_unsaved", { closeReason: reason, pages: unsavedPageCount() }),
-  // A close that keeps unsaved pages leaves their newest drafts in app data first.
-  flushSession: () => writeAtRisk().then(flushSession),
+  // The page host keeps a crash-recovery copy of every page it took and has
+  // not saved; the close only persists the session layout.
+  flushSession,
   setTransition: setGraphTransitioning,
   notifyPdfFailure: () => {
-    pushToast("Couldn't save pending PDF changes. The graph remains open.", "error");
+    pushToast(msg("app-couldn-t-save-pending-pdf-changes-the-graph"), "error");
   },
   notifyStillSaving: () => {
-    pushToast("Still saving your changes — closing in a moment.", "info");
+    pushToast(msg("app-still-saving-your-changes-closing-in"), "info");
   },
   notifyConfirmationFailure: () => {
-    pushToast("Couldn't confirm closing the window. Your unsaved changes are still open.", "error");
+    pushToast(msg("app-couldn-t-confirm-closing-the-window-your-unsaved"), "error");
   },
 });
 
@@ -162,7 +164,7 @@ setUpdateExitGuard(safeClose);
 const androidRootClose = createAndroidRootCloseCoordinator(safeClose, {
   finishActivity: exitAndroidActivity,
   finishActivityFailed: () => pushToast(
-    "Tine couldn't close the Android activity. Tap Back to retry closing.",
+    msg("app-tine-couldn-t-close-the-android-activity-tap"),
     "error",
   ),
 });
@@ -184,7 +186,7 @@ function journalsFeedOwner(
     graphEpoch: epoch,
     isLive: () =>
       graphEpoch() === epoch && owners.some((p) =>
-        layoutPaneIds().includes(p.paneId) && sameRoute(paneRouter(p.paneId).route(), p.route)
+        allPaneIds().includes(p.paneId) && sameRoute(paneRouter(p.paneId).route(), p.route)
       ),
   };
 }
@@ -197,7 +199,7 @@ function requestJournalFeedWatcherRestart(
 }
 
 installExternalChangeUiHandler(() => {
-  const routes = layoutPaneIds().map((paneId) => ({ paneId, router: paneRouter(paneId), route: paneRouter(paneId).route() }));
+  const routes = allPaneIds().map((paneId) => ({ paneId, router: paneRouter(paneId), route: paneRouter(paneId).route() }));
   return {
     pageOpen: (name: string) => routes.some((p) => p.route.kind === "page" && p.route.name === name),
     journalsOpen: routes.some((p) => p.route.kind === "journals"),
@@ -247,6 +249,7 @@ export function PaneTree(props: { node: LayoutNode; path: number[] }): JSX.Eleme
 }
 
 function PaneResizer(props: { dir: "row" | "col"; path: number[] }): JSX.Element {
+  const windowId = useWindowId(); // the seam's path is relative to its own window's tree
   return (
     <div
       class={`pane-resizer pane-resizer-${props.dir}`}
@@ -256,19 +259,20 @@ function PaneResizer(props: { dir: "row" | "col"; path: number[] }): JSX.Element
       onPointerDown={(e) => {
         e.preventDefault();
         const box = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+        const win = windowOf(e); // the drag continues in the seam's own window
         const onMove = (ev: PointerEvent) => {
           const raw =
             props.dir === "row"
               ? (ev.clientX - box.left) / Math.max(1, box.width)
               : (ev.clientY - box.top) / Math.max(1, box.height);
-          setSplitRatio(props.path, raw);
+          setSplitRatio(props.path, raw, windowId);
         };
         const onUp = () => {
-          window.removeEventListener("pointermove", onMove);
-          window.removeEventListener("pointerup", onUp);
+          win.removeEventListener("pointermove", onMove);
+          win.removeEventListener("pointerup", onUp);
         };
-        window.addEventListener("pointermove", onMove);
-        window.addEventListener("pointerup", onUp);
+        win.addEventListener("pointermove", onMove);
+        win.addEventListener("pointerup", onUp);
       }}
     />
   );
@@ -302,6 +306,9 @@ function PaneContent(props: { router: PaneRouter }): JSX.Element {
       <Match when={props.router.route().kind === "conflicts"}>
         <ConflictOverview router={props.router} />
       </Match>
+      <Match when={props.router.route().kind === "all-pages"}>
+        <AllPages router={props.router} />
+      </Match>
     </Switch>
   );
 }
@@ -329,16 +336,16 @@ function PaneScroller(props: {
   };
   onMount(() => {
     measure();
-    const frame = requestAnimationFrame(measure);
-    if (typeof ResizeObserver === "undefined") {
-      onCleanup(() => cancelAnimationFrame(frame));
+    const cancelFrame = requestFrame(scroller, measure);
+    const observer = newResizeObserver(scroller, measure);
+    if (!observer) {
+      onCleanup(cancelFrame);
       return;
     }
-    const observer = new ResizeObserver(measure);
     observer.observe(scroller);
     observer.observe(inner);
     onCleanup(() => {
-      cancelAnimationFrame(frame);
+      cancelFrame();
       observer.disconnect();
     });
   });
@@ -375,8 +382,7 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
       }>
         {(invalid) => <div class="pane-route-error" role="alert">
           <h2>{invalid().title}</h2>
-          <p>{invalid().message}</p>
-          <button type="button" onClick={() => { void props.router.closeTab(props.router.activeId()); }}>Close tab</button>
+          <p>{invalid().message}</p><button class="settings-btn" type="button" onClick={() => { void props.router.closeTab(props.router.activeId()); }}>{t("app-close-tab")}</button>
         </div>}
       </Show>
     }>
@@ -399,7 +405,8 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
 
 function PaneLeaf(props: { paneId: string }): JSX.Element {
   const router = paneRouter(props.paneId);
-  const multi = () => layoutHasMultiplePanes();
+  const windowId = useWindowId();
+  const multi = () => layoutHasMultiplePanes(layoutRoot(windowId));
   // STATIC per pane: context provider values freeze at mount, so the surface
   // must not depend on the pane's current route. Page.tsx's endEditForSurface
   // key uses the same mapping.
@@ -461,39 +468,22 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
 // pill is that indicator, and doubles as in-situ docs for the seam/edge tricks.
 export function PaneSelectHint(): JSX.Element {
   const kind = () => paneSel()?.kind ?? null;
+  const here = paneSelectIsHere();
   return (
-    <Show when={paneSel()}>
-      <div class="pane-select-hint">
-        <span class="pane-select-hint-title">Pane select</span>
+    <Show when={here() && paneSel()}>
+      <div class="pane-select-hint"><span class="pane-select-hint-title">{t("app-pane-select")}</span>
         <Show
           when={kind() !== "pane"}
           fallback={
             <span class="pane-select-hint-body">
-              <span>
-                <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move (onto seams &amp; edges) · <kbd>Enter</kbd> enter
-                pane · <kbd>Del</kbd> close pane
-              </span>
-              <span>
-                <kbd>Ctrl+K</kbd> open a page in this pane · <kbd>Esc</kbd> exit
-              </span>
+              <span><Rich message={msg("app-move-onto-seams-edges")} slots={{ "kbd": (children) => <kbd>{children}</kbd> }} /></span>
+              <span><Rich message={msg("app-ctrl-k-open-a-page-in-this-pane")} slots={{ "kbd": (children) => <kbd>{children}</kbd> }} /></span>
             </span>
           }
         >
           <span class="pane-select-hint-body">
-            <span>
-              <kbd>Enter</kbd>{" "}
-              <Show when={kind() === "edge"} fallback={<Show when={kind() === "pane-edge"} fallback={<span>split here (mirrors the pane)</span>}><span>split <span class="pane-select-hint-em">this pane</span></span></Show>}>
-                <span>split the <span class="pane-select-hint-em">whole window</span></span>
-              </Show>{" "}
-              · <span class="pane-select-hint-em">type a page name</span> (or <kbd>Ctrl+K</kbd>) to open it in the new
-              split
-            </span>
-            <span>
-              <Show when={kind() === "pane-edge"}>
-                <span>press outward again to widen the split · </span>
-              </Show>
-              <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Esc</kbd> exit
-            </span>
+            <span><Rich message={msg("app-pane-split-instruction", { kind: kind() ?? "seam" })} slots={{ "kbd": (children) => <kbd>{children}</kbd>, "span": (children) => <span>{children}</span>, "em-hint": (children) => <span class="pane-select-hint-em">{children}</span> }} /></span>
+            <span><Rich message={msg("app-pane-split-navigation", { kind: kind() ?? "seam" })} slots={{ "span": (children) => <span>{children}</span>, "kbd": (children) => <kbd>{children}</kbd> }} /></span>
           </span>
         </Show>
       </div>
@@ -501,8 +491,17 @@ export function PaneSelectHint(): JSX.Element {
   );
 }
 
+/** Pane select acts on the window the user is in (currentLayoutWindowId); its
+ * hint and edge tint render only in that window, never in another one too. */
+function paneSelectIsHere(): () => boolean {
+  const windowId = useWindowId();
+  return () => currentLayoutWindowId() === windowId;
+}
+
 export function PaneEdgeHighlights(): JSX.Element {
+  const here = paneSelectIsHere();
   const edge = () => {
+    if (!here()) return null;
     const target = paneSel();
     return target?.kind === "edge" ? target.side : null;
   };
@@ -533,7 +532,7 @@ export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen(
 
   const onClick = (e: MouseEvent) => {
     const target = e.target;
-    const el = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+    const el = isElementNode(target) ? target : isNodeValue(target) ? target.parentElement : null;
     const a = el?.closest?.("a[href]") as HTMLAnchorElement | null;
     const href = a?.getAttribute("href")?.trim() ?? "";
     const scheme = a ? /^([a-z][a-z0-9+.-]*):/i.exec(href)?.[1]?.toLowerCase() : undefined;
@@ -547,8 +546,9 @@ export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen(
     void backend().openExternal(a.href);
   };
 
-  document.addEventListener("click", onClick, true);
-  return () => document.removeEventListener("click", onClick, true);
+  // Mobile only, where main is the sole window.
+  mainWindow.document.addEventListener("click", onClick, true);
+  return () => mainWindow.document.removeEventListener("click", onClick, true);
 }
 
 /** Install the graph window's capture receiver. Each request is deduplicated
@@ -615,14 +615,11 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
       } catch {
         ok = false;
       }
-      if (saveOwner()) pushToast(
-        ok
-          ? title
-            ? `Captured to “${title}”`
-            : "Captured to today's journal"
-          : "Capture couldn't be saved — its text is kept in the capture window",
-        ok ? "info" : "error"
-      );
+      if (saveOwner()) {
+        if (!ok) pushToast(msg("app-capture-couldn-t-be-saved-its-text"), "error");
+        else if (title) pushToast(msg("app-captured-to", { title }), "info");
+        else pushToast(msg("app-captured-to-today-s-journal"), "info");
+      }
       return ok;
     };
     const promise = save();
@@ -638,12 +635,14 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
 }
 
 export function App(): JSX.Element {
-  installDraftStore();
-  // Every graph window mounts App and owns its own save engine. Split panes
+  // Every graph window mounts App and owns its own page-host client. Split panes
   // share it; the capture mini-window owns only an unsaved scratch page.
   onMount(() => onCleanup(installBackgroundFlush({
     endEdit: () => endEdit("graph-switch"),
-    flushAll,
+    flushAll: async () => {
+      const [pagesSaved, cssSaved] = await Promise.all([flushAll(), flushCssEditor()]);
+      return pagesSaved && cssSaved;
+    },
     closeInFlight: safeClose.inFlight,
   })));
   // GH #426: on mobile an OS reap of a hidden app is not an unclean exit.
@@ -729,7 +728,7 @@ export function App(): JSX.Element {
         // The edge swipe never closes the app: iOS has no root rung.
         back: () => { dispatchAppBack({ ...backDeps, closeRoot() {} }); },
         openDrawer: () => setLeftSidebarOpen(true),
-        surface: () => document.querySelector<HTMLElement>(".app-container > .main-container"),
+        surface: () => mainWindow.document.querySelector<HTMLElement>(".app-container > .main-container"),
       });
     })();
     onCleanup(() => { disposed = true; uninstall(); });
@@ -782,8 +781,8 @@ export function App(): JSX.Element {
 
   createEffect(() => {
     if (!isPublishedExport() || !firstLoadDone() || !graphMeta()) return;
-    const panes = layoutPaneIds();
-    const router = paneRouter(panes[0] ?? focusedPaneId());
+    const panes = layoutPaneIds(layoutRoot(MAIN_WINDOW_ID));
+    const router = paneRouter(panes[0] ?? focusedPaneId(MAIN_WINDOW_ID));
     const target = publishedPermalinkForWorkspace(panes.length, router.tabs().length, router.route());
     if (target !== undefined) replacePublishedPermalink(target);
   });
@@ -811,7 +810,7 @@ export function App(): JSX.Element {
       const result = await readOwned(ownedWhen(() => alive), invoke<boolean>("take_identifier_migration_notice"));
       if (result.kind === "stale" || !result.value) return;
       pushToast(
-        "Tine was renamed under the hood, so we moved your settings and backups across. A few app-level preferences (e.g. keyboard shortcuts) might need setting again — sorry about that!",
+        msg("app-tine-was-renamed-under-the-hood-so"),
         "info",
         { sticky: true },
       );
@@ -830,7 +829,7 @@ export function App(): JSX.Element {
       const result = await readOwned(ownedWhen(() => alive), backend().takeDataHomeFallbackNotice());
       if (result.kind === "stale" || !result.value) return;
       pushToast(
-        `Tine could not write its usual application-data folder, so this session is keeping settings and backups in ${result.value} instead. Fixing the permissions on that folder restores the normal location.`,
+        msg("app-tine-could-not-write-its-usual-application-data", { fallbackDirectory: result.value }),
         "warn",
         { sticky: true },
       );
@@ -855,7 +854,7 @@ export function App(): JSX.Element {
   onMount(() => void initRefCompletionSettings());
   onMount(() => void initNavSettings());
   onMount(() => void initSettingsLayout());
-  onMount(() => { void initContentWidths(); void initCodeDisplay(); });
+  onMount(() => { void initContentWidths(); void initCodeDisplay(); void initStickyParents(); });
   // Load the local-file images opt-in (Settings → Editing). Default off.
   onMount(() => void initLocalFileSettings());
   // A conflict copy appearing/vanishing on disk (watcher) refreshes the list.
@@ -872,6 +871,15 @@ export function App(): JSX.Element {
     let alive = true;
     const owner = ownedWhen(() => alive);
     void readOwnedResource(owner, backend().onGraphConfigChanged(applyGraphConfigChange), (u) => u())
+      .then((result) => { if (result.kind === "current") unsub = result.value; });
+    onCleanup(() => { alive = false; unsub(); });
+  });
+  // `logseq/custom.css` edited outside Tine: re-apply it without reopening.
+  onMount(() => {
+    let unsub = () => {};
+    let alive = true;
+    const owner = ownedWhen(() => alive);
+    void readOwnedResource(owner, backend().onCustomCssChanged(applyCustomCssChange), (u) => u())
       .then((result) => { if (result.kind === "current") unsub = result.value; });
     onCleanup(() => { alive = false; unsub(); });
   });
@@ -935,6 +943,8 @@ export function App(): JSX.Element {
         closeInProgress = true;
         if ((await safeClose.prepare()) !== "accepted") { closeInProgress = false; return; }
         allowClose = true;
+        // The session (saved by prepare) lists the open workspace windows; close them now.
+        closeAllWorkspaceWindows("quit");
         // Close only this graph window. The backend exits the process (including
         // Linux WebKit cleanup) only when this is the final graph window.
         try {
@@ -971,7 +981,7 @@ export function App(): JSX.Element {
     let alive = true, unlisten = () => {};
     onCleanup(() => { alive = false; unlisten(); });
     void installQuickCaptureReceiver(ownedWhen(() => alive)).then((dispose) => { if (alive) unlisten = dispose; else dispose(); })
-      .catch(() => { if (alive) pushToast("Quick Capture could not connect to this graph window.", "error"); });
+      .catch(() => { if (alive) pushToast(msg("app-quick-capture-could-not-connect-to-this"), "error"); });
   });
 
   // Tell the quick-capture mini-window our theme. It can't read the main
@@ -1083,6 +1093,60 @@ export function App(): JSX.Element {
     onCleanup(installInterfaceZoomWheel());
   });
 
+  // One shared group: the title bar by default (desktop, phone, tablet; GH #716),
+  // or, on a mobile app that turned on "Navigation buttons at the bottom", a row
+  // below the document (GH #598). Exactly one of the two is mounted.
+  const navigationAtBottom = () => isMobilePlatform && mobileNavigationAtBottom();
+  const NavigationActions = () => (
+    <div class="navigation-actions topbar-left">
+      <button
+        class="icon-btn"
+        title={t("navigation-sidebar-title")}
+        onClick={(event) => toggleSidebar(event.currentTarget)}
+      >
+        <svg viewBox="0 0 24 24" class="nav-icon">
+          <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
+          <line x1="9" y1="4" x2="9" y2="20" stroke="currentColor" stroke-width="1.7" />
+        </svg>
+      </button>
+      <button
+        class="icon-btn"
+        title={t("navigation-search-title")}
+        aria-label={t("navigation-search")}
+        data-search-trigger
+        data-pane-focus-neutral
+        onClick={() => openSwitcher()}
+      >
+        <svg viewBox="0 0 24 24" class="nav-icon">
+          <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.7" />
+          <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="1.7" />
+        </svg>
+      </button>
+      <button
+        class="icon-btn topbar-navigation-action"
+        title={t("command-go-backward")}
+        data-pane-focus-neutral
+        disabled={!canGoBack()}
+        onClick={topbarActions.back}
+      >
+        <svg viewBox="0 0 24 24" class="nav-icon">
+          <path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+      <button
+        class="icon-btn topbar-navigation-action"
+        title={t("command-go-forward")}
+        data-pane-focus-neutral
+        disabled={!canGoForward()}
+        onClick={topbarActions.forward}
+      >
+        <svg viewBox="0 0 24 24" class="nav-icon">
+          <path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+    </div>
+  );
+
   // Frameless window: the toolbar doubles as the title bar (decorations are off),
   // so track maximized state to drive our custom max/restore glyph + resize grips.
   // Also apply the persisted native-frame preference (Linux/Windows; macOS uses its
@@ -1115,20 +1179,15 @@ export function App(): JSX.Element {
       }}
     >
       <Show when={parserFailed()}>
-        <DrawerBackground class="parser-error-banner" blockedBy="any" role="alert">
-          The block renderer failed to load — text is shown unformatted. Please reload Tine;
-          if this persists, report it.
-        </DrawerBackground>
+        <DrawerBackground class="parser-error-banner" blockedBy="any" role="alert">{t("app-the-block-renderer-failed-to-load")}</DrawerBackground>
       </Show>
       <Show when={graphTransitioning()}>
-        <DrawerBackground class="graph-transition-shield" blockedBy="any" role="status" ariaLive="polite">
-          Finishing graph operation…
-        </DrawerBackground>
+        <DrawerBackground class="graph-transition-shield" blockedBy="any" role="status" ariaLive="polite">{t("app-finishing-graph-operation")}</DrawerBackground>
       </Show>
       <Show when={sidebarOpen()}>
         <MobileDrawerPanel
           side="left"
-          label="Navigation sidebar"
+          label={t("app-prose-navigation-sidebar")}
           class="left-sidebar"
           style={{
             flex: `0 0 ${sidebarWidth()}px`,
@@ -1140,8 +1199,7 @@ export function App(): JSX.Element {
             <div class="sidebar-header workspace-sidebar-header" data-workspace-switcher-sidebar>
               <Show when={!isPublishedExport()}><FailureBoundary region="The workspace switcher"><WorkspaceSwitcher /></FailureBoundary></Show>
             </div>
-            <Show when={mobileDrawerMode()}>
-              <button class="mobile-drawer-close" type="button" aria-label="Close navigation sidebar" onClick={() => dismissDrawerAndRestore("explicit")}>Close</button>
+            <Show when={mobileDrawerMode()}><button class="mobile-drawer-close" type="button" aria-label={t("app-close-navigation-sidebar")} onClick={() => dismissDrawerAndRestore("explicit")}>{t("app-close")}</button>
             </Show>
             <FailureBoundary region="The sidebar">
               <Sidebar onActiveNavigationComplete={completeActiveLeftNavigation} />
@@ -1154,12 +1212,13 @@ export function App(): JSX.Element {
               const onMove = (ev: MouseEvent) =>
                 resizeSidebar("left", ev.clientX);
               const onUp = () => {
-                window.removeEventListener("mousemove", onMove);
-                window.removeEventListener("mouseup", onUp);
+                mainWindow.removeEventListener("mousemove", onMove);
+                mainWindow.removeEventListener("mouseup", onUp);
                 commitSidebarWidth("left");
               };
-              window.addEventListener("mousemove", onMove);
-              window.addEventListener("mouseup", onUp);
+              // The left sidebar exists only in the main window.
+              mainWindow.addEventListener("mousemove", onMove);
+              mainWindow.addEventListener("mouseup", onUp);
             }}
           />
         </MobileDrawerPanel>
@@ -1175,53 +1234,7 @@ export function App(): JSX.Element {
             user drag the window by its empty areas (buttons/tabs, being children
             without the attribute, still click normally; double-click maximizes). */}
         <header class="topbar" data-tauri-drag-region>
-          <div class="topbar-left">
-            <button
-              class="icon-btn"
-              title="Toggle sidebar (t l)"
-              onClick={(event) => toggleSidebar(event.currentTarget)}
-            >
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
-                <line x1="9" y1="4" x2="9" y2="20" stroke="currentColor" stroke-width="1.7" />
-              </svg>
-            </button>
-            <button
-              class="icon-btn"
-              title="Search (Ctrl+K)"
-              aria-label="Search"
-              data-search-trigger
-              data-pane-focus-neutral
-              onClick={() => openSwitcher()}
-            >
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.7" />
-                <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="1.7" />
-              </svg>
-            </button>
-            <button
-              class="icon-btn topbar-navigation-action"
-              title="Go back"
-              data-pane-focus-neutral
-              disabled={!canGoBack()}
-              onClick={topbarActions.back}
-            >
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
-            <button
-              class="icon-btn topbar-navigation-action"
-              title="Go forward"
-              data-pane-focus-neutral
-              disabled={!canGoForward()}
-              onClick={topbarActions.forward}
-            >
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
-          </div>
+          <Show when={!navigationAtBottom()}><FailureBoundary region="Navigation"><NavigationActions /></FailureBoundary></Show>
           {/* A collapsed sidebar has no mounted sidebar header. Keep a compact
               one-tap workspace path in the toolbar without putting its full
               non-shrinking label back in this no-wrap row. */}
@@ -1231,24 +1244,19 @@ export function App(): JSX.Element {
           {/* The tab strip is a desktop feature; on a phone it only crowds the
               single-row toolbar (and its pill clips). Hide it there, keeping a
               flex spacer so the right-side icons stay pinned to the edge. */}
-          <Show when={!isMobilePlatform && !layoutHasMultiplePanes()} fallback={<div class="topbar-spacer" data-tauri-drag-region />}>
+          <Show when={!isMobilePlatform && !layoutHasMultiplePanes(layoutRoot(MAIN_WINDOW_ID))} fallback={<div class="topbar-spacer" data-tauri-drag-region />}>
             {/* Keyed on the SOLE pane's id: after closing panes the survivor
                 need not be "main", and TabBar freezes its router at mount. */}
-            <Show when={firstPaneId(layoutRoot()) ?? "main"} keyed>
+            <Show when={firstPaneId(layoutRoot(MAIN_WINDOW_ID)) ?? "main"} keyed>
               {(soloId) => <FailureBoundary region="The tabs"><TabBar router={paneRouter(soloId)} /></FailureBoundary>}
             </Show>
           </Show>
           <div class="topbar-right">
             <FailureBoundary region="The calendar"><CalendarJump triggerClass="topbar-optional-action" onOpenReady={(open) => { openCalendarJump = open; }} /></FailureBoundary>
-            <button class="icon-btn topbar-optional-action" title="Journals" data-pane-focus-neutral onClick={topbarActions.journals}>
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <path d="M4 5h11a2 2 0 0 1 2 2v12H6a2 2 0 0 1-2-2V5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
-                <line x1="8" y1="9" x2="14" y2="9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-                <line x1="8" y1="12.5" x2="14" y2="12.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-                <path d="M17 5h3v14a2 2 0 0 1-2 2 1 1 0 0 1-1-1V5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
-              </svg>
+            <button class="icon-btn topbar-optional-action" title={t("app-journals")} data-pane-focus-neutral onClick={topbarActions.journals}>
+              <JournalsIcon />
             </button>
-            <button class="icon-btn topbar-optional-action" title="Toggle theme (t t)" onClick={topbarActions.theme}>
+            <button class="icon-btn topbar-optional-action" title={t("app-toggle-theme-t-t")} onClick={topbarActions.theme}>
               <Show
                 when={theme() === "light"}
                 fallback={
@@ -1274,7 +1282,7 @@ export function App(): JSX.Element {
             <button
               class="icon-btn topbar-sidebar-action"
               classList={{ active: rightSidebarOpen() }}
-              title="Toggle right sidebar (t r)"
+              title={t("app-toggle-right-sidebar-t-r")}
               onClick={(event) => topbarActions.rightSidebar(event.currentTarget)}
             >
               <svg viewBox="0 0 24 24" class="nav-icon">
@@ -1295,7 +1303,7 @@ export function App(): JSX.Element {
             {/* Settings sits apart at the far right (separated by a divider) so
                 it reads as app-level config, not another content control. */}
             <Show when={!isPublishedExport()}><span class="topbar-sep" />
-            <button class="icon-btn" title="Settings (t s)" onClick={() => openSettings()}>
+            <button class="icon-btn" title={t("app-settings-t-s")} onClick={() => openSettings()}>
               <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
                 <path
                   fill="currentColor"
@@ -1314,8 +1322,7 @@ export function App(): JSX.Element {
           </div>
         </header>
         <FailureBoundary region="The conflict notice"><ConflictBar /></FailureBoundary>
-        <Show when={refreshingFromDisk()}>
-          <div class="focus-refresh-status" role="status" aria-live="polite">Refreshing changes from disk…</div>
+        <Show when={refreshingFromDisk()}><div class="focus-refresh-status" role="status" aria-live="polite">{t("app-refreshing-changes-from-disk")}</div>
         </Show>
         <FailureBoundary region="Find in page"><InPageFind /></FailureBoundary>
         </DrawerBackground>
@@ -1326,15 +1333,20 @@ export function App(): JSX.Element {
           <DrawerBackground class="drawer-workspace" blockedBy="right">
           <PaneEdgeHighlights />
           <PaneSelectHint />
-          <PaneTree node={visibleLayoutNode()} path={[]} />
+          <PaneTree node={visibleLayoutNode(MAIN_WINDOW_ID)} path={[]} />
           </DrawerBackground>
           <FailureBoundary region="The reference sidebar"><RightSidebar /></FailureBoundary>
         </div>
+        <Show when={navigationAtBottom()}>
+          <DrawerBackground class="mobile-navigation-toolbar" blockedBy="any">
+            <FailureBoundary region="Navigation"><NavigationActions /></FailureBoundary>
+          </DrawerBackground>
+        </Show>
       </DrawerBackground>
       <MobileDrawerController />
       <DrawerBackground class="drawer-floating-background" blockedBy="any">
         <Show when={focusMode()}>
-          <button class="focus-exit" title="Exit focus (Esc)" onClick={() => void exitFocusMode()}>
+          <button class="focus-exit" title={t("app-exit-focus-esc")} onClick={() => void exitFocusMode()}>
             <svg viewBox="0 0 24 24" class="nav-icon">
               <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
             </svg>
@@ -1344,37 +1356,19 @@ export function App(): JSX.Element {
           <ResizeGrips />
         </Show>
       </DrawerBackground>
-      <FailureBoundary region="Search"><QuickSwitcher /></FailureBoundary>
-      <FailureBoundary region="The graph chooser"><DeepLinkGraphChoice /></FailureBoundary>
-      <FailureBoundary region="The context menu"><ContextMenu /></FailureBoundary>
-      <FailureBoundary region="The date picker"><DatePicker /></FailureBoundary>
-      <FailureBoundary region="The formula editor"><FormulaEditor /></FailureBoundary>
-      <DrawerBackground class="drawer-floating-background" blockedBy="any">
-        <FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar /></FailureBoundary>
-      </DrawerBackground>
-      <FailureBoundary region="Page properties"><PageProps /></FailureBoundary>
-      <FailureBoundary region="Export"><ExportModal /></FailureBoundary>
-      <FailureBoundary region="Unsaved recovery"><UnsavedRecovery /></FailureBoundary>
-      <FailureBoundary region="PDF export"><PdfExportDialog /></FailureBoundary>
-      <FailureBoundary region="Query export"><QueryExportDialog request={queryExportRequest} /></FailureBoundary>
-      <Show when={settingsOpen()}>
-        <Suspense>
-          <FailureBoundary region="Settings"><Settings /></FailureBoundary>
-        </Suspense>
-      </Show>
-      <FailureBoundary region="Help"><HelpPopup /></FailureBoundary>
-      {/* First-run onboarding: covers the (empty) app when no graph is configured.
-          Rendered before Toasts so a "couldn't create graph" toast still shows on top. */}
-      <FailureBoundary region="Welcome"><WelcomeLayer
-        mandatory={(globalThis as any).__FORCE_WELCOME__ === true || (firstLoadDone() && !graphMeta())}
-        optionalOpen={welcomeOpen()}
-        onClose={closeWelcome}
-      /></FailureBoundary>
-      <DrawerBackground class="drawer-floating-background" blockedBy="any">
-        <Toasts />
-      </DrawerBackground>
-      <FailureBoundary region="This image"><Lightbox /></FailureBoundary>
-      <FailureBoundary region="This audio"><AudioOverlay /></FailureBoundary>
+      <WindowOverlays
+        windowId={MAIN_WINDOW_ID}
+        deepLink={<FailureBoundary region="The graph chooser"><DeepLinkGraphChoice /></FailureBoundary>}
+        keyboardToolbar={<FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar /></FailureBoundary>}
+        recovery={<FailureBoundary region="Unsaved recovery"><UnsavedRecovery /></FailureBoundary>}
+        // First-run onboarding covers the (empty) app when no graph is configured;
+        // it renders before Toasts so a "couldn't create graph" toast shows on top.
+        welcome={<FailureBoundary region="Welcome"><WelcomeLayer
+          mandatory={(globalThis as any).__FORCE_WELCOME__ === true || (firstLoadDone() && !graphMeta())}
+          optionalOpen={welcomeOpen()}
+          onClose={closeWelcome}
+        /></FailureBoundary>}
+      />
     </div>
   );
 }

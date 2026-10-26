@@ -101,6 +101,7 @@ fn every_filter_variant() -> Filter {
                 Filter::attr(Attr::Day, CmpOp::Ge, Value::date("2026-01-01")),
             ]),
         ),
+        Filter::rel(Rel::DirectRefs, Quant::Any, Filter::True),
         Filter::rel(
             Rel::Tags,
             Quant::None,

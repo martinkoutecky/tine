@@ -27,7 +27,16 @@ struct GraphChange {
 }
 
 pub(crate) fn watch_mode(app: &tauri::AppHandle) -> WatchMode {
-    let selected = settings_path(app)
+    watch_mode_from(settings_path(app))
+}
+
+/// `watch_mode` for a process without a Tauri handle (`tine serve`).
+pub(crate) fn watch_mode_in(app_data: &std::path::Path) -> WatchMode {
+    watch_mode_from(Some(crate::settings::settings_path_in(app_data)))
+}
+
+fn watch_mode_from(settings: Option<std::path::PathBuf>) -> WatchMode {
+    let selected = settings
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|source| serde_json::from_str::<serde_json::Value>(&source).ok())
         .and_then(|settings| settings.get("watch_mode")?.as_str().map(str::to_owned));
@@ -129,6 +138,20 @@ fn asset_event_payload(change: &Change, binding_generation: u64) -> Option<serde
     paths.sort_unstable();
     paths.dedup();
     Some(serde_json::json!({ "paths": paths, "binding_generation": binding_generation }))
+}
+
+/// The `graph-custom-css-changed` window event: an outside actor created,
+/// replaced or deleted `logseq/custom.css`, so the window re-reads and re-applies
+/// it without reopening the graph. It carries only the graph binding; the window
+/// fetches the bytes through `read_custom_css`, the one answerer. Own writes
+/// carry none (the creating window already knows).
+fn custom_css_event_payload(change: &Change, binding_generation: u64) -> Option<serde_json::Value> {
+    (change.origin == Origin::External
+        && change
+            .files
+            .iter()
+            .any(|(id, _, _)| id.as_str() == "logseq/custom.css"))
+    .then(|| serde_json::json!({ "binding_generation": binding_generation }))
 }
 
 /// Concord's share of one publication: the base ledger records it
@@ -294,9 +317,9 @@ impl RescanCursor {
 
 /// Run one rescan for the calling window's graph and answer the sequence
 /// number its `graph-rescan-complete` event will carry. By default it is the
-/// full stat diff `Store::scan_refresh` documents (one stat per graph-text
+/// full stat diff `Store::refresh(Depth::Stamps)` documents (one stat per graph-text
 /// file plus the bytes of changed files), which the focus return uses; with
-/// `rebuild` (Settings "Rescan graph") it is `Store::rebuild_graph`, which
+/// `rebuild` (Settings "Rescan graph") it is `Store::refresh(Depth::Rebuild)`, which
 /// ignores every stamp and re-reads and re-parses every file. The scan runs
 /// on the blocking pool and the command answers after it. A failed scan is
 /// returned as the command's error (I-9), so the caller shows it instead of
@@ -345,9 +368,9 @@ fn run_rescan(
     }
     let began = std::time::Instant::now();
     let scanned = if rebuild {
-        store.rebuild_graph()
+        store.refresh(tine_store::Depth::Rebuild)
     } else {
-        store.scan_refresh()
+        store.refresh(tine_store::Depth::Stamps)
     };
     if focus_scan {
         crate::flight::record_timing("rescan.scan", began.elapsed());
@@ -433,6 +456,9 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &Arc<GraphSlot>, change: 
     }
     if let Some(payload) = asset_event_payload(&change, binding_generation) {
         let _ = app.emit_to(label, "asset-changed", payload);
+    }
+    if let Some(payload) = custom_css_event_payload(&change, binding_generation) {
+        let _ = app.emit_to(label, "graph-custom-css-changed", payload);
     }
     // Measured once, after the last window event: the flight event and the
     // devtools ring report the same numbers.
@@ -689,7 +715,7 @@ mod tests {
         slot.store.whole_graph().unwrap();
         let subscription = slot.store.subscribe();
         edit();
-        slot.store.scan_refresh().unwrap();
+        slot.store.refresh(tine_store::Depth::Stamps).unwrap();
         let mut events = Vec::new();
         while let Some(change) = subscription.try_recv().unwrap() {
             events.extend(window_events(&change).0);
@@ -824,7 +850,7 @@ mod tests {
             vec![event(false, true)]
         );
         atomic_write(&root, "pages/New.md", "title:: New\n\n- winner\n");
-        slot.store.scan_refresh().unwrap();
+        slot.store.refresh(tine_store::Depth::Stamps).unwrap();
         slot.store.whole_graph().unwrap();
         let subscription = slot.store.subscribe();
         atomic_write(
@@ -832,7 +858,7 @@ mod tests {
             "pages/New.sync-conflict-20260705-120000-ABCDEFG.md",
             "title:: New\n\n- theirs\n",
         );
-        slot.store.scan_refresh().unwrap();
+        slot.store.refresh(tine_store::Depth::Stamps).unwrap();
         let change = subscription
             .try_recv()
             .unwrap()
@@ -953,7 +979,7 @@ mod tests {
         );
         atomic_write(&root, "pages/P.md", "- page\n");
         tine_graph_features::assets::save_asset(&slot.store, "own.png", b"mine").unwrap();
-        slot.store.scan_refresh().unwrap();
+        slot.store.refresh(tine_store::Depth::Stamps).unwrap();
         let (mut payloads, mut page_events, mut conflicts) = (Vec::new(), 0, false);
         while let Some(change) = subscription.try_recv().unwrap() {
             let (events, dirty) = window_events(&change);
@@ -982,6 +1008,52 @@ mod tests {
         );
         assert_eq!(page_events, 1, "only pages/P.md is a page event");
         assert!(!conflicts, "an asset is never a conflict copy");
+        drop(slot);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// GH #610: an outside edit of `logseq/custom.css` reaches the window as one
+    /// `graph-custom-css-changed` event carrying the graph binding, so the
+    /// stylesheet re-applies without reopening the graph. The store's own
+    /// creation of the file (Settings "Edit custom.css") sends none.
+    #[test]
+    fn an_external_custom_css_edit_is_announced_and_an_own_write_is_not() {
+        let root = std::env::temp_dir().join(format!("tine-watch-css-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::create_dir_all(root.join("journals")).unwrap();
+        std::fs::create_dir_all(root.join("logseq")).unwrap();
+        let store = tine_store::Store::open(
+            &root,
+            tine_store::OpenOptions {
+                approved_external_assets: None,
+                watch: WatchMode::Poll,
+                launch_checkpoint: None,
+            },
+        )
+        .unwrap()
+        .0;
+        let slot = GraphSlot::new(store, root.clone());
+        slot.store.whole_graph().unwrap();
+        let subscription = slot.store.subscribe();
+        atomic_write(&root, "logseq/custom.css", "a { color: red }\n");
+        slot.store.refresh(tine_store::Depth::Stamps).unwrap();
+        let mut payloads = Vec::new();
+        while let Some(change) = subscription.try_recv().unwrap() {
+            payloads.extend(custom_css_event_payload(&change, 7));
+        }
+        assert_eq!(payloads, [serde_json::json!({ "binding_generation": 7 })]);
+        std::fs::remove_file(root.join("logseq/custom.css")).unwrap();
+        slot.store.refresh(tine_store::Depth::Stamps).unwrap();
+        while subscription.try_recv().unwrap().is_some() {}
+        tine_graph_features::custom_css::ensure_custom_css(&slot.store).unwrap();
+        slot.store.refresh(tine_store::Depth::Stamps).unwrap();
+        while let Some(change) = subscription.try_recv().unwrap() {
+            assert!(
+                custom_css_event_payload(&change, 7).is_none(),
+                "an own write must not announce"
+            );
+        }
         drop(slot);
         std::fs::remove_dir_all(root).unwrap();
     }

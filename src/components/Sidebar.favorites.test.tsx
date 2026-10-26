@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { render } from "solid-js/web";
 import "../graph"; // installs the Favorites page door, as at app start
-import { backend, type SavePageEntry } from "../backend";
+import { backend } from "../backend";
+import type { EditKinds } from "../editKind";
+import type { PageDto } from "../types";
+import { bindTestHost } from "../document/host/wiring.test.support";
 import { favorites, seedFavorites, setRecentPages } from "../ui";
 import { openJournals, route } from "../router";
 import { Sidebar } from "./Sidebar";
@@ -19,14 +22,25 @@ const pointer = (type: string, x: number, y: number) =>
   new ((window as { PointerEvent?: typeof PointerEvent }).PointerEvent ?? MouseEvent)(type,
     { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 1 }) as PointerEvent;
 
-let saved: SavePageEntry[];
+/** What the page host was handed: each submitted page and its edit kinds. */
+let saved: { page: PageDto; kinds: EditKinds }[];
 let configWrites: [string[], string | null | undefined][];
-beforeEach(() => {
+beforeEach(async () => {
+  await bindTestHost();
   saved = [];
   configWrites = [];
-  vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+  // The store holds what the page host took (it publishes every take), at the
+  // revision the host answers an Open with.
+  vi.spyOn(backend(), "getPage").mockImplementation(async (name: string) => {
+    const page = saved.findLast((s) => s.page.name === name)?.page;
+    return page ? { ...page, id: `pages/${name}.md`, rev: page.rev ?? "mock-rev" } : null;
+  });
   vi.spyOn(backend(), "resolvePage").mockImplementation(async (name: string) => ({ kind: "absent", id: `pages/${name}.md` }));
-  vi.spyOn(backend(), "savePages").mockImplementation(async (entries: SavePageEntry[]) => { saved.push(...entries); return { ok: ["r1"] }; });
+  const submit = backend().pageSubmit.bind(backend());
+  vi.spyOn(backend(), "pageSubmit").mockImplementation(async (...args) => {
+    saved.push({ page: args[3], kinds: args[6] });
+    return submit(...args);
+  });
   vi.spyOn(backend(), "setFavorites").mockImplementation(async (names: string[], page?: string | null) => { configWrites.push([names, page]); });
 });
 afterEach(async () => {
@@ -38,11 +52,11 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-function mount(names = ["Alpha", "Beta", "Gamma"]) {
+function mount(names = ["Alpha", "Beta", "Gamma"], onActiveNavigationComplete?: () => void) {
   seedFavorites(names);
   const root = document.createElement("div");
   document.body.appendChild(root);
-  const dispose = render(() => <Sidebar />, root);
+  const dispose = render(() => <Sidebar onActiveNavigationComplete={onActiveNavigationComplete} />, root);
   const rows = () => [...root.querySelectorAll<HTMLElement>("#sidebar-favorites-list .nav-page")];
   const layoutRows = () => rows().forEach((row, i) => setRect(row, i * 30));
   return { root, dispose, rows, layoutRows };
@@ -58,6 +72,24 @@ function drag(from: HTMLElement, to: HTMLElement, start: [number, number], end: 
 }
 
 describe("favorites arrangement in the sidebar", () => {
+  it("GH #570: a Favorites page block row displays content and opens its source block", async () => {
+    const uuid = "57000000-0000-4000-8000-000000000001";
+    vi.spyOn(backend(), "getPage").mockResolvedValue({
+      name: "Favorites", kind: "page", title: "Favorites", id: "pages/Favorites.md", rev: "1", format: "md",
+      pre_block: "tine/favorites:: true", blocks: [{ id: "row", raw: `((${uuid}))`, children: [], collapsed: false }],
+    } as never);
+    vi.spyOn(backend(), "resolveBlocks").mockResolvedValue([{ page: "Source", kind: "page", blocks: [{ id: uuid, raw: "Important block", children: [], collapsed: false }] }] as never);
+    const complete = vi.fn();
+    const { root, dispose } = mount([], complete);
+    seedFavorites([], "Favorites");
+    try {
+      await vi.waitFor(() => expect(root.querySelector("#sidebar-favorites-list")?.textContent).toContain("Important block"));
+      root.querySelector<HTMLElement>("#sidebar-favorites-list .nav-page")!.click();
+      expect(route()).toMatchObject({ kind: "page", name: "Source", block: uuid });
+      expect(complete).toHaveBeenCalledOnce();
+      expect(configWrites.flatMap(([names]) => names)).not.toContain(`((${uuid}))`);
+    } finally { dispose(); }
+  });
   it("reorders by a vertical drag and persists membership only, for a flat list", async () => {
     const { dispose, rows, layoutRows } = mount();
     layoutRows();

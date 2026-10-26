@@ -1,3 +1,4 @@
+import { msg, t } from "../i18n";
 // Settings → Help & diagnostics: the last error messages of this session,
 // newest first, each copyable. In memory only (src/errorToastHistory.ts); it is
 // not part of the diagnostic report because messages can name pages.
@@ -11,21 +12,18 @@ export function ErrorToastHistory(): JSX.Element {
   const copy = async (text: string) => {
     try {
       await writeClipboardText(text);
-      pushToast("Error message copied", "success");
+      pushToast(msg("error-toast-history-error-message-copied"), "success");
     } catch (error) {
       dbg(`error message copy failed: ${String(error)}`);
-      pushToast("Could not copy the error message.", "error");
+      pushToast(msg("error-toast-history-could-not-copy-the-error-message"), "error");
     }
   };
 
   return (
     <div class="diagnostics-errors">
-      <h3>Recent error messages</h3>
-      <p class="settings-hint">
-        The last 20 red error messages of this session, newest first. They are kept in memory only,
-        are not part of the diagnostic report above (they can name pages), and are gone when Tine closes.
-      </p>
-      <Show when={errorToastHistory().length > 0} fallback={<p class="settings-hint">No error messages this session.</p>}>
+      <h3>{t("error-toast-history-recent-error-messages")}</h3>
+      <p class="settings-hint">{t("error-toast-history-the-last-20-red-error-messages-of-this")}</p>
+      <Show when={errorToastHistory().length > 0} fallback={<p class="settings-hint">{t("error-toast-history-no-error-messages-this-session")}</p>}>
         <ul class="diagnostics-error-list">
           <For each={errorToastHistory()}>
             {(entry) => (
@@ -37,7 +35,7 @@ export function ErrorToastHistory(): JSX.Element {
                 <Show when={entry.count > 1}>
                   <span class="diagnostics-error-count">×{entry.count}</span>
                 </Show>
-                <button type="button" onClick={() => void copy(entry.text)}>Copy</button>
+                <button class="settings-btn" type="button" onClick={() => void copy(entry.text)}>{t("error-toast-history-copy")}</button>
               </li>
             )}
           </For>

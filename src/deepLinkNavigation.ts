@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 /** External navigation over the existing backend, graph-switch and pane route
  * doors. Scans only on explicit opening and never writes; Copy link (which may
  * stamp identity) lives in components/blockLinkCopy.ts with the other reference creators.
@@ -16,6 +17,7 @@ import { admitPageFile, captureEmptyPage, pageByName, reportPageLoadRefusal } fr
 import { journalTitle, appNow } from "./journal";
 import { openSwitcher } from "./ui";
 import { platformKind } from "./nativeChrome";
+import { activeElement, isElementTag, isHTMLElementNode, nextFrame } from "./windowRealm";
 import { focusPageTrailing } from "./components/pageTrailing";
 import { resolvedTarget, refreshPageIndex } from "./pageIndex";
 import { chooseLinkGraph } from "./components/DeepLinkGraphChoice";
@@ -98,7 +100,7 @@ export async function openTineLink(delivery: LinkDelivery, alive: () => boolean 
     focusedRouter().openInNewTab({ kind: "page", name: page.name,
       pageKind: page.kind, path: page.id, ...(target.block ? { block: target.block } : {}) }, true);
   } catch (error) {
-    if (alive()) pushToast(`Couldn't open Tine link: ${String(error)}`, "error");
+    if (alive()) pushToast(msg("deep-link-navigation-couldn-t-open-tine-link", { error: String(error) }), "error");
   }
 }
 
@@ -143,9 +145,9 @@ async function openAppRoute(app: AppRoute, current: () => boolean): Promise<void
 const ROUTE_FOCUS_FRAMES = 60;
 
 function editableFocused(): boolean {
-  const active = document.activeElement;
-  return active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement
-    || (active instanceof HTMLElement && active.isContentEditable);
+  const active = activeElement();
+  return isElementTag(active, "input") || isElementTag(active, "textarea")
+    || (isHTMLElementNode(active) && active.isContentEditable);
 }
 
 /** A route's focus is script-made, so Android leaves the keyboard down until
@@ -155,7 +157,7 @@ async function showKeyboardForFocusedInput(current: () => boolean): Promise<void
   const show = backend().tineLinks?.showKeyboard;
   if (platformKind !== "android" || !show) return;
   for (let frame = 0; frame < ROUTE_FOCUS_FRAMES && !editableFocused(); frame++) {
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await nextFrame();
   }
   if (!current() || !editableFocused()) return;
   try { await show(); }
@@ -176,7 +178,7 @@ export async function installTineLinks(alive: () => boolean): Promise<() => void
         if (disposed || !alive()) break;
         await openTineLink(delivery, () => !disposed && alive());
       }
-    }).catch((error) => { if (!disposed && alive()) pushToast(`Couldn't receive Tine link: ${String(error)}`, "error"); });
+    }).catch((error) => { if (!disposed && alive()) pushToast(msg("deep-link-navigation-couldn-t-receive-tine-link", { error: String(error) }), "error"); });
   };
   let unlisten: () => void;
   try {
@@ -185,7 +187,7 @@ export async function installTineLinks(alive: () => boolean): Promise<() => void
     unlisten = registration.value;
   }
   catch (error) {
-    if (alive()) pushToast(`Couldn't listen for Tine links: ${String(error)}`, "error");
+    if (alive()) pushToast(msg("deep-link-navigation-couldn-t-listen-for-tine-links", { error: String(error) }), "error");
     return () => {};
   }
   if (!alive()) { unlisten(); return () => {}; }

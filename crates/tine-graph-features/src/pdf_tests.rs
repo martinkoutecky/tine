@@ -115,9 +115,9 @@ fn highlight_deletion_retires_its_crop_through_the_guarded_sidecar_path() {
         image: Some(42),
     };
     let rel = write_pdf_area_image(&store, "paper.pdf", 1, "crop-id", 42, b"png").unwrap();
-    write_highlights(&store, "paper.pdf", "Paper", &[area.clone()], &[]).unwrap();
+    write_highlights(&store, None, "paper.pdf", "Paper", &[area.clone()], &[]).unwrap();
     assert!(root.join("assets").join(&rel).is_file());
-    write_highlights(&store, "paper.pdf", "Paper", &[], &[area]).unwrap();
+    write_highlights(&store, None, "paper.pdf", "Paper", &[], &[area]).unwrap();
     assert!(!root.join("assets").join(&rel).exists());
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
@@ -204,6 +204,122 @@ fn c3u_page(ids: &[(&str, &str)]) -> String {
     page
 }
 
+#[test]
+fn a_sidecar_replaced_before_the_annotation_read_is_merged_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for area in ["pages", "assets", "logseq"] {
+        std::fs::create_dir(root.join(area)).unwrap();
+    }
+    std::fs::write(
+        root.join("logseq/config.edn"),
+        "{:file/name-format :triple-lowbar}\n",
+    )
+    .unwrap();
+    let loaded = vec![c3u_highlight(A, "text of a")];
+    std::fs::write(
+        root.join("assets/paper.edn"),
+        pdf::write_highlights(&loaded, ""),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages/hls__paper.md"),
+        c3u_page(&[(A, "text of a")]),
+    )
+    .unwrap();
+    let store = std::sync::Arc::new(Store::open(root, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    let app = tempfile::tempdir().unwrap();
+    let host = PageHost::start_for_tests(&store, app.path()).unwrap();
+    let (paused, at_read) = std::sync::mpsc::channel();
+    let (resume, resumed) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        let saver = scope.spawn(|| {
+            BEFORE_ANNOTATION_READ.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move || {
+                    paused.send(()).unwrap();
+                    resumed
+                        .recv_timeout(std::time::Duration::from_secs(20))
+                        .unwrap();
+                }));
+            });
+            write_highlights(&store, Some(&host), "paper.pdf", "Paper", &loaded, &loaded)
+        });
+        at_read
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .unwrap();
+        let other = Store::open(root, Default::default()).unwrap().0;
+        other.whole_graph().unwrap();
+        let mut blue = loaded.clone();
+        blue[0].color = "blue".into();
+        write_highlights(&other, None, "paper.pdf", "Paper", &blue, &loaded).unwrap();
+        other.close();
+        resume.send(()).unwrap();
+        assert_eq!(saver.join().unwrap().unwrap()[0].color, "blue");
+    });
+    assert_eq!(
+        read_highlights_checked(&store, "paper.pdf").unwrap()[0].color,
+        "blue"
+    );
+    let page = std::fs::read_to_string(root.join("pages/hls__paper.md")).unwrap();
+    assert!(page.contains("hl-color:: blue"), "{page}");
+    drop(host);
+    store.close();
+}
+
+/// P3 review #7: when the annotation page cannot be updated after the
+/// sidecar was saved, the error says the highlights were saved.
+#[test]
+fn a_page_failure_after_the_sidecar_save_says_the_highlights_were_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for area in ["pages", "assets", "logseq"] {
+        std::fs::create_dir(root.join(area)).unwrap();
+    }
+    std::fs::write(
+        root.join("logseq/config.edn"),
+        "{:file/name-format :triple-lowbar}\n",
+    )
+    .unwrap();
+    let loaded = vec![c3u_highlight(A, "text of a")];
+    std::fs::write(
+        root.join("assets/paper.edn"),
+        pdf::write_highlights(&loaded, ""),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages/hls__paper.md"),
+        c3u_page(&[(A, "text of a")]),
+    )
+    .unwrap();
+    let store = std::sync::Arc::new(Store::open(root, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    let app = tempfile::tempdir().unwrap();
+    let host = PageHost::start_for_tests(&store, app.path()).unwrap();
+    // A twin appears after the sidecar save, before the page read.
+    let twin = root.join("pages/hls__paper.org");
+    BEFORE_ANNOTATION_READ.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            std::fs::write(&twin, "* twin\n").unwrap();
+        }));
+    });
+    let mut blue = loaded.clone();
+    blue[0].color = "blue".into();
+    let error = write_highlights(&store, Some(&host), "paper.pdf", "Paper", &blue, &loaded)
+        .expect_err("the twin refuses the page update");
+    assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "{error}");
+    assert_eq!(
+        error.to_string(),
+        "The highlights were saved, but page has both .md and .org files: hls__paper"
+    );
+    assert_eq!(
+        read_highlights_checked(&store, "paper.pdf").unwrap()[0].color,
+        "blue"
+    );
+    drop(host);
+    store.close();
+}
+
 fn c3u_entries(raw: &str) -> Vec<tine_core::edn::Edn> {
     tine_core::edn::parse_strict(raw)
         .unwrap()
@@ -251,7 +367,7 @@ fn unreadable_sidecar_entries_and_their_page_blocks_survive_a_highlight_add() {
         assert_eq!(loaded.len(), 1, "shape {n}: fixture must be unreadable");
         let mut next = loaded.clone();
         next.push(c3u_highlight(C, "sea"));
-        write_highlights(&store, "paper.pdf", "Paper", &next, &loaded).unwrap();
+        write_highlights(&store, None, "paper.pdf", "Paper", &next, &loaded).unwrap();
 
         let written = std::fs::read_to_string(root.join("assets/paper.edn")).unwrap();
         let bad_value = tine_core::edn::parse_strict(bad).unwrap();
@@ -289,6 +405,7 @@ fn highlight_add_before_the_sidecar_syncs_keeps_existing_annotations() {
     assert!(loaded.is_empty());
     write_highlights(
         &store,
+        None,
         "paper.pdf",
         "Paper",
         &[c3u_highlight(C, "sea")],
@@ -330,7 +447,7 @@ fn deleting_a_known_highlight_still_drops_its_block_and_entry() {
     let loaded = read_highlights_checked(&store, "paper.pdf").unwrap();
     assert_eq!(loaded.len(), 2);
     let keep: Vec<Highlight> = loaded.iter().filter(|h| h.id == A).cloned().collect();
-    write_highlights(&store, "paper.pdf", "Paper", &keep, &loaded).unwrap();
+    write_highlights(&store, None, "paper.pdf", "Paper", &keep, &loaded).unwrap();
     let page = std::fs::read_to_string(root.join("pages/hls__paper.md")).unwrap();
     assert!(page.contains(&format!("id:: {A}")), "{page}");
     assert!(!page.contains(&format!("id:: {B}")), "{page}");
@@ -362,7 +479,7 @@ fn unchanged_entries_keep_fields_og_cannot_read_across_an_unrelated_edit() {
     let mut next = loaded.clone();
     next[1].color = "green".into();
     next.push(c3u_highlight(C, "sea"));
-    write_highlights(&store, "paper.pdf", "Paper", &next, &loaded).unwrap();
+    write_highlights(&store, None, "paper.pdf", "Paper", &next, &loaded).unwrap();
     let written = std::fs::read_to_string(root.join("assets/paper.edn")).unwrap();
     let entries = c3u_entries(&written);
     let b = entries
@@ -414,6 +531,7 @@ fn escape_before_a_multibyte_char_is_refused_without_panicking() {
     let write = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         write_highlights(
             &store,
+            None,
             "paper.pdf",
             "Paper",
             &[c3u_highlight(C, "sea")],
@@ -449,6 +567,7 @@ fn a_highlight_save_keeps_fenced_file_lines_in_the_page_preamble() {
     let store = Store::open(&root, Default::default()).unwrap().0;
     write_highlights(
         &store,
+        None,
         "paper.pdf",
         "Paper",
         &[c3u_highlight(C, "sea")],
@@ -501,7 +620,7 @@ fn a_leftover_that_cannot_be_retired_after_a_save_is_reported() {
     let loaded = read_highlights_checked(&store, "My Paper.pdf").unwrap();
     let mut next = loaded.clone();
     next.push(c3u_highlight(C, "sea"));
-    write_highlights(&store, "My Paper.pdf", "Paper", &next, &loaded).unwrap();
+    write_highlights(&store, None, "My Paper.pdf", "Paper", &next, &loaded).unwrap();
     let lines = seen.lock().unwrap().clone();
     for expected in [LEGACY_SIDECAR_LEFT, LEGACY_PAGE_LEFT] {
         assert!(
@@ -529,10 +648,10 @@ fn a_deleted_area_highlights_unremovable_image_is_reported_and_a_missing_one_is_
     let root = c3u_graph("crop-reported");
     let store = Store::open(&root, Default::default()).unwrap().0;
     let rel = write_pdf_area_image(&store, "paper.pdf", 1, A, 42, b"png").unwrap();
-    write_highlights(&store, "paper.pdf", "Paper", &[area(A, 42)], &[]).unwrap();
+    write_highlights(&store, None, "paper.pdf", "Paper", &[area(A, 42)], &[]).unwrap();
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::write(root.join("logseq/.tine-trash"), "not a directory").unwrap();
-    write_highlights(&store, "paper.pdf", "Paper", &[], &[area(A, 42)]).unwrap();
+    write_highlights(&store, None, "paper.pdf", "Paper", &[], &[area(A, 42)]).unwrap();
     assert!(seen
         .lock()
         .unwrap()
@@ -547,7 +666,7 @@ fn a_deleted_area_highlights_unremovable_image_is_reported_and_a_missing_one_is_
     // Missing: nothing to remove is the state we want, not a failure.
     let root = c3u_graph("crop-missing");
     let store = Store::open(&root, Default::default()).unwrap().0;
-    write_highlights(&store, "paper.pdf", "Paper", &[area(B, 7)], &[]).unwrap();
+    write_highlights(&store, None, "paper.pdf", "Paper", &[area(B, 7)], &[]).unwrap();
     let reported = |seen: &std::sync::Mutex<Vec<String>>| {
         seen.lock()
             .unwrap()
@@ -556,7 +675,7 @@ fn a_deleted_area_highlights_unremovable_image_is_reported_and_a_missing_one_is_
             .count()
     };
     let before = reported(seen);
-    write_highlights(&store, "paper.pdf", "Paper", &[], &[area(B, 7)]).unwrap();
+    write_highlights(&store, None, "paper.pdf", "Paper", &[], &[area(B, 7)]).unwrap();
     assert_eq!(
         reported(seen),
         before,

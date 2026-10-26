@@ -88,3 +88,33 @@ describe("error toasts", () => {
     expect(logged).toHaveBeenCalledWith("error toast: Could not save session: disk full");
   });
 });
+
+// tine#107: a toast holds a message, not a string. It shows in the active
+// language and follows a live switch; Copy, dedupe and the session error list
+// use the English text, so a report reads the same in every UI language (G5).
+describe("localized toasts", () => {
+  it("renders a message in the active locale, live, while reports keep the English text", async () => {
+    const { msg, setActiveLocale } = await import("../i18n");
+    const { errorToastHistory } = await import("../errorToastHistory");
+    initDebug();
+    pushToast(msg("toast-copy-failed"), "error");
+    const node = () => document.querySelector(".toast.toast-error .toast-msg")!;
+    expect(node().textContent).toBe("Couldn't copy the message; select its text instead.");
+    await setActiveLocale("zh-CN");
+    try {
+      expect(node().textContent).toBe("无法复制该消息，请手动选择文字。");
+      expect(document.querySelector(".toast-copy")!.textContent!.trim()).toBe("复制");
+      // The same message again is a repeat (one toast, ×2), keyed by id + English.
+      pushToast(msg("toast-copy-failed"), "error");
+      expect(toasts()).toHaveLength(1);
+      expect(toasts()[0].count).toBe(2);
+      expect(errorToastHistory()[0].text).toBe("Couldn't copy the message; select its text instead.");
+      const write = vi.spyOn(backend(), "writeText").mockResolvedValue();
+      (document.querySelector(".toast-copy") as HTMLElement).click();
+      await vi.waitFor(() => expect(write).toHaveBeenCalledWith("Couldn't copy the message; select its text instead."));
+    } finally {
+      await setActiveLocale("en");
+      resetDebugForTests();
+    }
+  });
+});

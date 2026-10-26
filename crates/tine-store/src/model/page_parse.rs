@@ -34,12 +34,19 @@ impl Graph {
     }
 }
 
-/// Isolate lsdoc's deliberate parser panics to one page rather than the cache.
-pub(super) fn parse_page_entry_isolated(e: PageEntry) -> PageParseResult {
-    let content = read_parse_input(&e.path).map_err(|error| {
-        PageParseFailure::Unreadable(e.rel_path_str().to_owned(), error.to_string())
-    })?;
-    isolate_page_parse(e, |entry| Some(parse_page_content(entry, &content)))
+impl Graph {
+    /// Isolate lsdoc's deliberate parser panics to one page rather than the
+    /// cache. The page is named and parsed from its file: a build leaves a
+    /// held page out, and its row is its owner's (`install_built`, (G)).
+    pub(super) fn parse_page_entry_isolated(&self, mut e: PageEntry) -> PageParseResult {
+        let content = read_parse_input(&e.path).map_err(|error| {
+            PageParseFailure::Unreadable(e.rel_path_str().to_owned(), error.to_string())
+        })?;
+        if let Ok(name) = self.name_from(&e, &content) {
+            e.name = name;
+        }
+        isolate_page_parse(e, |entry| Some(parse_page_content(entry, &content)))
+    }
 }
 
 pub(super) fn parse_page_content(e: &PageEntry, content: &str) -> (Document, DiskObs) {

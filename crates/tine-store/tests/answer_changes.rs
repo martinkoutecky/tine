@@ -1,7 +1,7 @@
 //! I-12/I-25: every publisher uses the same bounded native answer signal.
 use serde_json::{json, Value};
 use std::fs;
-use tine_store::{Area, EditKind, PageId, SaveBase, SavePagesOutcome, Store, TxOutcome};
+use tine_store::{Area, EditKind, PageId, SaveBase, Store, TxOutcome};
 const ONE: &str = "00000000-0000-4000-8000-000000000001";
 const TWO: &str = "00000000-0000-4000-8000-000000000002";
 fn fixture() -> (tempfile::TempDir, Store) {
@@ -12,22 +12,37 @@ fn fixture() -> (tempfile::TempDir, Store) {
     store.whole_graph().unwrap();
     (dir, store)
 }
+/// One guarded page save over the transaction primitive (the multi-page save is
+/// deleted, STEP3 §12); the page host serializes and publishes through the
+/// same transaction steps.
+fn save_one(
+    store: &Store,
+    id: &PageId,
+    base: SaveBase,
+    doc: &tine_core::model::PageDto,
+    kind: EditKind,
+) -> TxOutcome {
+    let mut tx = store.transaction(Some(kind));
+    tx.save_page(&[kind], id, base, doc);
+    tx.commit()
+}
 fn save(store: &Store, raw: &str) -> Value {
     let id = PageId::from("pages/A.md");
     let mut read = store.page(&id).unwrap();
     read.doc.blocks[0].raw = raw.into();
-    let SavePagesOutcome::Ok { change, .. } = store.save_pages(&[(
-        id,
+    let TxOutcome::Committed { change, .. } = save_one(
+        store,
+        &id,
         SaveBase::Existing(read.rev),
-        read.doc,
-        vec![EditKind::ReplacePage],
-    )]) else {
+        &read.doc,
+        EditKind::ReplacePage,
+    ) else {
         panic!("save refused");
     };
     serde_json::to_value(change.expect("changed save publishes")).unwrap()
 }
 /// External edits reach the store through its file watcher as well as through
-/// `scan_refresh`; under load the watcher may publish part of a bulk edit first.
+/// `refresh`; under load the watcher may publish part of a bulk edit first.
 /// Each publication carries final counts for the targets it changed, so read
 /// publications until `target` reaches `count` and report whether any of them
 /// changed the inventory.
@@ -47,6 +62,7 @@ fn counts(signal: &Value, expected: Value) {
 }
 #[test]
 fn save_signals_are_bounded_and_match_the_publication() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, store) = fixture();
     let sub = store.subscribe();
     let text = save(&store, "after");
@@ -65,12 +81,13 @@ fn save_signals_are_bounded_and_match_the_publication() {
     for pre in [Some("alias:: Shortcut"), Some("title:: Retitled"), None] {
         let mut read = store.page(&id).unwrap();
         read.doc.pre_block = pre.map(str::to_owned);
-        let SavePagesOutcome::Ok { change, .. } = store.save_pages(&[(
-            id.clone(),
+        let TxOutcome::Committed { change, .. } = save_one(
+            &store,
+            &id,
             SaveBase::Existing(read.rev),
-            read.doc,
-            vec![EditKind::SaveBlock],
-        )]) else {
+            &read.doc,
+            EditKind::SaveBlock,
+        ) else {
             panic!("property refused");
         };
         assert_eq!(
@@ -82,16 +99,18 @@ fn save_signals_are_bounded_and_match_the_publication() {
 }
 #[test]
 fn create_delete_and_rename_publish_both_answers() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, store) = fixture();
     let new = PageId::from("pages/New.md");
     let mut dto = store.page(&PageId::from("pages/A.md")).unwrap().doc;
     dto.blocks[0].raw = format!("(({ONE}))");
-    let SavePagesOutcome::Ok { change, .. } = store.save_pages(&[(
-        new.clone(),
+    let TxOutcome::Committed { change, .. } = save_one(
+        &store,
+        &new,
         SaveBase::CreateNew,
-        dto,
-        vec![EditKind::CreatePage],
-    )]) else {
+        &dto,
+        EditKind::CreatePage,
+    ) else {
         panic!("create refused");
     };
     let created = serde_json::to_value(change).unwrap();
@@ -110,6 +129,7 @@ fn create_delete_and_rename_publish_both_answers() {
     tx.trash(
         &renamed,
         store.page(&PageId::from(renamed.as_str())).unwrap().rev,
+        tine_store::TrashIf::Any,
     );
     let TxOutcome::Committed { change, .. } = tx.commit() else {
         panic!("delete refused");
@@ -121,6 +141,7 @@ fn create_delete_and_rename_publish_both_answers() {
 }
 #[test]
 fn external_single_and_bulk_changes_publish_final_target_counts() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = fixture();
     let sub = store.subscribe();
     fs::write(
@@ -128,7 +149,7 @@ fn external_single_and_bulk_changes_publish_final_target_counts() {
         format!("alias:: Outside\n- (({ONE}))\n"),
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let (inventory, single) = settled(&sub, ONE, 1);
     assert!(inventory);
     counts(&single, json!({ONE:1}));
@@ -139,7 +160,7 @@ fn external_single_and_bulk_changes_publish_final_target_counts() {
         )
         .unwrap();
     }
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let (inventory, bulk) = settled(&sub, TWO, 40);
     assert!(inventory);
     counts(&bulk, json!({TWO:40}));
@@ -150,7 +171,7 @@ fn external_single_and_bulk_changes_publish_final_target_counts() {
         )
         .unwrap();
     }
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let (_, removed) = settled(&sub, TWO, 0);
     assert_eq!(removed["inventoryChanged"], false);
     counts(&removed, json!({TWO:0}));

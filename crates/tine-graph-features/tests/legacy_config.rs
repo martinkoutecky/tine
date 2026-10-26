@@ -27,6 +27,7 @@ fn content(dir: &PathBuf) -> String {
 
 #[test]
 fn home_page_writer_changes_only_its_nested_page() {
+    let _integration_guard = crate::integration_lock();
     let original = "{;; :default-home {:page \"Decoy\"}\n :default-home {:sidebar [\"Contents\"] :page \"Old\"}\n :start-of-week 2}\n";
     let (dir, store) = fixture("home", original);
     config::set_default_home_page(&store, Some("New \"Home\"")).unwrap();
@@ -48,6 +49,7 @@ fn home_page_writer_changes_only_its_nested_page() {
 
 #[test]
 fn home_page_writer_refuses_a_non_map_owner_without_changing_bytes() {
+    let _integration_guard = crate::integration_lock();
     let input = "{:default-home \"Other shape\" :start-of-week 2}\n";
     let (dir, store) = fixture("home-invalid", input);
     assert!(config::set_default_home_page(&store, Some("Unsafe")).is_err());
@@ -56,6 +58,7 @@ fn home_page_writer_refuses_a_non_map_owner_without_changing_bytes() {
 
 #[test]
 fn set_timetracking_enabled_round_trips() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = fixture(
         "ttrack",
         "{:preferred-format \"Markdown\"\n :start-of-week 0}\n",
@@ -74,6 +77,7 @@ fn set_timetracking_enabled_round_trips() {
 
 #[test]
 fn show_brackets_defaults_parses_and_round_trips() {
+    let _integration_guard = crate::integration_lock();
     assert!(Config::parse("{}").show_brackets);
     assert!(!Config::parse("{:ui/show-brackets? false}").show_brackets);
     let (dir, store) = fixture(
@@ -96,6 +100,7 @@ fn show_brackets_defaults_parses_and_round_trips() {
 
 #[test]
 fn set_preferred_format_replaces_keyword_value() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = fixture("kw", "{:preferred-format :markdown\n :start-of-week 0}\n");
     config::set_preferred_format(&store, Format::Org).unwrap();
     let after = content(&dir);
@@ -113,6 +118,7 @@ fn set_preferred_format_replaces_keyword_value() {
 
 #[test]
 fn set_preferred_format_round_trips() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = fixture(
         "fmt",
         "{:preferred-format \"Markdown\"\n :start-of-week 0}\n",
@@ -139,6 +145,7 @@ fn set_preferred_format_round_trips() {
 
 #[test]
 fn set_journal_page_title_format_round_trips() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = fixture(
         "date",
         "{:preferred-format \"Markdown\"\n :start-of-week 0}\n",

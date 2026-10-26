@@ -1,4 +1,6 @@
 import { schemaGuards } from "../schemaGuards";
+import { acceptsPluginColor } from "./color.mjs";
+export { acceptsPluginColor } from "./color.mjs";
 export type PluginSettingValue = string | number | boolean;
 export type PluginSettings = Record<string, PluginSettingValue>;
 
@@ -33,11 +35,19 @@ export interface PluginStringSetting extends PluginSettingBase {
   maxLength: number;
 }
 
+export interface PluginColorSetting extends PluginSettingBase {
+  type: "color";
+  /** Empty uses the host's theme color. Otherwise a literal CSS color. */
+  default: string;
+}
+
 export type PluginSettingDefinition =
   | PluginBooleanSetting
   | PluginEnumSetting
   | PluginNumberSetting
+  | PluginColorSetting
   | PluginStringSetting;
+
 
 export class PluginSettingsError extends Error {
   constructor(message: string) {
@@ -62,7 +72,8 @@ function finite(value: unknown, where: string): number {
   return value;
 }
 
-export function parsePluginSettingDefinitions(value: unknown): PluginSettingDefinition[] | undefined {
+/** `apiVersion` gates types newer than API 0.2: an older host refuses them. */
+export function parsePluginSettingDefinitions(value: unknown, apiVersion: string): PluginSettingDefinition[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) throw new PluginSettingsError("settings must be an array");
   if (value.length > 64) throw new PluginSettingsError("settings must contain at most 64 entries");
@@ -80,6 +91,11 @@ export function parsePluginSettingDefinitions(value: unknown): PluginSettingDefi
       description: text(obj.description, `${where}.description`, 300),
     };
     switch (obj.type) {
+      case "color":
+        if (apiVersion === "0.2") throw new PluginSettingsError(`${where}.type color needs apiVersion 0.3`);
+        knownKeys(obj, where, ["key", "type", "label", "description", "default"]);
+        if (!acceptsPluginColor(obj.default)) throw new PluginSettingsError(`${where}.default must be a literal color or empty`);
+        return { ...base, type: "color", default: obj.default };
       case "boolean":
         knownKeys(obj, where, ["key", "type", "label", "description", "default"]);
         if (typeof obj.default !== "boolean") throw new PluginSettingsError(`${where}.default must be boolean`);
@@ -136,6 +152,8 @@ export function parsePluginSettingDefinitions(value: unknown): PluginSettingDefi
 
 export function settingAccepts(definition: PluginSettingDefinition, value: unknown): value is PluginSettingValue {
   switch (definition.type) {
+    case "color":
+      return acceptsPluginColor(value);
     case "boolean":
       return typeof value === "boolean";
     case "enum":

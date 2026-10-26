@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toasts, setToasts } from "./toasts";
+import { MAIN_WINDOW_ID, registerWindow } from "./windowRealm";
 import {
   ZOOM_WHEEL_MOMENTUM_TAIL_MS,
   decideWheelZoomGesture,
@@ -41,23 +42,32 @@ function installFakeWheelGlobals() {
     },
   };
 
-  Object.defineProperty(globalThis, "window", { value: fakeWindow, configurable: true });
-  Object.defineProperty(globalThis, "requestAnimationFrame", {
-    value: (cb: FrameRequestCallback) => {
-      const id = nextRaf++;
-      rafs.set(id, cb);
-      return id;
-    },
-    configurable: true,
-  });
-  Object.defineProperty(globalThis, "cancelAnimationFrame", {
-    value: (id: number) => {
-      rafs.delete(id);
-    },
-    configurable: true,
+  const requestFakeFrame = (cb: FrameRequestCallback) => {
+    const id = nextRaf++;
+    rafs.set(id, cb);
+    return id;
+  };
+  const cancelFakeFrame = (id: number) => {
+    rafs.delete(id);
+  };
+  // A window owns its frames and document and refers to itself, as a real one does.
+  Object.assign(fakeWindow, {
+    window: fakeWindow,
+    document: {},
+    requestAnimationFrame: requestFakeFrame,
+    cancelAnimationFrame: cancelFakeFrame,
   });
 
+  Object.defineProperty(globalThis, "window", { value: fakeWindow, configurable: true });
+  Object.defineProperty(globalThis, "requestAnimationFrame", { value: requestFakeFrame, configurable: true });
+  Object.defineProperty(globalThis, "cancelAnimationFrame", { value: cancelFakeFrame, configurable: true });
+
+  // The app registers its real main window at load (src/windowRealm.ts); this
+  // node-pool fake stands in for it so the wheel hook's onEachWindow reaches it.
+  const unregisterFake = registerWindow(MAIN_WINDOW_ID, fakeWindow as unknown as Window);
+
   restoreFakeGlobals = () => {
+    unregisterFake();
     if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
     else delete (globalThis as { window?: Window }).window;
     if (rafDescriptor) Object.defineProperty(globalThis, "requestAnimationFrame", rafDescriptor);

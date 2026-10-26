@@ -1,5 +1,6 @@
 import { Portal } from "solid-js/web";
 import type { JSX } from "solid-js";
+import { useOwnerWindow } from "../windowRealm";
 
 /**
  * **The ONE way a component floats a surface out of its own DOM subtree.**
@@ -21,13 +22,17 @@ import type { JSX } from "solid-js";
  * layer ownership are DOM-based), and a surface that WANTS its owner to hear an
  * event must call that owner explicitly — it may not inherit the whole bubble.
  *
+ * The default mount is the body of the window the component renders into
+ * (OG-MULTIWINDOW P1), not the main window's `document.body`.
+ *
  * Exemplar of the rule; `portalBoundary.guard.test.ts` fails on a direct
  * `Portal` import from `solid-js/web` anywhere else.
  */
 export function FloatingPortal(props: { mount?: Node; children: JSX.Element; ref?: (container: HTMLDivElement) => void }): JSX.Element {
+  const owner = useOwnerWindow();
   return (
     <Portal
-      mount={props.mount}
+      mount={props.mount ?? owner.document.body}
       ref={(container) => {
         // Own property on the container; Solid's `get()` accessor is configurable.
         Object.defineProperty(container, "_$host", { value: undefined, configurable: true });

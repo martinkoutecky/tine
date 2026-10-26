@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { buildPersistedSession, flushSession, parsePersistedSession, restoreSession, scheduleSessionSave, type PersistedSession } from "./session";
-import { setToasts, toasts } from "./toasts";
+import { buildPersistedSession, flushSession, hasRestoredSession, parsePersistedSession, restoreSession, scheduleSessionSave, type PersistedSession } from "./session";
+import { setToasts, toasts, toUiText } from "./toasts";
+import { renderEnglish } from "./i18n";
 import { backend } from "./backend";
 import { resetStore } from "./document";
 import { resetPaneLayoutToSingle, restorePaneLayout, type LayoutNode } from "./panes";
 import { mainRouter } from "./panes";
+import { resetWorkspacesForTest } from "./workspaces";
 import type { PaneSnapshot } from "./router";
 import { applySidebarSession, favoritesSectionExpanded, recentSectionExpanded, rightSidebar, parseStoredSidebarItems, openBlockInSidebar, openPageInSidebar, recentPages, setRecentPages, setRightSidebar, setFavoritesSectionExpanded, setRecentSectionExpanded } from "./ui";
 
@@ -21,11 +23,76 @@ const page = (name: string): PaneSnapshot => ({
 });
 
 beforeEach(() => {
+  resetWorkspacesForTest();
   resetPaneLayoutToSingle(journals());
   applySidebarSession({});
 });
 
 describe("persisted split session", () => {
+  it.each([null, "invalid JSON"])("leaves home available without a readable session (%s)", async (raw) => {
+    resetStore();
+    vi.spyOn(backend(), "loadSession").mockResolvedValue(raw);
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(JSON.stringify({
+      version: 1, activeId: "default", workspaces: [{ id: "default", name: "", blob: journals() }],
+    }));
+    try {
+      await restoreSession();
+      expect(hasRestoredSession()).toBe(false);
+      expect(mainRouter().route()).toEqual({ kind: "journals" });
+    } finally { vi.restoreAllMocks(); resetStore(); }
+  });
+
+  it("keeps a parked workspace's navigation when its session file is missing", async () => {
+    resetStore();
+    vi.spyOn(backend(), "loadSession").mockResolvedValue(null);
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(JSON.stringify({
+      version: 1, activeId: "saved", workspaces: [{ id: "saved", name: "", blob: page("Paralg 2026") }],
+    }));
+    try {
+      await restoreSession();
+      expect(mainRouter().route()).toMatchObject({ kind: "page", name: "Paralg 2026" });
+      expect(hasRestoredSession()).toBe(true);
+    } finally { vi.restoreAllMocks(); resetStore(); }
+  });
+
+  it("restores pinned tabs, the last visited route, history, order and active tab", async () => {
+    resetStore();
+    const router = mainRouter();
+    router.openPage("Index");
+    router.togglePin(router.activeId());
+    router.openPage("Tasks");
+    router.togglePin(router.activeId());
+    router.openPageInNewTab("Paralg 2026");
+    router.setActiveTab(router.tabs()[2].id);
+    router.openPage("Courses/Paralg 2026");
+    const saved = JSON.stringify(buildPersistedSession());
+    const expected = router.snapshot();
+    resetStore();
+    resetPaneLayoutToSingle(journals());
+    vi.spyOn(backend(), "loadSession").mockResolvedValue(saved);
+    try {
+      await restoreSession();
+      expect(mainRouter().snapshot()).toEqual(expected);
+      expect(hasRestoredSession()).toBe(true);
+      // A repeated startup probe must retain the evidence, even though the
+      // already-restored tabs are no longer the pristine default.
+      await restoreSession();
+      expect(hasRestoredSession()).toBe(true);
+      resetStore();
+      expect(hasRestoredSession()).toBe(false);
+    } finally { vi.restoreAllMocks(); }
+  });
+
+  it("recognizes a saved single Journals tab as a session too", async () => {
+    resetStore();
+    const saved = JSON.stringify(buildPersistedSession());
+    vi.spyOn(backend(), "loadSession").mockResolvedValue(saved);
+    try {
+      await restoreSession();
+      expect(mainRouter().route()).toEqual({ kind: "journals" });
+      expect(hasRestoredSession()).toBe(true);
+    } finally { vi.restoreAllMocks(); resetStore(); }
+  });
   it("coalesces repeated session write failures and offers retry", async () => {
     setToasts([]);
     const save = vi.spyOn(backend(), "saveSession").mockRejectedValue(new Error("permission denied"));
@@ -33,7 +100,7 @@ describe("persisted split session", () => {
       await expect(flushSession()).rejects.toThrow("permission denied");
       await expect(flushSession()).rejects.toThrow("permission denied");
       expect(toasts().filter((toast) => toast.message.includes("Could not save session"))).toHaveLength(1);
-      expect(toasts()[0].action?.label).toBe("Retry");
+      expect(renderEnglish(toUiText(toasts()[0].action!.label))).toBe("Retry");
       expect(toasts()[0].message).toContain("permission denied");
       save.mockResolvedValue();
       toasts()[0].action?.run();

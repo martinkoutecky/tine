@@ -25,14 +25,13 @@ const RULE = "I-20: module state naming graph content (block id, page name, sele
 // Module-level signals whose declared type can name graph content, and why each
 // cannot write into another graph. Shrink-only: fix an entry rather than add one.
 const CLASSIFIED: Record<string, string> = {
+  "src/styleKnobs.ts#values": "the device preference style.knobs.v1 (knob ids and scalar choices), no graph content; it deliberately survives a graph switch, like the colour scheme",
   "src/components/blockGestures.ts#dragId": "drag state; a click ends the drag in the old graph first, and beginDrag commits only while bindingCurrent (asyncOwnership guard)",
   "src/components/blockGestures.ts#dropInd": "drop indicator of the same drag",
   "src/components/RightSidebar.tsx#rsDropTarget": "right-sidebar drag state (a row index and side, not graph content); pointerup ends the drag in the old graph first",
   "src/components/SidebarFavorites.tsx#dropTarget": "favorites drag state; a click ends the drag in the old graph first (K17b, no user path)",
   "src/components/DeepLinkGraphChoice.tsx#choice": "a pending choice among known graph roots for an external link (paths, not graph content); the chosen target is re-resolved through the graph-switch door, which refuses a missing page or block",
   "src/components/TabBar.tsx#currentTabDropTarget": "tab drop target (pane/tab ids, not graph content)",
-  "src/draftStore.ts#held": "window-lifetime by design (storage.qnt MX): drafts of the graph that was LEFT, each carrying its own root; "
-    + "the recovery panel only shows and copies them, Dismiss releases them, and nothing writes them into any graph",
   "src/document/model.ts#collapseEpochState": "a counter compared for equality by embed folds, never written back to a graph; cleared by resetStore (clearCollapseEpochs)",
   "src/document/edits/selection.ts#selAnchor": "cleared by clearOnBindingInvalidated",
   "src/document/edits/selection.ts#selFocus": "cleared by clearOnBindingInvalidated",
@@ -44,6 +43,8 @@ const CLASSIFIED: Record<string, string> = {
   "src/pageIndex.ts#held": "read cache keyed by graph generation; resetPageIndex on switch; never written back",
   "src/pageIconBatch.ts#iconMap": "display cache, dropped on a new graph; never written back",
   "src/paneSelect.ts#paneSel": "pane layout target (pane ids, seams), not graph content",
+  "src/panes.ts#layouts": "per-window pane layout trees keyed by window id (pane ids, split ratios), not graph content; page routes live in the routers",
+  "src/panes.ts#focusedPanes": "focused pane id per window id, not graph content",
   "src/plugins/registry.ts#registryPersistenceError": "device-local registry message",
   "src/ui.ts#accentColor": "device preference",
   "src/ui.ts#pagePropsPanel": "carries its own captureBinding(); loadGraphPath closes it and writeOne refuses when !bindingCurrent (asyncOwnership guard)",
@@ -53,7 +54,6 @@ const CLASSIFIED: Record<string, string> = {
   "src/ui.ts#audioPlayer": "setAudioPlayer(null) on a switch; playback only",
   "src/ui.ts#switcherPluginBlock": "OwnedPluginBlockSnapshot carries its plugin graph owner",
   "src/assetCache.ts#versions": "display cache-buster per asset path; clearAssetBlobCache drops every version at graph switch",
-  "src/document/save/engine.ts#conflictReasons": "resetSaveState() clears it in resetStore",
   "src/mediaEditorSettings.ts#commands": "device preference",
   "src/ui.ts#shortcutOverrides": "device preference",
   // Found once named types were expanded (og 15a follow-up):
@@ -137,9 +137,18 @@ const COLLECTION_RULE = "I-21: module Map/Set state must end with its graph or h
   + "exemplar src/lazyObserve.ts renderedBlocks and src/binding.ts clearOnBindingInvalidated. "
   + "The existing collection baseline may only shrink";
 const BOUNDED_COLLECTIONS: Record<string, string> = {
+  "src/editorController.ts#editEntryGuards": "one guard per mounted native property input; FieldCell registers on mount and its Solid cleanup removes it on commit, cancel or unmount; captureResultDraft still guards the write's binding",
   "src/assetCache.ts#cache": "MAX_CACHE_ENTRIES=128 / MAX_CACHE_BYTES=128MiB retained LRU, plus pending mounted reads",
   "src/assetCache.ts#liveEntries": "active asset leases only; last release deletes the evicted entry; clearAssetBlobCache ends graph reuse",
   "src/render/parse.ts#cache": "CACHE_MAX=8000 LRU",
+  "src/i18n/index.ts#bundles": "one Fluent bundle per shipped UI locale (the generated LOCALES registry), app-lifetime; not graph state",
+  "src/i18n/index.ts#loading": "one in-flight catalog load per shipped UI locale; deleted when the load settles",
+  "src/i18n/index.ts#reported": "one key per (locale, message id) that failed to format: bounded by the catalog's message count",
+  "src/workspaceWindows.ts#live": "one entry per open workspace window, at most MAX_WORKSPACE_WINDOWS (openWorkspaceWindow refuses past it); disposal deletes it, and a graph switch closes them all",
+  "src/windowRealm.ts#registry": "one entry per open Tine window: main + at most MAX_WORKSPACE_WINDOWS popups; unregister on close",
+  "src/windowRealm.ts#pendingFrames": "one entry per open Tine window with a frame pending; deleted when it fires or its window unregisters",
+  "src/windowRealm.ts#hooks": "one entry per live onEachWindow installer (app-lifetime installers + the mounted editor); each remover deletes it",
+  "src/lazyObserve.ts#nearObservers": "one IntersectionObserver per open Tine window; deleted when that window unregisters",
   "src/render/facets.ts#derived": "DERIVED_MAX=1024 LRU",
   "src/sheet/formulaEval.ts#parseCache": "clears above 500, at most 501 expressions",
   "src/components/FormulaEditor.tsx#CONDITION_OPS": "fixed COMPARISON_OPS + BOOLEAN_OPS vocabulary (8 entries), no additions",
@@ -202,23 +211,11 @@ export function moduleCollections(sources: Sources = repoSources()): Collection[
 const LEGACY_COLLECTIONS = new Set([
   "src/assetRefresh.ts#pending",
   "src/binding.ts#scopedClears",
-  "src/components/Macro.tsx#youtubePlayers",
   "src/conflictQueue.ts#arrivalNotices",
-  "src/document/save/engine.ts#kindLedger",
-  "src/document/save/engine.ts#titleIdentityIntents",
-  "src/document/save/engine.ts#pageInstanceGenerations",
-  "src/document/save/engine.ts#dirty",
-  "src/document/save/engine.ts#baseRev",
-  "src/document/save/engine.ts#deletedPages",
-  "src/document/save/engine.ts#landedAliasDrafts",
-  "src/document/save/engine.ts#saveChain",
-  "src/document/save/engine.ts#lastSaveFailure",
-  "src/document/save/engine.ts#saveFailureToasts",
-  "src/document/save/engine.ts#assetWriteChain",
-  "src/document/save/engine.ts#groupOf",
-  "src/document/save/engine.ts#sealedGroups",
-  "src/document/save/engine.ts#saveAttempts",
-  "src/document/save/engine.ts#deletingGroupMembers",
+  // Moved unchanged out of the save engine (step 3b P2b, engine.ts deleted).
+  "src/document/instance.ts#pageInstanceGenerations",
+  // Moved unchanged out of the save engine (step 3b P2a), shared with settle.
+  "src/document/assetWrites.ts#pending",
   "src/document/workingSet.ts#draftPins",
   // The controller contract reserves its private token even in string inventories.
   "src/editorController.ts#pending" + "FocusSurface",
@@ -230,7 +227,6 @@ const LEGACY_COLLECTIONS = new Set([
   "src/mediaEditorSettings.ts#commandKeys",
   "src/mediaEditorSettings.ts#commandReaders",
   "src/mock.ts#mockPluginEntries",
-  "src/mock.ts#mockDrafts",
   "src/modeHooks.ts#outlineSelectionListeners",
   "src/modeHooks.ts#editingStartListeners",
   "src/modeHooks.ts#modeResetListeners",
@@ -262,7 +258,7 @@ const LEGACY_COLLECTIONS = new Set([
   "src/transientLayers.ts#layers",
   "src/themes/manager.ts#[revokedThemeVersions, setRevokedThemeVersions]",
 ]);
-const LEGACY_COLLECTION_COUNT = 61;
+const LEGACY_COLLECTION_COUNT = 45;
 function unownedCollections(sources: Sources): string[] {
   return moduleCollections(sources).filter((c) => !c.scoped && !c.fixed && !BOUNDED_COLLECTIONS[c.key]).map((c) => c.key);
 }
@@ -286,10 +282,14 @@ export function unprovenPopupConsumers(sources: Sources = repoSources()): string
 // Readers of a graph-scoped target that do not prove a binding check, and why
 // each cannot write into another graph. Shrink-only.
 const CLASSIFIED_CONSUMERS: Record<string, string> = {
+  "src/queryResultDrafts.ts#drafts": "read-only result retention leases, not a popup writer; graphScopedSignal clears them at binding invalidation, release checks its captured binding, and captureResultDraft guards the actual cell write",
+  "src/components/Page.tsx#upcomingFeed": "reads graph-bound feed metadata for rendering only; the owned feed restart publishes it after its graph/surface admission checks",
+  "src/components/RightSidebar.tsx#rightSidebarFocusRequest": "scrolls and focuses the mounted card only; no graph write. The queued callback rechecks request identity, and graphScopedSignal clears the request on a graph switch",
   "src/components/ContextMenu.tsx#contextMenu": "menu actions run synchronously on a click while the menu is mounted, and it is mounted only "
     + "while its target is bound (reads null after a switch). Every action that awaits before writing captures bindingOwner() first "
     + "and applies nothing when stale (make template, rename, delete, open file, copy as Markdown)",
   "src/components/Page.tsx#contextMenu": "reads whether its own page-actions menu is open (aria state); no write",
+  "src/render/PeekPopup.tsx#contextMenu": "reads only the page menu's opener identity to suspend hover/outside dismissal while its own menu is open; no graph write or delayed target action",
   "src/components/Block.tsx#blockReferencesRequest": "opens this block's own references panel when the request names it; no write",
   "src/components/ExportModal.tsx#exportModal": "exports the ids to the clipboard; never writes the graph",
   "src/components/PdfExportDialog.tsx#pdfExportPage": "prints the named page through the OS dialog; never writes the graph",
@@ -326,8 +326,8 @@ describe("graph-scoped UI state (I-20)", () => {
     expect(consumers.filter((c) => c.proven).map((c) => c.key).sort(), "the proven writers").toEqual([
       "src/components/DatePicker.tsx#datePicker",
       "src/components/FormulaEditor.tsx#formulaEditor",
+      "src/components/GraphNamePrompt.tsx#graphNameRequest",
       "src/components/Settings.tsx#orphanScan",
-      "src/draftStore.ts#earlier",
     ]);
     const picker = readFileSync("src/components/DatePicker.tsx", "utf8");
     expect(picker.match(/if \(!bound\(\)\) return/g)?.length, `${RULE}: both DatePicker write paths check bound()`).toBe(2);
