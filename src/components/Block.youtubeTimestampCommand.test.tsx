@@ -48,10 +48,7 @@ function commandPage(): PageDto {
 
 function inputAt(textarea: EditorDriver, value: string) {
   textarea.focus();
-  textarea.replaceText(value);
-  textarea.select(value.length, value.length);
-  textarea.reportInput({
-    bubbles: true,
+  textarea.input(value, value.length, {
     inputType: "insertText",
     data: value.at(-1) ?? null,
   });

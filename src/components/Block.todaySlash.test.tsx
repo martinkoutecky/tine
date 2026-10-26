@@ -41,10 +41,7 @@ function page(raw: string): PageDto {
 
 function inputAt(textarea: EditorDriver, value: string, caret = value.length) {
   textarea.focus();
-  textarea.replaceText(value);
-  textarea.select(caret, caret);
-  textarea.reportInput({
-    bubbles: true,
+  textarea.input(value, caret, {
     inputType: "insertText",
     data: value[caret - 1] ?? null,
   });

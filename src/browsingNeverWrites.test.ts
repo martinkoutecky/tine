@@ -201,6 +201,8 @@ describe("only reference creation may stamp an id:: (guard, I-2, I-21)", () => {
       "components/blockLinkCopy.ts",
       "document/edits/identity.ts",
       "document/index.ts",
+      // Explicit (( suggestion acceptance, with target publication before source.
+      "editor/cm6Completions.tsx",
       "favorites.ts",
     ]);
   });

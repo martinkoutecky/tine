@@ -180,9 +180,7 @@ it("reports a failed template listing and retries it instead of caching 'no temp
     textarea.focus();
     textarea.reportInput({ bubbles: true, inputType: "insertText", data: "L" });
     await vi.waitFor(() => expect(toasts().some((t) => t.kind === "error" && t.message.includes("templates unreadable"))).toBe(true));
-    textarea.replaceText("/La");
-    textarea.select(3, 3);
-    textarea.reportInput({ bubbles: true, inputType: "insertText", data: "a" });
+    textarea.input("/La", 3, { inputType: "insertText", data: "a" });
     await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2));
   } finally {
     dispose();

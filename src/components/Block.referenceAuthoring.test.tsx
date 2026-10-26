@@ -45,9 +45,7 @@ function update(textarea: EditorDriver) {
 
 function inputAt(textarea: EditorDriver, value: string, caret: number) {
   textarea.element.focus();
-  textarea.replaceText(value);
-  textarea.select(caret, caret);
-  textarea.reportInput({ bubbles: true, inputType: "insertText", data: value[caret - 1] ?? null });
+  textarea.input(value, caret, { inputType: "insertText", data: value[caret - 1] ?? null });
 }
 
 function entry(name: string): PageEntry {

@@ -49,6 +49,7 @@ src/deepLinkNavigation.ts platformKind x1  # why: native-api; asks the Android h
 src/edgeSwipe.ts platform-literal x2  # why: host-event; iOS history swipe vs Android back model
 src/editableEmoji.ts browserPlatform x1  # why: os-convention; emoji font stack differs per OS
 src/editableEmoji.ts navigator.userAgent x1  # why: os-convention; emoji font stack differs per OS
+src/editor/cm6Completions.tsx isMobilePlatform x1  # why: native-api; preserve the desktop-only /drawio external-editor command gate
 src/graph.ts isMobile x1  # why: native-api; folder picking and graph containers differ per host
 src/graph.ts platform-literal x13  # why: native-api; folder picking and graph containers differ per host
 src/graph.ts platformKind x4  # why: native-api; folder picking and graph containers differ per host

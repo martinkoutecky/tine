@@ -42,10 +42,7 @@ function taskPage(raw: string, format: "md" | "org" = "md"): PageDto {
 
 function inputAt(textarea: EditorDriver, value: string, caret: number) {
   textarea.focus();
-  textarea.replaceText(value);
-  textarea.select(caret, caret);
-  textarea.reportInput({
-    bubbles: true,
+  textarea.input(value, caret, {
     inputType: "insertText",
     data: value[caret - 1] ?? null,
   });

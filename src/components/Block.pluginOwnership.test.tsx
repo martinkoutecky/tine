@@ -7,7 +7,7 @@ import type { PluginEffect } from "../plugins/protocol";
 import { initParser } from "../render/parse";
 import { resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
-import { doc } from "../document/model";
+import { doc, setDoc } from "../document/model";
 import type { GraphMeta, PageDto } from "../types";
 import { bumpGraphEpoch, setGraphMeta } from "../graphSession";
 import { setGraphTransitioning } from "../ui";
@@ -56,6 +56,27 @@ afterEach(() => {
 });
 
 describe("plugin slash editor ownership", () => {
+  it.each(["typing", "read-only"])("refuses a delayed plugin result after %s", async change => {
+    vi.spyOn(pluginManager, "slashCommands").mockReturnValue([{
+      pluginId: "page.tine.delayed",
+      contribution: { id: "delayed", title: "Delayed" },
+    }]);
+    let finish!: (effects: PluginEffect[]) => void;
+    vi.spyOn(pluginManager, "invokeSlashCommand").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    setGraphMeta(meta("/graph-a"));
+    loadSingle(page());
+    startEditing("shared-id", 8);
+    const current = mountEditor();
+    try {
+      await choosePlugin(current.textarea);
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      if (change === "typing") current.textarea.input("newer text");
+      else setDoc("pages", p => p.name === "Shared", "readOnly", true);
+      finish([{ kind: "insert-at-caret", text: "obsolete" }]);
+      await Promise.resolve(); await Promise.resolve();
+      expect(doc.byId["shared-id"].raw).toBe(change === "typing" ? "newer text" : "/Delayed");
+    } finally { current.dispose(); }
+  });
   it("drops a delayed graph-A completion after unmount without changing or focusing equal graph-B content", async () => {
     vi.spyOn(pluginManager, "slashCommands").mockReturnValue([{
       pluginId: "page.tine.delayed",

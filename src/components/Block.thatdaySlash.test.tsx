@@ -28,9 +28,7 @@ it.each([
   try {
     const textarea = editorIn(root);
     textarea.focus();
-    textarea.replaceText("/thatday");
-    textarea.select(8, 8);
-    textarea.reportInput({ bubbles: true, inputType: "insertText", data: "y" });
+    textarea.input("/thatday", 8, { inputType: "insertText", data: "y" });
     await vi.waitFor(() => expect([...document.body.querySelectorAll(".autocomplete .ac-label")].map((el) => el.textContent)).toContain("That day"));
     const item = [...document.body.querySelectorAll<HTMLElement>(".autocomplete .ac-item")]
       .find((el) => el.querySelector(".ac-label")?.textContent === "That day")!;

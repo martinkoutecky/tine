@@ -32,10 +32,7 @@ function page(raw: string): PageDto {
 
 function inputAt(textarea: EditorDriver, value: string, caret = value.length) {
   textarea.focus();
-  textarea.replaceText(value);
-  textarea.select(caret, caret);
-  textarea.reportInput({
-    bubbles: true,
+  textarea.input(value, caret, {
     inputType: "insertText",
     data: value[caret - 1] ?? null,
   });
@@ -80,7 +77,7 @@ describe("property name/value autocomplete", () => {
       await vi.waitFor(() => expect(textarea.value()).toBe("alpha:: one"));
       inputAt(textarea, "alpha:: one,", "alpha:: one,".length);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("two"));
-      expect(document.body.textContent).not.toContain("one");
+      expect(document.querySelector(".autocomplete")?.textContent).not.toContain("one");
     } finally {
       dispose();
     }

@@ -29,8 +29,7 @@ async function slash(label: "Scheduled" | "Deadline" | "Date picker" | "Tomorrow
   const dispose = render(() => <><Block id="task" /><DatePicker /></>, root);
   mounted = dispose;
   const textarea = maybeEditorIn(root)!;
-  textarea.element.focus(); textarea.replaceText(raw); textarea.select(caret, caret);
-  textarea.reportInput({ bubbles: true, inputType: "insertText" });
+  textarea.element.focus(); textarea.input(raw, caret, { inputType: "insertText" });
   await vi.waitFor(() => expect([...document.body.querySelectorAll(".ac-label")].some(el => el.textContent === label)).toBe(true));
   [...document.body.querySelectorAll<HTMLElement>(".ac-item")].find(el => el.querySelector(".ac-label")?.textContent === label)!
     .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
@@ -142,8 +141,7 @@ describe("date picker draft commits (GH #30 / #485)", () => {
   it("a changed editor refuses a delayed journal insertion", async () => {
     const { textarea } = await slash("Date picker");
     await vi.waitFor(() => expect(datePicker()).not.toBeNull());
-    textarea.replaceText("Newer text");
-    textarea.reportInput({ bubbles: true, inputType: "insertText" });
+    textarea.input("Newer text", "Newer text".length, { inputType: "insertText" });
     outside();
     expect(node("task").raw).toBe("Newer text");
   });

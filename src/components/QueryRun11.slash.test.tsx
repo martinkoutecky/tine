@@ -38,8 +38,7 @@ async function slashPicker(which: string) {
   document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
   await vi.waitFor(() => expect(maybeEditorIn(root)).not.toBeNull());
   const editor = editorIn(root);
-  editor.replaceText(raw + '\n/' + which); editor.select(editor.value().length, editor.value().length);
-  editor.reportInput({ bubbles: true, inputType: 'insertText', data: which });
+  editor.input(raw + '\n/' + which, (raw + '\n/' + which).length, { inputType: 'insertText', data: which });
   await vi.waitFor(() => expect([...document.querySelectorAll('.ac-label')].some(e => e.textContent === which)).toBe(true));
   const item = [...document.querySelectorAll('.ac-item')].find(e => e.querySelector('.ac-label')?.textContent === which)!;
   item.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));

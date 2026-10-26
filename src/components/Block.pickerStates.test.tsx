@@ -20,8 +20,7 @@ function mount() {
   const dispose = render(() => <Block id="picker" />, root);
   const textarea = editorIn(root);
   const input = (value: string) => {
-    textarea.focus(); textarea.replaceText(value); textarea.select(value.length, value.length);
-    textarea.reportInput({ bubbles: true, inputType: "insertText", data: value.at(-1) });
+    textarea.focus(); textarea.input(value, value.length, { inputType: "insertText", data: value.at(-1) });
   };
   return { dispose, textarea, input };
 }

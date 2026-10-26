@@ -28,8 +28,7 @@ async function slash(label: "Scheduled" | "Deadline", existing = "") {
   const dispose = render(() => <><Block id="task" /><DatePicker /></>, root);
   mounted = dispose;
   const textarea = editorIn(root);
-  textarea.focus(); textarea.replaceText(raw); textarea.select(caret, caret);
-  textarea.reportInput({ bubbles: true, inputType: "insertText" });
+  textarea.focus(); textarea.input(raw, caret, { inputType: "insertText" });
   await vi.waitFor(() => expect([...document.body.querySelectorAll(".ac-label")].some(el => el.textContent === label)).toBe(true));
   [...document.body.querySelectorAll<HTMLElement>(".ac-item")].find(el => el.querySelector(".ac-label")?.textContent === label)!
     .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
