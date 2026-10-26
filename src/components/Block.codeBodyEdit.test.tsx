@@ -61,11 +61,8 @@ function mountPage(raw: string, format: "md" | "org" = "md") {
 function typeText(ta: EditorDriver, insert: string) {
   const caret = ta.selection()[0];
   const nv = ta.value().slice(0, caret) + insert + ta.value().slice(ta.selection()[1]);
-  ta.replaceText(nv);
-  ta.select(caret + insert.length, caret + insert.length);
   const last = insert.at(-1) ?? "";
-  ta.reportInput({
-    bubbles: true,
+  ta.input(nv, caret + insert.length, {
     inputType: "insertText",
     data: last || null,
   });
@@ -82,7 +79,8 @@ describe("body-only code editor (GH #412/#413)", () => {
       expect(textarea.value()).not.toContain("```");
       // The code-card presentation itself is unchanged (GH #357 contract).
       expect(textarea.element.classList.contains("code-edit")).toBe(true);
-      expect(textarea.element.getAttribute("wrap")).toBe("off");
+      if (textarea.kind === "textarea") expect(textarea.element.getAttribute("wrap")).toBe("off");
+      else expect(textarea.element.classList.contains("cm-lineWrapping")).toBe(false);
     } finally {
       dispose();
     }
@@ -196,4 +194,18 @@ describe("body-only code editor (GH #412/#413)", () => {
       dispose();
     }
   });
+
+  it.each(["js", "calc"])("a URL pasted over selected %s payload replaces literal text without a link wrapper", lang => {
+    const { textarea, blockId, dispose } = mountPage("```" + lang + "\nselected\n```");
+    try {
+      textarea.select(0, textarea.value().length);
+      const url = "https://example.org/code";
+      const event = textarea.paste({ text: url });
+      // jsdom has no native textarea paste; CM applies its own paste default.
+      if (textarea.kind === "textarea" && !event.defaultPrevented) textarea.type(url);
+      expect(textarea.value()).toBe(url);
+      expect(doc.byId[blockId].raw).toBe("```" + lang + "\n" + url + "\n```");
+    } finally { dispose(); }
+  });
+
 });

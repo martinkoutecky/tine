@@ -18,6 +18,7 @@ import { linkAutocompletePolicy } from "./linkDefault";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
 import { isAnnotationBlock } from "./annotation";
 import { calcSource } from "./calc";
+import { codeFences } from "./fences";
 import { setMarker } from "./marker";
 import { insertLink, setPriority } from "./format";
 import { runJournalSlash } from "../journalSlash";
@@ -42,6 +43,8 @@ export function cm6Completions(props: {
   id: string; surface: string; format: "md" | "org"; sheet: boolean;
   current: () => boolean; view: () => EditorView | undefined;
   visible: () => string; rawBeforeCommit: () => string;
+  literal(): boolean; languagePicker(active: boolean): void;
+  completeRegion(text: string, caret: number): void;
 }) {
   const cap = useContext(CaptureCtx);
   const inResults = useContext(ResultWriteTargetContext);
@@ -72,13 +75,22 @@ export function cm6Completions(props: {
   const closeAc = () => {
     clearTimeout(timer); releaseCompletionLease(); completionOriginalRaw = null;
     setAc(null); setAcBlockState(null); setAcItems([]); setAcIndex(0); setPropertyValueKey(null);
+    props.languagePicker(false);
   };
   const sameAcTrigger = (left: Trigger | null, right: Trigger) => left !== null
     && left.kind === right.kind && left.query === right.query && left.start === right.start
     && left.end === right.end && left.property === right.property
     && (left.propertyValues ?? []).join("\0") === (right.propertyValues ?? []).join("\0");
-  const detectEditorTrigger = () => props.sheet || isAnnotationBlock(node(props.id).raw, props.format) || calcSource(text()) !== null
-    ? null : detectTrigger(text(), caret(), propertyValueKey(), props.format);
+  const detectEditorTrigger = () => {
+    if (props.literal() || props.sheet || isAnnotationBlock(node(props.id).raw, props.format) || calcSource(text()) !== null) return null;
+    const trigger = detectTrigger(text(), caret(), propertyValueKey(), props.format);
+    if (trigger) return trigger;
+    // The explicit scaffold picker also accepts an empty query on its opener.
+    const open = ac();
+    return open?.kind === "code-language" && caret() === open.start
+      && codeFences(text(), props.format).some(f => f.delimEnd === caret() && caret() < f.openEnd)
+      ? { ...open, query: "", end: caret() } : null;
+  };
   const propertyValueItems = (key: string, query: string, used: readonly string[] = []): AcItem[] => {
     const values = propertyFacets.find(([candidate]) => candidate === key)?.[1] ?? [];
     const q = query.trim(), excluded = new Set(used.map(value => value.toLocaleLowerCase()));
@@ -281,7 +293,9 @@ export function cm6Completions(props: {
     const result = applyCompletion(text(), trigger.start, refCompletionEnd(text(), trigger.end, insert), insert, caretOffset);
     const spaced = caretOffset === undefined
       ? withRefCompletionSpace(result.raw, result.caret, insert, spaceAfterRefCompletion()) : result;
-    closeAc(); apply(spaced.raw, spaced.caret);
+    // Keep the raw view until the completion edit is committed, then map its
+    // source caret into the parser-owned code/calc body.
+    apply(spaced.raw, spaced.caret); closeAc(); props.completeRegion(spaced.raw, spaced.caret);
   };
   const openPlanning = (kind: "scheduled" | "deadline") => {
     const rect = view().contentDOM.getBoundingClientRect();
@@ -400,7 +414,7 @@ export function cm6Completions(props: {
         replaceTrigger(QUERY_MACRO_SCAFFOLD); setQueryBuilderAutoOpen(props.id); endEdit("query-builder"); return;
       case "code-block": {
         const result = applyCompletion(text(), t.start, t.end, "```\n\n```", 3);
-        closeAc(); apply(result.raw, result.caret);
+        closeAc(); props.languagePicker(true); apply(result.raw, result.caret);
         setAc({ kind: "code-language", query: "", start: result.caret, end: result.caret });
         setAcItems(codeLanguageItems("").map(language => ({
           get label() { return language.label; }, sub: [language.id, ...language.aliases].join(" · "),
@@ -495,7 +509,11 @@ export function cm6Completions(props: {
     void updateAutocomplete(); return true;
   };
   const keydown = (event: KeyboardEvent): boolean => {
-    if (acVisible() && event.key === "Escape") { closeAc(); return true; }
+    if (acVisible() && event.key === "Escape") {
+      const language = ac()?.kind === "code-language", raw = text(), pos = caret();
+      closeAc(); if (language) props.completeRegion(raw, pos);
+      return true;
+    }
     if (ac() && acItems().length) {
       const n = acItems().length;
       if (event.key === "ArrowDown") { setAcIndex((acIndex() + 1) % n); return true; }
@@ -544,7 +562,15 @@ export function cm6Completions(props: {
   const Popup = () => <Show when={acVisible()}><EditorAutocomplete items={acItems()} index={acIndex()} style={style()}
     listRef={element => { acListRef = element; }} select={selectAc}
     blockState={acBlockState()} retry={() => void updateAutocomplete()} /></Show>;
-  return { mount, inputSelection, changed, input, keydown, command, selectionChanged, close: closeAc,
+  const scaffold = () => {
+    props.languagePicker(true);
+    setAc({ kind: "code-language", query: "", start: 3, end: 3 });
+    setAcItems(codeLanguageItems("").map(language => ({
+      get label() { return language.label; }, sub: [language.id, ...language.aliases].join(" · "),
+      insert: language.id, caret: language.id.length + 1,
+    })));
+  };
+  return { mount, inputSelection, changed, input, keydown, command, selectionChanged, close: closeAc, scaffold,
     pause: () => clearTimeout(timer), refresh, Popup };
 }
 

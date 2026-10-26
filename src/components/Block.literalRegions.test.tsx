@@ -44,11 +44,10 @@ describe("L10-S1: in-block list editing ignores code text", () => {
   it("Backspace after `+ ` in a code body removes one character, not the list prefix", () => {
     const { ta, dispose } = mount("```text\n+ keep\n```");
     try {
-      // Body projection is a later CM port; either buffer uses the same source offset.
-      expect(ta.value()).toBe(ta.kind === "textarea" ? "+ keep" : "```text\n+ keep\n```");
+      expect(ta.value()).toBe("+ keep");
       const at = ta.value().indexOf("+ keep") + 2;
       ta.select(at, at); backspace(ta);
-      expect(ta.value()).toBe(ta.kind === "textarea" ? "+keep" : "```text\n+keep\n```");
+      expect(ta.value()).toBe("+keep");
       expect(node("b")!.raw).toBe("```text\n+keep\n```");
     } finally { dispose(); }
   });

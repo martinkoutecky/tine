@@ -82,8 +82,7 @@ it("Org source body edits retain the surrounding bytes", () => {
   const open = "intro\n#+BEGIN_SRC python\n", close = "\n#+END_SRC\noutro";
   const { ta, dispose } = mount(open + "x" + close, open.length, "org");
   try {
-    expect(ta.value()).toBe("x"); ta.replaceText("y");
-    ta.reportInput({ bubbles: true, inputType: "insertText", data: "y" });
+    expect(ta.value()).toBe("x"); ta.input("y", 1, { inputType: "insertText", data: "y" });
     expect(node("mixed")!.raw).toBe(open + "y" + close);
   } finally { dispose(); }
 });
@@ -102,16 +101,25 @@ it("paste of fence-like text never rewrites the captured suffix", async () => {
     ta.select(0, ta.value().length); paste(ta, "```\nnew"); await Promise.resolve();
     expect(node("mixed")!.raw).toBe(prefix + "```\nnew" + suffix);
     expect(ta.value()).toBe("```\nnew");
-    ta.replaceText(ta.value() + "er"); ta.reportInput({ bubbles: true, inputType: "insertText", data: "r" });
+    ta.input(ta.value() + "er", undefined, { inputType: "insertText", data: "r" });
     expect(node("mixed")!.raw).toBe(prefix + "```\nnewer" + suffix);
+  } finally { dispose(); }
+});
+it("input resembling a language scaffold remains literal inside a captured body", () => {
+  const { ta, dispose } = mount();
+  try {
+    const body = "```\n\n```";
+    ta.input(body, 3, { inputType: "insertText", data: body });
+    expect(node("mixed")!.raw).toBe(prefix + body + suffix);
+    expect(ta.value()).toBe(body);
+    expect(document.querySelector(".autocomplete")).toBeNull();
   } finally { dispose(); }
 });
 
 it.each(byteCases)("edits the shared $format native byte fixture through Block input", c => {
   const { ta, dispose } = mount(c.prefix + c.body + c.suffix, ("caret" in c ? c.caret : c.prefix.length) as number, c.format as "md" | "org");
   try {
-    expect(ta.value()).toBe(c.body); ta.replaceText(c.replacement);
-    ta.reportInput({ bubbles: true, inputType: "insertFromPaste" });
+    expect(ta.value()).toBe(c.body); ta.input(c.replacement, undefined, { inputType: "insertFromPaste" });
     expect(node("mixed")!.raw).toBe(c.prefix + c.replacement + c.suffix);
   } finally { dispose(); }
 });
@@ -132,8 +140,7 @@ it.each(["md", "org"] as const)("a %s code edit preserves hidden metadata at its
   const text = `intro\n${meta}\n${open}\nx\n${close}\noutro`;
   const { ta, dispose } = mount(text, `intro\n${open}\n`.length, format);
   try {
-    expect(ta.value()).toBe("x"); ta.replaceText("edited");
-    ta.reportInput({ bubbles: true, inputType: "insertText", data: "d" });
+    expect(ta.value()).toBe("x"); ta.input("edited", undefined, { inputType: "insertText", data: "d" });
     expect(node("mixed")!.raw).toBe(text.replace("\nx\n", "\nedited\n"));
   } finally { dispose(); }
 });

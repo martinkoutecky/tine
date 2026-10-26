@@ -25,7 +25,10 @@ describe("calc block persistence on blur", () => {
       const ta = editorIn(root);
       expect(ta.value()).toBe("1 + 1");
       ta.focus();
-      ta.replaceText("2 + 2");
+      // Retain the textarea's unreported native draft/blur ordering. CM owns
+      // its buffer in state, so the same user edit is a reported transaction.
+      if (ta.kind === "textarea") ta.replaceText("2 + 2");
+      else ta.input("2 + 2");
       ta.reportBlur();
       expect(doc.byId[id].raw, "calc exit rule: Block keeps text after the closing fence").toBe("```calc\n2 + 2\n```\nordinary text");
     } finally {
@@ -51,7 +54,9 @@ describe("calc block persistence on blur", () => {
       // User edits: adds a line and a SCHEDULED line AFTER it (the order that
       // normalizePlanning would scramble by hoisting SCHEDULED to line 2).
       ta!.focus();
-      ta!.replaceText("1 + 1\n2 + 2\nSCHEDULED: <2026-07-06 Mon>");
+      const expressions = "1 + 1\n2 + 2\nSCHEDULED: <2026-07-06 Mon>";
+      if (ta.kind === "textarea") ta.replaceText(expressions);
+      else ta.input(expressions);
       ta!.reportBlur();
 
       const raw = doc.byId[id]?.raw ?? "";

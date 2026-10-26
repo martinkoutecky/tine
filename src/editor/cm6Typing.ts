@@ -16,6 +16,7 @@ export function cm6Typing(ctx: {
   id: string; format: "md" | "org";
   current(): boolean; view(): EditorView | undefined;
   commit(text: string): void; refresh(): void; pauseCompletion(): void;
+  literal(): boolean; scaffold(): void;
 }) {
   let composing = false;
   let ending = false;
@@ -43,15 +44,17 @@ export function cm6Typing(ctx: {
     tr.changes.iterChanges((_a, _b, _c, _d, insert) => { count++; typed = insert.toString(); });
     if (count !== 1 || typed.length !== 1 || !tr.newSelection.main.empty) return tr;
     const text = tr.newDoc.toString(), caret = tr.newSelection.main.head;
+    if (!ctx.literal() && ctx.format === "md" && text === "```" && typed === "`" && caret === 3)
+      return [tr, { changes: { from: 0, to: text.length, insert: "```\n\n```" }, selection: { anchor: 3 }, sequential: true }];
     let edit = typed === "【" || typed === "（" || typed === "〈" ? fullWidthRefReplace(text, caret)
       : typed === "】" || typed === "）" ? fullWidthCloserEdit(text, caret, autoPairing()) : null;
     if (!edit) {
       if (autoPairing()) edit = autoPairInsertOnInput(text, caret, typed);
       else if (typed === "[" || typed === "]") edit = autoPairEdit(text, caret, typed);
     }
-    if (!edit && typographyMode() === "type" && calcSource(text) === null)
+    if (!edit && !ctx.literal() && typographyMode() === "type" && calcSource(text) === null)
       edit = typoTypeReplace(text, caret, typed, (from, to) => rangeInLiteral(text, ctx.format, from, to));
-    if (typed === " " && text === "1. ")
+    if (!ctx.literal() && typed === " " && text === "1. ")
       return [tr, { changes: { from: 0, to: text.length, insert: "" }, selection: { anchor: 0 },
         effects: ownNumbered.of(null), sequential: true }];
     return edit ? [tr, { changes: { from: 0, to: text.length, insert: edit.value },
@@ -74,7 +77,13 @@ export function cm6Typing(ctx: {
       makeOwnNumberedList(ctx.id, "");
       return true;
     }
-    if (update.docChanged) ctx.commit(update.state.doc.toString());
+    if (update.docChanged) {
+      // Hold the raw scaffold before committing, so the reactive projection
+      // cannot hide its opener while the picker is being installed.
+      if (!ctx.literal() && update.state.doc.toString() === "```\n\n```" && update.state.selection.main.head === 3
+        && update.transactions.some(tr => tr.isUserEvent("input.type"))) ctx.scaffold();
+      ctx.commit(update.state.doc.toString());
+    }
     return true;
   };
   const finish = () => {

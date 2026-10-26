@@ -1,4 +1,4 @@
-import { maybeEditorIn } from "../tests/editorDriver";
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -20,6 +20,10 @@ afterEach(() => {
   changeCodeWrapping(false); document.body.innerHTML = ""; vi.restoreAllMocks();
 });
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+const expectWrap = (editor: EditorDriver, wrap: boolean) => {
+  if (editor.kind === "textarea") expect(editor.element.getAttribute("wrap")).toBe(wrap ? "soft" : "off");
+  else expect(editor.element.classList.contains("cm-lineWrapping")).toBe(wrap);
+};
 
 it("GH453: bindable palette command preserves each reading viewport in both directions", async () => {
   const saved = vi.spyOn(backend(), "setAppString").mockResolvedValue();
@@ -79,11 +83,11 @@ it("Settings globally wraps reading and editing, and remembers the device prefer
   expect([...root.querySelectorAll("pre.code-block .calc-lineno")].map(el => el.textContent)).toEqual(["1", "2", "1", "2"]);
   startEditing("code", 0); await tick();
   const ta = maybeEditorIn(root)!;
-  expect(ta.element.getAttribute("wrap")).toBe("off");
+  expectWrap(ta, false);
   const toggle = root.querySelector<HTMLButtonElement>('[data-setting-label="Wrap code lines"] [role="switch"]')!;
   runGlobalCommand("ui/toggle-code-block-wrap"); await tick();
   expect(toggle.getAttribute("aria-checked")).toBe("true");
-  expect(ta.element.getAttribute("wrap")).toBe("soft");
+  expectWrap(ta, true);
   expect(root.querySelector("pre.code-block")?.classList.contains("code-wrapping")).toBe(true);
   expect(saved).toHaveBeenCalledWith("code_line_wrapping", "1");
   endEdit("page-navigation"); await tick();
@@ -114,7 +118,7 @@ it("open code cards react immediately to the global wrap preference", async () =
   try {
     startEditing("edit", 0); await tick();
     changeCodeWrapping(true); await tick();
-    expect.soft(maybeEditorIn(root)?.element.getAttribute("wrap")).toBe("soft");
+    expectWrap(maybeEditorIn(root)!, true);
     expect.soft(root.querySelector("pre.code-block")?.classList.contains("code-wrapping")).toBe(true);
   } finally { dispose(); }
 });

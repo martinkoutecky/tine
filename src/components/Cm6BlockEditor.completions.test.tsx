@@ -61,7 +61,7 @@ it("opens slash and paired reference lifecycles through the focused command brid
   expect(editor.value()).toBe("(([[]]))");
   expect(editor.selection()).toEqual([6, 6]);
 });
-it("accepts a fence language in raw source before the later body projection port", async () => {
+it("accepts a fence language on the opener and maps the caret into its body", async () => {
   const editor = mount();
   editor.input("/code");
   await pick("Code block");
@@ -69,8 +69,15 @@ it("accepts a fence language in raw source before the later body projection port
   editor.type("py");
   await pick("Python");
   expect(node("completion").raw).toBe("```python\n\n```");
-  expect(editor.selection()).toEqual([10, 10]);
+  expect(editor.value()).toBe("");
+  expect(editor.selection()).toEqual([0, 0]);
   expect(document.querySelector(".autocomplete")).toBeNull();
+});
+it.each(["js", "calc"])("keeps the own-numbered trigger literal inside a %s body", lang => {
+  const editor = mount("```" + lang + "\n\n```");
+  for (const ch of "1. ") editor.type(ch);
+  expect(editor.value()).toBe("1. ");
+  expect(node("completion").raw).toBe("```" + lang + "\n1. \n```");
 });
 it.each(["unmount", "read-only", "same-id replacement"])("retires page completion after %s even with identical text", async change => {
   let finish!: (entries: PageEntry[]) => void;

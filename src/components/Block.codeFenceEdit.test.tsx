@@ -35,7 +35,8 @@ describe("code-fence editor presentation", () => {
       const ta = maybeEditorIn(root)!;
       expect(ta.element.classList.contains("code-edit")).toBe(true);
       // Default is horizontal scrolling, shared with the rendered code card.
-      expect(ta.element.getAttribute("wrap")).toBe("off");
+      if (ta.kind === "textarea") expect(ta.element.getAttribute("wrap")).toBe("off");
+      else expect(ta.element.classList.contains("cm-lineWrapping")).toBe(false);
       // Body-only code view (GH #412/#413): the payload, without the fences;
       // the wrapper bytes are preserved on commit (see codeBodyEdit tests).
       expect(ta.value()).toBe("const x = 1;\nconsole.log(x);");
@@ -89,7 +90,8 @@ describe("code-fence editor presentation", () => {
     try {
       const ta = maybeEditorIn(root)!;
       expect(ta.element.classList.contains("code-edit")).toBe(true);
-      expect(ta.element.getAttribute("wrap")).toBe("off");
+      if (ta.kind === "textarea") expect(ta.element.getAttribute("wrap")).toBe("off");
+      else expect(ta.element.classList.contains("cm-lineWrapping")).toBe(false);
       expect(root.querySelector(".code-language")?.textContent).toBe("python");
       expect(root.querySelector(".calc-lineno")?.textContent).toBe("1");
     } finally {

@@ -12,3 +12,13 @@
 .cm6-page { color: var(--link-color, #589bdd); }
 .cm6-task, .cm6-chip { color: var(--link-color, #589bdd); border-radius: 4px; background: #8882; }
 .cm6-chip { padding: 0 3px; cursor: text; }
+.cm6-block-editor .code-editor-region > div:has(> .cm-editor) { min-width: 0; }
+.cm6-block-editor:has(.code-edit) { padding: var(--ls-block-content-pad-y) 0; }
+.cm6-block-editor:has(.code-edit) .cm-editor {
+  background: var(--code-bg); border: 1px solid var(--border-color); border-radius: 6px;
+  padding: 30px 12px 10px 48px; margin: 4px 0;
+  font-family: var(--tine-mono-font, var(--ls-font-mono)); font-size: 0.86em; line-height: 1.5;
+}
+.cm6-block-editor:has(.code-edit) .cm-scroller { overflow-x: auto; }
+.cm6-block-editor.calc-wrap .code-editor-region > div:has(> .cm-editor) { grid-column: 2; }
+.cm6-block-editor.calc-wrap .cm-scroller { overflow-x: auto; }

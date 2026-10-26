@@ -6,6 +6,7 @@ import {
   nextVisibleOrExtend, node, outdentBlock, pageByName, prevVisible, selectBlock,
   selectBlockSubtree, setCollapsed, splitBlock, withBlockMoving, withUndoUnit, type OutlineScope,
   removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter,
+  setRaw,
 } from "../document";
 import { editingId, startEditing, type EditorSelection as CaretSelection } from "../editorController";
 import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
@@ -20,6 +21,8 @@ import { listLineAt } from "../components/blockParts";
 import { isBlockEmbedMacro, type CollapseSurfaceApi } from "../components/Block";
 import { isAnnotationBlock } from "./annotation";
 import { calcSource } from "./calc";
+import { caretInFence, caretInDisplayMath, caretOnOpeningFence } from "./fences";
+import { codeBodyExitTrim } from "./codeFence";
 import { BUILTIN_HIDE, caretOnPropertyLine, isEditorEmpty, isPropertiesOnly, multilineExitTrim } from "./properties";
 
 interface StructureContext {
@@ -29,6 +32,8 @@ interface StructureContext {
   format: "md" | "org";
   current(): boolean;
   commit(text: string): void;
+  code(): boolean;
+  calc(): boolean;
   viewPrev(): string | null;
   viewNext(): string | null;
   embedExit: { hostBlockId: string; firstRoot(): string | undefined } | null;
@@ -61,7 +66,7 @@ export function cm6Structure(ctx: StructureContext) {
   };
   const nudge = (v: EditorView, out: boolean) => {
     const s = selection(v), text = v.state.doc.toString();
-    const ll = listLineAt(text, s.start, ctx.format);
+    const ll = ctx.code() || ctx.calc() ? null : listLineAt(text, s.start, ctx.format);
     if (ll && (ctx.format === "org" || ll.lineStart > 0) && (!out || ll.indent.length > 0)) {
       const removed = out ? Math.min(2, ll.indent.length) : 0;
       const caret = out ? Math.max(ll.lineStart, s.start - removed) : s.start + 2;
@@ -146,8 +151,12 @@ export function cm6Structure(ctx: StructureContext) {
     const page = pageByName(n.page);
     const properties = ctx.format === "md" && page?.roots[0] === ctx.id
       && (n.originatedFromPageHeader || (!page.preBlock && (isPropertiesOnly(raw) || (raw.endsWith("\n") && isPropertiesOnly(raw.slice(0, -1))))));
-    if (properties && s.empty) {
-      const trimmed = multilineExitTrim(raw, s.from, "properties", ctx.format);
+    const annotation = isAnnotationBlock(n.raw, ctx.format);
+    const fence = !annotation && !ctx.code() && !ctx.calc() && caretInFence(raw, s.from, ctx.format);
+    const math = !annotation && !ctx.code() && !ctx.calc() && !fence && caretInDisplayMath(raw, s.from, ctx.format);
+    const kind = ctx.calc() ? "calc" : ctx.code() ? "code" : fence ? "fence" : math ? "math" : properties ? "properties" : null;
+    if (kind && s.empty) {
+      const trimmed = kind === "code" ? codeBodyExitTrim(raw, s.from) : multilineExitTrim(raw, s.from, kind, ctx.format);
       if (trimmed !== null) {
         let id: string | null = null;
         withUndoUnit(`multiline-exit:${ctx.id}`, [n.page], () => {
@@ -159,7 +168,8 @@ export function cm6Structure(ctx: StructureContext) {
       }
     }
     if (properties && caretOnPropertyLine(raw, s.from)) return softNewline(v);
-    if (!isAnnotationBlock(raw, ctx.format)) {
+    if (ctx.code() || ctx.calc() || fence || math || !annotation && caretOnOpeningFence(raw, s.from, ctx.format)) return softNewline(v);
+    if (!annotation) {
       if (stopOwnNumberedListOnEmptyEnter(ctx.id, raw)) {
         v.dispatch({ selection: { anchor: 0 } });
         return true;
@@ -209,18 +219,26 @@ export function cm6Structure(ctx: StructureContext) {
     const s = v.state.selection.main, raw = v.state.doc.toString();
     if (plain && e.key === "Escape") { selectBlock(ctx.id, ctx.scope); return true; }
     if (plain && s.empty && e.key === "Backspace") {
+      if (ctx.code() && raw === "" && !node(ctx.id).children.length) {
+        const n = node(ctx.id);
+        const adjacent = [prevVisible(ctx.id, structuralScope), nextVisible(ctx.id, structuralScope)].find(id => id && node(id)?.page === n.page);
+        if (adjacent) { deleteBlock(ctx.id); startEditing(adjacent, 0, null, editSurface()); }
+        else setRaw(ctx.id, "", { timetracking: false });
+        return true;
+      }
       const pair = backspacePairEdit(raw, s.head);
       if (pair && (autoPairing() || raw[s.head - 1] === "[" && raw[s.head] === "]")) {
         v.dispatch({ changes: { from: 0, to: raw.length, insert: pair.text }, selection: { anchor: pair.start }, userEvent: "delete.backward" });
         return true;
       }
-      const ll = calcSource(raw) === null ? listLineAt(raw, s.head, ctx.format) : null;
+      const ll = !ctx.code() && !ctx.calc() && calcSource(raw) === null ? listLineAt(raw, s.head, ctx.format) : null;
       if (ll && s.head === ll.lineStart + ll.prefixLen) {
         v.dispatch({ changes: { from: ll.lineStart, to: s.head }, selection: { anchor: ll.lineStart }, userEvent: "delete.backward" });
         return true;
       }
     }
     if (plain && s.empty && e.key === "Backspace" && s.head === 0) {
+      if (ctx.code() || ctx.calc()) return true;
       if (isAnnotationBlock(raw, ctx.format) || calcSource(raw) !== null) return false;
       if (removeOwnNumberedList(ctx.id)) {
         v.dispatch({ selection: { anchor: 0 } });
@@ -233,6 +251,7 @@ export function cm6Structure(ctx: StructureContext) {
       }
     }
     if (plain && s.empty && e.key === "Delete" && s.head === raw.length) {
+      if (ctx.code() || ctx.calc()) return true;
       if (isAnnotationBlock(raw, ctx.format) || calcSource(raw) !== null) return false;
       const next = nextVisible(ctx.id, structuralScope), nextRaw = next ? node(next)?.raw ?? "" : "";
       if (next && !isAnnotationBlock(nextRaw, ctx.format) && calcSource(nextRaw) === null && mergeWithNext(ctx.id, structuralScope, editSurface())) {

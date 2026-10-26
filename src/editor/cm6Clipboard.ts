@@ -26,6 +26,7 @@ interface ClipboardContext {
   hiddenProperties: HidePolicy;
   current(): boolean;
   commit(text: string): void;
+  literal(): boolean;
 }
 
 /** Adapt the existing paste policies to CM state. Outline and identity changes
@@ -126,7 +127,7 @@ export function cm6Clipboard(ctx: ClipboardContext) {
       || types.some(type => type === "Files" || type === "text/uri-list" || type === "x-special/gnome-copied-files")) return false;
     const source = v.state.doc.toString(), s = v.state.selection.main;
     const code = codeFenceOnly(source, ctx.format) !== null;
-    const syntaxSensitive = ctx.sheet || calcSource(source) !== null || code
+    const syntaxSensitive = ctx.literal() || ctx.sheet || calcSource(source) !== null || code
       || caretInFence(source, s.from, ctx.format) || caretOnOpeningFence(source, s.from, ctx.format)
       || caretInDisplayMath(source, s.from, ctx.format);
     const slot = peekClipboardSlot();
@@ -157,7 +158,7 @@ export function cm6Clipboard(ctx: ClipboardContext) {
     }
     const url = text.trim();
     if (!s.empty && isPasteableUrl(url) && !isPasteableUrl(source.slice(s.from, s.to))
-      && calcSource(source) === null && !code && !caretInFence(source, s.from, ctx.format) && !caretOnOpeningFence(source, s.from, ctx.format)) {
+      && !ctx.literal() && calcSource(source) === null && !code && !caretInFence(source, s.from, ctx.format) && !caretOnOpeningFence(source, s.from, ctx.format)) {
       apply(v, wrapLink(source, s.from, s.to, url, ctx.format)); return true;
     }
     const video = videoPasteMacro(text);

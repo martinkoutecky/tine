@@ -1,4 +1,4 @@
-/** One textarea's reversible code view (GH #510). Selection in raw mixed text
+/** One editor's reversible code view (GH #510). Selection in raw mixed text
  * enters a parser-owned body on collapsed native selection; boundary motion returns to raw
  * coordinates without committing. O(block text), no writes or syntax recognition.
  * Prefix/suffix stay frozen during body edits, including paste of fence-like text.
@@ -8,6 +8,7 @@
  * `enter` takes a visible-source UTF-16 range and selects a body only if it contains the range.
  * `syncSelection` maps a collapsed native raw selection into that body.
  * `leaveOnKey` consumes boundary arrows/Backspace and restores raw coordinates.
+ * `leaveRange` supplies that same transition to editors with state-owned selections.
  * `selection` supplies visible-source mixed-block coordinates to history (whole-code keeps
  * its existing body coordinates). No operation here commits or persists text. */
 import { createMemo, createSignal, type Accessor } from "solid-js";
@@ -52,25 +53,28 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
       ta.setSelectionRange(caret - p.open.length, caret - p.open.length);
     }
   };
-  const leaveOnKey = (e: KeyboardEvent, ta: HTMLTextAreaElement) => {
+  const leaveRange = (e: KeyboardEvent, value: string, start: number, end: number) => {
     const p = shown();
-    if (!p || !mixed() || e.ctrlKey || e.metaKey || e.altKey) return false;
-    const start = ta.selectionStart, end = ta.selectionEnd;
+    if (!p || !mixed() || e.ctrlKey || e.metaKey || e.altKey) return null;
     const before = (e.key === "ArrowLeft" || e.key === "Backspace") && start === 0
-      || e.key === "ArrowUp" && !ta.value.slice(0, start).includes("\n");
-    const after = e.key === "ArrowRight" && end === ta.value.length
-      || e.key === "ArrowDown" && !ta.value.slice(end).includes("\n");
-    if ((!before && !after) || (!e.shiftKey && start !== end)) return false;
-    e.preventDefault();
+      || e.key === "ArrowUp" && !value.slice(0, start).includes("\n");
+    const after = e.key === "ArrowRight" && end === value.length
+      || e.key === "ArrowDown" && !value.slice(end).includes("\n");
+    if ((!before && !after) || (!e.shiftKey && start !== end)) return null;
     const anchor = p.open.length + (before ? end : start);
     const caret = before ? p.open.length - 1 : p.open.length + p.body.length + 1;
     setRegion(null);
+    return { anchor: e.shiftKey ? anchor : caret, head: caret, direction: before ? "backward" as const : "forward" as const };
+  };
+  const leaveOnKey = (e: KeyboardEvent, ta: HTMLTextAreaElement) => {
+    const range = leaveRange(e, ta.value, ta.selectionStart, ta.selectionEnd);
+    if (!range) return false;
+    e.preventDefault();
     ta.value = visibleRaw();
-    ta.setSelectionRange(e.shiftKey ? Math.min(anchor, caret) : caret,
-      e.shiftKey ? Math.max(anchor, caret) : caret, before ? "backward" : "forward");
+    ta.setSelectionRange(Math.min(range.anchor, range.head), Math.max(range.anchor, range.head), range.direction);
     return true;
   };
-  return { shown, mixed, enter, syncSelection, leaveOnKey,
+  return { shown, mixed, enter, syncSelection, leaveOnKey, leaveRange,
     join: (body: string) => {
       const p = shown();
       const captured = p && (region() ?? capture(p));
