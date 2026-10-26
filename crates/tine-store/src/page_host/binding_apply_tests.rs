@@ -117,6 +117,7 @@ fn a_folded_move_operation_keeps_its_key_and_rewrites_referrers() {
     assert!(listed.contains(&"Old.md".into()) && !listed.contains(&"old.md".into()));
     assert_eq!(live.disk("pages/Old.md"), "title:: Old\n- [[Old]]\n");
     assert_eq!(live.disk("pages/Ref.md"), "- [[Old]]\n");
+    assert_eq!(trashed(&live, "title:: old\n- [[old]]\n"), 1);
     assert_eq!(
         live.host
             .try_identify(&PageId::from("pages/Old.md"))
@@ -214,10 +215,17 @@ fn a_failed_folded_entry_move_keeps_applied_text_and_can_be_retried() {
         .inject_fault(crate::FaultPoint::CaseMoveAliasNoop);
     assert_eq!(
         live.host.apply(folded_op("title:: old\n- [[old]]\n")),
-        Err(ApplyRefusal::Uncertain)
+        Err(ApplyRefusal::SpellingIncomplete)
     );
     assert_eq!(live.disk("pages/old.md"), "title:: Old\n- [[Old]]\n");
     assert_eq!(live.disk("pages/Ref.md"), "- [[Old]]\n");
+    // A provider accepted the syscall but still lists old.md. The driver
+    // must keep the key, path lock and index at that observed spelling.
+    let (_, spelling, ..) = live
+        .host
+        .try_identify(&PageId::from("pages/old.md"))
+        .unwrap();
+    assert_eq!(spelling.as_str(), "pages/old.md");
     let mut retry = folded_op("title:: Old\n- [[Old]]\n");
     retry
         .pages
@@ -251,7 +259,7 @@ fn a_folded_entry_sync_error_keeps_the_key_at_the_new_spelling() {
     live.store.inject_fault(crate::FaultPoint::DirectorySyncIo);
     assert_eq!(
         live.host.apply(folded_op("title:: old\n- [[old]]\n")),
-        Err(ApplyRefusal::Uncertain)
+        Err(ApplyRefusal::SpellingIncomplete)
     );
     let (same, spelling, ..) = live
         .host

@@ -1058,7 +1058,8 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
     };
     renameSubmitted = true;
     setRenaming(false);
-    if (!next || next === from) return;
+    // The same displayed title can still have a pending filename case change.
+    if (!next) return;
     renameInFlight = true;
     try {
       const outcome = await renameOrMergePage(from, next, target, () => {

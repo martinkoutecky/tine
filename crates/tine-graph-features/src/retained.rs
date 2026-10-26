@@ -199,6 +199,10 @@ fn refusal_error(
             io::ErrorKind::TimedOut,
             format!("Couldn't confirm {what} yet; Tine keeps trying to finish it."),
         ),
+        ApplyRefusal::SpellingIncomplete => error(
+            io::ErrorKind::TimedOut,
+            "The page text may already have been renamed, but its filename casing could not be confirmed. Save or discard any pending edits, then open Rename and enter the intended name again, even if it matches the displayed name.".into(),
+        ),
     }
 }
 
@@ -213,6 +217,26 @@ fn capitalized(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn incomplete_spelling_reports_possible_text_changes_and_an_ordinary_retry() {
+        let err = refusal_error(
+            ApplyRefusal::SpellingIncomplete,
+            "the rename",
+            &|_| unreachable!(),
+        );
+        let message = err.to_string();
+        assert!(message.contains("text may already have been renamed"));
+        assert!(message.contains("enter the intended name again"));
+        assert!(message.contains("even if it matches the displayed name"));
+        assert!(!message.contains("nothing changed"));
+        assert!(!message.contains("keeps trying"));
+        // A case-sensitive rename still has a drafted entry operation.
+        let ordinary = refusal_error(ApplyRefusal::Uncertain, "the rename", &|_| unreachable!());
+        assert!(ordinary
+            .to_string()
+            .contains("Tine keeps trying to finish it"));
+    }
 
     #[test]
     fn busy_host_rename_keeps_its_existing_refusal_wording() {

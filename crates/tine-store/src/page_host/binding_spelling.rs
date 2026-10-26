@@ -13,6 +13,7 @@ impl PageHost {
     ) -> Result<(), ApplyRefusal> {
         let config = op.view.as_ref().map(|(_, config)| config.clone());
         let mut moves = Vec::new();
+        let mut copies = Vec::new();
         let mut seen = BTreeSet::new();
         let mut planned = BTreeMap::new();
         for (page, effect, expected) in &op.pages {
@@ -41,6 +42,9 @@ impl PageHost {
                 return Err(ApplyRefusal::Refused);
             };
             let (old, new) = (old.clone(), new.clone());
+            if old != new {
+                copies.push((src.clone(), old.clone()));
+            }
             // Validate the actual directory alias before changing any text.
             // A separately listed symlink/hard link is never a spelling move.
             tx.admission_slot(&dst.file(), None, Some(&src.file()))
@@ -60,11 +64,83 @@ impl PageHost {
         op.moves.retain(|(dst, _)| !destinations.contains(dst));
         op.creation_checks
             .retain(|(p, ..)| !destinations.contains(p));
-        self.apply(op)?;
+        // Keep the transaction rename's old-byte recovery copy before the
+        // ordinary content operation can overwrite and retire its draft.
+        self.retain_spelling_bytes(&op, copies)?;
+        self.apply(op).map_err(|why| match why {
+            ApplyRefusal::Unwritten(_) | ApplyRefusal::Superseded(_) | ApplyRefusal::Uncertain => {
+                ApplyRefusal::SpellingIncomplete
+            }
+            why => why,
+        })?;
         for (src, dst, key, bytes) in moves {
-            self.move_spelling(src, dst, key, bytes, config.clone())?;
+            self.move_spelling(src, dst, key, bytes, config.clone())
+                .map_err(|_| ApplyRefusal::SpellingIncomplete)?;
         }
         Ok(())
+    }
+
+    fn retain_spelling_bytes(
+        &self,
+        op: &HostOp,
+        copies: Vec<(PageId, Arc<[u8]>)>,
+    ) -> Result<(), ApplyRefusal> {
+        if copies.is_empty() {
+            return Ok(());
+        }
+        let pages: Vec<_> = op.pages.iter().map(|(p, ..)| p.clone()).collect();
+        if op.policy == Input::Flush {
+            self.flush_input(&pages)?;
+        }
+        let keys = self.register_all(pages).ok_or(ApplyRefusal::Refused)?;
+        let view = op.view.clone();
+        let store = self.store.clone();
+        let deadline = std::time::Instant::now() + OPERATION_WAIT;
+        let retain = move |state: &mut State<ProductionIo, SystemClock>| {
+            let Ok(_writer) = store.writer.try_lock() else {
+                return Wait::Until(Some(std::time::Instant::now() + Duration::from_millis(10)));
+            };
+            let host = &mut state.progress.host;
+            if !host.alive || !host.admission_open {
+                return Wait::Ready(Err(ApplyRefusal::Refused));
+            }
+            if view.as_ref().is_some_and(|(rev, config)| {
+                store.changes.rev() != *rev || !Arc::ptr_eq(config, &store.config().config)
+            }) {
+                return Wait::Ready(Err(ApplyRefusal::Changed));
+            }
+            if let Some(page) = super::retained::unsaved(host, &keys).into_values().next() {
+                return Wait::Ready(Err(ApplyRefusal::Unsaved(page)));
+            }
+            if host.order.touches(&keys)
+                || keys.iter().any(|key| host.busy(key))
+                || host.lacks_locks(&keys)
+            {
+                return Wait::Until(Some(std::time::Instant::now() + Duration::from_millis(10)));
+            }
+            let tx = store.transaction(None);
+            // Retain only verified source bytes, using the existing durable
+            // no-replace trash-copy recipe. Refusal later may leave a harmless
+            // recovery copy, but never changes live content.
+            for (src, bytes) in &copies {
+                if let Err(why) = tx.retain_spelling_bytes(&src.file(), bytes) {
+                    return Wait::Ready(Err(match why {
+                        Why::Conflict { .. } => ApplyRefusal::Changed,
+                        _ => ApplyRefusal::Refused,
+                    }));
+                }
+            }
+            Wait::Ready(Ok(()))
+        };
+        match self
+            .driver
+            .shared
+            .locked_wait(Deadline::At(deadline), retain)
+        {
+            Ok(result) => result,
+            Err(Unanswered::Withdrawn) => Err(ApplyRefusal::Busy),
+            Err(Unanswered::Late | Unanswered::Ended) => Err(ApplyRefusal::Refused),
+        }
     }
 
     pub(super) fn move_spelling(

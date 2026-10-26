@@ -81,6 +81,9 @@ pub enum ApplyRefusal {
     /// No answer or no publication within `OPERATION_WAIT`, or the host
     /// stopped: the operation may still complete.
     Uncertain,
+    /// Folded spelling work may have published text, but its unrecorded
+    /// entry step did not confirm completion. Retry using the displayed name.
+    SpellingIncomplete,
 }
 
 /// What one admission attempt came to.

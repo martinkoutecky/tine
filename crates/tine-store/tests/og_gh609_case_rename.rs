@@ -394,7 +394,9 @@ fn transaction_case_rename_kills() {
                 "old.md"
             }]
         );
-        rename_or_merge_page(&store, &host, "old", "Old", None, None, &[]).unwrap();
+        // The explicit title now determines the name the UI shows. A user
+        // retries that displayed name, not the pre-crash name.
+        rename_or_merge_page(&store, &host, "Old", "Old", None, None, &[]).unwrap();
         assert_eq!(
             fs::read_to_string(dir.path().join("pages/Old.md")).unwrap(),
             "title:: Old\n- [[Old]]\n"
@@ -403,6 +405,63 @@ fn transaction_case_rename_kills() {
         drop(host);
         store.close();
     }
+}
+
+/// Also runs on Linux: construct the state after content publication, then
+/// retry exactly the name the user sees in the rename dialog.
+#[test]
+fn same_name_rename_finishes_pending_filename_case() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    fs::write(dir.path().join("pages/old.md"), "title:: Old\n- [[Old]]\n").unwrap();
+    let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    hosted(&store, |host| {
+        rename_or_merge_page(&store, host, "Old", "Old", None, None, &[])
+    })
+    .unwrap();
+    assert_eq!(pages(dir.path()), ["Old.md"]);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("pages/Old.md")).unwrap(),
+        "title:: Old\n- [[Old]]\n"
+    );
+    let unchanged = hosted(&store, |host| {
+        rename_or_merge_page(&store, host, "Old", "Old", None, None, &[])
+    })
+    .unwrap();
+    assert!(unchanged.touched.is_empty());
+    store.close();
+}
+
+#[test]
+fn same_name_namespace_retry_moves_only_pending_case_differences() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    fs::create_dir(dir.path().join("logseq")).unwrap();
+    fs::write(
+        dir.path().join("logseq/config.edn"),
+        "{:file/name-format :triple-lowbar}\n",
+    )
+    .unwrap();
+    for (file, body) in [
+        ("Space.md", "title:: Space\n- root\n"),
+        ("space___a.md", "title:: Space/a\n- child\n"),
+        ("custom.md", "title:: Space/b\n- custom\n"),
+    ] {
+        fs::write(dir.path().join("pages").join(file), body).unwrap();
+    }
+    let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    hosted(&store, |host| {
+        rename_or_merge_page(&store, host, "Space", "Space", None, None, &[])
+    })
+    .unwrap();
+    assert_eq!(pages(dir.path()), ["Space.md", "Space___a.md", "custom.md"]);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("pages/custom.md")).unwrap(),
+        "title:: Space/b\n- custom\n"
+    );
+    store.close();
 }
 
 #[test]
