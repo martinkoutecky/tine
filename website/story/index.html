@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>The Story of Tine: from the first line of code to 0.8.0</title>
+<meta name="description" content="An arcade-style story of how Tine was built: Martin, Claude and Codex, seven worlds, from the first line of code in June 2026 to Tine 0.8.0. About 4.5 minutes.">
+<meta name="theme-color" content="#0e0c16">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:title" content="The Story of Tine: from the first line of code to 0.8.0">
+<meta property="og:description" content="Martin, Claude and Codex, seven worlds, about 4.5 minutes: how a fast, local-first outliner for Logseq notes was built, and what Martin learned on the way.">
+<meta property="og:image" content="https://tine.page/story/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:url" content="https://tine.page/story/">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  /* Fonts are bundled (SIL Open Font License 1.1): Press Start 2P by CodeMan38, Atkinson Hyperlegible by the
+     Braille Institute; license texts in fonts/. Latin subsets; other characters fall back to system fonts. */
+  @font-face { font-family: "Press Start 2P"; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/ps2p.woff2) format("woff2"); }
+  @font-face { font-family: "Atkinson Hyperlegible"; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/ah-400.woff2) format("woff2"); }
+  @font-face { font-family: "Atkinson Hyperlegible"; font-style: normal; font-weight: 700; font-display: swap; src: url(fonts/ah-700.woff2) format("woff2"); }
+  @font-face { font-family: "Atkinson Hyperlegible"; font-style: italic; font-weight: 400; font-display: swap; src: url(fonts/ah-italic.woff2) format("woff2"); }
+  :root {
+    --bg: #0e0c16; --panel: #1a1726; --panel2: #231f33; --line: #332d48;
+    --ink: #f3eee4; --muted: #a59fb5; --accent: #10b981; --accent2: #6ee7b7;
+    --gold: #ffcf4a; --danger: #ff6b5b; --sky: #9fe3ff;
+    --px: "Press Start 2P", ui-monospace, monospace;
+    --sans: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { background: var(--bg); color: var(--ink); }
+  body { margin: 0; font: 16px/1.5 var(--sans); overflow: hidden; }
+  button { font: inherit; color: inherit; }
+  .app {
+    height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    display: grid; grid-template-rows: minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 10px 8px; gap: 8px;
+  }
+  #stage { position: relative; min-height: 0; min-width: 0; overflow: hidden; display: grid; place-items: center; }
+  #screen { position: relative; border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 2px var(--line), 0 18px 60px rgba(0,0,0,.6); }
+  #cv { display: block; image-rendering: pixelated; cursor: pointer; }
+  /* control bar */
+  .bar { display: flex; align-items: center; gap: 8px; max-width: 1100px; width: 100%; margin: 0 auto; flex-wrap: wrap; }
+  .btn { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: .45em .8em; font-size: 14px; cursor: pointer; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #04130d; font-weight: 700; min-width: 5.2em; }
+  .scrubwrap { flex: 1 1 260px; min-width: 0; position: relative; padding-top: 18px; }
+  #band { position: absolute; left: 0; right: 0; top: 24px; height: 8px; border-radius: 4px; opacity: .85; }
+  #ticks { position: absolute; left: 0; right: 0; top: 0; height: 16px; }
+  .tick { position: absolute; transform: translateX(-1px); font: 8px/1 var(--px); background: none; border: 0; border-left: 1px solid var(--muted); color: var(--muted); padding: 0 0 0 3px; height: 16px; cursor: pointer; }
+  .tick:hover { color: var(--ink); }
+  .tick.fin { color: var(--accent2); border-left: 0; border-right: 1px solid var(--accent2); padding: 0 3px 0 0; transform: translateX(-100%); }
+  #scrub { position: relative; width: 100%; margin: 0; height: 20px; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer; }
+  #scrub::-webkit-slider-runnable-track { height: 20px; background: transparent; }
+  #scrub::-moz-range-track { height: 20px; background: transparent; }
+  #scrub::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 20px; border-radius: 3px; background: var(--ink); border: 2px solid var(--bg); }
+  #scrub::-moz-range-thumb { width: 12px; height: 18px; border-radius: 3px; background: var(--ink); border: 2px solid var(--bg); }
+  #worldName { font-size: 13px; color: var(--muted); min-width: 0; flex: 0 1 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* overlays */
+  .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(10,8,20,.78); backdrop-filter: blur(2px); z-index: 5; padding: 16px; overflow: auto; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px 24px; max-width: 640px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+  .panel h2 { margin: 0 0 .3em; font: 400 15px/1.5 var(--px); color: var(--gold); text-wrap: balance; }
+  .panel p { margin: .4em 0; }
+  .muted { color: var(--muted); }
+  #start .panel { text-align: center; }
+  .logo { font: 400 clamp(26px, 5vw, 44px)/1.2 var(--px); color: var(--ink); margin: .2em 0 .1em; letter-spacing: .02em; }
+  .logo span { color: var(--accent); }
+  .insert { font: 10px/1.6 var(--px); color: var(--gold); animation: blink 1.1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+  .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 16px; }
+  .legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px 16px; text-align: left; font-size: 14px; margin-top: 16px; color: var(--muted); }
+  .legend b { color: var(--ink); font-weight: 700; }
+  kbd { font: 11px var(--px); background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+
+  #card { z-index: 7; }
+  #cardDate { font: 9px/1.6 var(--px); color: var(--muted); text-transform: uppercase; }
+  #cardCap { font-size: 19px; font-weight: 700; margin: .3em 0; text-wrap: balance; }
+  #cardQuote { font-size: 18px; font-style: italic; border-left: 3px solid var(--gold); padding-left: 12px; margin: .6em 0; }
+  #cardSrc { font-size: 13px; color: var(--muted); }
+
+  @media (max-width: 640px) {
+    .app { padding-block: 6px; gap: 6px; }
+    #miniHud { display: block; }
+    #worldName { display: none; }
+    .btn { padding: .4em .6em; font-size: 13px; }
+    .hide-sm { display: none; }
+    .tick.fin { display: none; }
+  }
+
+  #screen { display: flex; flex-direction: column; background: #0e0c16; }
+  #dlg { display: flex; gap: .8em; align-items: flex-start; padding: .7em .9em; min-height: calc(1.4em * 3 + 2.1em);
+    background: #15121f; border-top: 3px solid #2a2540; cursor: pointer; user-select: none; }
+  #face { width: 3.4em; height: 3.4em; flex: none; image-rendering: pixelated; border-radius: 4px; box-shadow: 0 0 0 2px #2a2540; }
+  #dlg.empty #face { visibility: hidden; }
+  .dl { min-width: 0; flex: 1; }
+  .dh { display: flex; gap: .8em; align-items: baseline; font: 400 max(9px, .5em)/1.6 var(--px); letter-spacing: .04em; }
+  #dName { color: var(--muted); }
+  .who-martin #dName { color: #ffd23f; } .who-system #dName { color: var(--gold); } .who-narrator #dName { color: var(--accent2); }
+  .ask #dName { color: #c4b5fd; } .aha #dName { color: var(--gold); }
+  #dDate { color: #6f6886; }
+  #dMore { margin-left: auto; font: 400 max(9px, .5em)/1 var(--px); background: none; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); padding: .35em .6em; cursor: pointer; }
+  #dMore:hover { color: var(--ink); border-color: var(--accent); }
+  #dText { margin-top: .2em; line-height: 1.4; text-wrap: pretty; }
+  #dGhost { visibility: hidden; }
+  .who-martin #dText { font-weight: 700; color: #fff7e0; }
+  .who-narrator #dText { color: #e4def0; }
+  .who-system #dText { font-weight: 700; color: var(--gold); }
+  .ask #dText { color: #e9ddff; } .aha #dText { color: #fff3c4; }
+  #dlg.old #dText, #dlg.old .dh { opacity: .45; }
+  /* finale */
+  #finale { position: absolute; inset: 0; z-index: 4; overflow: auto; padding-block: 16px; background: rgba(14,12,22,.95); }
+  .fin { max-width: 760px; margin: 0 auto; display: grid; gap: 14px; }
+  #finTag { font: 11px/1.6 var(--px); color: var(--accent2); }
+  #finName { font: 400 clamp(20px, 4vw, 34px)/1.3 var(--px); color: var(--ink); text-wrap: balance; }
+  #trophies, #tally, #creditsList { list-style: none; padding: 0; margin: 0; }
+  #trophies { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+  #trophies li { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--gold); border-radius: 8px; padding: 10px 12px; min-width: 0; opacity: 0; animation: pop .45s ease forwards; animation-delay: calc(var(--i) * 120ms); }
+  #trophies b { display: block; font: 10px/1.6 var(--px); color: var(--gold); margin-bottom: 4px; }
+  #trophies span { font-size: 15px; }
+  @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.97); } to { opacity: 1; transform: none; } }
+  .finh { font: 11px/1.6 var(--px); color: var(--gold); margin: 10px 0 0; }
+  #syllabus { margin: 0; padding-left: 1.4em; display: grid; gap: 6px; }
+  #syllabus b { margin-right: .4em; }
+  #syllabus span { color: var(--muted); font-style: italic; }
+  #tally { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 6px; }
+  #tally li { display: flex; flex-direction: column; min-width: 0; }
+  #tally b { font: 14px/1.6 var(--px); color: var(--sky); }
+  #tally span { font-size: 13px; color: var(--muted); }
+  #closing { font-size: 19px; font-weight: 700; line-height: 1.45; border-left: 3px solid var(--accent); padding-left: 14px; margin: 8px 0; text-wrap: pretty; }
+  .finrow { display: flex; gap: 10px; flex-wrap: wrap; }
+  .finrow a.btn { text-decoration: none; color: var(--ink); }
+  .finrow a.btn.primary { color: #04130d; }
+  #creditsList { columns: 4 130px; font-size: 14px; color: var(--muted); }
+  #creditsList li { overflow-wrap: anywhere; }
+  .finlinks { margin: 8px 0 0; color: var(--muted); }
+  .finlinks a, .fin p a { color: var(--accent2); }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <div id="stage">
+    <div id="screen">
+      <canvas id="cv" width="640" height="272" aria-label="Animated story of Tine. The dialogue box below it carries every line."></canvas>
+      <div id="dlg" class="empty" aria-live="polite" title="Click to skip to the next line">
+        <canvas id="face" width="96" height="96" aria-hidden="true"></canvas>
+        <div class="dl">
+          <div class="dh"><span id="dName"></span><span id="dDate"></span><button id="dMore" hidden>More</button></div>
+          <div id="dText"><span id="dShown"></span><span id="dGhost"></span></div>
+        </div>
+      </div>
+
+    </div>
+
+    <div id="start" class="overlay">
+      <div class="panel">
+        <div class="insert">INSERT COIN</div>
+        <div class="logo"><span>T</span>INE</div>
+        <p>A fast, local-first outliner for your Logseq notes, built since June 2026 by a computer scientist who learned software engineering on the way, working with Claude and Codex.</p>
+        <p class="muted">Seven worlds, from the first line of code to 0.8.0. About <span id="runtime">4 minutes</span>; pause or skip ahead at any time.</p>
+        <div class="row"><button class="btn primary" id="startPlay">Play</button></div>
+        <div class="legend">
+          <div><b>? blocks</b>: Martin asks the agents to explain something. <b>LV</b> goes up when he later uses it himself.</div>
+          <div><kbd>Space</kbd> play or pause · <kbd>→</kbd> or a click on the text: next line · <kbd>←</kbd> back</div>
+        </div>
+      </div>
+    </div>
+
+
+    <div id="card" class="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="cardQuote">
+      <div class="panel">
+        <div id="cardDate"></div>
+        <div id="cardQuote"></div>
+        <p id="cardMore"></p>
+        <p id="cardSrc"></p>
+        <div class="row" style="justify-content:flex-end"><button class="btn" id="cardClose">Back to the story</button></div>
+      </div>
+    </div>
+
+    <div id="finale" hidden>
+      <div class="fin">
+        <div id="finTag"></div>
+        <div id="finName"></div>
+        <ul id="trophies"></ul>
+        <h3 class="finh">What Martin learned on the way</h3>
+        <ol id="syllabus"></ol>
+        <ul id="tally"></ul>
+        <p id="closing"></p>
+        <h3 class="finh">Try it</h3>
+        <p>Tine 0.8.0 is out for Linux, macOS, Windows and Android, with the iPhone and iPad beta on TestFlight. It works on the Logseq graph you already have.</p>
+        <div class="finrow">
+          <a class="btn primary" href="https://tine.page/" target="_blank" rel="noopener">Download at tine.page</a>
+          <a class="btn" href="https://github.com/martinkoutecky/tine/releases/tag/v0.8.0" target="_blank" rel="noopener">The 0.8.0 release on GitHub</a>
+          <a class="btn" href="https://tine.page/guide/" target="_blank" rel="noopener">The Guide</a>
+          <a class="btn" href="https://github.com/martinkoutecky/tine/discussions" target="_blank" rel="noopener">GitHub Discussions</a>
+          <button class="btn" id="finReplay">Play again</button>
+        </div>
+        <h3 class="finh">Thank you</h3>
+        <p class="muted">Everyone outside the core team who opened an issue, commented, discussed or sent a fix on GitHub.</p>
+        <ul id="creditsList"></ul>
+        <p class="finlinks"><a href="https://tine.page/" target="_blank" rel="noopener">Get Tine at tine.page</a> · <a href="https://tine.page/guide/" target="_blank" rel="noopener">The Guide</a> · <a href="https://github.com/martinkoutecky/tine/discussions" target="_blank" rel="noopener">GitHub Discussions</a></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="bar">
+    <button class="btn primary" id="play" aria-pressed="false">Play</button>
+    <button class="btn hide-sm" id="restart" title="Restart">Restart</button>
+    <div class="scrubwrap">
+      <div id="band"></div>
+      <div id="ticks"></div>
+      <input type="range" id="scrub" min="0" max="100" value="0" step="1" aria-label="Timeline position">
+    </div>
+    <span id="worldName"></span>
+    <button class="btn" id="speed" title="Speed">1×</button>
+    <button class="btn" id="sound" aria-pressed="false">Sound off</button>
+    <button class="btn hide-sm" id="fs">Fullscreen</button>
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script src="scenes.js"></script>
+<script src="engine.js"></script>
+</body>
+</html>

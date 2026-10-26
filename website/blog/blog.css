@@ -151,3 +151,11 @@
   background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
   color: var(--ink); font-size: .95rem;
 }
+
+/* human-blog: verbatim repost labels + AI-part pointers */
+.repost-meta {
+  font-size: .74rem; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--accent-deep); margin: 0 0 1rem;
+}
+.prose .ai-note { color: var(--ink-faint); font-size: .92rem; }
+.post-sep { border: 0; border-top: 1px solid var(--line); margin: 2.8rem 0; }

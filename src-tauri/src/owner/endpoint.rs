@@ -307,6 +307,8 @@ pub(crate) fn busy() -> ErrorBody {
 }
 
 #[cfg(unix)]
+pub(crate) use unix::blocking_connection;
+#[cfg(unix)]
 pub(crate) use unix::Endpoint;
 
 #[cfg(unix)]
@@ -518,6 +520,9 @@ mod unix {
                 }
                 continue;
             };
+            if blocking_connection(&stream).is_err() {
+                continue;
+            }
             let id = next;
             next += 1;
             #[cfg(test)]
@@ -589,6 +594,14 @@ mod unix {
             ok: None,
             error: Some(body),
         }
+    }
+
+    /// macOS and the BSDs give an accepted socket the listener's O_NONBLOCK;
+    /// Linux does not. Connection threads use blocking reads with timeouts, so
+    /// an inherited flag made the first request read fail at once and the CLI
+    /// saw EINVAL on its next setsockopt (GH #771).
+    pub(crate) fn blocking_connection(stream: &UnixStream) -> std::io::Result<()> {
+        stream.set_nonblocking(false)
     }
 
     fn connection(id: u64, stream: UnixStream, shared: &Shared) {

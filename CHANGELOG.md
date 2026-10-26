@@ -12,6 +12,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Expand and Collapse (one level) now follow a block embed's own folds and open or close child page embeds, while keeping embedded source folds separate (GH #768, GH #769).
 
+## [0.8.0] - 2026-10-26
+
+Tine 0.8.0 makes the Tine Beta line stable. It is Tine Beta 0.8.0-beta.12
+(the twelve Beta sections below list everything it changed since 0.7.0; the
+0.7.1 to 0.7.4 fixes are included) plus the macOS command-line fix in this
+section. Your settings, graphs and sessions carry over from 0.7.x. The
+highlights: a command line on Linux and macOS for reading pages, journals,
+search and queries; the interface in Simplified Chinese; the Android share
+sheet, launcher shortcuts and a Quick capture tile, and an iOS share
+extension; a Journal sections page for choosing what today's journal shows;
+page icons; and saving moved into one background page host per graph, so
+every edit is saved as you type, from any window.
+
+### Changed
+- Stable Tine now carries the 0.8 Beta line. Beta keeps its separate app and update channel, and continues with the next development line.
+
+### Fixed
+
+- macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
+
 ## [0.8.0-beta.12] - 2026-10-24
 
 Fixes for the 0.8.0 stable candidate: pasting a copied link keeps its URL (GH #759), opening a PDF no longer pulls the reader back to the top of the page (GH #672), a backlink to a highlight of a PDF that was not open scrolls to it, multiline Org blocks no longer add blank lines at the end of the file (GH #741), and hidden id:: and collapsed:: lines stay in the block's property group. Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
@@ -181,6 +201,20 @@ Two fixes for the 0.8.0 stable candidate. Fixes described elsewhere as "fixed fo
 - iOS: launching Tine no longer shows a red "Could not apply interface zoom." error; the interface zoom setting now applies on iOS (UI-IOS-ZOOM-TOAST-ON-LAUNCH).
 - A block link can no longer fail with "Tine link target not found in any known graph" when the quick check of closed graphs misses its block: Tine fully opens the graphs it ruled out before reporting the link as not found (GH #181).
 
+## [0.7.4] - 2026-10-16
+
+### Fixed
+
+- iOS: launching Tine no longer shows a red "Could not apply interface zoom." error; the interface zoom setting now applies on iOS (UI-IOS-ZOOM-TOAST-ON-LAUNCH).
+
+## [0.7.3] - 2026-10-15
+
+### Fixed
+
+- Phones: query headers keep their title and view buttons readable, wrapping the buttons onto a second line instead of breaking words letter by letter (UI-MOBILE-QUERY-HEADER-WRAP).
+- Android: granting All files access while opening a graph now continues straight to the folder picker; it no longer needs a second tap (UI-ANDROID-ALL-FILES-ONE-TAP).
+- Phones: the left sidebar starts closed, so it no longer covers the journal after the first graph opens (UI-MOBILE-LEFT-DRAWER-STARTS-CLOSED).
+
 ## [0.8.0-beta.2] - 2026-10-15
 
 ### Added
@@ -272,6 +306,28 @@ Two fixes for the 0.8.0 stable candidate. Fixes described elsewhere as "fixed fo
 - Journal feed backlinks refresh on published feed-source edits while keeping editors inside reference results stable (GH #481).
 - A page merge, rename or deletion that waited the full 10 seconds for another rename to finish could report "Couldn't confirm the merge yet; Tine keeps trying to finish it" for an operation that would never run; it now reports that another rename is still finishing and nothing changed (REG-PAGEHOST-ADMISSION-DEADLINE-RACE).
 
+## [0.7.2] - 2026-10-13
+
+### Added
+
+- Windows MSIX installs show that updates come from the Microsoft Store and disable Tine's self-updater (GH #307).
+- Android: Tine appears in the share sheet. Shared text, links and images become a new block at the bottom of today's journal, the same place quick capture files to, with the same "Captured to today's journal" notice. If an item can't be added yet, for example because no graph is open or saving fails, Tine keeps it and retries the next time it opens. A retry never loses the item; it can add it twice only if Tine is closed or crashes right after the journal was saved, or when an old share is reopened from Android's recent apps after Tine was closed. A share Tine can't save whole (more than 32 images, a file over 64 MiB, a non-image file, a file from Tine itself) is refused with a message instead of being saved in part (GH #608, REG-GH608-SHARE-INBOX-EXACTLY-ONCE).
+- Android: long-press the launcher icon for **Today**, **Quick capture** and **Search**. A **Quick capture** Quick Settings tile (with the Tine mark) opens today's journal with an empty block ready for typing (REG-GH608-ANDROID-SHARE-TARGET). Search and quick capture open with the keyboard already up (UI-ANDROID-ROUTE-KEYBOARD).
+- iOS: a **Tine** share extension saves text, web pages, links and up to five images ("Saved to Tine"), and they land at the bottom of today's journal the next time you open Tine. Pages of the open graph appear in Spotlight search; hidden pages never do. The Shortcuts app and Siri offer **Add to Tine journal**, **Search Tine** and **Open page**, and the Home Screen icon has **Today's journal**, **Quick capture** and **Search** quick actions (REG-IOS-NATIVE-INTEGRATIONS).
+- Shared items are shaped like Logseq's mobile share on each platform, using Logseq's `:quick-capture-templates` from `config.edn`. On Android links become titled links, video links become `{{video}}` embeds and posts on X become `{{twitter}}` embeds; on iOS the shared text and link are kept as they are (REG-GH608-SHARE-SHAPE-OG).
+- `tine://today`, `tine://capture`, `tine://search?q=…` and `tine://page/<name>` open those places in the current graph. They only navigate and never write (REG-NATIVE-APP-ROUTES).
+
+### Fixed
+
+- Android: the native library is aligned for 16 KB memory pages, which Google Play requires and newer Android devices can use; release builds also produce the app bundle Google Play takes.
+- Representable Windows graph paths display without verbatim prefixes; stored canonical paths retain existing graph identity (REG-WIN-GRAPH-PATH).
+- Cold launches from a Tine link restore the last graph before handling the link (UI-WIN-LINK-COLD-START).
+- New graphs refuse Windows access to WSL1 backing rootfs folders; existing graphs warn and remain openable, with advice to use `\\wsl.localhost\<distro>\…` (UI-WIN-WSL-ROOTFS).
+- Opening another graph replaces the previous graph's undismissed Guide announcement (UI-WIN-GUIDE-TOAST-ONCE).
+
+- A page that changed on disk while you were editing one of its blocks (a Syncthing delivery, another editor) now keeps the new text and your editor stays open on that block. Before, on Windows and Android an open code block, or a block whose SCHEDULED/DEADLINE line was not yet in its usual place, could write its old text back over the change and save it, and the editor closed (UI-CARRY-RELOAD-STALE-BLUR).
+- iOS (discussion #421): the folder-choice message now names both places a graph can live, On My iPhone → TineOutline and iCloud Drive → TineOutline. It said "inside On My iPhone", which read as if another app's folder there (such as Logseq's) would work.
+
 ## [0.8.0-beta.1] - 2026-10-13
 
 ### Added
@@ -361,6 +417,12 @@ Two fixes for the 0.8.0 stable candidate. Fixes described elsewhere as "fixed fo
 - Outline editing (GH #632): Tab and Shift+Tab indent and outdent blocks starting with a Markdown list marker when the caret is on the first body line. List items on later lines keep their in-block indentation.
 - Embeds (GH #642): Enter at the end of a collapsed embed creates a sibling after its host, including at the end of a page, without changing the embedded source. Undo removes the new sibling.
 - iOS (discussion #421): the folder-choice message now names both places a graph can live, On My iPhone → TineOutline and iCloud Drive → TineOutline. It said "inside On My iPhone", which read as if another app's folder there (such as Logseq's) would work.
+
+## [0.7.1] - 2026-10-08
+
+### Changed
+
+- Security: updated HTML sanitizers and desktop updater TLS dependencies, plus compatible dependency fixes from the review in discussion #564.
 
 ## [0.7.0-beta.3] - 2026-10-08
 

@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import { APP_PRODUCT_NAME } from "../appIdentity";
+import { APP_PRODUCT_NAME, APP_UPDATE_CHANNEL } from "../appIdentity";
 import { installUpdateForTest, setUpdateExitGuard } from "../update";
 import { setToasts } from "../toasts";
 import { Toasts } from "./Toasts";
@@ -21,8 +21,9 @@ vi.mock("../backend", () => ({
 vi.mock("../platform", () => ({ platformKind: async () => "desktop" }));
 vi.mock("../debug", () => ({ dbg: vi.fn(), recordDiagnostic: vi.fn(async () => {}) }));
 vi.mock("../ui", () => ({ openSettings: vi.fn() }));
+// The offer matches the channel this tree ships: a stable build refuses a Beta version.
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: async () => ({
-  version: "0.8.0-beta.2", download: async () => {}, install: native.install, close: async () => {},
+  version: APP_UPDATE_CHANNEL === "beta" ? "0.8.0-beta.2" : "0.8.1", download: async () => {}, install: native.install, close: async () => {},
 }) }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: native.relaunch }));
 
