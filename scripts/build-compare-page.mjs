@@ -64,6 +64,11 @@ export function renderComparison({ base = root, data, version } = {}) {
           }
           return `${escape(cell.text)}<br><small><a href="${escape(evidence.path.slice(8))}#${escape(evidence.anchor)}">Guide</a></small>`;
         }
+        if (evidence.path === "website/index.html") {
+          requireText(evidence.contains, `${row.id}: distribution evidence excerpt`);
+          if (!source.includes(evidence.contains)) throw new Error(`${row.id}: distribution evidence excerpt changed`);
+          return `${escape(cell.text)}<br><small><a href="https://github.com/martinkoutecky/tine/blob/v${encodeURIComponent(version)}/${escape(evidence.path)}">Distribution source</a></small>`;
+        }
         if (!/(?:^scripts\/(?:e2e-|cli-).*\.mjs$|(?:\.test\.|\/tests\/))/.test(evidence.path)) {
           throw new Error(`${row.id}: expected Guide page or test path`);
         }

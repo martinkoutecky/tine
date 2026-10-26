@@ -39,6 +39,18 @@ test("claims require reasons and are visibly marked", () => {
   input.rows[0].tine.reason = "Needs a runtime benchmark";
   assert.match(renderComparison({ data: input }), /Claim: Needs a runtime benchmark/);
 });
+test("distribution evidence requires a matching excerpt in the download page source", () => {
+  const input = data();
+  input.rows[0].tine = {
+    text: "TestFlight beta",
+    evidence: { path: "website/index.html", contains: "https://testflight.apple.com/join/rpGGpTVW" },
+  };
+  assert.match(renderComparison({ data: input }), /Distribution source/);
+  input.rows[0].tine.evidence.contains = "missing distribution evidence";
+  assert.throws(() => renderComparison({ data: input }), /distribution evidence excerpt changed/);
+  delete input.rows[0].tine.evidence.contains;
+  assert.throws(() => renderComparison({ data: input }), /distribution evidence excerpt/);
+});
 test("competitor cells require primary HTTPS sources and actual calendar dates", () => {
   for (const bad of [
     { source: undefined }, { source: "https://example.org/review" },

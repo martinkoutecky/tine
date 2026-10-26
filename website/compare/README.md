@@ -10,6 +10,9 @@ Tine cells contain `text` and either:
 - `evidence`: a repository `path` to a Guide HTML page with `anchor` and a
   `contains` excerpt from that anchored block, or a test path (optionally with
   a `contains` excerpt). Missing files, anchors and excerpts fail generation.
+- Distribution rows may cite `website/index.html` with a required `contains`
+  excerpt. The generator checks the download-page source and links to it at
+  the generated version, without asserting that a packaging workflow ran.
 - `claim: true` and a nonempty `reason`, displayed visibly as a claim.
 
 Competitor cells contain `text`, a primary HTTPS `source`, and a calendar
@@ -24,6 +27,11 @@ Builds do not fetch the network or run the cited native tests. At stable cuts,
 revisit competitor URLs and dates, and review evidence against current Guide
 templates and tests. Prefer scoped positive descriptions; do not infer absence
 from silence. Broad row labels are qualified by the cell's specific wording.
+Source-code citations use a pinned commit and line range; documentation source
+citations also prefer pinned commits. Keep file-version Logseq evidence separate
+from DB evidence: current `logseq/logseq` master uses the DB model. A documented
+alternative (such as Bases views or a capture URI) is described as that specific
+capability, not as full parity with the row label.
 
 `npm run docs:build` finishes with `npm run compare:preview`. The standalone
 preview is `artifacts/compare-page/compare.preview.html`; its only difference
