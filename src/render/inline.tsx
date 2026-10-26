@@ -31,6 +31,7 @@ import { EmojiText } from "./emoji";
 import { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
 export { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
 import { resolvedTarget } from "../pageIndex";
+import { pageIdentityKey } from "../pageIdentity";
 import { pageIcon } from "../pageIconBatch";
 import { PageIcon } from "../components/PageIcon";
 import { coarseSpanAttrs, literalSpanAttrs, rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset, type SpanDomAttrs } from "./spans";
@@ -407,6 +408,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
       <a
         ref={anchorEl}
         class={props.tag ? "tag" : "page-ref"}
+        data-ref={pageIdentityKey(props.name)}
         data-missing-page={missing() ? "" : undefined}
         {...(props.spanAttrs ?? {})}
         // Suppress the browser defaults the destinations replace: shift-range

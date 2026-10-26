@@ -357,7 +357,7 @@ fn publishes_only_public_pages() {
         .unwrap_or_else(|error| panic!("published page under {dir:?}: {error}"));
     assert!(p.contains("<h1 class=\"page\">Shared</h1>"));
     assert!(
-        p.contains("<span class=\"ref ref-outside\">Secret</span>"),
+        p.contains("<span class=\"ref ref-outside\" data-ref=\"secret\">Secret</span>"),
         "private reference must stay inert"
     );
     assert!(

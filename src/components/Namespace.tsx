@@ -26,6 +26,7 @@ import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
  *  handler from also firing. */
 function nsLink(name: string, after?: () => void, stop = false) {
   return {
+    "data-ref": pageIdentityKey(name),
     onMouseDown: internalLinkMouseDown,
     onClick: (e: MouseEvent) => {
       if (stop) e.stopPropagation();

@@ -1333,6 +1333,33 @@ describe("page actions entry point", () => {
     }
   });
 
+  it("shows the conflicting files and recovery instruction when a routed page rename is refused (GH #774)", async () => {
+    const dto: PageRead = { name: "Marketing Box", kind: "page", title: "Marketing Box", pre_block: null,
+      id: "pages/Marketing Box.md", blocks: [{ id: "duplicate-root", raw: "Body", collapsed: false, children: [] }] };
+    setDoc({ byId: { "duplicate-root": node("duplicate-root", "Body", dto.name) },
+      pages: [{ ...page(dto.name, "page", ["duplicate-root"]), id: dto.id }], feed: [], loaded: true });
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
+    const message = "Multiple files share this page identity:\n\n“pages/Marketing Box.md”\n“pages/copy/Marketing Box.md”\n\nTo resolve this, merge one file into the other or remove one, then try again.";
+    vi.spyOn(backend(), "renamePage").mockRejectedValue(message);
+    const alert = vi.spyOn(window, "alert").mockImplementation(() => {});
+    mainPaneRouter.openFile(dto.id, dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".page-title")).not.toBeNull());
+      root.querySelector<HTMLElement>(".page-title")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      await tick();
+      const input = root.querySelector<HTMLInputElement>(".page-title-input")!;
+      input.value = "Internal Tools";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await vi.waitFor(() => expect(alert).toHaveBeenCalledWith(`Rename failed: ${message}`));
+      expect(mainPaneRouter.route()).toMatchObject({ name: "Marketing Box" });
+      expect(doc.byId["duplicate-root"].raw).toBe("Body");
+    } finally { dispose(); }
+  });
+
   it("commits title rename once from blur or Enter and lets Escape cancel (GH #233)", async () => {
     const dto: PageRead = {
       name: "Rename me",
