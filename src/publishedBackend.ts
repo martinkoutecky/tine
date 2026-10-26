@@ -269,6 +269,7 @@ const OPTIONAL_METHODS = new Set([
   "tineLinks",
   // CLI slice 2: only a native window answers its graph owner's flush requests.
   "onOwnerFlushRequest",
+  "onOwnerPageRenamed",
   "ownerFlushAnswer",
 ]);
 

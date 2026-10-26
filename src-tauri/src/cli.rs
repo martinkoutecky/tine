@@ -76,7 +76,7 @@ enum Command {
     },
     /// Show which process owns the graph and what it is doing.
     Status(ReadArgs),
-    /// Read pages.
+    /// Read, create, rename or delete pages.
     Page {
         #[command(subcommand)]
         action: PageAction,
@@ -102,6 +102,20 @@ enum Command {
         block: bool,
         #[command(flatten)]
         read: ReadArgs,
+    },
+    /// Print ((uuid)), durably assigning the block an id when needed.
+    Ref {
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    /// Print {{embed ((uuid))}}, ensuring a durable block id first.
+    Embed {
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        #[command(flatten)]
+        write: WriteArgs,
     },
     /// Search page names and block text, as the app's search does.
     Search {
@@ -315,8 +329,45 @@ impl WriteArgs {
     }
 }
 
+/// Rename is graph-wide; the single-page revision/run options cannot guard it.
+#[derive(Debug, Args)]
+struct RenameOptions {
+    #[command(flatten)]
+    read: ReadArgs,
+    /// Unsupported for graph-wide rename; supplying this option refuses without changes.
+    #[arg(long, value_name = "REV")]
+    rev: Option<String>,
+    /// Unsupported for graph-wide rename; supplying this option (or a nonempty
+    /// TINE_RUN) refuses without changes. End/unset the run before renaming.
+    #[arg(long, value_name = "RUN", env = "TINE_RUN")]
+    run: Option<String>,
+}
+
 #[derive(Debug, Subcommand)]
 enum PageAction {
+    /// Create an empty page; refuse an existing page or alias.
+    Create {
+        name: String,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    /// Rename a page and rewrite references, as the app does. An existing
+    /// destination refuses; merges require confirmation in the app.
+    Rename {
+        old: String,
+        new: String,
+        #[command(flatten)]
+        write: RenameOptions,
+    },
+    /// Delete a page to graph trash and report broken references.
+    Delete {
+        name: String,
+        /// Confirm deletion without an interactive prompt.
+        #[arg(long, visible_alias = "force")]
+        yes: bool,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
     /// Show a page's outline (the text a window shows, unsaved edits included).
     Show {
         #[arg(value_name = "PAGE")]
@@ -561,6 +612,8 @@ pub(crate) fn dispatch() -> Option<i32> {
             | Command::Block { .. }
             | Command::Journal { .. }
             | Command::Refs { .. }
+            | Command::Ref { .. }
+            | Command::Embed { .. }
             | Command::Search { .. }
             | Command::Query { .. }
             | Command::Pages { .. }
@@ -600,6 +653,32 @@ fn read_command(command: Command) -> i32 {
         Command::Block {
             action: BlockAction::Show { uuid, read: args },
         } => read_verb(args.target(), "block.show", json!({ "uuid": uuid })),
+        Command::Page {
+            action: PageAction::Create { name, write },
+        } => {
+            let args = write.args(json!({"name":name}));
+            write_verb(write.read.target(), "page.create", args)
+        }
+        Command::Page {
+            action: PageAction::Rename { old, new, write },
+        } => {
+            let args = json!({"old":old,"new":new,"rev":write.rev,"run":write.run});
+            write_verb(write.read.target(), "page.rename", args)
+        }
+        Command::Page {
+            action: PageAction::Delete { name, yes, write },
+        } => {
+            let args = write.args(json!({"name":name,"yes":yes}));
+            write_verb(write.read.target(), "page.delete", args)
+        }
+        Command::Ref { handle, write } => {
+            let args = write.args(json!({"handle":handle}));
+            write_verb(write.read.target(), "ref", args)
+        }
+        Command::Embed { handle, write } => {
+            let args = write.args(json!({"handle":handle}));
+            write_verb(write.read.target(), "embed", args)
+        }
         Command::Journal { date, read: args } => {
             read_verb(args.target(), "journal", json!({ "date": date }))
         }
@@ -779,6 +858,8 @@ fn prepare_console_if_needed(argv: &[OsString]) {
                 | "block"
                 | "journal"
                 | "refs"
+                | "ref"
+                | "embed"
                 | "search"
                 | "query"
                 | "pages"
@@ -814,6 +895,47 @@ mod tests {
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_owned()).collect()
+    }
+
+    #[test]
+    fn page_verbs_and_reference_helpers_parse_as_terminal_writes() {
+        for form in [
+            vec!["tine", "page", "create", "A/B"],
+            vec!["tine", "page", "rename", "A", "a"],
+            vec!["tine", "page", "delete", "A", "--yes", "--rev", "revision"],
+            vec!["tine", "page", "delete", "A", "--force"],
+            vec!["tine", "ref", "A/1~abcdef", "--json"],
+            vec!["tine", "embed", "A/1~abcdef", "--author", "Ada"],
+        ] {
+            Cli::try_parse_from(&form).unwrap();
+            assert_eq!(
+                launch_request(&argv(&form), Path::new("/")),
+                LaunchRequest::Focus
+            );
+        }
+        assert!(Cli::try_parse_from(["tine", "page", "rename", "A"]).is_err());
+        assert!(Cli::try_parse_from(["tine", "ref"]).is_err());
+    }
+
+    #[test]
+    fn rename_help_discloses_unsupported_revision_and_run_options() {
+        let mut command = Cli::command();
+        let rename = command
+            .find_subcommand_mut("page")
+            .unwrap()
+            .find_subcommand_mut("rename")
+            .unwrap();
+        for option in ["rev", "run"] {
+            let help = rename
+                .get_arguments()
+                .find(|arg| arg.get_id() == option)
+                .unwrap()
+                .get_help()
+                .unwrap()
+                .to_string();
+            assert!(help.contains("Unsupported for graph-wide rename"));
+            assert!(help.contains("refuses without changes"));
+        }
     }
 
     #[test]
@@ -1066,6 +1188,20 @@ mod tests {
             ("tine-serve.1", include_str!("../../docs/tine-serve.1")),
             ("tine-status.1", include_str!("../../docs/tine-status.1")),
             ("tine-page.1", include_str!("../../docs/tine-page.1")),
+            (
+                "tine-page-create.1",
+                include_str!("../../docs/tine-page-create.1"),
+            ),
+            (
+                "tine-page-rename.1",
+                include_str!("../../docs/tine-page-rename.1"),
+            ),
+            (
+                "tine-page-delete.1",
+                include_str!("../../docs/tine-page-delete.1"),
+            ),
+            ("tine-ref.1", include_str!("../../docs/tine-ref.1")),
+            ("tine-embed.1", include_str!("../../docs/tine-embed.1")),
             (
                 "tine-page-show.1",
                 include_str!("../../docs/tine-page-show.1"),

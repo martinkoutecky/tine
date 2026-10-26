@@ -228,6 +228,16 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
             super::write::delete_block(slot, args)
         }),
         "block.add" => in_run(slot, args, "tine add", || super::add::add_block(slot, args)),
+        "page.create" => in_run(slot, args, "tine page create", || {
+            super::pages::create_named_page(slot, args)
+        }),
+        "page.rename" => super::pages::rename_named_page(slot, args),
+        "page.delete" => in_run(slot, args, "tine page delete", || {
+            super::pages::delete_named_page(slot, args)
+        }),
+        "ref" | "embed" => in_run(slot, args, "tine block id", || {
+            super::pages::block_reference(slot, args, request.verb == "embed")
+        }),
         #[cfg(desktop)]
         "run.begin" => super::git_run::run_begin(slot),
         #[cfg(desktop)]

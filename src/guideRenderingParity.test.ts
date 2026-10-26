@@ -1,5 +1,11 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+it("the Guide teaches calendar sidebar gestures and retained tagged-page folds", () => {
+  const journals = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
+  const references = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
+  expect(journals).toContain("Shift-clicking the calendar button itself opens today's journal there");
+  expect(references).toContain("remembers your fold choice for each page when you switch tabs");
+});
 it("the Guide explains query pauses and stale collapsed reference counts", () => {
   const queries = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
   const references = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");

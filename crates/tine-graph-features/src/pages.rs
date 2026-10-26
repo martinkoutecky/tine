@@ -425,7 +425,9 @@ pub fn rename_page_expected(
 /// transaction: all steps are checked before the first write and a failure
 /// rolls back; only a failed rollback or publication leaves partial state,
 /// and its error says to inspect disk. The host's rename moves
-/// `config.edn`'s home page in its own transaction after it.
+/// `config.edn`'s home page in its own transaction after it. If that later
+/// transaction fails, [`RenameReport::applied_before_error`] exposes the
+/// already-published page changes for caller reconciliation.
 pub fn rename_or_merge_page(
     store: &Store,
     host: &PageHost,
@@ -1067,12 +1069,22 @@ fn host_rename(
     }
     // In path order, as the transaction's report lists them.
     touched.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(Some(RenameReport {
+    let mut report = RenameReport {
         outcome: RenameOutcome::Renamed,
         touched,
         skipped_conflicted_referrers: skipped.iter().map(|id| id.as_str().to_owned()).collect(),
-        home_page: commit_home(store, &first.lookup)?,
-    }))
+        home_page: None,
+    };
+    report.home_page = commit_home(store, &first.lookup).map_err(|source| {
+        io::Error::new(
+            source.kind(),
+            IncompleteRename {
+                report: report.clone(),
+                source,
+            },
+        )
+    })?;
+    Ok(Some(report))
 }
 
 /// A host rename's `:default-home` move: `logseq/config.edn` (the meta area,
@@ -1175,6 +1187,17 @@ pub struct RenameReport {
 }
 
 impl RenameReport {
+    /// Page changes already published before a later, separate home-page
+    /// configuration transaction failed. Callers must refresh these pages
+    /// even though the overall operation returned an error. Other errors
+    /// carry no such proof and may still represent partial publication.
+    pub fn applied_before_error(error: &io::Error) -> Option<&Self> {
+        error
+            .get_ref()?
+            .downcast_ref::<IncompleteRename>()
+            .map(|error| &error.report)
+    }
+
     fn unchanged() -> Self {
         Self {
             outcome: RenameOutcome::Unchanged,
@@ -1182,6 +1205,28 @@ impl RenameReport {
             skipped_conflicted_referrers: Vec::new(),
             home_page: None,
         }
+    }
+}
+
+#[derive(Debug)]
+struct IncompleteRename {
+    report: RenameReport,
+    source: io::Error,
+}
+
+impl std::fmt::Display for IncompleteRename {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Page files renamed, but the home-page config update failed: {}",
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for IncompleteRename {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
     }
 }
 

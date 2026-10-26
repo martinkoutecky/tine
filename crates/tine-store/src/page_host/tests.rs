@@ -925,6 +925,7 @@ const CENSUS_CALL_SITES: &[&str] = &[
     "src-tauri/src/page_commands.rs",
     "src-tauri/src/graph.rs",
     "src-tauri/src/owner/write.rs",
+    "src-tauri/src/owner/pages.rs",
 ];
 
 /// Production `PageHost::start(` lines the census below saw.

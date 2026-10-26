@@ -2,6 +2,29 @@
 use super::*;
 
 #[test]
+fn owner_delete_captures_session_at_call_after_a_reload() {
+    let live = Live::new(&[("pages/a.md", "- base\n")]);
+    let (key, _) = live.open("pages/a.md");
+    let page = PageId::from(key.clone());
+    // The caller flushed/read in S1, then the window reloaded before delete.
+    let session = live.host.session();
+    let checked = fs::read(live.root.join(&key)).unwrap();
+    live.host.window_reloaded();
+    assert_ne!(session, live.host.session());
+    assert_eq!(
+        live.host.delete(session, &page, Some(&checked)),
+        PageOperation::Refused
+    );
+    assert!(live.root.join(&key).exists());
+    assert_eq!(
+        live.host.delete(None, &page, Some(&checked)),
+        PageOperation::Applied
+    );
+    assert!(!live.root.join(&key).exists());
+    live.host.stop();
+}
+
+#[test]
 fn f6_recovery_staging_leaves_driver_available_and_checks_the_staged_draft() {
     for absent in [false, true] {
         for change_draft in [false, true] {

@@ -1,4 +1,4 @@
-.ref-breadcrumb button.ref-crumb {
+.ref-breadcrumb [role="button"].ref-crumb {
   background: none;
   border: 0;
   padding: 0;
@@ -7,14 +7,14 @@
   cursor: pointer;
 }
 
-.ref-breadcrumb button.ref-crumb:hover {
+.ref-breadcrumb [role="button"].ref-crumb:hover {
   color: var(--link-color);
   text-decoration: underline;
 }
 
-/* GH #643 (query trails): a crumb renders its block's markup (OG `breadcrumb`
-   map-inline). Its links stay inert so a click picks the crumb; the width cap
-   replaces the old 60-character cut. */
+/* GH #643/#743: render the ancestor's markup, including working links. The
+   surrounding breadcrumb activates ancestor context only outside those links.
+   A role-button span avoids nesting anchors inside a native button. */
 .ref-breadcrumb .ref-crumb { max-width: 60ch; }
 .ref-crumb-label {
   display: inline-block;
@@ -23,6 +23,4 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   vertical-align: bottom;
-  pointer-events: none;
 }
-.ref-crumb-label .page-ref, .ref-crumb-label .tag { color: inherit; }

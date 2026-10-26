@@ -2,11 +2,11 @@
 .el .ds Aq '
 .TH tine-page 1  "page " 
 .SH NAME
-tine\-page \- Read pages
+tine\-page \- Read, create, rename or delete pages
 .SH SYNOPSIS
 \fBtine page\fR [\fB\-\-debug\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
 .SH DESCRIPTION
-Read pages
+Read, create, rename or delete pages
 .SH OPTIONS
 .TP
 \fB\-\-debug\fR
@@ -15,6 +15,15 @@ Enable diagnostic logging for the desktop app
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .SH SUBCOMMANDS
+.TP
+tine\-page\-create(1)
+Create an empty page; refuse an existing page or alias
+.TP
+tine\-page\-rename(1)
+Rename a page and rewrite references, as the app does. An existing destination refuses; merges require confirmation in the app
+.TP
+tine\-page\-delete(1)
+Delete a page to graph trash and report broken references
 .TP
 tine\-page\-show(1)
 Show a page\*(Aqs outline (the text a window shows, unsaved edits included)

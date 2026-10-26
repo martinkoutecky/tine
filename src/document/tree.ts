@@ -57,11 +57,24 @@ export function visibleOrder(): string[] {
 // that aren't part of the main routed view, e.g. the quick-capture scratch page,
 // whose roots never appear in mainPages(). Without this, prevVisible/nextVisible
 // (and therefore Backspace-merge and Up/Down nav) are dead in the capture window.
-export function pageVisibleOrder(pageName: string): string[] {
+export function pageVisibleOrder(pageName: string, revealId?: string): string[] {
   const order: string[] = [];
   const page = doc.pages.find((p) => p.name === pageName);
   if (!page) return order;
-  visitVisible(page.roots, (id) => order.push(id));
+  // GH #766: a secondary view can expose a child whose source ancestors are
+  // folded. Reveal only its ancestor path in SOURCE order for structural
+  // navigation; never use the arbitrary result list as a merge topology.
+  const ancestors = new Set<string>();
+  let parent = revealId ? doc.byId[revealId]?.parent : null;
+  while (parent && !ancestors.has(parent)) {
+    ancestors.add(parent);
+    parent = doc.byId[parent]?.parent;
+  }
+  const scope = revealId ? {
+    roots: page.roots,
+    collapsed: (id: string, stored: boolean) => ancestors.has(id) ? false : stored,
+  } : undefined;
+  visitVisible(page.roots, (id) => order.push(id), scope);
   return order;
 }
 
@@ -112,7 +125,7 @@ export function prevVisible(id: string, scope: OutlineScope | null = null): stri
   if (i !== undefined) return i > 0 ? order[i - 1] : null;
   const node = doc.byId[id];
   if (!node) return null;
-  const ord = pageVisibleOrder(node.page);
+  const ord = pageVisibleOrder(node.page, id);
   const j = ord.indexOf(id);
   return j > 0 ? ord[j - 1] : null;
 }
@@ -128,7 +141,7 @@ export function nextVisible(id: string, scope: OutlineScope | null = null): stri
   if (i !== undefined) return i < order.length - 1 ? order[i + 1] : null;
   const node = doc.byId[id];
   if (!node) return null;
-  const ord = pageVisibleOrder(node.page);
+  const ord = pageVisibleOrder(node.page, id);
   const j = ord.indexOf(id);
   return j >= 0 && j < ord.length - 1 ? ord[j + 1] : null;
 }

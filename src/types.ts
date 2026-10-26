@@ -139,6 +139,17 @@ export interface RenameDone {
   home_page?: string | null;
 }
 
+/** An owner-side rename uses the same refresh as the window's own rename. */
+export interface OwnerPageRename {
+  old: string;
+  name: string;
+  /** Null for a reference-only source or fileless namespace parent. */
+  path: string | null;
+  kind: PageKind;
+  report: RenameDone;
+  binding_generation: number;
+}
+
 /** One page file a rename or merge wrote. */
 export interface RenameTouchedPage {
   /** Graph-relative path before the rename: the loaded page's `id`. */
