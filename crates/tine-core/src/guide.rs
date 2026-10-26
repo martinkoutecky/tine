@@ -394,7 +394,7 @@ mod journal_guide_tests {
             "These actions switch to the new tab",
             "preview stays open while its **… → Page actions** menu is open",
             "keeps your current tab active and confirms **Opened in a new tab**",
-            "it is listed under **Tabs** in the left sidebar",
+            "it is listed under **Open tabs** in the left sidebar",
             "Block embed breadcrumbs",
             // GH #417/#418: per-occurrence actions on references and embeds.
             "**Edit link** and **Remove reference**",
@@ -418,6 +418,10 @@ mod journal_guide_tests {
             "for a page, **Open as page**",
             "Drag the sidebar's left edge to resize it",
             "Tabs stretch to fill the strip",
+            "**Open tabs** list in the left sidebar appears once a second tab is open",
+            "**Move out of group**",
+            "Closing a tab never closes the tabs nested under it",
+            "Use **Open tabs** in the left sidebar to switch tabs",
             "a tab zoomed into a block is named for that block",
             "anywhere onto another pane's tab bar to put it last there",
         ] {
@@ -956,6 +960,8 @@ mod rename_guide_tests {
             "**Reply…**",
             "`author:: <your name>`",
             "**Ctrl/Cmd+Z** restores them together",
+            "On a narrow window, in a split pane or in the sidebar, comments stay in the outline as cards",
+            "zooming into a commented bullet also shows them there",
         ] {
             assert!(
                 tips.contains(behavior),

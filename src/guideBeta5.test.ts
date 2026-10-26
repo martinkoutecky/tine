@@ -24,8 +24,8 @@ it("the Guide describes the phone navigation row, its Appearance setting and how
 // GH #705 said phones and tablets had no tab strip; D-20261018-W1 gates it on width instead, so the Guide
 // now says where a new tab goes on a narrow window.
 it("the Guide says where Open in new tab goes on a narrow window (GH #705, D-20261018-W1)", () => {
-  expect(guide("pages-links-references-search")).toContain("it is listed under **Tabs** in the left sidebar");
-  expect(guide("tips")).toContain("on a narrow window the tab is listed under **Tabs** in the left sidebar");
+  expect(guide("pages-links-references-search")).toContain("it is listed under **Open tabs** in the left sidebar");
+  expect(guide("tips")).toContain("on a narrow window the tab is listed under **Open tabs** in the left sidebar");
   expect(guide("platforms-and-mobile")).toContain("The **tab strip** appears whenever the window is 640 px or wider, on every platform");
 });
 
