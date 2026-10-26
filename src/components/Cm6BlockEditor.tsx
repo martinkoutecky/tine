@@ -16,7 +16,9 @@ import { PreviewWidget } from "../editor/cm6PreviewWidget";
 import { registerFocusedEditorCommandBridge } from "../editorCommandBridge";
 import { cm6Formatting } from "../editor/cm6Formatting";
 import { cm6Structure } from "../editor/cm6Structure";
-import { CollapseSurfaceContext, EmbedNavExitContext } from "./Block";
+import { CaptureCtx, CollapseSurfaceContext, EmbedNavExitContext } from "./Block";
+import { captureKeyIntent } from "../editor/captureKeys";
+import { cm6CommandHandlers } from "../editor/cm6Commands";
 import { marginNavigation } from "./blockComments";
 import { SheetCellContext } from "../sheet/context";
 import { cm6SheetKeys } from "../editor/cm6SheetKeys";
@@ -25,7 +27,8 @@ import { editorAssets } from "../editor/editorAssets";
 import { cm6Completions } from "../editor/cm6Completions";
 import { cm6Typing } from "../editor/cm6Typing";
 import { offsetThroughRewrite } from "../editor/caretThroughRewrite";
-import { isPermittedTabGesture } from "../keybindings";
+import { editorCommandFor, isPermittedTabGesture } from "../keybindings";
+import { spellcheckEnabled } from "../spellcheckSettings";
 import { isNodeValue } from "../windowRealm";
 import { nearestScrollableY } from "./blockParts";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
@@ -59,6 +62,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const format = pageByName(shownNode.page)?.format === "org" ? "org" : "md";
   const current = () => alive && node(props.id) === shownNode && blockWritable(props.id);
   const cell = useContext(SheetCellContext);
+  const capture = useContext(CaptureCtx);
   const hiddenProperties = cell ? SHEET_CELL_HIDE : BUILTIN_HIDE;
   // A directly mounted editor can outlive its node during graph replacement.
   // Its projections remain readable until disposal; current() gates all writes.
@@ -105,6 +109,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const projection = Annotation.define<boolean>();
   const wrapping = new Compartment();
   const editability = new Compartment();
+  const spellcheck = new Compartment();
   const refreshPreview = StateEffect.define<null>();
   let updating = false;
   let rawBeforeCommit = shownNode.raw;
@@ -165,6 +170,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   };
   const embedExit = useContext(EmbedNavExitContext);
   const structure = cm6Structure({ ...props, format, current, commit, embedExit, code: () => code() !== null, calc: isCalc,
+    annotation: () => annotationInfo(propertySession.facets(source(), format).properties) !== null,
     collapse: useContext(CollapseSurfaceContext),
     ...marginNavigation(props.id, props.scope, props.surface, () => format),
   });
@@ -193,6 +199,28 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     literal, scaffold: completion.scaffold, refresh: completion.refresh, pauseCompletion: completion.pause });
   const formatting = cm6Formatting({ ...props, format, current, commit, view: () => view,
     closeCompletion: completion.close, refreshCompletion: completion.refresh });
+  const submitCapture = () => {
+    if (!capture || !view) return false;
+    commit(view.state.doc.toString());
+    capture.submit();
+    return true;
+  };
+  const commands = cm6CommandHandlers({
+    text: {
+      text: () => view!.state.doc.toString(), start: () => view!.state.selection.main.from,
+      apply: edit => {
+        completion.close();
+        view!.dispatch({ changes: { from: 0, to: view!.state.doc.length, insert: edit.text },
+          selection: { anchor: edit.start, head: edit.end }, scrollIntoView: true, userEvent: "input" });
+      },
+      move: pos => view!.dispatch({ selection: { anchor: pos }, scrollIntoView: true }),
+    },
+    view: () => view!, structure: structure.commands, formatting: formatting.commands,
+    completion: completion.commands, clipboard: clipboard.commands,
+    capture: submitCapture, upload: () => { void assets.uploadAsset(); },
+    photo: () => { void assets.capturePhotoCmd(); }, voice: () => { void assets.voiceMemoToggle(); },
+  });
+  const command = (id: string) => sheet?.blocks(id) || commands[id]?.() || false;
   const buildDecorations = (state: EditorState): DecorationSet => {
     if (!parserReady() || literal()) return Decoration.none;
     const raw = state.doc.toString();
@@ -226,6 +254,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       state: EditorState.create({ doc: shown(), extensions: [
         decorations, wrapping.of(!isCalc() && (!codeEditing() || codeWrapping()) ? EditorView.lineWrapping : []),
         editability.of([EditorState.readOnly.of(!current()), EditorView.editable.of(current())]), completion.inputSelection, typing.filter,
+        spellcheck.of(EditorView.contentAttributes.of({ spellcheck: String(spellcheckEnabled()) })),
         EditorView.editorAttributes.of({ "data-block-editor": "cm6" }),
         EditorView.contentAttributes.of({ "data-cm6-editor": props.id, "aria-label": "" }),
         keymap.of(defaultKeymap),
@@ -301,10 +330,20 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       if (event.defaultPrevented && !isPermittedTabGesture(event)) return;
       // Run before CM's target handler: desktop WebKit suppresses its keymaps
       // just after compositionend, including an already committed plain Enter.
+      if (completion.keydown(event)) {
+        event.preventDefault(); event.stopImmediatePropagation(); return;
+      }
+      const id = editorCommandFor(event);
+      const intent = captureKeyIntent(event, id, capture);
+      if (intent) {
+        if (intent === "submit") submitCapture();
+        else capture!.cancel();
+        event.preventDefault(); event.stopImmediatePropagation(); return;
+      }
       const s = view.state.selection.main;
       const leave = codeView.leaveRange(event, view.state.doc.toString(), s.from, s.to);
       if (leave) showText(view, visible(), leave.anchor, leave.head);
-      if (leave || completion.keydown(event) || clipboard.keydown(event, view) || sheet?.keydown(event, view) || formatting.keydown(event) || structure.keydown(event, view)) {
+      if (leave || clipboard.keydown(event, view) || sheet?.keydown(event, view) || id && command(id) || formatting.keydown(event) || structure.keydown(event, view)) {
         event.preventDefault();
         event.stopImmediatePropagation();
       }
@@ -358,18 +397,10 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         const s = view?.state.selection.main;
         return view && s && !s.empty ? { text: view.state.doc.toString(), start: s.from, end: s.to } : null;
       },
-      dispatch: command => {
+      dispatch: id => {
         typing.beforeKey();
         if (!view || !current() || typing.active()) return false;
-        if (sheet?.blocks(command)) return true;
-        if (completion.command(command)) return true;
-        if (clipboard.command(view, command)) return true;
-        if (formatting.command(command)) return true;
-        if (structure.command(view, command)) return true;
-        if (command === "editor/upload-asset") { void assets.uploadAsset(); return true; }
-        if (command === "editor/capture-photo") { void assets.capturePhotoCmd(); return true; }
-        if (command === "editor/voice-memo") { void assets.voiceMemoToggle(); return true; }
-        return false;
+        return command(id);
       },
     });
   });
@@ -390,6 +421,10 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   createEffect(() => {
     const writable = writablePolicy();
     untrack(() => view?.dispatch({ effects: editability.reconfigure([EditorState.readOnly.of(!writable), EditorView.editable.of(writable)]) }));
+  });
+  createEffect(() => {
+    const enabled = spellcheckEnabled();
+    untrack(() => view?.dispatch({ effects: spellcheck.reconfigure(EditorView.contentAttributes.of({ spellcheck: String(enabled) })) }));
   });
   createEffect(() => {
     if (parserReady()) untrack(() => view?.dispatch({ effects: refreshPreview.of(null) }));

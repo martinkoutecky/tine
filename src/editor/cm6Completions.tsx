@@ -30,7 +30,8 @@ import { CaptureCtx } from "../components/Block";
 import { registerTransientLayer } from "../transientLayers";
 import { EditorAutocomplete } from "../components/EditorAutocomplete";
 import { editorAssets } from "./editorAssets";
-import { editorCommandFor, isPermittedTabGesture } from "../keybindings";
+import { isPermittedTabGesture } from "../keybindings";
+import { guardedCommands } from "./cm6Commands";
 import { msg, t as translate } from "../i18n";
 import { dbg } from "../debug";
 import { pushToast } from "../toasts";
@@ -492,24 +493,27 @@ export function cm6Completions(props: {
       return [tr, { selection: { anchor: line.from }, sequential: true }];
     return tr;
   });
-  const command = (id: string): boolean => {
-    if (!current() || view().compositionStarted) return false;
-    if (id === "editor/open-date-picker") { openPlanning("scheduled"); return true; }
-    if (id === "editor/insert-youtube-timestamp") {
+  const insertTrigger = (kind: "page" | "block" | "slash") => {
+    const s = view().state.selection.main, selected = text().slice(s.from, s.to);
+    const page = kind === "page", slash = kind === "slash";
+    const insert = slash ? "/" : (page ? "[[" : "((") + selected + (page ? "]]" : "))");
+    apply(text().slice(0, s.from) + insert + text().slice(s.to), s.from + (slash ? 1 : selected.length + 2));
+    void updateAutocomplete(); return true;
+  };
+  const commands = guardedCommands(() => current() && !view().compositionStarted, {
+    "editor/open-date-picker": () => { openPlanning("scheduled"); return true; },
+    "editor/insert-youtube-timestamp": () => {
       const macro = youtubeTimestampMacroFor(view().contentDOM);
       if (macro) {
         const s = view().state.selection.main, insert = macro + " ";
         closeAc(); apply(text().slice(0, s.from) + insert + text().slice(s.to), s.from + insert.length);
       }
       return true;
-    }
-    if (id !== "editor/open-slash-menu" && id !== "editor/insert-page-ref" && id !== "editor/insert-block-ref") return false;
-    const s = view().state.selection.main, selected = text().slice(s.from, s.to);
-    const page = id === "editor/insert-page-ref", slash = id === "editor/open-slash-menu";
-    const insert = slash ? "/" : (page ? "[[" : "((") + selected + (page ? "]]" : "))");
-    apply(text().slice(0, s.from) + insert + text().slice(s.to), s.from + (slash ? 1 : selected.length + 2));
-    void updateAutocomplete(); return true;
-  };
+    },
+    "editor/open-slash-menu": () => insertTrigger("slash"),
+    "editor/insert-page-ref": () => insertTrigger("page"),
+    "editor/insert-block-ref": () => insertTrigger("block"),
+  });
   const keydown = (event: KeyboardEvent): boolean => {
     if (acVisible() && event.key === "Escape") {
       const language = ac()?.kind === "code-language", raw = text(), pos = caret();
@@ -522,8 +526,7 @@ export function cm6Completions(props: {
       if (event.key === "ArrowUp") { setAcIndex((acIndex() - 1 + n) % n); return true; }
       if (event.key === "Enter" || isPermittedTabGesture(event)) { selectAc(acItems()[acIndex()]); return true; }
     }
-    const id = editorCommandFor(event);
-    return !!id && command(id);
+    return false;
   };
   const [rect, setRect] = createSignal<{ left: number; top: number; bottom: number } | null>(null);
   const reanchor = () => {
@@ -572,7 +575,7 @@ export function cm6Completions(props: {
       insert: language.id, caret: language.id.length + 1,
     })));
   };
-  return { mount, inputSelection, changed, input, keydown, command, selectionChanged, close: closeAc, scaffold,
+  return { mount, inputSelection, changed, input, keydown, commands, selectionChanged, close: closeAc, scaffold,
     pause: () => clearTimeout(timer), refresh, Popup };
 }
 

@@ -9,7 +9,8 @@ import {
   setRaw,
 } from "../document";
 import { editingId, startEditing, type EditorSelection as CaretSelection } from "../editorController";
-import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
+import { isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
+import { guardedCommands } from "./cm6Commands";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { pushToast } from "../toasts";
 import { msg } from "../i18n";
@@ -34,6 +35,7 @@ interface StructureContext {
   commit(text: string): void;
   code(): boolean;
   calc(): boolean;
+  annotation(): boolean;
   viewPrev(): string | null;
   viewNext(): string | null;
   embedExit: { hostBlockId: string; firstRoot(): string | undefined } | null;
@@ -103,40 +105,36 @@ export function cm6Structure(ctx: StructureContext) {
     }
     return true;
   };
-  const command = (v: EditorView, id: string): boolean => {
-    if (!ctx.current() || v.compositionStarted) return false;
-    switch (id) {
-      case "editor/indent": return nudge(v, false);
-      case "editor/outdent": return nudge(v, true);
-      case "editor/move-block-up": return move(v, -1);
-      case "editor/move-block-down": return move(v, 1);
-      case "editor/collapse": return collapse(true);
-      case "editor/expand": return collapse(false);
-      case "editor/soft-newline": return softNewline(v);
-      case "editor/select-embedding-block": {
-        if (!ctx.embedExit) return false;
-        const host = v.dom.closest(".embed-block, .embed-page")?.closest<HTMLElement>(".ls-block");
-        selectBlock(ctx.embedExit.hostBlockId);
-        host?.querySelector<HTMLElement>(":scope > .block-main")?.scrollIntoView?.({ block: "nearest" });
-        return true;
-      }
-      case "editor/select-all": {
-        const s = v.state.selection.main;
-        if (s.from !== 0 || s.to !== v.state.doc.length) return false;
-        selectBlockSubtree(ctx.id, ctx.scope);
-        return true;
-      }
-      case "editor/select-block-up":
-      case "editor/select-block-down": {
-        const dir = id === "editor/select-block-up" ? -1 : 1;
-        if (!atEdge(v, dir > 0)) return false;
-        selectBlock(ctx.id, ctx.scope);
-        moveSelection(dir, true);
-        return true;
-      }
-      default: return false;
-    }
+  const selectBlockAtEdge = (v: EditorView, dir: -1 | 1) => {
+    if (!atEdge(v, dir > 0)) return false;
+    selectBlock(ctx.id, ctx.scope);
+    moveSelection(dir, true);
+    return true;
   };
+  const commands = guardedCommands<[EditorView]>(v => ctx.current() && !v.compositionStarted, {
+    "editor/indent": v => nudge(v, false),
+    "editor/outdent": v => nudge(v, true),
+    "editor/move-block-up": v => move(v, -1),
+    "editor/move-block-down": v => move(v, 1),
+    "editor/collapse": () => collapse(true),
+    "editor/expand": () => collapse(false),
+    "editor/soft-newline": softNewline,
+    "editor/select-embedding-block": v => {
+      if (!ctx.embedExit) return false;
+      const host = v.dom.closest(".embed-block, .embed-page")?.closest<HTMLElement>(".ls-block");
+      selectBlock(ctx.embedExit.hostBlockId);
+      host?.querySelector<HTMLElement>(":scope > .block-main")?.scrollIntoView?.({ block: "nearest" });
+      return true;
+    },
+    "editor/select-all": v => {
+      const s = v.state.selection.main;
+      if (s.from !== 0 || s.to !== v.state.doc.length) return false;
+      selectBlockSubtree(ctx.id, ctx.scope);
+      return true;
+    },
+    "editor/select-block-up": v => selectBlockAtEdge(v, -1),
+    "editor/select-block-down": v => selectBlockAtEdge(v, 1),
+  });
   const enter = (v: EditorView) => {
     const s = v.state.selection.main, raw = v.state.doc.toString();
     const n = node(ctx.id);
@@ -148,12 +146,20 @@ export function cm6Structure(ctx: StructureContext) {
       if (id) startEditing(id, 0);
       return true;
     }
+    // Highlight text and hidden metadata remain one block, even when Enter
+    // starts from a selection. Annotation ownership comes from the property
+    // session, before interpreting any projected text as code or properties.
+    if (ctx.annotation()) {
+      ctx.commit(raw);
+      const id = insertOutlineAfter(ctx.id, [{ raw: "", children: [] }]);
+      if (id) startEditing(id, 0, null, editSurface());
+      return true;
+    }
     const page = pageByName(n.page);
     const properties = ctx.format === "md" && page?.roots[0] === ctx.id
       && (n.originatedFromPageHeader || (!page.preBlock && (isPropertiesOnly(raw) || (raw.endsWith("\n") && isPropertiesOnly(raw.slice(0, -1))))));
-    const annotation = isAnnotationBlock(n.raw, ctx.format);
-    const fence = !annotation && !ctx.code() && !ctx.calc() && caretInFence(raw, s.from, ctx.format);
-    const math = !annotation && !ctx.code() && !ctx.calc() && !fence && caretInDisplayMath(raw, s.from, ctx.format);
+    const fence = !ctx.code() && !ctx.calc() && caretInFence(raw, s.from, ctx.format);
+    const math = !ctx.code() && !ctx.calc() && !fence && caretInDisplayMath(raw, s.from, ctx.format);
     const kind = ctx.calc() ? "calc" : ctx.code() ? "code" : fence ? "fence" : math ? "math" : properties ? "properties" : null;
     if (kind && s.empty) {
       const trimmed = kind === "code" ? codeBodyExitTrim(raw, s.from) : multilineExitTrim(raw, s.from, kind, ctx.format);
@@ -168,19 +174,17 @@ export function cm6Structure(ctx: StructureContext) {
       }
     }
     if (properties && caretOnPropertyLine(raw, s.from)) return softNewline(v);
-    if (ctx.code() || ctx.calc() || fence || math || !annotation && caretOnOpeningFence(raw, s.from, ctx.format)) return softNewline(v);
-    if (!annotation) {
-      if (stopOwnNumberedListOnEmptyEnter(ctx.id, raw)) {
-        v.dispatch({ selection: { anchor: 0 } });
-        return true;
-      }
-      const ll = calcSource(raw) === null ? listLineAt(raw, s.from, ctx.format) : null;
-      if (ll) {
-        const nextMarker = /\d/.test(ll.marker) ? parseInt(ll.marker) + 1 + ll.marker.replace(/\d+/, "") : ll.marker;
-        const insert = "\n" + ll.indent + nextMarker + " " + (ll.hasCheckbox ? "[ ] " : "");
-        v.dispatch({ changes: { from: s.from, insert }, selection: { anchor: s.from + insert.length }, userEvent: "input" });
-        return true;
-      }
+    if (ctx.code() || ctx.calc() || fence || math || caretOnOpeningFence(raw, s.from, ctx.format)) return softNewline(v);
+    if (stopOwnNumberedListOnEmptyEnter(ctx.id, raw)) {
+      v.dispatch({ selection: { anchor: 0 } });
+      return true;
+    }
+    const ll = calcSource(raw) === null ? listLineAt(raw, s.from, ctx.format) : null;
+    if (ll) {
+      const nextMarker = /\d/.test(ll.marker) ? parseInt(ll.marker) + 1 + ll.marker.replace(/\d+/, "") : ll.marker;
+      const insert = "\n" + ll.indent + nextMarker + " " + (ll.hasCheckbox ? "[ ] " : "");
+      v.dispatch({ changes: { from: s.from, insert }, selection: { anchor: s.from + insert.length }, userEvent: "input" });
+      return true;
     }
     if (!s.empty) v.dispatch({ changes: { from: s.from, to: s.to } });
     ctx.commit(v.state.doc.toString());
@@ -209,14 +213,14 @@ export function cm6Structure(ctx: StructureContext) {
   const keydown = (e: KeyboardEvent, v: EditorView) => {
     if (!ctx.current() || v.compositionStarted || e.isComposing || e.keyCode === 229) return false;
     if (isTabLikeEvent(e) && !isPermittedTabGesture(e)) return false;
-    const cmd = editorCommandFor(e);
-    if (cmd && command(v, cmd)) return true;
     const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
     if (e.key === "Enter" && plain) {
       const newline = documentMode() && !docModeEnterForNewBlock();
       return e.shiftKey !== newline ? softNewline(v) : enter(v);
     }
     const s = v.state.selection.main, raw = v.state.doc.toString();
+    if (plain && s.empty && ctx.annotation()
+      && (e.key === "Backspace" && s.head === 0 || e.key === "Delete" && s.head === raw.length)) return false;
     if (plain && e.key === "Escape") { selectBlock(ctx.id, ctx.scope); return true; }
     if (plain && s.empty && e.key === "Backspace") {
       if (ctx.code() && raw === "" && !node(ctx.id).children.length) {
@@ -239,7 +243,7 @@ export function cm6Structure(ctx: StructureContext) {
     }
     if (plain && s.empty && e.key === "Backspace" && s.head === 0) {
       if (ctx.code() || ctx.calc()) return true;
-      if (isAnnotationBlock(raw, ctx.format) || calcSource(raw) !== null) return false;
+      if (calcSource(raw) !== null) return false;
       if (removeOwnNumberedList(ctx.id)) {
         v.dispatch({ selection: { anchor: 0 } });
         return true;
@@ -252,7 +256,7 @@ export function cm6Structure(ctx: StructureContext) {
     }
     if (plain && s.empty && e.key === "Delete" && s.head === raw.length) {
       if (ctx.code() || ctx.calc()) return true;
-      if (isAnnotationBlock(raw, ctx.format) || calcSource(raw) !== null) return false;
+      if (calcSource(raw) !== null) return false;
       const next = nextVisible(ctx.id, structuralScope), nextRaw = next ? node(next)?.raw ?? "" : "";
       if (next && !isAnnotationBlock(nextRaw, ctx.format) && calcSource(nextRaw) === null && mergeWithNext(ctx.id, structuralScope, editSurface())) {
         if (ctx.current()) v.dispatch({ selection: { anchor: s.head } });
@@ -268,5 +272,5 @@ export function cm6Structure(ctx: StructureContext) {
     }
     return false;
   };
-  return { command, keydown };
+  return { commands, keydown };
 }

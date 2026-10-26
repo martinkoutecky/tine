@@ -66,16 +66,12 @@ import {
   wrapLink,
   isPasteableUrl,
   videoPasteMacro,
-  killLineBefore,
-  killLineAfter,
-  wordForward,
-  wordBackward,
-  killWordForward,
-  killWordBackward,
   setPriority,
   type Edit,
   type InlineFormat,
 } from "../editor/format";
+import { textCommandHandlers } from "../editor/textCommands";
+import { captureKeyIntent } from "../editor/captureKeys";
 import {
   essentialSelectionActions,
   secondarySelectionActions,
@@ -1901,6 +1897,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // its own preventDefault when it handles the event and returns whether it did
   // (false → fall through to native handling). Read ref fresh at call time.
   const runEditorCmd: Record<string, (e: KeyboardEvent) => boolean> = {
+    ...Object.fromEntries(Object.entries(textCommandHandlers({
+      text: () => ref.value, start: () => ref.selectionStart, apply: applyEdit, move: moveCaret,
+    })).map(([id, run]) => [id, (e: KeyboardEvent) => { e.preventDefault(); return run(); }])),
     "editor/insert-youtube-timestamp": (e) => { e.preventDefault(); insertYoutubeTimestamp(ref, applyEdit); return true; },
     "editor/select-embedding-block": (e) => {
       if (!embedNavExit) return false;
@@ -1920,16 +1919,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     "editor/insert-link": (e) => { e.preventDefault(); applyEdit(insertLink(ref.value, ref.selectionStart, ref.selectionEnd, pageFmt())); return true; },
     // GH #279: embed twin of Mod+C; with a text selection decline so the platform copy runs.
     "editor/copy-embed": (e) => { if (ref.selectionStart !== ref.selectionEnd) return false; e.preventDefault(); commit(ref.value); void copyBlockLink(props.id, "embed"); return true; },
-    "editor/clear-block": (e) => { e.preventDefault(); applyEdit({ text: "", start: 0, end: 0 }); return true; },
     // Margin dialogue (vision §3.7). Always consumed: Ctrl/Cmd+R must not reach
     // the webview, whose default is reload. The capture window shows one block.
     "editor/comment": (e) => { e.preventDefault(); e.stopPropagation(); if (!cap) commentFromEditor(props.id, ref, commit, editSurface()); return true; },
-    "editor/kill-line-before": (e) => { e.preventDefault(); applyEdit(killLineBefore(ref.value, ref.selectionStart)); return true; },
-    "editor/kill-line-after": (e) => { e.preventDefault(); applyEdit(killLineAfter(ref.value, ref.selectionStart)); return true; },
-    "editor/backward-kill-word": (e) => { e.preventDefault(); applyEdit(killWordBackward(ref.value, ref.selectionStart)); return true; },
-    "editor/forward-kill-word": (e) => { e.preventDefault(); applyEdit(killWordForward(ref.value, ref.selectionStart)); return true; },
-    "editor/backward-word": (e) => { e.preventDefault(); moveCaret(wordBackward(ref.value, ref.selectionStart)); return true; },
-    "editor/forward-word": (e) => { e.preventDefault(); moveCaret(wordForward(ref.value, ref.selectionStart)); return true; },
     "editor/move-block-up": (e) => moveBlockCmd(e, -1),
     "editor/move-block-down": (e) => moveBlockCmd(e, 1),
     "editor/collapse": (e) => { e.preventDefault(); setOccurrenceCollapsed(true); return true; },
@@ -2315,30 +2307,12 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // Quick-capture window key handling (cap set only there). Runs AFTER the
     // autocomplete-popup block above, so when the popup is open Enter still
     // selects the highlighted item — only a popup-closed Enter files.
-    if (cap) {
-      // File the capture via the configurable `editor/quick-capture-file`
-      // shortcut (default mod+shift+enter). `cmd` is already resolved above; it's
-      // not in runEditorCmd, so it fell through to here. Remappable in Settings →
-      // Keyboard shortcuts (and the capture window syncs the user's binding).
-      if (cmd === "editor/quick-capture-file") {
-        e.preventDefault();
-        commit(raw);
-        cap.submit();
-        return;
-      }
-      // "Enter files" mode: a popup-closed plain Enter files. In "new block" mode
-      // it falls through to the normal split-into-a-new-block handling below.
-      if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && cap.enterFiles()) {
-        e.preventDefault();
-        commit(raw);
-        cap.submit();
-        return;
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        cap.cancel();
-        return;
-      }
+    const captureIntent = captureKeyIntent(e, cmd, cap);
+    if (captureIntent && cap) {
+      e.preventDefault();
+      if (captureIntent === "submit") { commit(raw); cap.submit(); }
+      else cap.cancel();
+      return;
     }
 
     // OG maps document-mode Enter to newline and Shift+Enter to new-block before

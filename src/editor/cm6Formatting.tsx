@@ -5,13 +5,13 @@ import { insertLink, toggleInlineFormat, type Edit, type InlineFormat } from "./
 import { doubleRefKind, SELECTION_WRAP, wrapSelectionEdit } from "./autopair";
 import { cycleMarkerSmart } from "./repeat";
 import { workflow } from "../ui";
-import { editorCommandFor } from "../keybindings";
 import { commentFromEditor } from "../commentActions";
 import { CaptureCtx } from "../components/Block";
 import { selectionActionLabel } from "../components/SelectionActionLabel";
 import { registerTransientLayer } from "../transientLayers";
 import { touchPrimary } from "../inputCapability";
 import { t } from "../i18n";
+import { guardedCommands } from "./cm6Commands";
 
 const inlineCommands: Readonly<Record<string, InlineFormat>> = {
   "editor/bold": "bold", "editor/italics": "italic",
@@ -53,24 +53,28 @@ export function cm6Formatting(ctx: {
     commentFromEditor(ctx.id, { value: view.state.doc.toString(), selectionStart: s.from, selectionEnd: s.to },
       ctx.commit, ctx.surface.startsWith("embed:") ? ctx.surface : null);
   };
-  const command = (id: string) => {
-    if (!current()) return false;
-    const view = ctx.view()!, s = view.state.selection.main, text = view.state.doc.toString();
-    const kind = inlineCommands[id];
-    if (kind) apply(toggleInlineFormat(text, s.from, s.to, ctx.format, kind, s.anchor > s.head ? "backward" : "forward"));
-    else if (id === "editor/insert-link") apply(insertLink(text, s.from, s.to, ctx.format));
-    else if (id === "editor/comment") comment();
-    else if (id === "editor/cycle-todo") {
+  const commands = guardedCommands(current, {
+    ...Object.fromEntries(Object.entries(inlineCommands).map(([id, kind]) => [id, () => {
+      const view = ctx.view()!, s = view.state.selection.main;
+      apply(toggleInlineFormat(view.state.doc.toString(), s.from, s.to, ctx.format, kind, s.anchor > s.head ? "backward" : "forward"));
+      return true;
+    }])),
+    "editor/insert-link": () => {
+      const view = ctx.view()!, s = view.state.selection.main;
+      apply(insertLink(view.state.doc.toString(), s.from, s.to, ctx.format));
+      return true;
+    },
+    "editor/comment": () => { comment(); return true; },
+    "editor/cycle-todo": () => {
+      const view = ctx.view()!, s = view.state.selection.main, text = view.state.doc.toString();
       const { raw, delta } = cycleMarkerSmart(text, workflow(), ctx.format);
       const pos = Math.max(0, Math.min(raw.length, s.from + delta));
       apply({ text: raw, start: pos, end: pos });
-    } else return false;
-    return true;
-  };
+      return true;
+    },
+  });
   const keydown = (event: KeyboardEvent) => {
     if (!current()) return false;
-    const id = editorCommandFor(event);
-    if (id) return command(id);
     const view = ctx.view()!, s = view.state.selection.main;
     if (s.empty || event.ctrlKey || event.metaKey || event.isComposing || event.keyCode === 229
       || !Object.prototype.hasOwnProperty.call(SELECTION_WRAP, event.key)) return false;
@@ -120,5 +124,5 @@ export function cm6Formatting(ctx: {
       </div></Show>
     </div>
   </Show>;
-  return { command, keydown, changed, Toolbar };
+  return { commands, keydown, changed, Toolbar };
 }

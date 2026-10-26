@@ -1,10 +1,10 @@
 import type { EditorView } from "@codemirror/view";
+import { guardedCommands } from "./cm6Commands";
 import { clearClipboardSlot, normalize, peekClipboardSlot, readClipboardText } from "../clipboard";
 import { insertOutlineAfter, insertOutlineChildren, node, outlineFits, pasteClipboardPayload, replaceEmptyBlockWithOutline, sanitizeOutlineIdsForPaste, withUndoUnit } from "../document";
 import { startEditing } from "../editorController";
 import { pasteAsLinkEdit } from "../blockRefActions";
 import { copyBlockLink } from "../components/blockLinkCopy";
-import { editorCommandFor } from "../keybindings";
 import { shortcutKey } from "../shortcutKey";
 import { graphOwner, readOwned } from "../owned";
 import { reportUiFailure } from "../uiFailure";
@@ -97,14 +97,13 @@ export function cm6Clipboard(ctx: ClipboardContext) {
     if (!edit) { pushToast(msg("editor-block-the-clipboard-doesn-t-hold-a-link-or-a-block-ref"), "warn"); return; }
     apply(v, edit);
   };
-  const command = (v: EditorView, id: string) => {
-    if (!available(v)) return false;
-    if (id === "editor/paste-as-link") { void pasteAsLink(v); return true; }
-    if (id === "editor/copy-embed" && v.state.selection.main.empty) {
+  const commands = guardedCommands<[EditorView]>(available, {
+    "editor/paste-as-link": v => { void pasteAsLink(v); return true; },
+    "editor/copy-embed": v => {
+      if (!v.state.selection.main.empty) return false;
       ctx.commit(v.state.doc.toString()); void copyBlockLink(ctx.id, "embed"); return true;
-    }
-    return false;
-  };
+    },
+  });
   const keydown = (e: KeyboardEvent, v: EditorView) => {
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && shortcutKey(e) === "v") {
       clearRaw(); rawPaste = true; rawTimer = setTimeout(clearRaw, 1_000); return false;
@@ -113,8 +112,7 @@ export function cm6Clipboard(ctx: ClipboardContext) {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && shortcutKey(e) === "c" && v.state.selection.main.empty) {
       ctx.commit(v.state.doc.toString()); void copyBlockLink(ctx.id, "ref"); return true;
     }
-    const id = editorCommandFor(e);
-    return id ? command(v, id) : false;
+    return false;
   };
   const paste = (e: ClipboardEvent, v: EditorView) => {
     const raw = rawPaste;
@@ -170,5 +168,5 @@ export function cm6Clipboard(ctx: ClipboardContext) {
     ctx.assets.pasteImage(e);
     return false;
   };
-  return { paste, keydown, command, clearRaw };
+  return { paste, keydown, commands, clearRaw };
 }
