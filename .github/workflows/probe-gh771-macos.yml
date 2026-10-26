@@ -51,7 +51,7 @@ jobs:
             echo "## ref ${{ matrix.ref }}"
             for cmd in "pages" "status" "pages"; do
               echo "### tine $cmd"
-              $T $cmd "$G"; echo "exit=$?"
+              $T $cmd --graph "$G"; echo "exit=$?"
             done
             echo "### tine serve --stop"
             $T serve --stop "$G"; echo "exit=$?"
