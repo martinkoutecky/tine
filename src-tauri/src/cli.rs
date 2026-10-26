@@ -868,6 +868,7 @@ fn prepare_console_if_needed(argv: &[OsString]) {
                 | "prop"
                 | "move"
                 | "delete"
+                | "run"
                 | "-h"
                 | "--help"
                 | "-v"

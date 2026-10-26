@@ -555,7 +555,7 @@ owner newer than this `tine`) exits `1`, like `internal`.
 | `owner-start` | 5 | `tine serve` did not come up, or the owner's endpoint does not answer, or the owner stopped answering a read |
 | `owner-unsafe` | 5 | the owner namespace or endpoint path is not safe to use |
 | `owner-lock` | 5 | the owner lock call itself failed (not contention) |
-| `unsupported` | 5 | no owner endpoint on this platform yet (Windows, slice 1a) |
+| `unsupported` | 5 | no CLI owner on this platform (iOS/Android and unshipped targets) |
 | `stale` | 6 | a write's page or block changed: `--rev` no longer matches, a handle no longer resolves (or resolves to several blocks), or the page changed twice while the write ran. Not admitted; read again |
 | `refused` | 6 | the owner refused; `detail.reason` says why (below). Nothing changed |
 | `draft-failed` | 7 | a write was admitted but its draft could not be saved (disk full, app-data error); nothing changed |
@@ -564,12 +564,22 @@ owner newer than this `tine`) exits `1`, like `internal`.
 | `uncertain` | 8 | admitted, outcome unknown (the connection was lost after the request was sent; `tine serve --stop`) |
 | `internal` | 1 | an owner bug or unnamed failure; the message leads with a diagnostic id |
 
-Windows still has no CLI endpoint, but the app now takes the account-wide graph
-owner lock under Known Folder LocalAppData/tine/owners. Another holder refuses
-the app open through the existing app-owner error; no Windows handover is
-attempted. Lock errors retain the diagnosed fail-open policy. Linux/macOS keep
-their existing lock and endpoint; iOS/Android rely on one process per sandboxed
-app. See `docs/storage-contract.md` (L9-01/L9-02).
+Linux, macOS and Windows support all graph commands against the app or `tine serve`,
+including automatic serve startup, app handover and `serve --stop`. Windows uses
+the account-wide lock under Known Folder LocalAppData/tine/owners and the local-only
+pipe `\\.\pipe\tine-<user-sid>-<16-hex-graph-hash>`. The owners directory and its
+tine parent have explicit protected DACLs, belong to the current user, and reject
+reparse points or another account's write/delete rights (SYSTEM and Administrators
+are trusted). Existing directories are checked, never silently repaired. The pipe
+grants access only to the current user, rejects remote clients, and its first
+instance refuses an occupied name. Before sending a hello the client checks the
+connected pipe's owner and protected DACL. Unsafe permissions or pipe creation
+conflicts report `owner-unsafe` (exit 5). Same-account processes are trusted.
+Framing, caps, deadlines, custody checks, the 60 s handover bound and the rule that
+a timeout never permits takeover are shared with Unix. App lock/namespace/bind
+errors retain the diagnosed policy of opening without an endpoint. iOS/Android
+have no CLI and rely on one process per sandboxed app.
+See `docs/storage-contract.md` (L9-01/L9-02).
 
 **Refusal reasons** (`detail.reason`, and `refused:<reason>` in the text):
 

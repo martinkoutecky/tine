@@ -1,5 +1,5 @@
-//! The owner's endpoint (CLI PROTOCOL §2, §3.2): a Unix socket in the
-//! account's owner directory, one thread per connection, bounded frames and
+//! The owner's endpoint (CLI PROTOCOL §2, §3.2): a private Unix socket or
+//! Windows named pipe, one thread per connection, bounded frames and
 //! I/O, and an admission gate. The gate is how an owner stops: it stops
 //! admitting (new requests answer `busy`), lets every admitted request
 //! settle, and only then closes the listener and every connection.
@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use super::wire::{ErrorBody, Request};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use super::wire::{Hello, Reply};
 use super::OwnerError;
 
@@ -307,16 +307,19 @@ pub(crate) fn busy() -> ErrorBody {
 }
 
 #[cfg(unix)]
-pub(crate) use unix::blocking_connection;
-#[cfg(unix)]
-pub(crate) use unix::Endpoint;
+pub(crate) use local::blocking_connection;
+#[cfg(any(unix, windows))]
+pub(crate) use local::Endpoint;
 
-#[cfg(unix)]
-mod unix {
+#[cfg(any(unix, windows))]
+mod local {
     use super::*;
+    #[cfg(windows)]
+    use crate::owner::windows::{Listener, Stream};
     use std::collections::HashMap;
     use std::io::{BufReader, Write};
-    use std::os::unix::net::{UnixListener, UnixStream};
+    #[cfg(unix)]
+    use std::os::unix::net::{UnixListener as Listener, UnixStream as Stream};
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 
     use crate::owner::wire::{
@@ -330,6 +333,7 @@ mod unix {
     /// every connection, remove the socket path. Its owner still holds the
     /// lock while it drops (`Lease` field order, §3.2).
     pub(crate) struct Endpoint {
+        #[cfg(unix)]
         socket: PathBuf,
         gate: Arc<Gate>,
         #[cfg(test)]
@@ -341,7 +345,7 @@ mod unix {
     /// Only the accept thread inserts streams and seals this registry.
     #[derive(Default)]
     struct Connections {
-        open: HashMap<u64, UnixStream>,
+        open: HashMap<u64, Stream>,
     }
 
     impl Connections {
@@ -386,6 +390,7 @@ mod unix {
             gate: Arc<Gate>,
             handler: Arc<dyn Handler>,
         ) -> Result<Self, OwnerError> {
+            #[cfg(unix)]
             match std::fs::remove_file(socket) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -396,9 +401,13 @@ mod unix {
                     )))
                 }
             }
-            let listener = UnixListener::bind(socket).map_err(|e| {
+            #[cfg(unix)]
+            let listener = Listener::bind(socket).map_err(|e| {
                 OwnerError::Start(format!("cannot listen on {}: {e}", socket.display()))
             })?;
+            #[cfg(windows)]
+            let listener = Listener::bind(socket)?;
+            #[cfg(unix)]
             listener
                 .set_nonblocking(true)
                 .map_err(|e| OwnerError::Start(format!("cannot poll the endpoint: {e}")))?;
@@ -419,6 +428,7 @@ mod unix {
                 .spawn(move || accept_loop(listener, accepting, commanded))
                 .map_err(|e| OwnerError::Start(format!("cannot start the endpoint: {e}")))?;
             Ok(Self {
+                #[cfg(unix)]
                 socket: socket.to_owned(),
                 gate,
                 #[cfg(test)]
@@ -470,11 +480,12 @@ mod unix {
             if let Some(accept) = self.accept.take() {
                 let _ = accept.join();
             }
+            #[cfg(unix)]
             let _ = std::fs::remove_file(&self.socket);
         }
     }
 
-    fn accept_loop(listener: UnixListener, shared: Arc<Shared>, commands: Receiver<Command>) {
+    fn accept_loop(listener: Listener, shared: Arc<Shared>, commands: Receiver<Command>) {
         let mut listener = Some(listener);
         let mut next = 0;
         let mut pending = None;
@@ -522,6 +533,7 @@ mod unix {
                 }
                 continue;
             };
+            #[cfg(unix)]
             if blocking_connection(&stream).is_err() {
                 continue;
             }
@@ -565,7 +577,7 @@ mod unix {
         }
     }
 
-    fn send(writer: &mut UnixStream, reply: &Reply) -> bool {
+    fn send(writer: &mut Stream, reply: &Reply) -> bool {
         let mut line = match serde_json::to_vec(reply) {
             Ok(line) => line,
             Err(_) => return false,
@@ -602,11 +614,12 @@ mod unix {
     /// Linux does not. Connection threads use blocking reads with timeouts, so
     /// an inherited flag made the first request read fail at once and the CLI
     /// saw EINVAL on its next setsockopt (GH #771).
-    pub(crate) fn blocking_connection(stream: &UnixStream) -> std::io::Result<()> {
+    #[cfg(unix)]
+    pub(crate) fn blocking_connection(stream: &Stream) -> std::io::Result<()> {
         stream.set_nonblocking(false)
     }
 
-    fn connection(id: u64, stream: UnixStream, shared: &Shared) {
+    fn connection(id: u64, stream: Stream, shared: &Shared) {
         let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
         let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
         let Ok(reader) = stream.try_clone() else {
@@ -745,23 +758,4 @@ mod unix {
     fn malformed() -> ErrorBody {
         ErrorBody::new("malformed", "the line is not a request object", false)
     }
-}
-
-/// Windows has no endpoint in slice 1a (PROTOCOL §1): the namespace is
-/// `Unsupported` there, so nothing binds.
-#[cfg(windows)]
-pub(crate) struct Endpoint;
-
-#[cfg(windows)]
-impl Endpoint {
-    pub(crate) fn bind(
-        _socket: &Path,
-        _hello: super::wire::Hello,
-        _gate: Arc<Gate>,
-        _handler: Arc<dyn Handler>,
-    ) -> Result<Self, OwnerError> {
-        Err(OwnerError::Unsupported)
-    }
-
-    pub(crate) fn seal(&self, _except: Option<u64>) {}
 }

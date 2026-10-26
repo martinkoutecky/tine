@@ -221,12 +221,17 @@ warns the user to keep it open; it is distinct from a rename that did not happen
 Linux and macOS use the existing account owner namespace; Windows now uses
 SHGetKnownFolderPath(FOLDERID_LocalAppData)/tine/owners, independent of the
 environment and app identifier, with the existing exclusive LockFileEx lock.
-Its directories inherit the account Known Folder ACL; the owners directory and
-its tine parent must be real directories without reparse attributes. This cheap
-check supplies honest-instance exclusion; it is not a new checked-DACL endpoint.
-The Windows endpoint remains unsupported. Contention refuses open through the
-same translated app-owner error as Unix; lock errors still diagnose and open without a
-lease. Single-instance forwarding is not exclusion. iOS and Android retain
+Its owners directory and tine parent are created with current-user protected
+DACLs and checked on every use: current-user ownership, no reparse attributes,
+no foreign write/delete grants (SYSTEM and Administrators are trusted). Existing
+unsafe directories refuse `owner-unsafe`; their ACLs are never repaired in place.
+Windows exposes a local-only, current-user pipe named by account SID and graph
+hash, with first-instance squatting refusal and a client-side security check before
+sending graph data. Contention with serve follows the same custody-checked
+handover, seal-before-unlock order and 60 s app-open bound as Unix; contention
+with an app refuses through the translated app-owner error. Namespace/lock/bind
+errors still diagnose and open without an endpoint. Single-instance forwarding
+is not exclusion. iOS and Android retain
 Unsupported: one process per app with per-app sandboxed app data. A five-target
 guard pins desktop locks versus mobile sandbox exclusion, supplemented by the
 in-process registry/retirement guard on every target. Stable and Beta

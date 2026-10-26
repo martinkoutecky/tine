@@ -28,22 +28,25 @@ pub(crate) enum Failure {
     Lost(String),
 }
 
-#[cfg(unix)]
-pub(crate) use unix::Conn;
+#[cfg(any(unix, windows))]
+pub(crate) use local::{dial, dial_with, Conn};
 
-#[cfg(unix)]
-mod unix {
+#[cfg(any(unix, windows))]
+mod local {
     use super::*;
+    #[cfg(windows)]
+    use crate::owner::windows::Stream;
     use std::io::BufReader;
-    use std::os::unix::net::UnixStream;
+    #[cfg(unix)]
+    use std::os::unix::net::UnixStream as Stream;
 
     use crate::owner::endpoint::IO_TIMEOUT;
     use crate::owner::wire::{self, Hello, Reply, Request, PROTOCOL, REPLY_CAP, REQUEST_CAP};
 
     /// A connection to a graph's owner, past the handshake.
     pub(crate) struct Conn {
-        reader: BufReader<UnixStream>,
-        writer: UnixStream,
+        reader: BufReader<Stream>,
+        writer: Stream,
         next: u64,
     }
 
@@ -84,7 +87,13 @@ mod unix {
         io: Duration,
         replies: Option<Duration>,
     ) -> Result<Option<Conn>, OwnerError> {
-        let stream = match UnixStream::connect(socket) {
+        #[cfg(windows)]
+        let stream = match Stream::connect_checked(socket)? {
+            Some(stream) => stream,
+            None => return Ok(None),
+        };
+        #[cfg(unix)]
+        let stream = match Stream::connect(socket) {
             Ok(stream) => stream,
             Err(e)
                 if matches!(
@@ -182,36 +191,6 @@ mod unix {
     }
 }
 
-#[cfg(windows)]
-pub(crate) struct Conn;
-
-#[cfg(windows)]
-impl Conn {
-    pub(crate) fn call(&mut self, _verb: &str, _args: Value) -> Result<Value, Failure> {
-        Err(Failure::Reach(OwnerError::Unsupported))
-    }
-
-    pub(crate) fn shutdown(&self) {}
-}
-
-#[cfg(windows)]
-pub(crate) fn dial(_socket: &Path, _root: &Path) -> Result<Option<Conn>, OwnerError> {
-    Err(OwnerError::Unsupported)
-}
-
-#[cfg(unix)]
-pub(crate) use unix::{dial, dial_with};
-
-#[cfg(windows)]
-pub(crate) fn dial_with(
-    _socket: &Path,
-    _root: &Path,
-    _io: Duration,
-    _replies: Option<Duration>,
-) -> Result<Option<Conn>, OwnerError> {
-    Err(OwnerError::Unsupported)
-}
-
 /// Reach `root`'s owner, starting `tine serve` when nobody answers (§3.4).
 pub(crate) fn connect(root: &Path) -> Result<Conn, OwnerError> {
     let paths = Namespace::resolve()?.graph(root)?;
@@ -280,6 +259,12 @@ fn spawn_serve(root: &Path, paths: &GraphPaths) -> Result<(), OwnerError> {
                 Ok(())
             });
         }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS};
+        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
     }
     command.spawn().map_err(start)?;
     Ok(())
