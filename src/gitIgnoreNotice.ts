@@ -5,13 +5,16 @@
  *  The backend appends the rule at most once per graph and device, and reports it
  *  in the worker's status until the worker ends; this module only shows that
  *  report. The worker sets it up just after the graph binds, so the status is
- *  asked a few times. A window shows it once per graph root. */
+ *  asked a few times. A window shows it once per graph root while that graph is
+ *  open; reopening needs no memory, as the backend reports an addition only once. */
 import { msg } from "./i18n";
 import { backend } from "./backend";
 import { bindingOwner, readOwned } from "./owned";
+import { clearOnBindingInvalidated } from "./binding";
 import { pushToast } from "./toasts";
 
 const shown = new Set<string>();
+clearOnBindingInvalidated(() => shown.clear());
 export const NOTICE_DELAYS_MS = [1_000, 5_000, 15_000, 45_000];
 
 export async function maybeShowSyncthingIgnoreNotice(
