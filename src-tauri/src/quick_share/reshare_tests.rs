@@ -17,6 +17,20 @@ fn reshare_preserves_link_and_key_uses_fresh_nonce_and_previews_membership() {
 }
 
 #[test]
+fn membership_compares_page_identity_not_spelling() {
+    let doc = serde_json::json!({"snapshot": {"pages": [
+        {"name": "Project", "path": "pages/Project.md"},
+        {"name": "Old note", "path": "pages/Old note.md"},
+        {"name": "Home", "path": ""},
+    ]}});
+    let old = super::reshare::snapshot_pages(&doc);
+    assert_eq!(old.len(), 2, "the synthetic home is not a member");
+    let (added, removed) = super::reshare::membership_diff(&old, ["PROJECT", "New member"]);
+    assert_eq!(added, ["New member"]);
+    assert_eq!(removed, ["Old note"]);
+}
+
+#[test]
 fn reshare_refusals_and_unknown_outcomes_never_retry_or_replace_records() {
     for code in [401, 403, 404, 410, 429, 500, 596, 597, 598, 599, 201] {
         run_update_case(code, false);
@@ -108,7 +122,7 @@ fn run_update_case(code: u16, changed: bool) {
     assert_eq!(preview.share_id, row.share_id);
     let diff = preview.membership.unwrap();
     assert_eq!(diff.added, ["New member"]);
-    assert_eq!(diff.removed.len(), 1);
+    assert_eq!(diff.removed, ["Project"]);
     assert_eq!(mock.count("PATCH", "/gists/"), 0);
     let mut link = String::new();
     let result = block_on(f.service.create_share(&id, |value| {

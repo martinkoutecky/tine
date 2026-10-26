@@ -28,6 +28,29 @@ pub(super) fn snapshot_pages(document: &serde_json::Value) -> BTreeMap<String, S
         .collect()
 }
 
+/// Pages compared by page identity (`page_key`), so a case-only rename is
+/// neither added nor removed. Returns (added, removed) display names.
+pub(super) fn membership_diff<'a>(
+    old: &BTreeMap<String, String>,
+    new: impl IntoIterator<Item = &'a str>,
+) -> (Vec<String>, Vec<String>) {
+    let new: BTreeMap<_, _> = new
+        .into_iter()
+        .map(|name| (page_key(name), name.to_owned()))
+        .collect();
+    let added = new
+        .iter()
+        .filter(|(key, _)| !old.contains_key(*key))
+        .map(|(_, name)| name.clone())
+        .collect();
+    let removed = old
+        .iter()
+        .filter(|(key, _)| !new.contains_key(*key))
+        .map(|(_, name)| name.clone())
+        .collect();
+    (added, removed)
+}
+
 impl Service {
     pub(super) fn update_lock(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> {
         let mut locks = self.update_locks.lock().unwrap_or_else(|p| p.into_inner());
@@ -115,24 +138,12 @@ impl Service {
             let (account, row) = self.owned_row(share_id)?;
             let (revision, document) = self.read_update_snapshot(&account, &row).await?;
             let old = snapshot_pages(&document);
-            let new: BTreeMap<_, _> = result
-                .preview
-                .pages
-                .iter()
-                .map(|p| (page_key(&p.name), p.name.clone()))
-                .collect();
+            let new = result.preview.pages.iter().map(|p| p.name.as_str());
+            let (added, removed) = membership_diff(&old, new);
             result.membership = Some(Membership {
                 current_snapshot_at: document["created_at"].as_str().unwrap_or("").to_owned(),
-                added: new
-                    .iter()
-                    .filter(|(key, _)| !old.contains_key(*key))
-                    .map(|(_, name)| name.clone())
-                    .collect(),
-                removed: old
-                    .iter()
-                    .filter(|(key, _)| !new.contains_key(*key))
-                    .map(|(_, name)| name.clone())
-                    .collect(),
+                added,
+                removed,
             });
             let mut all = self.prepared.lock().unwrap_or_else(|p| p.into_inner());
             let prepared = all
