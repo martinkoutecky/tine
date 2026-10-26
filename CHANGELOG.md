@@ -16,6 +16,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Clicking a hidden `{{cloze}}` reveals the answer in place again (and hides it on a second click), instead of opening the block editor (GH #763).
 
+- Expand and Collapse (one level) now follow a block embed's own folds and open or close child page embeds, while keeping embedded source folds separate (GH #768, GH #769).
+
 ## [0.8.0] - 2026-10-26
 
 Tine 0.8.0 makes the Tine Beta line stable. It is Tine Beta 0.8.0-beta.12
