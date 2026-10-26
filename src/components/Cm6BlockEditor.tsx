@@ -15,6 +15,7 @@ import { CollapseSurfaceContext, EmbedNavExitContext } from "./Block";
 import { marginNavigation } from "./blockComments";
 import { SheetCellContext } from "../sheet/context";
 import { cm6SheetKeys } from "../editor/cm6SheetKeys";
+import { cm6Clipboard } from "../editor/cm6Clipboard";
 import { isPermittedTabGesture } from "../keybindings";
 import "./cm6-editor.css";
 
@@ -60,6 +61,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     ...marginNavigation(props.id, props.scope, props.surface, () => format),
   });
   const sheet = cell ? cm6SheetKeys(props.id, cell, commit) : null;
+  const clipboard = cm6Clipboard({ id: props.id, format, current, commit, sheet: !!cell, hiddenProperties });
   const buildDecorations = (state: EditorState): DecorationSet => {
     const ranges = previewSpans(state.doc.toString(), format).flatMap(span => {
       // Reveal at either boundary and whenever any selection intersects source.
@@ -105,6 +107,13 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
             return false;
           },
           beforeinput: () => !current(),
+          paste: (event, v) => clipboard.paste(event, v),
+          // CM defaults to copying/cutting a whole line without a selection.
+          // Tine's empty-selection Mod+C is the durable block-ref command;
+          // other empty-selection clipboard events keep the source unchanged.
+          copy: (_event, v) => v.state.selection.main.empty,
+          cut: (_event, v) => !current() || v.state.selection.main.empty,
+          keyup: event => { if (event.key.toLowerCase() === "v") clipboard.clearRaw(); return false; },
         }),
         EditorView.updateListener.of(update => {
           setHasSelection(!update.state.selection.main.empty);
@@ -139,7 +148,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       if (event.defaultPrevented && !isPermittedTabGesture(event)) return;
       // Run before CM's target handler: desktop WebKit suppresses its keymaps
       // just after compositionend, including an already committed plain Enter.
-      if (sheet?.keydown(event, view) || structure.keydown(event, view)) {
+      if (clipboard.keydown(event, view) || sheet?.keydown(event, view) || structure.keydown(event, view)) {
         event.preventDefault();
         event.stopImmediatePropagation();
       }
@@ -193,6 +202,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       dispatch: command => {
         if (!view || !current() || view.compositionStarted) return false;
         if (sheet?.blocks(command)) return true;
+        if (clipboard.command(view, command)) return true;
         if (structure.command(view, command)) return true;
         // Media, pickers, slash menu and global-history parity are later ports.
         const s = view.state.selection.main;
@@ -217,7 +227,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
     }
   });
-  onCleanup(() => { alive = false; removeCommandBridge?.(); removeHistoryKeys?.(); view?.destroy(); });
+  onCleanup(() => { alive = false; clipboard.clearRaw(); removeCommandBridge?.(); removeHistoryKeys?.(); view?.destroy(); });
   const formatSelection = (action: SelectionAction) => {
     if (!view || !current() || view.compositionStarted) return;
     const s = view.state.selection.main;

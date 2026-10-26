@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { EditorView } from "@codemirror/view";
 import { Cm6BlockEditor } from "./Cm6BlockEditor";
@@ -9,11 +9,43 @@ import { setDoc } from "../document/model";
 import { editorIn } from "../tests/editorDriver";
 import { focusedEditorCommandBridge } from "../editorCommandBridge";
 import { installKeybindings } from "../keybindings";
+import * as clipboard from "../clipboard";
 
 let dispose: (() => void) | undefined;
 afterEach(() => {
+  vi.restoreAllMocks();
   dispose?.(); dispose = undefined;
   endEdit("page-navigation"); resetStore(); document.body.innerHTML = "";
+});
+
+it("keeps a plain cut with no selection from deleting CM's current line", () => {
+  const { editor } = mount("first\nsecond");
+  editor.select(8);
+  const setData = vi.fn();
+  const event = new Event("cut", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", { value: { setData, clearData() {} } });
+  editor.element.dispatchEvent(event);
+  expect(editor.value()).toBe("first\nsecond");
+  expect(node("land").raw).toBe("first\nsecond");
+  expect(setData).not.toHaveBeenCalled();
+});
+
+it.each(["typing", "read-only", "replacement graph"])("retires an async paste-as-link after %s", async change => {
+  const { editor } = mount("original");
+  editor.select(0, 8);
+  let resolve!: (text: string) => void;
+  vi.spyOn(clipboard, "readClipboardText").mockImplementation(() => new Promise<string>(done => { resolve = done; }));
+  expect(focusedEditorCommandBridge()!.dispatch("editor/paste-as-link")).toBe(true);
+  if (change === "typing") editor.type("new input");
+  else if (change === "read-only") setDoc("pages", page => page.name === "Land", "readOnly", true);
+  else {
+    resetStore();
+    loadSingle({ name: "Land", title: "Land", kind: "page", pre_block: null,
+      blocks: [{ id: "land", raw: "replacement", collapsed: false, children: [] }] });
+  }
+  resolve("https://example.org");
+  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+  expect(node("land").raw).toBe(change === "typing" ? "new input" : change === "read-only" ? "original" : "replacement");
 });
 
 function mount(raw = "visible\nid:: retained") {

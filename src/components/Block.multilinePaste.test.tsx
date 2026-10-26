@@ -608,8 +608,18 @@ describe("multiline paste into editor-visible empty blocks", () => {
       textarea.select(textarea.value().length, textarea.value().length);
       const event = paste(textarea, "https://example.com/watch?v=dQw4w9WgXcQ");
 
-      expect(event.defaultPrevented).toBe(false);
-      expect(doc.byId[block.id].raw).toBe("before ");
+      if (textarea.kind === "textarea") {
+        // The textarea leaves literal insertion to the browser default action;
+        // a synthetic paste has no browser default action in this fixture.
+        expect(event.defaultPrevented).toBe(false);
+        expect(doc.byId[block.id].raw).toBe("before ");
+      } else {
+        // CM owns literal insertion too. Preserve the same plain URL, with no
+        // video macro or HTML conversion, through its actual paste pipeline.
+        expect(event.defaultPrevented).toBe(true);
+        expect(doc.byId[block.id].raw).toBe("before https://example.com/watch?v=dQw4w9WgXcQ");
+        expect(textarea.value()).toBe(doc.byId[block.id].raw);
+      }
     } finally {
       dispose();
     }
