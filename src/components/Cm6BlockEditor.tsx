@@ -1,15 +1,21 @@
 // Experimental editor. No CM syntax parser is configured: lsdoc supplies all spans.
-import { createEffect, createSignal, For, Show, onCleanup, onMount, type JSX } from "solid-js";
+import { createEffect, createSignal, For, Show, onCleanup, onMount, useContext, type JSX } from "solid-js";
 import { EditorSelection, EditorState, Prec, StateField } from "@codemirror/state";
 import { Decoration, EditorView, keymap, WidgetType, type DecorationSet } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, redo, undo } from "@codemirror/commands";
-import { blockWritable, mergeWithPrev, nextVisible, node, pageByName, prevVisible, setRaw, splitBlock, type OutlineScope } from "../document";
-import { endEdit, noteSurfaceFocused, startEditing, takeCaretFor } from "../editorController";
-import { BUILTIN_HIDE, joinProps, splitProps } from "../editor/properties";
+import { blockWritable, isBlockMoving, node, pageByName, setRaw, type OutlineScope } from "../document";
+import { clearFocusSurface, editingId, endEdit, focusSurfaceFor, noteSurfaceFocused, takeCaretFor } from "../editorController";
+import { BUILTIN_HIDE, SHEET_CELL_HIDE, joinProps, splitProps } from "../editor/properties";
 import { previewSpans } from "../editor/cm6Preview";
 import { registerFocusedEditorCommandBridge } from "../editorCommandBridge";
 import { SELECTION_ACTIONS, type SelectionAction } from "../editor/selectionActions";
 import { touchPrimary } from "../inputCapability";
+import { cm6Structure } from "../editor/cm6Structure";
+import { CollapseSurfaceContext, EmbedNavExitContext } from "./Block";
+import { marginNavigation } from "./blockComments";
+import { SheetCellContext } from "../sheet/context";
+import { cm6SheetKeys } from "../editor/cm6SheetKeys";
+import { isPermittedTabGesture } from "../keybindings";
 import "./cm6-editor.css";
 
 class Chip extends WidgetType {
@@ -31,6 +37,7 @@ class Chip extends WidgetType {
 
 export function Cm6BlockEditor(props: { id: string; surface: string; scope: OutlineScope | null }): JSX.Element {
   let host!: HTMLDivElement;
+  let editorHost!: HTMLDivElement;
   let view: EditorView | undefined;
   let removeHistoryKeys: (() => void) | undefined;
   let removeCommandBridge: (() => void) | undefined;
@@ -39,23 +46,20 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const shownNode = node(props.id);
   const format = pageByName(shownNode.page)?.format === "org" ? "org" : "md";
   const current = () => alive && node(props.id) === shownNode && blockWritable(props.id);
-  const visible = () => splitProps(node(props.id).raw, BUILTIN_HIDE, format).visible;
+  const cell = useContext(SheetCellContext);
+  const hiddenProperties = cell ? SHEET_CELL_HIDE : BUILTIN_HIDE;
+  const visible = () => splitProps(node(props.id).raw, hiddenProperties, format).visible;
   const commit = (text: string) => {
     if (!current() || text === visible()) return;
     const raw = node(props.id).raw;
-    setRaw(props.id, joinProps(text, splitProps(raw, BUILTIN_HIDE, format).hidden, format, raw));
+    setRaw(props.id, joinProps(text, splitProps(raw, hiddenProperties, format).hidden, format, raw));
   };
-  const navSurface = () => props.surface.startsWith("ref:") || props.surface.startsWith("embed:") ? props.surface : null;
-  const editSurface = () => props.surface.startsWith("embed:") ? props.surface : null;
-  const structuralEnter = (v: EditorView) => {
-    if (!current() || v.compositionStarted) return false;
-    const s = v.state.selection.main;
-    if (!s.empty) v.dispatch({ changes: { from: s.from, to: s.to } });
-    commit(v.state.doc.toString());
-    const zoom = props.scope?.forceExpandedRoot === props.id;
-    splitBlock(props.id, s.from, zoom, zoom, editSurface());
-    return true;
-  };
+  const embedExit = useContext(EmbedNavExitContext);
+  const structure = cm6Structure({ ...props, format, current, commit, embedExit,
+    collapse: useContext(CollapseSurfaceContext),
+    ...marginNavigation(props.id, props.scope, props.surface, () => format),
+  });
+  const sheet = cell ? cm6SheetKeys(props.id, cell, commit) : null;
   const buildDecorations = (state: EditorState): DecorationSet => {
     const ranges = previewSpans(state.doc.toString(), format).flatMap(span => {
       // Reveal at either boundary and whenever any selection intersects source.
@@ -80,40 +84,26 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     update: (value, tr) => tr.docChanged || tr.selection ? buildDecorations(tr.state) : value,
     provide: field => EditorView.decorations.from(field),
   });
-  const vertical = (forward: boolean) => (v: EditorView) => {
-    const selection = v.state.selection.main;
-    if (!selection.empty || v.compositionStarted) return false;
-    // CM6 already resolves wrapped visual-row boundaries. Comparing caret
-    // glyph rectangles to line boxes failed with ordinary WebKit font leading.
-    const boundary = v.moveToLineBoundary(selection, forward).head;
-    const atEdge = forward ? boundary === v.state.doc.length : boundary === 0;
-    if (!atEdge) return false;
-    const target = forward ? nextVisible(props.id, props.scope) : prevVisible(props.id, props.scope);
-    if (!target) return false;
-    const rowStart = v.moveToLineBoundary(selection, false).head;
-    startEditing(target, { col: selection.head - rowStart, edge: forward ? "first" : "last" }, null, navSurface());
-    return true;
-  };
   onMount(() => {
     view = new EditorView({
-      parent: host,
+      parent: editorHost,
       state: EditorState.create({ doc: visible(), extensions: [
         history(), decorations, EditorView.lineWrapping,
         EditorView.editorAttributes.of({ "data-block-editor": "cm6" }),
         EditorView.contentAttributes.of({ "data-cm6-editor": props.id, "aria-label": "" }),
         Prec.highest(keymap.of([
           { key: "Mod-Shift-z", run: redo },
-          { key: "Enter", run: structuralEnter },
-          { key: "Backspace", run: v => !v.compositionStarted && current() && v.state.selection.main.empty
-            && v.state.selection.main.head === 0 && mergeWithPrev(props.id, props.scope?.navOnly ? null : props.scope, editSurface()) },
-          { key: "ArrowUp", run: vertical(false) },
-          { key: "ArrowDown", run: vertical(true) },
-          { key: "Escape", run: v => { if (v.compositionStarted) return false; endEdit("select-block"); return true; } },
         ])),
         keymap.of([...historyKeymap, ...defaultKeymap]),
         EditorView.domEventHandlers({
           focus: () => { noteSurfaceFocused(props.surface); return false; },
-          blur: (_event, v) => { if (alive && !v.hasFocus) endEdit("blur"); return false; },
+          blur: (event, v) => {
+            // Reorders can blur a retained editor; the structural gesture owns
+            // its focus restoration. Palette actions still need embed context.
+            if (isBlockMoving() || embedExit && (event.relatedTarget as HTMLElement | null)?.closest?.(".switcher")) return false;
+            if (current() && editingId() === props.id && !v.hasFocus) endEdit("blur");
+            return false;
+          },
           beforeinput: () => !current(),
         }),
         EditorView.updateListener.of(update => {
@@ -134,17 +124,6 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         event.stopImmediatePropagation();
         return;
       }
-      // CM6 6.43.15 skips keymaps for 100ms after compositionend on
-      // desktop WebKit. IBus Hangul has already committed and forwards a
-      // normal Enter here, so own the split before CM's suppression can
-      // leave WebKit's native line break in the block. Consumed IME/229
-      // keys stay above this boundary; modified Enter keeps its keymap.
-      if (!event.defaultPrevented && event.key === "Enter" && !event.shiftKey
-        && !event.ctrlKey && !event.metaKey && !event.altKey && structuralEnter(view)) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        return;
-      }
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
       const key = event.key.toLowerCase();
       if (key !== "z" && key !== "y") return;
@@ -152,12 +131,32 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       event.stopImmediatePropagation();
       if (current()) (key === "y" || event.shiftKey ? redo : undo)(view);
     };
+    const structuralKeys = (event: KeyboardEvent) => {
+      if (!view || !view.contentDOM.contains(event.target as Node) || !current()
+        || event.isComposing || event.keyCode === 229 || view.compositionStarted) return;
+      // Global capture (including transient/suspension ownership) runs first.
+      // Tab is pre-cancelled there specifically for the editor to own.
+      if (event.defaultPrevented && !isPermittedTabGesture(event)) return;
+      // Run before CM's target handler: desktop WebKit suppresses its keymaps
+      // just after compositionend, including an already committed plain Enter.
+      if (sheet?.keydown(event, view) || structure.keydown(event, view)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    };
     host.ownerDocument.defaultView!.addEventListener("keydown", historyKeys, true);
-    removeHistoryKeys = () => host.ownerDocument.defaultView!.removeEventListener("keydown", historyKeys, true);
+    host.addEventListener("keydown", structuralKeys, true);
+    removeHistoryKeys = () => {
+      host.ownerDocument.defaultView!.removeEventListener("keydown", historyKeys, true);
+      host.removeEventListener("keydown", structuralKeys, true);
+    };
     const want = takeCaretFor(props.id);
     let anchor = view.state.doc.length, head = anchor;
     if (typeof want === "number") anchor = head = want;
-    else if (want && "start" in want) { anchor = want.start; head = want.end; }
+    else if (want && "start" in want) {
+      anchor = want.direction === "backward" ? want.end : want.start;
+      head = want.direction === "backward" ? want.start : want.end;
+    }
     else if (want && "edge" in want) {
       const edge = want.edge === "first" ? 0 : view.state.doc.length;
       const row = view.moveToLineBoundary(EditorSelection.cursor(edge), false).head;
@@ -165,18 +164,37 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       anchor = head = Math.min(row + want.col, end);
     }
     view.dispatch({ selection: { anchor: Math.min(anchor, view.state.doc.length), head: Math.min(head, view.state.doc.length) }, scrollIntoView: true });
-    view.focus();
+    const focusSurface = focusSurfaceFor(props.id);
+    if (!focusSurface || focusSurface === props.surface) {
+      view.focus();
+      queueMicrotask(() => clearFocusSurface(props.id));
+    } else {
+      queueMicrotask(() => {
+        if (!view || !current() || !view.dom.isConnected || editingId() !== props.id) return;
+        const active = host.ownerDocument.activeElement;
+        if (!active?.closest('textarea.block-editor, [data-block-editor="cm6"]')) {
+          view.focus();
+          clearFocusSurface(props.id);
+        }
+      });
+    }
     removeCommandBridge = registerFocusedEditorCommandBridge({
       blockId: props.id,
       blur: () => view?.contentDOM.blur(),
+      replaceText: (text, container) => {
+        if (!view || !current() || view.compositionStarted || !container.contains(view.contentDOM)) return false;
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, selection: { anchor: text.length }, userEvent: "input" });
+        return true;
+      },
       textSelection: () => {
         const s = view?.state.selection.main;
         return view && s && !s.empty ? { text: view.state.doc.toString(), start: s.from, end: s.to } : null;
       },
       dispatch: command => {
         if (!view || !current() || view.compositionStarted) return false;
-        // Only basic source insertions are adapted here. Structural,
-        // media, picker, slash-menu and global-history parity remains deferred.
+        if (sheet?.blocks(command)) return true;
+        if (structure.command(view, command)) return true;
+        // Media, pickers, slash menu and global-history parity are later ports.
         const s = view.state.selection.main;
         const selected = view.state.sliceDoc(s.from, s.to);
         let insert: string, caret: number;
@@ -208,6 +226,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     view.focus();
   };
   return <div class="cm6-block-editor" ref={host}>
+    <div ref={editorHost} />
     <Show when={hasSelection()}>
       <div class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined} onPointerDown={event => event.preventDefault()}>
         <For each={SELECTION_ACTIONS}>{action => <button type="button" classList={{ "sel-action-page-link": action.id === "page-link" }} title={action.title} aria-label={action.title} data-selection-action={action.id} onClick={() => formatSelection(action)}>{action.label}</button>}</For>

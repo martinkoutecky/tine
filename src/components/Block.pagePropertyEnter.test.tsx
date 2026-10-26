@@ -29,8 +29,7 @@ const pressEnter = (textarea: EditorDriver) => {
   textarea.keydown({ key: "Enter", bubbles: true, cancelable: true });
 };
 const replaceValue = (textarea: EditorDriver, value: string) => {
-  textarea.replaceText(value);
-  textarea.reportInput({ bubbles: true, inputType: "insertText", data: value });
+  textarea.input(value, value.length, { inputType: "insertText", data: value });
 };
 
 describe("first-block page-property entry (GH #138)", () => {

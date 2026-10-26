@@ -4,6 +4,7 @@ import { createRoot, createSignal } from "solid-js";
 import { pushToast } from "../toasts";
 import { clearSelection, selectBlock, prevVisible, nextVisible, blockIsGridView, withUndoUnit, blockPageReadOnly, formatForBlock, node as docNode } from "../document";
 import { editingId, endEdit, prepareEditEntry, startEditing } from "../editorController";
+import { focusedEditorCommandBridge } from "../editorCommandBridge";
 import { graphOwner } from "../owned";
 import { SHEET_CELL_HIDE, splitProps } from "../editor/properties";
 import {
@@ -841,7 +842,10 @@ function replaceThroughMountedEditor(sel: CellSelInput, text: string): void {
   const owner = graphOwner();
   const apply = () => {
     if (!owner() || editingId() !== started) return true;
-    const textarea = cellElement(sel)?.querySelector("textarea.block-editor") as HTMLTextAreaElement | null;
+    const container = cellElement(sel);
+    const bridge = focusedEditorCommandBridge();
+    if (container && bridge?.blockId === started && bridge.replaceText?.(text, container)) return true;
+    const textarea = container?.querySelector("textarea.block-editor") as HTMLTextAreaElement | null;
     if (!textarea) return false;
     textarea.value = text;
     textarea.setSelectionRange(text.length, text.length);

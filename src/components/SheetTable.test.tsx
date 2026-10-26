@@ -308,8 +308,7 @@ describe("SheetTable", () => {
     (root.querySelector(".sheet-title-header") as HTMLElement).click();
     doubleClick(cell(root, 0, 0));
     const editor = maybeEditorIn(root) as EditorDriver;
-    editor.replaceText("Zulu");
-    editor.reportInput({ bubbles: true, inputType: "insertText", data: "Zulu" });
+    editor.input("Zulu", 4, { inputType: "insertText", data: "Zulu" });
     await Promise.resolve();
     expect(editingId()).toBe("a");
     expect(editorsIn(root)).toHaveLength(1);

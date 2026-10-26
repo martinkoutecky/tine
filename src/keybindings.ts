@@ -872,12 +872,14 @@ function isEditableTarget(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
   if (!el) return false;
   const tag = el.tagName;
-  return tag === "TEXTAREA" || tag === "INPUT" || el.isContentEditable;
+  return tag === "TEXTAREA" || tag === "INPUT" || el.isContentEditable
+    || !!el.closest?.('[data-block-editor="cm6"]');
 }
 
 function isOutlineBlockEditorTarget(t: EventTarget | null): boolean {
-  const el = t as { tagName?: unknown; classList?: { contains?: (name: string) => boolean } } | null;
-  return el?.tagName === "TEXTAREA" && el.classList?.contains?.("block-editor") === true;
+  const el = t as HTMLElement | null;
+  return el?.tagName === "TEXTAREA" && el.classList?.contains?.("block-editor") === true
+    || !!el?.closest?.('[data-block-editor="cm6"]');
 }
 
 function focusedGridSurface(gridId: string): string | null {

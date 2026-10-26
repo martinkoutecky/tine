@@ -1,0 +1,222 @@
+import { EditorSelection } from "@codemirror/state";
+import type { EditorView } from "@codemirror/view";
+import {
+  beginPageHeaderEdit, blockHasFoldableBody, deleteBlock, indentBlock, insertOutlineAfter,
+  mergeWithNext, mergeWithPrev, moveBlockFeed, moveItem, moveSelection, nextVisible,
+  nextVisibleOrExtend, node, outdentBlock, pageByName, prevVisible, selectBlock,
+  selectBlockSubtree, setCollapsed, splitBlock, withBlockMoving, withUndoUnit, type OutlineScope,
+} from "../document";
+import { editingId, startEditing, type EditorSelection as CaretSelection } from "../editorController";
+import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
+import { noticeMoveOutOfView } from "../moveNotice";
+import { pushToast } from "../toasts";
+import { msg } from "../i18n";
+import { documentMode, docModeEnterForNewBlock } from "../ui";
+import { replyOnEnter } from "../commentActions";
+import { detectMacro } from "../components/Rendered";
+import { listLineAt } from "../components/blockParts";
+import { isBlockEmbedMacro, type CollapseSurfaceApi } from "../components/Block";
+import { isAnnotationBlock } from "./annotation";
+import { calcSource } from "./calc";
+import { BUILTIN_HIDE, caretOnPropertyLine, isEditorEmpty, isPropertiesOnly, multilineExitTrim } from "./properties";
+
+interface StructureContext {
+  id: string;
+  surface: string;
+  scope: OutlineScope | null;
+  format: "md" | "org";
+  current(): boolean;
+  commit(text: string): void;
+  viewPrev(): string | null;
+  viewNext(): string | null;
+  embedExit: { hostBlockId: string; firstRoot(): string | undefined } | null;
+  collapse: CollapseSurfaceApi | null;
+}
+
+/** CM owns text/visual rows; document commands own outline topology and writes.
+ * The boundary receives the same occurrence and navigation context as Editor. */
+export function cm6Structure(ctx: StructureContext) {
+  const editSurface = () => ctx.surface.startsWith("embed:") ? ctx.surface : null;
+  const navSurface = () => ctx.surface.startsWith("ref:") || ctx.surface.startsWith("embed:") ? ctx.surface : null;
+  const structuralScope = ctx.scope?.navOnly ? null : ctx.scope;
+  const selection = (v: EditorView): CaretSelection => {
+    const s = v.state.selection.main;
+    return { start: s.from, end: s.to, direction: s.empty ? "none" : s.anchor > s.head ? "backward" : "forward" };
+  };
+  const softNewline = (v: EditorView) => {
+    v.dispatch(v.state.replaceSelection("\n"), { scrollIntoView: true, userEvent: "input" });
+    return true;
+  };
+  const atEdge = (v: EditorView, forward: boolean) => {
+    const s = v.state.selection.main;
+    return v.moveToLineBoundary(EditorSelection.cursor(s.head), forward).head === (forward ? v.state.doc.length : 0);
+  };
+  const restore = (v: EditorView, s: CaretSelection) => {
+    if (!ctx.current() || !v.dom.isConnected || editingId() !== ctx.id) return;
+    const end = Math.min(s.end, v.state.doc.length), start = Math.min(s.start, end);
+    v.dispatch({ selection: s.direction === "backward" ? EditorSelection.single(end, start) : EditorSelection.single(start, end) });
+    v.focus();
+  };
+  const nudge = (v: EditorView, out: boolean) => {
+    const s = selection(v), text = v.state.doc.toString();
+    const ll = listLineAt(text, s.start, ctx.format);
+    if (ll && (ctx.format === "org" || ll.lineStart > 0) && (!out || ll.indent.length > 0)) {
+      const removed = out ? Math.min(2, ll.indent.length) : 0;
+      const caret = out ? Math.max(ll.lineStart, s.start - removed) : s.start + 2;
+      v.dispatch({ changes: { from: ll.lineStart, to: ll.lineStart + removed, insert: out ? "" : "  " }, selection: { anchor: caret }, userEvent: "input" });
+      return true;
+    }
+    if (out ? ctx.scope?.forceExpandedRoot === node(ctx.id)?.parent : !ctx.scope?.navOnly && ctx.scope?.roots.includes(ctx.id)) return true;
+    ctx.commit(text);
+    if (out) outdentBlock(ctx.id, s, editSurface());
+    else if (indentBlock(ctx.id, s, editSurface()) === false) pushToast(msg("editor-block-outline-is-too-deep-to-indent"), "error");
+    return true;
+  };
+  const move = (v: EditorView, dir: -1 | 1) => {
+    const s = selection(v);
+    ctx.commit(v.state.doc.toString());
+    void withBlockMoving(node(ctx.id).page, async () => {
+      startEditing(ctx.id, s, null, editSurface());
+      const moving = ctx.scope && !ctx.scope.navOnly ? moveItem(ctx.id, dir) : moveBlockFeed(ctx.id, dir);
+      restore(v, s); // sibling reorders must retain the IME within the gesture
+      const moved = await moving;
+      if (ctx.current() && moved !== false && moved !== "none") noticeMoveOutOfView(ctx.id, ctx.scope);
+      await new Promise<void>(resolve => v.dom.ownerDocument.defaultView!.requestAnimationFrame(() => resolve()));
+      // A DOM reorder can clear the browser range while retaining focus. CM's
+      // observer reconciles that range on its frame; restore both state and DOM.
+      restore(v, s);
+    }).catch(() => console.error("Block move failed"));
+    return true;
+  };
+  const collapse = (value: boolean) => {
+    if (!ctx.collapse) setCollapsed(ctx.id, value);
+    else if (blockHasFoldableBody(ctx.id)) {
+      const current = ctx.collapse.collapsed(ctx.id, node(ctx.id).collapsed);
+      if (current !== value) ctx.collapse.toggle(ctx.id, current);
+    }
+    return true;
+  };
+  const command = (v: EditorView, id: string): boolean => {
+    if (!ctx.current() || v.compositionStarted) return false;
+    switch (id) {
+      case "editor/indent": return nudge(v, false);
+      case "editor/outdent": return nudge(v, true);
+      case "editor/move-block-up": return move(v, -1);
+      case "editor/move-block-down": return move(v, 1);
+      case "editor/collapse": return collapse(true);
+      case "editor/expand": return collapse(false);
+      case "editor/soft-newline": return softNewline(v);
+      case "editor/select-embedding-block": {
+        if (!ctx.embedExit) return false;
+        const host = v.dom.closest(".embed-block, .embed-page")?.closest<HTMLElement>(".ls-block");
+        selectBlock(ctx.embedExit.hostBlockId);
+        host?.querySelector<HTMLElement>(":scope > .block-main")?.scrollIntoView?.({ block: "nearest" });
+        return true;
+      }
+      case "editor/select-all": {
+        const s = v.state.selection.main;
+        if (s.from !== 0 || s.to !== v.state.doc.length) return false;
+        selectBlockSubtree(ctx.id, ctx.scope);
+        return true;
+      }
+      case "editor/select-block-up":
+      case "editor/select-block-down": {
+        const dir = id === "editor/select-block-up" ? -1 : 1;
+        if (!atEdge(v, dir > 0)) return false;
+        selectBlock(ctx.id, ctx.scope);
+        moveSelection(dir, true);
+        return true;
+      }
+      default: return false;
+    }
+  };
+  const enter = (v: EditorView) => {
+    const s = v.state.selection.main, raw = v.state.doc.toString();
+    const n = node(ctx.id);
+    const macro = ctx.embedExit ? detectMacro(node(ctx.embedExit.hostBlockId)?.raw ?? "", ctx.format) : null;
+    if (ctx.embedExit && ctx.id === ctx.embedExit.firstRoot() && isBlockEmbedMacro(macro)
+      && ctx.collapse?.collapsed(ctx.id, n.collapsed)
+      && s.empty && s.to === raw.length) {
+      const id = insertOutlineAfter(ctx.embedExit.hostBlockId, [{ raw: "", children: [] }]);
+      if (id) startEditing(id, 0);
+      return true;
+    }
+    const page = pageByName(n.page);
+    const properties = ctx.format === "md" && page?.roots[0] === ctx.id
+      && (n.originatedFromPageHeader || (!page.preBlock && (isPropertiesOnly(raw) || (raw.endsWith("\n") && isPropertiesOnly(raw.slice(0, -1))))));
+    if (properties && s.empty) {
+      const trimmed = multilineExitTrim(raw, s.from, "properties", ctx.format);
+      if (trimmed !== null) {
+        let id: string | null = null;
+        withUndoUnit(`multiline-exit:${ctx.id}`, [n.page], () => {
+          ctx.commit(trimmed);
+          id = insertOutlineAfter(ctx.id, [{ raw: "", children: [] }]);
+        });
+        if (id) startEditing(id, 0, null, editSurface());
+        return true;
+      }
+    }
+    if (properties && caretOnPropertyLine(raw, s.from)) return softNewline(v);
+    if (!s.empty) v.dispatch({ changes: { from: s.from, to: s.to } });
+    ctx.commit(v.state.doc.toString());
+    if (s.empty && replyOnEnter(ctx.id, raw, s.from, editSurface())) return true;
+    const zoom = ctx.scope?.forceExpandedRoot === ctx.id;
+    splitBlock(ctx.id, s.from, zoom, zoom, editSurface());
+    return true;
+  };
+  const vertical = (v: EditorView, forward: boolean) => {
+    if (!v.state.selection.main.empty || !atEdge(v, forward)) return false;
+    const s = v.state.selection.main;
+    const col = s.head - v.moveToLineBoundary(s, false).head;
+    let target = forward ? ctx.viewNext() : ctx.viewPrev();
+    const exiting = !forward && ctx.embedExit !== null && (!target || ctx.embedExit.firstRoot() === ctx.id);
+    if (exiting) target = prevVisible(ctx.embedExit!.hostBlockId);
+    if (!forward && !target && !ctx.scope && (ctx.surface === "main" || ctx.surface.startsWith("pane:"))
+      && pageByName(node(ctx.id).page)?.roots[0] === ctx.id) target = beginPageHeaderEdit(node(ctx.id).page);
+    if (target) startEditing(target, { col, edge: forward ? "first" : "last" }, null, exiting ? null : navSurface());
+    else if (forward && !ctx.scope) {
+      void nextVisibleOrExtend(ctx.id).then(id => {
+        if (id && ctx.current() && editingId() === ctx.id) startEditing(id, { col, edge: "first" }, null, navSurface());
+      });
+    } else return false;
+    return true;
+  };
+  const keydown = (e: KeyboardEvent, v: EditorView) => {
+    if (!ctx.current() || v.compositionStarted || e.isComposing || e.keyCode === 229) return false;
+    if (isTabLikeEvent(e) && !isPermittedTabGesture(e)) return false;
+    const cmd = editorCommandFor(e);
+    if (cmd && command(v, cmd)) return true;
+    const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+    if (e.key === "Enter" && plain) {
+      const newline = documentMode() && !docModeEnterForNewBlock();
+      return e.shiftKey !== newline ? softNewline(v) : enter(v);
+    }
+    const s = v.state.selection.main, raw = v.state.doc.toString();
+    if (plain && e.key === "Escape") { selectBlock(ctx.id, ctx.scope); return true; }
+    if (plain && s.empty && e.key === "Backspace" && s.head === 0) {
+      if (isAnnotationBlock(raw, ctx.format) || calcSource(raw) !== null) return false;
+      if (mergeWithPrev(ctx.id, structuralScope, editSurface())) return true;
+      const n = node(ctx.id), next = nextVisible(ctx.id, structuralScope);
+      if (isEditorEmpty(n.raw, BUILTIN_HIDE, ctx.format) && !n.children.length && next && node(next)?.page === n.page) {
+        deleteBlock(ctx.id); startEditing(next, 0, null, editSurface()); return true;
+      }
+    }
+    if (plain && s.empty && e.key === "Delete" && s.head === raw.length) {
+      if (isAnnotationBlock(raw, ctx.format) || calcSource(raw) !== null) return false;
+      const next = nextVisible(ctx.id, structuralScope), nextRaw = next ? node(next)?.raw ?? "" : "";
+      if (next && !isAnnotationBlock(nextRaw, ctx.format) && calcSource(nextRaw) === null && mergeWithNext(ctx.id, structuralScope, editSurface())) {
+        if (ctx.current()) v.dispatch({ selection: { anchor: s.head } });
+        return true;
+      }
+    }
+    if (plain && !e.shiftKey && s.empty) {
+      if (e.key === "ArrowLeft" && s.head === 0 || e.key === "ArrowRight" && s.head === raw.length) {
+        const forward = e.key === "ArrowRight", target = forward ? ctx.viewNext() : ctx.viewPrev();
+        if (target) { startEditing(target, forward ? 0 : Number.MAX_SAFE_INTEGER, null, navSurface()); return true; }
+      }
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") return vertical(v, e.key === "ArrowDown");
+    }
+    return false;
+  };
+  return { command, keydown };
+}

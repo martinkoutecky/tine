@@ -168,7 +168,11 @@ describe("outline Tab ownership (GH #157)", () => {
     startEditing("current", 0);
     try {
       const editor = activeEditor(root);
-      editor.replaceText("hello world");
+      // A textarea can hold an unreported browser draft; CM owns its text in
+      // state. Preserve the textarea ordering and exercise the same resulting
+      // text/selection through CM's public input transaction.
+      if (editor.kind === "textarea") editor.replaceText("hello world");
+      else editor.input("hello world");
       editor.select(2, 8, "backward");
       keydown(editor, "Tab");
       const next = activeEditor(root);

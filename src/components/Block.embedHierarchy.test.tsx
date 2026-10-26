@@ -361,11 +361,7 @@ describe("block embed hierarchy", () => {
         return element!;
       });
       editor.select(0, editor.value().length);
-      editor.replaceText("");
-      editor.reportInput({
-        bubbles: true,
-        inputType: "deleteContentForward",
-      });
+      editor.input("", 0, { inputType: "deleteContentForward" });
 
       await vi.waitFor(() => {
         expect(doc.byId[childId].raw).toBe("");

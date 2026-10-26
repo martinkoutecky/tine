@@ -247,8 +247,11 @@ function cssRule(selector: string): CSSStyleRule | null {
 }
 
 function inputText(textarea: EditorDriver, text: string): void {
-  textarea.replaceText(text);
-  textarea.reportInput(new Event("input", { bubbles: true }) as InputEvent);
+  if (textarea.kind === "textarea") {
+    // Keep coverage of WebViews that report a plain Event for native input.
+    textarea.replaceText(text);
+    textarea.reportInput(new Event("input", { bubbles: true }) as InputEvent);
+  } else textarea.input(text);
 }
 
 function childrenSnapshot(): Record<string, string[]> {

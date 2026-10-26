@@ -1,4 +1,5 @@
 import { editorIn } from "../tests/editorDriver";
+import { mockCm6VisualRows } from "../tests/editorGeometry";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -36,6 +37,7 @@ function page(blocks: BlockDto[]): PageDto {
 
 function mockFiveCharacterVisualRows(): void {
   const width = 5;
+  mockCm6VisualRows(width);
   const lineHeight = 10;
   vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
     return this instanceof HTMLDivElement ? lineHeight : 0;

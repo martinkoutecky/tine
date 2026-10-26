@@ -82,8 +82,7 @@ describe("reference row source identity", () => {
       content.click();
       await expect.poll(() => maybeEditorIn(root)).not.toBeNull();
       const editor = editorIn(root);
-      editor.replaceText("Edited source");
-      editor.reportInput({ bubbles: true });
+      editor.input("Edited source");
       expect(node("owned")?.raw).toBe("Edited source");
     } finally { dispose(); }
   });

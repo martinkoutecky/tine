@@ -577,7 +577,7 @@ function templateToOutline(
 // Enter/Escape when autocomplete is closed to commit or dismiss the capture.
 /** A host whose whole body is `{{embed ((uuid))}}`: the block-embed shape whose
  *  macro host is suppressed and whose folded root ends at the host (GH #642). */
-function isBlockEmbedMacro(m: ReturnType<typeof detectMacro>): boolean {
+export function isBlockEmbedMacro(m: ReturnType<typeof detectMacro>): boolean {
   return m?.kind === "embed" && /^embed\s*\(\([^)]+\)\)\s*$/i.test(m.inner);
 }
 

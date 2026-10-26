@@ -2,11 +2,13 @@ import { afterEach, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { EditorView } from "@codemirror/view";
 import { Cm6BlockEditor } from "./Cm6BlockEditor";
-import { endEdit, startEditing } from "../editorController";
-import { node, pageByName, resetStore } from "../document";
+import { editingId, endEdit, startEditing } from "../editorController";
+import { node, pageByName, resetStore, selectedIds } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { setDoc } from "../document/model";
 import { editorIn } from "../tests/editorDriver";
+import { focusedEditorCommandBridge } from "../editorCommandBridge";
+import { installKeybindings } from "../keybindings";
 
 let dispose: (() => void) | undefined;
 afterEach(() => {
@@ -50,4 +52,34 @@ it("does not apply detached transactions to a replacement graph with the same bl
     blocks: [{ id: "land", raw: "replacement", collapsed: false, children: [] }] });
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "stale edit" } });
   expect(node("land").raw).toBe("replacement");
+});
+
+it("routes mounted replacements through the document only for the requesting surface", () => {
+  const { editor } = mount();
+  const bridge = focusedEditorCommandBridge()!;
+  const container = editor.element.closest<HTMLElement>(".cm6-block-editor")!;
+  expect(bridge.replaceText?.("wrong surface", document.createElement("div"))).toBe(false);
+  expect(node("land").raw).toBe("visible\nid:: retained");
+  expect(bridge.replaceText?.("replacement", container)).toBe(true);
+  expect(node("land").raw).toBe("replacement\nid:: retained");
+  expect(editor.selection()).toEqual([11, 11]);
+  editor.compositionStart();
+  expect(bridge.replaceText?.("preedit overwrite", container)).toBe(false);
+  editor.compositionEnd();
+  setDoc("pages", page => page.name === "Land", "readOnly", true);
+  expect(bridge.replaceText?.("read-only overwrite", container)).toBe(false);
+  expect(node("land").raw).toBe("replacement\nid:: retained");
+});
+
+it("honors a remapped structural command after the global capture handler", () => {
+  const { editor } = mount("text");
+  const uninstall = installKeybindings({ "editor/select-all": "alt+q" });
+  try {
+    editor.select(0, 4, "backward");
+    const event = editor.keydown({ key: "q", altKey: true });
+    expect(event.defaultPrevented).toBe(true);
+    expect(node("land").raw).toBe("text");
+    expect(selectedIds()).toEqual(["land"]);
+    expect(editingId()).toBeNull();
+  } finally { uninstall(); }
 });
