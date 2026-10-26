@@ -93,11 +93,18 @@ signal-hook-registry = "=1.4.8"
 
 # Quick share's GitHub transport (DESIGN §3.3) on Linux, macOS, Android and
 # iOS: rustls with the platform verifier and the ring provider, the updater's
-# own rustls stack (no aws-lc). Android's verifier needs its activity hook,
-# which phase 3 settles on a device. Windows is declared below.
+# own rustls stack (no aws-lc). Android's JVM hook and AAR are wired below
+# and in android_quick_share_tls.rs. Windows is declared below.
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "android", target_os = "ios"))'.dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Match reqwest's locked verifier; this initializes its process-global JVM
+# context. Gradle locates the matching Kotlin AAR through cargo metadata.
+# Linux, macOS, Windows and iOS require no Android initialization or JNI.
+rustls-platform-verifier = { version = "=0.7.0", default-features = false }
+jni = { version = "0.22.4", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "5.4.1"

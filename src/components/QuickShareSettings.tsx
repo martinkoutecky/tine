@@ -5,7 +5,7 @@ import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, writeOwned
 import { pushToast } from "../toasts";
 import {
   GITHUB_APPLICATION_SETTINGS, quickShareErrorText,
-  type QuickShareFound, type QuickShareListed, type QuickShareListing,
+  type QuickShareConnectionTest, type QuickShareFound, type QuickShareListed, type QuickShareListing,
 } from "../quickShare/commands";
 import { QuickShareConnect } from "./QuickShareDialog";
 import { finishSharePending, pendingShareMarkers, removeShareProperty, shareValue, type PendingShareMarker } from "../quickShare/definitions";
@@ -25,6 +25,7 @@ export function QuickShareSettings(): JSX.Element {
   const [error, setError] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal<string | null>(null);
   const [connecting, setConnecting] = createSignal(false);
+  const [connectionTest, setConnectionTest] = createSignal<QuickShareConnectionTest | null>(null);
   // Per-row results this session: "No longer on GitHub" (404 for the matching account) or "Not found yet".
   const [gone, setGone] = createSignal<ReadonlySet<string>>(new Set());
   const [notYet, setNotYet] = createSignal<ReadonlySet<string>>(new Set());
@@ -97,6 +98,10 @@ export function QuickShareSettings(): JSX.Element {
   };
 
   const disconnect = () => void act("disconnect", bindingOwner(), () => backend().quickShareDisconnect(), () => { setFound(null); return refresh(); });
+  const testConnection = () => {
+    setConnectionTest(null);
+    void act("connection-test", bindingOwner(), () => backend().quickShareTestConnection(), setConnectionTest);
+  };
   const copy = (row: QuickShareListed) => void act(`copy:${row.shareId}`, bindingOwner(), () => backend().quickShareCopyLink(row.shareId),
     (copied) => { if (copied) pushToast(msg("quick-share-settings-copied"), "success"); else if (alive) setError(t("quick-share-copy-failed")); });
   /** A share recorded live here whose graph block still says pending: the marker becomes `<login>/<gist_id>`. */
@@ -212,6 +217,10 @@ export function QuickShareSettings(): JSX.Element {
 
   return (
     <div class="quick-share-settings">
+      <Show when={listing()?.connectionTestAvailable}>
+        <button type="button" class="export-btn-secondary quick-share-test-connection" disabled={!!busy()} onClick={testConnection}>{t("quick-share-connection-test")}</button>
+        <Show when={connectionTest()}>{(result) => <p role="status" class="settings-hint">{t(`quick-share-connection-${result()}`)}</p>}</Show>
+      </Show>
       <div class="settings-section">{t("quick-share-settings-account")}</div>
       <Show when={listing()?.account} fallback={
         <Show when={connecting()} fallback={<>

@@ -1983,6 +1983,13 @@ export interface MessageArgs {
   "quick-share-connect-title": {};
   "quick-share-connect-waiting": {};
   "quick-share-connected-as": { "login": string | number };
+  "quick-share-connection-badAnswer": {};
+  "quick-share-connection-connected": {};
+  "quick-share-connection-disabled": {};
+  "quick-share-connection-network": {};
+  "quick-share-connection-refused": {};
+  "quick-share-connection-test": {};
+  "quick-share-connection-tls": {};
   "quick-share-copied": {};
   "quick-share-copy-again": {};
   "quick-share-copy-failed": {};

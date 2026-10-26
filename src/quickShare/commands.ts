@@ -53,11 +53,14 @@ export interface QuickShareListed {
 export interface QuickShareListing {
   /** Quick share is on in this build (DESIGN §5: off until the viewer is deployed). */
   enabled: boolean;
+  /** Native debug builds only; never initiates a request by itself. */
+  connectionTestAvailable?: boolean;
   account: { login: string; accountId: number } | null;
   shares: QuickShareListed[];
   /** The shares file could not be read; `shares` is then empty. */
   error: string | null;
 }
+export type QuickShareConnectionTest = "connected" | "tls" | "network" | "refused" | "badAnswer" | "disabled";
 export type QuickShareCheckOutcome = "live" | "notFoundYet";
 export type QuickShareDeleteOutcome = "deleted" | "gone";
 export interface QuickShareFound { gistId: string; createdAt: string }

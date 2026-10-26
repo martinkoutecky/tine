@@ -442,6 +442,9 @@ class TauriBackend implements Backend {
   quickShareList() {
     return this.call<QuickShareListing>("quick_share_list");
   }
+  quickShareTestConnection() {
+    return this.call<import("./quickShare/commands").QuickShareConnectionTest>("quick_share_test_connection");
+  }
   quickShareCheck(shareId: string) {
     return this.call<QuickShareCheckOutcome>("quick_share_check", { shareId });
   }

@@ -7,6 +7,7 @@ const off = async (): Promise<never> => { throw { kind: "disabled" } satisfies Q
 
 export const mockQuickShareCommands = {
   async quickShareList(): Promise<QuickShareListing> { return QUICK_SHARE_OFF; },
+  async quickShareTestConnection() { return "disabled" as const; },
   async quickShareDiscard(): Promise<void> {},
   async quickShareConnectCancel(): Promise<void> {},
   quickSharePrepare: off,

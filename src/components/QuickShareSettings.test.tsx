@@ -56,6 +56,36 @@ async function mount() {
 const share = (root: HTMLElement, id: string) => root.querySelector<HTMLElement>(`[data-share-id="${id}"]`)!;
 const has = (element: HTMLElement, cls: string) => !!element.querySelector(`.${cls}`);
 
+it("offers the development HTTPS diagnostic without a GitHub account and shows success", async () => {
+  api.list.mockImplementation(async () => listing({ account: null, connectionTestAvailable: true }));
+  const probe = vi.spyOn(backend(), "quickShareTestConnection").mockResolvedValue("connected");
+  const root = await mount();
+  const button = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Test connection to GitHub");
+  expect(button).toBeDefined();
+  expect(probe).not.toHaveBeenCalled();
+  button!.click(); await settle();
+  expect(probe).toHaveBeenCalledTimes(1);
+  expect(root.querySelector('[role="status"]')?.textContent).toContain("HTTPS connection to GitHub succeeded.");
+});
+
+it("shows a sanitized TLS diagnostic and allows another test", async () => {
+  api.list.mockImplementation(async () => listing({ connectionTestAvailable: true }));
+  const probe = vi.spyOn(backend(), "quickShareTestConnection").mockResolvedValue("tls");
+  const root = await mount();
+  const button = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Test connection to GitHub")!;
+  button.click(); await settle();
+  expect(root.querySelector('[role="status"]')?.textContent).toContain("GitHub's certificate could not be verified.");
+  probe.mockResolvedValue("connected");
+  button.click(); await settle();
+  expect(root.querySelector('[role="status"]')?.textContent).toContain("HTTPS connection to GitHub succeeded.");
+});
+
+it("hides the HTTPS diagnostic when the native build does not offer it", async () => {
+  api.list.mockImplementation(async () => listing({ connectionTestAvailable: false }));
+  const root = await mount();
+  expect(root.textContent).not.toContain("Test connection to GitHub");
+});
+
 it("lists this device's shares with the actions each state allows", async () => {
   const root = await mount();
   expect(root.textContent).toContain("Connected to GitHub as @octo.");

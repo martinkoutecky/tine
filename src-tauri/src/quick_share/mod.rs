@@ -289,6 +289,8 @@ pub(crate) struct ConnectedAccount {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Listing {
     pub enabled: bool,
+    /// Development builds only: an unauthenticated, read-only HTTPS diagnostic.
+    pub connection_test_available: bool,
     pub account: Option<ConnectedAccount>,
     pub shares: Vec<ListedShare>,
     /// The shares file could not be read (shares is then empty).
@@ -821,6 +823,7 @@ impl Service {
             .collect();
         Listing {
             enabled: enabled(),
+            connection_test_available: cfg!(debug_assertions),
             account: account.map(|a| ConnectedAccount {
                 login: a.login,
                 account_id: a.account_id,
@@ -1108,6 +1111,23 @@ pub(crate) async fn quick_share_list(app: tauri::AppHandle) -> Result<Listing, Q
     tauri::async_runtime::spawn_blocking(move || service.listing())
         .await
         .map_err(|_| QsError::Unavailable)
+}
+
+/// No service, account, token, graph or caller-supplied URL is involved. Release
+/// builds cannot make this diagnostic request even through direct IPC.
+#[tauri::command]
+pub(crate) async fn quick_share_test_connection() -> github::ConnectionTestResult {
+    #[cfg(debug_assertions)]
+    {
+        match GitHub::new(Endpoints::github_https()) {
+            Ok(github) => github.test_connection().await,
+            Err(_) => github::ConnectionTestResult::Network,
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        github::ConnectionTestResult::Disabled
+    }
 }
 
 #[tauri::command]

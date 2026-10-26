@@ -1,4 +1,5 @@
 import java.util.Properties
+import groovy.json.JsonSlurper
 
 plugins {
     id("com.android.application")
@@ -98,7 +99,36 @@ rust {
     rootDirRel = "../../../"
 }
 
+// The locked verifier ships its Kotlin AAR in the Cargo registry. Locate it
+// through Cargo (not a machine-specific cache path or an independently updated
+// Maven version), as required by rustls-platform-verifier 0.7.0's Android setup.
+data class RustlsAndroidComponent(val repository: File, val version: String)
+
+val rustlsAndroidComponent = providers.exec {
+    workingDir(rootProject.projectDir.resolve("../../.."))
+    commandLine("cargo", "metadata", "--locked", "--format-version", "1",
+        "--filter-platform", "aarch64-linux-android", "--manifest-path", "src-tauri/Cargo.toml")
+}.standardOutput.asText.map { metadata ->
+    val packages = (JsonSlurper().parseText(metadata) as Map<*, *>)["packages"] as List<*>
+    val component = packages.map { it as Map<*, *> }
+        .single { it["name"] == "rustls-platform-verifier-android" }
+    RustlsAndroidComponent(
+        File(component["manifest_path"] as String).parentFile.resolve("maven"),
+        component["version"] as String,
+    )
+}
+
+repositories {
+    maven {
+        url = uri(rustlsAndroidComponent.get().repository)
+        content { includeModule("rustls", "rustls-platform-verifier") }
+        // The POM declares packaging=aar; artifact-only lookup assumes a JAR.
+        metadataSources { mavenPom() }
+    }
+}
+
 dependencies {
+    implementation("rustls:rustls-platform-verifier:${rustlsAndroidComponent.get().version}")
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-ktx:1.10.1")

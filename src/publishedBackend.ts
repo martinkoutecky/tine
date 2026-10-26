@@ -1088,6 +1088,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
  *  capture, native UI, OS. Pinned here so a new `Backend` method must be
  *  classified deliberately. */
 export const PUBLISHED_REFUSED_METHODS = [
+  "quickShareTestConnection",
   "addDefenderExclusion",
   "savePages",
   "publishLive",

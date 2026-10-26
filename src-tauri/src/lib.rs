@@ -6,6 +6,8 @@
 mod android_clipboard;
 mod android_folder_picker;
 mod android_media;
+#[cfg(target_os = "android")]
+mod android_quick_share_tls;
 mod android_safe_back;
 mod android_system_bars;
 mod app_identity;
@@ -863,6 +865,10 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.manage(tray::TrayState::default());
 
+    // Bootstrap Android's process-wide platform verifier before the WebView can
+    // invoke any quick-share command. Linux/macOS/Windows/iOS need no JNI hook.
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_quick_share_tls::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_folder_picker::init());
     #[cfg(target_os = "android")]
@@ -1096,6 +1102,7 @@ pub fn run() {
             quick_share::quick_share_create,
             quick_share::quick_share_discard,
             quick_share::quick_share_list,
+            quick_share::quick_share_test_connection,
             quick_share::quick_share_check,
             quick_share::quick_share_find,
             quick_share::quick_share_delete,

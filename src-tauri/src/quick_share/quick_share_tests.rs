@@ -1491,7 +1491,11 @@ fn quick_share_tls_is_declared_for_every_shipped_target() {
     for line in manifest.lines().map(str::trim) {
         if line.starts_with('[') {
             section = line;
-        } else if line.starts_with("reqwest") || line.starts_with("rustls ") {
+        } else if line.starts_with("reqwest")
+            || line.starts_with("rustls ")
+            || line.starts_with("rustls-platform-verifier ")
+            || line.starts_with("jni ")
+        {
             lines.push((section, line));
         }
     }
@@ -1507,6 +1511,14 @@ fn quick_share_tls_is_declared_for_every_shipped_target() {
                 "rustls = { version = \"0.23\", default-features = false, features = [\"ring\"] }",
             ),
             (
+                "[target.'cfg(target_os = \"android\")'.dependencies]",
+                "rustls-platform-verifier = { version = \"=0.7.0\", default-features = false }",
+            ),
+            (
+                "[target.'cfg(target_os = \"android\")'.dependencies]",
+                "jni = { version = \"0.22.4\", default-features = false }",
+            ),
+            (
                 "[target.'cfg(windows)'.dependencies]",
                 "reqwest = { version = \"0.13\", default-features = false, features = [\"native-tls\", \"system-proxy\"] }",
             ),
@@ -1518,6 +1530,97 @@ fn quick_share_tls_is_declared_for_every_shipped_target() {
     assert!(github.contains("builder.tls_backend_rustls()"));
     assert!(github.contains(".https_only(endpoints.https_only)") && Endpoints::github().https_only);
     assert!(github.contains("redirect::Policy::none()"));
+
+    // Android needs both halves: Rust's one-time JVM initialization AND the
+    // matching Kotlin verifier in the APK. The other four targets need no JNI.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let android_tls = std::fs::read_to_string(root.join("src/android_quick_share_tls.rs"))
+        .expect("Android must initialize the platform verifier at startup");
+    assert!(android_tls.contains("rustls_platform_verifier::android::init_with_env"));
+    assert!(
+        android_tls.contains("register_android_plugin(\"page.tine.app\", \"QuickShareTlsPlugin\")")
+    );
+    let app = include_str!("../lib.rs");
+    assert!(app.contains("builder.plugin(android_quick_share_tls::init())"));
+    let kotlin = std::fs::read_to_string(
+        root.join("gen/android/app/src/main/java/page/tine/app/QuickShareTlsPlugin.kt"),
+    )
+    .expect("Android must call the verifier's native initialization");
+    assert!(kotlin.contains("initVerifier(activity.applicationContext)"));
+    let gradle = include_str!("../../gen/android/app/build.gradle.kts");
+    assert!(gradle.contains("cargo") && gradle.contains("metadata"));
+    assert!(gradle.contains("rustls-platform-verifier-android"));
+    assert!(gradle.contains("metadataSources { mavenPom() }"));
+    assert!(gradle.contains("implementation(\"rustls:rustls-platform-verifier:"));
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn connection_diagnostic_is_unauthenticated_bounded_and_does_not_follow_redirects() {
+    use super::github::ConnectionTestResult;
+    for (response, expected) in [
+        (
+            resp(200, "Keep it logically awesome."),
+            ConnectionTestResult::Connected,
+        ),
+        (resp(200, ""), ConnectionTestResult::BadAnswer),
+        (
+            resp(200, vec![b'x'; 64 * 1024 + 1]),
+            ConnectionTestResult::BadAnswer,
+        ),
+        (
+            resp(503, "remote error text must not escape"),
+            ConnectionTestResult::Refused,
+        ),
+        (
+            resp(302, "").with("Location", "https://example.com/leak"),
+            ConnectionTestResult::Refused,
+        ),
+    ] {
+        let mock = Mock::start(move |_| response.clone());
+        let client = GitHub::new(mock.endpoints()).unwrap();
+        assert_eq!(block_on(client.test_connection()), expected);
+        let requests = mock.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, "GET");
+        assert_eq!(requests[0].path, "/zen");
+        assert!(requests[0].header("Authorization").is_none());
+        assert!(requests[0].header("Cookie").is_none());
+        assert!(requests[0].body.is_empty());
+    }
+    let endpoints = Endpoints::github_https();
+    assert_eq!(endpoints.api, "https://api.github.com");
+    assert!(endpoints.https_only);
+}
+
+#[cfg(all(
+    debug_assertions,
+    any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "android",
+        target_os = "ios"
+    )
+))]
+#[test]
+fn connection_diagnostic_classifies_tls_without_exposing_the_error_chain() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("https://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        let _ = stream.shutdown(std::net::Shutdown::Write);
+        // Read the ClientHello before closing, avoiding a TCP reset that would
+        // replace the typed TLS error with a generic network failure.
+        let mut hello = [0; 4096];
+        let _ = stream.read(&mut hello);
+    });
+    let mut endpoints = Endpoints::github_https();
+    endpoints.api = base;
+    let client = GitHub::new(endpoints).unwrap();
+    let answer = block_on(client.test_connection());
+    assert_eq!(answer, github::ConnectionTestResult::Tls);
+    assert_eq!(serde_json::to_string(&answer).unwrap(), "\"tls\"");
 }
 #[test]
 fn an_unattested_debug_build_does_not_offer_dead_share_links() {

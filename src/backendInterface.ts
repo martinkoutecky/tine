@@ -215,6 +215,8 @@ export interface Backend {
   quickShareDiscard(prepareId: string): Promise<void>;
   /** This device's shares and the connected account; `enabled` is the build gate. */
   quickShareList(): Promise<QuickShareListing>;
+  /** Development-only, unauthenticated HTTPS GET; returns only a fixed diagnostic code. */
+  quickShareTestConnection(): Promise<import("./quickShare/commands").QuickShareConnectionTest>;
   /** Look for a pending share on GitHub (connected account only); found → live. */
   quickShareCheck(shareId: string): Promise<QuickShareCheckOutcome>;
   /** The account's Tine shares that no record on this device knows. */

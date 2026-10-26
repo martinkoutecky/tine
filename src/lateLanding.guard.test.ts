@@ -167,7 +167,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   // Quick share reads and in-memory controls: prepare keeps a payload in memory,
   // discard and cancel drop one.
   "quickShareList", "quickSharePrepare", "quickShareDiscard", "quickShareFind", "quickShareConnectStatus",
-  "quickShareConnectCancel",
+  "quickShareConnectCancel", "quickShareTestConnection",
 ]);
 // These helpers receive Owner from audited constructor call sites. Arbitrary
 // Owner parameters do not prove provenance to this syntax scan.

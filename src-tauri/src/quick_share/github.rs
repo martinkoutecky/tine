@@ -10,7 +10,7 @@
 //! are parsed for their documented fields and otherwise dropped.
 
 use super::Token;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// The GitHub OAuth App "Tine" (registered 2026-10-17; public, not a secret).
@@ -49,6 +49,12 @@ impl Endpoints {
                 return endpoints;
             }
         }
+        Self::github_https()
+    }
+
+    /// Fixed production origins, including for the development connectivity
+    /// diagnostic. It cannot be redirected by the loopback E2E override.
+    pub(super) fn github_https() -> Self {
         Self {
             oauth: "https://github.com".into(),
             api: "https://api.github.com".into(),
@@ -133,6 +139,49 @@ pub(crate) struct Answer {
 pub(crate) struct GitHub {
     pub endpoints: Endpoints,
     client: reqwest::Client,
+}
+
+/// A fixed, secret-free diagnostic. No remote body, URL or transport error text
+/// reaches the WebView. Disabled is returned by release builds without I/O.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum ConnectionTestResult {
+    Connected,
+    Tls,
+    Network,
+    Refused,
+    BadAnswer,
+    Disabled,
+}
+
+#[cfg(debug_assertions)]
+fn connection_test_error(error: &reqwest::Error) -> ConnectionTestResult {
+    // Preserve a useful TLS diagnosis without serializing error chains (which
+    // can contain URLs). Windows keeps Schannel and reports the network code;
+    // the four rustls targets can identify its typed certificate/TLS errors.
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "android",
+        target_os = "ios"
+    ))]
+    {
+        use std::error::Error;
+        let mut cause = error.source();
+        while let Some(inner) = cause {
+            if inner.is::<rustls::Error>() {
+                return ConnectionTestResult::Tls;
+            }
+            // io::Error::source can skip its contained error. TLS errors from
+            // tokio-rustls are commonly nested in one or more io::Errors.
+            cause = inner
+                .downcast_ref::<std::io::Error>()
+                .and_then(|io| io.get_ref())
+                .map(|error| error as &(dyn Error + 'static))
+                .or_else(|| inner.source());
+        }
+    }
+    ConnectionTestResult::Network
 }
 
 fn tls(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
@@ -374,6 +423,26 @@ impl GitHub {
             .read_timeout(endpoints.read_timeout);
         let client = tls(builder).build().map_err(|_| GhError::NotSent)?;
         Ok(Self { endpoints, client })
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) async fn test_connection(&self) -> ConnectionTestResult {
+        let response = match self
+            .client
+            .get(format!("{}/zen", self.endpoints.api))
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => return connection_test_error(&error),
+        };
+        if response.status() != reqwest::StatusCode::OK {
+            return ConnectionTestResult::Refused;
+        }
+        match bounded_body(response, MAX_OAUTH_BYTES).await {
+            Ok(body) if !body.is_empty() => ConnectionTestResult::Connected,
+            _ => ConnectionTestResult::BadAnswer,
+        }
     }
 
     async fn exchange(
