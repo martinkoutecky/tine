@@ -74,6 +74,19 @@ const blockTarget = (macro: string, extra: Record<string, unknown> = {}) => ({
   macro, query: { argument: macro.replace(/^\{\{\S+ |\}\}$/g, ""), dialect: "macro_tql", properties: [["tine.view", "table"]],
     currentPage: "Notes", hostBlockId: "block-1", name: "My query", ...extra } as never });
 
+it("Re-share opens while the device listing is still loading, then keeps Link selected", async () => {
+  const gist = "1234567890abcdef1234567890abcdef";
+  doc.properties.set("block-1\0tine.share", `octo/${gist}`);
+  let finish!: (value: import("../quickShare/commands").QuickShareListing) => void;
+  vi.spyOn(backend(), "quickShareList").mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  const root = await open({query: blockTarget("{{tine-query @page}}").query, macro: "{{tine-query @page}}"});
+  expect(root.querySelector<HTMLInputElement>('input[value="link"]')!.checked).toBe(true);
+  finish({enabled: true, error: null, account: {login: "octo", accountId: 42}, shares: [{shareId: "local", gistId: gist,
+    login: "octo", accountMatches: true, state: "live", title: "Project", createdAt: "2026-10-26T00:00:00Z", pages: 1}]});
+  await settle();
+  expect(exportButton(root).textContent).toBe("Re-share");
+});
+
 it("offers three choices: this page, its neighbours (disabled, coming), and a query starting at this page", async () => {
   const root = await open({ page: "Project" });
   const [page, neighbours, query] = radios(root, "share-what");

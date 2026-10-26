@@ -266,6 +266,62 @@ create costs ≈ 2 × file size), 1 file; one gist create of the envelope (≈ 1
 `P`) plus the fixed README. Connect: one 149 B file. Transport per graph edit:
 none (shares are made on request).
 
+### Re-share in place
+
+Share again from a query carrying a live `tine.share::` value, or choose
+Re-share beside Delete in the Exports overview. The local record is matched
+by gist id, regardless of login spelling. Without its device-local key the
+dialog explains why and offers **Re-share as a new link**, preserving the old
+definition and share. An unreadable records file refuses instead of pretending
+the key is absent.
+
+`quick_share_prepare(request, shareId?)` validates the new snapshot through
+the ordinary prepare path. With `shareId`, native code reads the owned Tine
+gist's current history revision and its revision-pinned raw envelope, decrypts
+with the local K, checks the authenticated share id, and reads the snapshot's
+real pages (nonempty path; the synthetic home is excluded). Comparing page
+identity keys against the new selection gives **+N new / −M gone**, including
+names in a collapsible list. The previous membership cannot come from the
+record's page count. This uses no record or in-graph format change.
+
+The reviewed revision and exact prepared bytes stay in memory under the
+existing 10-minute/4-preview/discard limits. Confirmation consumes the preview
+once. Re-share serializes per share id within the process (the record lock is
+process-wide only; there is no cross-process lock to reuse). It seals under
+the same K and share id with a fresh OS-random 96-bit nonce, then re-reads
+the current gist revision immediately before `PATCH /gists/{id}`. No
+undocumented conditional header is sent. Only `tine-share.bin` is replaced.
+Success updates the existing row's title/page count, preserves its key, login,
+creation date and gist id, and copies the unchanged link natively. No graph
+write or duplicate definition is needed for in-place Re-share.
+
+| Update result | Outcome and recovery |
+| --- | --- |
+| Valid 200 response for the same gist | Confirm updated; same link |
+| Gist gone (404) | `notFound`; keep key and graph definition; never silently create another gist |
+| 401 / other 403 / rate limit | Existing `reconnect` / sanitized `github` / `rateLimited`; keep record and graph |
+| Revision or local record changed since review | `shareChanged`; upload nothing; Refresh for a fresh preview |
+| Request known not sent (DNS/connect/TLS) | `network`; no automatic retry; Refresh before another attempt |
+| Timeout, dropped response, 5xx, malformed or unexpected success, local record-save failure after PATCH | `maybeUpdated`; never retry automatically or claim success; Review current share or Settings Check reads and decrypts GitHub again |
+
+**Residual race:** another writer can update between the final re-read and
+PATCH. GitHub's gist update has no documented compare-and-swap. Whichever
+PATCH wins leaves one complete valid snapshot; no graph data is changed or
+lost. Re-share again if needed. Check on a live record now reads and decrypts
+the current gist and refreshes its title/page count; the next Re-share derives
+its membership from the current snapshot and shows that copy's timestamp;
+Settings Check is available on live rows too and reports the current copy's
+timestamp and page names. This resolves an unknown outcome
+without a new record state. GitHub keeps earlier revisions, so Re-share does
+not remove previously shared text; only Delete removes the hosted gist.
+Readers may see raw-content cache delay (about five minutes).
+
+Cost per Re-share: preview one authenticated gist GET plus one bounded raw
+read/decrypt; confirm one gist GET and one complete-envelope PATCH, followed
+by at most one private atomic record rewrite (only if metadata changed).
+Zero graph saves, and no work on ordinary edits. Check uses one gist GET/raw
+read and at most one record rewrite. Membership and locks are memory-only.
+
 ### In the graph (D-20261017-QS3, D-20261018-Q1, D-20261018-QS3)
 
 A share is an export definition (`docs/contracts/export-definitions.md`): a
@@ -320,6 +376,14 @@ new write path):
   tine.share))` lists them, pending markers included; Settings → Sharing keeps
   the account, Find shares on GitHub and this device's keys (Copy link, Check,
   Delete, Forget).
+- Share definitions render **Delete** in their query action bar, including
+  when listed by the Exports overview. The existing confirmation and native
+  delete command apply. With a local record, the connected account must match
+  its immutable account id; without a key, the native command verifies the
+  gist's Tine marker and owner before deleting it. A declined confirmation
+  sends nothing. A `gone` result keeps the marker and key, as in Settings.
+  Confirmed deletion removes graph markers through the same guarded save as
+  Settings; a cleanup failure is shown while the hosted deletion stands.
 - A failure to write or remove the property is shown; the share itself (created,
   deleted or forgotten) stands.
 
@@ -342,7 +406,7 @@ holds). Delete/Forget: the same line removed from each page that carries it.
 
 ### Commands
 
-`quick_share_prepare(request)`, `quick_share_create(prepareId)`,
+`quick_share_prepare(request, shareId?)`, `quick_share_create(prepareId)`,
 `quick_share_discard(prepareId)`, `quick_share_list()`,
 `quick_share_check(shareId)`, `quick_share_find()`,
 `quick_share_delete(shareId | gistId)`, `quick_share_forget(shareId)`,

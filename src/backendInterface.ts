@@ -208,7 +208,7 @@ export interface Backend {
    * the token and each share's key stay native; failures reject with a
    * `QuickShareError`. Prepare builds the exact payload a later create uploads,
    * kept natively for 10 minutes under `prepareId`. */
-  quickSharePrepare(request: QueryPublicationRequest): Promise<QuickSharePrepared>;
+  quickSharePrepare(request: QueryPublicationRequest, shareId?: string): Promise<QuickSharePrepared>;
   /** Upload the prepared payload once (never retried) and copy the link to the
    *  clipboard natively; the link is not returned. */
   quickShareCreate(prepareId: string): Promise<QuickShareCreated>;

@@ -10,6 +10,9 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 
+#[path = "reshare_tests.rs"]
+mod reshare_tests;
+
 /// Every `log` line of this process (tests scan it for secrets).
 pub(super) static LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
@@ -228,6 +231,7 @@ impl Fixture {
             title: "Project".into(),
             pages: 1,
             expires: Instant::now() + PREPARED_TTL,
+            update: None,
         });
         id
     }
@@ -640,13 +644,13 @@ fn gist_mock(
                     .map(|(name, file)| {
                         (
                             name.clone(),
-                            serde_json::json!({ "filename": name, "content": file["content"], "raw_url": format!("{base}/{LOGIN}/{id}/raw/0/{name}") }),
+                            serde_json::json!({ "filename": name, "content": file["content"], "raw_url": format!("{base}/{LOGIN}/{id}/raw/{}/{name}", "a".repeat(40)) }),
                         )
                     })
                     .collect();
                 gists.lock().unwrap().insert(
                     0,
-                    serde_json::json!({ "id": id, "description": body["description"], "public": body["public"], "created_at": now_rfc3339(), "owner": { "id": ACCOUNT_ID, "login": LOGIN }, "files": files }),
+                    serde_json::json!({ "id": id, "description": body["description"], "public": body["public"], "created_at": now_rfc3339(), "owner": { "id": ACCOUNT_ID, "login": LOGIN }, "files": files, "history": [{"version": "a".repeat(40)}] }),
                 );
                 let answer = create(req);
                 if answer.status == 201 && answer.body.is_empty() {

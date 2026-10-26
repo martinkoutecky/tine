@@ -119,7 +119,10 @@ export function QuickShareSettings(): JSX.Element {
   const check = (row: QuickShareListed) => {
     const owner = bindingOwner();
     void act(`check:${row.shareId}`, owner, () => backend().quickShareCheck(row.shareId), async (outcome) => {
-      if (outcome !== "live") { setNotYet((set) => add(set, row.shareId)); return; }
+      if (outcome === "notFoundYet") { setNotYet((set) => add(set, row.shareId)); return; }
+      if (typeof outcome === "object") pushToast(msg("quick-share-current-checked", {
+        date: outcome.current.createdAt, pages: outcome.current.pages.join(", "),
+      }), "info");
       await refresh();
       await finishMarker(row.shareId, owner);
       await scanMarkers();
@@ -141,7 +144,7 @@ export function QuickShareSettings(): JSX.Element {
           if (!row.accountMatches) continue;
           const answer = await writeOwned(owner, backend().quickShareCheck(row.shareId));
           if (answer.kind === "stale") return;
-          if (answer.value !== "live") { setNotYet((set) => add(set, row.shareId)); continue; }
+          if (answer.value === "notFoundYet") { setNotYet((set) => add(set, row.shareId)); continue; }
           await refresh();
         }
         await finishMarker(row.shareId, owner);
@@ -259,7 +262,7 @@ export function QuickShareSettings(): JSX.Element {
               <Show when={!isGone() && row.state === "live"}>
                 <button type="button" class="export-btn-secondary quick-share-row-copy" disabled={!!busy()} onClick={() => copy(row)}>{t("quick-share-settings-copy")}</button>
               </Show>
-              <Show when={!isGone() && row.state === "pending" && row.accountMatches}>
+              <Show when={!isGone() && row.accountMatches}>
                 <button type="button" class="export-btn-secondary quick-share-row-check" disabled={!!busy()} onClick={() => check(row)}>{t("quick-share-check")}</button>
               </Show>
               <Show when={!isGone() && row.state === "live" && row.accountMatches}>

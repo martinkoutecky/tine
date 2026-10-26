@@ -5,6 +5,9 @@ import { QuickShareDialog, QUICK_SHARE_STATUS_POLL_MS } from "./QuickShareDialog
 import { closeQuickShare, openQuickShare, quickShareRequest } from "../shareState";
 import { clearTransientLayersForTest } from "../transientLayers";
 import { setToasts } from "../toasts";
+import { loadSingle } from "../document/workingSet";
+import { resetStore } from "../document";
+import * as definitions from "../quickShare/definitions";
 import type { QueryPublicationRequest } from "../types";
 import type { QuickShareConnectStart, QuickShareListing, QuickSharePrepared } from "../quickShare/commands";
 
@@ -44,6 +47,7 @@ beforeEach(() => { prepared = 0; api = spies(); });
 afterEach(() => {
   dispose?.(); dispose = undefined; document.body.innerHTML = "";
   closeQuickShare(); clearTransientLayersForTest(); setToasts([]); vi.useRealTimers(); vi.restoreAllMocks();
+  resetStore();
 });
 
 async function open() {
@@ -66,6 +70,58 @@ it("prepares the reviewed request and shows what goes out before anything is upl
   expect(text(root)).toContain("Shares the pages as shown; refresh to include later edits.");
   expect(text(root), "the size of what GitHub stores").toContain("2.0 KB");
   expect(api.create, "nothing is uploaded without the click").not.toHaveBeenCalled();
+});
+
+async function openExisting(keyHere = true) {
+  const gist = "1234567890abcdef1234567890abcdef";
+  loadSingle({name: "Project", title: "Project", kind: "page", pre_block: "", blocks: [
+    {id: "definition", raw: `{{tine-query @page}}\n  tine.share:: octo/${gist}`, properties: [["tine.share", `octo/${gist}`]], children: [], collapsed: false},
+  ]});
+  api.list.mockResolvedValue(listing({shares: keyHere ? [{shareId: "local", state: "live", login: "octo", gistId: gist,
+    createdAt: "2026-10-26T00:00:00Z", title: "Project", pages: 1, accountMatches: true}] : []}));
+  if (keyHere) api.prepare.mockImplementation(async () => ({...preparedOf(), shareId: "local", membership: {
+    added: ["New"], removed: ["Old"], currentSnapshotAt: "2026-10-25T12:00:00Z",
+  }}));
+  const root = document.createElement("div"); document.body.append(root);
+  openQuickShare({...REQUEST, hostBlockId: "definition"}, {hostBlockId: "definition", macro: "{{tine-query @page}}"});
+  dispose = render(() => <QuickShareDialog request={quickShareRequest} />, root);
+  await settle();
+  return root;
+}
+
+it("share-again reviews membership then updates without saving a duplicate definition", async () => {
+  const mark = vi.spyOn(definitions, "markSharePending");
+  const root = await openExisting();
+  expect(api.prepare.mock.calls[0][1]).toBe("local");
+  expect(text(root)).toContain("+1 new / −1 gone");
+  expect(text(root)).toContain("GitHub keeps earlier revisions");
+  expect(text(root)).toContain("Currently shared copy: 2026-10-25T12:00:00Z");
+  expect(api.create).not.toHaveBeenCalled();
+  button(root, "quick-share-create")!.click(); await settle();
+  expect(api.create).toHaveBeenCalledTimes(1);
+  expect(mark).not.toHaveBeenCalled();
+  expect(text(root)).toContain("The same link opens the updated pages");
+});
+
+it("without the device key, share-again explains and offers a separate new link", async () => {
+  const root = await openExisting(false);
+  expect(api.prepare.mock.calls[0][1]).toBeUndefined();
+  expect(text(root)).toContain("This device does not have the old link's key");
+  expect(button(root, "quick-share-create")!.textContent).toBe("Re-share as a new link");
+  expect(api.create).not.toHaveBeenCalled();
+});
+
+it.each(["maybeUpdated", "shareChanged"])("an update refused with %s needs a new review and never retries automatically", async kind => {
+  api.create.mockRejectedValueOnce({kind});
+  const root = await openExisting();
+  button(root, "quick-share-create")!.click(); await settle();
+  expect(api.create).toHaveBeenCalledTimes(1);
+  expect(button(root, "quick-share-create")!.disabled).toBe(true);
+  expect(root.querySelector(".quick-share-created")).toBeNull();
+  button(root, "quick-share-refresh")!.click(); await settle();
+  expect(api.prepare).toHaveBeenCalledTimes(2);
+  expect(api.create).toHaveBeenCalledTimes(1);
+  expect(button(root, "quick-share-create")!.disabled).toBe(false);
 });
 
 it("creates exactly once from the prepared payload and says the link was copied, without the key in the page", async () => {
