@@ -12,15 +12,17 @@ it("I-12: visible preorder belongs to document/tree.ts visitVisible; find traver
   expect(find).toContain("appendOutlineMatches(blocks, dtoFindNode");
   expect(find).toContain("appendOutlineMatches(scope.roots, docNode");
 });
-it("I-12: imported outline construction is blocks.ts createOutline; deletion is subtree.ts removeSubtree; page mutation is moves.ts reassignPage", () => {
+it("I-12: imported outline construction is blocks.ts createOutline; deletion is the outline kernel or subtree.ts removeSubtree; page mutation is moves.ts reassignPage", () => {
   const blocks = read("src/document/edits/blocks.ts");
   expect(blocks.match(/const create =/g)).toHaveLength(1);
   expect(blocks.match(/createOutline\((?:s|state), nodes/g)).toHaveLength(3);
-  for (const name of ["blocks", "selection"]) {
-    const source = read(`src/document/edits/${name}.ts`);
-    expect(source).toContain("removeSubtree(s, id)");
-    expect(source).not.toContain("const rm =");
-  }
+  // Block and selection deletion are the kernel's verb (outline-kernel M1).
+  expect(blocks).toContain('outlineChange({ verb: "delete", keys: [id] }');
+  expect(blocks).not.toMatch(/removeSubtree|delete s\.byId/);
+  const selection = read("src/document/edits/selection.ts");
+  expect(selection).toContain('outlineChange({ verb: "delete", keys: ids }');
+  expect(selection).not.toMatch(/removeSubtree|delete s\.byId/);
+  for (const name of ["blocks", "selection"]) expect(read(`src/document/edits/${name}.ts`)).not.toContain("const rm =");
   const moves = read("src/document/edits/moves.ts");
   expect(moves).not.toContain("const reassign =");
   expect(moves.match(/\.page\s*=(?!=)/g)).toHaveLength(1);

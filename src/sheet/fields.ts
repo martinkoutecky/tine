@@ -1,3 +1,4 @@
+import { msg, t } from "../i18n";
 import { formatForBlock, setRaw, setBlockProperty, setSchedule, blockPageReadOnly, withUndoUnit, node as docNode } from "../document";
 import { facetsFromDto, facetsOf, inlineText, parseBody, tagIdentityKey, type Facets } from "../render/facets";
 import { isRenderHiddenProp } from "../render/block";
@@ -64,7 +65,7 @@ interface GroupKeysOptions {
 
 function facetsForInput(input: GroupKeyInput): Facets | null {
   const id = typeof input === "string" ? input : input.id;
-  const n = typeof input === "string" ? docNode(id) : liveFormulaRowNode(input);
+  const n = typeof input === "string" ? docNode(id) : liveFormulaRowNode(input, "mount");
   if (n) return facetsOf(n.raw, formatForBlock(id));
   return typeof input === "string" || !input.dto ? null : facetsFromDto(input.dto);
 }
@@ -203,12 +204,12 @@ export function boardGroupByOptions(ownerId: string): FieldId[] {
 export function fieldLabel(field: FieldId): string {
   if (field.startsWith("prop:")) return field.slice(5);
   if (isFormulaField(field)) return field.slice("formula:".length);
-  if (field === "state") return "State";
-  if (field === "priority") return "Priority";
-  if (field === "scheduled") return "Scheduled";
-  if (field === "deadline") return "Deadline";
-  if (field === "tags") return "Tags";
-  return "Page";
+  if (field === "state") return t("sheet-prose-state");
+  if (field === "priority") return t("sheet-prose-priority");
+  if (field === "scheduled") return t("sheet-prose-scheduled");
+  if (field === "deadline") return t("sheet-prose-deadline");
+  if (field === "tags") return t("sheet-prose-tags");
+  return t("sheet-prose-page");
 }
 
 /** One field's value from a block's facets: the single reader behind both the
@@ -303,7 +304,7 @@ export function writeFieldVisibly(id: string, field: FieldId, value: string): bo
   const written = writeField(id, field, value);
   if (!written) {
     const shown = value.trim().slice(0, 60);
-    pushToast(`Couldn't change that cell${shown ? ` to “${shown}”` : ""}: the page is read-only, the row is gone, or the value doesn't fit the column.`, "error");
+    pushToast(msg("sheet-cell-refused", { value: shown, hasValue: shown ? 1 : 0 }), "error");
   }
   return written;
 }
@@ -405,7 +406,7 @@ export function groupKeysForBlock(input: GroupKeyInput, field: FieldId, opts: Gr
   }
 
   const id = typeof input === "string" ? input : input.id;
-  if (typeof input === "string" ? docNode(id) : liveFormulaRowNode(input)) return [groupKeyForBlock(id, field)];
+  if (typeof input === "string" ? docNode(id) : liveFormulaRowNode(input, "mount")) return [groupKeyForBlock(id, field)];
 
   const f = facetsForInput(input);
   if (!f) return [null];

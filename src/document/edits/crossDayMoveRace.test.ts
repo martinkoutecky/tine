@@ -4,11 +4,12 @@
 // target day holds the same block twice (duplicate content, duplicate `id::`).
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "../../render/parse";
-import { backend } from "../../backend";
 import { appendFeed, loadFeed, moveBlockFeed, moveSelectionItems, pageByName, resetStore, selectBlock, setFeedExtender } from "../index";
 import { pageToDto } from "../convert";
 import { doc } from "../model";
 import type { BlockDto, PageDto } from "../../types";
+import { answerOpensFromDocument } from "../host/documentHost.test.support";
+import { bindTestHost } from "../host/wiring.test.support";
 
 let serial = 0;
 const block = (raw: string): BlockDto => ({ id: `cd-${++serial}`, raw, collapsed: false, children: [] });
@@ -24,10 +25,10 @@ function deferredExtender() {
 }
 
 beforeAll(() => initParser());
-beforeEach(() => {
+beforeEach(async () => {
   serial = 0;
   resetStore();
-  vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map((_, i) => `s-${i}`) }));
+  answerOpensFromDocument(await bindTestHost());
 });
 afterEach(() => { setFeedExtender(null); vi.restoreAllMocks(); });
 

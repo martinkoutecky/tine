@@ -1,0 +1,6 @@
+{:meta/version 1
+ :preferred-format :org
+ :preferred-workflow :todo
+ :org-mode/insert-file-link? false
+ :default-templates {:journals ""}
+ :file/name-format :triple-lowbar}

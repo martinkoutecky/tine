@@ -2,7 +2,7 @@
 
 use tine_store::{Budget, QueryError};
 
-pub(super) fn query_error(error: QueryError) -> String {
+pub(crate) fn query_error(error: QueryError) -> String {
     match error {
         QueryError::Cancelled => "cancelled".into(),
         QueryError::Parse(reason) => reason,
@@ -37,7 +37,7 @@ pub(super) fn query_error(error: QueryError) -> String {
 /// Report a reference-read failure: a fixed budget family crosses the wire,
 /// while full query detail is written only to the opt-in private debug log.
 /// Cost is O(error detail length); callers display fixed text for this family.
-pub(super) fn reference_error(error: QueryError) -> String {
+pub(crate) fn reference_error(error: QueryError) -> String {
     let bounded = matches!(&error, QueryError::ResultTooLarge { .. });
     let detail = query_error(error);
     crate::debug::diag_private("reference-load-failed", &detail);

@@ -3,7 +3,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 // Each exemption is one-page by construction; multi-page intents must call
-// persistTogether in the same function that marks or flushes their pages.
+// persistTransfer (host/wiring.ts, STEP3 §8; formerly persistTogether) in the
+// same function that marks or flushes their pages.
 const ONE_PAGE = new Map([
   ["src/document/history.ts::applyEntry", "raw replay changes one page; snapshot replay delegates all multi-page dirties to undo/redo"],
   ["src/document/edits/blocks.ts::replaceChildOrders", "callers pass orders from one page"],
@@ -13,6 +14,16 @@ const ONE_PAGE = new Map([
   ["src/document/edits/properties.ts::setPageProperty", "both branches change one named page"],
   ["src/document/edits/identity.ts::ensureBlockId", "stamps one block's page"],
   ["src/document/edits/identity.ts::stampBlockId", "stamps one block's page (ensureStableBlockId body, GH #373)"],
+]);
+
+// I-3 as amended by Q-TS1 (STEP3 §8): an intent whose per-page edits are
+// independent (no block moves between pages) is K page submits, one per page;
+// each entry says why nothing transfers.
+const INDEPENDENT = new Map([
+  ["src/document/edits/moves.ts::moveSelectionItems", "reorders siblings within each page; no block changes page"],
+  ["src/document/edits/selection.ts::cycleSelectionTasks", "rewrites each selected block's marker in place"],
+  ["src/document/edits/selection.ts::deleteSelection", "removes blocks from their own pages; nothing is inserted elsewhere"],
+  ["src/document/edits/selection.ts::setSelectionHeading", "rewrites each selected block's heading in place"],
 ]);
 
 function sourceFiles(dir: string): string[] {
@@ -29,11 +40,11 @@ export function crossPageSaveViolations(file: string, source: string): string[] 
   for (let i = 0; i < functions.length; i++) {
     const name = functions[i][1];
     const body = source.slice(functions[i].index, functions[i + 1]?.index ?? source.length);
-    const calls = [...body.matchAll(/\b(?:markDirty|addDirty|flushPage|persistTogether)\s*\(/g)];
+    const calls = [...body.matchAll(/\b(?:markDirty|addDirty|flushPage|persistTransfer)\s*\(/g)];
     const looping = /\bfor\s*\([^\n]+\)\s*(?:\{\s*)?(?:markDirty|addDirty|flushPage)\s*\(/.test(body)
       || /\bfor\s*\([^\n]+\)\s*\{\s*\n\s*(?:markDirty|addDirty|flushPage)\s*\(/.test(body);
     const cross = calls.length > 1 || looping;
-    if (cross && !/\bpersistTogether\s*\(/.test(body) && !ONE_PAGE.has(`${file}::${name}`)) found.push(`${file}::${name}`);
+    if (cross && !/\bpersistTransfer\s*\(/.test(body) && !ONE_PAGE.has(`${file}::${name}`) && !INDEPENDENT.has(`${file}::${name}`)) found.push(`${file}::${name}`);
   }
   return found;
 }

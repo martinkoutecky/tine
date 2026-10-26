@@ -21,9 +21,45 @@ const META: GraphMeta = {
 
 beforeAll(() => initParser());
 
+it.each(["md", "org"] as const)("keeps template collapse at the rendered insertion boundary (%s)", async (format) => {
+  const property = (value: string) => format === "org"
+    ? `\n:PROPERTIES:\n:collapsed: ${value}\n:END:` : `\ncollapsed:: ${value}`;
+  const leaf = (raw: string) => ({ id: "", raw, collapsed: false, children: [] });
+  vi.spyOn(backend(), "listTemplates").mockResolvedValue([{
+    name: "Collapse", page: "Templates", kind: "page", blocks: [
+      { ...leaf(`Folded${property("true")}`), collapsed: true, children: [
+        { ...leaf(`Nested${property("true")}`), collapsed: true, children: [leaf("hidden grandchild")] },
+      ] },
+      { ...leaf(`Expanded${property("false")}`), children: [leaf("visible false child")] },
+      { ...leaf("Default"), children: [leaf("visible default child")] },
+    ],
+  }]);
+  setGraphMeta(META);
+  bumpGraphEpoch();
+  loadSingle({ name: "Shared", kind: "page", title: "Shared", pre_block: null, format,
+    blocks: [{ id: "collapse-host", raw: "/Collapse", collapsed: false, children: [] }] });
+  startEditing("collapse-host", 9);
+  const root = document.createElement("div");
+  document.body.append(root);
+  const dispose = render(() => <For each={pageByName("Shared")?.roots ?? []}>{(id) => <Block id={id} />}</For>, root);
+  try {
+    const textarea = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+    textarea.focus();
+    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "e" }));
+    await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Template: Collapse"));
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(Object.values(doc.byId).find((b) => b.raw.startsWith("Folded"))?.collapsed).toBe(true));
+    expect(Object.values(doc.byId).find((b) => b.raw.startsWith("Nested"))?.collapsed).toBe(true);
+    expect(root.textContent).not.toContain("hidden grandchild");
+    expect(root.textContent).toContain("visible false child");
+    expect(root.textContent).toContain("visible default child");
+  } finally { dispose(); }
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
   setGraphMeta(null);
+  bumpGraphEpoch();
   resetStore();
   document.body.innerHTML = "";
 });

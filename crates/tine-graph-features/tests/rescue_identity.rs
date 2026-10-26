@@ -36,7 +36,7 @@ fn assert_rescue_refused(root: &PathBuf, incumbent: &str, stray: &str, name: &st
     let stray_bytes = fs::read(root.join(stray)).unwrap();
     let store = Store::open(root, Default::default()).unwrap().0;
     let _ = store.whole_graph().unwrap();
-    let error = pages::rename_file_to_page(&store, stray, name).unwrap_err();
+    let error = pages::rename_file_to_page(&store, None, stray, name).unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "{error}");
     assert_eq!(fs::read(root.join(incumbent)).unwrap(), incumbent_bytes);
     assert_eq!(fs::read(root.join(stray)).unwrap(), stray_bytes);
@@ -51,6 +51,7 @@ fn assert_rescue_refused(root: &PathBuf, incumbent: &str, stray: &str, name: &st
 #[test]
 #[cfg_attr(windows, ignore = "':' cannot appear in a Windows filename")]
 fn rescue_refuses_legacy_page_identity_collision() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("legacy");
     fs::write(
         root.join("pages/A:B.md"),
@@ -70,6 +71,7 @@ fn rescue_refuses_legacy_page_identity_collision() {
 #[test]
 #[cfg_attr(windows, ignore = "':' cannot appear in a Windows filename")]
 fn rescue_refuses_legacy_identity_in_other_text_extension() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("extension");
     fs::write(
         root.join("pages/B:C.markdown"),
@@ -92,6 +94,7 @@ fn rescue_refuses_legacy_identity_in_other_text_extension() {
 
 #[test]
 fn rescue_refuses_effective_markdown_title_collision() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("title");
     fs::write(
         root.join("pages/Other.md"),
@@ -111,12 +114,13 @@ fn rescue_refuses_effective_markdown_title_collision() {
 #[test]
 #[cfg_attr(windows, ignore = "':' cannot appear in a Windows filename")]
 fn a_legacy_filename_for_another_name_does_not_block_a_rescue() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("unrelated");
     fs::write(root.join("pages/A:B.md"), "- legacy page\n").unwrap();
     fs::write(root.join("journals/Loose.md"), "- loose journal stray\n").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
     let _ = store.whole_graph().unwrap();
-    pages::rename_file_to_page(&store, "journals/Loose.md", "A:C").unwrap();
+    pages::rename_file_to_page(&store, None, "journals/Loose.md", "A:C").unwrap();
     assert!(root.join("pages/A%3AC.md").exists());
     assert!(!root.join("journals/Loose.md").exists());
     assert!(root.join("pages/A:B.md").exists());

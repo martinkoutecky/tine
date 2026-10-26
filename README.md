@@ -59,17 +59,30 @@ warn the first time — here's how to get past it:
 
 - **Linux** — the **AppImage** runs on any distro with no install: `chmod +x Tine_*.AppImage`, then
   run it. Or use the **`.deb`** (Debian/Ubuntu) or **`.rpm`** (Fedora/openSUSE).
-- **macOS** — open the **`.dmg`** and drag Tine into Applications. If Tine
+  Prefer Flatpak? The community repository [FlatPark](https://flatpark.org) packages the official
+  `.deb` (unofficial, but approved by us; packaging issues go to FlatPark's tracker):
+  `flatpak --user remote-add --if-not-exists flatpark https://dl.flatpark.org/flatpark.flatpakrepo`,
+  then `flatpak --user install flatpark page.tine.Tine`.
+- **macOS** — `brew install --cask tine` with [Homebrew](https://brew.sh), or open the **`.dmg`**
+  and drag Tine into Applications. If Tine
   **keeps asking to access your Documents folder on every launch**, see the
   [workaround](#macos-repeated-documents-permission-prompt) below.
 - **Windows** — run the **`.exe`** installer; if SmartScreen appears, click **More info → Run
   anyway**. Prefer no installer? Grab the portable **`Tine_*_x64-portable.zip`**, unzip, and run
-  `Tine.exe` — it needs the WebView2 runtime, which is preinstalled on Windows 10/11.
+  `Tine.exe` — it needs the WebView2 runtime, which is preinstalled on Windows 10/11. The portable
+  Tine keeps its settings and WebView2 data in the `tine-data` folder next to `Tine.exe`, not in
+  AppData, so it runs from a USB drive; to update it, quit Tine and unzip the new version into the
+  same folder.
 - **Android** — install from **[F-Droid](https://f-droid.org/packages/page.tine.app/)** for automatic
   updates, or take the signed **`Tine_*_android-arm64.apk`** from Releases.
 - **iPhone and iPad** — Tine is in public beta on **[TestFlight](https://testflight.apple.com/join/rpGGpTVW)**:
   install Apple's TestFlight app, open the link, and install Tine (it appears as *TineOutline*).
   Graphs live in **On My iPhone → TineOutline** or **iCloud Drive → TineOutline**.
+
+**Updates.** On desktop, Tine tells you when a new version is out and installs it in place when
+you click **Install update**: this covers the AppImage, `.deb`, `.rpm`, macOS app and Windows
+installer. The raw Linux binary and Flatpak builds update through their own channel instead
+(`flatpak update` for FlatPark).
 
 (Want to hack on Tine instead? Build from source — see [Build & run](#build--run).)
 
@@ -248,8 +261,9 @@ TINE_DEBUG=1 tine                 # or:  tine --debug
 TINE_DEBUG=1 ./Tine-*.AppImage    # AppImage
 ```
 
-Tine prints the log path on startup; it defaults to `/tmp/tine-debug.log` (override with
-`TINE_DEBUG_LOG=/path`). Reproduce the problem, then send that file. The log records no note content
+Tine prints the log path on startup; it defaults to `/tmp/tine-debug.log` (`%TEMP%\tine-debug.log`
+on Windows; `tine-data\<app id>\local\logs\tine-debug.log` for the portable Windows Tine; override
+with `TINE_DEBUG_LOG=/path`). Reproduce the problem, then send that file. The log records no note content
 — only startup diagnostics.
 
 **Quick capture** — at the top of the journal feed, a page-title field + a body composer: fill the
@@ -279,7 +293,8 @@ without reading note content.
 
 ## Community
 
-Questions, ideas, screenshots, and bug reports are welcome on the subreddit:
+Ask questions in [GitHub Discussions → Questions](https://github.com/martinkoutecky/tine/discussions/categories/questions).
+Ideas, screenshots, and bug reports are also welcome on the subreddit:
 **[r/TineOutline](https://www.reddit.com/r/TineOutline/)** — the best place to follow what's
 shipping and help shape what's next. For concrete bugs or feature requests you can also
 [open an issue](https://github.com/martinkoutecky/tine/issues).

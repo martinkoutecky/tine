@@ -46,8 +46,9 @@ fn atomic_write(root: &Path, path: &Path, bytes: &[u8]) {
 
 #[test]
 fn demo_graph_scaffolds_and_resolves() {
-    let dir = scratch("demo");
-    guide::create_demo_graph(&dir).unwrap();
+    let _integration_guard = crate::integration_lock();
+    let parent = scratch("demo");
+    let dir = guide::create_demo_graph(&parent, "notes").unwrap();
     assert!(dir.join("logseq/config.edn").is_file());
     assert!(dir.join("journals").is_dir());
     assert!(dir.join("assets/quick-capture.png").is_file());
@@ -91,6 +92,7 @@ fn demo_graph_scaffolds_and_resolves() {
 
 #[test]
 fn bundled_guide_pages_are_read_only_virtual_pages() {
+    let _integration_guard = crate::integration_lock();
     let pages = bundled_guide_pages();
     let index = pages
         .iter()
@@ -119,6 +121,7 @@ fn bundled_guide_pages_are_read_only_virtual_pages() {
 
 #[test]
 fn guide_explains_page_title_identity_and_files_outside_page_directory() {
+    let _integration_guard = crate::integration_lock();
     let tips = bundled_guide_pages()
         .into_iter()
         .find(|page| page.title == "Features/Tips & shortcuts")
@@ -129,10 +132,16 @@ fn guide_explains_page_title_identity_and_files_outside_page_directory() {
         .contains("keeps the file at its existing path"));
     assert!(tips.markdown.contains("archive/"));
     assert!(tips.markdown.contains(":hidden [\"archive/private\"]"));
+    assert!(tips.markdown.contains("non-Latin keyboard layout"));
+    assert!(tips.markdown.contains("AZERTY and Dvorak"));
+    assert!(tips
+        .markdown
+        .contains("Text you type keeps the selected language"));
 }
 
 #[test]
 fn guide_explains_favorites_groups_nesting_and_page_storage() {
+    let _integration_guard = crate::integration_lock();
     let tips = bundled_guide_pages()
         .into_iter()
         .find(|page| page.title == "Features/Tips & shortcuts")
@@ -145,6 +154,7 @@ fn guide_explains_favorites_groups_nesting_and_page_storage() {
 
 #[test]
 fn guide_explains_following_the_link_at_the_caret() {
+    let _integration_guard = crate::integration_lock();
     // GH #274: Ctrl+O / Ctrl+Shift+O follow the link nearest the caret.
     let tips = bundled_guide_pages()
         .into_iter()
@@ -178,6 +188,7 @@ fn guide_explains_following_the_link_at_the_caret() {
 
 #[test]
 fn pdf_guide_explains_conflict_discard_and_crop_cleanup_retry() {
+    let _integration_guard = crate::integration_lock();
     let pdf = bundled_guide_pages()
         .into_iter()
         .find(|page| page.title == "Features/PDF annotation")
@@ -200,6 +211,7 @@ fn extract_page_links(markdown: &str) -> Vec<String> {
 
 #[test]
 fn guide_link_set_is_closed_over_demo_pages() {
+    let _integration_guard = crate::integration_lock();
     let guide: HashSet<String> = GUIDE_TEMPLATES
         .iter()
         .map(|t| tine_core::refs::page_key(t.title))
@@ -220,6 +232,7 @@ fn guide_link_set_is_closed_over_demo_pages() {
 
 #[test]
 fn guide_copy_rewrites_interguide_page_refs_only() {
+    let _integration_guard = crate::integration_lock();
     let copied = [
         "Tine Guide",
         "Features/Sheets",
@@ -271,10 +284,11 @@ fn guide_copy_rewrites_interguide_page_refs_only() {
 
 #[test]
 fn copy_guide_into_graph_writes_whole_lowercase_namespace_and_assets() {
+    let _integration_guard = crate::integration_lock();
     let dir = scratch("whole");
     fs::create_dir_all(dir.join("pages")).unwrap();
     let store = open(&dir);
-    let copied = guide::copy_guide_into_graph(&store, "Features/Sheets").unwrap();
+    let copied = guide::copy_guide_into_graph(&store, None, "Features/Sheets").unwrap();
     assert_eq!(copied.name, "tine-guide/Features/Sheets");
     assert!(copied.created);
     assert_eq!(copied.created_pages.len(), GUIDE_TEMPLATES.len());
@@ -310,16 +324,17 @@ fn copy_guide_into_graph_writes_whole_lowercase_namespace_and_assets() {
 
 #[test]
 fn recopy_guide_skips_existing_pages_without_clobbering_user_edits() {
+    let _integration_guard = crate::integration_lock();
     let dir = scratch("recopy");
     fs::create_dir_all(dir.join("pages")).unwrap();
     let store = open(&dir);
-    guide::copy_guide_into_graph(&store, "Tine Guide").unwrap();
+    guide::copy_guide_into_graph(&store, None, "Tine Guide").unwrap();
     let edited = guide_copy_page_name("Features/Sheets");
     let edited_path = store
         .path_for_os_handoff(&page_id(&store, &edited).file(), false)
         .unwrap();
     atomic_write(&dir, &edited_path, b"- user edits stay\n");
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let before: HashMap<String, String> = GUIDE_TEMPLATES
         .iter()
         .map(|template| {
@@ -330,7 +345,7 @@ fn recopy_guide_skips_existing_pages_without_clobbering_user_edits() {
             (name, fs::read_to_string(path).unwrap())
         })
         .collect();
-    let existing = guide::copy_guide_into_graph(&store, "Features/Sheets").unwrap();
+    let existing = guide::copy_guide_into_graph(&store, None, "Features/Sheets").unwrap();
     assert_eq!(existing.name, edited);
     assert!(!existing.created);
     assert!(existing.created_pages.is_empty());
@@ -354,6 +369,7 @@ fn recopy_guide_skips_existing_pages_without_clobbering_user_edits() {
 #[cfg(unix)]
 #[test]
 fn copy_guide_rejects_pages_directory_symlink_swap() {
+    let _integration_guard = crate::integration_lock();
     use std::os::unix::fs::symlink;
     let dir = scratch("pages-swap");
     let outside = scratch("pages-outside");
@@ -361,13 +377,14 @@ fn copy_guide_rejects_pages_directory_symlink_swap() {
     let store = open(&dir);
     fs::remove_dir(dir.join("pages")).unwrap();
     symlink(&outside, dir.join("pages")).unwrap();
-    assert!(guide::copy_guide_into_graph(&store, "Tine Guide").is_err());
+    assert!(guide::copy_guide_into_graph(&store, None, "Tine Guide").is_err());
     assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
 }
 
 #[cfg(unix)]
 #[test]
 fn copy_guide_rejects_assets_directory_symlink_swap() {
+    let _integration_guard = crate::integration_lock();
     use std::os::unix::fs::symlink;
     let dir = scratch("assets-swap");
     let outside = scratch("assets-outside");
@@ -376,12 +393,13 @@ fn copy_guide_rejects_assets_directory_symlink_swap() {
     let store = open(&dir);
     fs::remove_dir(dir.join("assets")).unwrap();
     symlink(&outside, dir.join("assets")).unwrap();
-    assert!(guide::copy_guide_into_graph(&store, "Tine Guide").is_err());
+    assert!(guide::copy_guide_into_graph(&store, None, "Tine Guide").is_err());
     assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
 }
 
 #[test]
 fn guide_explains_missing_links_and_old_web_engines() {
+    let _integration_guard = crate::integration_lock();
     let pages = bundled_guide_pages();
     let links = &pages
         .iter()
@@ -401,6 +419,7 @@ fn guide_explains_missing_links_and_old_web_engines() {
 
 #[test]
 fn guide_explains_query_sort_search_retry_and_print_refusal() {
+    let _integration_guard = crate::integration_lock();
     let pages = bundled_guide_pages();
     let page = |title: &str| {
         &pages
@@ -424,6 +443,7 @@ fn guide_explains_query_sort_search_retry_and_print_refusal() {
 
 #[test]
 fn guide_says_the_launch_backup_waits_for_a_quiet_start() {
+    let _integration_guard = crate::integration_lock();
     let pages = bundled_guide_pages();
     let files = &pages
         .iter()
@@ -438,6 +458,7 @@ fn guide_says_the_launch_backup_waits_for_a_quiet_start() {
 
 #[test]
 fn guide_explains_hierarchy_queries_and_empty_relations() {
+    let _integration_guard = crate::integration_lock();
     let page = bundled_guide_pages()
         .into_iter()
         .find(|page| page.title == "Workflows/Find and revisit")
@@ -463,10 +484,11 @@ fn guide_explains_hierarchy_queries_and_empty_relations() {
 /// closed (Martin 2026-10-03, UI-OG-GH619-SLASH-QUERY-CHOOSER), the query text
 /// sits behind "Edit as text" (UI-OG-GH619-EDIT-AS-TEXT), a condition can be
 /// dragged into another group (UI-OG-GH619-DRAG-BETWEEN-GROUPS), scheduled and
-/// deadline ranges print as OG's `(between scheduled …)`, and the conflicts list
+/// deadline ranges save as `{{tine-query …}}`, and the conflicts list
 /// is remembered in the launch cache.
 #[test]
 fn guide_describes_the_current_query_sheet_and_conflict_list() {
+    let _integration_guard = crate::integration_lock();
     let page = |title: &str| {
         GUIDE_TEMPLATES
             .iter()
@@ -488,7 +510,8 @@ fn guide_describes_the_current_query_sheet_and_conflict_list() {
             "{name}: /query no longer opens the field chooser by itself"
         );
     }
-    assert!(find.contains("press **Edit as text** at the foot of the sheet"));
+    assert!(find.contains("Open **⋯ → Edit as text**"));
+    assert!(find.contains("The real results remain below the editor as your live preview"));
     assert!(
         !find.contains("It is always there"),
         "the query text is behind Edit as text"
@@ -496,8 +519,9 @@ fn guide_describes_the_current_query_sheet_and_conflict_list() {
     assert!(find.contains("Drop the handle onto another group to move the condition into it"));
     assert!(!find.contains("only ever reorders within one list"));
     let model = page("Reference/Tine query model");
-    assert!(!model.contains("scheduled and deadline ranges,"));
-    assert!(model.contains("Scheduled and deadline *ranges* are not on this list"));
+    assert!(model.contains("**Tine-only features** (scheduled and deadline ranges,"));
+    assert!(model.contains("{{tine-query @block scheduled between today and '+7d'}}"));
+    assert!(!model.contains("Scheduled and deadline *ranges* are not on this list"));
     let tips = page("Features/Tips & shortcuts");
     assert!(!tips.contains("Nothing is stored"));
     assert!(tips.contains("its own disposable launch cache"));

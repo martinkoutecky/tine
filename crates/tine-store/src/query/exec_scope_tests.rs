@@ -72,7 +72,7 @@ fn page_constraints_preserve_or_not_refs_duplicates_and_page_rows() {
         "- duplicate [[Other]]\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(crate::Depth::Stamps).unwrap();
     let graph = store.whole_graph().unwrap();
     for (source, rows) in [
         (

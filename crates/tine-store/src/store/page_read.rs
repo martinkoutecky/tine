@@ -10,12 +10,18 @@ impl Store {
         &self,
         id: &PageId,
     ) -> Result<(PageId, PathBuf, PageEntry), StoreError> {
+        let (id, path) = self.page_spot(id)?;
+        let entry = self.page_entry(&id, &path)?;
+        Ok((id, path, entry))
+    }
+
+    /// [`Self::page_target`]'s checks that read no page file: its disk
+    /// spelling and path, refusing a symlinked page or one outside the areas.
+    pub(crate) fn page_spot(&self, id: &PageId) -> Result<(PageId, PathBuf), StoreError> {
         if self.as_page(&id.file()).is_none() {
             return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
         }
-        let id = self
-            .disk_spelling_for_case_alias(id)
-            .unwrap_or_else(|| id.clone());
+        let id = self.disk_spelling(id).unwrap_or_else(|| id.clone());
         // v0.6.5's page walker never indexes a symlinked page file (it could
         // expose a file outside the graph), so no listing hands out such an
         // id; refuse one here too. Ancestors must stay inside the area. The
@@ -25,11 +31,32 @@ impl Store {
         if fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
             return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
         }
-        let entry = self
-            .graph
-            .entry_for_path(&path)
-            .ok_or_else(|| StoreError::InvalidTarget(id.as_str().to_owned()))?;
-        Ok((id, path, entry))
+        Ok((id, path))
+    }
+
+    /// The listing entry of the page file at `path` (its preamble names it).
+    pub(super) fn page_entry(&self, id: &PageId, path: &Path) -> Result<PageEntry, StoreError> {
+        self.graph
+            .entry_for_path(path)
+            .ok_or_else(|| StoreError::InvalidTarget(id.as_str().to_owned()))
+    }
+
+    /// A read of a page a host holds (A-V4, A-H1): its owner's indexed
+    /// bytes, named and parsed from them, with no read of the file; one
+    /// its owner has not indexed yet is parsed from the file, unpublished.
+    /// None for a page no host holds.
+    pub(super) fn held_page(&self, path: &Path) -> Result<Option<PageDto>, StoreError> {
+        let read = match self.graph.source(path) {
+            crate::model::Source::Disk => return Ok(None),
+            crate::model::Source::Held(bytes) => {
+                page_dto(|| self.graph.page_dto_for_bytes(path, &bytes))
+            }
+            crate::model::Source::HeldAbsent => Err(StoreError::NotFound),
+            crate::model::Source::HeldUnindexed => {
+                page_dto(|| self.graph.load_by_validated_path(path))
+            }
+        };
+        read.map(Some)
     }
 
     /// A parsed page as a read: its revision and read-only state.
@@ -48,6 +75,65 @@ impl Store {
             rev,
             read_only,
         })
+    }
+
+    /// Parse one page file no host holds: the canonical claimant through
+    /// the cache (which it reconciles), any other file directly.
+    pub(super) fn parse_page(
+        &self,
+        path: &Path,
+        entry: &PageEntry,
+        canonical: bool,
+    ) -> Result<PageDto, StoreError> {
+        page_dto(|| {
+            #[cfg(test)]
+            if fs::read_to_string(path)
+                .is_ok_and(|text| text.contains("__TINE_TEST_PAGE_PARSE_PANIC__"))
+            {
+                panic!("deterministic test page parser panic");
+            }
+            if canonical {
+                self.graph.load_page(entry).map(Some)
+            } else {
+                self.graph.load_by_validated_path(path)
+            }
+        })
+    }
+
+    /// The page `id` parsed from `bytes`, as a read of its file holding
+    /// them would answer: for a caller that already read the file (with
+    /// [`Store::read`]) and writes under that read's revision, so what it
+    /// writes is computed from the bytes the revision guards (A-V4b).
+    /// [`Store::page`] reads the file itself. Writes nothing. Cost O(bytes
+    /// + blocks).
+    pub fn page_of(&self, id: &PageId, bytes: &[u8]) -> Result<PageRead, StoreError> {
+        let (id, path, _) = self.page_target(id)?;
+        let doc = page_dto(|| self.graph.page_dto_for_bytes(&path, bytes))?;
+        self.page_read(id, doc)
+    }
+
+    /// Stage a byte-exact copy of `old`, the bytes of marker-bearing page file
+    /// `file`, under `logseq/.tine-trash/conflicts/<stamp>__markers__<name>`
+    /// (no-replace, fsync'd), before a host operation resolves them (DESIGN
+    /// §3.4 pre): a crash leaves the old file plus its copy, or the resolved
+    /// file plus the copy, never a lost side. A refused operation leaves the
+    /// copy in trash. One write + fsync of `old`.
+    pub fn stage_marker_copy(&self, file: &FileId, old: &[u8]) -> Result<FileId, crate::Why> {
+        self.transaction(None).stage_marker_file(file, old)
+    }
+
+    /// Hold page `id` as a page host does, with no host running: its index
+    /// and reads answer the bytes on disk now until the store closes
+    /// (A-V4). The caller's later disk edits stay unindexed.
+    #[cfg(any(test, feature = "test-faults"))]
+    pub fn hold_page(&self, id: &PageId) -> Result<(), StoreError> {
+        let _writer = self.writer.lock().unwrap();
+        let (id, path, _) = self.page_target(id)?;
+        let bytes = fs::read(&path).map_err(StoreError::from_io)?;
+        self.graph.hold_unhosted(id.as_str());
+        let _ = (self.graph).publish_owned(id.as_str(), Some(Arc::from(bytes)), None);
+        self.publish_retired();
+        Ok(())
     }
 
     /// Publish a change `read` observed on disk (its cache entry moved): a
@@ -86,4 +172,33 @@ impl Store {
         );
         self.watch.reconcile_raced(&raced);
     }
+}
+
+/// One page's DTO from `parse`, with lsdoc's deliberate panics and the
+/// read's errors mapped to the store's.
+fn page_dto(
+    parse: impl FnOnce() -> std::io::Result<Option<PageDto>>,
+) -> Result<PageDto, StoreError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(parse))
+        .map_err(|panic| {
+            let reason = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                .unwrap_or_else(|| "page parser panicked".to_owned());
+            StoreError::Unparseable(reason)
+        })?
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::InvalidData
+                && error
+                    .get_ref()
+                    .and_then(|inner| inner.downcast_ref::<crate::model::ParseInputTooLarge>())
+                    .is_none()
+            {
+                StoreError::Undecodable
+            } else {
+                StoreError::from_io(error)
+            }
+        })?
+        .ok_or(StoreError::NotFound)
 }

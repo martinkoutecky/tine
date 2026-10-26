@@ -5,7 +5,11 @@
 
 mod checkpoint_state;
 mod collapse_only;
+pub(crate) mod derived;
+pub(crate) mod entry_identity;
+pub(crate) mod held_index;
 pub(crate) use checkpoint_state::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
+pub(crate) use held_index::Source;
 mod layout_retention;
 pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};
@@ -16,21 +20,17 @@ mod page_parse;
 mod parse_depth;
 pub(crate) mod shape_stats;
 mod transaction_publish;
-pub(crate) use page_identity::configured_hidden;
 #[cfg(test)]
 use page_identity::effective_page_name;
-use page_identity::list_graph_pages;
+pub(crate) use page_identity::{configured_hidden, portable_component};
 pub(crate) use page_identity::{
     graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
     graph_text_watch_relevant,
 };
-use page_parse::{
-    carry_saved_runtime_ids, isolate_page_parse, page_dto, parse_page_content,
-    parse_page_entry_isolated,
-};
+use page_parse::{carry_saved_runtime_ids, isolate_page_parse, page_dto, parse_page_content};
 
 use crate::path_identity::canonical_existing_path;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -56,8 +56,9 @@ use tine_core::reference_evidence::{BlockSignature, ReferenceFilter};
 
 /// Maximum source bytes admitted to a page/config/EDN parser or renderer.
 pub const PARSE_INPUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
-/// Maximum structural depth admitted before recursive projections or rendering.
-pub(crate) const PARSE_INPUT_MAX_DEPTH: usize = 128;
+/// Maximum structural depth admitted before recursive projections or rendering:
+/// the outline kernel's cap, so admission and every edit agree (twin 4).
+pub(crate) const PARSE_INPUT_MAX_DEPTH: usize = tine_outline::outline::OUTLINE_MAX_DEPTH;
 
 pub(crate) enum SyncFileResult {
     Reconciled {
@@ -85,6 +86,21 @@ impl std::fmt::Display for ParseInputTooLarge {
 }
 impl std::error::Error for ParseInputTooLarge {}
 
+/// Why a graph with no `logseq/config.edn` must not take the defaults, if it
+/// must not. An iCloud placeholder (`logseq/.config.edn.icloud`) means the
+/// file exists but is not downloaded: its settings are unknown, so the graph
+/// opens read-only (`ConfigState::problem`) instead of writing under the
+/// default :legacy file names. A plainly absent config.edn is no problem
+/// (Logseq's defaults). Cost: one metadata call.
+pub(crate) fn missing_config_problem(config_path: &Path) -> Option<crate::IoError> {
+    let placeholder = config_path.with_file_name(".config.edn.icloud");
+    placeholder.symlink_metadata().is_ok().then(|| {
+        io::Error::other(
+            "config.edn is in iCloud but not downloaded yet; open the graph again once it is",
+        )
+        .into()
+    })
+}
 pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
     let bytes = read_parse_bytes(path)?;
     validate_parse_bytes_for_path(&bytes, path)?;
@@ -266,15 +282,15 @@ mod depth_contract_tests {
         fs::write(root.join("pages/A.md"), "- first\n").unwrap();
         let graph = Graph::open(&root);
         let entry = graph.find_entry("A", PageKind::Page).unwrap();
-        assert!(graph.find_entry_cache.read().unwrap().is_some());
+        assert!(graph.claimant_memo_built());
         assert!(graph.load_page(&entry).unwrap().blocks[0]
             .raw
             .contains("first"));
-        assert!(graph.find_entry_cache.read().unwrap().is_some());
+        assert!(graph.claimant_memo_built());
         assert!(graph.load_page(&entry).unwrap().blocks[0]
             .raw
             .contains("first"));
-        assert!(graph.find_entry_cache.read().unwrap().is_some());
+        assert!(graph.claimant_memo_built());
         fs::remove_dir_all(root).unwrap();
     }
 }
@@ -309,6 +325,30 @@ fn parse_doc(path: &Path, content: &str) -> Document {
     }
 }
 
+/// Asset safety also includes physical files omitted from the query snapshot.
+/// Use the normal bounded input and format parser, isolating parser failures.
+pub(crate) fn collect_file_asset_refs(path: &Path, names: &mut HashSet<String>) -> io::Result<()> {
+    let content = read_parse_input(path)?;
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let doc = parse_doc(path, &content);
+        tine_core::asset_refs::collect_document_asset_refs(&doc, names);
+    }))
+    .map_err(|_| io::Error::other("asset reference parser panicked"))
+}
+
+/// Whether `bytes`, read as the page file at `path`, hold a block with id
+/// `id` (STEP3 §8, Q2: a published block-reference target).
+pub(crate) fn bytes_hold_block_id(path: &Path, bytes: &[u8], id: &str) -> bool {
+    let Ok(content) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let mut found = false;
+    SnapshotBlockIndex::for_each_block_id(&parse_doc(path, content), |block| {
+        found |= block == id;
+    });
+    found
+}
+
 fn parse_doc_with_opts(path: &Path, source: &str) -> (Document, doc::SerializeOpts) {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::parse();
@@ -335,17 +375,13 @@ pub(crate) struct Graph {
     /// store installs a live override after open and refreshes it on config edits.
     pub(crate) journal_format: Arc<JournalFormat>,
     live_journal_format: RwLock<Option<Arc<JournalFormat>>>,
-    /// In-memory cache of every parsed page, keyed implicitly by position.
-    /// Built once on first whole-graph query and kept in sync by edits, so
-    /// search / backlinks / `{{query}}` scan memory instead of re-reading and
-    /// re-parsing the entire tree on every keystroke. `None` = not yet built.
-    // `Arc<Document>` so a cache snapshot or a save's scoped-invalidation copy is
-    // an O(1) refcount bump, not a deep clone of the whole page (see cache_upsert).
-    cache: RwLock<Option<Arc<Pages>>>,
     /// Launch/diff/save timings and load-pass accounting behind `Store::diagnostics`.
     pub(crate) diag: crate::launch_diag::DiagRecorder,
     #[cfg(test)]
     pub(crate) cache_publish_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    /// Between a name discovery's authority decision and its record.
+    #[cfg(test)]
+    pub(crate) discovery_record_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
     pub(crate) warm_after_first_page_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
@@ -358,19 +394,11 @@ pub(crate) struct Graph {
     pub(crate) fail_sync_read_once: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     pub(crate) fail_sync_parse_once: std::sync::atomic::AtomicBool,
-    /// File times observed while publishing the parsed page cache. Readers
-    /// clone the table with their graph view, so later disk edits cannot alter it.
-    observed_mtimes: RwLock<Arc<SharedMap<String, std::time::SystemTime>>>,
-    /// Graph-relative paths of pages skipped by the latest whole-graph cache
-    /// build because their parse/projection panicked. Kept retrievable so an
-    /// lsdoc ownership gap can never degrade search completeness invisibly.
-    page_index_failures: RwLock<Vec<String>>,
-    unreadable_pages: RwLock<Arc<Vec<(crate::store::FileId, String)>>>,
-    pub(super) discovery_errors: RwLock<Vec<(crate::FileId, crate::IoError)>>,
-    /// Exact-path index into stable cache slots. Whole-graph iteration retains
-    /// the initial page order, with new pages appended and removed slots omitted.
-    /// `None` rebuilds this live index from the snapshot on next lookup.
-    cache_index: RwLock<Option<PageCacheIndex>>,
+    /// The installed derived page state; written only by `derived.rs` and its
+    /// `derived_owners.rs` child ((G)).
+    derived: derived::Derived,
+    /// Pages a page host holds, and what their owner last published.
+    pub(crate) held: derived::HeldPages,
     /// Bumped on every cache mutation (upsert/remove). The lock-free cache build
     /// captures this before reading disk and rebuilds if a mutation raced it
     /// (which would otherwise install stale content over a concurrent save).
@@ -379,28 +407,12 @@ pub(crate) struct Graph {
     /// the graph ONCE, not once per caller. Held only during the build (not the
     /// cache lock), so it never blocks readers of an already-built cache.
     build_lock: std::sync::Mutex<()>,
-    /// Memoized `list_pages()` (the journals//pages/ directory scan), keyed by
-    /// cache_gen — which bumps on every page create/delete/rename (Tine or watcher)
-    /// — so quick-switch / [[ ]] autocomplete don't re-read both dirs on every
-    /// keystroke. An externally-created page not yet seen by the watcher is at most
-    /// one watcher tick (≤3s) stale here.
-    page_list_cache: RwLock<Option<(u64, Arc<Vec<PageEntry>>)>>,
-    /// Memoized exact `find_entry(name, kind)` resolution, keyed by `cache_gen`.
-    /// Unlike `list_pages()`, this index is built from raw `list_md` output so it
-    /// preserves `find_entry`'s duplicate selection: date-stem file first, else
-    /// first directory-walk match.
-    find_entry_cache: RwLock<Option<(u64, FindEntryIndex)>>,
     /// GH #623 / storage spec §5.1 step 1: what the launch load pass observed
     /// (each file's stamp, taken before its one read, the revision of the bytes
     /// it parsed, and whether the stamp was racy), for the watcher baseline.
     /// Taken once by the load worker; `None` when the cache was built by
     /// another path (an on-demand build), which falls back to a baseline walk.
     launch_observations: std::sync::Mutex<Option<LaunchObservations>>,
-    /// The launch pass's complete, effective-name page listing (duplicate
-    /// journal days included), keyed by `cache_gen`: the first publication's
-    /// name index is built from it instead of re-walking the graph and
-    /// re-opening every page preamble.
-    launch_listing: RwLock<Option<(u64, Arc<Vec<PageEntry>>)>>,
     /// When this graph was opened. A file the launch pass finds written since
     /// then may already have been read by a client (`Store::page` works while
     /// loading), so the Ready publication announces it (`LaunchObservations`).
@@ -413,25 +425,6 @@ pub(crate) struct Graph {
     /// bytes we wrote and suppress that false positive (the parse-cache comparison
     /// alone races that window). See `write_page` / `sync_file_content`.
     recent_writes: std::sync::Mutex<std::collections::HashMap<PathBuf, String>>,
-    /// `path → content_rev` of the on-disk bytes the cached page's
-    /// `Document` was parsed from. Invariant: an entry exists IFF the page is in
-    /// the cache, and `disk_revs[path] == content_rev(current disk bytes)` ⟹ the
-    /// cached doc reflects disk (is fresh). Lets `sync_file_content` skip the
-    /// parse→serialize→parse freshness comparison when a file is unchanged — the
-    /// common case on every page navigation and most watcher polls. A missing or
-    /// mismatched entry always falls through to the correct parse-compare path, so
-    /// the worst a desync can cause is redundant work, never a stale serve.
-    disk_revs: RwLock<std::collections::HashMap<PathBuf, String>>,
-    /// The cached pages whose bytes carry a column-0 VCS anchor line
-    /// (`tine_core::concord_queue::has_vcs_anchor`), observed from the SAME
-    /// bytes as `disk_revs[path]`. Invariant: a cached page (an entry in
-    /// `disk_revs`) with no entry here has no anchor line, so "which pages
-    /// might carry merge markers" is answered with no file read
-    /// ([`Graph::vcs_anchor_state`]); a page not in `disk_revs` is unknown.
-    /// Written only beside `disk_revs`, under the same locks (page_lock →
-    /// cache → disk_revs → vcs_anchored); a superset is harmless, a subset
-    /// would hide a conflicted page. Checkpointed (FORMAT 6).
-    vcs_anchored: RwLock<std::collections::HashSet<PathBuf>>,
     /// Per-resolved-path write locks. The same page file has TWO in-process
     /// writers — the editor (`save_page`/`write_page`) and the PDF highlight path
     /// (`write_highlights`, for an `hls__` page) — and a rename rewrites many
@@ -473,13 +466,93 @@ pub(crate) struct ReadSnapshot {
     icon_index: std::sync::OnceLock<Arc<page_icons::IconIndex>>,
     memos: SnapshotMemos,
     query_index: crate::query::index::QueryIndexSlot,
+    pub(crate) transliteration_names: Arc<NameKeyMap>,
+    pub(crate) transliteration_owners: SharedMap<String, usize>,
+    // Only open editor completions own supplemental keys. Shared across
+    // publications, released explicitly on close (including stale IPC replies).
+    pub(crate) completion_name_keys: Arc<std::sync::Mutex<HashMap<String, Arc<NameKeyMap>>>>,
+    #[cfg(test)]
+    pub(crate) name_cache_work: usize,
     #[cfg(test)]
     block_full_builds: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     referenced_name_full_builds: std::sync::atomic::AtomicUsize,
 }
 
+pub(crate) type NameKeyMap = SharedMap<String, Arc<crate::transliteration::NameKeys>>;
+
 impl ReadSnapshot {
+    fn build_name_keys(&mut self, old: Option<&Self>, changed_paths: &[String]) -> Arc<NameKeyMap> {
+        if let Some(old) = old {
+            self.transliteration_owners = old.transliteration_owners.clone();
+            if Arc::ptr_eq(&old.pages, &self.pages) && Arc::ptr_eq(&old.list, &self.list) {
+                return Arc::clone(&old.transliteration_names);
+            }
+        }
+        let names = |page: &PageEntry, doc: &Document| -> std::collections::BTreeSet<String> {
+            std::iter::once(page.name.clone())
+                .chain(crate::query::document_alias_spellings(doc))
+                .chain(collect_document_referenced_names(doc))
+                .filter_map(|name| crate::transliteration::cache_identity(&name))
+                .collect()
+        };
+        let mut delta: std::collections::BTreeMap<String, isize> = Default::default();
+        if let Some(old) = old {
+            // Only publication paths are inspected. Counts are page ownership,
+            // so repeated aliases/references within one document count once.
+            for path in changed_paths {
+                let before = snapshot_page_by_rel(&old.pages, None, path)
+                    .map(|(page, doc)| names(page, doc))
+                    .unwrap_or_default();
+                let after = snapshot_page_by_rel(&self.pages, None, path)
+                    .map(|(page, doc)| names(page, doc))
+                    .unwrap_or_default();
+                #[cfg(test)]
+                {
+                    self.name_cache_work += before.len() + after.len();
+                }
+                for name in before.difference(&after) {
+                    *delta.entry(name.clone()).or_default() -= 1;
+                }
+                for name in after.difference(&before) {
+                    *delta.entry(name.clone()).or_default() += 1;
+                }
+            }
+        } else {
+            for (page, doc) in self.pages.iter() {
+                for name in names(page, doc) {
+                    #[cfg(test)]
+                    {
+                        self.name_cache_work += 1;
+                    }
+                    *delta.entry(name).or_default() += 1;
+                }
+            }
+        }
+        let mut keys = old
+            .map(|old| Arc::clone(&old.transliteration_names))
+            .unwrap_or_else(|| Arc::new(NameKeyMap::new()));
+        for (name, change) in delta {
+            if change == 0 {
+                continue;
+            }
+            let before = self.transliteration_owners.get(&name).copied().unwrap_or(0);
+            let count = before
+                .checked_add_signed(change)
+                .expect("name ownership delta");
+            if count == 0 {
+                self.transliteration_owners.remove(&name);
+                Arc::make_mut(&mut keys).remove(&name);
+            } else {
+                self.transliteration_owners.insert(name.clone(), count);
+                if before == 0 {
+                    let value = Arc::new(crate::transliteration::NameKeys::build(&name));
+                    Arc::make_mut(&mut keys).insert(name, value);
+                }
+            }
+        }
+        keys
+    }
     /// Owner paths of the aliases whose page key is `key`, in
     /// `page_aliases_with_owners` order. Built once per snapshot so a
     /// resolve costs O(1) instead of cloning and re-keying every alias.
@@ -524,20 +597,14 @@ impl ReadSnapshot {
     ) -> Self {
         #[cfg(feature = "test-faults")]
         let capture_started = std::time::Instant::now();
-        let pages = graph
-            .cache
-            .read()
-            .unwrap()
-            .as_ref()
-            .cloned()
-            .expect("loaded graph");
+        let pages = graph.peek_pages().expect("loaded graph");
         let cache_generation = graph.cache_generation();
         // Build the indexes PRE warmed before ready. Block hints and referenced
         // names were first-use work there, so their OnceLocks remain cold.
         let initial = old.is_none().then(|| {
             std::thread::scope(|scope| {
-                let explicit =
-                    scope.spawn(|| SnapshotExplicitIndex::capture(None, &pages, &[], None));
+                let explicit = scope
+                    .spawn(|| SnapshotExplicitIndex::capture(None, &pages, &[], None, &config));
                 let signatures = scope.spawn(|| {
                     SnapshotReferenceCandidateIndex::capture(None, &pages, &[], cache_generation)
                 });
@@ -556,7 +623,7 @@ impl ReadSnapshot {
                         None,
                         &pages,
                         &[],
-                        crate::query::document_aliases,
+                        crate::query::document_alias_spellings,
                         None,
                     )
                 });
@@ -591,10 +658,16 @@ impl ReadSnapshot {
             index.clone()
         } else {
             SnapshotExplicitIndex::capture(
-                old.map(|old| (&old.explicit_index, &old.pages)),
+                old.filter(|old| {
+                    old.config.separated_by_commas == config.separated_by_commas
+                        && old.config.ignored_page_references_keywords
+                            == config.ignored_page_references_keywords
+                })
+                .map(|old| (&old.explicit_index, &old.pages)),
                 &pages,
                 changed_paths,
                 position_pair,
+                &config,
             )
         };
         let block_index = std::sync::OnceLock::new();
@@ -630,7 +703,7 @@ impl ReadSnapshot {
         } else {
             carry_projection(
                 old.and_then(|old| old.alias_index.get().map(|index| (index, &old.pages))),
-                crate::query::document_aliases,
+                crate::query::document_alias_spellings,
             )
         };
         let referenced_name_index = carry_projection(
@@ -650,7 +723,7 @@ impl ReadSnapshot {
             old.map(|old| (&old.query_index, Arc::ptr_eq(&old.pages, &pages))),
             changed_paths,
         );
-        let snapshot = Self {
+        let mut snapshot = Self {
             pages,
             config,
             list,
@@ -671,11 +744,19 @@ impl ReadSnapshot {
             icon_index: std::sync::OnceLock::new(),
             memos: SnapshotMemos::default(),
             query_index,
+            transliteration_names: Arc::new(NameKeyMap::new()),
+            transliteration_owners: SharedMap::new(),
+            completion_name_keys: old
+                .map(|old| Arc::clone(&old.completion_name_keys))
+                .unwrap_or_default(),
+            #[cfg(test)]
+            name_cache_work: 0,
             #[cfg(test)]
             block_full_builds: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             referenced_name_full_builds: std::sync::atomic::AtomicUsize::new(0),
         };
+        snapshot.transliteration_names = snapshot.build_name_keys(old, changed_paths);
         let icons = page_icons::IconIndex::capture(
             old.and_then(|old| {
                 old.icon_index
@@ -759,7 +840,8 @@ impl ReadSnapshot {
             return false;
         };
         let aliases_unchanged = edits.iter().all(|(_, previous, current)| {
-            crate::query::document_aliases(previous) == crate::query::document_aliases(current)
+            crate::query::document_alias_spellings(previous)
+                == crate::query::document_alias_spellings(current)
         });
         if !aliases_unchanged {
             return false;
@@ -829,7 +911,9 @@ impl ReadSnapshot {
         }
     }
 
-    /// `{{query}}` through the legacy block-group bridge, memoized.
+    /// `{{query}}` through the legacy block-group bridge, memoized. Reached
+    /// only from the `WholeGraph::query` test oracle.
+    #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn run_query_bounded(
         &self,
         source: &str,
@@ -857,6 +941,7 @@ impl ReadSnapshot {
         }
     }
 
+    #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn run_advanced_query_bounded_cached(
         &self,
         source: &str,
@@ -987,6 +1072,7 @@ impl ReadSnapshot {
         page_match_scope: tine_core::query::ir::FriendlyPageMatchScope,
         page_view: Option<tine_core::query::ir::ViewSettings>,
         block_view: Option<tine_core::query::ir::ViewSettings>,
+        transliteration: bool,
     ) -> tine_core::query_plan::QueryExecution {
         match scope {
             Some(scope) => crate::query_plan::QueryPlan::friendly_for_page_with_policy(
@@ -1003,6 +1089,7 @@ impl ReadSnapshot {
                 page_match_scope,
             ),
         }
+        .with_transliteration(transliteration)
         .with_display(page_view, block_view)
         .execute_with_explain(
             self,
@@ -1096,38 +1183,47 @@ impl ReadSnapshot {
     pub(crate) fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
         self.aliases
             .get_or_init(|| {
-                let index = self.alias_index.get_or_init(|| {
-                    SnapshotPageDerivedIndex::capture(
-                        None,
-                        &self.pages,
-                        &[],
-                        crate::query::document_aliases,
-                        None,
-                    )
-                });
-                let mut owned = Vec::new();
-                for (entry, _) in self.pages.iter() {
-                    if let Some(projection) = index.get(&entry.path) {
-                        for alias in projection {
-                            owned.push((
-                                entry.path.clone(),
-                                alias.clone(),
-                                entry.name.clone(),
-                                entry.rel_path_str().to_owned(),
-                            ));
-                        }
-                    }
-                }
-                owned.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
                 Arc::new(
-                    owned
+                    self.page_alias_spellings_with_owners()
                         .into_iter()
-                        .map(|(_, alias, owner, path)| (alias, owner, path))
+                        .map(|(alias, owner, path)| {
+                            (tine_core::refs::page_key(&alias), owner, path)
+                        })
                         .collect(),
                 )
             })
             .as_ref()
             .clone()
+    }
+
+    pub(crate) fn page_alias_spellings_with_owners(&self) -> Vec<(String, String, String)> {
+        let index = self.alias_index.get_or_init(|| {
+            SnapshotPageDerivedIndex::capture(
+                None,
+                &self.pages,
+                &[],
+                crate::query::document_alias_spellings,
+                None,
+            )
+        });
+        let mut owned = Vec::new();
+        for (entry, _) in self.pages.iter() {
+            if let Some(projection) = index.get(&entry.path) {
+                for alias in projection {
+                    owned.push((
+                        entry.path.clone(),
+                        alias.clone(),
+                        entry.name.clone(),
+                        entry.rel_path_str().to_owned(),
+                    ));
+                }
+            }
+        }
+        owned.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        owned
+            .into_iter()
+            .map(|(_, alias, owner, path)| (alias, owner, path))
+            .collect()
     }
     pub(crate) fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
         Arc::clone(&self.observed_mtimes)
@@ -1149,6 +1245,13 @@ impl ReadSnapshot {
         let positions = Arc::clone(&self.reference_candidate_index.read().unwrap().positions);
         (self.query_index).get(&self.pages, &positions, &self.config, self.cache_generation)
     }
+    pub(crate) fn explicit_reference_names(&self) -> impl Iterator<Item = &str> {
+        self.explicit_index
+            .shards
+            .iter()
+            .flat_map(|shard| shard.iter().map(|(name, _)| name.as_str()))
+    }
+
     pub(crate) fn referenced_page_names(&self) -> Vec<String> {
         self.referenced_names
             .get_or_init(|| {
@@ -1177,9 +1280,50 @@ impl ReadSnapshot {
             })
             .clone()
     }
+
+    /// Completion sees the editing block's reference baseline, even when its
+    /// live text has already autosaved. Other owners keep their cached facts.
+    pub(crate) fn referenced_page_names_for_editor(
+        &self,
+        owner: &str,
+        id: &str,
+        original: &str,
+    ) -> Vec<String> {
+        let index = self.referenced_name_index.get_or_init(|| {
+            #[cfg(test)]
+            self.referenced_name_full_builds
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            SnapshotPageDerivedIndex::capture(
+                None,
+                &self.pages,
+                &[],
+                collect_document_referenced_names,
+                None,
+            )
+        });
+        let mut seen = HashMap::new();
+        for (entry, doc) in self.pages.iter() {
+            let names = if entry.name == owner {
+                collect_document_referenced_names_with_baseline(doc, Some((id, original)))
+            } else {
+                index.get(&entry.path).cloned().unwrap_or_default()
+            };
+            for name in names {
+                seen.entry(tine_core::refs::page_key(&name)).or_insert(name);
+            }
+        }
+        seen.into_values().collect()
+    }
 }
 
 pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
+    collect_document_referenced_names_with_baseline(doc, None)
+}
+
+fn collect_document_referenced_names_with_baseline(
+    doc: &Document,
+    baseline: Option<(&str, &str)>,
+) -> Vec<String> {
     fn add(seen: &mut HashMap<String, String>, name: String) {
         if !name.is_empty() {
             seen.entry(tine_core::refs::page_key(&name)).or_insert(name);
@@ -1194,13 +1338,21 @@ pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
             add(seen, name.to_owned());
         }
     }
-    fn visit(block: &DocBlock, seen: &mut HashMap<String, String>) {
-        for name in block.projection().refs_page() {
+    fn visit(block: &DocBlock, seen: &mut HashMap<String, String>, baseline: Option<(&str, &str)>) {
+        let replacement = baseline
+            .filter(|(id, _)| *id == block.uuid)
+            .map(|(_, raw)| {
+                let mut replacement = DocBlock::new(raw);
+                replacement.set_org(block.is_org());
+                replacement
+            });
+        let reference_block = replacement.as_ref().unwrap_or(block);
+        for name in reference_block.projection().refs_page() {
             add(seen, name.clone());
         }
-        property_refs(seen, block);
+        property_refs(seen, reference_block);
         for child in &block.children {
-            visit(child, seen);
+            visit(child, seen, baseline);
         }
     }
     let mut seen = HashMap::new();
@@ -1210,7 +1362,7 @@ pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
         property_refs(&mut seen, &block);
     }
     for block in &doc.roots {
-        visit(block, &mut seen);
+        visit(block, &mut seen, baseline);
     }
     seen.into_values().collect()
 }
@@ -1224,6 +1376,10 @@ pub(crate) enum Withdrawal {
 
 struct PageCacheIndex {
     by_path: std::collections::HashMap<PathBuf, usize>,
+    /// Cached paths by folded leaf ([`entry_identity::fold_leaf`]): the
+    /// rows an ownership transition may move (REVIEW-3a4 #3). Built on the
+    /// first transition that asks, then kept with `by_path`.
+    by_fold: Option<HashMap<String, Vec<PathBuf>>>,
 }
 
 fn snapshot_page_by_rel<'a>(
@@ -1574,6 +1730,7 @@ impl SnapshotExplicitIndex {
         pages: &Arc<Pages>,
         changed_paths: &[String],
         positions: Option<(&SharedMap<String, usize>, &SharedMap<String, usize>)>,
+        config: &Config,
     ) -> Self {
         if let Some((previous, previous_pages)) = old.filter(|(_, previous_pages)| {
             !changed_paths.is_empty() || Arc::ptr_eq(previous_pages, pages)
@@ -1588,10 +1745,14 @@ impl SnapshotExplicitIndex {
                 let after =
                     snapshot_page_by_rel(pages, positions.map(|(_, after)| after), rel_path);
                 let old_names = before
-                    .map(|(entry, doc)| crate::query::document_explicit_reference_names(entry, doc))
+                    .map(|(entry, doc)| {
+                        crate::query::document_explicit_reference_names(entry, doc, config)
+                    })
                     .unwrap_or_default();
                 let new_names = after
-                    .map(|(entry, doc)| crate::query::document_explicit_reference_names(entry, doc))
+                    .map(|(entry, doc)| {
+                        crate::query::document_explicit_reference_names(entry, doc, config)
+                    })
                     .unwrap_or_default();
                 if let Some(path) = after.or(before).map(|(entry, _)| entry.path.as_path()) {
                     index.update(path, &old_names, &new_names);
@@ -1601,7 +1762,7 @@ impl SnapshotExplicitIndex {
         } else {
             let mut index = Self::empty();
             for (entry, doc) in pages.iter() {
-                let names = crate::query::document_explicit_reference_names(entry, doc);
+                let names = crate::query::document_explicit_reference_names(entry, doc, config);
                 index.update(&entry.path, &[], &names);
             }
             index
@@ -1724,41 +1885,50 @@ impl PageCacheBuild {
     }
 }
 
-/// Count each projected block reference once per referring block.
-pub(crate) fn document_block_ref_counts(doc: &Document) -> HashMap<String, usize> {
-    fn walk(blocks: &[DocBlock], counts: &mut std::collections::HashMap<String, usize>) {
-        for block in blocks {
-            // projection().block_refs() is already de-duplicated per referrer block,
-            // matching the badge's OG-compatible counting semantics.
-            for id in block.projection().block_refs() {
-                *counts.entry(id.clone()).or_insert(0) += 1;
-            }
-            walk(&block.children, counts);
-        }
-    }
-    let mut counts = std::collections::HashMap::new();
-    // OG parity (#7): the header pre-block is a block with `:block/refs`, so a
-    // `((uuid))` in a page property is one referrer of that block.
-    if let Some(pre) = crate::query::document_page_property_block(doc) {
-        for id in pre.projection().block_refs() {
-            *counts.entry(id.clone()).or_insert(0) += 1;
-        }
-    }
-    walk(&doc.roots, &mut counts);
-    counts
+pub(crate) use tine_core::page_properties::document_block_ref_counts;
+
+fn leaf_fold(path: &Path) -> Option<String> {
+    path.file_name().map(entry_identity::fold_leaf)
 }
 
 impl PageCacheIndex {
     fn insert(&mut self, entry: &PageEntry, slot: usize) {
-        self.by_path.insert(entry.path.clone(), slot);
+        if self.by_path.insert(entry.path.clone(), slot).is_none() {
+            if let (Some(folds), Some(fold)) = (self.by_fold.as_mut(), leaf_fold(&entry.path)) {
+                folds.entry(fold).or_default().push(entry.path.clone());
+            }
+        }
     }
     fn remove(&mut self, entry: &PageEntry, _slot: usize) {
         self.by_path.remove(&entry.path);
+        if let (Some(folds), Some(fold)) = (self.by_fold.as_mut(), leaf_fold(&entry.path)) {
+            if let Some(paths) = folds.get_mut(&fold) {
+                paths.retain(|path| *path != entry.path);
+                if paths.is_empty() {
+                    folds.remove(&fold);
+                }
+            }
+        }
+    }
+    /// The cached paths whose leaf folds to `fold`.
+    fn folded(&mut self, fold: &str) -> &[PathBuf] {
+        let paths = &self.by_path;
+        let folds = self.by_fold.get_or_insert_with(|| {
+            let mut folds: HashMap<String, Vec<PathBuf>> = HashMap::new();
+            for path in paths.keys() {
+                if let Some(fold) = leaf_fold(path) {
+                    folds.entry(fold).or_default().push(path.clone());
+                }
+            }
+            folds
+        });
+        folds.get(fold).map_or(&[], Vec::as_slice)
     }
 }
 fn build_page_cache_index(pages: &Pages) -> PageCacheIndex {
     let mut index = PageCacheIndex {
         by_path: HashMap::with_capacity(pages.len()),
+        by_fold: None,
     };
     for (slot, (entry, _)) in pages.slots() {
         index.insert(entry, slot);
@@ -1838,6 +2008,7 @@ struct SnapshotMemos {
     query: crate::query::memo::QueryMemo,
 }
 
+#[cfg(any(test, feature = "test-faults"))]
 fn answer_groups(groups: crate::query::BoundedGroups) -> crate::query::memo::Answer {
     crate::query::memo::Answer::Groups(BoundedRefGroups {
         groups: Arc::new(groups.groups),
@@ -1952,23 +2123,159 @@ fn path_stays_within_root(root: &Path, target: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// `Graph::ensure_write_target`'s answer for `root` (named `label`).
+fn checked_write_target(root: &Path, target: &Path, label: &str) -> io::Result<()> {
+    match write_target_contained(root, target) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("write target escapes {label}: {}", target.display()),
+        )),
+        Err(error) if error.kind() == io::ErrorKind::InvalidInput => Err(error),
+        Err(error) => Err(io::Error::new(
+            error.kind(),
+            format!(
+                "could not inspect write target {}: {error}",
+                target.display()
+            ),
+        )),
+    }
+}
+
+/// Pauses before re-probing a target that cannot be inspected (under 50 ms in
+/// all): Windows refuses to open a page for a moment while a save replaces it
+/// (REG-WIN-WRITE-TARGET-TRANSIENT).
+const TARGET_PROBE_PAUSES: [std::time::Duration; 3] = [
+    std::time::Duration::from_millis(2),
+    std::time::Duration::from_millis(8),
+    std::time::Duration::from_millis(32),
+];
+
+/// A write target's containment: `Ok(false)` when it resolves outside `root`,
+/// through an alias of a managed directory (`path_uses_managed_alias`), or
+/// through a link that does not resolve. One that cannot be inspected (after
+/// `canonical_existing_ancestor`'s re-probes) is answered as that I/O error:
+/// unverified, which the caller fails, rather than outside, which it refuses.
+fn write_target_contained(root: &Path, target: &Path) -> io::Result<bool> {
+    let canonical_root = canonical_existing_path(root).unwrap_or_else(|_| root.to_path_buf());
+    let (existing, resolved) = match reprobed_existing_ancestor(target) {
+        Ok(found) => found,
+        Err(Unresolved::Link(_)) => return Ok(false),
+        Err(Unresolved::Io(error)) => return Err(error),
+    };
+    let Ok(relative) = existing.strip_prefix(root) else {
+        return Ok(false);
+    };
+    Ok(resolved == canonical_root.join(relative))
+}
+
+/// Why the deepest existing ancestor did not resolve.
+enum Unresolved {
+    /// A link whose target does not resolve (dangling or looping): it is not
+    /// at its own canonical location, and re-probing cannot change that.
+    Link(io::Error),
+    /// The entry could not be inspected.
+    Io(io::Error),
+}
+
 /// Resolve the deepest existing ancestor without following a missing suffix.
+/// An entry that cannot be inspected is re-probed after each pause, then
+/// answered as that error. An existing entry that is not a link but cannot be
+/// opened (Windows, while a save replaces it) resolves through its parent: a
+/// link-free entry's canonical path is its parent's plus its name.
 pub(crate) fn canonical_existing_ancestor(target: &Path) -> io::Result<(&Path, PathBuf)> {
-    let mut existing = target;
+    reprobed_existing_ancestor(target).map_err(|unresolved| match unresolved {
+        Unresolved::Link(error) | Unresolved::Io(error) => error,
+    })
+}
+
+fn reprobed_existing_ancestor(target: &Path) -> Result<(&Path, PathBuf), Unresolved> {
+    let mut pauses = TARGET_PROBE_PAUSES.iter();
     loop {
-        match fs::symlink_metadata(existing) {
-            Ok(_) => return Ok((existing, canonical_existing_path(existing)?)),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                existing = existing.parent().ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "target has no existing ancestor",
-                    )
-                })?;
+        match existing_ancestor_once(target) {
+            Err(Unresolved::Io(error)) if error.kind() != io::ErrorKind::InvalidInput => {
+                match pauses.next() {
+                    Some(pause) => std::thread::sleep(*pause),
+                    None => return Err(Unresolved::Io(error)),
+                }
             }
-            Err(error) => return Err(error),
+            answer => return answer,
         }
     }
+}
+
+fn existing_ancestor_once(target: &Path) -> Result<(&Path, PathBuf), Unresolved> {
+    let mut existing = target;
+    loop {
+        match probe_lstat(existing) {
+            Ok(metadata) => {
+                let resolved = match probe_canonical(existing) {
+                    Ok(resolved) => resolved,
+                    Err(error) if metadata.file_type().is_symlink() => {
+                        return Err(Unresolved::Link(error))
+                    }
+                    Err(error) => match (existing.parent(), existing.file_name()) {
+                        (Some(parent), Some(name)) => {
+                            probe_canonical(parent).map_err(Unresolved::Io)?.join(name)
+                        }
+                        _ => return Err(Unresolved::Io(error)),
+                    },
+                };
+                return Ok((existing, resolved));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                existing = existing.parent().ok_or_else(|| {
+                    Unresolved::Io(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "target has no existing ancestor",
+                    ))
+                })?;
+            }
+            Err(error) => return Err(Unresolved::Io(error)),
+        }
+    }
+}
+
+// Test faults for the write-target probes: `(path, step, failures)` makes the
+// next `failures` probes of `path` at `step` fail as Windows does while a
+// save replaces the file (`u32::MAX`: every probe).
+#[cfg(test)]
+thread_local! {
+    static PROBE_FAULTS: std::cell::RefCell<Vec<(PathBuf, ProbeStep, u32)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProbeStep {
+    Lstat,
+    Canonical,
+}
+
+#[cfg(test)]
+fn probe_fault(path: &Path, step: ProbeStep) -> io::Result<()> {
+    PROBE_FAULTS.with(|faults| {
+        for (at, kind, left) in faults.borrow_mut().iter_mut() {
+            if *at == path && *kind == step && *left > 0 {
+                if *left != u32::MAX {
+                    *left -= 1;
+                }
+                return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+            }
+        }
+        Ok(())
+    })
+}
+
+fn probe_lstat(path: &Path) -> io::Result<fs::Metadata> {
+    #[cfg(test)]
+    probe_fault(path, ProbeStep::Lstat)?;
+    fs::symlink_metadata(path)
+}
+
+fn probe_canonical(path: &Path) -> io::Result<PathBuf> {
+    #[cfg(test)]
+    probe_fault(path, ProbeStep::Canonical)?;
+    canonical_existing_path(path)
 }
 
 /// Managed graph directories must retain their own identity, not merely land
@@ -1979,7 +2286,7 @@ pub(crate) fn canonical_existing_ancestor(target: &Path) -> io::Result<(&Path, P
 fn path_uses_managed_alias(root: &Path, target: &Path) -> bool {
     let canonical_root = canonical_existing_path(root).unwrap_or_else(|_| root.to_path_buf());
     let mut existing = target;
-    while fs::symlink_metadata(existing).is_err() {
+    while probe_lstat(existing).is_err() {
         let Some(parent) = existing.parent() else {
             return true;
         };
@@ -1991,6 +2298,113 @@ fn path_uses_managed_alias(root: &Path, target: &Path) -> bool {
     canonical_existing_path(existing)
         .map(|actual| actual != canonical_root.join(relative))
         .unwrap_or(true)
+}
+
+#[cfg(test)]
+mod write_target_probe_tests {
+    use super::*;
+
+    fn graph(tag: &str) -> (PathBuf, Graph) {
+        let dir = std::env::temp_dir().join(format!("tine-probe-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(dir.join("pages/Page.md"), "- before\n").unwrap();
+        let graph = Graph::open(&dir);
+        (dir, graph)
+    }
+
+    fn fault(path: PathBuf, step: ProbeStep, failures: u32) {
+        PROBE_FAULTS.with(|faults| faults.borrow_mut().push((path, step, failures)));
+    }
+
+    fn clear() {
+        PROBE_FAULTS.with(|faults| faults.borrow_mut().clear());
+    }
+
+    /// REG-WIN-WRITE-TARGET-TRANSIENT: Windows briefly refuses to open a page
+    /// a save is replacing. Its parent still proves where the write lands.
+    #[test]
+    fn a_page_that_cannot_be_opened_is_checked_through_its_folder() {
+        let (dir, graph) = graph("unopenable");
+        let page = graph.root.join("pages/Page.md");
+        fault(page.clone(), ProbeStep::Canonical, u32::MAX);
+        let checked = graph.ensure_write_target(&page);
+        clear();
+        assert!(
+            checked.is_ok(),
+            "an ordinary page is inside its graph: {checked:?}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// REG-WIN-WRITE-TARGET-TRANSIENT: a page that cannot even be inspected is
+    /// retried, and then reported as the I/O error it is, never as outside.
+    #[test]
+    fn a_page_that_cannot_be_inspected_is_retried_then_fails_without_escaping() {
+        let (dir, graph) = graph("uninspectable");
+        let page = graph.root.join("pages/Page.md");
+        fault(page.clone(), ProbeStep::Lstat, 2);
+        let brief = graph.ensure_write_target(&page);
+        clear();
+        assert!(brief.is_ok(), "a brief failure is retried: {brief:?}");
+
+        fault(page.clone(), ProbeStep::Lstat, u32::MAX);
+        let lasting = graph.ensure_write_target(&page);
+        clear();
+        let error = lasting.expect_err("a lasting failure fails the write");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied, "{error}");
+        assert!(!error.to_string().contains("escapes"), "{error}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// REG-WIN-WRITE-TARGET-TRANSIENT, the submit's first check: a page's OS
+    /// path resolves through the same re-probes and folder fallback.
+    #[test]
+    fn an_unopenable_page_still_resolves_for_its_save() {
+        let (dir, graph) = graph("handoff");
+        let page = graph.root.join("pages/Page.md");
+        let expected = canonical_existing_path(&graph.root.join("pages"))
+            .unwrap()
+            .join("Page.md");
+        fault(page.clone(), ProbeStep::Canonical, u32::MAX);
+        let unopenable = canonical_existing_ancestor(&page).map(|(_, resolved)| resolved);
+        clear();
+        assert_eq!(unopenable.unwrap(), expected);
+        fault(page.clone(), ProbeStep::Lstat, 3);
+        let brief = canonical_existing_ancestor(&page).map(|(_, resolved)| resolved);
+        clear();
+        assert_eq!(
+            brief.unwrap(),
+            expected,
+            "three brief failures are re-probed"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The parent fallback is for ordinary entries only: a link that cannot be
+    /// resolved is still refused.
+    #[cfg(unix)]
+    #[test]
+    fn an_unresolvable_link_is_still_refused() {
+        let (dir, graph) = graph("unresolvable-link");
+        let outside = dir.with_extension("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("foreign.md"), "x").unwrap();
+        let link = graph.root.join("pages/escape.md");
+        std::os::unix::fs::symlink(outside.join("foreign.md"), &link).unwrap();
+        assert!(graph.ensure_write_target(&link).is_err());
+        fault(link.clone(), ProbeStep::Canonical, u32::MAX);
+        let checked = graph.ensure_write_target(&link);
+        clear();
+        let error = checked.expect_err("a link is never resolved through its folder");
+        assert_eq!(
+            error.kind(),
+            io::ErrorKind::InvalidInput,
+            "refused, not failed: {error}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+    }
 }
 
 #[cfg(test)]
@@ -2164,17 +2578,10 @@ impl Graph {
         Ok(graph)
     }
 
+    /// `InvalidInput`: the target is outside the graph (a refusal). Any other
+    /// error: it could not be inspected (a failure the save retries).
     pub(crate) fn ensure_write_target(&self, target: &Path) -> io::Result<()> {
-        if path_stays_within_root(&self.root, target)
-            && !path_uses_managed_alias(&self.root, target)
-        {
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("write target escapes graph root: {}", target.display()),
-            ))
-        }
+        checked_write_target(&self.root, target, "graph root")
     }
 
     /// Asset writes have their own capability boundary. Keeping this separate
@@ -2184,19 +2591,7 @@ impl Graph {
         if self.assets_root == self.root.join("assets") {
             return self.ensure_write_target(target);
         }
-        if path_stays_within_root(&self.assets_root, target)
-            && !path_uses_managed_alias(&self.assets_root, target)
-        {
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "write target escapes approved assets root: {}",
-                    target.display()
-                ),
-            ))
-        }
+        checked_write_target(&self.assets_root, target, "approved assets root")
     }
 
     /// Open a graph directory, reading `logseq/config.edn` if present.
@@ -2209,7 +2604,10 @@ impl Graph {
         let root = root.as_ref().to_path_buf();
         let (config, problem) = match read_parse_input(&root.join("logseq/config.edn")) {
             Ok(text) => (Config::parse(&text), None),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => (Config::default(), None),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (
+                Config::default(),
+                missing_config_problem(&root.join("logseq/config.edn")),
+            ),
             Err(error) => (Config::default(), Some(error.into())),
         };
         let journal_format = JournalFormat::new(
@@ -2230,10 +2628,11 @@ impl Graph {
             journal_format: Arc::new(journal_format),
             live_config: RwLock::new(None),
             live_journal_format: RwLock::new(None),
-            cache: RwLock::new(None),
             diag: crate::launch_diag::DiagRecorder::new(),
             #[cfg(test)]
             cache_publish_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            discovery_record_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
             warm_after_first_page_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
@@ -2246,21 +2645,13 @@ impl Graph {
             fail_sync_read_once: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             fail_sync_parse_once: std::sync::atomic::AtomicBool::new(false),
-            observed_mtimes: RwLock::new(Arc::new(SharedMap::new())),
-            page_index_failures: RwLock::new(Vec::new()),
-            unreadable_pages: RwLock::new(Arc::new(Vec::new())),
-            discovery_errors: RwLock::new(Vec::new()),
-            cache_index: RwLock::new(None),
             cache_gen: std::sync::atomic::AtomicU64::new(0),
+            derived: Default::default(),
+            held: Default::default(),
             build_lock: std::sync::Mutex::new(()),
-            page_list_cache: RwLock::new(None),
-            find_entry_cache: RwLock::new(None),
             launch_observations: std::sync::Mutex::new(None),
-            launch_listing: RwLock::new(None),
             opened_at: std::time::SystemTime::now(),
             recent_writes: std::sync::Mutex::new(std::collections::HashMap::new()),
-            disk_revs: RwLock::new(std::collections::HashMap::new()),
-            vcs_anchored: RwLock::new(std::collections::HashSet::new()),
             page_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
@@ -2279,11 +2670,7 @@ impl Graph {
         }
         let graph = Graph::open_inner(root);
         let entries = pages.iter().map(|(entry, _)| entry.clone()).collect();
-        let pages = Pages::from(pages);
-        let index = build_page_cache_index(&pages);
-        *graph.cache.write().unwrap() = Some(Arc::new(pages));
-        *graph.cache_index.write().unwrap() = Some(index);
-        *graph.page_list_cache.write().unwrap() = Some((0, Arc::new(entries)));
+        graph.install_test_pages(Pages::from(pages), entries);
         graph
     }
 
@@ -2317,68 +2704,6 @@ impl Graph {
     /// needlessly invalidate everything).
     pub(crate) fn cache_generation(&self) -> u64 {
         self.cache_gen.load(std::sync::atomic::Ordering::Acquire)
-    }
-
-    pub(crate) fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
-        Arc::clone(&self.observed_mtimes.read().unwrap())
-    }
-
-    pub(crate) fn unreadable_pages(&self) -> Arc<Vec<(crate::store::FileId, String)>> {
-        let mut rows = Arc::clone(&self.unreadable_pages.read().unwrap());
-        Arc::make_mut(&mut rows).extend(
-            self.discovery_errors
-                .read()
-                .unwrap()
-                .iter()
-                .map(|(id, error)| (id.clone(), error.to_string())),
-        );
-        Arc::make_mut(&mut rows).sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
-        Arc::make_mut(&mut rows).dedup_by(|a, b| a.0 == b.0);
-        rows
-    }
-
-    pub(crate) fn replace_unreadable_walk_errors(
-        &self,
-        previous: &std::collections::HashMap<PathBuf, String>,
-        current: &std::collections::HashMap<PathBuf, String>,
-    ) {
-        let affected: std::collections::HashSet<_> = previous
-            .keys()
-            .chain(current.keys())
-            .map(|path| crate::store::FileId::from(self.rel_path(path)))
-            .collect();
-        let mut guard = self.unreadable_pages.write().unwrap();
-        let rows = Arc::make_mut(&mut *guard);
-        rows.retain(|(id, _)| !affected.contains(id));
-        rows.extend(current.iter().map(|(path, reason)| {
-            (
-                crate::store::FileId::from(self.rel_path(path)),
-                reason.clone(),
-            )
-        }));
-        rows.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
-    }
-
-    pub(crate) fn observe_page_mtime(&self, path: &Path, mtime: Option<std::time::SystemTime>) {
-        let key = self.rel_path(path);
-        let mut observed = self.observed_mtimes.write().unwrap();
-        if observed.contains_key(&key) {
-            match mtime {
-                Some(value) => {
-                    Arc::make_mut(&mut observed).insert(key, value);
-                }
-                None => {
-                    Arc::make_mut(&mut observed).remove(&key);
-                }
-            }
-        }
-    }
-
-    /// Pages skipped by the latest whole-graph search-cache build because their
-    /// parse/projection panicked. Paths are graph-relative and safe to surface.
-    #[cfg(test)]
-    pub fn page_index_failures(&self) -> Vec<String> {
-        self.page_index_failures.read().unwrap().clone()
     }
 
     pub(crate) fn journals_path(&self) -> PathBuf {
@@ -2457,28 +2782,9 @@ impl Graph {
     }
 
     /// List all pages and journals in the graph.
+    #[cfg(test)]
     pub(crate) fn list_pages(&self) -> Vec<PageEntry> {
         self.list_pages_shared().as_ref().clone()
-    }
-
-    pub(crate) fn list_pages_shared(&self) -> Arc<Vec<PageEntry>> {
-        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
-        if let Some((g, entries)) = self.page_list_cache.read().unwrap().as_ref() {
-            if *g == gen {
-                return Arc::clone(entries);
-            }
-        }
-        let entries = list_graph_pages(self);
-        // A duplicate-day journal (canonical + leftover title-named file) must show
-        // once in quick-switch / All-Pages, not twice (both resolve to one page).
-        let entries = dedup_journal_days(
-            entries,
-            &self.current_journal_format(),
-            self.current_config().file_name_format,
-        );
-        let entries = Arc::new(entries);
-        *self.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&entries)));
-        entries
     }
 
     /// Journals sorted newest-first.
@@ -2488,7 +2794,7 @@ impl Graph {
         // by cache_upsert/cache_remove, so we avoid a directory read + parse on
         // every infinite-scroll feed append. Fall back to scanning the dir while
         // the cache isn't built yet.
-        let raw: Vec<PageEntry> = match self.cache.read().unwrap().as_ref() {
+        let raw: Vec<PageEntry> = match self.peek_pages().as_deref() {
             Some(pages) => pages
                 .iter()
                 .filter(|(e, _)| e.kind == PageKind::Journal && e.date_key.is_some())
@@ -2758,33 +3064,11 @@ impl Graph {
         Ok(None)
     }
 
-    /// Locate a page in the parsed-doc cache by its resolved physical path.
-    /// Callers must already hold either `cache.read()` or `cache.write()`; this
-    /// function only touches the companion index, preserving the lock order
-    /// cache -> cache_index.
-    fn cached_page_index_for_path(&self, pages: &Pages, path: &Path) -> Option<usize> {
-        if let Some(index) = self.cache_index.read().unwrap().as_ref() {
-            return index.by_path.get(path).copied();
-        }
-        let mut guard = self.cache_index.write().unwrap();
-        if guard.is_none() {
-            #[cfg(test)]
-            count_cache_linear_scan(pages.len());
-            *guard = Some(build_page_cache_index(pages));
-        }
-        guard
-            .as_ref()
-            .and_then(|index| index.by_path.get(path).copied())
-    }
-
     /// A page DTO from the cache ONLY if the cache is already built — never
     /// triggers a (synchronous, whole-graph) build. `None` on a cold cache or a
     /// page not yet cached, so latency-path callers can parse just one file.
     fn peek_cached_page(&self, entry: &PageEntry) -> Option<PageDto> {
-        let guard = self.cache.read().unwrap();
-        let pages = guard.as_ref()?;
-        let i = self.cached_page_index_for_path(pages, &entry.path)?;
-        pages.get(i).map(|(e, d)| page_dto(e, d))
+        self.with_cached(&entry.path, |row| row.map(|(e, d)| page_dto(e, d)))?
     }
 
     /// Read and validate the current page file on every call, then reconcile a
@@ -2804,7 +3088,9 @@ impl Graph {
         // disagree via a write landing between two reads), and — on a cache miss —
         // parse it below.
         let read = read_parse_input(&entry.path);
-        let cache_ready = self.cache.read().unwrap().is_some();
+        // A held page's installed row is its owner's ((G)): a direct read
+        // neither reconciles nor serves it.
+        let cache_ready = self.cache_built() && self.disk_sourced(&entry.path);
         if let Ok(content) = &read {
             if cache_ready {
                 self.sync_file_content(&entry.path, content, false)?;
@@ -2864,12 +3150,35 @@ impl Graph {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
         };
-        let mut doc = parse_doc(&abs, &content);
+        Ok(Some(Self::dto_of(&entry, abs, &content)))
+    }
+
+    /// The DTO of `bytes` as the page file at `abs`, as a read of that file
+    /// would give it: the page host's mail carries its buffers this way
+    /// (STEP3 §3.2). None when `abs` is no page path.
+    pub(crate) fn page_dto_for_bytes(
+        &self,
+        abs: &Path,
+        bytes: &[u8],
+    ) -> io::Result<Option<PageDto>> {
+        validate_parse_bytes_for_path(bytes, abs)?;
+        let content = std::str::from_utf8(bytes)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        // Named from these bytes, not the file (A3, REVIEW-3a), and without
+        // touching the name index, which describes disk.
+        let Some(entry) = self.page_entry_in(abs, Some(content)) else {
+            return Ok(None);
+        };
+        Ok(Some(Self::dto_of(&entry, abs, content)))
+    }
+
+    fn dto_of(entry: &PageEntry, abs: &Path, content: &str) -> PageDto {
+        let mut doc = parse_doc(abs, content);
         assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
-        let mut dto = page_dto(&entry, &doc);
-        dto.read_only = read_only_org(&abs, &content);
-        dto.rev = Some(content_rev(&content));
-        Ok(Some(dto))
+        let mut dto = page_dto(entry, &doc);
+        dto.read_only = read_only_org(abs, content);
+        dto.rev = Some(content_rev(content));
+        dto
     }
 
     /// Read+parse every page from disk (skipping unreadable files). Used to build
@@ -2878,100 +3187,20 @@ impl Graph {
     /// (the background warm shares its parallel parse, `parse_pages_parallel`).
     ///
     fn load_all_pages(&self) -> PageCacheBuild {
-        let entries = self.list_pages();
+        // A held page's row is its owner's (`install_built`): never read.
+        let mut memo = entry_identity::Memo::default();
+        let entries: Vec<PageEntry> = (self.list_pages_shared().iter())
+            .filter(|entry| self.disk_sourced_in(&mut memo, &entry.path))
+            .cloned()
+            .collect();
         let mut built = PageCacheBuild::with_capacity(entries.len());
-        let shards = parse_pages_parallel(entries, &|| true, &parse_page_entry_isolated)
-            .expect("an unstoppable parse always finishes");
+        let shards =
+            parse_pages_parallel(entries, &|| true, &|e| self.parse_page_entry_isolated(e))
+                .expect("an unstoppable parse always finishes");
         for parsed in shards.into_iter().flatten() {
             built.collect(parsed);
         }
         built
-    }
-
-    /// Install a freshly-built whole-graph snapshot atomically: the parsed pages
-    /// into the cache, their on-disk revs into `disk_revs`. Cache set BEFORE
-    /// disk_revs so a reader never observes a fresh rev paired with a stale cache.
-    fn install_built(
-        &self,
-        built: PageCacheBuild,
-        expected_gen: u64,
-        replace: bool,
-        observed: Option<&HashMap<PathBuf, crate::watch::Stamp>>,
-    ) -> bool {
-        let PageCacheBuild {
-            pages: built,
-            failures,
-            mut unreadable,
-        } = built;
-        unreadable.extend(
-            self.discovery_errors
-                .read()
-                .unwrap()
-                .iter()
-                .map(|(id, error)| (id.as_str().to_owned(), error.to_string())),
-        );
-        // One row per path: a discovery and a parse failure of the same file
-        // are one unreadable file (the stable sort keeps the parse reason).
-        unreadable.sort_by(|a, b| a.0.cmp(&b.0));
-        unreadable.dedup_by(|a, b| a.0 == b.0);
-        let revs: std::collections::HashMap<PathBuf, String> = built
-            .iter()
-            .map(|(e, _, obs)| (e.path.clone(), obs.rev.clone()))
-            .collect();
-        let anchored: std::collections::HashSet<PathBuf> = built
-            .iter()
-            .filter(|(_, _, obs)| obs.anchored)
-            .map(|(e, _, _)| e.path.clone())
-            .collect();
-        let pages: Vec<(PageEntry, Arc<Document>)> = built
-            .into_iter()
-            .map(|(e, d, _)| (e, Arc::new(d)))
-            .collect();
-        // The launch pass observed every file's stamp before reading it; an
-        // on-demand build did not, and stats each page here.
-        let mtimes = pages
-            .iter()
-            .filter_map(|(entry, _)| {
-                match observed {
-                    Some(observed) => observed.get(&entry.path).and_then(|stamp| stamp.modified()),
-                    None => fs::metadata(&entry.path)
-                        .and_then(|meta| meta.modified())
-                        .ok(),
-                }
-                .map(|mtime| (entry.rel_path_str().to_owned(), mtime))
-            })
-            .collect();
-        let pages = Pages::from(pages);
-        let index = build_page_cache_index(&pages);
-        // Publish cache + revs atomically under the cache lock (cache → disk_revs
-        // order), so no reader observes a fresh rev paired with a stale cache.
-        let mut guard = self.cache.write().unwrap();
-        if (guard.is_some() && !replace)
-            || self.cache_gen.load(std::sync::atomic::Ordering::Acquire) != expected_gen
-        {
-            return false;
-        }
-        *guard = Some(Arc::new(pages));
-        *self.observed_mtimes.write().unwrap() = Arc::new(mtimes);
-        *self.page_index_failures.write().unwrap() = failures;
-        *self.unreadable_pages.write().unwrap() = Arc::new(
-            unreadable
-                .into_iter()
-                .map(|(path, reason)| (crate::store::FileId::from(path), reason))
-                .collect(),
-        );
-        *self.cache_index.write().unwrap() = Some(index);
-        *self.disk_revs.write().unwrap() = revs;
-        *self.vcs_anchored.write().unwrap() = anchored;
-        if replace {
-            // A replaced cache is new content under the old generation: the
-            // generation-keyed page list, name index and block index must
-            // rebuild against it. Bumped after the content, as everywhere.
-            self.cache_gen
-                .fetch_add(1, std::sync::atomic::Ordering::Release);
-        }
-        drop(guard);
-        true
     }
 
     /// Run `f` over every parsed page, building the cache on first use.
@@ -2983,11 +3212,7 @@ impl Graph {
     /// use copy-on-write under `cache.write()` when a scan still holds an older
     /// snapshot.
     pub(crate) fn with_pages<T>(&self, f: impl FnOnce(&Pages) -> T) -> T {
-        let snapshot = {
-            let guard = self.cache.read().unwrap();
-            guard.as_ref().map(Arc::clone)
-        };
-        if let Some(snapshot) = snapshot {
+        if let Some(snapshot) = self.peek_pages() {
             return f(&snapshot);
         }
         // Single-flight build: serialize builders on `build_lock` (NOT the cache
@@ -2995,27 +3220,23 @@ impl Graph {
         // and so we never hold the cache write lock during the slow parse.
         use std::sync::atomic::Ordering;
         let _bl = self.build_lock.lock().unwrap();
-        if self.cache.read().unwrap().is_none() {
+        if !self.cache_built() {
             let build_began = std::time::Instant::now();
             loop {
-                let gen0 = self.cache_gen.load(Ordering::Acquire);
+                let gen0 = (self.cache_gen.load(Ordering::Acquire), self.held.epoch());
                 let built = self.load_all_pages();
                 // If a save/remove raced our read (its cache mutation no-op'd
                 // because the cache was still None), its disk write is already
                 // done — rebuild so we don't install a stale snapshot. We hold
                 // build_lock, so no other builder competes.
-                if self.install_built(built, gen0, false, None) {
+                if self.install_built(built, gen0, false, None, None) {
                     break;
                 }
             }
             self.diag.on_demand_build(build_began.elapsed());
         }
         drop(_bl);
-        let snapshot = {
-            let guard = self.cache.read().unwrap();
-            guard.as_ref().map(Arc::clone).unwrap()
-        };
-        f(&snapshot)
+        f(&self.peek_pages().unwrap())
     }
 
     /// Build graph-open caches while allowing a revoked window binding to stop
@@ -3048,9 +3269,8 @@ impl Graph {
             return false;
         }
         if replace {
-            *self.page_list_cache.write().unwrap() = None;
-            *self.find_entry_cache.write().unwrap() = None;
-        } else if self.cache.read().unwrap().is_some() {
+            self.forget_name_memos();
+        } else if self.cache_built() {
             return true; // already built (e.g. by a query) — nothing to warm
         }
         // Build WITHOUT holding build_lock during the parse, so an on-demand
@@ -3059,7 +3279,7 @@ impl Graph {
         // build's parallel parse (`parse_pages_parallel`). GH #623: it used to be paced
         // (one thread, 2 ms sleep every 24 files), which on a 13k-page graph
         // spent ~1.2 s of a 2.65 s parse asleep, on every launch.
-        let gen0 = self.cache_gen.load(Ordering::Acquire);
+        let gen0 = (self.cache_gen.load(Ordering::Acquire), self.held.epoch());
         #[cfg(test)]
         self.warm_passes.fetch_add(1, Ordering::Relaxed);
         // Phase timings for `Store::diagnostics`: local accumulators, one
@@ -3080,6 +3300,12 @@ impl Graph {
         // Journal identity is the filename date, so the duplicate-day collapse
         // needs no content; non-journal entries pass through it unchanged.
         let entries = dedup_journal_days(listed.clone(), &journal_format, name_format);
+        // A held page's row is its owner's ((G), `install_built`): the build
+        // never reads it, and the watcher rereads its file.
+        let withheld = self.withheld(&listed);
+        let entries: Vec<PageEntry> = (entries.into_iter())
+            .filter(|entry| !withheld.contains(&entry.path))
+            .collect();
         pass.listing_us = diag::micros(began.elapsed());
         pass.entries = entries.len() as u64;
         let mut built = PageCacheBuild::with_capacity(entries.len());
@@ -3111,21 +3337,14 @@ impl Graph {
             let path = e.path.clone();
             let phase = std::time::Instant::now();
             let read = read_parse_input(&e.path);
-            let read_len = match &read {
-                Ok(content) => Some(content.len()),
-                Err(_) => None,
-            };
+            let read_len = read.as_ref().ok().map(String::len);
             clock.read(phase.elapsed(), read_len);
             let mut name_failure = None;
             let parsed = match read {
                 Ok(content) => {
-                    if e.kind == PageKind::Page {
-                        match page_identity::effective_page_name_from_text(
-                            &e.path, &e.name, &content,
-                        ) {
-                            Ok(name) => e.name = name,
-                            Err(error) => name_failure = Some(error),
-                        }
+                    match self.name_from(&e, &content) {
+                        Ok(name) => e.name = name,
+                        Err(error) => name_failure = Some(error),
                     }
                     clock.crlf(line_endings::convention(Some(&content)) == "\r\n");
                     let phase = std::time::Instant::now();
@@ -3178,10 +3397,8 @@ impl Graph {
                     announce.push((path.clone(), created, entry.kind, entry.name.clone()));
                 }
                 if let Some(stamp) = stamp {
-                    stamps.insert(
-                        path.clone(),
-                        stamp.with_rev(Some(crate::store::FileRev::from(rev.rev.clone()))),
-                    );
+                    let rev = Some(crate::store::FileRev::from(rev.rev.clone()));
+                    stamps.insert(path.clone(), stamp.with_rev(rev));
                     if is_racy {
                         racy.insert(path.clone());
                     }
@@ -3206,14 +3423,14 @@ impl Graph {
             #[cfg(test)]
             crate::store::pause_at_hook(&self.warm_after_first_page_pause);
         }
-        let still_wanted = || !cancelled() && (replace || self.cache.read().unwrap().is_none());
+        let still_wanted = || !cancelled() && (replace || !self.cache_built());
         let parallel_began = std::time::Instant::now();
         let Some(parsed_chunks) =
             parse_pages_parallel(entries.collect(), &still_wanted, &parse_one)
         else {
             // Either a query built the cache while we parsed, or we were cancelled.
             clock.fold(&mut pass, parallel_began.elapsed(), 0);
-            let built_meanwhile = !replace && self.cache.read().unwrap().is_some();
+            let built_meanwhile = !replace && self.cache_built();
             let outcome = if built_meanwhile {
                 diag::OUTCOME_CACHE_ALREADY_BUILT
             } else {
@@ -3227,8 +3444,9 @@ impl Graph {
         }
         drop(take);
         // Files the build does not read: duplicate-day journals the collapse
-        // set aside and sync conflict copies. The watcher tracks their stamps
-        // without a revision (§5.1); nothing parses them.
+        // set aside, sync conflict copies and held pages. The watcher tracks
+        // their stamps without a revision (§5.1); nothing parses them. A held
+        // page's stamp is racy, so the watcher rereads the file (A-V4).
         let phase = std::time::Instant::now();
         for path in listed
             .iter()
@@ -3237,7 +3455,7 @@ impl Graph {
         {
             if !stamps.contains_key(path) && !names.contains_key(path) {
                 if let Some((stamp, observed)) = listing_stamp(path) {
-                    if stamp.racy_at(observed) {
+                    if stamp.racy_at(observed) || withheld.contains(path) {
                         racy.insert(path.clone());
                     }
                     stamps.insert(path.clone(), stamp);
@@ -3277,28 +3495,20 @@ impl Graph {
                 entry
             })
             .collect();
-        {
-            let mut known = self.discovery_errors.write().unwrap();
-            known.clear();
-            known.extend(discovery);
-            known.extend(
-                walk_errors
-                    .into_iter()
-                    .map(|(path, error)| (crate::FileId::from(self.rel_path(&path)), error.into())),
-            );
-        }
+        discovery.extend(
+            walk_errors
+                .into_iter()
+                .map(|(path, error)| (crate::FileId::from(self.rel_path(&path)), error.into())),
+        );
         // Install only if nobody else built it and no Tine save/remove raced our
         // reads (its cache mutation would have no-op'd against the None cache, so
         // its disk write must be folded in by a rebuild — defer to the next
         // on-demand build rather than install a stale snapshot).
         let phase = std::time::Instant::now();
         let _bl = self.build_lock.lock().unwrap();
-        let installed = self.install_built(built, gen0, replace, Some(&stamps));
+        let installed = self.install_built(built, gen0, replace, Some(&stamps), Some(discovery));
         if installed {
-            let gen = self.cache_gen.load(Ordering::Acquire);
-            let deduped = dedup_journal_days(named.clone(), &journal_format, name_format);
-            *self.page_list_cache.write().unwrap() = Some((gen, Arc::new(deduped)));
-            *self.launch_listing.write().unwrap() = Some((gen, Arc::new(named)));
+            self.install_launch_listing(self.cache_gen.load(Ordering::Acquire), named);
             if !replace {
                 *self.launch_observations.lock().unwrap() = Some(LaunchObservations {
                     stamps,
@@ -3328,107 +3538,6 @@ impl Graph {
     /// built some other way (an on-demand build won the race).
     pub(crate) fn take_launch_observations(&self) -> Option<LaunchObservations> {
         self.launch_observations.lock().unwrap().take()
-    }
-
-    /// Discard the cache; it rebuilds on the next whole-graph query. Use when an
-    /// external change may have touched many files.
-    pub(crate) fn invalidate_cache(&self) {
-        let mut guard = self.cache.write().unwrap();
-        *guard = None;
-        *self.observed_mtimes.write().unwrap() = Arc::new(SharedMap::new());
-        self.page_index_failures.write().unwrap().clear();
-        *self.unreadable_pages.write().unwrap() = Arc::new(Vec::new());
-        self.discovery_errors.write().unwrap().clear();
-        *self.cache_index.write().unwrap() = None;
-        self.disk_revs.write().unwrap().clear(); // under the cache lock (cache → disk_revs)
-        self.vcs_anchored.write().unwrap().clear();
-        // Bump the generation AFTER discarding the cache (under the cache lock), so
-        // a reader that loads the new gen then reads the cache sees None (and
-        // rebuilds from disk) rather than the stale pre-invalidation content — same
-        // gen-after-content ordering as cache_upsert. The gen-keyed block index
-        // then rebuilds against fresh content too.
-        self.cache_gen
-            .fetch_add(1, std::sync::atomic::Ordering::Release);
-        drop(guard);
-    }
-
-    /// Update one page in the cache after we write it (no full rebuild). A no-op
-    /// if the cache hasn't been built yet. `disk_rev` is `content_rev` of the
-    /// exact on-disk bytes `doc` was produced from (the freshness key — see
-    /// `disk_revs`).
-    fn cache_upsert(&self, entry: PageEntry, mut doc: Document, disk: DiskObs) {
-        // Fill runtime ids for any block that lacks one (e.g. PDF-highlight writes)
-        // from this physical owner. Blocks saved from the frontend already carry
-        // live ids, which are deliberately kept through the in-memory save path.
-        assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
-        let path_key = entry.path.clone();
-        let doc = Arc::new(doc);
-        let evict_entry = entry.clone();
-        let mut guard = self.cache.write().unwrap();
-        #[cfg(test)]
-        crate::store::pause_at_hook(&self.cache_publish_pause);
-        if let Some(pages) = guard.as_mut() {
-            let pages = Arc::make_mut(pages);
-            match self.cached_page_index_for_path(pages, &entry.path) {
-                Some(i) => {
-                    let slot = pages.get_mut(i).unwrap();
-                    if slot.0.kind != entry.kind
-                        || tine_core::refs::page_key(&slot.0.name)
-                            != tine_core::refs::page_key(&entry.name)
-                    {
-                        if let Some(index) = self.cache_index.write().unwrap().as_mut() {
-                            index.remove(&slot.0, i);
-                            index.insert(&entry, i);
-                        }
-                    }
-                    *slot = (entry, doc);
-                }
-                None => {
-                    let slot = pages.push((entry, doc));
-                    if let Some(index) = self.cache_index.write().unwrap().as_mut() {
-                        index.insert(&pages[slot].0, slot);
-                    }
-                }
-            }
-            // Update disk_revs WHILE STILL HOLDING the cache write lock, so the
-            // cached doc and its freshness rev are published atomically and can
-            // never diverge across concurrent same-page writers (e.g. an editor
-            // save racing a PDF write_highlights on an hls__ page). If they could
-            // diverge, the sync_file_content fast-path could match disk against a
-            // rev that isn't the cached doc's and serve a stale doc. Lock order is
-            // always cache → disk_revs; readers never hold disk_revs while taking
-            // the cache lock, so this nesting can't deadlock. Sets only when the
-            // page is actually cached (preserves "entry exists IFF cached").
-            // The anchor observation moves with the rev, from the same bytes.
-            {
-                let mut anchored = self.vcs_anchored.write().unwrap();
-                if disk.anchored {
-                    anchored.insert(path_key.clone());
-                } else {
-                    anchored.remove(&path_key);
-                }
-            }
-            self.disk_revs.write().unwrap().insert(path_key, disk.rev);
-            if let Ok(mtime) = fs::metadata(&evict_entry.path).and_then(|meta| meta.modified()) {
-                Arc::make_mut(&mut self.observed_mtimes.write().unwrap())
-                    .insert(evict_entry.rel_path_str().to_owned(), mtime);
-            }
-            Arc::make_mut(&mut self.unreadable_pages.write().unwrap())
-                .retain(|(id, _)| id.as_str() != evict_entry.rel_path_str());
-        }
-        // Bump cache_gen AFTER publishing the new content (and disk_revs), still
-        // under the cache write lock. A reader loads cache_gen (Acquire) then takes
-        // the cache read lock; because the bump (Release) happens-after the slot
-        // write and before the lock is dropped, observing the new gen guarantees
-        // the new doc is visible. So any derived result computed at gen G reflects
-        // every edit whose gen is <= G — it can never be a stale whole-graph scan
-        // that reads the OLD doc yet gets tagged (and served) at the fresh gen.
-        // (Bumping FIRST left a window where the gen was new but the doc still old.)
-        // The bump is unconditional — even on a cold cache (no slot to update) — so
-        // a concurrent lock-free with_pages build still detects the race and retries.
-        self.cache_gen
-            .fetch_add(1, std::sync::atomic::Ordering::Release);
-        drop(guard);
     }
 }
 
@@ -3506,6 +3615,7 @@ impl SnapshotMemos {
                         target,
                         entry,
                         candidate,
+                        graph.config(),
                     ),
                     Some(("u", target)) => crate::query::page_affects_unlinked(
                         &real_pages,
@@ -3514,6 +3624,7 @@ impl SnapshotMemos {
                         target,
                         entry,
                         candidate,
+                        graph.config(),
                     ),
                     Some(("br", uuid)) => {
                         crate::query::page_affects_block_referrers(uuid, candidate)
@@ -3526,6 +3637,7 @@ impl SnapshotMemos {
                             target,
                             entry,
                             candidate,
+                            graph.config(),
                         )
                     }),
                     Some(("U", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|target| {
@@ -3536,6 +3648,7 @@ impl SnapshotMemos {
                             target,
                             entry,
                             candidate,
+                            graph.config(),
                         )
                     }),
                     Some(("R", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|uuid| {
@@ -3553,50 +3666,6 @@ impl SnapshotMemos {
             dc.lru.retain(|key| dc.results.contains_key(key));
             dc.gen = newgen; // survivors are valid for the post-bump generation
         }
-    }
-}
-
-impl Graph {
-    /// Whether the cached page at `path` has a VCS anchor line in the bytes
-    /// the store last observed for it: `Some(false)` means no read of the file
-    /// can find one, `Some(true)` that one may exist (the caller scans), `None`
-    /// that the page is not cached (not loaded yet, or never cached:
-    /// shadow journals, sync copies, unreadable or oversized files), so only
-    /// reading the file can tell. Cost O(1).
-    pub(crate) fn vcs_anchor_state(&self, path: &Path) -> Option<bool> {
-        let _cache = self.cache.read().unwrap();
-        if !self.disk_revs.read().unwrap().contains_key(path) {
-            return None;
-        }
-        Some(self.vcs_anchored.read().unwrap().contains(path))
-    }
-
-    /// Drop one physical page from the cache after its file disappears. Unlike
-    /// `cache_remove`, this preserves same-name siblings and rebuilds the logical
-    /// first-wins index from the surviving entries.
-    fn cache_remove_path(&self, entry: &PageEntry) {
-        let mut guard = self.cache.write().unwrap();
-        if let Some(pages) = guard.as_mut() {
-            let pages = Arc::make_mut(pages);
-            if let Some(i) = self.cached_page_index_for_path(pages, &entry.path) {
-                if let Some(index) = self.cache_index.write().unwrap().as_mut() {
-                    index.remove(&pages[i].0, i);
-                }
-                pages.remove(i);
-                // Drop the rev under the cache lock (same cache → disk_revs order
-                // as cache_upsert) so the two never diverge.
-                self.disk_revs.write().unwrap().remove(&entry.path);
-                self.vcs_anchored.write().unwrap().remove(&entry.path);
-                Arc::make_mut(&mut self.observed_mtimes.write().unwrap())
-                    .remove(entry.rel_path_str());
-            }
-        }
-        // Bump AFTER the removal is published (under the cache lock), so a reader
-        // that loads the new gen is guaranteed to see the page gone — see the
-        // gen-after-content note in cache_upsert.
-        self.cache_gen
-            .fetch_add(1, std::sync::atomic::Ordering::Release);
-        drop(guard);
     }
 }
 
@@ -3728,12 +3797,7 @@ impl Graph {
         let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
         self.with_pages(|pages| {
             for (_e, doc) in pages {
-                if let Some(pre) = &doc.pre_block {
-                    collect_asset_refs(pre, &mut referenced);
-                }
-                for b in &doc.roots {
-                    collect_block_asset_refs(b, &mut referenced);
-                }
+                tine_core::asset_refs::collect_document_asset_refs(doc, &mut referenced);
             }
         });
         let mut out = Vec::new();
@@ -3780,6 +3844,13 @@ impl Graph {
     /// [`Self::entry_for_path`] whose page preamble comes from `text`, the
     /// file's bytes already in hand, instead of a fresh open (GH #623).
     pub(crate) fn entry_for_path_in(&self, path: &Path, text: Option<&str>) -> Option<PageEntry> {
+        let entry = self.page_entry_in(path, text)?;
+        self.observe_name_entry(&entry);
+        Some(entry)
+    }
+
+    /// The page entry `path` names, its page name from `text` when given.
+    fn page_entry_in(&self, path: &Path, text: Option<&str>) -> Option<PageEntry> {
         if !graph_text_eligible(&self.root, path, &self.current_config()) {
             return None;
         }
@@ -3813,7 +3884,6 @@ impl Graph {
                 path: path.to_path_buf(),
             }
         };
-        self.observe_name_entry(&entry);
         Some(entry)
     }
 
@@ -3988,10 +4058,7 @@ impl Graph {
             Ok(entry) => Ok(entry),
             Err(_) => {
                 self.invalidate_cache();
-                self.page_index_failures
-                    .write()
-                    .unwrap()
-                    .push(self.rel_path(path));
+                self.record_index_failure(path);
                 Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "page parser panicked during sync",
@@ -4007,6 +4074,11 @@ impl Graph {
         consume_self_write: bool,
     ) -> Option<PageEntry> {
         let entry = self.cacheable_page_entry(path)?;
+        // A held page's rows are its owner's ((G)): the watcher forwards its
+        // file to the owner, and nothing here installs or retires them.
+        if !self.disk_sourced(path) {
+            return None;
+        }
         // Our own write: if the bytes on disk are exactly what Tine last wrote
         // here, this is not an external change — suppress it even if the parse
         // cache hasn't folded in the write yet (the rename→cache_upsert gap the
@@ -4040,17 +4112,8 @@ impl Graph {
         // the guard is dropped before the reconcile path below re-locks the cache.
         // A missing/mismatched entry falls through to the exact comparison, so this
         // can only ever save work, never serve stale content.
-        {
-            let _cache_guard = self.cache.read().unwrap();
-            if self
-                .disk_revs
-                .read()
-                .unwrap()
-                .get(path)
-                .is_some_and(|r| *r == disk_rev)
-            {
-                return None;
-            }
+        if self.cached_rev(path).is_some_and(|r| r == disk_rev) {
+            return None;
         }
         #[cfg(test)]
         if self
@@ -4060,69 +4123,49 @@ impl Graph {
             panic!("injected external sync parser panic");
         }
         let (mut newdoc, opts) = parse_doc_with_opts(path, content);
-        {
-            let guard = self.cache.read().unwrap();
-            if guard.is_none() {
-                drop(guard);
+        // Compare CONTENT, not the in-memory uuids: cached blocks carry
+        // generated uuids (assigned at cache build / upsert), while a fresh
+        // `parse` leaves them empty for non-ref-target blocks, so a direct
+        // `cached == newdoc` would never match and would flag every one of
+        // Tine's own writes as an external change. Normalize the cached doc
+        // through the same serialize→parse round-trip the file went through
+        // (both sides then have empty uuids) and compare.
+        let compared = self.with_cached(path, |row| {
+            row.map(|(_, cached)| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    match Format::from_path(path) {
+                        Format::Md => parse_doc(path, &doc::serialize_with(cached, &opts)),
+                        Format::Org => parse_doc(
+                            path,
+                            &tine_core::org::serialize_org_detect(cached, Some(content)),
+                        ),
+                    }
+                }))
+                .map(|cached_norm| cached_norm == newdoc)
+            })
+        });
+        match compared {
+            None => {
                 #[cfg(test)]
                 crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
-                // A builder can install between the read above and this lock.
-                // If it did, continue to cache_upsert below; otherwise bump the
-                // generation under the same lock used by install_built so its
-                // pre-write candidate cannot be installed afterward.
-                let cache = self.cache.write().unwrap();
-                if cache.is_none() {
-                    *self.page_list_cache.write().unwrap() = None;
-                    *self.find_entry_cache.write().unwrap() = None;
-                    *self.cache_index.write().unwrap() = None;
-                    self.cache_gen
-                        .fetch_add(1, std::sync::atomic::Ordering::Release);
+                // A builder can install between the look above and this
+                // bump; if it did, continue to cache_upsert below. Otherwise
+                // the generation moves under the lock install_built takes, so
+                // its pre-write candidate cannot be installed afterward.
+                if self.cold_reconcile_bump() {
                     return None;
                 }
-                drop(cache);
-            } else if let Some(i) = self.cached_page_index_for_path(guard.as_ref().unwrap(), path) {
-                let cache = guard.as_ref().unwrap();
-                let cached = &cache[i].1;
-                // Compare CONTENT, not the in-memory uuids: cached blocks carry
-                // generated uuids (assigned at cache build / upsert), while a
-                // fresh `parse` leaves them empty for non-ref-target blocks, so a
-                // direct `cached == newdoc` would never match and would flag every
-                // one of Tine's own writes as an external change. Normalize the
-                // cached doc through the same serialize→parse round-trip the file
-                // went through (both sides then have empty uuids) and compare.
-                let cached_norm =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                        || match Format::from_path(path) {
-                            Format::Md => parse_doc(path, &doc::serialize_with(cached, &opts)),
-                            Format::Org => parse_doc(
-                                path,
-                                &tine_core::org::serialize_org_detect(cached, Some(content)),
-                            ),
-                        },
-                    ));
-                let cached_norm = match cached_norm {
-                    Ok(doc) => doc,
-                    Err(_) => {
-                        drop(guard);
-                        panic!("page parser panicked during cached comparison");
-                    }
-                };
-                if cached_norm == newdoc {
-                    // Unchanged document, but not necessarily unchanged bytes:
-                    // parsing normalizes some lines (a column-0 continuation
-                    // line parses like an indented one), so these bytes may
-                    // carry an anchor line the cached bytes did not. The flag
-                    // may only err toward true, so raise it (still under the
-                    // cache lock: cache → vcs_anchored).
-                    if tine_core::concord_queue::has_vcs_anchor(content.as_bytes()) {
-                        self.vcs_anchored
-                            .write()
-                            .unwrap()
-                            .insert(path.to_path_buf());
-                    }
-                    return None; // unchanged / our own write
-                }
             }
+            Some(Some(Err(_))) => panic!("page parser panicked during cached comparison"),
+            Some(Some(Ok(true))) => {
+                // Unchanged document, but not necessarily unchanged bytes:
+                // parsing normalizes some lines (a column-0 continuation line
+                // parses like an indented one), so these bytes may carry an
+                // anchor line the cached bytes did not.
+                self.raise_vcs_anchor(path, content);
+                return None; // unchanged / our own write
+            }
+            Some(_) => {}
         }
         newdoc.roots.shrink_to_fit();
         let anchored = tine_core::concord_queue::has_vcs_anchor(content.as_bytes());
@@ -4146,11 +4189,14 @@ impl Graph {
             .unwrap()
             .remove(path)
             .is_some_and(|rev| rev == "<tx-deleted>");
+        // A disk disappearance never removes a held page's row (R1).
+        if !self.disk_sourced(path) {
+            return None;
+        }
         let entry = self.entry_for_path(path)?;
-        let cached_entry = self.cache.read().unwrap().as_ref().and_then(|pages| {
-            self.cached_page_index_for_path(pages, path)
-                .map(|index| pages[index].0.clone())
-        });
+        let cached_entry = self
+            .with_cached(path, |row| row.map(|(entry, _)| entry.clone()))
+            .flatten();
         self.cache_remove_path(&entry);
         cached_entry.filter(|_| !own_delete)
     }
@@ -4177,22 +4223,6 @@ impl Graph {
 
     pub(crate) fn transaction_clear_page_marker(&self, path: &Path) {
         self.recent_writes.lock().unwrap().remove(path);
-    }
-
-    pub(crate) fn transaction_bump_generation(&self) {
-        let before = self
-            .cache_gen
-            .fetch_add(1, std::sync::atomic::Ordering::Release);
-        if let Some((gen, _)) = self.page_list_cache.write().unwrap().as_mut() {
-            if *gen == before {
-                *gen = before + 1;
-            }
-        }
-        if let Some((gen, _)) = self.find_entry_cache.write().unwrap().as_mut() {
-            if *gen == before {
-                *gen = before + 1;
-            }
-        }
     }
 
     /// Bytes a save writes for `page`. Markdown reuses every unchanged block's
@@ -4327,28 +4357,51 @@ impl Graph {
 /// empty title line, and its serializer promotes only a first block whose FIRST
 /// line holds `:: ` (`file/core.cljs` `transform-content`); Tine's raw has no
 /// empty title line, so the key itself must decide (GH #540). `id` marks a
-/// referenced outline block. Mirrored by `BLOCK_SCOPED_PROPERTY_KEYS` in
-/// `src/document/convert.ts`; `src/i12PageHeader.test.ts` keeps them equal.
+/// referenced outline block. `tine.view` is a Tine table/grid/board block whose
+/// title is typed after its view is chosen (GH #210): its rows are children and
+/// its first line is text, so it is never page properties. Mirrored by
+/// `BLOCK_SCOPED_PROPERTY_KEYS` in `src/document/convert.ts`; `src/i12PageHeader.test.ts` keeps them equal.
 pub(crate) const BLOCK_SCOPED_PROPERTY_KEYS: &[&str] = &[
     "id",
     "heading",
     "collapsed",
     "background-color",
     "logseq.order-list-type",
+    "tine.view",
+    "tine.header",
+    "tine.col-widths",
+    "tine.col-aggregates",
+    "tine.group-by",
+    "tine.group-field",
+    "tine.table-widths",
+    "tine.columns",
+    "tine.block-columns",
+    "tine.filter",
+    "tine.sort",
+    "tine.sample",
+    "tine.result-kinds",
 ];
+
+/// The ONE predicate for "this first root's raw is a page header" (TS twin:
+/// `isPropertiesOnly`, `src/editor/properties.ts`): canonical page-header
+/// properties (the parser's `page_header_only`, I-12) and no block-scoped key.
+/// Save-time promotion and alias reading both call it, so a block cannot be
+/// promoted/read as the header in one place and kept an outline block in another.
+pub(crate) fn is_page_header_candidate(raw: &str) -> bool {
+    tine_core::block_regions::page_header_only(raw).is_some_and(|header| {
+        !header.entries.iter().any(|entry| {
+            BLOCK_SCOPED_PROPERTY_KEYS
+                .iter()
+                .any(|scoped| entry.key.eq_ignore_ascii_case(scoped))
+        })
+    })
+}
 
 fn first_root_is_promotable_page_header(doc: &Document) -> bool {
     let Some(first) = doc.roots.first() else {
         return false;
     };
-    first.children.is_empty()
-        && tine_core::block_regions::page_header_only(first.raw()).is_some_and(|header| {
-            !header.entries.iter().any(|entry| {
-                BLOCK_SCOPED_PROPERTY_KEYS
-                    .iter()
-                    .any(|scoped| entry.key.eq_ignore_ascii_case(scoped))
-            })
-        })
+    first.children.is_empty() && is_page_header_candidate(first.raw())
 }
 
 fn promote_first_root_page_header(doc: &mut Document) {
@@ -4450,10 +4503,10 @@ fn newly_reclassified_page_property_line(
 /// A shard whose thread panicked despite per-page isolation is omitted with a
 /// diagnostic line. The one parallel page parse: the on-demand build and the
 /// background warm both use it.
-fn parse_pages_parallel<T: Send>(
-    entries: Vec<PageEntry>,
+fn parse_pages_parallel<I: Send, T: Send>(
+    entries: Vec<I>,
     keep_going: &(impl Fn() -> bool + Sync),
-    parse: &(impl Fn(PageEntry) -> T + Sync),
+    parse: &(impl Fn(I) -> T + Sync),
 ) -> Option<Vec<Vec<T>>> {
     let workers = page_cache_worker_count();
     let per = if workers <= 1 || entries.len() < 64 {
@@ -4462,13 +4515,13 @@ fn parse_pages_parallel<T: Send>(
         entries.len().div_ceil(workers)
     };
     // Drain into owned contiguous chunks (no clone of PageEntry).
-    let mut chunks: Vec<Vec<PageEntry>> = Vec::with_capacity(workers);
+    let mut chunks: Vec<Vec<I>> = Vec::with_capacity(workers);
     let mut it = entries.into_iter().peekable();
     while it.peek().is_some() {
         chunks.push(it.by_ref().take(per).collect());
     }
     let stopped = std::sync::atomic::AtomicBool::new(false);
-    let run = |chunk: Vec<PageEntry>| {
+    let run = |chunk: Vec<I>| {
         let mut out = Vec::with_capacity(chunk.len());
         for (i, entry) in chunk.into_iter().enumerate() {
             if i % 24 == 0 && (stopped.load(std::sync::atomic::Ordering::Relaxed) || !keep_going())
@@ -4682,133 +4735,6 @@ fn encode_page_name(name: &str, fmt: FileNameFormat) -> String {
 /// survives instead of being turned into a separator.
 fn decode_page_name(stem: &str, fmt: FileNameFormat) -> String {
     tine_core::model::decode_page_name(stem, fmt)
-}
-
-/// Decode `%XX` percent-escapes (UTF-8 aware, like JS `decodeURIComponent`). An
-/// invalid or truncated escape is left literal rather than dropped.
-pub(crate) fn percent_decode(s: &str) -> String {
-    if !s.contains('%') {
-        return s.to_string();
-    }
-    let b = s.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let (Some(h), Some(l)) = (hex_nibble(b[i + 1]), hex_nibble(b[i + 2])) {
-                out.push((h << 4) | l);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn hex_nibble(c: u8) -> Option<u8> {
-    match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        b'A'..=b'F' => Some(c - b'A' + 10),
-        _ => None,
-    }
-}
-
-/// A unique-ish label (epoch millis + process-local sequence) for trashed files,
-/// so deleting two pages with the same name doesn't collide in the trash.
-/// Asset liveness combines parser-accepted targets with conservative plaintext
-/// mentions. The latter may retain extra files (including literal code), but
-/// cannot shorten or replace an accepted target. Parsing is skipped entirely
-/// when there is no asset mention; whole-graph results are memoized by the store.
-pub(crate) fn collect_asset_refs(text: &str, into: &mut std::collections::HashSet<String>) {
-    use tine_core::lsdoc::ast::{Inline, Url};
-    fn links(nodes: &[Inline], into: &mut std::collections::HashSet<String>) {
-        for node in nodes {
-            match node {
-                Inline::Link { url, label, .. } => {
-                    let target = match url {
-                        Url::Search { v } | Url::File { v } => Some(v.as_str()),
-                        Url::Complex { link, .. } => link.as_deref(),
-                        _ => None,
-                    };
-                    if let Some((_, name)) = target.and_then(|t| t.split_once("assets/")) {
-                        insert_asset_path(into, name);
-                    }
-                    links(label, into);
-                }
-                Inline::Emphasis { children, .. }
-                | Inline::Subscript { children, .. }
-                | Inline::Superscript { children, .. }
-                | Inline::Tag { children, .. } => links(children, into),
-                Inline::Fnref { definition, .. } => links(definition, into),
-                _ => (),
-            }
-        }
-    }
-    if !text.contains("assets/") {
-        return;
-    }
-    // Preambles carry no format argument. Both parsers may conservatively add
-    // accepted targets; neither removes a target recognized by the other.
-    for format in ["md", "org"] {
-        if let Some(nodes) = tine_core::render::parse_inline_bounded(text, format) {
-            links(&nodes, into);
-        }
-    }
-    conservative_asset_mentions(text, into);
-}
-
-fn insert_asset_path(into: &mut std::collections::HashSet<String>, name: &str) {
-    if name.is_empty() {
-        return;
-    }
-    insert_asset_ref(into, name);
-    if let Some((segment, _)) = name.split_once('/') {
-        insert_asset_ref(into, segment);
-    }
-}
-
-/// Legacy plaintext safety policy, NOT link recognition: any assets/ mention
-/// can keep a file alive even outside accepted links. Delimiters bound an extra
-/// conservative candidate only; link targets above always come from lsdoc.
-fn conservative_asset_mentions(text: &str, into: &mut std::collections::HashSet<String>) {
-    let mut rest = text;
-    while let Some(i) = rest.find("assets/") {
-        let after = &rest[i + "assets/".len()..];
-        let end = after
-            .find(|c: char| {
-                matches!(
-                    c,
-                    ')' | ']' | '"' | '\'' | '<' | '>' | '|' | '\n' | '\r' | '\t'
-                )
-            })
-            .unwrap_or(after.len());
-        let name = &after[..end];
-        insert_asset_path(into, name);
-        rest = &after[end..];
-    }
-}
-
-/// Record an asset reference under BOTH its raw form AND its percent-decoded form.
-/// A link like `../assets/my%20file.png` names the on-disk file `my file.png`, so
-/// comparing the raw URL substring against directory entries would miss the real
-/// file and let `orphan_assets` offer an IN-USE asset for trashing (DS Codex#7).
-/// Keeping the raw form too covers a file literally named with a `%` escape.
-fn insert_asset_ref(into: &mut std::collections::HashSet<String>, raw: &str) {
-    let decoded = percent_decode(raw);
-    if decoded != raw {
-        into.insert(decoded);
-    }
-    into.insert(raw.to_string());
-}
-
-pub(crate) fn collect_block_asset_refs(b: &DocBlock, into: &mut std::collections::HashSet<String>) {
-    collect_asset_refs(b.raw(), into);
-    for c in &b.children {
-        collect_block_asset_refs(c, into);
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5084,6 +5010,19 @@ pub(crate) fn atomic_copy_file_new(
 mod tests {
     use super::*;
 
+    use crate::test_fixture_io::hosted;
+
+    fn delete(
+        store: &std::sync::Arc<tine_store::Store>,
+        name: &str,
+        expected_path: Option<&str>,
+    ) -> io::Result<tine_store::PageOperation> {
+        let (operation, published) =
+            crate::test_fixture_io::delete(store, name, PageKind::Page, expected_path)?;
+        assert_ne!(published, Some(false), "a pending delete must publish");
+        Ok(operation)
+    }
+
     #[test]
     fn journal_content_asks_the_parser_which_bytes_are_properties() {
         // OG-C5 L12-S1/S1-14: Org stores properties in drawers, so heading prose
@@ -5274,7 +5213,8 @@ mod tests {
         .unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let _ = store.whole_graph().unwrap();
-        tine_graph_features::pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
+        tine_graph_features::pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md")
+            .unwrap();
         let merged = fs::read_to_string(dir.join("pages").join("dst.md")).unwrap();
         assert!(
             merged.contains("alias:: Foo"),
@@ -5441,6 +5381,34 @@ mod tests {
     }
 
     #[test]
+    fn alias_completion_case_only_save_refreshes_live_and_reloaded_spelling() {
+        let dir = scratch("gh675-case-save");
+        fs::write(dir.join("pages/Owner.md"), "alias:: SSE\n- body\n").unwrap();
+        let store = model_store(&dir);
+        let before = published_snapshot(&store);
+        before.page_aliases_with_owners();
+        assert_eq!(crate::query::quick_switch(&before, "sse", 8)[0].name, "SSE");
+        save_model_page(&store, "Owner", |page| {
+            page.pre_block = Some("alias:: Sse".into())
+        });
+        let after = published_snapshot(&store);
+        assert_eq!(crate::query::quick_switch(&after, "SSE", 8)[0].name, "Sse");
+        assert_eq!(crate::query::quick_switch(&before, "sse", 8)[0].name, "SSE");
+        assert!(matches!(
+            store.whole_graph().unwrap().resolve("sSE", false),
+            crate::store::Resolved::Alias { .. }
+        ));
+        store.close();
+        let reopened = model_store(&dir);
+        assert_eq!(
+            crate::query::quick_switch(&published_snapshot(&reopened), "sse", 8)[0].name,
+            "Sse"
+        );
+        reopened.close();
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn quick_switch_includes_referenced_pages() {
         // A page referenced by `#tag` / `[[link]]` but with no file of its own
         // still "exists" (OG semantics) and must show up in quick-switch — that's
@@ -5545,6 +5513,7 @@ mod tests {
                         target,
                         entry,
                         doc,
+                        graph.config(),
                     ),
                     ReferenceKind::Plain => crate::query::page_affects_unlinked(
                         &real_pages,
@@ -5553,6 +5522,7 @@ mod tests {
                         target,
                         entry,
                         doc,
+                        graph.config(),
                     ),
                 })
                 .map(|(entry, _)| entry.rel_path.clone())
@@ -5643,6 +5613,59 @@ mod tests {
             ),
             crate::store::SaveOutcome::Saved(_)
         ));
+    }
+
+    #[test]
+    fn completion_reference_baseline_survives_live_save_and_reload() {
+        for (extension, before, after) in [
+            ("md", "- start\n", "[[Fz]]"),
+            ("org", "* start\n", "[[Fz]]"),
+        ] {
+            let dir = scratch(&format!("fz-baseline-{extension}"));
+            fs::write(dir.join(format!("pages/Notes.{extension}")), before).unwrap();
+            fs::write(dir.join("pages/Fuzzy Existing.md"), "- body\n").unwrap();
+            let store = model_store(&dir);
+            let before = published_snapshot(&store);
+            // Warm both indexes so save must refresh carried facts correctly.
+            before.referenced_page_names();
+            let id = before.with_pages(|pages| {
+                pages
+                    .iter()
+                    .find(|(p, _)| p.name == "Notes")
+                    .unwrap()
+                    .1
+                    .roots[0]
+                    .uuid
+                    .clone()
+            });
+            save_model_page(&store, "Notes", |page| page.blocks[0].raw = after.into());
+            let live = published_snapshot(&store);
+            assert_eq!(crate::query::quick_switch(&live, "Fz", 8)[0].name, "Fz");
+            assert_eq!(
+                crate::query::quick_switch_for_editor(&live, "Fz", 8, "Notes", &id, "start")[0]
+                    .name,
+                "Fuzzy Existing"
+            );
+            assert_eq!(
+                crate::query::quick_switch(&before, "Fz", 8)[0].name,
+                "Fuzzy Existing"
+            );
+            store.close();
+            let reopened = model_store(&dir);
+            let snapshot = published_snapshot(&reopened);
+            assert_eq!(
+                crate::query::quick_switch_for_editor(&snapshot, "Fz", 8, "Notes", &id, "start")[0]
+                    .name,
+                "Fuzzy Existing"
+            );
+            assert_eq!(
+                crate::query::quick_switch_for_editor(&snapshot, "Fz", 8, "Notes", &id, after)[0]
+                    .name,
+                "Fz"
+            );
+            reopened.close();
+            let _ = fs::remove_dir_all(dir);
+        }
     }
 
     fn advanced_result(snapshot: &ReadSnapshot, source: &str) -> tine_core::query::AdvancedResult {
@@ -5790,7 +5813,7 @@ mod tests {
 
         // Watcher-equivalent physical replace is an upsert at the same seam.
         fs::write(&source_path, "- [[Target]] plus Target\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         snapshot = published_snapshot(&store);
         assert!(candidate_paths(
             &snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit)
@@ -5811,7 +5834,7 @@ mod tests {
         assert_indexed_reference_results_equal_full_scan(&snapshot, "Target");
 
         fs::remove_file(&source_path).unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         snapshot = published_snapshot(&store);
         let after_delete = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
         assert!(after_delete.indexed);
@@ -5832,7 +5855,7 @@ mod tests {
 
         // A broad invalidation reconstructs from the new physical page set.
         fs::write(&source_path, "- [[Alias]] and Target again\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         snapshot = published_snapshot(&store);
         assert!(candidate_paths(
             &snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit)
@@ -5853,7 +5876,7 @@ mod tests {
         assert_indexed_reference_results_equal_full_scan(&snapshot, "Target");
 
         fs::write(dir.join("pages/Created.md"), "- [[Target]] and Target\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         snapshot = published_snapshot(&store);
         let after_create = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
         assert!(after_create.indexed);
@@ -6167,7 +6190,7 @@ mod tests {
         let g = Graph::open(&dir);
         assert!(g.warm_cache_cancellable(|| false));
         assert!(
-            g.cache_index.read().unwrap().is_some(),
+            g.cache_index_built(),
             "warm cache should install the by-name parsed-doc index"
         );
 
@@ -6191,17 +6214,14 @@ mod tests {
     fn parsed_doc_cache_index_does_not_serve_deleted_page() {
         let dir = scratch("doc-cache-index-delete");
         fs::write(dir.join("pages").join("Gone.md"), "- old\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
         let id = tine_store::PageId::from("pages/Gone.md");
         assert!(store.page(&id).is_ok());
-        tine_graph_features::pages::delete_page_expected(
-            &store,
-            "Gone",
-            PageKind::Page,
-            None,
-            None,
-        )
-        .unwrap();
+        assert_eq!(
+            delete(&store, "Gone", None).unwrap(),
+            tine_store::PageOperation::Applied
+        );
         assert!(
             store.page(&id).is_err(),
             "stale cache/index must not serve the deleted entry"
@@ -6221,10 +6241,14 @@ mod tests {
             "- links [[Old]] and #Old\n",
         )
         .unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
         let old_id = tine_store::PageId::from("pages/Old.md");
         assert!(store.page(&old_id).is_ok());
-        tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None).unwrap();
+        hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "Old", "New", None)
+        })
+        .unwrap();
         assert!(
             store.page(&old_id).is_err(),
             "old entry must not be served after rename"
@@ -6257,8 +6281,13 @@ mod tests {
             tine_store::Resolved::Existing { .. }
         ));
 
-        tine_graph_features::pages::rename_file_to_page(&store, "journals/Loose.md", "Rescued")
-            .unwrap();
+        tine_graph_features::pages::rename_file_to_page(
+            &store,
+            None,
+            "journals/Loose.md",
+            "Rescued",
+        )
+        .unwrap();
         let after = store.whole_graph().unwrap();
         assert!(matches!(
             after.resolve("Loose", true),
@@ -6613,9 +6642,9 @@ mod tests {
             "A"
         );
         fs::write(dir.join("pages/A.md"), "- empty again\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         fs::write(dir.join("pages/B.md"), "- destination\n  id:: moved-id\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert_eq!(
             crate::query::preview_block_with_budget(
                 &published_snapshot(&store),
@@ -6744,7 +6773,7 @@ mod tests {
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let listed = tine_graph_features::journals::journal_filename_migrations(&store).unwrap();
         assert_eq!(
-            tine_graph_features::journals::migrate_journal_filenames(&store, &listed)
+            tine_graph_features::journals::migrate_journal_filenames(&store, None, &listed)
                 .unwrap()
                 .migrated,
             1,
@@ -6769,7 +6798,7 @@ mod tests {
         let names: Vec<String> = store
             .whole_graph()
             .unwrap()
-            .inventory()
+            .inventory(tine_store::InventoryScope::All)
             .0
             .iter()
             .filter(|e| e.is_journal)
@@ -7071,7 +7100,7 @@ mod tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .inventory()
+            .inventory(tine_store::InventoryScope::All)
             .0
             .iter()
             .any(|e| e.name == "Jul 17th, 2030"));
@@ -7084,7 +7113,7 @@ mod tests {
             duplicate
                 .whole_graph()
                 .unwrap()
-                .inventory()
+                .inventory(tine_store::InventoryScope::All)
                 .0
                 .iter()
                 .filter(|e| e.day == Some(tine_store::Day(20300717)))
@@ -7109,8 +7138,12 @@ mod tests {
         let dir = scratch("rename");
         fs::write(dir.join("pages").join("Alpha.md"), "- alpha body\n").unwrap();
         fs::write(dir.join("pages").join("Other.md"), "- see [[Alpha]] here\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        tine_graph_features::pages::rename_page_expected(&store, "Alpha", "Beta", None).unwrap();
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "Alpha", "Beta", None)
+        })
+        .unwrap();
         // The page file moved (content preserved) and the old file is gone.
         assert!(!dir.join("pages").join("Alpha.md").exists());
         assert_eq!(
@@ -7130,7 +7163,8 @@ mod tests {
         fs::write(dir.join("pages/Old.md"), "- old body\n").unwrap();
         let referrer = dir.join("pages/Referrer.md");
         fs::write(&referrer, "- unrelated\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
         let old_view = store.whole_graph().unwrap();
         let names = vec!["Old".to_owned()];
         let initial_candidates = old_view.explicit_referrers(&names);
@@ -7147,7 +7181,10 @@ mod tests {
             "the held production view must remain unchanged after a disk edit"
         );
 
-        tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None).unwrap();
+        hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "Old", "New", None)
+        })
+        .unwrap();
         let rewritten = fs::read_to_string(&referrer).unwrap();
         assert!(rewritten.contains("[[New]]"));
         assert!(!rewritten.contains("[[Old]]"));
@@ -7208,9 +7245,14 @@ mod tests {
             "tags:: Project, Project/Beta\n- see [[Project]], [[Project/Alpha]] and #[[Project/Beta]]\n",
         )
         .unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        tine_graph_features::pages::rename_page_expected(&store, "Project", "Archive", None)
-            .unwrap();
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(
+                &store, host, "Project", "Archive", None,
+            )
+        })
+        .unwrap();
 
         // Primary + every descendant file moved (content preserved), old names gone.
         assert!(!dir.join("pages").join("Project.md").exists());
@@ -7250,6 +7292,29 @@ mod tests {
             !refs.contains("Project"),
             "no stale Project anywhere: {refs:?}"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn org_autosaved_soft_newline_does_not_become_file_trivia() {
+        let dir = scratch("org-drawer-autosave");
+        let path = dir.join("pages/ManualOrg.org");
+        fs::write(&path, "* plain\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/ManualOrg.org");
+        let mut dto = store.page(&id).unwrap().doc;
+        let mut rev = dto.rev.clone().unwrap();
+        let typed = "plain\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END: suffix";
+        for end in 6..=typed.len() {
+            dto.blocks[0].raw = typed[..end].to_string();
+            rev = saved_rev(save_on_store(&store, &dto, Some(&rev)));
+        }
+        let expected = format!("* {typed}\n");
+        assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+        drop(store);
+        let reopened = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        assert_eq!(reopened.page(&id).unwrap().doc.blocks[0].raw, typed);
+        assert_eq!(fs::read_to_string(&path).unwrap(), expected);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -7404,20 +7469,17 @@ mod tests {
         let dir = scratch("org-twin");
         fs::write(dir.join("pages").join("Foo.md"), "- md body\n").unwrap();
         fs::write(dir.join("pages").join("Foo.org"), "* org body\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
         assert!(
-            tine_graph_features::pages::rename_page_expected(&store, "Foo", "Bar", None).is_err(),
+            hosted(&store, |_, host| {
+                tine_graph_features::pages::rename_page_expected(&store, host, "Foo", "Bar", None)
+            })
+            .is_err(),
             "rename refused on twin"
         );
         assert!(
-            tine_graph_features::pages::delete_page_expected(
-                &store,
-                "Foo",
-                PageKind::Page,
-                None,
-                None
-            )
-            .is_err(),
+            delete(&store, "Foo", None).is_err(),
             "delete refused on twin"
         );
         // Both files are byte-intact (nothing was written/moved/trashed).
@@ -7720,9 +7782,12 @@ mod tests {
         // `* a\n*** c` skips a heading level → not round-trip-safe → read-only.
         let ro = "* a\n*** c referencing [[Alpha]]\n";
         fs::write(dir.join("pages").join("Weird.org"), ro).unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        let err = tine_graph_features::pages::rename_page_expected(&store, "Alpha", "Beta", None)
-            .unwrap_err();
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let err = hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "Alpha", "Beta", None)
+        })
+        .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
         // All-or-nothing: neither file moved/changed.
         assert!(
@@ -7744,8 +7809,12 @@ mod tests {
         fs::write(dir.join("pages").join("Old.md"), "- old body\n").unwrap();
         let org = "* note\nsee [[Old]]\n#+BEGIN_SRC clojure\n\"[[Old]]\"\n#+END_SRC\n";
         fs::write(dir.join("pages").join("Ref.org"), org).unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None).unwrap();
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "Old", "New", None)
+        })
+        .unwrap();
         let got = fs::read_to_string(dir.join("pages").join("Ref.org")).unwrap();
         assert_eq!(
             got,
@@ -8467,9 +8536,15 @@ mod tests {
         fs::write(&edn_path, unknown).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
-        let err =
-            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
-                .unwrap_err();
+        let err = tine_graph_features::pdf::write_highlights(
+            &store,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h],
+            &[],
+        )
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&edn_path).unwrap(), unknown);
@@ -8497,7 +8572,7 @@ mod tests {
         assert!(!dir.join("assets").join("paper.edn").exists());
         assert!(!dir.join("pages").join("hls__paper.org").exists());
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
-        tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+        tine_graph_features::pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[h], &[])
             .unwrap();
 
         let sidecar = fs::read_to_string(dir.join("assets").join("paper.edn")).unwrap();
@@ -8535,6 +8610,7 @@ mod tests {
 
         tine_graph_features::pdf::write_highlights(
             &store,
+            None,
             "paper.pdf",
             "Paper",
             &[h.clone(), h2.clone()],
@@ -8570,7 +8646,7 @@ mod tests {
         .unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let h = mkhl("11111111-1111-1111-1111-111111111111", 3, Some("text"));
-        tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+        tine_graph_features::pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[h], &[])
             .unwrap();
         let org_path = dir.join("pages").join("hls__paper.org");
         let org = fs::read_to_string(&org_path).unwrap();
@@ -8589,8 +8665,15 @@ mod tests {
         store.close();
         let reopened = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let h2 = mkhl("22222222-2222-2222-2222-222222222222", 4, Some("more"));
-        tine_graph_features::pdf::write_highlights(&reopened, "paper.pdf", "Paper", &[h2], &[])
-            .unwrap();
+        tine_graph_features::pdf::write_highlights(
+            &reopened,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h2],
+            &[],
+        )
+        .unwrap();
         assert!(org_path.exists());
         assert!(!dir.join("pages").join("hls__paper.md").exists());
         reopened.close();
@@ -8607,9 +8690,15 @@ mod tests {
         fs::write(&page_path, unknown).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
-        let err =
-            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
-                .unwrap_err();
+        let err = tine_graph_features::pdf::write_highlights(
+            &store,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h],
+            &[],
+        )
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&page_path).unwrap(), unknown);
@@ -8637,9 +8726,15 @@ mod tests {
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        let err =
-            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
-                .unwrap_err();
+        let err = tine_graph_features::pdf::write_highlights(
+            &store,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h],
+            &[],
+        )
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(fs::read_to_string(&sidecar_path).unwrap(), original);
@@ -8671,8 +8766,14 @@ mod tests {
         let mut read_only = original_permissions.clone();
         read_only.set_mode(0o555);
         fs::set_permissions(&pages, read_only).unwrap();
-        let result =
-            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[]);
+        let result = tine_graph_features::pdf::write_highlights(
+            &store,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h],
+            &[],
+        );
         fs::set_permissions(&pages, original_permissions).unwrap();
 
         assert!(
@@ -8681,7 +8782,7 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(&sidecar_path).unwrap(), sidecar_before);
         assert_eq!(fs::read_to_string(&page_path).unwrap(), page_before);
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         assert_eq!(
             store.whole_graph().unwrap().rev(),
             before_rev,
@@ -8711,8 +8812,14 @@ mod tests {
         let mut read_only = original_permissions.clone();
         read_only.set_mode(0o555);
         fs::set_permissions(&pages, read_only).unwrap();
-        let result =
-            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[]);
+        let result = tine_graph_features::pdf::write_highlights(
+            &store,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h],
+            &[],
+        );
         fs::set_permissions(&pages, original_permissions).unwrap();
 
         assert!(result.is_err());
@@ -8738,9 +8845,15 @@ mod tests {
         fs::write(&edn_path, malformed).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
-        let err =
-            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
-                .unwrap_err();
+        let err = tine_graph_features::pdf::write_highlights(
+            &store,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h],
+            &[],
+        )
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read_to_string(&edn_path).unwrap(), malformed);
@@ -8759,9 +8872,15 @@ mod tests {
         fs::write(&edn_path, malformed).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
-        let err =
-            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
-                .unwrap_err();
+        let err = tine_graph_features::pdf::write_highlights(
+            &store,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h],
+            &[],
+        )
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read_to_string(&edn_path).unwrap(), malformed);
@@ -8813,6 +8932,7 @@ mod tests {
         let h2 = mkhl("22222222-2222-2222-2222-222222222222", 4, Some("new text"));
         tine_graph_features::pdf::write_highlights(
             &store,
+            None,
             pdf,
             "My Paper",
             &[h1.clone(), h2.clone()],
@@ -8877,6 +8997,7 @@ mod tests {
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         tine_graph_features::pdf::write_highlights(
             &store,
+            None,
             pdf,
             "Paper",
             &[h.clone()],
@@ -8945,6 +9066,7 @@ mod tests {
         );
         tine_graph_features::pdf::write_highlights(
             &store,
+            None,
             spaced_pdf,
             "My Paper",
             &[spaced_highlight],
@@ -9009,6 +9131,7 @@ mod tests {
         let page_path = dir.join("pages").join("hls__paper.md");
         tine_graph_features::pdf::write_highlights(
             &store,
+            None,
             "paper.pdf",
             "Paper",
             &[h1.clone(), h2.clone()],
@@ -9016,7 +9139,7 @@ mod tests {
         )
         .unwrap();
         assert!(page_path.exists());
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         while let Some(change) = changes.try_recv().unwrap() {
             assert!(
                 change.origin != tine_store::Origin::External
@@ -9030,13 +9153,14 @@ mod tests {
         // Delete h2 (write just h1; baseline = both) — the rewrite must also be ours.
         tine_graph_features::pdf::write_highlights(
             &store,
+            None,
             "paper.pdf",
             "Paper",
             &[h1.clone()],
             &[h1.clone(), h2.clone()],
         )
         .unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         while let Some(change) = changes.try_recv().unwrap() {
             assert!(
                 change.origin != tine_store::Origin::External
@@ -10465,12 +10589,15 @@ mod tests {
         fs::write(&path, "- old\n").unwrap();
         let store = crate::Store::open(&dir, Default::default()).unwrap().0;
         let _view = store.whole_graph().unwrap();
+        // Drive reconciliation here; the watcher must not consume the write
+        // before refresh can exercise the injected parser panic.
+        store.watch.stop_background_for_test();
         fs::write(&path, "- changed outside\n").unwrap();
         store
             .graph
             .fail_sync_parse_once
             .store(true, std::sync::atomic::Ordering::Release);
-        let outcome = store.scan_refresh();
+        let outcome = store.refresh(crate::Depth::Stamps);
         assert!(outcome.is_ok(),
             "I-22: an external page parser panic must be isolated to that page; exemplar sync_file_content_with_saved");
         assert!(
@@ -10480,7 +10607,7 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Acquire),
             "the external sync path must consume the injected parser panic"
         );
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert_eq!(
             store
                 .page(&crate::PageId::from("pages/External.md"))
@@ -10556,10 +10683,13 @@ mod tests {
         let b = dir.join("pages/client-b/foo.md");
         fs::write(&a, "- body a\n").unwrap();
         fs::write(&b, "- body b\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
 
-        let err = tine_graph_features::pages::rename_page_expected(&store, "foo", "bar", None)
-            .unwrap_err();
+        let err = hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "foo", "bar", None)
+        })
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&a).unwrap(), "- body a\n");
@@ -10578,16 +10708,10 @@ mod tests {
         let b = dir.join("pages/client-b/foo.md");
         fs::write(&a, "- body a\n").unwrap();
         fs::write(&b, "- body b\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
 
-        let err = tine_graph_features::pages::delete_page_expected(
-            &store,
-            "foo",
-            PageKind::Page,
-            None,
-            None,
-        )
-        .unwrap_err();
+        let err = delete(&store, "foo", None).unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&a).unwrap(), "- body a\n");
@@ -10604,26 +10728,23 @@ mod tests {
         let a = dir.join("pages/client-a/Twin.md");
         let b = dir.join("pages/client-b/Twin.md");
         fs::write(&a, "- client a\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
 
-        let stale = tine_graph_features::pages::delete_page_expected(
-            &store,
-            "Twin",
-            PageKind::Page,
-            Some("pages/client-b/Twin.md"),
-            None,
-        )
-        .unwrap_err();
+        let stale = delete(&store, "Twin", Some("pages/client-b/Twin.md")).unwrap_err();
         assert_eq!(stale.kind(), io::ErrorKind::NotFound);
         assert_eq!(fs::read_to_string(&a).unwrap(), "- client a\n");
 
         fs::write(&b, "- client b\n").unwrap();
-        let ambiguous = tine_graph_features::pages::rename_page_expected(
-            &store,
-            "Twin",
-            "Renamed",
-            Some("pages/client-b/Twin.md"),
-        )
+        let ambiguous = hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(
+                &store,
+                host,
+                "Twin",
+                "Renamed",
+                Some("pages/client-b/Twin.md"),
+            )
+        })
         .unwrap_err();
         assert_eq!(ambiguous.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&a).unwrap(), "- client a\n");
@@ -10640,10 +10761,13 @@ mod tests {
         let target = dir.join("pages/New.md");
         fs::write(&old, "* old body\n").unwrap();
         fs::write(&target, "- existing target\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
 
-        let err = tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None)
-            .unwrap_err();
+        let err = hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "Old", "New", None)
+        })
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&old).unwrap(), "* old body\n");
@@ -10661,10 +10785,13 @@ mod tests {
         let target = dir.join("pages/client/New.md");
         fs::write(&old, "* old body\n").unwrap();
         fs::write(&target, "- nested target\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
 
-        let err = tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None)
-            .unwrap_err();
+        let err = hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "Old", "New", None)
+        })
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&old).unwrap(), "* old body\n");
@@ -10681,6 +10808,7 @@ mod tests {
         let _ = store.whole_graph().unwrap();
         tine_graph_features::pages::merge_pages(
             &store,
+            None,
             "journals/Friday, 26-06-2026.org",
             "journals/2026_06_26.org",
         )
@@ -10712,6 +10840,7 @@ mod tests {
         let _ = store.whole_graph().unwrap();
         tine_graph_features::pages::rename_file_to_page(
             &store,
+            None,
             "journals/Friday, 26-06-2026.org",
             "Old Friday",
         )
@@ -10736,6 +10865,7 @@ mod tests {
         assert!(
             tine_graph_features::pages::rename_file_to_page(
                 &store,
+                None,
                 "journals/Saturday, 27-06-2026.org",
                 "Old Friday",
             )

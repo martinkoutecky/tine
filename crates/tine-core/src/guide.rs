@@ -149,6 +149,10 @@ pub const GUIDE_TEMPLATES: &[GuideTemplate] = &[
         markdown: include_str!("templates/extend-tine.md"),
     },
     GuideTemplate {
+        title: "Workflows/Customize Tine's look",
+        markdown: include_str!("templates/customize-look.md"),
+    },
+    GuideTemplate {
         title: "Reference/Tine query model",
         markdown: include_str!("templates/query-model.md"),
     },
@@ -208,6 +212,26 @@ pub fn rewrite_bundled_guide_links(markdown: &str, renames: &HashMap<String, Str
 #[cfg(test)]
 mod journal_guide_tests {
     #[test]
+    fn reference_change_notices_offer_undo() {
+        let reference = include_str!("templates/pages-links-references-search.md");
+        assert!(
+            reference.contains("Deleting referenced blocks or merging them with Backspace/Delete")
+        );
+        assert!(reference.contains("with **Undo** to restore the blocks and their ids"));
+    }
+
+    #[test]
+    fn the_language_setting_says_where_it_is_and_what_it_never_translates() {
+        let places = include_str!("templates/where-things-are.md");
+        assert!(places.contains("**Themes** is the first section under Settings → **Appearance**"));
+        assert!(places.contains("Settings search reveals these controls too"));
+        assert!(places.contains("**System default** follows your system's language"));
+        assert!(
+            places.contains("Your notes, page names, properties and queries are never translated")
+        );
+    }
+
+    #[test]
     fn search_workspace_and_find_explain_visible_views_and_destinations() {
         let reference = include_str!("templates/pages-links-references-search.md");
         let tips = include_str!("templates/tips.md");
@@ -217,6 +241,165 @@ mod journal_guide_tests {
         assert!(reference.contains("Page results offer the same right-click menu"));
         assert!(tips.contains("**Enter** / **Shift+Enter** move forward / backward"));
         assert!(tips.contains("In a Search tab, clicking a result opens a new tab"));
+    }
+
+    #[test]
+    fn find_and_replace_is_documented() {
+        let reference = include_str!("templates/pages-links-references-search.md");
+        let revisit = include_str!("templates/find-and-revisit.md");
+        let tips = include_str!("templates/tips.md");
+        for detail in [
+            "**Replace with**",
+            "**Replace all**",
+            "as one **Undo** step",
+            "a link's address and hidden properties such as `id::` are never changed",
+            "**⋯** menu → **Find in page**",
+        ] {
+            assert!(
+                reference.contains(detail),
+                "missing find/replace detail: {detail}"
+            );
+        }
+        assert!(revisit.contains("**⋯** menu → **Find in page**"));
+        assert!(tips.contains("**Replace** and **Replace all**"));
+    }
+
+    #[test]
+    fn workspace_windows_are_documented() {
+        let context = include_str!("templates/keep-context-visible.md");
+        for detail in [
+            "## Open a page in its own window",
+            "**Open in new window**",
+            "**Open current page in new window**",
+            "It has no left or right sidebar.",
+            "text you just typed is kept",
+            "the ones that were open come back",
+            "Switching to another graph closes them.",
+        ] {
+            assert!(
+                context.contains(detail),
+                "missing workspace-window Guide detail: {detail}"
+            );
+        }
+    }
+
+    #[test]
+    fn keyboard_block_commands_are_documented() {
+        // R2 B1 (GH #513, #576, #448, #379, #634, #525, #633): every command
+        // that ships without a default key must be findable in the Guide by
+        // the label the palette and Settings show.
+        let tips = include_str!("templates/tips.md");
+        for label in [
+            "Ctrl/Cmd+Shift+V",
+            "Paste as link",
+            "Duplicate block below (with children)",
+            "Duplicate block above (with children)",
+            "Insert child block",
+            "Collapse (one level)",
+            "Expand (one level)",
+            "once its children are all folded",
+            "a folded block opens by itself first",
+            "Copy block refs of the selected blocks",
+            "Search for the selected text",
+        ] {
+            assert!(
+                tips.contains(label),
+                "Guide is missing keyboard command: {label}"
+            );
+        }
+        for outcome in [
+            "each further press opens the next level",
+            "ignoring leaves",
+            "each press is one Undo step",
+        ] {
+            assert!(
+                tips.contains(outcome),
+                "missing progressive expansion outcome: {outcome}"
+            );
+        }
+        let search = include_str!("templates/pages-links-references-search.md");
+        for outcome in [
+            "press **ArrowDown**",
+            "page and block results",
+            "scroll the highlighted row",
+            "**Shift+Enter**",
+            "**Ctrl/Cmd+Enter**",
+            "**Alt+Enter**",
+            "on the first result returns to the search box",
+            "does not wrap around",
+        ] {
+            assert!(
+                search.contains(outcome),
+                "missing Search keyboard outcome: {outcome}"
+            );
+        }
+    }
+
+    #[test]
+    fn page_icon_property_remains_editable_in_the_guide() {
+        let reference = include_str!("templates/pages-links-references-search.md");
+        assert!(reference.contains("`icon::` property stays visible in the page-properties block"));
+        assert!(reference.contains("click its row to edit it"));
+        for detail in [
+            "**Set page icon…**",
+            "**Remove page icon**",
+            "emoji or short text",
+            "including external file changes",
+            "`#+icon:`",
+        ] {
+            assert!(
+                reference.contains(detail),
+                "Guide is missing page icon capability: {detail}"
+            );
+        }
+    }
+
+    #[test]
+    fn tab_and_sidebar_actions_are_documented() {
+        let favorites = include_str!("templates/find-and-revisit.md");
+        for detail in [
+            "**Favourite block**",
+            "a `((uuid))` row",
+            "clicking zooms into that block",
+            "never add `favorite::` properties",
+        ] {
+            assert!(
+                favorites.contains(detail),
+                "missing block favorites guidance: {detail}"
+            );
+        }
+        let previews = include_str!("templates/pages-links-references-search.md");
+        for detail in [
+            "read-only preview",
+            "**Open source**",
+            "source page's title and page properties",
+            "These actions switch to the new tab",
+            "preview stays open while its **… → Page actions** menu is open",
+            "keeps your current tab active and confirms **Opened in a new tab**",
+            "Phones and tablets have no tab strip, so their menus omit **Open in new tab**",
+            "Block embed breadcrumbs",
+        ] {
+            assert!(
+                previews.contains(detail),
+                "missing reference guidance: {detail}"
+            );
+        }
+        let context = include_str!("templates/keep-context-visible.md");
+        for detail in [
+            "**Close others**, **Collapse others**",
+            "its ✕ closes it",
+            "sidebar header's ⋯ menu offers **Collapse all**, **Expand all**, and **Close all**",
+            "for a page, **Open as page**",
+            "Drag the sidebar's left edge to resize it",
+            "Tabs stretch to fill the strip",
+            "a tab zoomed into a block is named for that block",
+            "anywhere onto another pane's tab bar to put it last there",
+        ] {
+            assert!(
+                context.contains(detail),
+                "missing tab/sidebar Guide detail: {detail}"
+            );
+        }
     }
 
     #[test]
@@ -233,6 +416,17 @@ mod journal_guide_tests {
         }
         assert!(tips.contains("one Undo step"));
         assert!(tips.contains("complete subtrees for pasting"));
+        assert!(tips.contains(
+            "**Copy as ▸** holds **Copy block refs**, **Copy block embeds**, and **Copy link**"
+        ));
+        let references = include_str!("templates/pages-links-references-search.md");
+        assert!(references
+            .contains("**Expand all** if any group is folded, otherwise **Collapse all**"));
+        let research = include_str!("templates/research-document.md");
+        assert!(research.contains("**Copy / export as…** offers Markdown and rendered copies"));
+        assert!(!research.contains("Copy page as Markdown"));
+        let queries = include_str!("templates/queries.md");
+        assert!(queries.contains("**⋯ → Collapse all / Expand all** is one toggle"));
         let calendar = include_str!("templates/journals-tasks-scheduling.md");
         for behavior in [
             "keyboard focus",
@@ -247,6 +441,60 @@ mod journal_guide_tests {
                 "missing calendar behavior: {behavior}"
             );
         }
+    }
+
+    #[test]
+    fn todays_sections_page_is_documented() {
+        let text = include_str!("templates/journals-tasks-scheduling.md");
+        for required in [
+            "**Customize today's sections…**",
+            "`tine/journal-sections:: true`",
+            "in outline order",
+            "Delete the page, or set the marker to `false`, to go back to `config.edn`",
+            "Tine never writes to `config.edn`",
+            "the Agenda window setting no longer applies",
+        ] {
+            assert!(
+                text.contains(required),
+                "missing sections-page fact: {required}"
+            );
+        }
+    }
+
+    #[test]
+    fn journal_logseq_query_config_is_documented_with_examples() {
+        let text = include_str!("templates/journals-tasks-scheduling.md");
+        for required in [
+            ":default-queries",
+            ":journals",
+            ":scheduled/future-days 7",
+            ":feature/disable-scheduled-and-deadline-query?",
+            ":inputs []",
+            ":collapsed? true",
+            "Priority A tasks",
+            "Config edits apply live",
+            "Graph code is never executed",
+            "a query with no results shows nothing",
+            "strictly after today and strictly before 14 days ahead",
+            "A reference on a parent block does not include its children",
+            "Technical details",
+        ] {
+            assert!(
+                text.contains(required),
+                "missing journal config guidance: {required}"
+            );
+        }
+    }
+
+    /// Martin 2026-10-11: Logseq's default NOW priority sort is the one
+    /// `:result-transform` Tine runs; every other one still refuses whole.
+    #[test]
+    fn the_one_supported_result_transform_is_documented() {
+        let model = include_str!("templates/query-model.md");
+        assert!(model.contains(r#"(sort-by (fn [h] (get h :block/priority "Z")) result)"#));
+        assert!(model.contains("missing one last"));
+        assert!(include_str!("templates/queries.md")
+            .contains("other than Logseq's default priority sort"));
     }
 
     #[test]
@@ -297,6 +545,14 @@ mod journal_guide_tests {
         assert!(files.contains("moved into the restore's recovery folder"));
         // og-J2 (master d017d1afc): assets refresh in place after an outside change.
         assert!(files.contains("Files in `assets/` are watched too"));
+        assert!(files.contains("offers the original asset file"));
+        assert!(files.contains("hover over **Preview unavailable** to use **Copy image**"));
+        assert!(files.contains("`{{img ...}}` image macros"));
+        assert!(files
+            .contains("image viewer keeps copying the original file after an outside asset edit"));
+        assert!(files.contains("Missing files keep their missing-image placeholder"));
+        assert!(files.contains("import their original bytes unchanged"));
+        assert!(files.contains("pixel-only clipboard image is saved as PNG"));
         assert!(files.contains("An open PDF, audio, or video is not swapped while you use it"));
     }
 }
@@ -414,6 +670,9 @@ mod search_guide_tests {
             "Ctrl+K, search tabs and in-page Find still ignore case",
             "Commas split values only for",
             ":property/separated-by-commas",
+            "tags:: #eng #exec #founder",
+            "page and block properties",
+            "#[[multi word]]",
             "query-table:: true",
             "a trailing `table`",
             "never adds `query-table`",
@@ -430,7 +689,7 @@ mod search_guide_tests {
         for text in [
             "select visible results",
             "Org source stays Org",
-            "include chips match any",
+            "match every included chip and none of the excluded chips",
             "collapse or expand all source groups",
         ] {
             assert!(
@@ -482,6 +741,9 @@ mod rename_guide_tests {
         assert!(tips.contains("**Alt-click** opens the other pane"));
         assert!(tips.contains("an outline bullet's dot"));
         assert!(tips.contains("a pane's only tab still has a close button"));
+        assert!(tips.contains("opens a graph without a saved session"));
+        assert!(tips.contains("restores every tab's last page, order and pin state"));
+        assert!(tips.contains("the same active tab"));
         let refs = include_str!("templates/pages-links-references-search.md");
         assert!(refs.contains("follows its source's fold state live"));
     }
@@ -543,6 +805,56 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn referenced_fileless_journal_days_are_documented() {
+        let text = include_str!("templates/journals-tasks-scheduling.md");
+        for behavior in [
+            "even without a journal file",
+            "Viewing a fileless day creates no file",
+            "Upcoming is off by default",
+            "`{{upcoming}}`",
+            "query blocks and the Upcoming macro in outline order",
+            "removing the last mention updates the feed",
+        ] {
+            assert!(
+                text.contains(behavior),
+                "missing journal behavior: {behavior}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_capture_finished_after_a_graph_switch_is_documented() {
+        // og H1b: kept in the graph it was started in, never the new one.
+        let mobile = include_str!("templates/platforms-and-mobile.md");
+        assert!(mobile.contains("saved into the graph it was started in and not inserted"));
+    }
+
+    #[test]
+    fn desktop_guide_documents_the_system_tray_settings() {
+        // GH #625: three off-by-default device switches, the menu, and the
+        // no-tray-host fallback have to be findable without reading the code.
+        let platforms = include_str!("templates/platforms-and-mobile.md");
+        for outcome in [
+            "**Show Tine in the system tray**",
+            "**Minimize to tray**",
+            "**Start minimized to tray**",
+            "**Open Tine**, **Quick Capture** and **Quit**",
+            "All three are off by default",
+            "Closing the main window still quits Tine",
+            "has no tray",
+            "Starting Tine again shows the main window if the tray had hidden it",
+            "If the tray disappears while Tine is running",
+            "waits a few seconds for a late tray",
+            "`libayatana-appindicator3`",
+        ] {
+            assert!(
+                platforms.contains(outcome),
+                "missing system-tray Guide outcome: {outcome}"
+            );
+        }
+    }
+
+    #[test]
     fn desktop_guide_says_a_store_install_updates_through_the_store() {
         // GH #307: an MSIX install is updated by the Microsoft Store; the About text is quoted.
         let platforms = include_str!("templates/platforms-and-mobile.md");
@@ -556,9 +868,9 @@ mod rename_guide_tests {
                 "missing Store-update Guide outcome: {outcome}"
             );
         }
-        let about = include_str!("../../../src/components/AboutTab.tsx");
+        let about = include_str!("../../../src/i18n/locales/en/settings.ftl");
         assert!(
-            about.contains(">Updates come from the Microsoft Store.<"),
+            about.contains("settings-about-store-updates = Updates come from the Microsoft Store."),
             "the Guide quotes Settings → About's Store line; keep them in step"
         );
     }
@@ -584,10 +896,86 @@ mod rename_guide_tests {
     }
 
     #[test]
-    fn a_capture_finished_after_a_graph_switch_is_documented() {
-        // og H1b: kept in the graph it was started in, never the new one.
+    fn desktop_guide_teaches_export_destination_and_signed_macos_updates() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for outcome in [
+            "last successful export destination",
+            "**Show in folder**",
+            "**Export graph as HTML and read-only app…**",
+        ] {
+            assert!(
+                files.contains(outcome),
+                "missing export workflow: {outcome}"
+            );
+        }
+        let platforms = include_str!("templates/platforms-and-mobile.md");
+        for outcome in [
+            "Windows and Linux",
+            "macOS offers Restart",
+            "signed macOS updater archives",
+            "signed and notarized universal application",
+            "download and replace the app manually",
+            "(previous version).app",
+            "look beside the original app",
+            "updater shows the saved location",
+        ] {
+            assert!(
+                platforms.contains(outcome),
+                "missing desktop update workflow: {outcome}"
+            );
+        }
+    }
+
+    #[test]
+    fn desktop_guide_documents_the_beta_flatpak_download() {
+        // The bundle is a manual-update download: the install command, the way to find the app
+        // id, side-by-side coexistence and the update path must be on the page.
+        let platforms = include_str!("templates/platforms-and-mobile.md");
+        for outcome in [
+            "**Install as a Flatpak (Linux, Beta).**",
+            "`Tine-Beta_<version>_x86_64.flatpak`",
+            "`flatpak install --user Tine-Beta_<version>_x86_64.flatpak`",
+            "`flatpak list` shows its application id for `flatpak run`",
+            "installs next to a stable Tine Flatpak",
+            "**Updates are manual**",
+            "graph folders **inside your home folder only**",
+            "the Flatpak bundle carries its own",
+        ] {
+            assert!(
+                platforms.contains(outcome),
+                "missing Flatpak Guide outcome: {outcome}"
+            );
+        }
+    }
+
+    #[test]
+    fn android_guide_requires_a_local_graph_folder() {
         let mobile = include_str!("templates/platforms-and-mobile.md");
-        assert!(mobile.contains("saved into the graph it was started in and not inserted"));
+        for outcome in [
+            "device's own storage",
+            "Cloud document providers",
+            "sync-to-local-folder",
+        ] {
+            assert!(
+                mobile.contains(outcome),
+                "missing Android Guide outcome: {outcome}"
+            );
+        }
+    }
+
+    #[test]
+    fn new_graph_naming_is_documented() {
+        let guide = include_str!("templates/bring-existing-graph.md");
+        for detail in [
+            "**Graph name**",
+            "`notes`, `notes-2`, `notes-3`",
+            "even when the parent is empty",
+            "Cancel creates nothing",
+            "name prompt stays open",
+            "existing empty child folder",
+        ] {
+            assert!(guide.contains(detail), "missing creation detail: {detail}");
+        }
     }
 
     #[test]
@@ -674,6 +1062,26 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn pinyin_guide_explains_entry_setting_and_native_priority() {
+        let guide = include_str!("templates/pages-links-references-search.md");
+        for concept in [
+            "Match Chinese page names by Pinyin",
+            "`beijing`",
+            "`bj`",
+            "Native name matches always come first",
+            "block text is not transliterated",
+            "Turning it off",
+            "default dictionary reading",
+            "Japanese kanji",
+        ] {
+            assert!(
+                guide.contains(concept),
+                "missing onboarding concept: {concept}"
+            );
+        }
+    }
+
+    #[test]
     fn unlinked_reference_guide_says_the_highlight_is_clickable() {
         // GH #200 (master 552d988c9): nothing in the UI announces that a
         // highlighted mention is a control, so the Guide has to.
@@ -688,6 +1096,35 @@ mod rename_guide_tests {
         let search = include_str!("templates/pages-links-references-search.md");
         assert!(search.contains("A `file:` link"));
         assert!(!search.contains("`file:` links are not opened"));
+    }
+
+    #[test]
+    fn graph_folder_guide_names_the_settings_entry_and_its_reveal() {
+        // GH #447: Settings → Graph names the graph folder and, on desktop,
+        // shows it in the file manager.
+        let guide = include_str!("templates/bring-existing-graph.md");
+        assert!(guide.contains("**Graph folder** shows the current graph path"));
+        assert!(guide.contains("**Show in folder**"));
+    }
+
+    #[test]
+    fn custom_scheme_link_guide_says_it_asks_before_opening_another_app() {
+        // GH #503: another app's link opens after a confirm; the Guide must not
+        // still say every non-web link is refused.
+        let search = include_str!("templates/pages-links-references-search.md");
+        assert!(search.contains("A link to another app"));
+        assert!(search.contains("first asks whether to open it"));
+        assert!(!search.contains("or any other kind of link, is reported"));
+    }
+
+    #[test]
+    fn relative_file_link_guide_names_its_base_and_the_graph_boundary() {
+        // GH #457: the graph is the base; explicit parent traversal can leave it.
+        let search = include_str!("templates/pages-links-references-search.md");
+        assert!(search.contains("A file path is read from the graph folder"));
+        assert!(search.contains("sibling `files` folder outside the graph"));
+        assert!(search.contains("Parent steps such as `../../` are preserved"));
+        assert!(!search.contains("shown struck through and never opened"));
     }
 
     #[test]
@@ -744,11 +1181,13 @@ mod rename_guide_tests {
     }
 
     #[test]
-    fn parser_comparison_guide_says_intentional_differences_are_not_bugs() {
-        // Master c0c2ff11b: a known intentional lsdoc difference is suppressed,
-        // not offered as a reportable parser bug.
+    fn diagnostics_guide_keeps_reporting_and_graph_tools_without_parser_runner() {
         let recovery = include_str!("templates/troubleshooting-recovery.md");
-        assert!(recovery.contains("Known intentional parser differences are not offered as bugs"));
+        assert!(recovery.contains("**Create diagnostic report**"));
+        assert!(recovery.contains("**Rescan graph**"));
+        assert!(recovery.contains("**Create graph verification report**"));
+        assert!(!recovery.contains("Help improve Tine's parser"));
+        assert!(!recovery.contains("Run comparison"));
     }
 
     #[test]
@@ -811,7 +1250,8 @@ mod query_guide_tests {
         for control in [
             "{{query (task TODO DOING)}}",
             "(page-property type book)",
-            "(between scheduled today +7d)",
+            "{{tine-query @block scheduled between today and '+7d'}}",
+            "Logseq ignores scheduled/deadline date windows",
             "at most 10,000 years",
             "tine.sample:: 10",
             "the whole query is refused",
@@ -854,6 +1294,17 @@ mod query_guide_tests {
             "**Show me**",
             "**Undo that change**",
             "**why empty?**",
+            "At rest a query block shows its title, result count and results",
+            "**⋯ → Edit**",
+            "the real results below it",
+            "**Select all** and **Select none**",
+            "today±N days",
+            "**⋯ → Collapse all / Expand all**",
+            "journals use their date titles",
+            "old results stay read-only",
+            "refuses the whole action",
+            "never means a negated date comparison",
+            "sortable **Backlinks** column",
         ] {
             assert!(
                 queries.contains(control),
@@ -882,9 +1333,9 @@ mod query_guide_tests {
             "press **Edit as text**",
             "press the pencil beside a result to edit its properties",
             "**Grouped by**",
-            "Press **Clear** to remove grouping",
+            "**⋯ → View → Group by → None** to remove grouping",
             "instead of a table containing only `(none)`",
-            "the sentence then reads *Pages and blocks where …*",
+            "the builder then reads *Find pages and blocks*",
             "a section that a **Sample** cut short says *More pages match than are shown*",
         ] {
             assert!(
@@ -892,6 +1343,23 @@ mod query_guide_tests {
                 "missing GH #619 query Guide control: {control}"
             );
         }
+    }
+
+    /// GH #651: the Guide says why a task nested under a matching task has no
+    /// row of its own in the Table (OG's top-level-result rule, ADR 0042).
+    #[test]
+    fn gh651_guide_states_the_nested_match_rule() {
+        let queries = include_str!("templates/queries.md");
+        assert!(
+            queries.contains(
+                "A block that matches directly under another block that also matches is not a result of its own, as in Logseq"
+            ),
+            "queries.md must state the nested-match rule"
+        );
+        assert!(
+            queries.contains("a match under a block that does not match is its own result"),
+            "queries.md must say a match below a non-matching block is its own result"
+        );
     }
 
     /// GH #542 (master c1b14a859): the Guide's advanced-query example is one
@@ -949,8 +1417,8 @@ mod query_guide_tests {
     fn query_display_and_type_declarations_are_documented() {
         let queries = include_str!("templates/queries.md");
         for control in [
-            "press **Display**",
-            "Choosing **Page** in the column picker",
+            "Open **⋯ → View**",
+            "Choosing **Page** shows each block's owning page",
             "**complete sample**",
             "**Count**, **Sum**, **Average**, or **None**",
             "Built-in columns such as Page and State have no property total",
@@ -984,6 +1452,79 @@ mod theme_presentation_guide_tests {
 }
 
 #[cfg(test)]
+mod customize_look_guide_tests {
+    use super::*;
+
+    const TITLE: &str = "Workflows/Customize Tine's look";
+
+    fn page() -> &'static str {
+        GUIDE_TEMPLATES
+            .iter()
+            .find(|t| t.title == TITLE)
+            .unwrap_or_else(|| panic!("Guide page {TITLE:?} is not bundled"))
+            .markdown
+    }
+
+    /// GH #610: a user who wants to change one visual detail must be able to
+    /// find the page from the Guide index, find the file, open it, recover from
+    /// a broken stylesheet, and inspect an element, using the names the app
+    /// shows. `src/themeTokens.guard.test.ts` checks the token table and the
+    /// control names against the contract and the Settings source.
+    #[test]
+    fn the_customize_page_is_reachable_and_teaches_the_whole_loop() {
+        let index = GUIDE_TEMPLATES
+            .iter()
+            .find(|t| t.title == "Tine Guide")
+            .unwrap()
+            .markdown;
+        assert!(index.contains("[[Workflows/Customize Tine's look]]"));
+        for other in [
+            include_str!("templates/extend-tine.md"),
+            include_str!("templates/plugins.md"),
+        ] {
+            assert!(other.contains("[[Workflows/Customize Tine's look]]"));
+        }
+        let page = page();
+        for needed in [
+            "logseq/custom.css",
+            "**Edit global CSS**",
+            "per-user config directory",
+            "**Reload from disk**",
+            "**Ctrl+K**",
+            "Settings",
+            "**Edit custom.css**",
+            "**Disable custom CSS**",
+            "**Developer tools**",
+            "**Ctrl+Shift+J**",
+            "Soft",
+            "--tine-embed-bg: transparent",
+            "--tine-bullet-color",
+            "--tine-content-width",
+            "--tine-content-font",
+            "Nord, Solarized, Gruvbox",
+            // Style knobs (GH #610 item 3): the Fine-tuning section and its
+            // three first rows, named as Settings shows them.
+            "**Fine-tuning**",
+            "**Embedded blocks**",
+            "**Links to the web or a file**",
+            "**Links to pages that do not exist yet**",
+            "style.knobs.v1",
+            // GH #583: arrows render as typed unless the user opts in.
+            "**Typographic replacements**",
+            "It is **Off** by default",
+            "**On (while reading)**",
+        ] {
+            assert!(page.contains(needed), "the page must mention {needed}");
+        }
+        assert!(
+            page.matches("```css").count() >= 10,
+            "ten copy-paste recipes"
+        );
+        assert!(page.contains("What you should see"));
+    }
+}
+
+#[cfg(test)]
 mod og_20d_guide_tests {
     use super::*;
 
@@ -1008,6 +1549,24 @@ mod og_20d_guide_tests {
             assert!(
                 map.contains(detail),
                 "missing where-things-are detail: {detail}"
+            );
+        }
+    }
+
+    #[test]
+    fn where_things_are_documents_the_full_all_pages_view() {
+        // GH #335: the sidebar entry navigates directly to the full view.
+        let map = page("Start/Where things are");
+        for detail in [
+            "**All pages** entry opens",
+            "**Updated** column shows when each page",
+            "**Page** (name)",
+            "**Show journals**",
+            "**Journal date**",
+        ] {
+            assert!(
+                map.contains(detail),
+                "missing All pages view detail: {detail}"
             );
         }
     }
@@ -1047,7 +1606,8 @@ mod og_20d_guide_tests {
     }
 
     /// AP2/D11 (Martin 2026-10-04): the query-model reference states the rule,
-    /// names the one "finds less" exception and the refusals, and is linked
+    /// names the bare `(task)` / `(priority)` reading (as in Logseq since
+    /// GH #422, so the rule has no exception) and the refusals, and is linked
     /// from the Guide index and the Queries page.
     #[test]
     fn query_model_reference_states_the_rule_and_every_divergence_class() {
@@ -1056,9 +1616,15 @@ mod og_20d_guide_tests {
             "never less",
             "never changes your files",
             "`cafe` does not find `café`",
-            "`(task)` with no marker",
+            "`(task)` with no markers",
             "no datalog engine",
             "`:view` and `:result-transform` never run",
+            "Advanced-query shapes that run",
+            "Tagged-page name results",
+            "numeric `yyyymmdd` inputs",
+            "strict `>` / `<`",
+            "reversed bounds return nothing",
+            "`direct_ref('project')`",
             "20,000 rows",
             "Tine 0.6 (stable)",
         ] {
@@ -1069,6 +1635,54 @@ mod og_20d_guide_tests {
         }
         assert!(page("Tine Guide").contains("[[Reference/Tine query model]]"));
         assert!(page("Features/Queries").contains("[[Reference/Tine query model]]"));
+    }
+
+    /// GH #422, D-18: a bare `(task)` / `(priority)` adds no condition, as in
+    /// OG Logseq, and the on-query note's three rewrites are documented with
+    /// the open-task rule they write. The retired claim (bare `(task)` means
+    /// open tasks, an intentional OG difference) must not come back.
+    #[test]
+    fn queries_document_bare_task_as_og_and_the_rewrite_hint() {
+        let queries = page("Features/Queries");
+        assert!(queries.contains("Click **Convert**"));
+        assert!(queries.contains("refuses to run those blocks as written"));
+        for detail in [
+            "`(task)` with no markers",
+            "`(priority)` with no levels",
+            "add no condition, exactly as in OG Logseq",
+            "`(and (task) [[x]])` finds what `[[x]]` finds",
+            "**Open tasks**",
+            "**Any task**",
+            "**A, B or C**",
+            "has a task marker",
+            "`DONE`",
+            "`CANCELED`",
+            "`CANCELLED`",
+            "`WAITING`",
+            "`IN-PROGRESS`",
+            "explicit marker lists",
+        ] {
+            assert!(
+                queries.contains(detail),
+                "missing bare task detail: {detail}"
+            );
+        }
+        let model = page("Reference/Tine query model");
+        assert!(model.contains(
+            "`(task)` with no markers and `(priority)` with no levels add no condition."
+        ));
+        for page_text in [&queries, &model] {
+            for retired in [
+                "intentionally differs from OG",
+                "finds less",
+                "one exception",
+            ] {
+                assert!(
+                    !page_text.contains(retired),
+                    "the retired bare-task difference is back: {retired}"
+                );
+            }
+        }
     }
 
     /// og-D D4 (master e7af4db9c): the command-line reference names every shipped
@@ -1104,6 +1718,46 @@ mod og_20d_guide_tests {
             );
         }
         assert!(page("Tine Guide").contains("[[Reference/Command line]]"));
+    }
+
+    #[test]
+    fn command_line_guide_teaches_read_commands_ownership_and_script_results() {
+        let cli = page("Reference/Command line");
+        for command in [
+            "tine status",
+            "tine page show",
+            "tine journal",
+            "tine block show",
+            "tine refs",
+            "tine search",
+            "tine query",
+            "tine pages",
+        ] {
+            assert!(cli.contains(command), "Guide must teach {command}");
+        }
+        // Check connected concepts within a teaching block, not exact prose.
+        let blocks: Vec<_> = cli.lines().map(str::to_lowercase).collect();
+        for concepts in [
+            vec!["read-only", "edit", "notes"],
+            vec!["unsaved", "app", "page"],
+            vec!["--graph", "tine_graph", "working directory", "logseq/"],
+            vec!["id::", "uuid", "descendants"],
+            vec!["--namespace", "existing", "pages"],
+            vec!["app", "automatically", "tine serve", "30", "idle"],
+            vec!["handover", "60", "timeout", "--stop"],
+            vec!["windows", "unsupported", "exit 5", "app", "opens"],
+            vec!["android", "ios", "no command-line"],
+            vec!["--json", "stdout", "tine.cli/1"],
+            vec!["stderr", "exit", "diagnostics", "truncation"],
+            vec!["cli-output.md", "fields", "exit-code"],
+        ] {
+            assert!(
+                blocks
+                    .iter()
+                    .any(|block| concepts.iter().all(|concept| block.contains(concept))),
+                "Command-line onboarding must connect {concepts:?}"
+            );
+        }
     }
 
     /// og 21a: a live-draft conflict is merged at the page and survives a
@@ -1222,6 +1876,10 @@ mod og_20d_guide_tests {
         assert!(files.contains("`:publishing/all-pages-public? true`"));
         let queries = include_str!("templates/queries.md");
         assert!(queries.contains("it still leaves out pages marked `public:: false`"));
+        // REG-QUERY-EXPORT-PRIVATE-PAGES: a query export leaves them out too.
+        assert!(files
+            .contains("Pages marked `public:: false` stay out even when the query matches them"));
+        assert!(!files.contains("whatever their `public::` setting"));
     }
 }
 
@@ -1295,6 +1953,22 @@ mod external_link_guide_tests {
             assert!(
                 guide.contains(outcome),
                 "GH #181 Guide is missing {outcome}"
+            );
+        }
+    }
+
+    #[test]
+    fn guide_explains_reference_breadcrumb_context() {
+        // GH #526: a clickable breadcrumb nobody is told about reads as missing.
+        let guide = include_str!("templates/find-and-revisit.md");
+        for outcome in [
+            "Click an ancestor in a **Linked References** or **Unlinked References** breadcrumb",
+            "**Shift+click** opens the ancestor in the right sidebar",
+            "leaving and returning resets it",
+        ] {
+            assert!(
+                guide.contains(outcome),
+                "GH #526 Guide is missing {outcome}"
             );
         }
     }

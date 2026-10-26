@@ -109,6 +109,17 @@ describe("block reference to a soft-line-break block (GH #506)", () => {
     }
   });
 
+  it("renders mixed fenced code in a bare reference as a code card (GH #510)", async () => {
+    const { host, dispose } = setup(`AAA\n\`\`\`js\nBBB\n\`\`\`\nDDD\nid:: ${ID}`, `((${ID}))`);
+    try {
+      await vi.waitFor(() => expect(host.querySelector(".block-ref")?.textContent).toContain("BBB"));
+      expect(host.querySelector(".block-ref pre.code-block code")?.textContent).toContain("BBB");
+      expect(host.querySelector(".block-ref")?.textContent).toContain("AAA");
+      expect(host.querySelector(".block-ref")?.textContent).toContain("DDD");
+      expect(host.querySelector(".block-ref")?.textContent).not.toContain("```");
+    } finally { dispose(); }
+  });
+
   it("sibling: {{embed ((uuid))}} renders both soft-break lines and is not affected", async () => {
     const { host, dispose } = setup(TARGET_RAW, `{{embed ((${ID}))}}`);
     try {

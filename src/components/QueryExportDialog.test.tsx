@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { QueryExportDialog } from "./QueryExportDialog";
+import { rawText, renderEnglish } from "../i18n";
 
 vi.mock("../owned", async (orig) => ({ ...await orig<typeof import("../owned")>(), graphOwner: () => () => true }));
 vi.mock("../sheet/exportSheets", () => ({ exportSheets: async () => [] }));
@@ -30,8 +31,11 @@ it("exports a reviewed query directly into its graph and reports recovery and mi
   exportButton(root).click(); for (let i = 0; i < 4; i++) await tick();
   expect(api).toHaveBeenCalled();
   const { pushToast } = await import("../toasts");
-  expect(pushToast).toHaveBeenCalledWith(expect.stringContaining("old/previous"), "success", { sticky: true });
-  expect(pushToast).toHaveBeenCalledWith(expect.stringContaining("missing.png"), "warn", { sticky: true });
+  const calls = vi.mocked(pushToast).mock.calls.map(([text, kind, options]) => [
+    renderEnglish(typeof text === "string" ? rawText(text) : text), kind, options,
+  ]);
+  expect(calls).toContainEqual([expect.stringContaining("old/previous"), "success", { sticky: true }]);
+  expect(calls).toContainEqual([expect.stringContaining("missing.png"), "warn", { sticky: true }]);
 });
 it("requires an explicit Replace or separate folder choice", async () => {
   const api = vi.spyOn(backend(), "publishQuery").mockResolvedValue({ path: "site", pages: 1, files: 12, retired: null, warnings: [] } as never);
@@ -48,4 +52,21 @@ it("offers Settings for the typed asset refusal, without parsing its message", a
   const adjust = [...root.querySelectorAll("button")].find((b) => b.textContent === "Adjust limit in Settings…");
   expect(adjust).toBeTruthy(); adjust!.click();
   const { openSettings } = await import("../ui"); expect(openSettings).toHaveBeenCalledWith("graph");
+});
+
+it("pins the overlay window while open, so focusing another window does not remount it (review F10)", async () => {
+  const { registerWindow, setActiveWindowId, MAIN_WINDOW_ID } = await import("../windowRealm");
+  const { overlayWindowId } = await import("../transientLayers");
+  const frame = document.createElement("iframe"); document.body.append(frame);
+  const unregister = registerWindow("ws-f10", frame.contentWindow!);
+  try {
+    setActiveWindowId(MAIN_WINDOW_ID);
+    await dialog();
+    expect(overlayWindowId()).toBe(MAIN_WINDOW_ID);
+    setActiveWindowId("ws-f10");
+    expect(overlayWindowId(), "the dialog stays in the window it was opened in").toBe(MAIN_WINDOW_ID);
+  } finally {
+    setActiveWindowId(MAIN_WINDOW_ID);
+    unregister();
+  }
 });

@@ -12,12 +12,11 @@ import { editingId, startEditing } from "../editorController";
 import { dispatchFocusedEditorCommand } from "../editorCommandBridge";
 import { setGraphMeta } from "../graphSession";
 import { setToasts, toasts } from "../toasts";
-import { resetSaveState } from "../document/save/engine";
 import { Block, SurfaceContext } from "./Block";
 
 beforeAll(() => initParser());
 afterEach(() => {
-  vi.unstubAllGlobals(); vi.restoreAllMocks(); resetSaveState(); resetStore(); setGraphMeta(null);
+  vi.unstubAllGlobals(); vi.restoreAllMocks(); resetStore(); setGraphMeta(null);
   setToasts([]); document.body.innerHTML = "";
 });
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setTimeout(r, 0)); };

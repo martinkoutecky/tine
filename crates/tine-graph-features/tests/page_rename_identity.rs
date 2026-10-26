@@ -4,7 +4,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages;
 use tine_store::Store;
 
-fn fixture(label: &str) -> (PathBuf, Store) {
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
+fn fixture(label: &str) -> (PathBuf, std::sync::Arc<Store>) {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-client-{label}-{}-{}",
@@ -13,7 +24,7 @@ fn fixture(label: &str) -> (PathBuf, Store) {
     ));
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("assets")).unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     (root, store)
 }
 fn put(root: &Path, rel: &str, body: &str) {
@@ -24,6 +35,7 @@ fn put(root: &Path, rel: &str, body: &str) {
 
 #[test]
 fn title_owned_rename_rebinds_identity_and_plain_rename_keeps_lookup() {
+    let _integration_guard = crate::integration_lock();
     for (label, physical, source) in [
         (
             "title",
@@ -48,18 +60,21 @@ fn title_owned_rename_rebinds_identity_and_plain_rename_keeps_lookup() {
                 "- [[Physical]]\n"
             },
         );
-        let store = Store::open(&root, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
         let old = if label != "plain" {
             "Effective"
         } else {
             "Physical"
         };
-        pages::rename_page_expected(
-            &store,
-            old,
-            "Renamed",
-            Some(&format!("pages/{physical}.md")),
-        )
+        hosted(&store, |host| {
+            pages::rename_page_expected(
+                &store,
+                host,
+                old,
+                "Renamed",
+                Some(&format!("pages/{physical}.md")),
+            )
+        })
         .unwrap();
         assert!(!root.join(format!("pages/{physical}.md")).exists());
         let moved = root.join("pages/Renamed.md");
@@ -93,6 +108,7 @@ fn title_owned_rename_rebinds_identity_and_plain_rename_keeps_lookup() {
 /// rewritten `[[Renamed]]` dangles (receipt 12B, differential).
 #[test]
 fn org_title_directive_rename_rebinds_identity() {
+    let _integration_guard = crate::integration_lock();
     for (label, before, after) in [
         (
             "upper",
@@ -120,8 +136,11 @@ fn org_title_directive_rename_rebinds_identity() {
             let source = format!("pages/{physical}.org");
             put(&root, &source, before);
             put(&root, "pages/Ref.md", "- [[Effective]]\n");
-            let store = Store::open(&root, Default::default()).unwrap().0;
-            pages::rename_page_expected(&store, "Effective", "Renamed", Some(&source)).unwrap();
+            let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+            hosted(&store, |host| {
+                pages::rename_page_expected(&store, host, "Effective", "Renamed", Some(&source))
+            })
+            .unwrap();
             assert!(!root.join(&source).exists(), "{label}");
             assert_eq!(
                 fs::read_to_string(root.join("pages/Renamed.org")).unwrap(),
@@ -155,6 +174,7 @@ fn org_title_directive_rename_rebinds_identity() {
 /// content: a rename of a different page never rewrites it.
 #[test]
 fn org_title_naming_another_page_is_left_alone() {
+    let _integration_guard = crate::integration_lock();
     let (root, _) = fixture("rename-org-title-other");
     put(
         &root,
@@ -162,8 +182,11 @@ fn org_title_naming_another_page_is_left_alone() {
         "#+TITLE: Other\n* see [[Effective]]\n",
     );
     put(&root, "pages/Effective.md", "- body\n");
-    let store = Store::open(&root, Default::default()).unwrap().0;
-    pages::rename_page_expected(&store, "Effective", "Renamed", None).unwrap();
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    hosted(&store, |host| {
+        pages::rename_page_expected(&store, host, "Effective", "Renamed", None)
+    })
+    .unwrap();
     assert_eq!(
         fs::read_to_string(root.join("pages/Other.org")).unwrap(),
         "#+TITLE: Other\n* see [[Renamed]]\n"
@@ -175,16 +198,54 @@ fn org_title_naming_another_page_is_left_alone() {
 /// nothing moves (storage contract, `rewrite_move::ReadOnly`).
 #[test]
 fn org_title_rename_refuses_a_page_that_does_not_round_trip() {
+    let _integration_guard = crate::integration_lock();
     let (root, _) = fixture("rename-org-title-readonly");
     let source = "#+TITLE: Effective\n* Parent\n*** child\n";
     put(&root, "pages/Physical.org", source);
-    let store = Store::open(&root, Default::default()).unwrap().0;
-    let error = pages::rename_page_expected(&store, "Effective", "Renamed", None)
-        .expect_err("a non-round-tripping Org title must not be rewritten");
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let error = hosted(&store, |host| {
+        pages::rename_page_expected(&store, host, "Effective", "Renamed", None)
+    })
+    .expect_err("a non-round-tripping Org title must not be rewritten");
     assert!(error.to_string().contains("round-trip"), "{error}");
     assert_eq!(
         fs::read_to_string(root.join("pages/Physical.org")).unwrap(),
         source
     );
     assert!(!root.join("pages/Renamed.org").exists());
+}
+
+/// og-surface row 6: an interrupted rename. The physical move to `New.md`
+/// already happened (a crash after the rename, before the title rewrite), so
+/// the page named `Old` by its `title::` already sits in the destination
+/// file. A retried rename completes in place: the own title and every
+/// reference rebind, and the file is not moved or duplicated.
+#[test]
+fn a_rename_whose_move_already_happened_rebinds_the_title_in_place() {
+    let _integration_guard = crate::integration_lock();
+    let (root, _) = fixture("rename-interrupted");
+    put(&root, "pages/New.md", "title:: Old\n\n- [[Old]] body\n");
+    put(&root, "pages/Ref.md", "- [[Old]]\n");
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    hosted(&store, |host| {
+        pages::rename_page_expected(&store, host, "Old", "New", Some("pages/New.md"))
+    })
+    .unwrap();
+    assert_eq!(
+        fs::read_to_string(root.join("pages/New.md")).unwrap(),
+        "title:: New\n\n- [[New]] body\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("pages/Ref.md")).unwrap(),
+        "- [[New]]\n"
+    );
+    let graph = store.whole_graph().unwrap();
+    assert!(matches!(
+        graph.resolve("New", false),
+        tine_store::Resolved::Existing { .. }
+    ));
+    assert!(matches!(
+        graph.resolve("Old", false),
+        tine_store::Resolved::Absent { .. }
+    ));
 }

@@ -87,7 +87,7 @@ try {
       };
     });
     if (!(metrics.scrollWidth > metrics.clientWidth)) throw new Error(`${testCase.name}: strip does not overflow`);
-    if (metrics.minTabWidth < 110) throw new Error(`${testCase.name}: tab shrank to ${metrics.minTabWidth}px`);
+    if (metrics.minTabWidth < 140) throw new Error(`${testCase.name}: tab shrank to ${metrics.minTabWidth}px`);
     if (metrics.rows !== metrics.tabs) throw new Error(`${testCase.name}: ${metrics.rows} rows for ${metrics.tabs} tabs`);
     await page.screenshot({ path: `${OUT}/${testCase.name}.png` });
     await page.keyboard.press("Escape");

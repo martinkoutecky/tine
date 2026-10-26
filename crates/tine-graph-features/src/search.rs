@@ -11,28 +11,65 @@ use tine_core::model::{PageKind, RefGroup};
 use tine_core::query::ir::FriendlyPageMatchScope;
 use tine_core::query::ir::ViewSettings;
 use tine_core::query_plan::{QueryExecution, QueryExplanation, QueryHasMore, QueryHit};
-use tine_store::{
-    Cancel, LoadError, PageId, QueryDialect, QueryError, QueryResult, Resolved, SearchRequest,
-    Store,
-};
+use tine_store::{Cancel, LoadError, PageId, QueryError, Resolved, SearchRequest, Store};
 
 /// Per-transport-lane cancellation flags, hidden behind search operations.
+/// A lane entry also keeps the issue order of its request, when the caller
+/// supplied one.
 #[derive(Default)]
-pub struct SearchLanes(Mutex<HashMap<String, Arc<AtomicBool>>>);
+pub struct SearchLanes(Mutex<HashMap<String, LaneEntry>>);
+
+struct LaneEntry {
+    flag: Arc<AtomicBool>,
+    seq: Option<u64>,
+}
 
 impl SearchLanes {
     fn begin<'a>(&'a self, lane: Option<&'a str>) -> SearchLease<'a> {
+        self.begin_sequenced(lane, None)
+    }
+
+    /// Register a request on its lane. A request carrying `seq` older than the
+    /// one now on the lane was overtaken by the scheduler: it is born
+    /// cancelled and owns no entry, so it can neither cancel the newer request
+    /// nor remove its entry. Without `seq` (or against an entry without one)
+    /// the later arrival wins. O(1).
+    fn begin_sequenced<'a>(&'a self, lane: Option<&'a str>, seq: Option<u64>) -> SearchLease<'a> {
         let flag = Arc::new(AtomicBool::new(false));
-        if let Some(lane) = lane {
-            if let Some(previous) = self
-                .0
-                .lock()
-                .unwrap()
-                .insert(lane.to_owned(), Arc::clone(&flag))
-            {
-                previous.store(true, Ordering::Release);
+        let Some(name) = lane else {
+            return SearchLease {
+                lanes: self,
+                lane,
+                flag,
+            };
+        };
+        let mut lanes = self.0.lock().unwrap();
+        if let (
+            Some(mine),
+            Some(LaneEntry {
+                seq: Some(held), ..
+            }),
+        ) = (seq, lanes.get(name))
+        {
+            if mine < *held {
+                flag.store(true, Ordering::Release);
+                return SearchLease {
+                    lanes: self,
+                    lane: None,
+                    flag,
+                };
             }
         }
+        if let Some(previous) = lanes.insert(
+            name.to_owned(),
+            LaneEntry {
+                flag: Arc::clone(&flag),
+                seq,
+            },
+        ) {
+            previous.flag.store(true, Ordering::Release);
+        }
+        drop(lanes);
         SearchLease {
             lanes: self,
             lane,
@@ -49,8 +86,8 @@ impl SearchLanes {
             format!("query-workspace:{workspace}"),
             format!("query-workspace:{workspace}:materialize"),
         ] {
-            if let Some(flag) = lanes.remove(&key) {
-                flag.store(true, Ordering::Release);
+            if let Some(entry) = lanes.remove(&key) {
+                entry.flag.store(true, Ordering::Release);
             }
         }
     }
@@ -77,7 +114,7 @@ impl Drop for SearchLease<'_> {
             let mut lanes = self.lanes.0.lock().unwrap();
             if lanes
                 .get(lane)
-                .is_some_and(|flag| Arc::ptr_eq(flag, &self.flag))
+                .is_some_and(|entry| Arc::ptr_eq(&entry.flag, &self.flag))
             {
                 lanes.remove(lane);
             }
@@ -117,7 +154,7 @@ pub fn run_graph_search(
     page_view: Option<ViewSettings>,
     block_view: Option<ViewSettings>,
 ) -> Result<QueryExecution, SearchError> {
-    run_graph_search_after_scope(
+    run_graph_search_with_transliteration(
         store,
         lanes,
         source,
@@ -129,6 +166,77 @@ pub fn run_graph_search(
         page_match_scope,
         page_view,
         block_view,
+        false,
+    )
+}
+
+/// Friendly search whose lane request carries the caller's own issue order.
+/// IPC handlers reach this function in scheduler order, not call order; a
+/// request older than the one already on its lane is refused as cancelled
+/// instead of cancelling the newer one. `lane_seq` is ignored without a lane.
+pub fn run_graph_search_sequenced(
+    store: &Store,
+    lanes: &SearchLanes,
+    source: String,
+    page_limit: usize,
+    block_limit: usize,
+    lane: Option<&str>,
+    lane_seq: Option<u64>,
+    explain: bool,
+    scope: Option<Scope>,
+    page_match_scope: Option<FriendlyPageMatchScope>,
+    page_view: Option<ViewSettings>,
+    block_view: Option<ViewSettings>,
+    transliteration: bool,
+) -> Result<QueryExecution, SearchError> {
+    run_graph_search_after_scope(
+        store,
+        lanes,
+        source,
+        page_limit,
+        block_limit,
+        lane,
+        lane_seq,
+        explain,
+        scope,
+        page_match_scope,
+        page_view,
+        block_view,
+        transliteration,
+        #[cfg(test)]
+        || {},
+    )
+}
+
+/// Friendly search with request-local page-name expansion; saved query evaluation is unchanged.
+pub fn run_graph_search_with_transliteration(
+    store: &Store,
+    lanes: &SearchLanes,
+    source: String,
+    page_limit: usize,
+    block_limit: usize,
+    lane: Option<&str>,
+    explain: bool,
+    scope: Option<Scope>,
+    page_match_scope: Option<FriendlyPageMatchScope>,
+    page_view: Option<ViewSettings>,
+    block_view: Option<ViewSettings>,
+    transliteration: bool,
+) -> Result<QueryExecution, SearchError> {
+    run_graph_search_after_scope(
+        store,
+        lanes,
+        source,
+        page_limit,
+        block_limit,
+        lane,
+        None,
+        explain,
+        scope,
+        page_match_scope,
+        page_view,
+        block_view,
+        transliteration,
         #[cfg(test)]
         || {},
     )
@@ -141,15 +249,17 @@ fn run_graph_search_after_scope(
     page_limit: usize,
     block_limit: usize,
     lane: Option<&str>,
+    lane_seq: Option<u64>,
     explain: bool,
     scope: Option<Scope>,
     page_match_scope: Option<FriendlyPageMatchScope>,
     page_view: Option<ViewSettings>,
     block_view: Option<ViewSettings>,
+    transliteration: bool,
     #[cfg(test)] after_scope: impl FnOnce(),
 ) -> Result<QueryExecution, SearchError> {
     let view = store.whole_graph().map_err(SearchError::Load)?;
-    let lease = lanes.begin(lane);
+    let lease = lanes.begin_sequenced(lane, lane_seq);
     let within = scope.map(|scope| match scope.path {
         Some(path) => PageId::from(path),
         None => match view.resolve(&scope.name, scope.kind == PageKind::Journal) {
@@ -159,6 +269,7 @@ fn run_graph_search_after_scope(
     });
     let request = SearchRequest {
         text: source,
+        transliteration,
         within,
         page_limit,
         block_limit,
@@ -194,8 +305,22 @@ pub fn find_blocks(
     limit: usize,
     lane: Option<&str>,
 ) -> Result<Vec<RefGroup>, SearchError> {
+    find_blocks_sequenced(store, lanes, query, limit, lane, None)
+}
+
+/// `find_blocks` whose lane request carries the caller's issue order (see
+/// `run_graph_search_sequenced`). An overtaken older request fails as
+/// `QueryError::Cancelled`. Cost O(all blocks + output).
+pub fn find_blocks_sequenced(
+    store: &Store,
+    lanes: &SearchLanes,
+    query: &str,
+    limit: usize,
+    lane: Option<&str>,
+    lane_seq: Option<u64>,
+) -> Result<Vec<RefGroup>, SearchError> {
     let view = store.whole_graph().map_err(SearchError::Load)?;
-    let lease = lanes.begin(lane);
+    let lease = lanes.begin_sequenced(lane, lane_seq);
     view.find_blocks(query, limit, &Cancel(Arc::clone(&lease.flag)))
         .map_err(SearchError::Query)
 }
@@ -239,8 +364,10 @@ fn enforce_execution_budget(execution: &QueryExecution) -> Result<(), QueryError
 }
 
 /// Refuse oversized or over-nested query source before parsing or cache lookup.
-/// Cost O(source bytes).
-pub fn validate_source(query: &str) -> Result<(), QueryError> {
+/// Cost O(source bytes). Test-only: the live answerer is src-tauri
+/// `commands::query_ir`.
+#[cfg(test)]
+fn validate_source(query: &str) -> Result<(), QueryError> {
     tine_core::query::admit_source(query).map_err(|reason| {
         QueryError::Parse(match reason {
             tine_core::query::SourceRefusal::TooLarge => format!(
@@ -255,47 +382,23 @@ pub fn validate_source(query: &str) -> Result<(), QueryError> {
     })
 }
 
-/// Run a bounded simple query. Cost O(query candidates + output).
-pub fn run_query(store: &Store, query: &str) -> Result<Arc<Vec<RefGroup>>, SearchError> {
-    validate_source(query).map_err(SearchError::Query)?;
-    let view = store.whole_graph().map_err(SearchError::Load)?;
-    match view
-        .query(query, QueryDialect::Simple)
-        .map_err(SearchError::Query)?
-    {
-        QueryResult::Simple(groups) => Ok(groups),
-        QueryResult::Advanced(_) => unreachable!(),
-    }
-}
-
-/// Run an advanced query. Cost O(query candidates + output).
-pub fn run_advanced_query(
-    store: &Store,
-    query: &str,
-) -> Result<tine_core::query::AdvancedResult, SearchError> {
-    run_advanced_query_after_scope(
-        store,
-        query,
-        #[cfg(test)]
-        || {},
-    )
-}
-
+/// Test helper over the `WholeGraph::query` test oracle (the legacy advanced
+/// bridge). Production queries run through `query_ir`.
+#[cfg(test)]
 fn run_advanced_query_after_scope(
     store: &Store,
     query: &str,
-    #[cfg(test)] after_scope: impl FnOnce(),
+    after_scope: impl FnOnce(),
 ) -> Result<tine_core::query::AdvancedResult, SearchError> {
     validate_source(query).map_err(SearchError::Query)?;
     let view = store.whole_graph().map_err(SearchError::Load)?;
-    #[cfg(test)]
     after_scope();
     match view
-        .query(query, QueryDialect::Advanced)
+        .query(query, tine_store::QueryDialect::Advanced)
         .map_err(SearchError::Query)?
     {
-        QueryResult::Advanced(result) => Ok(result),
-        QueryResult::Simple(_) => unreachable!(),
+        tine_store::QueryResult::Advanced(result) => Ok(result),
+        tine_store::QueryResult::Simple(_) => unreachable!(),
     }
 }
 
@@ -327,11 +430,13 @@ mod tests {
             10,
             10,
             None,
+            None,
             false,
             Some(scope),
             None,
             None,
             None,
+            false,
             || {
                 let writer = Arc::clone(&store);
                 std::thread::spawn(move || {
@@ -474,6 +579,86 @@ mod tests {
         drop(next);
         drop(other);
         assert!(lanes.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_late_older_request_does_not_cancel_the_newer_one_on_its_lane() {
+        let lanes = SearchLanes::default();
+        let newer = lanes.begin_sequenced(Some("query-workspace:w"), Some(2));
+        let older = lanes.begin_sequenced(Some("query-workspace:w"), Some(1));
+        assert!(
+            older.load(Ordering::Acquire),
+            "the older request is refused"
+        );
+        assert!(
+            !newer.load(Ordering::Acquire),
+            "the newer request keeps running"
+        );
+        // The refused request owns no entry: finishing it leaves the newer one's.
+        drop(older);
+        assert_eq!(lanes.0.lock().unwrap().len(), 1);
+        let newest = lanes.begin_sequenced(Some("query-workspace:w"), Some(3));
+        assert!(
+            newer.load(Ordering::Acquire),
+            "a newer request still cancels"
+        );
+        assert!(!newest.load(Ordering::Acquire));
+        // Requests without an order keep the arrival-order rule.
+        let plain = lanes.begin(Some("query-workspace:w"));
+        assert!(newest.load(Ordering::Acquire));
+        assert!(!plain.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn typing_race_newest_search_survives_a_late_older_one() {
+        // The Search tab sends one request per keystroke on one lane. The
+        // handler threads run in any order: here the newest request holds its
+        // lane while the older one arrives.
+        let root = std::env::temp_dir().join(format!(
+            "tine-lane-order-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::write(root.join("pages/Keyboard Alpha.md"), "- Body\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let lanes = SearchLanes::default();
+        let run = |text: &str, seq: u64, inner: &dyn Fn()| {
+            run_graph_search_after_scope(
+                &store,
+                &lanes,
+                text.into(),
+                10,
+                10,
+                Some("query-workspace:w"),
+                Some(seq),
+                false,
+                None,
+                None,
+                None,
+                None,
+                false,
+                inner,
+            )
+            .ok()
+            .unwrap()
+        };
+        let older_result = std::cell::RefCell::new(None);
+        let newer = run("Keyboard", 2, &|| {});
+        assert!(!newer.cancelled);
+        // Replay with the older request landing while the newer one runs.
+        let newest = run("Keyboard", 4, &|| {
+            *older_result.borrow_mut() = Some(run("Keyboar", 3, &|| {}));
+        });
+        assert!(
+            older_result.borrow().as_ref().unwrap().cancelled,
+            "the older request is reported cancelled"
+        );
+        assert!(
+            !newest.cancelled && !newest.hits.is_empty(),
+            "the newest request answers: the user sees Keyboard Alpha"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

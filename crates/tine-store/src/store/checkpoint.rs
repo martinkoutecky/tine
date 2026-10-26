@@ -42,10 +42,24 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// 8 (og lane Q): a memo entry's retained-byte charge includes the plan's
 /// tag-target set; facts, depth admission and key normalisation follow the
 /// parser's literal regions and the engine date-token grammar.
-pub(crate) const FORMAT: u32 = 8;
+/// 9 (GH #422, D-18): a memoized answer to a bare `(task)` / `(priority)` or a
+/// blank `{{query}}` changed meaning (OG's "no condition"), while its memo key
+/// — the source text, or for a blank query the unchanged IR — did not.
+/// 10 (Kalem parity): retained Org headline-tag projections and reference
+/// indexes/answers now include those tags as page refs.
+/// 11 (Kalem K1): namespace ancestors join reference candidates, path refs
+/// and memoized query/backlink answers. Old indexes and answers must rebuild.
+/// 12 (Kalem K2): linkable page-property values join reference candidates.
+/// 13 (GH #675): `alias_index` retains authored spelling; older derived caches
+/// hold folded aliases and must be rebuilt from the unchanged graph files.
+/// 14 (GH #487): parsed task markers join explicit reference projections,
+/// candidate indexes and cached backlinks; old disposable caches rebuild.
+/// 15 (GH #699): parser-token extraction separates stored page tag facets and
+/// aliases; older combined names in derived indexes and answers must rebuild.
+pub(crate) const FORMAT: u32 = 15;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
-pub(crate) const PARSER: &str = "lsdoc v0.5.8";
+pub(crate) const PARSER: &str = "lsdoc v0.5.10";
 /// Quiet time after the last dirtying publication before a checkpoint.
 pub(crate) const IDLE: Duration = Duration::from_secs(60);
 /// Least time between two checkpoint writes (Martin, 2026-10-02): at most 12
@@ -178,6 +192,10 @@ pub(crate) fn config_key(config: &tine_core::config::Config) -> [u8; 32] {
         start_of_week: _,
         linked_references_collapsed_threshold: _,
         default_journal_template: _,
+        default_journal_queries: _,
+        disable_scheduled_and_deadline_query: _,
+        scheduled_future_days: _,
+        journal_config_diagnostics: _,
         default_home: _,
         favorites: _,
         mobile_gestures_disabled_in_block_with_tags: _,

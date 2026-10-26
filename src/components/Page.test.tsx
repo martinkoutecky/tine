@@ -5,20 +5,22 @@ import { backend } from "../backend";
 import { PUBLISHED_META_NAME } from "../publishedBackend";
 import { invalidateBinding } from "../binding";
 import { initParser } from "../render/parse";
-import { installExternalChangeUiHandler, pageByName, readPageProperty, resetStore, setRaw, extendFeedForScroll, flushPage, isDirty, undo, moveBlockFeed } from "../document";
+import { installExternalChangeUiHandler, pageByName, readPageProperty, resetStore, setRaw, extendFeedForScroll, flushPage, isDirty, undo, redo, moveBlockFeed, moveBlock, selectedIds, deleteSelection, finishPageHeaderEdit, indentBlock, indentSelection, selectBlock } from "../document";
+import { installKeybindings } from "../keybindings";
 import { setBlockMoving } from "../document/edits/moves";
 import { pageToDto } from "../document/convert";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
-import { loadSingle, pinPageWhileDrafting } from "../document/workingSet";
+import { loadSingle, pinPageWhileDrafting, reloadPageIfStillSafe } from "../document/workingSet";
 import { editingId, editingOwner, activeSurface, endEdit, startEditing } from "../editorController";
 import { journalTitle } from "../journal";
 import type { JournalFeedPage, PageDto, PageRead, RefGroup } from "../types";
 import { TagPageTable, TagTableToggle } from "./Page";
 import { PageView, reloadJournalsFeedFromStart, withToday } from "./Page";
 import { focusBlock, mainPaneRouter, resetTabsToJournals, tabRoute } from "../router";
-import { clearConflict } from "../document/save/engine";
-import { markConflict } from "../document/save/engine";
+import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
+import { isSaving, pendingDataRevision } from "../document/host/wiring";
+import { conflictedInHost, openAsLoaded } from "./hostConflict.test.support";
 import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRecentPages, setRightSidebar } from "../ui";
 import { bumpGraphEpoch, graphEpoch, setGraphMeta } from "../graphSession";
 import { setToasts, toasts } from "../toasts";
@@ -93,6 +95,25 @@ function unpinned(dto: PageDto): PageRead {
 function feedResponse(pages: PageDto[], patch: Partial<JournalFeedPage> = {}): JournalFeedPage {
   return { pages: pages.map(unpinned), next_before_day: null, done: true, as_of_day: localDay(), ...patch };
 }
+
+it.each([
+  ["page", "md"], ["journal", "md"], ["page", "org"], ["journal", "org"],
+] as const)("highlights survive the %s %s view boundary (GH #243)", async (kind, format) => {
+  const name = kind === "journal" ? journalTitle(new Date()) : "Highlights";
+  const dto: PageDto = { name, title: name, kind, pre_block: null, format,
+    blocks: [{ id: "highlights", raw: format === "md" ? "a ==one== b ^^two^^ c" : "a ^^one^^ b ^^two^^ c", children: [], collapsed: false }] };
+  if (kind === "journal") {
+    vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([dto]));
+  } else {
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto as PageRead);
+    mainPaneRouter.replaceActiveRoute({ kind: "page", name, pageKind: kind });
+  }
+  const mounted = mount(() => <PageView />);
+  try {
+    await vi.waitFor(() => expect([...mounted.root.querySelectorAll(".block-content mark")].map(el => el.textContent)).toEqual(["one", "two"]));
+    expect(mounted.root.querySelector("textarea.block-editor")).toBeNull();
+  } finally { mounted.dispose(); }
+});
 
 describe("Journals feed generation lifecycle", () => {
   it.each([false, true])("adds a new day around an active editor (dirty: %s)", async (dirty) => {
@@ -199,7 +220,6 @@ describe("Journals feed generation lifecycle", () => {
     const first = journalDto(today, "Visible today");
     const second = journalDto(older, "Move me");
     vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([first, second]));
-    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["today-r2", "older-r2"] });
     const mounted = mount(() => <PageView />);
     try {
       await vi.waitFor(() => expect(mounted.root.querySelector(`[data-block-id="${second.blocks[0].id}"]`)).not.toBeNull());
@@ -224,6 +244,7 @@ describe("Journals feed generation lifecycle", () => {
   });
 
   it("writes a configured template before reading each new local day into the feed", async () => {
+    await bindTestHost();
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2030, 6, 15, 12));
     setGraphMeta({
@@ -237,9 +258,10 @@ describe("Journals feed generation lifecycle", () => {
       blocks: [{ id: "template", raw: "Template body", collapsed: false, children: [] }],
     }]);
     vi.spyOn(backend(), "resolvePage").mockImplementation(async () => ({ kind: "absent", id: `journals/${localDay()}.md` }));
-    vi.spyOn(backend(), "savePages").mockImplementation(async () => {
+    const submit = backend().pageSubmit.bind(backend());
+    vi.spyOn(backend(), "pageSubmit").mockImplementation(async (...args) => {
       order.push(`save:${localDay()}`);
-      return { ok: ["revision"] };
+      return submit(...args);
     });
     vi.spyOn(backend(), "journalFeedPage").mockImplementation(async () => {
       order.push(`feed:${localDay()}`);
@@ -497,27 +519,39 @@ describe("Journals feed generation lifecycle", () => {
   });
 
   it.each(["active edit", "dirty", "saving", "conflict", "moving"] as const)("defers a %s feed gate then retries on its real release", async (gate) => {
+    const host = await bindTestHost();
     const api = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([journalDto("initial")]))
     const mounted = mount(() => <PageView />);
     await flushMicrotasks();
     api.mockClear();
     const today = journalTitle(new Date());
+    const key = `journals/${today}.md`;
     setDoc({
       byId: { feed: node("feed", "original", today) },
       pages: [page(today, "journal", ["feed"])], feed: [today], loaded: true,
     });
     const oldPage = pageByName(today);
     api.mockResolvedValue(feedResponse([journalDto(`released-${gate}`)]));
+    // The host read the file the window shows (the mock graph has no such day).
+    openAsLoaded(host);
+    if (gate === "conflict") await conflictedInHost(host, today, key);
     if (gate === "active edit") startEditing("feed", 0);
-    if (gate === "dirty" || gate === "saving") setRaw("feed", "dirty");
-    if (gate === "conflict") markConflict(today);
-    if (gate === "moving") setBlockMoving(true, today);
     let saved: Promise<boolean> | null = null;
     let releaseSave: (() => void) | null = null;
     if (gate === "saving") {
-      vi.spyOn(backend(), "savePages").mockImplementation(() => new Promise((resolve) => { releaseSave = () => resolve({ ok: ["rev"] }); }));
+      // The host admits the submit only on release: the page is in flight.
+      const submit = backend().pageSubmit.bind(backend());
+      vi.spyOn(backend(), "pageSubmit").mockImplementation(async (...args) => {
+        releaseSave = () => { void submit(...args); };
+        return null;
+      });
+    }
+    if (gate === "dirty" || gate === "saving") setRaw("feed", "dirty");
+    if (gate === "moving") setBlockMoving(true, today);
+    if (gate === "saving") {
       saved = flushPage(today);
-      await flushMicrotasks();
+      await vi.waitFor(() => expect(releaseSave).not.toBeNull());
+      expect(isSaving(today)).toBe(true);
     }
     try {
       await reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => true });
@@ -526,24 +560,29 @@ describe("Journals feed generation lifecycle", () => {
       expect(pageByName(today)).toBe(oldPage);
       expect(doc.feed).toEqual([today]);
       if (gate === "active edit") endEdit("blur");
-      if (gate === "dirty") {
-        // Saving is the real dirty release and bumps dataRev after the backend
-        // accepts it; leave the PageView retry effect to consume that event.
-        vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
-        await flushPage(today);
-        await new Promise<void>((resolve) => setTimeout(resolve, 750));
-      }
+      // Saving is the real dirty release and bumps dataRev after the host
+      // publishes it; the PageView retry effect consumes that event.
+      if (gate === "dirty") await flushPage(today);
       if (gate === "saving") {
         releaseSave!();
         await saved!;
-        await new Promise<void>((resolve) => setTimeout(resolve, 750));
       }
-      if (gate === "conflict") clearConflict(today);
+      if (gate === "conflict") host.deliver({ key, answer: null,
+        page: { version: 3, conflict: false, risk: false, disk: { kind: "file", rev: "disk-2" }, text: { kind: "unchanged" } } });
       if (gate === "moving") setBlockMoving(false);
+      // The window now holds a saved page until the host publishes it (J6),
+      // so its close lands after the retry's read began: that read can be
+      // superseded and retried once the close is admitted. The release
+      // still retries, lands the released feed, and then stops.
+      await vi.waitFor(() => expect(api).toHaveBeenCalled(), { timeout: 2000 });
+      await vi.waitFor(() => expect(doc.feed).toContain(`released-${gate}`));
+      // GH #481: the coalesced host publication also refreshes fileless-day
+      // membership. Only measure quiescence after that real publication lands.
+      await vi.waitFor(() => expect(pendingDataRevision()).toBe(false), { timeout: 2000 });
       await flushMicrotasks();
-      await flushMicrotasks();
-      expect(api).toHaveBeenCalledTimes(1);
-      expect(doc.feed).toContain(`released-${gate}`);
+      const reads = api.mock.calls.length;
+      await new Promise((done) => setTimeout(done, 1000));
+      expect(api).toHaveBeenCalledTimes(reads);
     } finally {
       mounted.dispose();
     }
@@ -677,6 +716,8 @@ describe("Journals feed generation lifecycle", () => {
 
 describe("tag-page table", () => {
   it("toggles a query-sourced table and adds new rows to today's journal", async () => {
+    // The host read the journal the window shows (the mock graph has no such day).
+    openAsLoaded(await bindTestHost());
     const todayName = journalTitle(new Date());
     setDoc({
       byId: {
@@ -716,7 +757,6 @@ describe("tag-page table", () => {
       anchor: "block", groups, diagnostics: [],
       report: { ran: ["tag"], ignored: [], supported: true }, total: 1, exceeded: false,
     });
-    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev1"] });
 
     const tagPage = pageByName("Tag")!;
     const { root, dispose } = mount(() => (
@@ -1768,6 +1808,24 @@ describe("page route loading", () => {
 });
 
 describe("page properties", () => {
+  it("GH #346: keeps icon visible in the properties list and editable beside the title icon", async () => {
+    const propsId = "11111111-1111-4111-8111-111111111111";
+    const dto = { name: "Flag", kind: "page" as const, title: "Flag", pre_block: null,
+      blocks: [{ id: propsId, raw: "icon:: 🚩", collapsed: false, children: [] }] };
+    setDoc({ byId: { [propsId]: node(propsId, dto.blocks[0].raw, dto.name) },
+      pages: [page(dto.name, "page", [propsId])], feed: [dto.name], loaded: true });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      expect(root.querySelector(".page-properties")?.textContent).toContain("icon");
+      (root.querySelector(".page-properties .prop-row") as HTMLElement).click();
+      await tick();
+      expect(editingId()).toBe(propsId);
+      expect(root.querySelector("textarea")?.value).toContain("icon:: 🚩");
+    } finally { dispose(); }
+  });
   it("keeps a first-bullet alias editor mounted while the property is being typed (GH #62)", async () => {
     const propsId = "11111111-1111-4111-8111-111111111111";
     const dto = {
@@ -1924,6 +1982,111 @@ describe("page properties", () => {
 });
 
 describe("Markdown preamble content", () => {
+  it.each(["delete", "outdent", "move"])("repairs a marked header's child through ordinary %s editing (GH #638)", async (repair) => {
+    const header = "header-638", child = "child-638", body = "body-638";
+    const properties = "tags:: books\nalias:: Book";
+    const childRaw = repair === "delete" ? "" : "Keep this child";
+    const bodyRaw = "Unrelated body  \nsecond line";
+    const dto: PageDto = {
+      name: "Repair header", kind: "page", title: "Repair header", pre_block: null, format: "md",
+      blocks: [
+        { id: header, raw: properties, collapsed: false, children: [{ id: child, raw: childRaw, collapsed: false, children: [] }] },
+        { id: body, raw: bodyRaw, collapsed: false, children: [] },
+      ],
+    };
+    loadSingle(dto);
+    setToasts([]);
+    // The reporter's transient topology; a file DTO does not carry this flag.
+    setDoc("byId", header, "originatedFromPageHeader", true);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/Repair header.md" });
+    openAsLoaded(await bindTestHost());
+    const save = vi.spyOn(backend(), "pageSubmit");
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+    const disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      expect(pageToDto(dto.name)).toBeNull();
+      finishPageHeaderEdit(header);
+      expect(toasts().map((toast) => toast.message)).toEqual(["Page properties can't be saved yet: the properties block has child blocks. Outdent or delete them."]);
+      const face = root.querySelector<HTMLElement>(`[data-block-id="${child}"] .block-content-wrapper`);
+      expect(face).not.toBeNull();
+      face!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, cancelable: true }));
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+      await tick();
+      expect(editingId()).toBe(child);
+      const editor = root.querySelector<HTMLTextAreaElement>(`[data-block-id="${child}"] textarea`)!;
+      if (repair === "delete" || repair === "move") {
+        editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        expect(selectedIds()).toEqual([child]);
+        if (repair === "delete") deleteSelection();
+        else expect(await moveBlock(child, null, 1)).toBe(true);
+      } else {
+        editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
+        expect(doc.byId[child].parent).toBeNull();
+      }
+      await tick();
+      expect(doc.byId[header].raw).toBe(properties);
+      expect(pageToDto(dto.name)).toMatchObject({
+        pre_block: properties,
+        blocks: repair === "delete" ? [{ raw: bodyRaw }] : [{ raw: childRaw }, { raw: bodyRaw }],
+      });
+      const repaired = pageToDto(dto.name)!;
+      await flushPage(dto.name);
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(submittedPages(save)[0]).toEqual(repaired);
+      expect(isDirty(dto.name)).toBe(false);
+      undo();
+      await tick();
+      expect(doc.byId[header].children).toEqual([child]);
+      expect(doc.byId[child].raw).toBe(childRaw);
+      expect(pageToDto(dto.name)).toBeNull();
+      expect(isDirty(dto.name)).toBe(true);
+      expect(root.querySelector(`[data-block-id="${child}"]`)).not.toBeNull();
+      await flushPage(dto.name);
+      expect(save).toHaveBeenCalledTimes(1); // Undo's invalid draft stays local.
+      redo();
+      expect(pageToDto(dto.name)?.pre_block).toBe(properties);
+    } finally { dispose(); disposeKeys(); }
+  });
+
+  it.each(["import", "external reload"])("keeps a properties-only root's subtree reachable after %s without reinterpreting the file (GH #638)", async (source) => {
+    const dto: PageDto = {
+      name: "Imported child", kind: "page", title: "Imported child", pre_block: null, format: "md",
+      blocks: [{ id: "import-header", raw: "tags:: books\nalias:: Book", collapsed: false,
+        children: [{ id: "import-child", raw: "", collapsed: false, children: [] }] },
+        { id: "import-body", raw: "Unrelated body", collapsed: false, children: [] }],
+    };
+    if (source === "import") loadSingle(dto);
+    else {
+      loadSingle({ ...dto, blocks: dto.blocks.map((block) => ({ ...block, children: [] })) });
+      expect(reloadPageIfStillSafe(dto.name, dto)).toBe(true);
+    }
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      expect(root.querySelector('[data-block-id="import-child"]')).not.toBeNull();
+      expect(pageToDto(dto.name)?.blocks).toEqual(dto.blocks);
+      expect(readPageProperty(dto.name, "tags")).toBe("books");
+    } finally { dispose(); }
+  });
+
+  it.each(["editor", "selection"])("does not Tab-indent a body into a transient page header via %s (GH #638)", async (mode) => {
+    const dto: PageDto = { name: "Tab header", kind: "page", title: "Tab header", pre_block: null, format: "md",
+      blocks: [{ id: "tab-header", raw: "tags:: books", collapsed: false, children: [] },
+        { id: "tab-body", raw: "Body", collapsed: false, children: [] }] };
+    loadSingle(dto);
+    setDoc("byId", "tab-header", "originatedFromPageHeader", true);
+    if (mode === "editor") indentBlock("tab-body", 0);
+    else { selectBlock("tab-body"); indentSelection(); }
+    expect(doc.byId["tab-body"].parent).toBeNull();
+    expect(doc.byId["tab-header"].children).toEqual([]);
+    expect(pageToDto(dto.name)?.pre_block).toBe("tags:: books");
+  });
+
   it("opens canonical page-header properties in the ordinary editor without dirtying on entry", async () => {
     const bodyId = "33333333-3333-4333-8333-333333333333";
     const dto = {

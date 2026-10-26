@@ -41,7 +41,7 @@ To flip it, run `node scripts/set-app-identity.mjs release` (or
 | Android `applicationId` (`src-tauri/gen/android/app/build.gradle.kts`) | rewritten by the script; the Kotlin `namespace` stays `page.tine.app` |
 | Deploy destination (`scripts/deploy.sh`) | `~/research/<deployName>` |
 | Native E2E journeys | `scripts/lib/app-identity.mjs` (`APP_ID`, `IDENTITY`) |
-| Flatpak (`.github/workflows/flatpak.yml`) | refuses to build unless `ship` is `release`; the manifest id is the release identifier |
+| Flatpak (`.github/workflows/flatpak.yml`) | `flatpak/` carries the released identity; `scripts/derive-flatpak-identity.mjs` derives the app id, `Name=`, metainfo `<id>`/`<name>`/`<releases>` and every install path for the identity the tree ships (the Beta bundle is `page.tine.TineBeta`, so it installs beside a stable Tine Flatpak with its own `~/.var/app/<id>/` data). The workflow's `identity` input must equal `ship`; a mismatch is refused |
 
 Android release preparation (`scripts/release-workflow-inputs.mjs android-config`)
 uses the committed Gradle Kotlin namespace for Tauri's Java source lookup in the
@@ -58,10 +58,21 @@ update pattern, Windows portable lookup, APK name, updater manifest and publishe
 all consume the same layout. Beta updates remain restricted to the `beta` release.
 `scripts/test-release-identity.mjs` drives staging and assembly for both ships.
 
+The Beta Flatpak bundle is published with the other Beta assets as
+`Tine-Beta_<version>_x86_64.flatpak` (`flatpak-x64` lane in
+`scripts/release-layout.mjs`; `release.yml` calls `flatpak.yml` with
+`identity: experiment`). It is a manual download: updates mean installing the
+next bundle, and `latest.json` never references it.
+
 A few identity-bearing places need no file of their own:
 
 - The iOS bundle id is Tauri's `identifier`. No `gen/apple` project is
   checked in.
+- iOS has no Beta app yet, so `ios-testflight.yml` with `beta_as_release`
+  builds a Beta tag under the stable identity `page.tine.Tine`, with marketing
+  version `X.Y.Z` (the `-beta.N` suffix stripped) and "What to Test" naming the
+  Beta (D-20261018-I1 option A). From 0.9 a separate TestFlight-only Tine Beta
+  app replaces this (option B).
 - The Linux window class, Wayland `app_id` and runtime `.desktop` file come
   from `TINE_APP_IDENTIFIER`. Tauri's deb/rpm launcher filename uses the
   product name. When that packaged launcher is present, the runtime app-ID
@@ -149,10 +160,12 @@ staging dir, fsyncs it, and renames it into place.
 - In a release build it is a no-op (`APP_IDENTIFIER == RELEASE_IDENTIFIER`).
 - Only on desktop. Mobile app data is private to each application id.
 
-**Deleted in 0.7.0, when the switch first shipped `release`.** The steps were: Remove the file, its `_tests.rs`,
-the `mod` line and the one call in `lib::run()`, and its
-`APPROVED_WRITER_SITES` entry in `scripts/lib/og-enforcement.mjs`.
-`src/appIdentity.guard.test.ts` fails until you do.
+**Delete it when the switch ships `release`** (done in 0.7.0 and again in
+0.8.0). Remove the file, its `_tests.rs`, the `mod` line and the one call in
+`lib::run()`, and its rows in the portable host-path allowlist
+(`src-tauri/src/portable.rs`) and the regression row's test list; point the
+updater endpoint at the stable address. `src/appIdentity.guard.test.ts` fails
+until you do.
 
 About, update notifications and copied version information derive their app name
 from the same switch through `src/appIdentity.ts`. **Copy version** preserves
@@ -172,6 +185,42 @@ opens a page and toggles the theme. It then checks three things:
 - Master reopens the dir og used with the same config.
 
 On the pre-change og build the first check fails (Welcome, default theme).
+
+## Portable Windows (GH #719)
+
+A Windows exe is portable (`src-tauri/src/portable.rs`) only when a real
+`tine-data` directory sits beside it (read with `symlink_metadata`: no
+symlink, no junction or other reparse point), no NSIS `uninstall.exe` sits
+beside it (Tauri's NSIS template writes it into `$INSTDIR`), and the process
+has no MSIX package identity. Any missing or unanswerable probe means
+installed. The portable ZIP ships the folder; the NSIS installer and MSIX
+never do. Its state is keyed by the identifier like an
+installed build's, one level down, so a stable and a Beta exe in one folder
+stay separate:
+
+| Installed | Portable |
+| --- | --- |
+| `%APPDATA%\<identifier>` (config, data) | `tine-data\<identifier>\roaming` |
+| `%LOCALAPPDATA%\<identifier>` (local data, cache, WebView2 `EBWebView`) | `tine-data\<identifier>\local` |
+| `%LOCALAPPDATA%\<identifier>\logs` | `tine-data\<identifier>\local\logs` (also the default `--debug` log) |
+
+The layout goes to Tauri's `app > appDirectoriesOverride` before the Builder,
+so every `app.path().app_*_dir()` and the WebView2 user-data folder follow it;
+`app_identity::current_app_data_dir()` asks `portable::dirs()` first. The
+identifier migration and the Beta config seed do nothing when portable (they
+read or write the host's per-user folders). A portable build updates by
+download (`gpu_env().portable`), because the updater's NSIS installer would add
+an installed copy; installing in place needs an affirmative "not MSIX, not
+Flatpak, not portable" from one `gpu_env()` read. A portable folder that
+cannot take a file stops the launch first (`portable::preflight()`, the first
+call in `main` and `run`) with a native error naming the folder; it never
+falls back to the installed profile, which would split state across two homes.
+`host_folder_lookups_go_through_the_portable_owner` scans production code in
+`src-tauri/src` for host-folder lookups (`dirs::`, the temp dir, Tauri's
+host `BaseDirectory` variants, `APPDATA`/`LOCALAPPDATA`/`USERPROFILE`/`HOME`)
+and accepts each only at a listed call site with its reason. It is a text
+scan: a lookup spelled another way (an alias, a macro, a dependency) is not
+seen.
 
 ## Open items
 

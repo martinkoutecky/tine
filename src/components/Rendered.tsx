@@ -1,4 +1,5 @@
-import { Show, Switch, Match, type JSX } from "solid-js";
+import { t } from "../i18n";
+import { Show, Switch, Match, onMount, onCleanup, useContext, type JSX } from "solid-js";
 import { pageByName, blockPageReadOnly, blockExternalId, type OutlineScope, type Node as ReadonlyNode } from "../document";
 import { isPropertyLine } from "../render/block";
 import { renderedProperties, type Facets } from "../render/facets";
@@ -6,6 +7,7 @@ import { AstBody } from "../render/body";
 import { DeferredStandaloneMacro } from "./DeferredStandaloneMacro";
 import { QueryMacro, EmbedMacro } from "./Macro";
 import { timetrackingEnabled, openDatePicker } from "../ui";
+import { ResultWriteTargetContext } from "./queryResultIdentity";
 import { PropertyRows } from "../render/PropertyRows";
 import { taskCheckboxState } from "../markers";
 import { markerLabelClickable } from "../editor/repeat";
@@ -15,9 +17,13 @@ import { AnnotationBody } from "./AnnotationBody";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { blockBackgroundColor } from "../blockColors";
 import { queryMacroExtent, type MacroExtent } from "../editor/queryMacro";
-import { soleBlockMacro } from "../render/parse";
+import { isQuarantined, parseBlock, parserReady, soleBlockMacro } from "../render/parse";
 import { isQueryMacroName } from "../editor/queryMacro";
-import { beginEditGesture, renderedClickOffset } from "./blockGestures";
+import { beginEditGesture, renderedClickOffset, registerRenderedSelection } from "./blockGestures";
+import { isMobilePlatform } from "../nativeChrome";
+import { startEditing } from "../editorController";
+import { editorOffsetFromRenderedRange } from "../render/spans";
+import { BUILTIN_HIDE, HIDE_ALL, splitProps } from "../editor/properties";
 import { CalGlyph, ClockBadge, toggleBlockMarkerLabel, toggleBlockCheckbox } from "./blockParts";
 
 // The rendered (non-editing) body of one block: header facets, body, chips and
@@ -25,6 +31,15 @@ import { CalGlyph, ClockBadge, toggleBlockMarkerLabel, toggleBlockCheckbox } fro
 
 // Detect a block whose entire body is a single {{query}}/{{tine-query}}/{{embed}} macro.
 export function detectMacro(raw: string, format: "md" | "org" = "md"): { kind: "query" | "embed"; inner: string; sourceExtent?: MacroExtent } | null {
+  if (!parserReady() || !raw.includes("{{") || isQuarantined(parseBlock(raw, format === "org"))) return null;
+  // lsdoc's inline macro stops at the first `}}` (inside an options map),
+  // leaving a phantom closing brace and denying the standalone host. Use the
+  // shared query reader's complete extent and the parser's visible body, so
+  // option-bearing queries keep the same reactive host as bare queries.
+  const queryExtent = queryMacroExtent(raw);
+  if (queryExtent && splitProps(raw, HIDE_ALL, format).visible.trim() === raw.slice(queryExtent.start, queryExtent.end)) {
+    return { kind: "query", inner: `${queryExtent.name} ${queryExtent.argument}`, sourceExtent: queryExtent };
+  }
   const macro = soleBlockMacro(raw, format);
   if (!macro) return null;
   if (isQueryMacroName(macro.name)) {
@@ -53,6 +68,8 @@ export function Rendered(props: {
   refCountBadge?: JSX.Element;
   outlineScope?: OutlineScope | null;
 }): JSX.Element {
+  // In a query result, Scheduled/Deadline resolve the result row again at commit.
+  const resultTarget = useContext(ResultWriteTargetContext);
   const node = props.node;
   const fmt = props.fmt;
   // Header facets (marker/priority/heading/scheduled/deadline/properties) off the
@@ -86,6 +103,27 @@ export function Rendered(props: {
   // Anything without trustworthy span data (chips, macro hosts, parser fallback)
   // keeps the old end-of-block behavior.
   let contentRef: HTMLDivElement | undefined;
+  onMount(() => {
+    if (!isMobilePlatform || !contentRef) return;
+    const owner = contentRef.ownerDocument;
+    const transferSelection = () => {
+      if (readOnly() || !contentRef?.isConnected) return;
+      const selection = owner.getSelection();
+      if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return;
+      const range = selection.getRangeAt(0);
+      // Own both endpoints in this rendered block. Cross-block selections,
+      // embeds and controls retain their existing owners.
+      if (!contentRef.contains(range.startContainer) || !contentRef.contains(range.endContainer)) return;
+      if (range.startContainer.parentElement?.closest(".ls-block")?.getAttribute("data-block-id") !== props.id
+        || range.endContainer.parentElement?.closest(".ls-block")?.getAttribute("data-block-id") !== props.id) return;
+      const start = editorOffsetFromRenderedRange(contentRef, range, node().raw, BUILTIN_HIDE, fmt());
+      const end = editorOffsetFromRenderedRange(contentRef, { startContainer: range.endContainer, startOffset: range.endOffset }, node().raw, BUILTIN_HIDE, fmt());
+      if (start === null || end === null || start === end) return;
+      const direction = selection.anchorNode === range.startContainer && selection.anchorOffset === range.startOffset ? "forward" : "backward";
+      startEditing(props.id, { start, end, direction }, props.owner ?? null);
+    };
+    onCleanup(registerRenderedSelection(contentRef, transferSelection));
+  });
   const clickOffset = (e: MouseEvent): number | null =>
     contentRef ? renderedClickOffset(contentRef, node().raw, pageByName(node().page)?.format === "org" ? "org" : "md", e) : null;
   // For annotation blocks the editor shows only the highlight text (metadata
@@ -114,7 +152,7 @@ export function Rendered(props: {
     return blockBackgroundColor(facets().properties);
   };
 
-  const body = (
+  const body = () => (
     <Show when={annotation()} fallback={<AstBody raw={node().raw} blockId={props.id} format={fmt()} headingLevel={headingLevel()} />}>
       <AnnotationBody
         highlightId={blockExternalId(props.id) ?? props.id}
@@ -162,7 +200,7 @@ export function Rendered(props: {
           classList={{ checked: taskCheckboxState(facets().marker) === true }}
           role="checkbox"
           aria-checked={taskCheckboxState(facets().marker) === true}
-          title={taskCheckboxState(facets().marker) === true ? "Mark undone" : "Mark done"}
+          title={taskCheckboxState(facets().marker) === true ? t("rendered-mark-undone") : t("rendered-mark-done")}
           // Mouse-DOWN (not click) + preventDefault so toggling never enters the
           // block editor (OG parity — matches the block-ref/chip mousedown model).
           onMouseDown={(e) => {
@@ -170,6 +208,10 @@ export function Rendered(props: {
             e.preventDefault();
             toggleBlockCheckbox(props.id);
           }}
+          // A direct listener also makes the checked box a Chromium touch
+          // adjustment candidate, rather than redirecting a near-edge tap to
+          // an adjacent bullet/task. The toggle still belongs to mousedown.
+          on:click={(e) => { e.stopPropagation(); e.preventDefault(); }}
         />{" "}
       </Show>
       <Show when={facets().marker}>
@@ -191,7 +233,7 @@ export function Rendered(props: {
       {/* Heading size is applied inside AstBody to ONLY the heading's first line
           (see renderBlocks headingLevel), so a `> quote`/table/etc. continuation in
           the same block renders at normal size — matching OG. */}
-      {body}
+      {body()}
       {/* Same gate for the trailing chips. `clock()` is only non-null for a
           DONE/TODO/LATER block, so keying on the marker also keeps `logbookInfo`
           off every ordinary block's raw text. */}
@@ -202,10 +244,10 @@ export function Rendered(props: {
       <Show when={facets().scheduled}>
         <span
           class="date-chip scheduled"
-          title="Scheduled — click to change"
+          title={t("rendered-scheduled-click-to-change")}
           onClick={(e) => {
             e.stopPropagation();
-            openDatePicker(props.id, "scheduled", e.clientX, e.clientY);
+            openDatePicker(props.id, "scheduled", e.clientX, e.clientY, resultTarget(props.id));
           }}
         >
           <CalGlyph /> {facets().scheduled}
@@ -214,10 +256,10 @@ export function Rendered(props: {
       <Show when={facets().deadline}>
         <span
           class="date-chip deadline"
-          title="Deadline — click to change"
+          title={t("rendered-deadline-click-to-change")}
           onClick={(e) => {
             e.stopPropagation();
-            openDatePicker(props.id, "deadline", e.clientX, e.clientY);
+            openDatePicker(props.id, "deadline", e.clientX, e.clientY, resultTarget(props.id));
           }}
         >
           <CalGlyph /> {facets().deadline}

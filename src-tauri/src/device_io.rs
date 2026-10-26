@@ -10,6 +10,8 @@ use std::path::Path;
 #[path = "../../crates/tine-store/src/no_replace.rs"]
 mod no_replace;
 
+// The app uses only the atomic writers of this shared source.
+#[allow(dead_code)]
 #[path = "../../crates/tine-store/src/atomic_file.rs"]
 mod atomic_file;
 #[allow(dead_code)]
@@ -114,6 +116,36 @@ pub(crate) fn import_asset_from_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clipboard_file_import_streams_original_bytes_above_bitmap_budget() {
+        use std::io::{Read, Seek, Write};
+        let graph = tempfile::tempdir().unwrap();
+        let source_dir = tempfile::tempdir().unwrap();
+        let source = source_dir.path().join("original.tiff");
+        let mut file = std::fs::File::create(&source).unwrap();
+        file.write_all(b"original header").unwrap();
+        file.set_len(65 * 1024 * 1024).unwrap();
+        file.seek(std::io::SeekFrom::End(-4)).unwrap();
+        file.write_all(b"tail").unwrap();
+        drop(file);
+        let (store, ..) = tine_store::Store::open(graph.path(), Default::default()).unwrap();
+        let name = import_asset_from_path(&store, source.to_str().unwrap(), None).unwrap();
+        let stored = tine_graph_features::assets::path_for_os_handoff(&store, &name).unwrap();
+        assert_eq!(std::fs::metadata(&stored).unwrap().len(), 65 * 1024 * 1024);
+        let mut original = std::fs::File::open(&source).unwrap();
+        let mut imported = std::fs::File::open(stored).unwrap();
+        let mut a = [0; 65536];
+        let mut b = [0; 65536];
+        loop {
+            let count = original.read(&mut a).unwrap();
+            if count == 0 {
+                break;
+            }
+            imported.read_exact(&mut b[..count]).unwrap();
+            assert_eq!(&a[..count], &b[..count]);
+        }
+    }
 
     #[test]
     fn atomic_update_retries_on_external_change_without_losing_it() {

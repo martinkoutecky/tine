@@ -50,7 +50,7 @@ fn graph_with(pages: usize) -> tempfile::TempDir {
     root
 }
 
-/// Counts of one Rescan (`rebuild_graph`) of an opened graph.
+/// Counts of one Rescan (`refresh(Depth::Rebuild)`) of an opened graph.
 fn rescan_counts(root: &std::path::Path) -> cost_counters::Counts {
     let (store, _, _) = Store::open(
         root,
@@ -62,7 +62,7 @@ fn rescan_counts(root: &std::path::Path) -> cost_counters::Counts {
     .unwrap();
     drop(store.whole_graph().unwrap());
     cost_counters::reset();
-    store.rebuild_graph().unwrap();
+    store.refresh(tine_store::Depth::Rebuild).unwrap();
     let counts = cost_counters::snapshot();
     store.close();
     counts
@@ -92,6 +92,7 @@ fn reads(counts: &cost_counters::Counts) -> u64 {
 
 #[test]
 fn a_cold_launch_reads_each_graph_file_once_and_stamps_it_from_the_listing() {
+    let _integration_guard = crate::integration_lock();
     // The config-only graph measures the fixed reads of config.edn itself.
     let empty = graph_with(0);
     let fixed = launch_reads(empty.path());

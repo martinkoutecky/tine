@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
 import { setGraphMeta } from "../graphSession";
-import { beginPageHeaderEdit, indentBlock, resetStore } from "./index";
+import { beginPageHeaderEdit, moveBlock, resetStore } from "./index";
 import { loadSingle } from "./workingSet";
 import { pageToDto } from "./convert";
 import { doc } from "./model";
@@ -48,10 +48,12 @@ describe("property mutation across page formats", () => {
     expect(doc.byId.body.raw).toBe("Body\ntags:: x");
   });
 
-  it("keeps children reachable when clearing a transient Markdown header", () => {
+  it("keeps children reachable when clearing a transient Markdown header", async () => {
     loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: "klíč:: old", blocks: [{ id: "body", raw: "Body", collapsed: false, children: [] }], format: "md" });
     const header = beginPageHeaderEdit("Test")!;
-    indentBlock("body", 0);
+    // GH #638: Tab cannot target a transient header. A direct child move can
+    // still produce an invalid draft whose content must survive property edits.
+    await moveBlock("body", header, 0);
     expect(doc.byId[header].children).toEqual(["body"]);
     setPageProperty("Test", "klíč", null);
     expect(doc.byId[header]?.children).toEqual(["body"]);

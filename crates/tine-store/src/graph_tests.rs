@@ -8,6 +8,8 @@ use std::sync::Arc;
 use tine_graph_features::{conflicts, pages};
 use tine_store::{Cancel, PageId, SaveBase, SaveOutcome, SearchRequest, Store};
 
+use crate::test_fixture_io::hosted;
+
 fn demo_graph() -> Graph {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/demo-graph");
     Graph::open(root)
@@ -55,6 +57,7 @@ fn search_count(store: &Store, query: &str) -> usize {
         .unwrap()
         .search(
             &SearchRequest {
+                transliteration: false,
                 text: query.into(),
                 within: None,
                 page_limit: 10,
@@ -377,7 +380,7 @@ fn search_cache_reflects_saves_and_deletes() {
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::write(root.join("pages").join("Seed.md"), "- a seed block\n").unwrap();
 
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let cancel = tine_store::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
     let find = || {
         store
@@ -420,7 +423,12 @@ fn search_cache_reflects_saves_and_deletes() {
     assert_eq!(hits[0].page, "Fresh");
 
     // Deleting the page removes it from the cache too.
-    pages::delete_page_expected(&store, "Fresh", PageKind::Page, None, None).unwrap();
+    let (deleted, published) =
+        crate::test_fixture_io::delete(&store, "Fresh", PageKind::Page, None).unwrap();
+    assert_eq!(
+        (deleted, published),
+        (tine_store::PageOperation::Applied, Some(true))
+    );
     assert_eq!(find().len(), 0, "deleted page should drop out");
 
     std::fs::remove_dir_all(&root).ok();
@@ -852,12 +860,12 @@ fn sync_file_detects_external_change_and_suppresses_self() {
     let initial = store.whole_graph().unwrap().rev();
 
     // No external change yet → sync reports nothing.
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(store.whole_graph().unwrap().rev(), initial);
 
     // External edit → sync reports the entry and refreshes the cache.
     std::fs::write(&path, "- after the change").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let changed = store.whole_graph().unwrap();
     assert!(changed.rev() > initial, "external change detected");
     assert_eq!(store.page(&id).unwrap().doc.name, "S");
@@ -870,12 +878,12 @@ fn sync_file_detects_external_change_and_suppresses_self() {
     assert_eq!(search_count(&store, "before"), 0);
 
     // Re-syncing the same content is a no-op (self-write suppression).
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(store.whole_graph().unwrap().rev(), changed.rev());
 
     // Deletion is reported and drops it from the cache.
     std::fs::remove_file(&path).unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(store.whole_graph().unwrap().rev() > changed.rev());
     assert!(matches!(
         store.page(&id),
@@ -1004,7 +1012,7 @@ fn self_write_marker_does_not_outlive_its_save() {
     let saved_bytes = std::fs::read(&path).unwrap();
     let saved_rev = store.whole_graph().unwrap().rev();
     std::fs::remove_file(&path).unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let removed_rev = store.whole_graph().unwrap().rev();
     assert!(removed_rev > saved_rev, "page deletion must be published");
     assert!(matches!(
@@ -1012,7 +1020,7 @@ fn self_write_marker_does_not_outlive_its_save() {
         Err(tine_store::StoreError::NotFound)
     ));
     std::fs::write(&path, saved_bytes).unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(
         store.whole_graph().unwrap().rev() > removed_rev,
         "a stale self-write marker must not suppress the page reappearing"
@@ -1062,13 +1070,13 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
     ));
     let path = root.join("pages").join("R.md");
     let saved = store.whole_graph().unwrap().rev();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(
         store.whole_graph().unwrap().rev(),
         saved,
         "unchanged save → suppressed via disk_rev fast-path"
     );
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(
         store.whole_graph().unwrap().rev(),
         saved,
@@ -1077,7 +1085,7 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
 
     // A real external edit must still be detected (not masked by disk_revs).
     std::fs::write(&path, "- beta\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(
         store.whole_graph().unwrap().rev() > saved,
         "external change detected despite disk_revs entry"
@@ -1139,7 +1147,7 @@ fn self_write_is_not_reported_as_external_change() {
 
     // A watcher poll right after our own save must emit nothing.
     let saved = store.whole_graph().unwrap().rev();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(
         store.whole_graph().unwrap().rev(),
         saved,
@@ -1203,11 +1211,9 @@ fn rename_page_moves_file_and_updates_refs() {
     )
     .unwrap();
 
-    pages::rename_page_expected(
-        &Store::open(&root, Default::default()).unwrap().0,
-        "Old Name",
-        "New Name",
-        None,
+    hosted(
+        &Arc::new(Store::open(&root, Default::default()).unwrap().0),
+        |store, host| pages::rename_page_expected(store, host, "Old Name", "New Name", None),
     )
     .unwrap();
 
@@ -1268,11 +1274,9 @@ fn rename_cascades_namespace_and_rewrites_self_refs() {
     )
     .unwrap();
 
-    pages::rename_page_expected(
-        &Store::open(&root, Default::default()).unwrap().0,
-        "Proj",
-        "Renamed",
-        None,
+    hosted(
+        &Arc::new(Store::open(&root, Default::default()).unwrap().0),
+        |store, host| pages::rename_page_expected(store, host, "Proj", "Renamed", None),
     )
     .unwrap();
 
@@ -1360,11 +1364,9 @@ fn rename_rewrites_bare_tags_property() {
     )
     .unwrap();
 
-    pages::rename_page_expected(
-        &Store::open(&root, Default::default()).unwrap().0,
-        "Old",
-        "New",
-        None,
+    hosted(
+        &Arc::new(Store::open(&root, Default::default()).unwrap().0),
+        |store, host| pages::rename_page_expected(store, host, "Old", "New", None),
     )
     .unwrap();
 
@@ -1391,11 +1393,9 @@ fn rename_aborts_on_target_collision_without_changes() {
     std::fs::write(root.join("pages").join("B.md"), "- b body\n").unwrap();
 
     assert!(
-        pages::rename_page_expected(
-            &Store::open(&root, Default::default()).unwrap().0,
-            "A",
-            "B",
-            None
+        hosted(
+            &Arc::new(Store::open(&root, Default::default()).unwrap().0),
+            |store, host| pages::rename_page_expected(store, host, "A", "B", None)
         )
         .is_err(),
         "rename onto existing page must fail"
@@ -1425,11 +1425,9 @@ fn rename_ref_only_page_rewrites_refs_without_a_file() {
     )
     .unwrap();
 
-    pages::rename_page_expected(
-        &Store::open(&root, Default::default()).unwrap().0,
-        "Ghost",
-        "Spirit",
-        None,
+    hosted(
+        &Arc::new(Store::open(&root, Default::default()).unwrap().0),
+        |store, host| pages::rename_page_expected(store, host, "Ghost", "Spirit", None),
     )
     .unwrap();
 
@@ -2208,9 +2206,29 @@ fn agenda_query_excludes_finished_tasks() {
     )
     .unwrap();
     let store = store_at(&root);
-    let q = "(and (or (between scheduled -36500d +36500d) (between deadline -36500d +36500d)) \
-             (not (task DONE CANCELED CANCELLED)))";
-    let raws: Vec<String> = query_simple(&store, q)
+    let q = "@block and (scheduled between '-36500d' and '+36500d' or deadline between '-36500d' and '+36500d') \
+             and not (task in ('DONE', 'CANCELED', 'CANCELLED'))";
+    let (query, view) = tine_core::query::parse_query_text(
+        q,
+        tine_core::query::QueryDialect::Tql,
+        tine_core::date::JournalDate::today(),
+    );
+    let tine_store::IrAnswer::Result(answer) = store
+        .whole_graph()
+        .unwrap()
+        .query_ir(tine_store::IrRequest::Run {
+            query: &query,
+            view: &view,
+            context: &tine_core::query::ir::ExecutionContext::none(),
+        })
+        .unwrap()
+    else {
+        panic!("query result");
+    };
+    let tine_core::query::ir::QueryRows::Block { groups } = answer.rows else {
+        panic!("block result");
+    };
+    let raws: Vec<String> = groups
         .iter()
         .flat_map(|gr| gr.blocks.iter().map(|b| b.raw.clone()))
         .collect();
@@ -2257,10 +2275,13 @@ fn rename_superstring_rewrites_journal_and_nonjournal_refs() {
     )
     .unwrap();
 
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let _ = store.whole_graph().unwrap().backlinks("Testtest").unwrap();
 
-    pages::rename_page_expected(&store, "Testtest", "TesttestTest", None).unwrap();
+    hosted(&store, |store, host| {
+        pages::rename_page_expected(store, host, "Testtest", "TesttestTest", None)
+    })
+    .unwrap();
 
     let my = std::fs::read_to_string(root.join("pages").join("MyPage.md")).unwrap();
     let jr = std::fs::read_to_string(root.join("journals").join("2026_06_15.md")).unwrap();
@@ -2301,11 +2322,14 @@ fn rename_rewrites_nested_ref_in_open_page() {
     )
     .unwrap();
 
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let _ = store.page(&PageId::from("pages/Tine.md")).unwrap();
     let _ = store.whole_graph().unwrap().backlinks("Testtest").unwrap();
 
-    pages::rename_page_expected(&store, "Testtest", "TesttestTest", None).unwrap();
+    hosted(&store, |store, host| {
+        pages::rename_page_expected(store, host, "Testtest", "TesttestTest", None)
+    })
+    .unwrap();
 
     let tine = std::fs::read_to_string(root.join("pages").join("Tine.md")).unwrap();
     assert!(
@@ -2335,10 +2359,10 @@ fn trash_sync_conflict_refuses_real_pages() {
 
     let store = Store::open(&root, Default::default()).unwrap().0;
     // Refuses a genuine page — never trashes real data.
-    assert!(conflicts::trash_sync_conflict(&store, "pages/Real.md").is_err());
+    assert!(conflicts::trash_sync_conflict(&store, None, "pages/Real.md").is_err());
     assert!(pages.join("Real.md").exists(), "real page must survive");
     // Trashes an actual conflict copy.
-    conflicts::trash_sync_conflict(&store, &format!("pages/{conflict}")).unwrap();
+    conflicts::trash_sync_conflict(&store, None, &format!("pages/{conflict}")).unwrap();
     assert!(
         !pages.join(conflict).exists(),
         "conflict copy should be gone"
@@ -2474,6 +2498,7 @@ fn resolve_sync_conflict_merges_and_trashes() {
     crate::test_fixture_io::atomic_write(pages.join("Foo.md"), &changed_winner).unwrap();
     let err = conflicts::resolve_sync_conflict(
         &store,
+        None,
         win_rel,
         &conf_rel,
         &HashMap::new(),
@@ -2502,6 +2527,7 @@ fn resolve_sync_conflict_merges_and_trashes() {
     crate::test_fixture_io::atomic_write(pages.join(conflict_name), &changed_conflict).unwrap();
     let err = conflicts::resolve_sync_conflict(
         &store,
+        None,
         win_rel,
         &conf_rel,
         &HashMap::new(),
@@ -2532,6 +2558,7 @@ fn resolve_sync_conflict_merges_and_trashes() {
     let conflict_rev = crate::model::content_rev(conflict);
     conflicts::resolve_sync_conflict(
         &store,
+        None,
         win_rel,
         &conf_rel,
         &decisions,
@@ -2593,13 +2620,13 @@ fn page_symlinks_are_not_indexed_or_reconciled() {
     let (store, _, _) = Store::open(&root, Default::default()).unwrap();
     let before = store.whole_graph().unwrap();
     assert!(before
-        .inventory()
+        .inventory(tine_store::InventoryScope::All)
         .0
         .iter()
         .all(|entry| entry.name != "Secret"));
     let id = store.file_id(tine_store::Area::Pages, "Secret.md").unwrap();
     assert!(store.path_for_os_handoff(&id, false).is_err());
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(store.whole_graph().unwrap().rev(), before.rev());
     assert!(link.exists());
 

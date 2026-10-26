@@ -1,18 +1,28 @@
+import { focusOnMount } from "../focusOnMount";
 import { FailureBoundary } from "./FailureBoundary";
+import { msg, t, rawText, render as renderMessage, type UiText } from "../i18n";
+import { Rich } from "../i18n/Rich";
+import { youtubePlayerForTarget, registerYoutubePlayer, recordYoutubePlayback, unregisterYoutubePlayer, type YoutubePlayer } from "../youtubePlayer";
+export { youtubePlayerForTarget } from "../youtubePlayer";
 import { TableWrap } from "./TableWrap";
 import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
-import { setBoardGroupBy } from "../sheet/mutations";
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
-import { openPageInSidebar, openBlockInSidebar, pageIdentityKey, openQueryExport, switcherOpen } from "../ui";
+import { openPageInSidebar, openBlockInSidebar, openQueryExport, switcherOpen } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
+import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 import { bindingOwner, advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
-import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
-import { resolveBlockBatched } from "../resolveBatch";
-import { LiveRefGroup } from "./LiveRefGroup";
+import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
+import { createQueryFold } from "./macroFold";
+export { EmbedMacro } from "./EmbedMacro";
 import { QueryGroups } from "./QueryGroup";
-import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
+import { QueryDisplay } from "./QueryDisplay";
+import { queryBlockColumns } from "../queryResultColumns";
+import { startEditing } from "../editorController";
+import { collapseQueryResults } from "./QueryCollapse";
+import { QueryBuilder, createQueryRegistryAccess, type BuilderSession } from "./QueryBuilder";
 import { CrossingNotice } from "./CrossingNotice";
 import { SearchResultRow } from "./SearchResultRow";
 import { editEdnTitle, readEdnOptions } from "../editor/edn";
@@ -25,7 +35,6 @@ import {
   sourceOptions,
   sourceOriginal,
   sourcePrintDialect,
-  VIEW_KINDS,
   type ExecutionContext,
   type ExplainEmptyResult,
   type ParsedQuery,
@@ -41,8 +50,8 @@ import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
 import { QueryResultSections } from "./QueryResultSections";
-import { QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
-import type { PageKind, QueryHit, RefGroup } from "../types";
+import { QueryOgHint, QueryPageRows, QueryResultsRegion, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
+import type { QueryHit, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
 import { bothFamilies } from "../queryTwin";
 import { declaresCurrentPageInput, queryCurrentPage } from "../queryCurrentPage";
@@ -63,13 +72,10 @@ import {
 } from "./queryMacroSupport";
 export { boundedFeature, withoutHostBlock, PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY };
 import { QueryLegacyTable } from "./QueryLegacyTable";
-
-const QUERY_VIEW_LABEL: Record<QueryView, string> = {
-  search: "Search",
-  list: "List",
-  table: "Table",
-  board: "Board",
-};
+import { mainWindow } from "../windowRealm";
+import { QueryMacroActions } from "./QueryMacroActions";
+import { QueryResultTask } from "./QueryResultTask";
+import { resultTicket, resultsEpoch, resultsTicketCurrent } from "../queryResultsEpoch";
 
 // Collapsed state for query results, keyed by graph + rendered query identity.
 // A raw query-string key made unrelated dashboards across pages/graphs collide.
@@ -97,7 +103,7 @@ function saveCollapsed(key: string, v: boolean) {
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const sameJson = <T,>(a: T, b: T) => JSON.stringify(a) === JSON.stringify(b);
 const CURRENT_PAGE_RE = /<%\s*current page\s*%>/i;
-const BLOCK_CHANGED = "The block changed while saving. Try this edit again.";
+const BLOCK_CHANGED = msg("macro-block-changed");
 
 // Device-local dismissal keyed by graph (D-11): one read per graph binding,
 // shared by every crossing in this window (I-12/I-13).
@@ -125,7 +131,7 @@ function dismissCrossingNoticeForever(): void {
   void writeOwned(
     revisionOwner(crossingNoticePreference, revision, bindingOwner()),
     backend().setAppBool(CROSSING_NOTICE_KEY, true),
-  ).catch((error: unknown) => pushToast(`Couldn't save the notice preference: ${errorText(error)}`, "error"));
+  ).catch((error: unknown) => pushToast(msg("macro-macro-couldn-t-save-the-notice-preference", { value1: errorText(error) }), "error"));
 }
 export function resetCrossingNoticeForTests(): void {
   crossingNoticePrimed = undefined;
@@ -183,8 +189,13 @@ export function QueryMacro(props: {
    *  with `unsupportedLabel` to avoid showing the source. */
   strictAdvanced?: boolean;
   unsupportedLabel?: string;
-  // Render nothing when there are no results (the app-inserted journal agenda).
+  // Render nothing until there are results: the app-inserted journal agenda
+  // and config.edn's default journal queries (OG query.cljs: a built-in query
+  // with an empty result renders nothing).
   hideWhenEmpty?: boolean;
+  builtIn?: boolean;
+  /** App-inserted query from config.edn, with user-facing refusal copy. */
+  configQuery?: boolean;
 }): JSX.Element {
   return <FailureBoundary region="Query results"><QueryMacroContent {...props} /></FailureBoundary>;
 }
@@ -198,6 +209,9 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const sourceError = () => macroBody() === null ? "Query source could not be parsed. Edit the block text to repair the macro." : undefined;
   const macroName = (): string => macroBody()?.name ?? QUERY_MACRO_NAMES[0];
   const arg = () => macroBody()?.argument.trim() ?? "";
+  // Ask the engine: removing the last builder row can print `(and)` or leave
+  // only view directives. Those are the same no-condition query as blank text.
+  const emptyDraft = () => arg() === "" || reading()?.og_hint?.no_conditions === true;
   const hostProperties = createMemo<[string, string][]>(() => {
     const id = props.blockId;
     const node = id ? docNode(id) : undefined;
@@ -302,13 +316,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
 
   const currentPage = () => props.currentPage ?? (props.blockId ? docNode(props.blockId)?.page : undefined);
   const collapseKey = () => JSON.stringify([graphMeta()?.root ?? "", props.blockId ?? currentPage() ?? "global", arg()]);
-  const [collapseOverride, setCollapseOverride] = createSignal(loadCollapsed(collapseKey()));
-  const collapsed = () => collapseOverride() ?? (optionValues()?.collapsed ?? false);
-  const toggleCollapsed = () => {
-    const v = !collapsed();
-    setCollapseOverride(v);
-    saveCollapsed(collapseKey(), v);
-  };
+  const { collapsed, toggle: toggleCollapsed } = createQueryFold(loadCollapsed(collapseKey()), () => optionValues()?.collapsed ?? false,
+    () => props.blockId, (v) => saveCollapsed(collapseKey(), v));
 
   // A save anywhere in the graph bumps dataRev after 700 ms of quiet. Each
   // distinct expanded request costs one whole-graph evaluation per revision;
@@ -318,16 +327,27 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // 10k-graph 3/20-block save measurements are in RECEIPT-14Q4A.md.
   const runRequest = createMemo(() => {
     const query = runnable();
-    if (!query) return undefined;
+    if (!query || emptyDraft()) return undefined;
     const context = executionContext();
     const search = friendlySearch();
     const both = search === null && bothKinds();
-    const displayKey = JSON.stringify([graphEpoch(), query.query, query.view, context ?? null, search, collapsed(), both]);
-    const key = `${displayKey}\0${collapsed() ? "collapsed" : dataRev()}`;
+    // Authored options (title, collapsed, table) do not change the question.
+    // Keep the last adopted answer on screen through their save/publication;
+    // its original ticket still governs actions. Advanced execution reads the
+    // original source, so retain it in the identity (parse.rs::resolve_for_execution).
+    // Dialects resolve stored IR differently (OG drops an empty task clause,
+    // TQL evaluates it), so a dialect change always retires the shown answer.
+    const source = query.query.source;
+    const answerQuery = { ...query.query, source: source.kind === "advanced"
+      ? { kind: source.kind, original: source.original } : { kind: source.kind } };
+    const { view: _presentation, columns: _columns, group_by: _group, aggregates: _aggregates, ...answerView } = query.view;
+    const displayKey = JSON.stringify([graphEpoch(), answerQuery, answerView, context ?? null, search, collapsed(), both]);
+    // A collapsed count is never acted on: neither saves nor epochs rerun it.
+    const key = `${JSON.stringify([displayKey, query.query, query.view])}\0${collapsed() ? "collapsed" : `${dataRev()}\0${resultsEpoch()}`}`;
     return { query, context, search, displayKey, key, both };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const runOwners = {};
-  const [operation] = createResource(runRequest, async (request): Promise<QueryOperation | undefined> => {
+  const [operation] = createMembershipResource(runRequest, () => runRequest()?.displayKey ?? "", async (request): Promise<QueryOperation | undefined> => {
     const owner = latestOwner(runOwners, "run", graphOwner());
     const scope = `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
     if (request.search !== null) {
@@ -392,7 +412,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       matchedTotal: result.matched_total ?? null,
       both,
     };
-  });
+  }, (value, id) => !!value && groupsContainEdit(value.groups, id), () => !collapsed(), true);
   /** The last coherent answer; an errored run shows its error, not old rows. */
   const displayed = (): QueryOperation | undefined => {
     const current = runRequest();
@@ -400,6 +420,12 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     return current && landed?.requestKey === current.displayKey ? landed : undefined;
   };
   const groups = () => displayed()?.groups ?? [];
+  /** The shown answer is awaiting a settled rerun. Own saves can keep actions
+   * valid, but publication still delays adoption (queryResultsEpoch). */
+  const resultsBusy = () => {
+    const shown = displayed();
+    return !!shown && !collapsed() && (operation.loading || !resultsTicketCurrent(resultTicket(shown)));
+  };
   const pageRows = () => displayed()?.pages ?? null;
   // The run's OWN diagnostics (I-9): an invalid query returns zero rows plus
   // these, so they must render — "No results" alone would report a broken query
@@ -434,7 +460,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const ranEmpty = () =>
     !!displayed() && !operation.loading && total() === 0 && blockingDiagnostics().length === 0
     && displayed()?.report?.supported !== false;
-  const emptyMessage = () => (ranEmpty() ? "No results" : "Loading query results…");
+  const emptyMessage = () => (ranEmpty() ? t("macro-prose-no-results") : t("macro-prose-loading-query-results"));
 
   // Why empty? (Q14, N19): which top-level conjunct emptied the query, asked
   // only once the run actually came back empty.
@@ -464,10 +490,10 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   };
 
   // -- editing: every edit is printed by the engine and written back as bytes --
-  const [printError, setPrintError] = createSignal<string | null>(null);
+  const [printError, setPrintError] = createSignal<UiText | null>(null);
   const refuseChanged = () => {
     setPrintError(BLOCK_CHANGED);
-    pushToastUnique(BLOCK_CHANGED, "error");
+    pushToastUnique(msg("macro-block-changed"), "error");
     return false;
   };
   // Rewrite just THIS macro inside the owning block, targeted by the extent's
@@ -506,17 +532,26 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // express crosses to `{{tine-query}}` (and says so, §7.5). The bytes written
   // are the engine's; a refused print writes nothing and says why (I-4).
   const applyEdit = async (next: BuilderSession, displayEdit = false): Promise<boolean> => {
+    const startedInSheet = sheetOpen();
     const blockId = props.blockId;
     if (!blockId || !docNode(blockId)) return false;
     const rawAtStart = docNode(blockId).raw;
-    const previousDisplay = displayEdit ? new Map(displayPropertyPatch(reading()?.view ?? {})) : null;
+    const previousDisplay = displayEdit ? new Map(displayPropertyPatch(displayView())) : null;
     const previousGroup = displayEdit ? reading()?.view.group_by : undefined;
     const owner = bindingOwner(() => docNode(blockId)?.raw === rawAtStart);
     const current = macroName();
     let name = current;
     let dialect = macroPrintDialect(name);
-    let printed: Owned<string>;
-    try {
+    let printed: Owned<string> | undefined;
+    // **A display edit is not a filter conversion (§4.3.1)**: unless sort or sample
+    // (the view fields OG prints inside the query) change, re-emit the authored text.
+    const before = displayEdit ? reading()?.view : undefined;
+    if (before && sameJson(before.sort ?? [], next.view.sort ?? []) && before.sample === next.view.sample) try {
+      printed = await readOwned(owner, backend().printQuery(next.query, next.view, dialect, true));
+    } catch (error) {
+      if (!(error instanceof QueryPrintRefusedError && error.isNotApplicable)) { setPrintError(rawText(errorText(error))); return false; }
+    }
+    if (!printed) try {
       const expressible = await readOwned(owner, backend().queryOgExpressible(next.query, next.view));
       if (expressible.kind === "stale") {
         return refuseChanged();
@@ -534,17 +569,17 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
         printed = await readOwned(owner, backend().printQuery(next.query, next.view, dialect));
       }
     } catch (error) {
-      setPrintError(errorText(error));
+      setPrintError(rawText(errorText(error)));
       return false;
     }
     const node = docNode(blockId);
-    if (printed.kind === "stale" || !node) {
+    if (!printed || printed.kind === "stale" || !node) {
       return refuseChanged();
     }
     // A page that turned read-only while the print was in flight refuses the
     // write; report "not saved" so the sheet arms no focus (master 93ff682a3).
     if (!blockWritable(blockId)) {
-      setPrintError("This block is read-only. The query was not changed.");
+      setPrintError(msg("macro-query-read-only"));
       return false;
     }
     const target = targetMacro(node.raw);
@@ -575,14 +610,18 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       return true;
     });
     if (saved !== true) {
-      setPrintError("A graph rewrite is in progress. The query was not changed.");
+      setPrintError(msg("macro-query-rewrite"));
       return false;
     }
-    if (crossing) setCrossed(blockId, boundedFeature(argument));
+    if (crossing) setCrossed(blockId, boundedFeature(argument), startedInSheet);
     return true;
   };
   /** Display uses the same guarded print and undo unit as a filter edit. */
   const applyDisplay = (view: ViewSettings): Promise<boolean> => {
+    // Display rows can disappear or be replaced after their guarded save.
+    // Keep focus on the panel's stable completion control before that happens.
+    const panel = queryEl?.querySelector<HTMLElement>(".qc-panel");
+    if (panel?.contains(panel.ownerDocument.activeElement)) panel.querySelector<HTMLElement>(".qc-done")?.focus();
     const current = reading();
     if (current && view.view !== current.view.view
       && JSON.stringify({ ...view, view: undefined }) === JSON.stringify({ ...current.view, view: undefined })) {
@@ -597,7 +636,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // authored source verbatim, so renaming a partly understood query cannot
   // rewrite its filter.
   const [editingTitle, setEditingTitle] = createSignal(false);
-  const titleText = () => props.title ?? titleOption() ?? "Query";
+  const titleText = () => props.title ?? titleOption() ?? t("macro-prose-query");
   const titleEditable = () => !!props.blockId && props.title === undefined && !!reading();
   const setTitle = async (t: string) => {
     const blockId = props.blockId;
@@ -627,24 +666,39 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
         rewriteMacro(`{{${macroName()} ${printed.value}}}`, target);
         return true;
       });
-      setPrintError(saved === true ? null : "A graph rewrite is in progress. The query was not changed.");
+      setPrintError(saved === true ? null : msg("macro-query-rewrite"));
     } catch (error) {
       // I-4: a refused print is never swallowed; nothing is written.
-      setPrintError(errorText(error));
+      setPrintError(rawText(errorText(error)));
     }
   };
 
   // -- the §7.5 crossing notice ----------------------------------------------
   const [crossedTag, setCrossedTag] = createSignal<string | null>(null);
   const [crossedText, setCrossedText] = createSignal<string | null>(null);
+  const [crossedFromSheet, setCrossedFromSheet] = createSignal(false);
   // The notice moves between two hosts; its UI state lives here so a
   // re-parented notice keeps its checkbox and does not grab focus again (N3).
   const [noticeDontShow, setNoticeDontShow] = createSignal(false);
   const [noticeFocused, setNoticeFocused] = createSignal(false);
   const [sheetOpen, setSheetOpen] = createSignal(false);
-  const setCrossed = (blockId: string, changed: string | null) => {
+  const [editRequest, setEditRequest] = createSignal<{ n: number; tab: "filter" | "display" | "text" } | null>(null);
+  const [bulkFold, setBulkFold] = createSignal<{ n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> }>();
+  const advancedRegistry = createQueryRegistryAccess(() => isAdvanced() && editRequest()?.tab === "display");
+  let queryEl: HTMLDivElement | undefined;
+  const closeDisplay = () => {
+    setEditRequest(null);
+    queryEl?.querySelector<HTMLElement>(".qc-actions > summary")?.focus();
+  };
+  const requestEdit = (tab: "filter" | "display" | "text") => {
+    if (isAdvanced() && tab !== "display" && props.blockId) { startEditing(props.blockId); return; }
+    setEditRequest({ n: (editRequest()?.n ?? 0) + 1, tab });
+    if (isAdvanced()) queueMicrotask(() => queryEl?.querySelector<HTMLElement>(".qc-panel .qc-done")?.focus());
+  };
+  const setCrossed = (blockId: string, changed: string | null, fromSheet = false) => {
     primeCrossingNoticePreference();
     setCrossedText(changed);
+    setCrossedFromSheet(fromSheet);
     setNoticeDontShow(false);
     setNoticeFocused(false);
     setCrossedTag(`query:cross:${blockId}`);
@@ -666,14 +720,17 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       changed={crossedText() ?? undefined}
       dontShow={noticeDontShow()}
       onDontShowChange={setNoticeDontShow}
-      autoFocus={!noticeFocused()}
+      // A pending print can land after the user closes the panel or moves to
+      // another editor. Only continue focus while this query still owns it.
+      autoFocus={!noticeFocused() && (!crossedFromSheet() || sheetOpen())
+        && !!queryEl?.contains(queryEl.ownerDocument.activeElement)}
       onFocused={() => setNoticeFocused(true)}
       onUndo={() => {
         if (undo()) {
           dismissCrossing();
           return true;
         }
-        pushToastUnique("Undo is unavailable while the graph is being rewritten.", "error");
+        pushToastUnique(msg("macro-macro-undo-is-unavailable-while-the-graph-is-being-rewritten"), "error");
         return false;
       }}
       onKeep={dismissCrossing}
@@ -687,6 +744,14 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   };
   const showBuilder = () => !!props.blockId && !isAdvanced() && !!builderSession();
   const [paneStale, setPaneStale] = createSignal(false);
+  const effectiveDefaultColumns = createMemo(() => reading()?.query.anchor === "page"
+    ? [...new Set((pageRows() ?? []).flatMap(row => row.properties.map(([key]) => key)))]
+    : queryBlockColumns(groups()));
+  const displayView = (): ViewSettings => {
+    const view = reading()?.view ?? {};
+    return { ...view, columns: view.columns?.length || props.blockId && blockProperty(props.blockId, "tine.columns") !== null
+      ? view.columns : undefined };
+  };
 
   const globalSort = createMemo(() => (runnable()?.view.sort ?? []).length > 0);
   const queryGroupKey = (group: RefGroup, flat: boolean) =>
@@ -743,8 +808,14 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const stop = (e: MouseEvent) => e.stopPropagation();
   const arrow = (c: string) => (sortState()?.column === columnKey(c) ? (sortState()!.desc ? " ▼" : " ▲") : "");
 
+  // OG's journal sections have no pending shell (discussion #617). Keep an
+  // adopted answer during same-query reruns, but never reveal a new section
+  // before its first answer. Errors and unsupported queries remain visible.
   const hidden = () =>
-    props.hideWhenEmpty && !isAdvanced() && !!displayed() && total() === 0 && blockingDiagnostics().length === 0;
+    props.hideWhenEmpty && !loadError() && (!displayed() || (
+      total() === 0 && blockingDiagnostics().length === 0
+      && (!isAdvanced() || advInfo()?.supported === true)
+    ));
   const unsupportedAdvanced = () => {
     const info = advInfo();
     return isAdvanced() && info && (!info.supported || (props.strictAdvanced === true && (info.ignored ?? []).length > 0));
@@ -758,12 +829,12 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
         class="query-why-empty"
         onClick={(e) => { e.stopPropagation(); setExplainOpen(!explainOpen()); }}
       >
-        {explainOpen() ? "hide" : "why empty?"}
+        {explainOpen() ? t("macro-macro-hide") : t("macro-macro-why-empty")}
       </button>
       <Show when={explainOpen()}>
         <div class="query-why-empty-panel" onClick={stop}>
           <Show when={explained.loading}>
-            <span class="query-why-empty-pending">Checking…</span>
+            <span class="query-why-empty-pending">{t("macro-macro-checking")}</span>
           </Show>
           <Show when={explainNotice()}>
             {(notice) => <div class="query-why-empty-notice">{notice()}</div>}
@@ -771,7 +842,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
           <Show when={(explanation()?.rows.length ?? 0) > 0}>
             <TableWrap><table class="md-table query-why-empty-table">
               <thead>
-                <tr><th>Condition</th><th>Alone</th><th>Without it</th></tr>
+                <tr><th>{t("macro-macro-condition")}</th><th>{t("macro-macro-alone")}</th><th>{t("macro-macro-without-it")}</th></tr>
               </thead>
               <tbody>
                 <For each={explanation()!.rows}>
@@ -800,53 +871,56 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
 
   return (
     <Show when={!hidden()}>
-      <div class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}>
+      <div ref={queryEl} class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
+        aria-busy={resultsBusy() ? "true" : undefined}>
         <Switch>
           <Match when={unsupportedAdvanced()}>
             <div class="query-unsupported" role={props.unsupportedLabel ? "alert" : undefined}>
+              <Show when={props.configQuery} fallback={<>
               <Show
                 when={props.unsupportedLabel}
                 fallback={
                   <>
-                    Advanced (datalog) query not run: Tine cannot run{" "}
-                    {(advInfo()?.ignored ?? []).length > 0
-                      ? `these clauses (${(advInfo()?.ignored ?? []).join(", ")})`
-                      : "some of its clauses"}
-                    , and a partial answer would be wrong. <code>{`{{${props.body}}}`}</code>
+                    <Rich message={msg("macro-advanced-unsupported", { clauses: (advInfo()?.ignored ?? []).join(", "), hasClauses: (advInfo()?.ignored ?? []).length ? 1 : 0 })} />
+                    <code>{props.body}</code>
                   </>
                 }
               >
-                {(label) => <>{label()}: query contains unsupported clauses.</>}
+                {(label) => <>{t("macro-labeled-unsupported", { label: label() })}</>}
+              </Show>
+              <Show when={blockingDiagnostics().length > 0}>
+                <span class="query-diagnostics">{" "}{blockingDiagnostics().map((d) => d.message).join(" · ")}</span>
+              </Show>
+              </>}>
+                <strong>{props.title ?? renderMessage(msg("config-query-title"))}</strong>
+                <p>{renderMessage(msg("config-query-unsupported"))}</p>
+                <details>
+                  <summary>{renderMessage(msg("config-query-details"))}</summary>
+                  <p>{(advInfo()?.ignored ?? []).join(", ")}</p>
+                  <code>{`{{${props.body}}}`}</code>
+                  <p>{blockingDiagnostics().map((d) => d.message).join(" · ")}</p>
+                </details>
               </Show>
             </div>
           </Match>
           <Match when={true}>
-            <Show when={isAdvanced() && advInfo()?.supported}>
-              <div class="query-adv-note">
-                Advanced query — ran: {(advInfo()!.ran ?? []).join(", ") || "—"}
-              </div>
-            </Show>
             <div class="query-header">
-              <span
+              <ReferenceDisclosure
                 class="query-collapse"
-                classList={{ collapsed: collapsed() }}
-                title={collapsed() ? "Expand results" : "Collapse results"}
+                collapsed={collapsed()}
+                title={collapsed() ? t("macro-macro-expand-results") : t("macro-macro-collapse-results")}
                 onClick={(e) => {
                   e.stopPropagation();
                   toggleCollapsed();
                 }}
-              >
-                <svg viewBox="0 0 24 24" class="triangle">
-                  <path d="M8 5l8 7-8 7z" />
-                </svg>
-              </span>
+              />
               <Show
                 when={editingTitle()}
                 fallback={
                   <span
                     class="query-title"
                     classList={{ "query-title-editable": titleEditable() }}
-                    title={titleEditable() ? "Click to rename this query" : undefined}
+                    title={titleEditable() ? t("macro-macro-click-to-rename-this-query") : undefined}
                     onClick={(e) => {
                       if (titleEditable()) {
                         e.stopPropagation();
@@ -862,10 +936,10 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                   let canceled = false;
                   return (
                     <input
+                      ref={(input) => focusOnMount(input, true)}
                       class="query-title-input"
-                      autofocus
                       value={titleOption() ?? ""}
-                      placeholder="Query title"
+                      placeholder={t("macro-macro-query-title")}
                       onClick={(e) => e.stopPropagation()}
                       onKeyDown={(e) => {
                         e.stopPropagation();
@@ -886,57 +960,56 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                   );
                 })()}
               </Show>{" "}
-              {/* The builder sentence carries the count beside it; queries with
-                  no builder keep it here so the count never disappears. */}
-              <Show when={!showBuilder()}>
-                <span class="query-count">{total()}</span>
-              </Show>
-              <Show when={!isPublishedExport() && runnable() && displayed() && total() > 0}>
-                <button type="button" class="query-export-action" title="Export query results"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    openQueryExport({
+              <Show when={!reading()?.og_hint?.date_windows}><span class="query-count">{total()}</span></Show>
+              <Show when={!props.builtIn && !isPublishedExport() && runnable()}>
+                <QueryMacroActions current={runnable} groups={groups} pages={() => pageRows() ?? []}
+                  editable={!!props.blockId && blockWritable(props.blockId)} results={!!displayed() && total() > 0}
+                  edit={requestEdit}
+                  fold={blockFace() === "list" ? (collapsed) => {
+                    void collapseQueryResults(groups(), collapsed).then(epochs => {
+                      if (epochs) setBulkFold({ n: (bulkFold()?.n ?? 0) + 1, collapsed, epochs });
+                    });
+                  } : undefined}
+                  export={() => openQueryExport({
                       argument: executionArg() ?? arg(),
                       dialect: macroTextDialect(macroName()),
                       properties: hostProperties(),
                       currentPage: executionContext()?.current_page,
                       hostBlockId: props.blockId,
                       name: titleText(),
-                    });
-                  }}>Export…</button>
-              </Show>
-              <Show when={props.blockId && !isPublishedExport()}>
-                <div class="query-view-switcher" role="group" aria-label="Query view" onClick={stop}>
-                  <For each={VIEW_KINDS}>
-                    {(view) => (
-                      <button
-                        type="button"
-                        classList={{ active: currentView() === view }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setQueryView(view);
-                        }}
-                      >
-                        {QUERY_VIEW_LABEL[view]}
-                      </button>
-                    )}
-                  </For>
-                </div>
+                    })} />
               </Show>
             </div>
+            <Show when={isAdvanced() && editRequest()?.tab === "display"}>
+              <div class="qc-panel" onKeyDown={event => {
+                event.stopPropagation();
+                if (event.key === "Escape") { event.preventDefault(); closeDisplay(); }
+              }}>
+                <button type="button" class="qc-done" onClick={closeDisplay}>{t("query-calm-done")}</button>
+                {/* Which clauses Tine ran is editing context, not resting content (GH #502). */}
+                <Show when={advInfo()?.supported}>
+                  <div class="query-adv-note">
+                    {t("macro-advanced-ran", { clauses: (advInfo()!.ran ?? []).join(", ") || "—" })}
+                  </div>
+                </Show>
+                <QueryDisplay inline registry={advancedRegistry} view={displayView} apply={applyDisplay} defaultColumns={effectiveDefaultColumns} rowKind={() => reading()?.query.anchor ?? "block"} />
+              </div>
+            </Show>
             {/* The builder edits a FILTER; an authored advanced query keeps its
                 own editing path (raw text) — converting one is out of scope. */}
             <Show when={showBuilder()}>
               <QueryBuilder
+                inline
+                openRequest={editRequest}
                 session={builderSession}
                 onChange={applyEdit}
-                display={{ view: () => reading()?.view ?? {}, apply: applyDisplay,
+                display={{ view: displayView, apply: applyDisplay,
+                  defaultColumns: effectiveDefaultColumns,
                   formulas: () => [...formulasOf(hostProperties()).keys()] }}
                 paneDialect="tql"
                 blockId={props.blockId}
                 previewContext={executionContext}
                 both={props.blockId ? { on: bothKinds, set: setBothKinds } : undefined}
-                total={<span class="query-count">{total()}</span>}
                 onStale={setPaneStale}
                 onOpenChange={setSheetOpen}
                 notice={showCrossingNotice() && sheetOpen() ? crossingNotice : undefined}
@@ -945,32 +1018,46 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
             {/* §7.5, N3: one notice, inline while the sheet is shut and inside
                 the text pane while it is open — never both. */}
             <Show when={showCrossingNotice() && !sheetOpen()}>{crossingNotice()}</Show>
+            {/* D-18: a Logseq form that adds no condition is said out loud on
+                the query, with explicit rewrites saved like any builder edit. */}
+            <Show when={!isAdvanced() && reading()?.og_hint}>
+              {(hint) => (
+                <QueryOgHint
+                  hint={hint()}
+                  onRewrite={props.blockId && !isPublishedExport() && blockWritable(props.blockId)
+                    ? (query) => {
+                      const current = reading();
+                      if (current) void applyEdit({ query, view: current.view });
+                    }
+                    : undefined}
+                />
+              )}
+            </Show>
             <Show when={printError()}>
               {(message) => (
                 <div class="query-unsupported query-print-refused" role="alert">
-                  The query wasn't changed: {message()}
+                  {t("macro-query-unchanged", { detail: renderMessage(message()) })}
                 </div>
               )}
             </Show>
             <Show when={loadError()}>
               {(error) => (
                 <div class="query-unsupported" role="alert">
-                  Query couldn't be loaded: {errorText(error())}
+                  {t("macro-query-load-failed", { detail: errorText(error()) })}
                 </div>
               )}
             </Show>
-            <Show when={blockingDiagnostics().length > 0}>
+            <Show when={blockingDiagnostics().length > 0 && (!reading()?.og_hint?.date_windows || !reading()?.og_hint?.rewrites.length)}>
               <div class="query-unsupported query-diagnostics" role="alert">
-                <span class="query-diagnostics-lead">
-                  Tine didn't understand part of this query, so it returned no results:
-                </span>{" "}
-                {blockingDiagnostics().map((d) => d.message).join(" · ")}
+                <Rich message={msg("macro-query-diagnostics", { detail: blockingDiagnostics().map((d) => d.message).join(" · ") })}
+                  slots={{ lead: (children) => <span class="query-diagnostics-lead">{children}</span> }} />
               </div>
             </Show>
-            <Show when={!collapsed()}>
+            <Show when={emptyDraft()}><div class="query-empty">{t("query-calm-condition")}</div></Show>
+            <Show when={!collapsed() && !emptyDraft()}>
+              <QueryResultsRegion>
               <Show when={displayed()?.statistics}>
-                {(statistics) => <QueryStatisticsSummary statistics={statistics()} onClearGrouping={props.blockId && blockWritable(props.blockId) && !isPublishedExport()
-                  ? () => setBoardGroupBy(props.blockId!, "") : undefined} />}
+                {(statistics) => <QueryStatisticsSummary statistics={statistics()} />}
               </Show>
               <Switch>
                 <Match when={displayed()?.both}>
@@ -989,7 +1076,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                               rows={both().pages}
                               view={simpleView()}
                               groupBy={runnable()?.view.group_by ?? blockProperty(props.blockId ?? "", "tine.group-by") ?? undefined}
-                              columns={runnable()?.view.columns}
+                              columns={displayView().columns}
                             />
                           ),
                         },
@@ -1003,8 +1090,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                           // macro's OWN anchor, so a page-anchored macro's blocks get none.
                           body: (
                             <Switch fallback={
-                              <Show when={globalSort()} fallback={<QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} />}>
-                                <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} />
+                              <Show when={globalSort()} fallback={<QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} bulkFold={bulkFold()} />}>
+                                <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} bulkFold={bulkFold()} />
                               </Show>
                             }>
                               <Match when={sheetFace() && !!props.blockId && blockFace() === "table"}>
@@ -1034,7 +1121,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                         rows={pages()}
                         view={simpleView()}
                         groupBy={runnable()?.view.group_by ?? blockProperty(props.blockId ?? "", "tine.group-by") ?? undefined}
-                        columns={runnable()?.view.columns}
+                        columns={displayView().columns}
                       />
                     </Show>
                   )}
@@ -1057,7 +1144,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                   </Show>
                 </Match>
                 <Match when={currentView() === "search"}>
-                  <div class="query-search-results" role="list" aria-label="Search results" onClick={stop}>
+                  <div class="query-search-results" role="list" aria-label={t("macro-macro-search-results")} onClick={stop}>
                     <Show when={searchPresentationHits().length > 0} fallback={empty()}>
                       <For each={searchPresentationHits()}>
                         {(hit) => (
@@ -1111,6 +1198,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                                   openInNewTab({ kind: "page", name: bh.page, pageKind: bh.kind, block: blockDtoExternalId(bh.block), ...(bh.path ? { path: bh.path } : {}) });
                                 })}
                               >
+                                <QueryResultTask row={{ id: blockHit().block.id, page: blockHit().page, kind: blockHit().kind,
+                                  path: blockHit().path, dto: blockHit().block }} />
                                 <SearchResultRow
                                   page={blockHit().page}
                                   breadcrumb={blockHit().block.breadcrumb ?? []}
@@ -1133,11 +1222,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                         <Show
                           when={globalSort()}
                           fallback={
-                            <QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} />
+                            <QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} bulkFold={bulkFold()} />
                           }
                         >
                           {/* Sorted: the engine's flat global order, one group per run of rows. */}
-                          <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} />
+                          <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} bulkFold={bulkFold()} />
                         </Show>
                       }
                     >
@@ -1146,6 +1235,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                   </Show>
                 </Match>
               </Switch>
+              </QueryResultsRegion>
             </Show>
           </Match>
         </Switch>
@@ -1154,14 +1244,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   );
 }
 
-interface YoutubePlayer {
-  seekTo(seconds: number, allowSeekAhead: boolean): void;
-  getCurrentTime(): number;
-  destroy?(): void;
-}
-
 interface YoutubeApi {
-  Player: new (iframeId: string, options: { events?: { onReady?: () => void } }) => YoutubePlayer;
+  Player: new (iframeId: string, options: { events?: { onReady?: () => void; onStateChange?: (event: { data: number }) => void } }) => YoutubePlayer;
 }
 
 type YoutubeWindow = Window & {
@@ -1169,7 +1253,6 @@ type YoutubeWindow = Window & {
   onYouTubeIframeAPIReady?: () => void;
 };
 
-const youtubePlayers = new Map<string, YoutubePlayer>();
 let youtubeApiLoading: Promise<YoutubeApi | null> | null = null;
 const YOUTUBE_API_SCRIPT_ID = "tine-youtube-iframe-api";
 
@@ -1197,7 +1280,8 @@ function loadYoutubeApi(): Promise<YoutubeApi | null> {
         settle(ytWindow.YT);
       }
     };
-    let script = document.getElementById(YOUTUBE_API_SCRIPT_ID) as HTMLScriptElement | null;
+    // The IFrame API is one process-wide script in the main realm's <head>.
+    let script = mainWindow.document.getElementById(YOUTUBE_API_SCRIPT_ID) as HTMLScriptElement | null;
     if (!script) {
       script = document.createElement("script");
       script.id = YOUTUBE_API_SCRIPT_ID;
@@ -1210,18 +1294,6 @@ function loadYoutubeApi(): Promise<YoutubeApi | null> {
   return youtubeApiLoading;
 }
 
-// OG's get-player selects the last YouTube iframe whose DOM position precedes
-// the target (compareDocumentPosition(..., target) has FOLLOWING set), then
-// looks up that iframe's registered handle (og-1.0.0 6e7afa8eb,
-// extensions/video/youtube.cljs:85-101).
-export function youtubePlayerForTarget(target: Node): YoutubePlayer | undefined {
-  if (typeof document === "undefined" || typeof Node === "undefined") return undefined;
-  const iframe = Array.from(document.getElementsByTagName("iframe"))
-    .filter((node) => node.src.includes("youtube.com"))
-    .filter((node) => (node.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)
-    .at(-1);
-  return iframe ? youtubePlayers.get(iframe.id) : undefined;
-}
 
 // The OG generator floors getCurrentTime before it formats the macro; with no
 // registered/ready player it produces NOTHING — the command is a no-op, no
@@ -1298,20 +1370,25 @@ export function VideoMacro(props: { body: string }): JSX.Element {
     void loadYoutubeApi().then((api) => {
       if (!mounted || !api) return;
       try {
-        const registered = new api.Player(iframeId, { events: { onReady: () => undefined } });
+        const registered = new api.Player(iframeId, { events: {
+          onReady: () => undefined,
+          onStateChange: (event) => {
+            if (mounted && event.data === 1) recordYoutubePlayback(iframeId);
+          },
+        } });
         if (!mounted) {
           registered.destroy?.();
           return;
         }
         player = registered;
-        youtubePlayers.set(iframeId, registered);
+        registerYoutubePlayer(iframeId, registered);
       } catch {
         // Offline, blocked, or malformed API responses leave the timestamp label usable.
       }
     });
     onCleanup(() => {
       mounted = false;
-      if (youtubePlayers.get(iframeId) === player) youtubePlayers.delete(iframeId);
+      unregisterYoutubePlayer(iframeId, player);
       player?.destroy?.();
     });
   });
@@ -1330,7 +1407,7 @@ export function VideoMacro(props: { body: string }): JSX.Element {
       }
     >
       <div class="embed-iframe-wrap">
-        <iframe id={isYoutubeEmbed() ? iframeId : undefined} class="embed-iframe" src={embed()!} allowfullscreen title="video" {...embedAttrs()} />
+        <iframe id={isYoutubeEmbed() ? iframeId : undefined} class="embed-iframe" src={embed()!} allowfullscreen title={t("macro-macro-video")} {...embedAttrs()} />
       </div>
     </Show>
   );
@@ -1348,7 +1425,7 @@ export function TweetMacro(props: { body: string }): JSX.Element {
   );
 }
 
-// `{{youtube-timestamp <seconds>}}` seeks the OG-selected on-page YouTube player.
+// `{{youtube-timestamp <seconds>}}` seeks the shared selected YouTube player.
 export function YoutubeTimestamp(props: { body: string }): JSX.Element {
   const secs = () => {
     const raw = props.body.replace(/^youtube-timestamp\s*/i, "").trim();
@@ -1366,7 +1443,7 @@ export function YoutubeTimestamp(props: { body: string }): JSX.Element {
   return (
     <a
       class="youtube-ts"
-      title="Seek the preceding YouTube video"
+      title={renderMessage(msg("media-youtube-timestamp-seek"))}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -1393,7 +1470,7 @@ export function ClozeMacro(props: { body: string }): JSX.Element {
     <span
       class="cloze"
       classList={{ revealed: revealed() }}
-      title={revealed() ? "Click to hide" : "Click to reveal"}
+      title={revealed() ? t("macro-macro-click-to-hide") : t("macro-macro-click-to-reveal")}
       onClick={(e) => {
         e.stopPropagation();
         setRevealed((v) => !v);
@@ -1412,59 +1489,10 @@ export function ClozeMacro(props: { body: string }): JSX.Element {
 export function ZoteroMacro(props: { body: string }): JSX.Element {
   const arg = () => props.body.replace(/^zotero-(imported|linked)-file\s*/i, "").trim();
   return (
-    <span class="zotero-ref" title="Zotero integration isn't supported in Tine">
-      📎 {arg() || "Zotero attachment"}
+    <span class="zotero-ref" title={t("macro-macro-zotero-integration-isn-t-supported-in-tine")}>
+      📎 {arg() || t("macro-macro-zotero-attachment")}
     </span>
   );
 }
 
 // A {{embed ((uuid))}} or {{embed [[Page]]}} block.
-export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Element {
-  const linkDepth = useContext(LinkDepthContext);
-  if (linkDepth > MAX_DEPTH_OF_LINKS) return <LinkDepthWarning />;
-
-  const target = () => props.body.replace(/^embed\s*/i, "").trim();
-  const pageTarget = () => /^\[\[([^\]]+)\]\]$/.exec(target())?.[1];
-  const selfPageEmbed = () => {
-    const sourcePage = props.blockId ? docNode(props.blockId)?.page : undefined;
-    const targetPage = pageTarget();
-    return !!sourcePage
-      && pageByName(sourcePage)?.kind === "page"
-      && !!targetPage
-      && pageIdentityKey(sourcePage) === pageIdentityKey(targetPage);
-  };
-
-  const [data] = createResource(
-    () => selfPageEmbed() ? null : `${target()} ${graphEpoch()} ${dataRev()}`,
-    async () => {
-    const t = target();
-    const blockRef = /^\(\(([^)]+)\)\)$/.exec(t);
-    if (blockRef) {
-      const g = await resolveBlockBatched(blockRef[1]);
-      // embedId = the embedded block's own id, so its ref-count badge is hidden
-      // inside the embed (OG hide-block-refs-count?); its children keep theirs.
-      return g ? { page: g.page, kind: g.kind, blocks: g.blocks, embedId: g.blocks[0]?.id } : null;
-    }
-    const pageRef = /^\[\[([^\]]+)\]\]$/.exec(t);
-    if (pageRef) {
-      // Backend miss → the virtual in-app Guide, matched by bare title (the embed
-      // carries no source context to remap the name). No-op for real graphs.
-      const result = await readOwned(graphOwner(), backend().getPage(pageRef[1], "page"));
-      if (result.kind === "stale") return null;
-      const p = result.value ?? resolveGuidePageDto(pageRef[1]);
-      return p ? { page: p.name, kind: "page" as PageKind, blocks: p.blocks, embedId: undefined } : null;
-    }
-    return null;
-  });
-
-  const embedded = () => readOr(data, undefined, "embed");
-  return (
-    <div class="embed-block">
-      <Show when={!selfPageEmbed()}>
-        <Show when={embedded()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
-          <LiveRefGroup page={embedded()!.page} kind={embedded()!.kind} blocks={embedded()!.blocks} embedId={embedded()!.embedId} hostBlockId={props.blockId} surface="embed" />
-        </Show>
-      </Show>
-    </div>
-  );
-}

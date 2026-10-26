@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
-use tauri::{Runtime, State, WebviewWindow};
+use tauri::{Manager, Runtime, State, WebviewWindow};
 use tine_store::Store;
 
 pub(crate) type WindowKey = String;
@@ -20,7 +20,9 @@ pub(crate) struct CaptureGraphBinding {
 }
 
 pub(crate) struct GraphSlot {
-    pub(crate) store: Store,
+    /// Shared with the binding's page host. An adopting binding takes it
+    /// over (`HostRetirement::adopt`), and this slot then leaves it open.
+    pub(crate) store: Arc<Store>,
     /// Latest `((` request per transport lane for this window binding.
     pub(crate) block_search_lanes: tine_graph_features::search::SearchLanes,
     pub(crate) root_key: PathBuf,
@@ -42,13 +44,61 @@ pub(crate) struct GraphSlot {
     pub(crate) concord_ledger: std::sync::OnceLock<crate::concord_ledger::ConcordLedger>,
     /// Focus rescans waiting for this binding's dispatch thread (family 10).
     pub(crate) rescan: crate::watcher::RescanCursor,
+    /// The binding's page host (STEP3 §6–7). Census writers run under its
+    /// reservations while one runs (`running`). Its write lock is the
+    /// binding's host transition gate (plan v3 S8): a backup restore holds
+    /// it across stop, file restore and relaunch, and retirement and
+    /// adoption take it, so each waits for the others' outcome.
+    ///
+    /// Lock order (REVIEW-3b-P1 B1): registry, then this gate, then the
+    /// retirement map, then the host's own state. Nothing holding this gate
+    /// takes the registry; a writer checks revocation from the gate's own
+    /// state (`host_slot`).
+    pub(crate) host: RwLock<PageHostSlot>,
+    /// The graph's owner lease (CLI PROTOCOL §3.1): the owner lock and the
+    /// command endpoint, taken with a fresh host and kept with it. Paused
+    /// at retirement, moved by `HostRetirement::adopt`, released by
+    /// retirement once the host has stopped. `None` when the platform or
+    /// filesystem gives no arbitration (the graph opens without endpoint).
+    pub(crate) owner: Mutex<Option<crate::owner::lease::Lease>>,
 }
 
+/// Where the binding's page host stands. `Off` before the open starts it,
+/// and after a restore whose fresh host could not start (writers then run
+/// as with no host).
+#[derive(Default)]
+pub(crate) enum PageHostSlot {
+    #[default]
+    Off,
+    Running(tine_store::PageHost),
+    /// An open adopted this binding's Store and host
+    /// (`HostRetirement::adopt`): a worker that captured the slot before
+    /// gets the stale-binding outcome, never the no-host arm on the adopted
+    /// Store (REVIEW-3b-P1 B1), and the slot no longer closes the Store.
+    Revoked,
+}
+
+impl PageHostSlot {
+    /// The running host, which census writers reserve their pages from.
+    /// Reached only through `GraphSlot::host_slot`, which refuses a revoked
+    /// slot.
+    pub(crate) fn running(&self) -> Option<&tine_store::PageHost> {
+        match self {
+            Self::Running(host) => Some(host),
+            Self::Off | Self::Revoked => None,
+        }
+    }
+}
+
+/// A revoked slot's outcome: the existing stale-binding refusal (scenario:
+/// a command queued before its window closed and the root was reopened).
+pub(crate) const STALE_BINDING: &str = "stale-graph-binding";
+
 impl GraphSlot {
-    pub(crate) fn new(store: Store, root_key: PathBuf) -> Self {
+    pub(crate) fn new(store: impl Into<Arc<Store>>, root_key: PathBuf) -> Self {
         static NEXT_BINDING: AtomicU64 = AtomicU64::new(1);
         Self {
-            store,
+            store: store.into(),
             block_search_lanes: tine_graph_features::search::SearchLanes::default(),
             root_key,
             binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -60,7 +110,21 @@ impl GraphSlot {
             conflict_queue: Default::default(),
             concord_ledger: Default::default(),
             rescan: Default::default(),
+            host: Default::default(),
+            owner: Default::default(),
         }
+    }
+
+    /// The host slot, read for a census writer's whole call: a restore
+    /// cannot take the host out from under the writer's reservation, and a
+    /// writer waits for a restore's outcome (S8). A revoked slot refuses
+    /// here, under the gate, before the writer starts (B1).
+    pub(crate) fn host_slot(&self) -> Result<std::sync::RwLockReadGuard<'_, PageHostSlot>, String> {
+        let slot = self.host.read().unwrap();
+        if matches!(*slot, PageHostSlot::Revoked) {
+            return Err(STALE_BINDING.into());
+        }
+        Ok(slot)
     }
 
     pub(crate) fn begin_startup_warm(&self) -> u64 {
@@ -147,20 +211,29 @@ pub(crate) fn graph_meta(slot: &GraphSlot) -> tine_core::model::GraphMeta {
 pub(crate) static SLOT_CLOSE_PROBE: Mutex<Option<Box<dyn Fn(&Path) + Send>>> = Mutex::new(None);
 
 impl Drop for GraphSlot {
+    /// The host stops before its Store closes (plan v3 §3). A slot that
+    /// held a running host was retired first (`HostRetirement`), so a host
+    /// still here is a test fixture's or an unbound open's: dropping it is a
+    /// crash stop, which keeps every written draft.
     fn drop(&mut self) {
         #[cfg(test)]
         if let Some(probe) = SLOT_CLOSE_PROBE.lock().unwrap().as_ref() {
             probe(&self.root_key);
         }
-        self.store.close();
+        let host = self.host.get_mut().unwrap_or_else(|e| e.into_inner());
+        if !matches!(std::mem::take(host), PageHostSlot::Revoked) {
+            self.store.close();
+        }
     }
 }
 
 /// Release the graph of a window that was destroyed (or never got built);
-/// true when no graph window remains. The Store closes (~200 ms for a Ready graph) after the
-/// registry lock is released, so other windows' graph commands do not wait on
-/// it (as `load_graph` does for a displaced graph). Cost: one registry write
-/// plus the released Store's close on the calling thread.
+/// true when no graph window remains. A slot with a page host goes to its
+/// retirement (`HostRetirement`); otherwise the Store closes (~200 ms for a
+/// Ready graph) after the registry lock is released, so other windows' graph
+/// commands do not wait on it (as `load_graph` does for a displaced graph).
+/// Cost: one registry write plus the released Store's close on the calling
+/// thread.
 pub(crate) fn release_window_graph(graphs: &RwLock<GraphRegistry>, window: &str) -> bool {
     let (released, empty) = {
         let mut registry = graphs.write().unwrap();
@@ -171,10 +244,104 @@ pub(crate) fn release_window_graph(graphs: &RwLock<GraphRegistry>, window: &str)
     empty
 }
 
+/// The exit the last graph window's close leaves pending (plan v3 §3,
+/// REVIEW-3b-P1 B2, manager decision G6). It first waits up to `bound` for
+/// every retiring page host to stop. It then decides under `graph_load`,
+/// which an open holds from its routing through adoption and bind: it exits
+/// only if no graph is bound, none is retiring, and no graph window exists
+/// (`windows`, which leaves out the window whose close left this exit). An
+/// open that adopted or bound meanwhile, an open still inside its load, or
+/// a window created during the wait (loaded or not) cancels the exit; the
+/// last close after it leaves its own. Whether it exited, or the roots whose
+/// hosts are still saving past `bound`: Tine never exits over them, and
+/// keeps their hosts (STEP3-DESIGN B-QA).
+pub(crate) fn exit_when_unowned(
+    state: &AppState,
+    bound: Duration,
+    windows: impl FnOnce() -> bool,
+    exit: impl FnOnce(),
+) -> Result<bool, Vec<PathBuf>> {
+    let retirement = state.graphs.read().unwrap().retirement.clone();
+    if let Err(stuck) = retirement.wait_idle(bound) {
+        crate::debug::diag("page-host-retirement-stuck-at-exit");
+        return Err(stuck);
+    }
+    let _opens = state.graph_load.lock().unwrap();
+    let unowned = {
+        let graphs = state.graphs.read().unwrap();
+        graphs.len() == 0 && graphs.retirement.is_idle()
+    };
+    let exits = unowned && !windows();
+    if exits {
+        exit();
+    }
+    Ok(exits)
+}
+
+/// Whether one graph root contains the other: two Stores and hosts must
+/// never hold the same page files.
+pub(crate) fn roots_overlap(a: &Path, b: &Path) -> bool {
+    a.starts_with(b) || b.starts_with(a)
+}
+
+fn still_saving(root: &Path, saving: &Path) -> String {
+    format!(
+        "graph {} overlaps graph {}, which is still saving its pages; open it again once that graph has closed",
+        root.display(),
+        saving.display()
+    )
+}
+
+/// Before `window` opens `root` (REVIEW-3b-P1 F6): a window switching to a
+/// root nested in or enclosing its own graph's releases that graph first, so
+/// its page host retires (saving what it holds) before the open's host
+/// starts; the open then waits for it like any retiring overlap. Two hosts
+/// never hold the same page files. True when it released.
+pub(crate) fn release_own_overlap(
+    graphs: &RwLock<GraphRegistry>,
+    window: &str,
+    root: &Path,
+) -> bool {
+    let released = {
+        let mut registry = graphs.write().unwrap();
+        let overlaps = registry
+            .slot(window)
+            .is_some_and(|slot| slot.root_key != root && roots_overlap(&slot.root_key, root));
+        if !overlaps {
+            return false;
+        }
+        registry.remove(window)
+    };
+    // A slot with no host closes its Store here, outside the registry lock.
+    drop(released);
+    true
+}
+
+/// Before an open of `root`: wait, outside the registry lock, up to `bound`
+/// for each retiring graph whose root overlaps it (another root: the same
+/// root is adopted) to save and close. `waiting` runs once, with that
+/// graph's root, when the open has to wait. Past the bound, the refusal
+/// `bind` would give.
+pub(crate) fn wait_for_retiring_overlaps(
+    graphs: &RwLock<GraphRegistry>,
+    root: &Path,
+    bound: Duration,
+    waiting: impl FnOnce(&Path),
+) -> Result<(), String> {
+    let retirement = graphs.read().unwrap().retirement.clone();
+    retirement
+        .wait_overlapping(root, bound, waiting)
+        .map_err(|saving| still_saving(root, &saving))
+}
+
 #[derive(Default)]
 pub(crate) struct GraphRegistry {
     by_window: HashMap<WindowKey, Arc<GraphSlot>>,
     by_root: HashMap<PathBuf, WindowKey>,
+    /// Owns every released slot that holds a page host until its Store has
+    /// closed. A slot leaves the registry and enters it under the registry
+    /// lock, so no opener sees its root unowned meanwhile (plan v3 §3, S2).
+    pub(crate) retirement: crate::host_retirement::HostRetirement,
 }
 
 impl GraphRegistry {
@@ -197,24 +364,28 @@ impl GraphRegistry {
         self.by_window.len()
     }
 
-    /// Bind `slot` to `window`. A replaced binding is revoked and returned,
-    /// so the caller drops it after releasing the registry lock: closing a
-    /// Ready Store takes ~200 ms (master abf7af831884).
+    /// Bind `slot` to `window`. A replaced binding is revoked and retired,
+    /// or returned when it holds no page host, so the caller drops it after
+    /// releasing the registry lock: closing a Ready Store takes ~200 ms
+    /// (master abf7af831884).
     pub(crate) fn bind(
         &mut self,
         window: WindowKey,
         slot: Arc<GraphSlot>,
     ) -> Result<Option<Arc<GraphSlot>>, String> {
         for (root, owner) in &self.by_root {
-            if owner != &window
-                && (root.starts_with(&slot.root_key) || slot.root_key.starts_with(root))
-            {
+            if owner != &window && roots_overlap(root, &slot.root_key) {
                 return Err(format!(
                     "graph {} overlaps graph {} already owned by window {owner}",
                     slot.root_key.display(),
                     root.display()
                 ));
             }
+        }
+        // A retiring host still owns its root (plan v3 §3, S2); the open
+        // waited for it first (`wait_for_retiring_overlaps`).
+        if let Some(saving) = self.retirement.overlapping(&slot.root_key, true) {
+            return Err(still_saving(&slot.root_key, &saving));
         }
         let displaced = self.by_window.insert(window.clone(), slot.clone());
         if let Some(old) = &displaced {
@@ -226,7 +397,9 @@ impl GraphRegistry {
             self.by_root.remove(&old.root_key);
         }
         self.by_root.insert(slot.root_key.clone(), window);
-        Ok(displaced)
+        Ok(displaced
+            .filter(|old| !Arc::ptr_eq(old, &slot))
+            .and_then(|old| self.retirement.retire(old)))
     }
 
     /// Release `window`'s binding only if it is still the one an open with
@@ -249,11 +422,13 @@ impl GraphRegistry {
         }
     }
 
+    /// Unbind `window`. Its slot is retired, or returned when it holds no
+    /// page host, for the caller to drop outside the registry lock.
     pub(crate) fn remove(&mut self, window: &str) -> Option<Arc<GraphSlot>> {
         let slot = self.by_window.remove(window)?;
         slot.cancel_background();
         self.by_root.remove(&slot.root_key);
-        Some(slot)
+        self.retirement.retire(slot)
     }
 }
 
@@ -380,8 +555,8 @@ impl<'r, 'de: 'r, R: Runtime> CommandArg<'de, R> for GraphContext<'r, R> {
         };
         let state: State<'r, AppState> = command
             .message
-            .state_ref()
-            .try_get()
+            .webview_ref()
+            .try_state()
             .ok_or_else(|| InvokeError::from("AppState is not managed"))?;
         let window = WebviewWindow::<R>::from_command(command)?;
         Ok(Self {
@@ -417,7 +592,7 @@ pub(crate) fn slot_for_context(ctx: &GraphContext<'_>) -> Result<Arc<GraphSlot>,
 /// the frontend issues these commands through its ordered lane (`ORDERED_COMMANDS`
 /// in src/orderedWrites.ts) and the shared state each touches keeps its own lock
 /// (store writer, SETTINGS_LOCK, DRAFTS_LOCK, NOTICES_LOCK, WORKSPACES_LOCK).
-/// Exemplar: commands.rs `save_pages`. A panicking job returns its join error.
+/// Exemplar: commands/concord.rs `resolve_sync_conflict`. A panicking job returns its join error.
 pub(crate) async fn off_ui<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
@@ -437,7 +612,7 @@ pub(crate) fn slot_for_bound_window(
     let slot = slot_for_window(state, window)?;
     let generation = binding_generation.ok_or("missing-graph-binding")?;
     if generation != slot.binding_generation {
-        return Err("stale-graph-binding".into());
+        return Err(STALE_BINDING.into());
     }
     Ok(slot)
 }
@@ -458,11 +633,11 @@ pub(crate) fn capture_quick_switch_slot(
         .ok_or("no graph bound for quick capture")?;
     let generation = binding_generation.ok_or("missing-graph-binding")?;
     if generation != capture.binding_generation {
-        return Err("stale-graph-binding".into());
+        return Err(STALE_BINDING.into());
     }
     let slot = slot_for_window(state, &capture.target)?;
     if slot.binding_generation != capture.binding_generation {
-        return Err("stale-graph-binding".into());
+        return Err(STALE_BINDING.into());
     }
     Ok(slot)
 }
@@ -470,6 +645,64 @@ pub(crate) fn capture_quick_switch_slot(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// G6: every exit is the revocable waiter's. The last window's
+    /// `close_graph_window` and the `Destroyed` hook each release the
+    /// window's graph (which retires its running host) before they leave the
+    /// exit to `exit_after_retirement`, the one place that exits the process.
+    #[test]
+    fn every_exit_goes_through_the_retirement_waiter() {
+        let commands = include_str!("commands.rs");
+        let close = &commands[commands.find("fn close_graph_window").unwrap()..];
+        let close = &close[..close.find("\n}\n").unwrap()];
+        let release = close.find("release_window_graph(").unwrap();
+        assert!(
+            release < close.find("exit_after_retirement(").unwrap() && !close.contains("exit(")
+        );
+        let lib = include_str!("lib.rs");
+        let destroyed = &lib[lib.find("WindowEvent::Destroyed => {").unwrap()..];
+        let destroyed = &destroyed[..destroyed.find("_ => {}").unwrap()];
+        let release = destroyed.find("release_window_graph(").unwrap();
+        assert!(release < destroyed.find("exit_after_retirement(").unwrap());
+        let waiter = &lib[lib.find("fn exit_after_retirement").unwrap()..];
+        let waiter = &waiter[..waiter.find("\n}\n").unwrap()];
+        assert!(waiter.contains("exit_when_unowned(") && waiter.contains("app.exit(0)"));
+        // Census over every production source (test modules cut off).
+        let mut exits = vec![];
+        let mut dirs = vec![std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(dir).unwrap().map(Result::unwrap) {
+                let path = entry.path();
+                if path.is_dir() {
+                    dirs.push(path);
+                    continue;
+                }
+                let name = path.to_string_lossy().into_owned();
+                if !name.ends_with(".rs") || name.ends_with("_tests.rs") {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                let production = source
+                    .match_indices("#[cfg(test)]\nmod ")
+                    .find(|(at, _)| {
+                        let line = source[*at + 13..].lines().next().unwrap_or("");
+                        line.ends_with(" {")
+                    })
+                    .map_or(source.as_str(), |(at, _)| &source[..at]);
+                exits.extend(production.matches(".exit(").map(|_| name.clone()));
+            }
+        }
+        assert_eq!(
+            exits.len(),
+            1,
+            "G6: an exit outside exit_after_retirement ({exits:?}) skips a running host's retirement; exemplar lib.rs exit_after_retirement"
+        );
+        assert!(exits[0].ends_with("src/lib.rs"));
+        assert!(
+            lib.contains("std::process::exit(0)"),
+            "the GH #455 Exit arm is the one other exit"
+        );
+    }
 
     fn graph(root: &Path) -> Arc<GraphSlot> {
         std::fs::create_dir_all(root.join("pages")).unwrap();
@@ -566,7 +799,7 @@ mod tests {
             .store(7, std::sync::atomic::Ordering::Release);
 
         let binding = old.binding_generation;
-        old.store.scan_refresh().unwrap();
+        old.store.refresh(tine_store::Depth::Stamps).unwrap();
 
         assert_eq!(old.binding_generation, binding);
         assert_eq!(old.root_key, base);
@@ -589,7 +822,7 @@ mod tests {
         let old = graph(&base);
         let mut registry = GraphRegistry::default();
         registry.bind("main".into(), Arc::clone(&old)).unwrap();
-        old.store.scan_refresh().unwrap();
+        old.store.refresh(tine_store::Depth::Stamps).unwrap();
         assert_eq!(
             registry.slot("main").unwrap().binding_generation,
             old.binding_generation

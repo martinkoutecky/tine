@@ -6,9 +6,20 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages::{self, RenameOutcome};
-use tine_store::{PageId, RenameMap, Store, TxOutcome};
+use tine_store::{PageId, RenameMap, Store, TitleRebind, TxOutcome};
 
-fn graph(label: &str, files: &[(&str, &str)]) -> (PathBuf, Store) {
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
+fn graph(label: &str, files: &[(&str, &str)]) -> (PathBuf, std::sync::Arc<Store>) {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-rename-markers-{label}-{}-{}",
@@ -26,7 +37,7 @@ fn graph(label: &str, files: &[(&str, &str)]) -> (PathBuf, Store) {
     for (rel, body) in files {
         fs::write(root.join(rel), body).unwrap();
     }
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     (root, store)
 }
 
@@ -35,6 +46,7 @@ const CONFLICTED: &str =
 
 #[test]
 fn rename_skips_marker_bearing_referrers_and_reports_them() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph(
         "referrer",
         &[
@@ -43,7 +55,10 @@ fn rename_skips_marker_bearing_referrers_and_reports_them() {
             ("pages/Clean.md", "- clean sees [[Alpha]]\n"),
         ],
     );
-    let report = pages::rename_or_merge_page(&store, "Alpha", "Beta", None, None, &[]).unwrap();
+    let report = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Alpha", "Beta", None, None, &[])
+    })
+    .unwrap();
     assert_eq!(report.outcome, RenameOutcome::Renamed);
     assert_eq!(
         fs::read_to_string(root.join("pages/Conflicted.md")).unwrap(),
@@ -70,6 +85,7 @@ fn rename_skips_marker_bearing_referrers_and_reports_them() {
 /// descendant that moves keeps its bytes exactly.
 #[test]
 fn namespace_rename_also_skips_marker_bearing_referrers_and_moves_them_verbatim() {
+    let _integration_guard = crate::integration_lock();
     let conflicted = "- intro\n<<<<<<< HEAD\n- [[Parent]] and [[Parent/Child]]\n=======\n- [[Parent/Child]] only\n>>>>>>> branch\n";
     let child = "- child of [[Parent]]\n<<<<<<< HEAD\n- a\n=======\n- b\n>>>>>>> x\n";
     let (root, store) = graph(
@@ -80,8 +96,10 @@ fn namespace_rename_also_skips_marker_bearing_referrers_and_moves_them_verbatim(
             ("pages/Conflicted.md", conflicted),
         ],
     );
-    let report =
-        pages::rename_or_merge_page(&store, "Parent", "Ancestor", None, None, &[]).unwrap();
+    let report = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Parent", "Ancestor", None, None, &[])
+    })
+    .unwrap();
     assert_eq!(
         fs::read_to_string(root.join("pages/Conflicted.md")).unwrap(),
         conflicted
@@ -107,11 +125,18 @@ fn namespace_rename_also_skips_marker_bearing_referrers_and_moves_them_verbatim(
 /// file is refused whoever asks; the bytes stay.
 #[test]
 fn the_store_refuses_a_reference_rewrite_inside_a_marker_bearing_file() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph("backstop", &[("pages/Conflicted.md", CONFLICTED)]);
     let id = PageId::from("pages/Conflicted.md");
     let (_, rev) = store.read(&id.file(), None).unwrap();
     let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
-    tx.rewrite_refs(&id, rev, &RenameMap(vec![("alpha".into(), "Beta".into())]));
+    tx.rewrite_refs(
+        &id,
+        rev,
+        None,
+        &RenameMap(vec![("alpha".into(), "Beta".into())]),
+        TitleRebind::Keep,
+    );
     assert!(matches!(tx.commit(), TxOutcome::NotCommitted { .. }));
     assert_eq!(
         fs::read_to_string(root.join("pages/Conflicted.md")).unwrap(),

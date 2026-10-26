@@ -1,8 +1,18 @@
+import { msg, render, t } from "../i18n";
 // Friendly search metadata, membership and evidence come from tine-search via wasm.
 // Initialize the app parser before calling this synchronous door. Parsing costs
 // O(query bytes + bounded compilation); membership O(text × terms); evidence
 // O(text × needle scalars), capped by limit. Invalid programs match nothing.
 import { search_query_json, search_matches, search_spans_json, search_substring_spans_json } from "../render/wasm/lsdoc_wasm.js";
+
+// Deferred catalog messages; property getters resolve in the consuming computation.
+const UI_MESSAGES = {
+  "editor-contains-both-terms": msg("editor-contains-both-terms"),
+  "editor-contains-either-term": msg("editor-contains-either-term"),
+  "editor-contains-foo-excludes-draft": msg("editor-contains-foo-excludes-draft"),
+  "editor-matches-adjacent-words": msg("editor-matches-adjacent-words"),
+  "editor-case-sensitive-regular-expression": msg("editor-case-sensitive-regular-expression"),
+};
 
 interface Term { text: string; negated: boolean; quoted: boolean }
 interface SearchSource { query: string; removeAccents: boolean; simple: string | null }
@@ -50,11 +60,11 @@ export function matchHighlights(m: SearchMatcher, text: string, limit = 24): Sou
 }
 
 export const SEARCH_SYNTAX = [
-  { example: "foo bar", description: "contains both terms", match: "bar then foo", miss: "foo only" },
-  { example: "foo OR bar", description: "contains either term", match: "bar only", miss: "neither" },
-  { example: "foo -draft", description: "contains foo, excludes draft", match: "foo ready", miss: "foo draft" },
-  { example: '"exact phrase"', description: "matches adjacent words", match: "an exact phrase here", miss: "exact other phrase" },
-  { example: "/[A-Z]{3}/", description: "case-sensitive regular expression", match: "ABC", miss: "abc" },
+  { example: "foo bar", get description() { return render(UI_MESSAGES["editor-contains-both-terms"]); }, match: "bar then foo", miss: "foo only" },
+  { example: "foo OR bar", get description() { return render(UI_MESSAGES["editor-contains-either-term"]); }, match: "bar only", miss: "neither" },
+  { example: "foo -draft", get description() { return render(UI_MESSAGES["editor-contains-foo-excludes-draft"]); }, match: "foo ready", miss: "foo draft" },
+  { example: '"exact phrase"', get description() { return render(UI_MESSAGES["editor-matches-adjacent-words"]); }, match: "an exact phrase here", miss: "exact other phrase" },
+  { example: "/[A-Z]{3}/", get description() { return render(UI_MESSAGES["editor-case-sensitive-regular-expression"]); }, match: "ABC", miss: "abc" },
 ] as const;
 
 function quoteDsl(value: string): string {
@@ -68,7 +78,7 @@ function quoteDsl(value: string): string {
 export function friendlySearchToDsl(query: string): { dsl: string; error: string | null } {
   const matcher = parseSearchQuery(query);
   if (matcher.kind === "invalid") return { dsl: "", error: matcher.error };
-  if (matcher.kind === "empty") return { dsl: "", error: "Add at least one positive search term." };
+  if (matcher.kind === "empty") return { dsl: "", error: t("query-search-positive-term") };
   if (matcher.kind === "regex") {
     return { dsl: `(content-regex ${quoteDsl(matcher.pattern)})`, error: null };
   }

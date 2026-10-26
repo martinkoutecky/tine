@@ -2,9 +2,21 @@ use std::fs;
 use tine_core::model::PageKind;
 use tine_store::{EditKind, PageId, Resolved, SaveBase, SaveOutcome, Store};
 
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
 #[cfg(unix)]
 #[test]
 fn path_saved_under_another_case_opens_disk_spelling() {
+    let _integration_guard = crate::integration_lock();
     use std::os::unix::fs::symlink;
 
     let root = std::env::temp_dir().join(format!("tine-case-path-{}", std::process::id()));
@@ -26,6 +38,7 @@ fn path_saved_under_another_case_opens_disk_spelling() {
 #[cfg(unix)]
 #[test]
 fn nonportable_graph_text_path_is_outside_page_scope() {
+    let _integration_guard = crate::integration_lock();
     let root = std::env::temp_dir().join(format!("tine-portable-scope-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("pages")).unwrap();
@@ -47,6 +60,7 @@ fn nonportable_graph_text_path_is_outside_page_scope() {
 
 #[test]
 fn title_property_owns_page_name_through_store() {
+    let _integration_guard = crate::integration_lock();
     let root = std::env::temp_dir().join(format!("tine-title-identity-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("pages")).unwrap();
@@ -84,7 +98,7 @@ fn title_property_owns_page_name_through_store() {
         "title:: Renamed\n\n- body\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(matches!(
         store.whole_graph().unwrap().resolve("Renamed", false),
         Resolved::Existing { .. }
@@ -136,6 +150,7 @@ fn title_property_owns_page_name_through_store() {
 
 #[test]
 fn ordinary_page_outside_standard_directories_is_discoverable() {
+    let _integration_guard = crate::integration_lock();
     let root = std::env::temp_dir().join(format!("tine-outside-pages-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("pages")).unwrap();
@@ -190,7 +205,7 @@ fn ordinary_page_outside_standard_directories_is_discoverable() {
     )
     .unwrap();
     fs::write(root.join("Top Level.md"), "- top\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(matches!(
         store.whole_graph().unwrap().resolve("Later", false),
         Resolved::Existing { .. }
@@ -213,6 +228,7 @@ fn ordinary_page_outside_standard_directories_is_discoverable() {
 
 #[test]
 fn filename_owner_wins_over_a_title_claimant() {
+    let _integration_guard = crate::integration_lock();
     let root = std::env::temp_dir().join(format!("tine-title-claimants-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("pages")).unwrap();
@@ -231,6 +247,7 @@ fn filename_owner_wins_over_a_title_claimant() {
 
 #[test]
 fn safe_new_filename_and_legacy_existing_path_keep_master_bytes() {
+    let _integration_guard = crate::integration_lock();
     let root = std::env::temp_dir().join(format!("tine-safe-filenames-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("pages")).unwrap();
@@ -320,6 +337,7 @@ fn safe_new_filename_and_legacy_existing_path_keep_master_bytes() {
 /// a bullet-looking line inside a fence is content, not the first block.
 #[test]
 fn page_name_agrees_with_the_outline_preamble() {
+    let _integration_guard = crate::integration_lock();
     let root = std::env::temp_dir().join(format!("tine-title-outline-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("pages")).unwrap();
@@ -366,6 +384,7 @@ fn page_name_agrees_with_the_outline_preamble() {
 /// is not the page's title, so nothing binds it to the page name.
 #[test]
 fn rename_keeps_a_heading_blocks_title_property() {
+    let _integration_guard = crate::integration_lock();
     let root =
         std::env::temp_dir().join(format!("tine-title-heading-rename-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
@@ -376,8 +395,11 @@ fn rename_keeps_a_heading_blocks_title_property() {
         "# Heading\ntitle:: Physical\n\n- body\n",
     )
     .unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
-    tine_graph_features::pages::rename_page_expected(&store, "Physical", "Moved", None).unwrap();
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    hosted(&store, |host| {
+        tine_graph_features::pages::rename_page_expected(&store, host, "Physical", "Moved", None)
+    })
+    .unwrap();
     assert_eq!(
         fs::read_to_string(root.join("pages/Moved.md")).unwrap(),
         "# Heading\ntitle:: Physical\n\n- body\n"

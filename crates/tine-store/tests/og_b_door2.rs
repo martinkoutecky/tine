@@ -3,6 +3,7 @@ use tine_store::{EditKind, PageId, SaveBase, SaveOutcome, Store};
 
 #[test]
 fn org_page_drawers_and_directives_contribute_backlinks_but_prose_does_not() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     for (name, raw) in [
@@ -57,6 +58,7 @@ fn org_page_drawers_and_directives_contribute_backlinks_but_prose_does_not() {
 
 #[test]
 fn page_icons_use_the_file_format_and_parser_property_ownership() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     for (name, raw) in [
@@ -85,6 +87,7 @@ fn page_icons_use_the_file_format_and_parser_property_ownership() {
 
 #[test]
 fn saving_org_conflict_marker_examples_preserves_the_literal_and_allows_the_edit() {
+    let _integration_guard = crate::integration_lock();
     for newline in ["\n", "\r\n"] {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("pages")).unwrap();
@@ -132,6 +135,7 @@ fn saving_org_conflict_marker_examples_preserves_the_literal_and_allows_the_edit
 
 #[test]
 fn plain_references_never_match_an_unaccented_prefix_of_an_nfd_grapheme() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     std::fs::write(
@@ -152,6 +156,7 @@ fn plain_references_never_match_an_unaccented_prefix_of_an_nfd_grapheme() {
 
 #[test]
 fn org_real_conflicts_beside_literal_examples_are_inventory_and_resolution_candidates() {
+    let _integration_guard = crate::integration_lock();
     use std::collections::HashMap;
     use tine_graph_features::conflicts;
     let dir = tempfile::tempdir().unwrap();
@@ -177,6 +182,7 @@ fn org_real_conflicts_beside_literal_examples_are_inventory_and_resolution_candi
         .collect();
     conflicts::resolve_vcs_marker_conflict(
         &store,
+        None,
         "pages/Real.org",
         &decisions,
         &reviewed.diff.base_rev,

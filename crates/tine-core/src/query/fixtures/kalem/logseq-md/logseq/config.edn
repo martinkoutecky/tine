@@ -1,0 +1,19 @@
+;; Logseq's configuration of the corpus graph, as Logseq 0.10 writes it,
+;; shortened.
+{:meta/version 1
+ :preferred-format :markdown
+ :preferred-workflow :now
+ :hidden ["/private"]
+ :default-templates {:journals "Daily"}
+ :journal/page-title-format "MMM do, yyyy"
+ :journal/file-name-format "yyyy_MM_dd"
+ :feature/enable-timetracking? true
+ :ui/show-brackets? true
+ :property-pages/enabled? true
+ :property/separated-by-commas #{:related}
+ :block-hidden-properties #{:public}
+ :shortcuts {}
+ :commands []
+ :macros {"poem" "Rose is $1, violet's $2."}
+ :graph/settings {:orphan-pages? true}
+ :file/name-format :triple-lowbar}

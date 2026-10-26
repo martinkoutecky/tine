@@ -1,9 +1,11 @@
 //! Rule 8 census of Tauri page-content writers and their kind-taking store path.
 
 fn body<'a>(source: &'a str, name: &str) -> &'a str {
-    let signature = format!("fn {name}(");
+    let signature = format!("fn {name}");
     let start = source
-        .find(&signature)
+        .match_indices(&signature)
+        .find(|(start, _)| source[*start + signature.len()..].starts_with(['(', '<']))
+        .map(|(start, _)| start)
         .unwrap_or_else(|| panic!("missing writer {name}"));
     let open = source[start..].find('{').unwrap() + start;
     let mut depth = 0;
@@ -38,14 +40,13 @@ fn production(source: &str) -> &str {
 
 /// Every graph-writing Store entry in `source` names its edit kind:
 /// `transaction(None)` or a kind-less `restore` would write pages outside
-/// the Rule 8 census, and `save_pages` belongs to the page-save front door.
+/// the Rule 8 census.
 fn store_entries_take_a_kind(source: &str) -> Result<(), String> {
     let squash = |text: &str| text.split_whitespace().collect::<String>();
     let source = squash(production(source));
     for (entry, kind_taking) in [
         (".transaction(", ".transaction(Some(tine_store::EditKind::"),
         (".restore(", ".restore(tine_store::EditKind::"),
-        (".save_pages(", "\0never"),
     ] {
         let (calls, kinded) = (
             source.matches(entry).count(),
@@ -85,17 +86,11 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
     const BACKUP_SNAPSHOT: &str = include_str!("backup.rs");
     const PAGES: &str = include_str!("../../crates/tine-graph-features/src/pages.rs");
     const CONFLICTS: &str = include_str!("../../crates/tine-graph-features/src/conflicts.rs");
-    const LIVE: &str = include_str!("../../crates/tine-graph-features/src/live_conflict.rs");
     const PDF: &str = include_str!("../../crates/tine-graph-features/src/pdf.rs");
     const GUIDE: &str = include_str!("../../crates/tine-graph-features/src/guide.rs");
     const JOURNALS: &str = include_str!("../../crates/tine-graph-features/src/journals.rs");
     const FEATURES: &str = include_str!("../../crates/tine-graph-features/src/lib.rs");
     let routes = [
-        ("save_pages", "tine_graph_features::pages::save_pages"),
-        (
-            "delete_page",
-            "tine_graph_features::pages::delete_page_expected",
-        ),
         (
             "rename_page",
             "tine_graph_features::pages::rename_or_merge_page",
@@ -137,17 +132,13 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             "tine_graph_features::conflicts::resolve_vcs_marker_conflict",
         ),
         (
-            "resolve_live_conflict",
-            "tine_graph_features::live_conflict::resolve_live_conflict",
-        ),
-        (
             "resolve_duplicate_journal_day",
             "tine_graph_features::conflicts::resolve_duplicate_journal_day",
         ),
     ];
     assert_eq!(
         routes.len() + concord_routes.len(),
-        14,
+        11,
         "OG-RULES Rule 8: update the page-writer census; exemplar src-tauri/src/commands.rs"
     );
     for (name, route) in routes {
@@ -157,15 +148,12 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         assert!(calls(body(CONCORD, name), route), "OG-RULES Rule 8: {name} changed its page-write route; exemplar src-tauri/src/commands/concord.rs");
     }
     let destinations = [
-        (PAGES, "save_pages", "store.save_pages(&prepared)"),
+        // A rename's transaction is `commit_rename` (a retained rename under
+        // the page host's reservation; a single page's rename is the host's).
+        (PAGES, "rename_page_after_inventory", "commit_rename("),
         (
             PAGES,
-            "delete_page_expected",
-            "transaction(Some(tine_store::EditKind::DeletePage))",
-        ),
-        (
-            PAGES,
-            "rename_page_after_inventory",
+            "commit_rename",
             "transaction(Some(tine_store::EditKind::RenamePage))",
         ),
         (
@@ -183,14 +171,37 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             "create_if_absent",
             "transaction(Some(tine_store::EditKind::ReplacePage))",
         ),
+        // The migration's transaction is `migrate_one`, one per eligible
+        // proposal (under a page host's reservation of its two pages).
+        (JOURNALS, "migrate_journal_filenames", "migrate_one("),
         (
             JOURNALS,
-            "migrate_journal_filenames",
+            "migrate_one",
+            "migration_transaction(",
+        ),
+        (
+            JOURNALS,
+            "migrate_hosted",
+            "migration_transaction(",
+        ),
+        (
+            JOURNALS,
+            "migration_transaction",
             "transaction(Some(tine_store::EditKind::RenamePage))",
         ),
         (
             FEATURES,
             "trash_current",
+            "trash_transaction(",
+        ),
+        (
+            JOURNALS,
+            "trash_journal_file",
+            "crate::trash_transaction(",
+        ),
+        (
+            FEATURES,
+            "trash_transaction",
             "transaction(Some(tine_store::EditKind::DeletePage))",
         ),
         // Both two-file folds (a sync copy, a duplicate journal day) write
@@ -207,15 +218,38 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             "resolve_vcs_marker_conflict",
             "tx.save_page(&[tine_store::EditKind::ReplacePage], &page, SaveBase::ResolvingMarkers(rev)",
         ),
-        (LIVE, "resolve_live_conflict", "tx.save_page(&[kind], &page, base"),
         (
             PDF,
             "write_highlights",
-            "tx.save_page(&[tine_store::EditKind::ReplacePage",
+            "annotation_steps(",
         ),
+        (PDF, "annotation_steps", "let mut kinds = vec![tine_store::EditKind::ReplacePage];"),
+        (PDF, "annotation_steps", "kinds.push(tine_store::EditKind::DeletePage)"),
+        (PDF, "annotation_steps", "tx.save_page(&kinds,"),
     ];
     for (source, name, marker) in destinations {
         assert!(calls(body(source, name), marker), "OG-RULES Rule 8: {name} must reach a kind-taking store entry; exemplar crates/tine-graph-features/src/pages.rs");
+    }
+    // The hosted branch consumes that same builder through read-only plan,
+    // whose declared kinds reach PageHost::apply (the store census checks took).
+    for (source, name, marker) in [
+        (GUIDE, "create_if_absent", "transaction().plan()"),
+        (JOURNALS, "migrate_hosted", ".plan()"),
+        (JOURNALS, "trash_journal_file", "crate::retained::plan("),
+        (PAGES, "rename_file_to_page", "crate::retained::plan("),
+        (PAGES, "merge_pages", "crate::retained::plan("),
+        (CONFLICTS, "fold_pair", "crate::retained::plan("),
+        (
+            CONFLICTS,
+            "resolve_vcs_marker_conflict",
+            "crate::retained::plan(",
+        ),
+        (PDF, "write_highlights", "crate::retained::plan("),
+    ] {
+        assert!(
+            calls(body(source, name), marker),
+            "OG-RULES Rule 8: {name}'s hosted branch must plan its kind-taking transaction"
+        );
     }
     assert!(calls(
         body(BACKUP, "restore_backup"),
@@ -237,9 +271,15 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
 
 #[test]
 fn writer_guard_rejects_a_missing_kind_path() {
-    let altered = "fn delete_page_expected() { store.transaction(None); }";
+    let altered = "fn trash_current() { store.transaction(None); }";
     assert!(!calls(
-        body(altered, "delete_page_expected"),
+        body(altered, "trash_current"),
+        "transaction(Some(tine_store::EditKind::DeletePage))"
+    ));
+    let generic =
+        "fn trash_transaction<'a>() { store.transaction(Some(tine_store::EditKind::DeletePage)); }";
+    assert!(calls(
+        body(generic, "trash_transaction"),
         "transaction(Some(tine_store::EditKind::DeletePage))"
     ));
 }
@@ -251,8 +291,6 @@ fn backup_census_rejects_a_writer_without_a_kind() {
     assert!(store_entries_take_a_kind(kindless).is_err());
     let restore = "fn r() { store.restore(files, None) }";
     assert!(store_entries_take_a_kind(restore).is_err());
-    let front_door = "fn r() { store.save_pages(&prepared) }";
-    assert!(store_entries_take_a_kind(front_door).is_err());
     let kinded = "fn r() { store.transaction(Some(tine_store::EditKind::ReplacePage)) }";
     assert!(store_entries_take_a_kind(kinded).is_ok());
     let test_only = "fn r() {}\n#[cfg(test)]\nmod tests { fn t() { store.transaction(None); } }";

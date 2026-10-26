@@ -5,7 +5,7 @@ import { pageWritable } from "./properties";
 import { pushUndo } from "../history";
 import { produce } from "solid-js/store";
 import { reassignPage } from "./moves";
-import { persistTogether, refuseConflictedMove } from "../save/engine";
+import { capturePages, persistTransfer, refuseConflictedMove } from "../host/wiring";
 
 // ---------------------------------------------------------------------------
 // Carry unfinished tasks forward (B)
@@ -36,15 +36,17 @@ function collectTopOpenTasks(id: string, acc: string[]) {
  *  processed in the given order and each batch is appended, so passing days
  *  newest→oldest puts the newest on top. `keepContext` true moves each top-level
  *  block that contains an open task whole; false pulls out just the open-task
- *  subtrees. Returns the number of blocks moved. Today + every fromPage must be
- *  loaded into the working set first. */
+ *  subtrees. Returns the number of blocks moved and whether the host took the
+ *  move (a refused move is restored, so it is not reported as carried). Today +
+ *  every fromPage must be loaded into the working set first. */
 export function carryUnfinished(
   fromPages: string[],
   keepContext: boolean,
   header: string | null
-): number {
+): { moved: number; persisted: Promise<boolean> } {
+  const none = { moved: 0, persisted: Promise.resolve(true) };
   const today = journalTitle(appNow());
-  if (!pageWritable(today) || fromPages.some((page) => pageByName(page) && !pageWritable(page))) return 0;
+  if (!pageWritable(today) || fromPages.some((page) => pageByName(page) && !pageWritable(page))) return none;
   type Item = { id: string; from: string; parent: string | null };
   const plan: Item[] = [];
   for (const fp of fromPages) {
@@ -61,10 +63,11 @@ export function carryUnfinished(
       for (const id of ids) plan.push({ id, from: fp, parent: doc.byId[id].parent });
     }
   }
-  if (!plan.length) return 0;
+  if (!plan.length) return none;
   const sources = [...new Set(plan.map((item) => item.from))];
-  if (refuseConflictedMove([today, ...sources])) return 0;
+  if (refuseConflictedMove([today, ...sources])) return none;
   pushUndo("carry", [today, ...new Set(plan.map((i) => i.from))]);
+  const before = capturePages([today, ...sources]);
   setDoc(
     produce((s) => {
       const todayPage = s.pages.find((p) => p.name === today);
@@ -103,6 +106,6 @@ export function carryUnfinished(
       todayPage.roots.push(...carried);
     })
   );
-  void persistTogether([today, ...sources], ["move-blocks", "insert-blocks", "delete-blocks"], sources.map((source) => [source, today] as const));
-  return plan.length;
+  const persisted = persistTransfer(before, ["move-blocks", "insert-blocks", "delete-blocks"], sources.map((source) => [source, today] as const));
+  return { moved: plan.length, persisted };
 }

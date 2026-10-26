@@ -207,7 +207,12 @@ try {
   await page.keyboard.press("Escape");
   await editor.waitFor({ state: "detached" });
   if (PLATFORM === "desktop") {
-    await tasksBlock.getByRole("button", { name: "Table", exact: true }).click();
+    // The calm query block keeps its view choice in one place: ⋯ → View.
+    await tasksBlock.locator(".qc-actions > summary").first().click();
+    await page.getByRole("button", { name: "View", exact: true }).click();
+    await tasksBlock.locator('.qc-panel [aria-label="Query view"]').getByRole("button", { name: "table", exact: true }).click();
+    await tasksBlock.locator(".qc-panel .qc-done").click();
+    await tasksBlock.locator(".qc-panel").waitFor({ state: "detached" });
   }
   await page.locator(".sheet-table").waitFor();
   await tasksBlock.locator(".sheet-table .sheet-cell").filter({ hasText: /^DONE$/ }).waitFor();

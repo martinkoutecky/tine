@@ -149,8 +149,8 @@ describe("GH #161 successful left-navigation boundary", () => {
     };
 
     try {
-      // Positive synchronous destinations, including same-page navigation and a
-      // path-backed All Pages row, all close only through the shared callback.
+      // Positive synchronous destinations, including same-page navigation and
+      // the full All pages view, close through the shared callback.
       openPage("Before journals", "page");
       armLeft();
       let before = completion.mock.calls.length;
@@ -173,17 +173,10 @@ describe("GH #161 successful left-navigation boundary", () => {
 
       armLeft();
       before = completion.mock.calls.length;
-      dispatch(findText(root, ".nav-section-header", "ALL PAGES"));
-      await expectNotCompleted(before);
-      expect(sidebarOpen()).toBe(true);
-      const pathRow = await vi.waitFor(() => findText(root, ".nav-page", "A path target"));
-      dispatch(pathRow);
+      dispatch(findText(root, ".nav-section-header", "All pages"));
       await expectCompleted(before);
-      expect(route()).toMatchObject({
-        kind: "page",
-        name: "A path target",
-        path: "pages/nested/a-path-target.md",
-      });
+      expect(route()).toMatchObject({ kind: "all-pages" });
+      expect(root.textContent).not.toContain("A path target");
 
       armLeft();
       before = completion.mock.calls.length;
@@ -195,27 +188,21 @@ describe("GH #161 successful left-navigation boundary", () => {
       await expectCompleted(before);
       expect(route()).toMatchObject({ kind: "page", name: "Namespace" });
 
-      // Disclosures and search are not navigation completion. Namespace-node
+      // Disclosures are not navigation completion. Namespace-node
       // disclosure is exercised separately from its adjacent page label.
       armLeft();
       before = completion.mock.calls.length;
       dispatch(root.querySelector('[data-sidebar-section="favorites"]')!);
       dispatch(root.querySelector('[data-sidebar-section="recent"]')!);
-      dispatch(findText(root, ".nav-section-header", "ALL PAGES"));
       dispatch(findText(root, ".nav-section-header", "NAMESPACES"));
       await expectNotCompleted(before);
       expect(sidebarOpen()).toBe(true);
 
-      // Re-open both lists; the oversized resource exposes the +more/search row.
-      dispatch(findText(root, ".nav-section-header", "ALL PAGES"));
+      // Namespace disclosure remains independent of All pages navigation.
       dispatch(findText(root, ".nav-section-header", "NAMESPACES"));
       const namespaceToggle = await vi.waitFor(() => root.querySelector<HTMLElement>(".ns-node-toggle")!);
       dispatch(namespaceToggle);
-      const more = await vi.waitFor(() => root.querySelector<HTMLElement>(".nav-page-more")!);
-      dispatch(more);
       await expectNotCompleted(before);
-      expect(sidebarOpen()).toBe(true);
-      closeSwitcher();
 
       // Modified rows preserve the semantic surface they opened: Shift replaces
       // the left drawer with the right drawer; middle/new-tab and context menu

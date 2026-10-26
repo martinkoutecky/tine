@@ -8,7 +8,7 @@ import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
-import { anyTaskFilter, encodePropertyLeaf, betweenFilter, journalFilter, pageRefFilter, propertyFilter, taskFilter } from "../editor/queryBuilder";
+import { anyTaskFilter, encodePropertyLeaf, betweenFilter, journalFilter, namespaceFilter, onPageFilter, pageRefFilter, propertyFilter, taskFilter } from "../editor/queryBuilder";
 import { diagnosticFor, PropertyValueCell } from "./querySheetParts";
 import type { Filter, ParsedQuery, RegistrySnapshot } from "../editor/queryIr";
 
@@ -1096,6 +1096,26 @@ describe("GH #619: Any status, In a journal page, no advanced chip for builder s
       const row = sheet.querySelector(".qs-row")!;
       expect(row.querySelector(".qs-field")!.textContent).toContain("In a journal page");
       expect(row.textContent).not.toMatch(/2000|-2000y|\+2000y/);
+    } finally {
+      builder.dispose();
+    }
+  });
+
+  it("reads a page row as 'Page is X', never 'On page on page X' (GH #619 c6)", async () => {
+    const builder = mountBuilder({
+      kind: "and",
+      items: [onPageFilter("BugTasks"), { kind: "not", inner: onPageFilter("Other") }, namespaceFilter("Projects")],
+    });
+    try {
+      const sheet = builder.open();
+      await settle();
+      const rows = [...sheet.querySelectorAll(".qs-row")].map((row) =>
+        [".qs-field", ".qs-op", ".qs-value"].map((cell) => row.querySelector(cell)!.textContent!.replace(/[▾\s]+$/, "").trim()));
+      expect(rows).toEqual([
+        ["Page", "is", "BugTasks"],
+        ["Page", "is not", "Other"],
+        ["Page", "is in namespace", "Projects"],
+      ]);
     } finally {
       builder.dispose();
     }

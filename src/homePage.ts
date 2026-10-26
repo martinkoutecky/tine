@@ -1,8 +1,10 @@
+import { msg } from "./i18n";
 // Graph home page: the ONE answer to "which page is home" (I-12). OG reads
 // config.edn `:default-home {:page "..."}` (state/get-default-home) and keeps it
 // only while that page exists (container.cljs `get-default-home-if-valid`); the
 // :home route then redirects there, else shows the Journals feed. `g h` and
-// graph open both land here. Nothing is ever created for a missing page.
+// graph open without a saved session both land here. Nothing is ever created
+// for a missing page.
 import { backend } from "./backend";
 import { graphMeta } from "./graphSession";
 import { isJournalTitle } from "./journal";
@@ -28,7 +30,10 @@ export type HomeOutcome = "opened" | "unresolved" | "stale";
  *  intent changed during the lookup. A name in the graph's journal title format
  *  resolves as that journal. "In place" matches master (GH #245/#276): it
  *  replaces the focused tab's route even when the tab is pinned (history keeps
- *  a Back entry), and on graph open it replaces the restored session tab.
+ *  a Back entry). Graph open uses this only without a readable saved session;
+ *  restored tabs retain their own routes (internal card 3x4). OG 0.10.9's
+ *  container.cljs `main-content` resolves default-home on :home; Tine's multi-tab
+ *  session restore is deliberately separate from that home navigation.
  *  Cost: one `getPage`, which waits (no timeout) for the backend's initial
  *  whole-graph parse — O(pages) — so on graph open the home page can land
  *  seconds after the landing on a large graph, or not at all if the user
@@ -55,7 +60,7 @@ export async function openConfiguredHomePage(): Promise<HomeOutcome> {
     return "opened";
   } catch (error) {
     if (!owner()) return "stale";
-    pushToast(`Couldn't open the home page "${name}". (${String(error)})`, "error");
+    pushToast(msg("home-page-couldn-t-open-the-home-page", { name: String(name), error: String(error) }), "error");
     return "unresolved";
   }
 }

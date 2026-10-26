@@ -6,6 +6,7 @@ use tine_store::{Area, PageId, RestoreFile, SaveBase, SaveOutcome, Store};
 
 #[test]
 fn merge_source_preamble_survives_in_lsdoc_tree() {
+    let _integration_guard = crate::integration_lock();
     let root = std::env::temp_dir().join(format!("tine-i04-merge-{}", std::process::id()));
     for area in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(area)).unwrap();
@@ -17,7 +18,7 @@ fn merge_source_preamble_survives_in_lsdoc_tree() {
     .unwrap();
     fs::write(root.join("pages/dst.md"), b"alias:: Destination\n- kept\n").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
-    pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
+    pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md").unwrap();
     let bytes = fs::read_to_string(root.join("pages/dst.md")).unwrap();
     let projection = lsdoc::parse_format(&bytes, "md");
     let tree = serde_json::to_string(&projection).unwrap();
@@ -31,6 +32,7 @@ fn merge_source_preamble_survives_in_lsdoc_tree() {
 
 #[test]
 fn emitted_fixture_corpus_is_accepted_by_lsdoc() {
+    let _integration_guard = crate::integration_lock();
     // The client tests pin these bytes after exercising each producer. Parse
     // the same artifacts independently through the Logseq-compatible oracle.
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
@@ -62,6 +64,7 @@ fn emitted_fixture_corpus_is_accepted_by_lsdoc() {
 
 #[test]
 fn save_and_restore_emit_parseable_page_trees() {
+    let _integration_guard = crate::integration_lock();
     let root = std::env::temp_dir().join(format!("tine-i04-save-restore-{}", std::process::id()));
     for area in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(area)).unwrap();
@@ -121,6 +124,7 @@ fn save_and_restore_emit_parseable_page_trees() {
 
 #[test]
 fn config_and_pdf_sidecar_fixtures_remain_edn() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     for (emitter, rel) in [
         (

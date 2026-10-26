@@ -5,6 +5,7 @@ use tine_store::{cost_counters, Cancel, SearchRequest, Store};
 
 #[test]
 fn a_block_only_first_search_derives_no_page_facts() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     std::fs::write(
@@ -18,6 +19,7 @@ fn a_block_only_first_search_derives_no_page_facts() {
     let result = graph
         .search(
             &SearchRequest {
+                transliteration: false,
                 text: "uniqueblockneedle".into(),
                 within: None,
                 page_limit: 10,

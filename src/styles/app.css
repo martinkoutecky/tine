@@ -14,8 +14,8 @@ body {
 }
 
 body {
-  font-family: var(--ls-font-family);
-  font-size: 16px;
+  font-family: var(--tine-content-font, var(--ls-font-family));
+  font-size: var(--tine-font-size, 16px);
   line-height: 1.5;
   color: var(--text-primary);
   background: var(--bg-primary);
@@ -436,7 +436,7 @@ html[data-system-insets="native-viewport"] {
   font-size: 10px;
 }
 .workspace-menu-action:hover { color: var(--text-title); }
-.workspace-menu-action.danger:hover { color: var(--danger, #c44); }
+.workspace-menu-action.danger:hover { color: var(--tine-danger-color, var(--palette-danger)); }
 .workspace-edit-form {
   display: flex;
   gap: 5px;
@@ -519,13 +519,16 @@ html[data-system-insets="native-viewport"] {
 .tab {
   position: relative;
   display: flex;
-  flex: 0 0 auto;
+  /* GH #529: Chrome-style. Tabs stretch to fill a roomy strip up to 260px (about
+     31 title characters at 13px, matching the 32-character zoomed-block label) and
+     shrink evenly toward 144px (about 14 characters) before the strip scrolls. */
+  flex: 1 1 260px;
   align-items: center;
   gap: 6px;
   height: 26px;
   padding: 0 10px;
-  min-width: 112px;
-  max-width: 200px;
+  min-width: 144px;
+  max-width: 260px;
   font-size: 13px;
   color: var(--text-secondary);
   cursor: pointer;
@@ -1312,6 +1315,8 @@ html[data-system-insets="native-viewport"] {
 .nav-section-toggle:hover {
   color: var(--text-secondary);
 }
+.nav-all-pages-open { width: 100%; text-align: left; background: transparent; border: 0; font: inherit; cursor: pointer; }
+.nav-all-pages-open:hover, .nav-all-pages-open.active { color: var(--text-primary); background: var(--bg-tertiary); }
 .nav-toggle-caret {
   display: inline-block;
   transition: transform 0.1s ease;
@@ -1382,14 +1387,14 @@ html[data-system-insets="native-viewport"] {
 }
 
 .page-title {
-  font-size: var(--ls-page-title-size);
+  font-size: var(--tine-page-title-size, var(--ls-page-title-size));
   font-weight: 600;
   color: var(--text-title);
   margin: 8px 0 6px;
   line-height: 1.5;
 }
 .page-title-input {
-  font-size: var(--ls-page-title-size);
+  font-size: var(--tine-page-title-size, var(--ls-page-title-size));
   font-weight: 600;
   color: var(--text-title);
   margin: 8px 0 6px;
@@ -1595,6 +1600,11 @@ html[data-system-insets="native-viewport"] {
 }
 
 /* Copy / export modal */
+.modal-overlay.graph-name-overlay { z-index: 9100; } /* Above first-run Welcome. */
+.export-modal.graph-name-prompt { width: min(420px, 100%); box-sizing: border-box; overflow-y: auto; }
+.graph-name-field { display: flex; flex-direction: column; gap: 8px; padding: 16px; }
+.graph-name-field input { width: 100%; box-sizing: border-box; font: inherit; padding: 8px; }
+.graph-name-error { padding: 0 16px; color: var(--tine-danger-color, var(--palette-danger)); overflow-wrap: anywhere; }
 .export-modal {
   width: 620px;
   max-width: 94vw;
@@ -1629,7 +1639,7 @@ html[data-system-insets="native-viewport"] {
   border-radius: 8px;
   background: var(--bg-secondary, rgba(0, 0, 0, 0.03));
   color: var(--text-primary);
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--tine-mono-font, var(--font-mono, ui-monospace, monospace));
   font-size: 12.5px;
   line-height: 1.5;
   white-space: pre;
@@ -1667,7 +1677,7 @@ html[data-system-insets="native-viewport"] {
 .export-indent-btn.active {
   background: var(--link-color);
   border-color: var(--link-color);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .export-toggles {
   gap: 6px 14px;
@@ -1707,7 +1717,7 @@ html[data-system-insets="native-viewport"] {
 .export-btn-primary {
   background: var(--link-color);
   border-color: var(--link-color);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .export-btn-primary:disabled {
   opacity: 0.6;
@@ -1886,6 +1896,7 @@ html[data-system-insets="native-viewport"] {
 }
 .settings-search-result:hover,.settings-search-result:focus-visible { background: var(--bg-tertiary); }
 .settings-search-result small { color: var(--text-muted); }
+.settings-search-description { display: block; margin-top: 2px; color: var(--text-muted); font-size: 0.85em; }
 .settings-search-empty { padding: 8px; color: var(--text-muted); font-size: 13px; }
 .settings-pane-body {
   flex: 1;
@@ -1909,7 +1920,7 @@ html[data-system-insets="native-viewport"] {
   color: var(--text-primary);
 }
 .settings-value.mono {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 12px;
 }
 .settings-hint {
@@ -2055,7 +2066,7 @@ html[data-system-insets="native-viewport"] {
 }
 .plugin-finding-severity.severity-high,
 .plugin-finding-severity.severity-critical {
-  color: var(--danger, #b33);
+  color: var(--tine-danger-color, var(--palette-danger));
   background: rgba(190, 45, 45, 0.14);
 }
 .plugin-settings-nav {
@@ -2180,7 +2191,7 @@ html[data-system-insets="native-viewport"] {
 }
 .settings-segment button.active {
   background: var(--link-color, #2563eb);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .settings-segment button.active:hover {
   background: var(--link-color, #2563eb);
@@ -2199,6 +2210,22 @@ html[data-system-insets="native-viewport"] {
   font-weight: 600;
   font-size: 13px;
   color: var(--text-secondary);
+}
+/* Fine-tuning (style knobs): a group label between settings rows. */
+.settings-subsection {
+  margin-top: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.knob-slider,
+.knob-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.knob-reset {
+  margin-left: 8px;
 }
 .theme-gallery-grid {
   display: grid;
@@ -2382,7 +2409,7 @@ html[data-system-insets="native-viewport"] {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--tine-mono-font, var(--font-mono, ui-monospace, monospace));
   font-size: 12px;
   color: var(--text-secondary);
   background: var(--bg-secondary);
@@ -2430,7 +2457,7 @@ html[data-system-insets="native-viewport"] {
   background: color-mix(in srgb, #c0392b 12%, transparent);
 }
 .settings-btn-primary {
-  color: #fff;
+  color: var(--on-accent, #fff);
   background: var(--link-color);
   border-color: var(--link-color);
 }
@@ -2536,7 +2563,7 @@ html[data-system-insets="native-viewport"] {
 .sync-merge-seg.active {
   background: var(--link-color);
   border-color: var(--link-color);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .sync-merge-unchanged-tag {
   font-size: 11px;
@@ -2550,6 +2577,8 @@ html[data-system-insets="native-viewport"] {
 }
 /* Carry-over action buttons, right-aligned next to a journal title. */
 .page-carry-actions {
+  opacity: 0;
+  transition: opacity 0.1s;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
@@ -2565,11 +2594,17 @@ html[data-system-insets="native-viewport"] {
   font-size: 12px;
   color: var(--text-muted);
   cursor: pointer;
-  opacity: 0.5;
+  opacity: 1;
   transition: opacity 0.12s, color 0.12s, border-color 0.12s;
 }
-.page-section:hover .carry-btn {
+.page-title-row:hover .page-carry-actions,
+.page-title-row:focus-within .page-carry-actions {
   opacity: 1;
+}
+@media (hover: none) {
+  .page-carry-actions {
+    opacity: 1;
+  }
 }
 .carry-btn:hover {
   color: var(--link-color, var(--text-primary));
@@ -2775,139 +2810,10 @@ html[data-system-insets="native-viewport"] {
   transition: transform 0.12s ease, background 0.12s ease;
 }
 .settings-toggle.on .settings-toggle-knob {
-  background: #fff;
+  background: var(--on-accent, #fff);
   transform: translateX(16px);
 }
 
-/* "Help improve Tine" diff panel ------------------------------------------- */
-.improve-tab {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.improve-tab .seg {
-  display: inline-flex;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.improve-tab .seg-btn {
-  padding: 5px 12px;
-  border: none;
-  background: var(--bg-primary);
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 13px;
-}
-.improve-tab .seg-btn + .seg-btn {
-  border-left: 1px solid var(--border-color);
-}
-.improve-tab .seg-btn.on {
-  background: var(--link-color);
-  color: #fff;
-}
-.improve-run {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 4px;
-}
-.improve-run .btn-primary {
-  padding: 7px 16px;
-  border: none;
-  border-radius: 8px;
-  background: var(--link-color);
-  color: #fff;
-  font-weight: 600;
-  cursor: pointer;
-}
-.improve-run .btn-primary:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.improve-progress {
-  font-variant-numeric: tabular-nums;
-}
-.improve-error {
-  color: var(--marker-todo, #c0392b);
-  font-size: 13px;
-}
-.improve-report {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  border-top: 1px solid var(--border-color);
-  padding-top: 12px;
-}
-.improve-notice {
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--bg-tertiary);
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-.improve-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-.improve-table th,
-.improve-table td {
-  text-align: left;
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--border-color);
-}
-.improve-table th {
-  color: var(--text-muted);
-  font-weight: 500;
-}
-.improve-findings-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.improve-findings h4,
-.improve-bench h4 {
-  margin: 0 0 6px;
-}
-.improve-clean {
-  color: var(--text-secondary);
-  font-size: 14px;
-}
-.improve-card {
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 10px 12px;
-  margin-top: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.improve-card-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-.improve-lines {
-  color: var(--text-muted);
-  font-size: 12px;
-  white-space: nowrap;
-}
-.improve-snippet {
-  margin: 0;
-  padding: 8px 10px;
-  background: var(--code-bg, var(--bg-tertiary));
-  border-radius: 6px;
-  font-family: var(--ls-font-mono, monospace);
-  font-size: 12.5px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 220px;
-  overflow: auto;
-}
 .btn-secondary {
   align-self: flex-start;
   padding: 4px 10px;
@@ -2917,10 +2823,6 @@ html[data-system-insets="native-viewport"] {
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 12.5px;
-}
-.improve-other {
-  margin-top: 6px;
-  font-size: 13px;
 }
 
 .settings-num {
@@ -3061,6 +2963,17 @@ html[data-system-insets="native-viewport"] {
   cursor: pointer;
   vertical-align: middle;
 }
+/* Zero specificity keeps component families in charge; new and partially styled
+   actions use theme tokens instead of a native bevel. Spacing stays local. */
+:where(button) {
+  appearance: none;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  cursor: pointer;
+}
 .settings-btn {
   padding: 5px 12px;
   border: 1px solid var(--border-color);
@@ -3154,7 +3067,8 @@ html[data-system-insets="native-viewport"] {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
 
-.ctx-submenu:hover > .ctx-submenu-menu {
+.ctx-submenu:hover > .ctx-submenu-menu,
+.ctx-submenu:focus-within > .ctx-submenu-menu {
   visibility: visible;
 }
 
@@ -3225,7 +3139,7 @@ html[data-system-insets="native-viewport"] {
   border: none;
   border-radius: 5px;
   background: var(--accent, #4c8bf5);
-  color: #fff;
+  color: var(--on-accent, #fff);
   cursor: pointer;
 }
 .ctx-template-submit:hover {
@@ -3359,7 +3273,7 @@ html[data-system-insets="native-viewport"] {
 
 /* Org inline timestamp: a quiet monospace date chip; inactive (`[…]`) is fainter. */
 .org-timestamp {
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--tine-mono-font, var(--font-mono, ui-monospace, monospace));
   font-size: 0.92em;
   color: var(--text-secondary);
   background: var(--bg-tertiary);
@@ -3517,6 +3431,26 @@ html[data-system-insets="native-viewport"] {
   position: relative;
 }
 
+/* GH #717: the pin is a sticky child of its own block, so it can never leave
+   that block's box: the next row at its level or above pushes it up and out
+   instead of being covered. The constraint rectangle is the margin box, so the
+   pin takes its full 30 px in flow and the row pulls itself back up over it
+   (a -30 px bottom margin on the pin instead let it hang 30 px below the block). */
+.sticky-ancestor { position: sticky; height: 30px; pointer-events: none; }
+[data-sticky-parent] > .block-main { margin-top: -30px; }
+.sticky-ancestor button { pointer-events: auto; display: flex; align-items: center; width: 100%; height: 30px; padding: 0; text-align: left; overflow: hidden; white-space: nowrap; border: 0; border-bottom: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary); font: inherit; cursor: pointer; }
+.sticky-ancestor button[hidden] { display: none; }
+/* Same widths as .collapse-toggle and .bullet-container, so the pinned bullet
+   lines up with the row's own bullet (GH #643). */
+.sticky-ancestor-toggle { flex: 0 0 18px; }
+.sticky-ancestor-bullet { flex: 0 0 16px; height: 16px; margin-right: 6px; display: flex; align-items: center; justify-content: center; }
+.sticky-ancestor-dot { width: var(--tine-bullet-size, var(--ls-block-bullet-size)); height: var(--tine-bullet-size, var(--ls-block-bullet-size)); border-radius: 50%; background: var(--tine-bullet-color, var(--bullet-color)); }
+/* The whole row is one jump target; inline links inside it stay inert. */
+.sticky-ancestor-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.sticky-ancestor-label * { white-space: nowrap; }
+[data-sticky-parent] > .block-main { scroll-margin-top: 30px; }
+@media print { .sticky-ancestor { display: none; } [data-sticky-parent] > .block-main { margin-top: 0; } }
+
 .block-main {
   display: flex;
   align-items: flex-start;
@@ -3666,10 +3600,10 @@ html[data-system-insets="native-viewport"] {
 }
 
 .bullet {
-  width: var(--ls-block-bullet-size);
-  height: var(--ls-block-bullet-size);
+  width: var(--tine-bullet-size, var(--ls-block-bullet-size));
+  height: var(--tine-bullet-size, var(--ls-block-bullet-size));
   border-radius: 50%;
-  background: var(--bullet-color);
+  background: var(--tine-bullet-color, var(--bullet-color));
   transition: transform 0.1s;
 }
 
@@ -3792,26 +3726,133 @@ html[data-system-insets="native-viewport"] {
 
 /* Host-owned rendering for the plugin `thread-lines` decoration. The guest can
    request this known visual vocabulary but cannot inject CSS or DOM. */
-.plugin-thread-lines > .block-children-container > .block-children > :is(.ls-block, .outline-list > .outline-window > .ls-block) > .block-main::before {
+.plugin-thread-lines {
+  --thread-bullet-x: 26px;
+  --thread-active-color: var(--thread-color, var(--ls-link-text-color));
+  --thread-normal-color: color-mix(in srgb, var(--guide-color) 82%, transparent);
+}
+.plugin-thread-lines-standard { --thread-normal-color: var(--guide-color); }
+.plugin-thread-lines > .block-children-container > .block-children {
+  border-left-color: transparent;
+}
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block {
+  --thread-incoming-color: var(--thread-normal-color);
+  --thread-elbow-color: var(--thread-normal-color);
+}
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:focus-within,
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:has(~ .ls-block:focus-within) {
+  --thread-incoming-color: var(--thread-active-color);
+}
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:focus-within {
+  --thread-elbow-color: var(--thread-active-color);
+}
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main {
+  position: relative;
+  --thread-bullet-y: calc(1px + (var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y)) / 2);
+}
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main.bullet-h1 { --thread-bullet-y: calc(1px + 1.36em); }
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main.bullet-h2 { --thread-bullet-y: calc(1px + 1.12em); }
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main.bullet-h3 { --thread-bullet-y: calc(1px + .96em); }
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main::before {
   content: "";
   position: absolute;
-  left: -3px;
+  left: calc(var(--thread-bullet-x) - 1px - var(--ls-block-indent) - var(--thread-width, 1px) / 2);
   top: 0;
-  width: calc(var(--ls-block-indent) - 19px);
-  height: 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--guide-color) 82%, transparent);
+  width: calc(var(--ls-block-indent) + 1px + var(--thread-width, 1px) / 2);
+  height: calc(var(--thread-bullet-y) + var(--thread-width, 1px) / 2);
+  box-sizing: border-box;
+  border-left: var(--thread-width, 1px) solid var(--thread-incoming-color);
+  border-bottom: var(--thread-width, 1px) solid var(--thread-elbow-color);
   border-bottom-left-radius: 6px;
   pointer-events: none;
+  z-index: 1;
 }
 
 /* Active mode follows the focused branch using only host-owned focus state. It
    does not reveal block contents to the guest or let the guest select DOM. */
-.plugin-thread-lines-active > .block-children-container > .block-children > :is(.ls-block, .outline-list > .outline-window > .ls-block):not(:focus-within) > .block-main::before {
+:is(.plugin-thread-lines-active > .block-children-container > .block-children, .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:not(:focus-within) > .block-main::before {
   display: none;
 }
 
-.plugin-thread-lines-standard > .block-children-container > .block-children > :is(.ls-block, .outline-list > .outline-window > .ls-block) > .block-main::before {
-  border-bottom-color: var(--guide-color);
+/* The remaining connectors are the edited block's ancestry; emphasize them in
+   the active color, as the ported Logseq plugin does (GH #614). */
+.plugin-thread-lines > .block-main {
+  position: relative;
+  --thread-bullet-y: calc(1px + (var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y)) / 2);
+}
+.plugin-thread-lines > .block-main.bullet-h1 { --thread-bullet-y: calc(1px + 1.36em); }
+.plugin-thread-lines > .block-main.bullet-h2 { --thread-bullet-y: calc(1px + 1.12em); }
+.plugin-thread-lines > .block-main.bullet-h3 { --thread-bullet-y: calc(1px + .96em); }
+/* Start beneath the parent bullet, then span preceding siblings. Stop at the
+   focused child's elbow, so unrelated guides retain their normal appearance. */
+.plugin-thread-lines:not(.collapsed) > .block-main::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--thread-bullet-x) - var(--thread-width, 1px) / 2);
+  top: var(--thread-bullet-y);
+  bottom: 0;
+  border-left: var(--thread-width, 1px) solid var(--thread-normal-color);
+  pointer-events: none;
+}
+.plugin-thread-lines:has(> .block-children-container :focus) > .block-main::after {
+  border-left-color: var(--thread-active-color);
+}
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--thread-bullet-x) - 1px - var(--ls-block-indent) - var(--thread-width, 1px) / 2);
+  top: 0;
+  bottom: 0;
+  border-left: var(--thread-width, 1px) solid var(--thread-normal-color);
+  pointer-events: none;
+}
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:has(~ .ls-block:focus-within)::after {
+  border-left-color: var(--thread-active-color);
+}
+.plugin-thread-lines-active > .block-main::after,
+:is(.plugin-thread-lines-active > .block-children-container > .block-children, .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block::after {
+  display: none;
+}
+.plugin-thread-lines-active:has(> .block-children-container :focus) > .block-main::after,
+:is(.plugin-thread-lines-active > .block-children-container > .block-children, .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:has(~ .ls-block:focus-within)::after {
+  display: block;
+}
+/* Shell windowing groups siblings in separate wrappers. Carry the vertical
+   path across preceding windows and their unmounted height placeholders. */
+.plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window {
+  position: relative;
+}
+.plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window > [aria-hidden="true"]::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--thread-bullet-x) - 1px - var(--ls-block-indent) - var(--thread-width, 1px) / 2);
+  top: 0;
+  bottom: 0;
+  border-left: var(--thread-width, 1px) solid var(--thread-normal-color);
+  pointer-events: none;
+}
+.plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window > [aria-hidden="true"]::before {
+  display: none;
+}
+.plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window:has(~ .outline-window:focus-within) > .ls-block > .block-main::before {
+  border-left-color: var(--thread-active-color);
+}
+.plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window:has(~ .outline-window:focus-within) > .ls-block::after,
+.plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window:has(~ .outline-window:focus-within) > [aria-hidden="true"]::before {
+  display: block;
+  border-left-color: var(--thread-active-color);
+}
+.plugin-thread-lines:focus-within > .block-main > .block-controls .bullet,
+.plugin-thread-lines .ls-block:has(> .block-main:focus-within) > .block-main > .block-controls .bullet {
+  background: var(--thread-active-color);
+}
+.plugin-thread-lines .block-controls {
+  z-index: 2;
+}
+.plugin-thread-lines-hidden > .block-main::after,
+:is(.plugin-thread-lines-hidden > .block-children-container > .block-children, .plugin-thread-lines-hidden > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block::after,
+:is(.plugin-thread-lines-hidden > .block-children-container > .block-children, .plugin-thread-lines-hidden > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main::before {
+  display: none;
 }
 
 .block-children-left-border:focus-visible {
@@ -3827,6 +3868,7 @@ html[data-system-insets="native-viewport"] {
    guide remains centered under the parent bullet instead of drifting with the
    tighter indentation. Desktop and precise-pointer layouts stay unchanged. */
 @media (max-width: 640px) and (pointer: coarse) {
+  .plugin-thread-lines { --thread-bullet-x: 8px; }
   :root {
     --ls-block-indent: 20px;
   }
@@ -3992,7 +4034,8 @@ html[data-system-insets="native-viewport"] {
   position: fixed;
   left: var(--system-inset-left);
   right: var(--system-inset-right);
-  z-index: 80;
+  /* Above mobile drawers (90), below their portaled popups (96) and dialogs. */
+  z-index: 95;
   transform: translateY(-100%);
   display: flex;
   align-items: stretch;
@@ -4003,6 +4046,24 @@ html[data-system-insets="native-viewport"] {
   border-bottom: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
   box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.18);
   pointer-events: auto;
+}
+
+/* GH #751: while the editing dock (z-index 95) is shown, these body-level
+   popups must clear it as well as the drawer. Without the dock the existing
+   layer order stands. Dialogs (100+), context menus (150), help (118), and
+   toast/media overlays (200+) already clear the dock. */
+html[data-mobile-editing-dock] :is(
+  .autocomplete, .peek-popup, .dp-overlay, .pp-overlay,
+  .formula-editor-overlay, .rs-actions-menu.rs-item-menu, .tab-overview
+) {
+  z-index: 96;
+}
+
+/* Give the drawer's last editor enough scroll range above keyboard + dock.
+   The lift is measured from the real dock top, for both resized and overlay
+   viewports; scroll-padding alone would not create this missing scroll range. */
+html[data-mobile-editing-dock] .app-container[data-mobile-drawer-mode="true"] :is(.right-sidebar, .left-sidebar-scroll) {
+  padding-bottom: var(--mobile-kb-toolbar-lift, 0px);
 }
 
 .mobile-keyboard-toolbar-strip {
@@ -4054,7 +4115,7 @@ html[data-system-insets="native-viewport"] {
 
 /* Voice-memo button while recording: red + a filled stop square + a soft pulse. */
 .mobile-keyboard-toolbar-btn.recording {
-  color: var(--danger, #c0392b);
+  color: var(--tine-danger-color, var(--palette-danger));
   animation: tine-rec-pulse 1.1s ease-in-out infinite;
 }
 .mobile-keyboard-toolbar-btn.recording svg {
@@ -4110,24 +4171,29 @@ html[data-system-insets="native-viewport"] {
 }
 
 /* Code view/editor share card metrics and the calculator's numbered gutter. */
-.editor-wrap:has(> .block-editor.code-edit) { position: relative; padding: var(--ls-block-content-pad-y) 0; }
+.editor-wrap:has(> .code-editor-region > .block-editor.code-edit) { position: relative; padding: var(--ls-block-content-pad-y) 0; }
 .block-editor.code-edit {
   background: var(--code-bg); border: 1px solid var(--border-color); border-radius: 6px;
   padding: 30px 12px 10px 48px; margin: 4px 0;
-  --tine-editable-font: "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco,
-    Consolas, "Courier New", var(--tine-editable-emoji-font), monospace;
+  --tine-editable-font: var(--tine-mono-font, "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco,
+    Consolas, "Courier New", var(--tine-editable-emoji-font), monospace);
   font-size: 0.86em; line-height: 1.5; white-space: pre;
   overflow-x: auto; overflow-y: hidden; min-height: 0;
 }
-.code-language { position: absolute; top: 9px; right: 48px; color: var(--text-muted); font: 11px/16px var(--ls-font-mono); pointer-events: none; }
+.code-language { position: absolute; top: 9px; right: 48px; color: var(--text-muted); font: 11px/16px var(--tine-mono-font, var(--ls-font-mono)); pointer-events: none; }
 .code-gutter { position: absolute; top: 30px; left: 48px; right: 12px; pointer-events: none; font: inherit; white-space: pre; }
 .gutter-row { position: relative; }
 .code-gutter .calc-lineno { position: absolute; right: calc(100% + 14px); }
 .gutter-mirror { visibility: hidden; }
-.editor-wrap > .code-gutter { top: calc(35px + var(--ls-block-content-pad-y)); left: 49px; right: 13px; font-family: var(--ls-font-mono); font-size: 0.86em; line-height: 1.5; }
-.editor-wrap > .code-language { top: calc(14px + var(--ls-block-content-pad-y)); }
+.code-editor-region > .code-gutter { top: calc(35px + var(--ls-block-content-pad-y)); left: 49px; right: 13px; font-family: var(--tine-mono-font, var(--ls-font-mono)); font-size: 0.86em; line-height: 1.5; }
+.code-editor-region > .code-language { top: calc(14px + var(--ls-block-content-pad-y)); }
+.code-editor-region { display: contents; }
+.code-editor-region.mixed-code-region { display: block; position: relative; }
+.mixed-code-region > .code-gutter { top: 35px; }
+.mixed-code-region > .code-language { top: 14px; }
+.mixed-code-before, .mixed-code-after { padding: 0; min-height: 0; }
 .code-wrapping .code-gutter, .code-wrapping.code-block code,
-.code-wrapping > .block-editor.code-edit { white-space: pre-wrap; overflow-wrap: anywhere; }
+.code-wrapping .block-editor.code-edit { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .block-editor.h1 { font-size: 1.7em; font-weight: 600; line-height: 1.3; }
 .block-editor.h2 { font-size: 1.4em; font-weight: 600; line-height: 1.3; }
@@ -4176,7 +4242,7 @@ html[data-system-insets="native-viewport"] {
   top: 1px;
   width: 4px;
   height: 8px;
-  border: solid #fff;
+  border: solid var(--on-accent, #fff);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
@@ -4184,8 +4250,11 @@ html[data-system-insets="native-viewport"] {
 /* Sheet field checkbox (table `checkbox` fields + boolean formula results).
    Custom-drawn from theme vars — a NATIVE checkbox renders white-on-dark under
    any theme that doesn't set `color-scheme: dark` (e.g. a custom gallery theme),
-   which is exactly Martin's dark-theme white-box nit. Mirrors .block-checkbox. */
-.sheet-checkbox {
+   which is exactly Martin's dark-theme white-box nit. Mirrors .block-checkbox.
+   `.themed-checkbox` is the same box for any other plain checkbox (All pages'
+   "Show journals"); it does not depend on the engine honouring `color-scheme`. */
+.sheet-checkbox,
+.themed-checkbox {
   appearance: none;
   -webkit-appearance: none;
   display: inline-block;
@@ -4200,25 +4269,29 @@ html[data-system-insets="native-viewport"] {
   cursor: pointer;
   position: relative;
 }
-.sheet-checkbox:not(:disabled):hover {
+.sheet-checkbox:not(:disabled):hover,
+.themed-checkbox:not(:disabled):hover {
   border-color: var(--accent, #4c8bf5);
 }
-.sheet-checkbox:checked {
+.sheet-checkbox:checked,
+.themed-checkbox:checked {
   background: var(--accent, #4c8bf5);
   border-color: var(--accent, #4c8bf5);
 }
-.sheet-checkbox:checked::after {
+.sheet-checkbox:checked::after,
+.themed-checkbox:checked::after {
   content: "";
   position: absolute;
   left: 4px;
   top: 1px;
   width: 4px;
   height: 8px;
-  border: solid #fff;
+  border: solid var(--on-accent, #fff);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
-.sheet-checkbox:disabled {
+.sheet-checkbox:disabled,
+.themed-checkbox:disabled {
   cursor: default;
 }
 
@@ -4237,6 +4310,28 @@ html[data-system-insets="native-viewport"] {
   border-radius: 3px;
   cursor: pointer;
   position: relative;
+}
+@media (pointer: coarse) {
+  /* Pseudo-element hits target the owning checkbox, preserving its toggle and
+     forbid-edit handlers without changing the visible box or inline layout.
+     One line high keeps adjacent checklist/task rows' hit areas separate. */
+  .block-checkbox::before,
+  .block-task-checkbox::before {
+    content: "";
+    position: absolute;
+    left: -10px;
+    right: -10px;
+    top: 50%;
+    height: 1lh;
+    transform: translateY(-50%);
+  }
+  /* Leading task boxes sit between the outline bullet and marker chip. Enlarge
+     these vertically: horizontal overflow lets Chromium's touch adjustment
+     redirect near-edge taps to the bullet, especially when the box is checked. */
+  .block-task-checkbox::before {
+    left: 0;
+    right: 0;
+  }
 }
 .block-task-checkbox:has(+ .marker-todo) { --task-checkbox-color: var(--marker-todo); }
 .block-task-checkbox:has(+ .marker-doing) { --task-checkbox-color: var(--marker-doing); }
@@ -4258,7 +4353,7 @@ html[data-system-insets="native-viewport"] {
   top: 1px;
   width: 3.5px;
   height: 7px;
-  border: solid #fff;
+  border: solid var(--on-accent, #fff);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
@@ -4303,7 +4398,7 @@ html[data-system-insets="native-viewport"] {
   position: relative; /* anchor for the hover-peek card (GH #40) */
 }
 .page-ref { color: var(--link-color); }
-.tag { color: var(--tag-color); }
+.tag { color: var(--tine-tag-color, var(--tag-color)); }
 .page-ref:hover, .tag:hover { text-decoration: underline; }
 
 .page-ref .bracket {
@@ -4312,9 +4407,14 @@ html[data-system-insets="native-viewport"] {
 }
 
 /* Deliberate Martin-approved OG divergence: missing page refs are muted
-   and dotted, but still navigate/create; tags are exempt. OG dims only untitled pages. */
+   and dotted, but still navigate/create; tags are exempt. OG dims only untitled pages.
+   The colour is a link tint pulled toward the secondary text colour (GH #432): a link
+   to a page that does not exist yet stays above plain text in the emphasis order,
+   below a real link, and readable (>= 4.5:1 on the built-in palettes; a muted grey was
+   2.8:1 in light). Hover restores the full link colour. --tine-missing-page-color
+   overrides it. */
 [data-missing-page] {
-  color: var(--text-muted);
+  color: var(--tine-missing-page-color, color-mix(in srgb, var(--link-color) 55%, var(--text-secondary)));
   text-decoration: underline dotted;
   text-underline-offset: 2px;
 }
@@ -4323,17 +4423,25 @@ html[data-system-insets="native-viewport"] {
   text-decoration: underline dotted;
 }
 
+/* External links carry a solid underline, page refs none (OG common.css `.external-link`:
+   `border-bottom: 1px solid`, GH #430): a link that leaves the graph reads differently from
+   one that stays in it, with no second link colour. --tine-external-link-underline replaces
+   the underline (any border-bottom value, or `none`). */
 .external-link {
   color: var(--link-color);
   text-decoration: none;
+  border-bottom: var(--tine-external-link-underline, 1px solid);
 }
 
-.external-link:hover {
-  text-decoration: underline;
+/* GH #457: a file link whose path leaves the graph folder is never opened. */
+.external-link[data-broken-file-link] {
+  color: var(--ls-secondary-text-color, inherit);
+  text-decoration: line-through;
+  opacity: 0.75;
 }
 
 .inline-code {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 0.88em;
   background: var(--code-bg);
   padding: 1px 5px;
@@ -4341,7 +4449,7 @@ html[data-system-insets="native-viewport"] {
 }
 
 mark {
-  background: var(--mark-bg);
+  background: var(--tine-highlight-bg, var(--mark-bg));
   color: var(--mark-text);
   padding: 0 2px;
   border-radius: 2px;
@@ -4465,7 +4573,7 @@ mark {
 }
 
 .macro {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 0.85em;
   color: var(--text-muted);
   background: var(--bg-secondary);
@@ -4497,6 +4605,11 @@ mark {
   display: inline-block;
   line-height: 0;
   max-width: 100%;
+}
+.inline-image-unavailable {
+  display: inline-block;
+  line-height: 1.5;
+  padding: 8px 100px 8px 8px;
 }
 .img-resize-grip {
   position: absolute;
@@ -4546,7 +4659,8 @@ mark {
   background: rgba(0, 0, 0, 0.75);
 }
 .asset-action-btn.asset-action-trash:hover {
-  background: var(--danger, #c0392b);
+  background: var(--tine-danger-color, var(--palette-danger));
+  color: var(--bg-primary);
 }
 
 /* Inline video/audio asset players + the click-to-open fallback chip. */
@@ -4764,7 +4878,7 @@ mark {
   font-size: 1.05em;
   min-width: 52px;
   background: var(--accent, #4c8bf5);
-  color: #fff;
+  color: var(--on-accent, #fff);
   border-color: transparent;
 }
 .audio-play:hover {
@@ -5017,15 +5131,17 @@ body.file-drop-active::after {
 }
 .dp-cell.selected {
   background: var(--accent, #10b981);
-  color: #fff;
+  color: var(--on-accent, #fff);
+}
+/* GH #596: roving keyboard focus must remain visible in every palette,
+   independently of the selected date. Override the browser's default box. */
+.dp-cell:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  opacity: 1;
 }
 .dp-empty {
   visibility: hidden;
-}
-.dp-help {
-  margin: 8px 0 0;
-  font-size: 11px;
-  color: var(--text-muted);
 }
 .dp-foot {
   display: flex;
@@ -5185,7 +5301,7 @@ body.file-drop-active::after {
 .formula-editor-textarea {
   min-height: 94px;
   resize: vertical;
-  font-family: var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-family: var(--tine-mono-font, var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace));
 }
 .formula-editor-input.invalid,
 .formula-editor-textarea.invalid {
@@ -5198,7 +5314,7 @@ body.file-drop-active::after {
 }
 .formula-editor-error pre {
   margin: 2px 0 0;
-  font: 12px var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font: 12px var(--tine-mono-font, var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace));
   white-space: pre-wrap;
 }
 .formula-editor-hints {
@@ -5306,7 +5422,7 @@ body.file-drop-active::after {
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font: 12px var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font: 12px var(--tine-mono-font, var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace));
 }
 .formula-builder-raw-inline.invalid,
 .formula-builder-raw-input.invalid {
@@ -5333,7 +5449,7 @@ body.file-drop-active::after {
 .formula-editor-btn.primary {
   background: var(--accent, #4c8bf5);
   border-color: var(--accent, #4c8bf5);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .formula-editor-btn:disabled {
   opacity: 0.5;
@@ -5348,7 +5464,7 @@ body.file-drop-active::after {
   padding: 30px 12px 10px 48px;
   margin: 4px 0;
   overflow-x: auto;
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 0.86em;
   line-height: 1.5;
   /* An empty code card still reserves the editor's empty line. */
@@ -5929,8 +6045,8 @@ body.file-drop-active::after {
   margin-right: 4px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: color-mix(in srgb, var(--tag-color) 13%, transparent);
-  color: var(--tag-color);
+  background: color-mix(in srgb, var(--tine-tag-color, var(--tag-color)) 13%, transparent);
+  color: var(--tine-tag-color, var(--tag-color));
   font-size: 0.84em;
   font-weight: 600;
   white-space: nowrap;
@@ -6382,7 +6498,7 @@ body.file-drop-active::after {
 .md-hr {
   border: none;
   border-top: 1px solid var(--border-color);
-  margin: 10px 0;
+  margin: calc((var(--ls-block-line-height) - 1px) / 2) 0;
 }
 /* In-block markdown list — deliberately distinct from outline (Tine) bullets:
    real list markers, indented, no zoom/ref affordance. These live inside ONE
@@ -6397,6 +6513,15 @@ ol.md-list { list-style: decimal; }
 .md-list .md-list-item.has-checkbox {
   list-style: none;
   margin-left: -1.25em;
+}
+/* Keep the first checklist aligned with its block, but do not subtract that
+   alignment offset again at every nested level (GH #691). OG's nested lists
+   retain a full indent; use our outline step so the same hierarchy reads alike. */
+.md-list .md-list {
+  padding-left: var(--ls-block-indent);
+}
+.md-list .md-list > .md-list-item.has-checkbox {
+  margin-left: 0;
 }
 /* Markdown definition-list term (`term` / `: def`) — the item's label (lsdoc render
    contract). Rendered inline before its definition body. */
@@ -6455,7 +6580,7 @@ ol.md-list { list-style: decimal; }
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: start;
   column-gap: 14px;
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 0.9em;
   line-height: 1.6;
   background: var(--bg-tertiary);
@@ -6697,6 +6822,19 @@ img.emoji {
 }
 .reference-export-toggle:disabled { opacity: .4; cursor: default; }
 
+.peek-popup-title { display: flex; align-items: center; gap: 12px; }
+.peek-source-title { color: inherit; font: inherit; text-align: left; }
+.peek-open-source { margin-left: auto; color: var(--link-color); white-space: nowrap; }
+.peek-page-actions { flex-shrink: 0; min-width: 36px; min-height: 36px; border-radius: 4px; }
+.peek-page-actions:hover, .peek-page-actions:focus-visible { background: var(--bg-tertiary); }
+.peek-page-properties { padding: 8px 16px; color: var(--text-secondary); }
+/* GH #440: the same muted trail as Linked References (.ref-breadcrumb), starting
+   at the embedded block's bullet column (18px toggle + bullet ring inset). */
+.embed-source-breadcrumb { display: none; color: var(--text-muted); font-size: 0.78em; padding: 4px 8px 0 22px; }
+.tine-embed-breadcrumbs .embed-source-breadcrumb { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.embed-source-breadcrumb .page-ref { color: inherit; }
+.embed-source-breadcrumb .ref-crumb * { white-space: nowrap; }
+
 .ref-export-actions { display: flex; gap: 8px; }
 .ref-export-actions button {
   padding: 3px 12px;
@@ -6821,7 +6959,7 @@ img.emoji {
 }
 
 .reference-filter-error {
-  color: var(--danger, #dc2626);
+  color: var(--tine-danger-color, var(--palette-danger));
 }
 
 .reference-filter-warning {
@@ -6871,6 +7009,10 @@ img.emoji {
   cursor: pointer;
   border-radius: 4px;
 }
+.reference-group-disclosure .ref-collapse {
+  margin-right: 0;
+  vertical-align: middle;
+}
 
 .reference-group-disclosure:hover,
 .reference-group-disclosure:focus-visible {
@@ -6907,8 +7049,21 @@ img.emoji {
 }
 
 .reference-excerpt-bullet {
+  align-self: flex-start;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font: inherit;
   color: var(--bullet-color, var(--text-muted));
   line-height: 1.55;
+  cursor: pointer;
+}
+.reference-excerpt-bullet:hover,
+.reference-excerpt-bullet:focus-visible {
+  color: var(--link-color);
+  background: var(--bg-tertiary);
 }
 
 .reference-excerpt-content {
@@ -7084,6 +7239,13 @@ img.emoji {
   position: relative;
   z-index: 1;
 }
+/* Every query box sits at z-index 1, so the NEXT one paints over a menu that
+   overhangs this one's bottom edge (GH #619 c6). The box holding an open menu
+   or panel goes one step up, still below the sticky pins (9+) and the app's
+   overlays. */
+.query-block:has(.qs-menu, .qc-actions[open], .qd-panel, .qb-prop-type-menu) {
+  z-index: 2;
+}
 .query-block.query-sheet-block {
   border: 0;
   border-radius: 0;
@@ -7097,48 +7259,60 @@ img.emoji {
   margin-bottom: 18px;
 }
 
+/* GH #605: quiet until the today section is hovered or focused; always faintly
+   visible where there is no hover (touch). */
+.today-sections-customize {
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.journal-sections-header {
+  color: var(--text-muted);
+  font-size: 0.875em;
+  margin: 0.5em 0 1em;
+}
+
+.journal-sections-header button {
+  color: inherit;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 0.15em 0.5em;
+  background: transparent;
+}
+.page-section:hover .today-sections-customize,
+.today-sections-customize:focus-visible {
+  opacity: 1;
+}
+.today-sections-customize:hover {
+  text-decoration: underline;
+}
+@media (hover: none) {
+  .today-sections-customize { opacity: 0.6; }
+}
+
 .query-header {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
   margin-bottom: 6px;
   display: flex;
-  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
-/* Phone width: the title keeps whole words and the view switcher wraps below it
-   as a unit, instead of the row squeezing the title to one letter per line. */
-.query-header .query-title {
-  word-break: normal;
-  overflow-wrap: break-word;
-}
-.query-header .query-export-action {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
 
 .query-collapse {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  color: var(--text-muted);
   margin-left: -2px;
-}
-.query-collapse .triangle {
-  width: 14px;
-  height: 14px;
-  fill: currentColor;
-  transform: rotate(90deg);
-  transition: transform 0.1s ease;
-}
-.query-collapse.collapsed .triangle {
-  transform: rotate(0deg);
 }
 
 .query-view-switcher {
   margin-left: auto;
-  flex-shrink: 0;
   display: inline-flex;
   border: 1px solid var(--border-color);
   border-radius: 5px;
@@ -7153,7 +7327,6 @@ img.emoji {
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  white-space: nowrap;
 }
 .query-view-switcher button:first-child {
   border-left: 0;
@@ -7256,7 +7429,7 @@ img.emoji {
   border-color: var(--link-color);
 }
 .qb-chip-raw {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   color: var(--text-secondary);
 }
 /* Sort control: a labelled pill (NOT the round "+" add button) — auto width so
@@ -7447,11 +7620,18 @@ img.emoji {
 }
 
 .embed-block {
-  background: var(--bg-secondary);
+  background: var(--tine-embed-bg, var(--bg-secondary));
   border-radius: 4px;
   border-left: 3px solid var(--border-color);
   padding-left: 12px;
   margin: 2px 0;
+}
+
+/* Style knob "Embedded blocks" = accent line and dot only (src/styleKnobs.ts,
+   class on <html>): the shade goes, the accent bullet and guide stay. It sits
+   above --tine-embed-bg on purpose, since the user chose it in Settings. */
+html.tine-embed-shading-accent .embed-block {
+  background: none;
 }
 
 /* A whole-block block embed is visually the referenced outline, not an empty
@@ -7469,15 +7649,57 @@ img.emoji {
   margin: 0;
 }
 .block-embed-host .embed-block > .live-ref-group > .ls-block > .block-main > .block-controls .bullet {
-  background: var(--block-embed-accent);
+  background: var(--tine-embed-accent, var(--block-embed-accent));
 }
 .block-embed-host .embed-block > .live-ref-group > .ls-block > .block-children-container > .block-children {
   border-left-width: 2px;
-  border-left-color: var(--block-embed-accent);
+  border-left-color: var(--tine-embed-accent, var(--block-embed-accent));
+}
+
+/* GH #439: a whole-page embed. The host's bullet row carries a header naming the
+   page (OG block.cljs `page-embed`: page icon + page link in `.embed-header`);
+   the page's roots then sit on the host's own children grid, one indent step in,
+   under a guide in the embed accent, instead of in an inset tinted box whose
+   roots landed ~26px off the outline column. `--page-embed-controls` is the
+   host's control column (fold arrow + bullet, 40px on desktop): the embed starts
+   after it, while the children grid starts one indent from the host's left edge,
+   so the group is pulled back by (controls - indent). */
+.embed-block.embed-page {
+  background: none;
+  border-left: 0;
+  padding-left: 0;
+  margin: 0;
+  --page-embed-controls: 40px;
+}
+.embed-page-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
+}
+.embed-page-glyph {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  color: var(--text-muted);
+}
+.embed-block.embed-page > .live-ref-group {
+  margin-left: calc(var(--ls-block-indent) - var(--page-embed-controls) - 3px);
+  padding-left: 1px;
+  border-left: 2px solid var(--tine-embed-accent, var(--block-embed-accent));
+}
+/* The phone layout takes the fold arrow out of the control column (see the
+   coarse-pointer block above), leaving the bullet column alone: 21px. */
+@media (max-width: 640px) and (pointer: coarse) {
+  .embed-block.embed-page {
+    --page-embed-controls: 21px;
+  }
 }
 
 /* video / iframe embeds */
 .embed-iframe-wrap {
+  display: block;
   position: relative;
   width: 100%;
   max-width: 640px;
@@ -7645,7 +7867,8 @@ img.emoji {
   -webkit-line-clamp: 2;
 }
 
-.search-result-excerpt mark {
+.search-result-excerpt mark,
+.settings-search-result mark {
   border-radius: 2px;
   background: var(--match-mark-bg);
   color: inherit;
@@ -7653,6 +7876,11 @@ img.emoji {
 
 .switcher-row.active {
   background: var(--bg-tertiary);
+}
+.query-workspace button[data-query-result].active {
+  background: var(--bg-tertiary);
+  outline: 2px solid var(--text-muted);
+  outline-offset: -2px;
 }
 
 .switcher-kind {
@@ -7699,7 +7927,7 @@ img.emoji {
 }
 
 .switcher-empty.switcher-error {
-  color: var(--error, #d33);
+  color: var(--tine-danger-color, var(--palette-danger));
 }
 
 .switcher-group-header {
@@ -7744,7 +7972,7 @@ img.emoji {
   margin-left: auto;
   font-size: 11px;
   color: var(--text-muted);
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   white-space: nowrap;
 }
 .switcher-name mark {
@@ -7761,7 +7989,7 @@ img.emoji {
   color: var(--text-muted);
 }
 .switcher-footer kbd {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   background: var(--bg-secondary);
   border-radius: 3px;
   padding: 0 4px;
@@ -7796,6 +8024,18 @@ img.emoji {
   outline: 1px solid var(--link-color);
   outline-offset: 2px;
 }
+/* Settings search: mark the setting a result jumped to (GH #706). */
+.settings-jump-flash {
+  border-radius: 6px;
+  animation: settings-jump-flash 2s ease-out;
+}
+@keyframes settings-jump-flash {
+  0%, 50% { background: var(--match-mark-bg); }
+  100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-jump-flash { animation: none; background: var(--match-mark-bg); }
+}
 /* Brief highlight when jumping to a block from search. */
 .block-flash > .block-main {
   animation: block-flash 1.2s ease-out;
@@ -7810,16 +8050,55 @@ img.emoji {
 .inpage-find-bar {
   flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
   padding: 6px 14px;
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-secondary);
 }
-.inpage-find-input {
+.inpage-find-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+/* At phone width the inputs shrink, never the toggle or the buttons (GH #338). */
+.inpage-find-row > * {
+  flex: 0 0 auto;
+}
+.inpage-find-row > .inpage-find-input,
+.inpage-find-row > .inpage-replace-input {
+  flex: 0 1 240px;
+  min-width: 72px;
+}
+/* GH #208: the replace row sits under the find input (toggled in the bar). */
+.inpage-replace-toggle {
+  order: -1;
+}
+.inpage-replace-btn {
+  padding: 3px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.inpage-replace-btn:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+}
+.inpage-replace-btn:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+.inpage-find-input,
+.inpage-replace-input {
   width: 240px;
-  max-width: min(48vw, 240px);
+  max-width: 240px;
   padding: 4px 8px;
   font-size: 13px;
   border: 1px solid var(--border-color);
@@ -7827,7 +8106,8 @@ img.emoji {
   background-color: var(--bg-primary);
   color: var(--text-primary);
 }
-.inpage-find-input:focus {
+.inpage-find-input:focus,
+.inpage-replace-input:focus {
   border-color: var(--link-color);
   outline: none;
 }
@@ -7868,6 +8148,10 @@ img.emoji {
 .right-sidebar {
   position: relative;
   width: 360px;
+  /* GH #521: a stored wide width on a smaller window can never swallow the main
+     pane or its own resize handle (same bounds as sidebarSizing.rightSidebarMaxWidth;
+     drawer mode sets its own max-width above). */
+  max-width: min(70vw, calc(100vw - 360px));
   flex: 0 0 auto;
   border-left: 1px solid var(--border-color);
   background: var(--bg-secondary);
@@ -7975,7 +8259,9 @@ img.emoji {
   border: 1px solid var(--border-color);
   border-radius: 8px;
   margin-bottom: 10px;
-  overflow: hidden;
+  /* Clip the rounded card without creating a second scroll container: its
+     sticky ancestors follow the right sidebar's scrolling viewport. */
+  overflow: clip;
 }
 
 .rs-item-head {
@@ -8019,6 +8305,14 @@ img.emoji {
   white-space: nowrap;
 }
 
+/* GH #640: the opened block's ancestors after its page, as OG's sidebar shows. */
+.rs-item-crumbs { display: flex; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 13px; color: var(--text-secondary); }
+.rs-item-crumbs .crumb-sep { margin: 0 4px; opacity: 0.6; flex: 0 0 auto; }
+.rs-crumb { cursor: pointer; color: inherit; min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.rs-crumb:hover { color: var(--link-color); }
+.rs-crumb * { white-space: nowrap; }
+.rs-crumb-more { flex: 0 0 auto; }
+
 .rs-close {
   /* The title no longer stretches, so the close button keeps the right edge
      itself (GH #464). */
@@ -8028,6 +8322,23 @@ img.emoji {
   color: var(--text-muted);
   cursor: pointer;
   font-size: 12px;
+}
+
+/* GH #462: the per-item "more actions" button sits beside the close button; the
+   menu itself floats (position: fixed, portalled) because .rs-item clips overflow. */
+.rs-item-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.rs-item-actions .rs-close { margin-left: 0; }
+.rs-actions-menu.rs-item-menu {
+  position: fixed;
+  z-index: 90;
+  left: auto;
+  white-space: nowrap;
 }
 
 .rs-item-body {
@@ -8081,7 +8392,7 @@ img.emoji {
 }
 .about-commit {
   color: var(--text-muted);
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 12px;
 }
 .about-check {
@@ -8581,7 +8892,7 @@ img.emoji {
   margin-top: 7px;
   padding: 9px;
   resize: vertical;
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 12px;
 }
 .query-advanced-actions {

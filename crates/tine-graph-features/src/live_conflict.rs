@@ -1,18 +1,21 @@
 //! Concord live-draft conflicts (og family 8e): an editor draft whose ordinary
 //! guarded save was refused because the file changed on disk. The review
 //! compares the draft ("mine") with the file as it is NOW ("theirs"); the
-//! resolve recomputes the same comparison and writes the chosen result through
-//! one guarded store transaction. Nothing here is persisted; the draft itself
-//! lives in the editor, or in the app-private draft store across a restart.
+//! merge recomputes the same comparison and composes the chosen result,
+//! read-only. The window submits the merged page through its page host with
+//! the reviewed disk revision (STEP3 R6), so nothing here writes. Nothing here
+//! is persisted; the draft itself lives in the editor, or in the page host's
+//! drafts across a restart.
 //!
 //! Base: the Concord ledger's retained text whose revision equals the draft's
 //! `base_rev` (the bytes the editor loaded or last saved). With it the review is
-//! 3-way and its rows carry suggestions; without it (evicted, unreadable, never
-//! recorded) it is 2-way and nothing is pre-selected. Never an authority: only
-//! a `"merged"` decision reads the base at resolve time.
+//! 3-way and its rows carry suggestions, and names that text by its sha256
+//! (`merge_base_rev`); without it (evicted, unreadable, never recorded) it is
+//! 2-way and nothing is pre-selected. Never an authority: only a `"merged"`
+//! decision reads the base at merge time, by that name.
 //!
-//! A missing file is its own disk revision, `"absent"`: the resolve then
-//! creates the file and refuses when anything (even an empty file) appeared.
+//! A missing file is its own disk revision, `"absent"`: the merge refuses when
+//! anything (even an empty file) appeared since the review.
 
 use std::collections::HashMap;
 use std::io;
@@ -22,7 +25,7 @@ use tine_core::doc::Document;
 use tine_core::model::{Format, PageDto};
 use tine_core::projection::page_dto_document;
 use tine_core::sync_diff::{self, SyncConflictDiff};
-use tine_store::{EditKind, FileId, FileRev, SaveBase, Store};
+use tine_store::{FileId, FileRev, Store};
 
 use crate::conflicts::{
     choose_pre, dto, format, id, invalid_path, merge_refused, parse, read_text,
@@ -52,17 +55,20 @@ fn disk_rev(read: &Option<(String, FileRev)>) -> String {
         .map_or_else(|| ABSENT.to_owned(), |(_, rev)| rev.clone().into())
 }
 
-/// The retained text the draft was edited from, and its identity token
-/// (sha256 hex). `None` when no candidate has the draft's revision.
+/// A retained text's identity token (sha256 hex): the review's
+/// `merge_base_rev`.
+fn token(text: &str) -> String {
+    format!("{:x}", Sha256::digest(text.as_bytes()))
+}
+
+/// The retained text the draft was edited from, and its identity token.
+/// `None` when no candidate has the draft's revision.
 fn base_for<'a>(bases: &'a [String], base_rev: Option<&str>) -> Option<(&'a str, String)> {
     let wanted = base_rev?;
     let base = bases
         .iter()
         .find(|text| String::from(FileRev::from_bytes(text.as_bytes())) == wanted)?;
-    Some((
-        base.as_str(),
-        format!("{:x}", Sha256::digest(base.as_bytes())),
-    ))
+    Some((base.as_str(), token(base)))
 }
 
 fn sides(
@@ -109,26 +115,27 @@ pub fn live_conflict_diff(
     Ok(diff)
 }
 
-/// Apply the user's per-row `decisions` for the reviewed live conflict and
-/// write the result in one guarded transaction: `SaveBase::Existing` at the
-/// reviewed disk revision, or `CreateNew` when the review showed the file
-/// absent. Returns the written page with its new revision, which the editor
-/// installs. Refusals (each writes nothing):
+/// Compose the result of the user's per-row `decisions` for the reviewed
+/// live conflict, read-only: the page as the editor installs it, without a
+/// revision. The review showed the disk at `conflict_rev` ([`ABSENT`] for a
+/// missing file); a `"merged"` row reads the retained text the review named
+/// `merge_base_rev`. Refusals:
 /// - the disk moved since the review (`live conflict changed on disk`,
 ///   scenario: an external-editor race, sync-service delivery, or an honest
 ///   concurrent instance writing after the review) — the UI refreshes the
 ///   review;
-/// - a `"merged"` row whose reviewed base is gone or different (`merge base
+/// - a `"merged"` row whose reviewed base is no longer retained (`merge base
 ///   changed since the review`, same scenarios moving the ledger);
 /// - an Org file on disk that does not round-trip (malformed imported content).
 ///
-/// Cost O(file + draft + base bytes) plus one page commit.
+/// The caller writes the result guarded by `conflict_rev`, so a write after
+/// this read is the first refusal's race again. Cost O(file + draft + base
+/// bytes).
 #[allow(clippy::too_many_arguments)]
-pub fn resolve_live_conflict(
+pub fn merge_live_conflict(
     store: &Store,
     path: &str,
     draft: &PageDto,
-    base_rev: Option<&str>,
     conflict_rev: &str,
     merge_base_rev: Option<&str>,
     bases: &[String],
@@ -151,9 +158,9 @@ pub fn resolve_live_conflict(
     }
     let (fmt, mine, theirs) = sides(&file, draft, &now);
     let base_doc = match (merge_base_rev, decisions.values().any(|d| d == "merged")) {
-        (Some(token), true) => match base_for(bases, base_rev) {
-            Some((base, current)) if current == token => Some(parse(base, fmt)),
-            _ => {
+        (Some(wanted), true) => match bases.iter().find(|text| token(text) == wanted) {
+            Some(base) => Some(parse(base, fmt)),
+            None => {
                 return Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
                     "merge base changed since the review",
@@ -171,27 +178,5 @@ pub fn resolve_live_conflict(
     )
     .map_err(merge_refused)?;
     let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs)?;
-    let mut merged = dto(store, &page, Document { pre_block, roots });
-    let (kind, base) = match &now {
-        Some((_, rev)) => (EditKind::ReplacePage, SaveBase::Existing(rev.clone())),
-        None => (EditKind::CreatePage, SaveBase::CreateNew),
-    };
-    let mut tx = store.transaction(Some(kind));
-    tx.save_page(&[kind], &page, base, &merged);
-    let outcome = tx.commit();
-    // A revision guard that fails at commit is the same race as a moved
-    // revision before it: refresh the review, never retry against unseen bytes.
-    if crate::is_conflict(&outcome) {
-        return Err(changed_on_disk());
-    }
-    let rev = crate::tx_error(outcome)?
-        .into_iter()
-        .find_map(|step| match step {
-            tine_store::StepResult::Written { rev, .. }
-            | tine_store::StepResult::Unchanged { rev, .. } => Some(rev),
-            _ => None,
-        })
-        .ok_or_else(|| io::Error::other("the resolved page was not written"))?;
-    merged.rev = Some(rev.into());
-    Ok(merged)
+    Ok(dto(store, &page, Document { pre_block, roots }))
 }

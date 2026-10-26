@@ -3,6 +3,87 @@
 //! Evaluation tests over a graph belong with execution (og lane Q2).
 
 use super::advanced_patterns::{adv_range, advanced_pred};
+use super::ir::{Field, SortDir};
+use super::registry::Registry;
+use super::{parse_query_input, QueryInput};
+
+#[test]
+fn gh628_inputs_resolve_without_changing_numeric_dates_or_string_identity() {
+    let today = crate::date::JournalDate::from_ordinal(20261008);
+    for (input, ordinal) in [
+        ("20261008", 20261008),
+        (":today", 20261008),
+        (":7d-after", 20261015),
+        (":7d-before", 20261001),
+        (":7d", 20261001),
+        (":+7d", 20261015),
+        (":yesterday", 20261007),
+        (":tomorrow", 20261009),
+        (":-1w", 20261001),
+        (":+1m", 20261108),
+    ] {
+        let source = format!("{{:title \"ignore :where :inputs\" :query [:find (pull ?b [*]) :in $ ?day :where [?b :block/scheduled ?day]] :inputs [{input}]}}");
+        let (query, _, ignored) = advanced_pred(&source, None, today);
+        assert!(ignored.is_empty(), "{input}: {ignored:?}");
+        assert_eq!(
+            query.unwrap().filter,
+            crate::query::ir::Filter::attr(
+                crate::query::ir::Attr::Scheduled,
+                crate::query::ir::CmpOp::Eq,
+                crate::query::ir::Value::Number {
+                    number: ordinal as f64
+                }
+            )
+        );
+    }
+    let source = r#"{:query [:find ?name :in $ ?tag :where [?t :block/name ?tag] [?p :block/tags ?t] [?p :block/name ?name]] :inputs ["computer science"]}"#;
+    let (query, _, ignored) = advanced_pred(source, None, today);
+    assert!(ignored.is_empty(), "{ignored:?}");
+    assert_eq!(query.unwrap().anchor, crate::query::ir::Anchor::Page);
+    for input in [":Today", ":now", ":2026-10-08"] {
+        let source = format!("{{:query [:find (pull ?b [*]) :in $ ?day :where [?b :block/scheduled ?day]] :inputs [{input}]}}");
+        let (query, ran, ignored) = advanced_pred(&source, None, today);
+        assert!(query.is_none(), "{input}");
+        assert!(ran.is_empty());
+        assert!(!ignored.is_empty());
+    }
+}
+
+#[test]
+fn gh628_arbitrary_joins_rules_projections_and_transforms_refuse_whole() {
+    let today = crate::date::JournalDate::from_ordinal(20261008);
+    for source in [
+        r#"[:find ?b ?m :where [?b :block/marker ?m]]"#,
+        r#"[:find (pull ?b [:block/content]) :where [?b :block/marker "TODO"]]"#,
+        r#"[:find (pull ?b [*]) :where []]"#,
+        r#"[:find ?name :where [?p :block/name ?name]]"#,
+        r#"[:find (pull ?b [*]) :where [?b :block/page ?p] [?p :block/journal? _]]"#,
+        r#"{:query [:find (pull ?b [*]) :in $ ?tag :where [?b :block/marker "TODO"] (page-ref ?other ?tag)] :inputs ["project"]}"#,
+        r#"{:query [:find (pull ?b [*]) :where (task ?b #{"TODO"})] :rules [[(task ?b ?m) [?b :block/content ?m]]]}"#,
+        r#"{:query [:find (pull ?b [*]) :in $ % :where (task ?b #{"TODO"})] :inputs [[[(task ?b ?m) [?b :block/content ?m]]]]}"#,
+        r#"[:find (pull ?b [*]) :where (or [?b :block/scheduled ?d] [?b :block/deadline ?d]) [(> ?d 20261008)] [?other :block/scheduled ?d]]"#,
+    ] {
+        let (query, ran, ignored) = advanced_pred(source, None, today);
+        assert!(query.is_none(), "{source}");
+        assert!(ran.is_empty());
+        assert!(!ignored.is_empty(), "{source}");
+    }
+    let source = r#"{:query [:find (pull ?b [*]) :where [?b :block/marker "TODO"]] :result-transform (fn [xs] (take 1 xs))}"#;
+    let (query, _) = super::parse_query_input(
+        source,
+        super::QueryInput::Advanced,
+        today,
+        super::registry::Registry::none(),
+    );
+    let resolved =
+        super::resolve_for_execution(&query, &super::ir::ExecutionContext::none(), today);
+    assert!(!resolved.is_executable());
+    assert!(resolved.report().ran.is_empty());
+    assert!(resolved.query().diagnostics.iter().any(|d| d
+        .message
+        .contains("without :result-transform, use TQL:")
+        && d.message.contains("TODO")));
+}
 use super::ir::{
     Anchor, Attr, CmpOp, DiagnosticKind, ExecutionContext, Filter, Quant, Rel, Source, Value,
 };
@@ -235,7 +316,11 @@ fn advanced_current_page_input_lowers_the_standard_page_relationship() {
 
     assert_eq!(
         lowered.map(|query| query.filter),
-        Some(e_page_ref("focus a"))
+        Some(Filter::rel(
+            Rel::DirectRefs,
+            Quant::Any,
+            Filter::attr(Attr::Name, CmpOp::Eq, Value::text("focus a"))
+        ))
     );
     assert_eq!(ran, vec!["current-page-ref"]);
     assert!(ignored.is_empty());
@@ -329,8 +414,9 @@ fn gh542_attribute_patterns_lower_only_block_local_meaning() {
 
 /// GH #542 (og lane Q1): a marker variable narrowed by `contains?` lowers to a
 /// task leaf. og's pre-port engine answered this query with an empty result.
-/// A `:result-transform` is a Clojure function Tine cannot run, so the same
-/// query WITH one is refused whole (Martin, 2026-10-03), never run without it.
+/// The same query WITH OG's shipped NOW transform (a priority sort) lowers to
+/// the same filter and carries the sort (Martin 2026-10-11); other transforms
+/// still refuse whole (Martin 2026-10-03), see the next test.
 #[test]
 fn gh542_contains_narrowed_marker_lowers_to_a_task_leaf() {
     let query = r#"[:find (pull ?h [*])
@@ -363,12 +449,97 @@ fn gh542_contains_narrowed_marker_lowers_to_a_task_leaf() {
         :result-transform (fn [result] (sort-by (fn [h] (get h :block/priority "Z")) result))}}"#
     );
     let (lowered, ran, ignored) = advanced_pred(&with_transform, None, TODAY);
-    assert!(
-        lowered.is_none(),
-        "a result-transform refuses the whole query"
+    assert_eq!(
+        lowered
+            .expect("OG's NOW transform is a sort, not a refusal")
+            .filter,
+        filter
     );
-    assert!(ran.is_empty());
-    assert_eq!(ignored, vec!["result-transform"]);
+    assert!(!ran.is_empty());
+    assert!(ignored.is_empty(), "{ignored:?}");
+    let (_, view) = parse_query_input(
+        &with_transform,
+        QueryInput::Advanced,
+        TODAY,
+        Registry::none(),
+    );
+    assert_eq!(view.sort, vec![(Field::new("priority"), SortDir::Asc)]);
+}
+
+#[test]
+fn gh690_next_lowers_one_direct_journal_reference() {
+    let source = r#"{:query [:find (pull ?h [*]) :in $ ?start ?next :where
+        [?h :block/marker ?marker] [?h :block/ref-pages ?p]
+        [?p :block/journal? true] [?p :block/journal-day ?d]
+        [(> ?d ?start)] [(< ?d ?next)]
+        [(contains? #{"NOW" "LATER" "TODO"} ?marker)]] :inputs [:today :14d-after]}"#;
+    let (query, _, ignored) = advanced_pred(source, None, TODAY);
+    assert!(ignored.is_empty(), "{ignored:?}");
+    assert!(query.unwrap().filter.any_leaf(&mut |leaf| matches!(
+        leaf,
+        crate::query::ir::Leaf::Rel {
+            rel: Rel::DirectRefs,
+            ..
+        }
+    )));
+    for extra in [
+        "[?p :block/name ?name]",
+        "[?other :block/ref-pages ?p]",
+        "[?h :block/scheduled ?d]",
+        "[(unknown ?p)]",
+        "[(unknown ?d)]",
+    ] {
+        let variant = source.replace("[(> ?d ?start)]", &format!("{extra} [(> ?d ?start)]"));
+        let (_, _, ignored) = advanced_pred(&variant, None, TODAY);
+        assert!(!ignored.is_empty(), "must refuse {extra}");
+    }
+}
+
+/// REG-OG-C5-Q-RESULT-TRANSFORM (Martin 2026-10-11): only OG's exact NOW
+/// priority sort is recognised. A transform that changes the result set, its
+/// order otherwise, or the missing-priority default still refuses the query
+/// whole; no transform declared means no sort.
+#[test]
+fn only_ogs_priority_sort_transform_runs() {
+    let vector = r#"[:find (pull ?h [*]) :where [?h :block/marker "TODO"]]"#;
+    let with = |transform: &str| format!("{{:query {vector} :result-transform {transform}}}");
+    for transform in [
+        r#"(fn [result] (sort-by (fn [h] (get h :block/priority "Z")) result))"#,
+        r#"(fn [xs]
+             (sort-by (fn [row] (get row :block/priority "Z")) xs))"#,
+    ] {
+        let src = with(transform);
+        let (lowered, _, ignored) = advanced_pred(&src, None, TODAY);
+        assert!(
+            lowered.is_some() && ignored.is_empty(),
+            "{transform}: {ignored:?}"
+        );
+        let (_, view) = parse_query_input(&src, QueryInput::Advanced, TODAY, Registry::none());
+        assert_eq!(
+            view.sort,
+            vec![(Field::new("priority"), SortDir::Asc)],
+            "{transform}"
+        );
+    }
+    for transform in [
+        r#"(fn [result] (take 1 (sort-by (fn [h] (get h :block/priority "Z")) result)))"#,
+        r#"(fn [result] (reverse (sort-by (fn [h] (get h :block/priority "Z")) result)))"#,
+        r#"(fn [result] (sort-by (fn [h] (get h :block/priority "A")) result))"#,
+        r#"(fn [result] (sort-by (fn [h] (get h :block/priority)) result))"#,
+        r#"(fn [result] (sort-by (fn [h] (get h :block/scheduled "Z")) result))"#,
+        r#"(fn [result] (sort-by (fn [result] (get result :block/priority "Z")) result))"#,
+        r#"(fn [result] (sort-by (fn [h] (get h :block/priority "Z")) other))"#,
+        r#"(fn [result] (filter (fn [h] (get h :block/priority "Z")) result))"#,
+        r#"#(sort-by (fn [h] (get h :block/priority "Z")) %)"#,
+        ":sort-by-priority",
+    ] {
+        let src = with(transform);
+        let (lowered, ran, ignored) = advanced_pred(&src, None, TODAY);
+        assert!(lowered.is_none() && ran.is_empty(), "{transform}");
+        assert_eq!(ignored, vec!["result-transform"], "{transform}");
+    }
+    let (_, view) = parse_query_input(vector, QueryInput::Advanced, TODAY, Registry::none());
+    assert!(view.sort.is_empty());
 }
 
 /// Checkpoint-5 Q (REG-OG-C5-Q-RESULT-TRANSFORM): the refusal fires on a

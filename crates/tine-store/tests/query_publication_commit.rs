@@ -4,7 +4,7 @@ use std::{
     process::{Child, Command},
     time::{Duration, Instant},
 };
-use tine_store::{publish::publish_query_site, Store};
+use tine_store::Store;
 
 fn open(root: &Path) -> Store {
     Store::open(root, Default::default()).unwrap().0
@@ -23,6 +23,7 @@ fn recoveries(root: &Path) -> Vec<std::path::PathBuf> {
 }
 #[test]
 fn replace_reports_the_leaf_that_arrived_after_review_and_leaves_siblings() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     old(root);
@@ -36,11 +37,18 @@ fn replace_reports_the_leaf_that_arrived_after_review_and_leaves_siblings() {
     let review = tine_store::publish::query_publication_destination(&store, "tasks").unwrap();
     assert!(review.1);
     assert_eq!(review.2.as_deref(), Some("tasks-2"));
-    let result = publish_query_site(&store, "tasks", true, &mut |w| {
-        fs::write(root.join("published-queries/tasks/index.html"), b"arrived").unwrap();
-        w.write("index.html", b"new")
-    })
-    .unwrap();
+    let result = store
+        .publish(
+            tine_store::PublishDest::QueryLeaf {
+                folder: "tasks",
+                replace: true,
+            },
+            &mut |w| {
+                fs::write(root.join("published-queries/tasks/index.html"), b"arrived").unwrap();
+                w.write("index.html", b"new")
+            },
+        )
+        .unwrap();
     assert_eq!(
         fs::read(result.previous_kept.unwrap().join("index.html")).unwrap(),
         b"arrived"
@@ -50,22 +58,27 @@ fn replace_reports_the_leaf_that_arrived_after_review_and_leaves_siblings() {
         b"sibling"
     );
     assert_eq!(fs::read(result.site.join("index.html")).unwrap(), b"new");
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(store.whole_graph().unwrap().corpus().pages.len(), 1);
     store.close();
 }
 
 #[test]
 fn publication_child() {
+    let _integration_guard = crate::integration_lock();
     let Ok(root) = std::env::var("TINE_QUERY_COMMIT_CHILD") else {
         return;
     };
     let root = Path::new(&root);
     let store = open(root);
     let replace = std::env::var("TINE_QUERY_REPLACE").as_deref() == Ok("yes");
-    let result = publish_query_site(&store, "tasks", replace, &mut |w| {
-        w.write("index.html", b"new")
-    });
+    let result = store.publish(
+        tine_store::PublishDest::QueryLeaf {
+            folder: "tasks",
+            replace,
+        },
+        &mut |w| w.write("index.html", b"new"),
+    );
     match result {
         Ok(_) => fs::write(root.join("result"), b"success").unwrap(),
         Err(error) => fs::write(
@@ -82,7 +95,11 @@ fn publication_child() {
 }
 fn child(root: &Path, point: &str, replace: bool) -> Child {
     Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "publication_child", "--nocapture"])
+        .args([
+            "--exact",
+            "query_publication_commit::publication_child",
+            "--nocapture",
+        ])
         .env("TINE_QUERY_COMMIT_CHILD", root)
         .env("TINE_QUERY_REPLACE", if replace { "yes" } else { "no" })
         .env("TINE_PUBLICATION_PAUSE", point)
@@ -114,6 +131,7 @@ fn paused(root: &Path, child: &mut Child) {
 }
 #[test]
 fn killed_replace_reopens_with_the_complete_previous_leaf_in_recovery() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     old(root);
@@ -132,10 +150,15 @@ fn killed_replace_reopens_with_the_complete_previous_leaf_in_recovery() {
     assert_eq!(fs::read(kept[0].join("index.html")).unwrap(), b"old");
     let store = open(root);
     assert_eq!(store.whole_graph().unwrap().corpus().pages.len(), 1);
-    let result = publish_query_site(&store, "tasks", false, &mut |w| {
-        w.write("index.html", b"complete")
-    })
-    .unwrap();
+    let result = store
+        .publish(
+            tine_store::PublishDest::QueryLeaf {
+                folder: "tasks",
+                replace: false,
+            },
+            &mut |w| w.write("index.html", b"complete"),
+        )
+        .unwrap();
     assert_eq!(
         fs::read(result.site.join("index.html")).unwrap(),
         b"complete"
@@ -145,6 +168,7 @@ fn killed_replace_reopens_with_the_complete_previous_leaf_in_recovery() {
 }
 #[test]
 fn concurrent_create_and_replace_winners_are_never_clobbered() {
+    let _integration_guard = crate::integration_lock();
     for replace in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -184,6 +208,7 @@ fn concurrent_create_and_replace_winners_are_never_clobbered() {
 
 #[test]
 fn graph_site_and_query_leaf_have_one_commit_answerer() {
+    let _integration_guard = crate::integration_lock();
     let source = include_str!("../src/publish.rs");
     let production = source.split("#[cfg(all(test, unix))]").next().unwrap();
     // Count CALLS, whatever the receiver or argument spelling: every occurrence of the
@@ -201,8 +226,20 @@ fn graph_site_and_query_leaf_have_one_commit_answerer() {
         2,
         "I-12: the graph and query-leaf publications both go through publish_site_at"
     );
-    assert_eq!(calls("collect_asset_refs"), 1,
-        "I-12: publication reuses the asset-reference answerer; exemplar publish.rs::publication_assets");
+    // Publication asset selection is a client (gf publish_query::publication_assets)
+    // over tine-core's one collector; the store reads only through Store::read.
+    assert_eq!(calls("collect_asset_refs"), 0,
+        "I-12: the store does not re-collect publication assets; exemplar tine-graph-features publish_query.rs::publication_assets");
+    let client = include_str!("../../tine-graph-features/src/publish_query.rs");
+    assert_eq!(client.matches("corpus.asset_refs()").count(), 1,
+        "I-12: publication reuses the asset-reference answerer Corpus::asset_refs; exemplar publish_query.rs::publication_assets");
+    assert!(
+        !client.contains("collect_asset_refs("),
+        "I-12: publication must not re-derive asset references; use Corpus::asset_refs"
+    );
+    let corpus = include_str!("../../tine-core/src/corpus.rs");
+    assert!(corpus.contains("asset_refs::collect_document_asset_refs("),
+        "I-12: Corpus::asset_refs is the orphan detector's collector; exemplar tine-core asset_refs.rs");
     let contract = include_str!("../../../docs/storage-contract.md");
     for value in [
         "published-queries/<portable-folder>/",
@@ -220,6 +257,7 @@ fn graph_site_and_query_leaf_have_one_commit_answerer() {
 
 #[test]
 fn review_suggestions_remain_portable_at_the_folder_limit() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(dir.path().join("pages")).unwrap();
     let folder = "a".repeat(80);
@@ -230,16 +268,22 @@ fn review_suggestions_remain_portable_at_the_folder_limit() {
     assert!(exists);
     let suggestion = suggestion.unwrap();
     assert!(suggestion.len() <= 80);
-    publish_query_site(&store, &suggestion, false, &mut |w| {
-        w.write("index.html", b"new")
-    })
-    .unwrap();
+    store
+        .publish(
+            tine_store::PublishDest::QueryLeaf {
+                folder: &suggestion,
+                replace: false,
+            },
+            &mut |w| w.write("index.html", b"new"),
+        )
+        .unwrap();
     store.close();
 }
 
 #[cfg(unix)]
 #[test]
 fn review_refuses_an_unsafe_existing_leaf() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(dir.path().join("pages")).unwrap();
     fs::create_dir_all(dir.path().join("published-queries")).unwrap();

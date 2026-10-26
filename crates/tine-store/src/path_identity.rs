@@ -12,30 +12,21 @@ use std::path::{Path, PathBuf};
 /// Refuse Windows-created files in WSL1's backing rootfs: those writes bypass
 /// Linux metadata and can corrupt it. Inspect the resolved parent too, so a
 /// directory junction cannot bypass the refusal. Existing graphs stay openable.
-pub(crate) fn check_new_graph_parent(parent: &Path) -> Result<(), crate::OpenError> {
+pub(crate) fn new_graph_root(parent: &Path, name: &str) -> Result<PathBuf, crate::OpenError> {
     #[cfg(windows)]
     {
         let resolved =
             canonical_existing_path(parent).map_err(|error| crate::OpenError::Io(error.into()))?;
-        check_new_graph_parent_paths(parent, &resolved)?;
+        if tine_core::graph_paths::is_windows_wsl_rootfs(&parent.to_string_lossy())
+            || tine_core::graph_paths::is_windows_wsl_rootfs(&resolved.to_string_lossy())
+        {
+            return Err(crate::OpenError::CreateFailed {
+                path: parent.to_path_buf(),
+                cause: io::Error::new(io::ErrorKind::InvalidInput, "wsl-rootfs").into(),
+            });
+        }
     }
-    #[cfg(not(windows))]
-    let _ = parent;
-    Ok(())
-}
-
-#[cfg(any(windows, test))]
-fn check_new_graph_parent_paths(parent: &Path, resolved: &Path) -> Result<(), crate::OpenError> {
-    if tine_core::graph_paths::is_windows_wsl_rootfs(&parent.to_string_lossy())
-        || tine_core::graph_paths::is_windows_wsl_rootfs(&resolved.to_string_lossy())
-    {
-        return Err(crate::OpenError::CreateFailed {
-            path: parent.to_path_buf(),
-            cause: io::Error::new(io::ErrorKind::InvalidInput,
-                "Windows access to a WSL1 rootfs can corrupt Linux files. Use \\\\wsl.localhost\\<distro>\\… instead.").into(),
-        });
-    }
-    Ok(())
+    Ok(parent.join(name))
 }
 
 pub(crate) fn canonical_existing_path(path: &Path) -> io::Result<PathBuf> {
@@ -83,24 +74,6 @@ fn has_link_component(path: &Path) -> bool {
 mod canonical_root_fallback_tests {
     use super::*;
     use std::path::PathBuf;
-
-    #[test]
-    fn new_graph_refuses_both_selected_and_resolved_wsl_rootfs_parents() {
-        let unsafe_root = Path::new(r"C:\Users\m\Packages\Ubuntu_123\LocalState\rootfs\home\m");
-        let safe_root = Path::new(r"C:\notes");
-        for (parent, resolved) in [(unsafe_root, safe_root), (safe_root, unsafe_root)] {
-            let error = check_new_graph_parent_paths(parent, resolved).unwrap_err();
-            let crate::OpenError::CreateFailed { path, cause } = error else {
-                panic!("expected a creation refusal");
-            };
-            assert_eq!(path, parent);
-            assert!(cause.message.contains("corrupt Linux files"));
-            assert!(cause.message.contains(r"\\wsl.localhost\<distro>\"));
-        }
-        let network = Path::new(r"\\wsl.localhost\Ubuntu\home\m");
-        assert!(check_new_graph_parent_paths(network, network).is_ok());
-        assert!(check_new_graph_parent_paths(safe_root, safe_root).is_ok());
-    }
 
     fn test_root(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
-import { VideoMacro, YoutubeTimestamp } from "./Macro";
+import { VideoMacro, YoutubeTimestamp, youtubeTimestampMacroFor } from "./Macro";
 
 interface MockPlayer {
   seekTo: ReturnType<typeof vi.fn>;
@@ -29,6 +29,74 @@ afterEach(() => {
 });
 
 describe("YouTube timestamp macros", () => {
+  // Intentional OG divergence: same-video and playback history cross pane boundaries.
+  it("prefers the played same-id sidebar copy over a nearer different video", async () => {
+    const players = new Map<string, MockPlayer>();
+    const events = new Map<string, (event: { data: number }) => void>();
+    const Player = vi.fn(function Player(id: string, options: { events: { onStateChange: (event: { data: number }) => void } }) {
+      const player = { seekTo: vi.fn(), getCurrentTime: vi.fn(() => 42.9), destroy: vi.fn() };
+      players.set(id, player);
+      events.set(id, options.events.onStateChange);
+      return player;
+    });
+    Object.assign(window, { YT: { Player } });
+    const { root, dispose } = mount(() => <>
+      <div data-pane-id="main"><VideoMacro body="youtube dQw4w9WgXcQ" />
+        <div data-pane-id="other"><VideoMacro body="youtube JI-AyLv68Xs" /></div>
+        <YoutubeTimestamp body="youtube-timestamp 125" />
+      </div>
+      <div class="rs-item"><VideoMacro body="youtube dQw4w9WgXcQ" /></div>
+    </>);
+    try {
+      await expect.poll(() => players.size).toBe(3);
+      const frames = root.querySelectorAll("iframe");
+      const stamp = root.querySelector<HTMLElement>(".youtube-ts")!;
+      events.get(frames[2].id)?.({ data: 1 });
+      events.get(frames[1].id)?.({ data: 1 });
+      stamp.click();
+      expect(players.get(frames[2].id)!.seekTo).toHaveBeenCalledWith(125, true);
+      expect(players.get(frames[1].id)!.seekTo).not.toHaveBeenCalled();
+      expect(youtubeTimestampMacroFor(stamp)).toBe("{{youtube-timestamp 42}}");
+    } finally { dispose(); }
+  });
+
+  it("uses the last played sidebar player without a video association and forgets unmounted history", async () => {
+    const players: MockPlayer[] = [];
+    const events: ((event: { data: number }) => void)[] = [];
+    Object.assign(window, { YT: { Player: function (_id: string, options: { events: { onStateChange: (event: { data: number }) => void } }) {
+      const player = { seekTo: vi.fn(), getCurrentTime: vi.fn(() => 17), destroy: vi.fn() };
+      players.push(player); events.push(options.events.onStateChange); return player;
+    } } });
+    const stamp = mount(() => <div data-pane-id="main"><YoutubeTimestamp body="youtube-timestamp 8" /></div>);
+    const video = mount(() => <div class="rs-item"><VideoMacro body="youtube dQw4w9WgXcQ" /><VideoMacro body="youtube JI-AyLv68Xs" /></div>);
+    try {
+      await expect.poll(() => players.length).toBe(2);
+      events[1]?.({ data: 1 }); events[0]?.({ data: 1 }); events[1]?.({ data: 2 });
+      stamp.root.querySelector<HTMLElement>(".youtube-ts")!.click();
+      expect(players[0].seekTo).toHaveBeenCalledWith(8, true);
+      expect(players[1].seekTo).not.toHaveBeenCalled();
+      video.dispose();
+      expect(youtubeTimestampMacroFor(stamp.root.querySelector(".youtube-ts")!)).toBeNull();
+    } finally { stamp.dispose(); }
+  });
+
+  it("retains OG's nearest preceding player with no history or own-pane association", async () => {
+    const players: MockPlayer[] = [];
+    Object.assign(window, { YT: { Player: function () {
+      const player = { seekTo: vi.fn(), getCurrentTime: vi.fn(() => 0), destroy: vi.fn() };
+      players.push(player); return player;
+    } } });
+    const { root, dispose } = mount(() => <>
+      <div class="rs-item"><VideoMacro body="youtube dQw4w9WgXcQ" /><VideoMacro body="youtube JI-AyLv68Xs" /></div>
+      <div data-pane-id="main"><YoutubeTimestamp body="youtube-timestamp 9" /></div>
+    </>);
+    try {
+      await expect.poll(() => players.length).toBe(2);
+      root.querySelector<HTMLElement>(".youtube-ts")!.click();
+      expect(players[1].seekTo).toHaveBeenCalledWith(9, true);
+      expect(players[0].seekTo).not.toHaveBeenCalled();
+    } finally { dispose(); }
+  });
   it.each(["video https://youtu.be/JI-AyLv68Xs", "youtube JI-AyLv68Xs"])("renders the GH #600 video through %s", (body) => {
     const { root, dispose } = mount(() => <VideoMacro body={body} />);
     try {

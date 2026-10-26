@@ -11,8 +11,7 @@
 
 use lsdoc::ast::Block;
 
-#[path = "../../lsdoc-block-parse.rs"]
-mod lsdoc_block_parse;
+use tine_outline::lsdoc_block_parse;
 
 /// Parse one block body into lsdoc's block AST the way OG feeds mldoc: re-prepend
 /// the block pattern (`-` Markdown / `*` Org) to the de-indented `raw`, then parse.
@@ -50,7 +49,7 @@ pub fn parse_text_bounded(text: &str, is_org: bool) -> Option<lsdoc::ast::Projec
 }
 
 /// Quote-staircase markers opening one source line, as lsdoc recurses on
-/// them (`lsdoc-block-parse.rs::line_quote_depth`): the page admission's
+/// them (`lsdoc_block_parse.rs::line_quote_depth`): the page admission's
 /// quote count, so the admission and the parser agree (I-22).
 pub fn line_quote_depth(line: &str) -> usize {
     lsdoc_block_parse::line_quote_depth(line)

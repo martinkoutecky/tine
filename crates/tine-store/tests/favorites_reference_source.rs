@@ -12,6 +12,7 @@ fn names(groups: &[tine_core::model::RefGroup]) -> Vec<String> {
 
 #[test]
 fn favorites_layout_page_is_never_a_reference_source() {
+    let _integration_guard = crate::integration_lock();
     let root = std::env::temp_dir().join(format!("tine-fav-exclude-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("journals")).unwrap();
@@ -41,7 +42,7 @@ fn favorites_layout_page_is_never_a_reference_source() {
         "{:tine/favorites-page \"favorites\"}\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let graph = store.whole_graph().unwrap();
     assert_eq!(
         names(&graph.backlinks("Target").unwrap()),

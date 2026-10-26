@@ -20,6 +20,7 @@ const DRIVER_BASE = Number(process.env.E2E_DRIVER_PORT || 4582);
 const NATIVE_BASE = Number(process.env.E2E_NATIVE_PORT || 4583);
 const EDIT_ID = "drawer-edit-161";
 const SAVED_TEXT = "Native saved [[Completion Target]] 中文";
+const ALL_PAGES_ONLY = process.env.E2E_ALL_PAGES_ONLY === "1";
 const PDF = "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA1IDAgUiA+PiA+PiAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAyMDUgPj4Kc3RyZWFtCkJUIC9GMSAyMCBUZiA3MiA3MjAgVGQgKFRpbmUgUERGIHZpZXdlcikgVGogRVQKQlQgL0YxIDEzIFRmIDcyIDY5MCBUZCAoU2VsZWN0IHRoaXMgdGV4dCB0byBjcmVhdGUgYSBoaWdobGlnaHQuKSBUaiBFVApCVCAvRjEgMTMgVGYgNzIgNjY4IFRkIChIaWdobGlnaHRzIHBlcnNpc3QgdG8gYXNzZXRzLzxrZXk+LmVkbiArIGFuIGhsc19fIHBhZ2UuKSBUaiBFVAoKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDA0OTcgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo1NjcKJSVFT0Y=";
 
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
@@ -41,7 +42,9 @@ const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "
 fs.writeFileSync(path.join(GRAPH, "journals", `${journal}.md`), "- Drawer fixture home\n");
 
 const proof = {
-  scenario: "gh-161-native-mobile-drawers",
+  scenario: ALL_PAGES_ONLY ? "gh-335-native-all-pages" : "gh-161-native-mobile-drawers",
+  testedCommit: spawnSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).stdout.trim(),
+  sourceDelta: "ui-small worktree diff",
   app: APP,
   graph: GRAPH,
   startedAt: new Date().toISOString(),
@@ -101,8 +104,15 @@ async function withApp(index, forced, fn) {
     });
     await browser.$(".app-container").waitForExist({ timeout: 20_000 });
     await browser.$(".main-content").waitForExist({ timeout: 20_000 });
+    await browser.$(".graph-transition-shield").waitForExist({ timeout: 30_000, reverse: true });
     await fn(browser);
     await sleep(500);
+  } catch (error) {
+    const failure = { testedCommit: proof.testedCommit, sourceDelta: proof.sourceDelta, journey: proof.scenario, app: APP, expected: "mounted app and successful drawer navigation", observed: String(error), classification: "ambiguous", screenshot: `failure-${index}.png`, log: logPath };
+    try { failure.document = await browser.execute(() => ({ url: location.href, title: document.title, body: document.body.innerText.slice(0, 2000) })); } catch {}
+    try { await browser.saveScreenshot(path.join(ARTIFACT, `failure-${index}.png`)); } catch {}
+    fs.writeFileSync(path.join(ARTIFACT, `failure-${index}.json`), `${JSON.stringify(failure, null, 2)}\n`);
+    throw error;
   } finally {
     try { await browser?.deleteSession(); } catch {}
     try { process.kill(-driver.pid, "SIGKILL"); } catch {}
@@ -221,6 +231,19 @@ async function clickToolbar(browser, title) {
   await item.click();
 }
 
+// WebDriver's element-clear (what setValue starts with) focuses the field, clears
+// it and then BLURS it. Under a window manager that gives the Tine window focus
+// (openbox, a real desktop) that blur is a genuine "user clicked elsewhere" and
+// ends the block edit, so the editor unmounts before the keys arrive; with no
+// window manager document.hasFocus() is false and the blur is (correctly) ignored.
+// Replace the text the way a user does instead: select all in the live field and
+// type over it, keeping focus inside the editor throughout.
+async function replaceEditorText(browser, editor, text) {
+  await editor.waitForExist({ timeout: 5_000 });
+  await browser.keys(["Control", "a"]);
+  await editor.addValue(text);
+}
+
 async function shiftClick(browser, element) {
   await browser.performActions([{
     type: "key",
@@ -278,6 +301,23 @@ await withApp(0, true, async (browser) => {
     "left drawer exposed a resizer or failed to own focus", left);
   proof.artifacts.left = path.join(ARTIFACT, "forced-left.png");
   nativeScreenshot(proof.artifacts.left);
+
+  // GH #335: the drawer entry navigates to the full view and completes the
+  // same active-navigation boundary as a favorite.
+  await browser.$(".nav-all-pages-open").click();
+  await browser.$(".all-pages-filter").waitForExist({ timeout: 10_000 });
+  await waitNoDrawer(browser);
+  proof.allPagesMobile = await snapshot(browser);
+  assert(proof.allPagesMobile.active?.inMain, "All pages drawer navigation did not focus main content", proof.allPagesMobile);
+  await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".all-pages-open")].some(row => row.textContent === "Drawer target")),
+    { timeout: 10_000, timeoutMsg: "full All pages view did not list the fixture page" });
+  if (ALL_PAGES_ONLY) {
+    proof.artifacts.allPagesMobile = path.join(ARTIFACT, "all-pages-mobile.png");
+    nativeScreenshot(proof.artifacts.allPagesMobile);
+    return;
+  }
+  await clickToolbar(browser, "Toggle sidebar");
+  await waitDrawer(browser, "left");
 
   // A genuine favorite navigation is successful only after the new page is
   // visible; it must close the left drawer and focus the active main pane.
@@ -368,14 +408,14 @@ await withApp(0, true, async (browser) => {
   await browser.$(contentSelector).click();
   const editor = await browser.$(`.right-sidebar [data-block-ref='${EDIT_ID}'] textarea.block-editor`);
   await editor.waitForExist({ timeout: 5_000 });
-  await editor.setValue("Native plain [[Comp");
+  await replaceEditorText(browser, editor, "Native plain [[Comp");
   await browser.$(".autocomplete .ac-item").waitForExist({ timeout: 10_000 });
   await browser.keys(["Escape"]);
   await browser.$(".autocomplete").waitForExist({ timeout: 5_000, reverse: true });
   const completionEscaped = await snapshot(browser);
   assert(completionEscaped.activeDrawer === "right" && completionEscaped.active?.tag === "TEXTAREA" && completionEscaped.active?.inRight,
     "completion Escape also closed the editor/drawer", completionEscaped);
-  await editor.setValue(SAVED_TEXT);
+  await replaceEditorText(browser, editor, SAVED_TEXT);
   const composition = await browser.execute(() => {
     const textarea = document.activeElement;
     if (!(textarea instanceof HTMLTextAreaElement)) return { dispatched: false };
@@ -446,7 +486,7 @@ await withApp(0, true, async (browser) => {
 
 // Same XDG/graph, fresh native process: persistence must not be an immediate
 // DOM illusion.
-await withApp(1, true, async (browser) => {
+if (!ALL_PAGES_ONLY) await withApp(1, true, async (browser) => {
   const start = await snapshot(browser);
   assert(start.viewport.width < 640 && start.mode === "true", "restart lost literal phone-width classification", start);
   if (start.activeDrawer) {
@@ -495,6 +535,19 @@ await withApp(2, false, async (browser) => {
     && regularBoth.workspace.width < regularClosed.workspace.width,
   "regular sidebars did not consume their persisted flex widths", { closed: regularClosed, both: regularBoth });
 
+  await browser.$(".nav-all-pages-open").click();
+  await browser.$(".all-pages-filter").waitForExist({ timeout: 10_000 });
+  proof.allPagesDesktop = await snapshot(browser);
+  assert(proof.allPagesDesktop.left && proof.allPagesDesktop.scrims === 0,
+    "All pages navigation closed the persistent desktop sidebar", proof.allPagesDesktop);
+  await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".all-pages-open")].some(row => row.textContent === "Drawer target")),
+    { timeout: 10_000, timeoutMsg: "desktop All pages view did not list the fixture page" });
+  if (ALL_PAGES_ONLY) {
+    proof.artifacts.allPagesDesktop = path.join(ARTIFACT, "all-pages-desktop.png");
+    await browser.saveScreenshot(proof.artifacts.allPagesDesktop);
+    return;
+  }
+
   // The 960px state above proves both persisted sidebars simultaneously. Give
   // the split+560px PDF neighbor physically meaningful room for its separate
   // layout assertion; keeping every optional surface open inside 960px
@@ -536,4 +589,4 @@ proof.finishedAt = new Date().toISOString();
 proof.result = "pass";
 const proofPath = path.join(ARTIFACT, "proof.json");
 fs.writeFileSync(proofPath, `${JSON.stringify(proof, null, 2)}\n`);
-console.log(`PASS: native <640 drawer flow, restart persistence, and unforced >=640 persistent split/PDF neighbor; proof: ${proofPath}`);
+console.log(`PASS: ${ALL_PAGES_ONLY ? "All pages navigation in the native phone drawer and persistent desktop sidebar" : "native <640 drawer flow, restart persistence, and unforced >=640 persistent split/PDF neighbor"}; proof: ${proofPath}`);

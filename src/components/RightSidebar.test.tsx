@@ -3,12 +3,14 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { editingId, endEdit } from "../editorController";
 import { initParser } from "../render/parse";
-import { blockRef, blockPositionRef, ensureBlockId, pageByName, resetStore } from "../document";
+import { blockRef, blockPositionRef, ensureBlockId, isDirty, pageByName, resetStore } from "../document";
+import { bindTestHost } from "../document/host/wiring.test.support";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import type { PageDto, PageRead } from "../types";
-import { applySidebarSession, openBlockInSidebar, rightSidebar, setRightSidebar } from "../ui";
+import { applySidebarSession, openBlockInSidebar, rightSidebar, setRightSidebar, type SidebarItem } from "../ui";
 import { RightSidebar } from "./RightSidebar";
+import { route } from "../router";
 
 const page: PageDto = {
   name: "Sidebar test",
@@ -40,11 +42,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mount(items = [
+function mount(items: SidebarItem[] = [
   { kind: "page" as const, name: page.name, pageKind: "page" as const },
   { kind: "block" as const, uuid: "sidebar-second", page: page.name, pageKind: "page" as const },
-]) {
-  loadSingle(page);
+], dto: PageDto = page) {
+  loadSingle(dto);
   applySidebarSession({ right: true, items });
   vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
   vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
@@ -56,8 +58,59 @@ function mount(items = [
 }
 
 describe("right sidebar collection disclosures", () => {
-  it("opening a fresh block in the sidebar writes nothing and stores its position, not an id", () => {
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-sidebar"] });
+  it("names the source page above an opened block (GH #640)", async () => {
+    const { root, dispose } = mount([
+      { kind: "block", uuid: "sidebar-second", page: page.name, pageKind: "page" },
+    ]);
+    try {
+      await expect.poll(() => root.querySelector(".rs-item-title")?.textContent).toBe(page.name);
+      expect(root.textContent).toContain("Second block");
+      root.querySelector<HTMLElement>(".rs-item-title")!.click();
+      expect(route()).toMatchObject({ kind: "page", name: page.name });
+    } finally {
+      dispose();
+    }
+  });
+
+  it("shows the opened block's ancestors after its page, nearest three after an ellipsis, rendered (GH #640)", async () => {
+    let leaf = { id: "deep-leaf", raw: "Leaf itself", collapsed: false, children: [] as PageDto["blocks"] };
+    for (const [id, raw] of [["deep-4", "Fourth **bold**"], ["deep-3", "Third"], ["deep-2", "Second"], ["deep-1", "First"]] as const)
+      leaf = { id, raw, collapsed: false, children: [leaf] };
+    const deep: PageDto = { ...page, blocks: [leaf] };
+    const { root, dispose } = mount([{ kind: "block", uuid: "deep-leaf", page: page.name, pageKind: "page" }], deep);
+    try {
+      await expect.poll(() => root.querySelectorAll(".rs-crumb").length).toBe(3);
+      const crumbs = [...root.querySelectorAll(".rs-crumb")].map((el) => el.textContent);
+      expect(crumbs).toEqual(["Second", "Third", "Fourth bold"]);
+      expect(root.querySelector(".rs-item-crumbs strong")?.textContent).toBe("bold");
+      expect(root.querySelector(".rs-crumb-more")).not.toBeNull();
+      expect(root.querySelector(".rs-item-title")?.textContent).toBe(page.name);
+      expect(root.querySelector(".rs-item-crumbs")?.textContent).not.toContain("Leaf itself");
+      (root.querySelectorAll(".rs-crumb")[1] as HTMLElement).click();
+      expect(rightSidebar()).toHaveLength(1);
+      expect(rightSidebar()[0]).toMatchObject({ kind: "block", page: page.name });
+      await expect.poll(() => [...root.querySelectorAll(".rs-crumb")].map((el) => el.textContent)).toEqual(["First", "Second"]);
+      expect(root.querySelector(".rs-crumb-more")).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps the page label and missing-block notice for a deleted sidebar target (GH #640)", async () => {
+    const { root, dispose } = mount([
+      { kind: "block", uuid: "deleted-block", page: page.name, pageKind: "page" },
+    ]);
+    try {
+      await expect.poll(() => root.textContent).toContain("This block is no longer available.");
+      expect(root.querySelector(".rs-item-title")?.textContent).toBe(page.name);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("opening a fresh block in the sidebar writes nothing and stores its position, not an id", async () => {
+    await bindTestHost();
+    const save = vi.spyOn(backend(), "pageSubmit");
     loadSingle({
       ...page,
       blocks: [{ id: "bfresh-sidebar", raw: "Fresh sidebar target", collapsed: false, children: [] }],
@@ -68,12 +121,13 @@ describe("right sidebar collection disclosures", () => {
     expect(rightSidebar()[0]).toMatchObject({ kind: "block", page: page.name, pageKind: "page", blockPos: [0] });
     expect(doc.byId["bfresh-sidebar"].raw).toBe("Fresh sidebar target");
     expect(save).not.toHaveBeenCalled();
+    expect(isDirty(page.name)).toBe(false);
   });
 
   it("Copy block ref on a sidebar block still stamps its durable UUID", async () => {
     const uuid = "12345678-1234-4234-8234-123456789abc";
     vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
-    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-sidebar"] });
+    await bindTestHost();
     loadSingle({
       ...page,
       blocks: [{ id: "bfresh-sidebar", raw: "Fresh sidebar target", collapsed: false, children: [] }],

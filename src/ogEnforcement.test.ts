@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   PINNED_FORMAT_COUNT, PERSISTED_FORMATS,
-  checkFormatCount, checkSizeRatchet, checkWriterSites,
+  checkFormatCount, checkSizeRatchet, checkWriterSites, isProduction,
   readSizeCounts, readWriterSiteCounts, writerSiteCounts,
 } from "../scripts/lib/og-enforcement.mjs";
 
@@ -15,6 +15,20 @@ const sizeCounts = readSizeCounts(root);
 const writerCounts = readWriterSiteCounts(root);
 
 describe("og campaign enforcement", () => {
+  it("treats out-of-line Rust test modules as test code", () => {
+    expect(isProduction("crates/tine-store/src/page_host/tests.rs")).toBe(false);
+    expect(isProduction("crates/tine-store/src/page_host/driver_tests.rs")).toBe(false);
+    expect(isProduction("crates/tine-store/src/page_host/driver.rs")).toBe(true);
+    expect(isProduction("src-tauri/src/owner/output_tests/mod.rs")).toBe(false);
+    expect(isProduction("src/i18n/messages.gen.ts")).toBe(false);
+    expect(isProduction("src/i18n/messages.ts")).toBe(true);
+    expect(isProduction("src-tauri/src/owner/serve.rs")).toBe(true);
+    expect(isProduction("crates/tine-store/src/contests.rs")).toBe(true);
+    expect(isProduction("crates/tine-store/src/page_state/mod.rs")).toBe(false);
+    // That exemption holds only while the transcription stays test-gated.
+    expect(readFileSync(path.join(root, "crates/tine-store/src/lib.rs"), "utf8")).toMatch(/#\[cfg\(test\)\]\nmod page_state;/);
+  });
+
   it("ratchets production file size against the post-batch-5 baseline", () => {
     const { current, baseline } = sizeCounts;
     expect(() => checkSizeRatchet(current, baseline)).not.toThrow();

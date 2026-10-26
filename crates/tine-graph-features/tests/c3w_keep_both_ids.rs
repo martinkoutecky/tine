@@ -49,6 +49,7 @@ fn resolve_all(ext: &str, winner: &str, copy: &str, decision: &str) -> String {
     all_rows(&diff.rows, decision, &mut decisions);
     conflicts::resolve_sync_conflict(
         &store,
+        None,
         &win,
         &conf,
         &decisions,
@@ -66,6 +67,7 @@ fn resolve_all(ext: &str, winner: &str, copy: &str, decision: &str) -> String {
 
 #[test]
 fn w4_keep_both_on_a_reorder_conflict_writes_each_block_id_once() {
+    let _integration_guard = crate::integration_lock();
     let winner = format!("- moved\n  id:: {ID}\n- stays\n- stays too\n");
     let copy = format!("- stays\n- stays too\n- moved, edited there\n  id:: {ID}\n");
     for decision in ["both", "theirs"] {
@@ -90,6 +92,7 @@ fn w4_keep_both_on_a_reorder_conflict_writes_each_block_id_once() {
 
 #[test]
 fn w4_keep_both_strips_an_org_drawer_id_from_the_copy() {
+    let _integration_guard = crate::integration_lock();
     let winner = format!("* mine text\n:PROPERTIES:\n:id: {ID}\n:END:\n");
     let copy = format!("* their text\n:PROPERTIES:\n:id: {ID}\n:END:\n");
     let merged = resolve_all("org", &winner, &copy, "both");

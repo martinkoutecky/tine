@@ -59,10 +59,9 @@ async function openTitleActions() {
 }
 
 async function focusFavoriteAction() {
+  // open, open-sidebar, open-new-tab, open-new-window, then favorite-toggle.
   await browser.keys("Home");
-  await browser.keys("ArrowDown");
-  await browser.keys("ArrowDown");
-  await browser.keys("ArrowDown");
+  for (let step = 0; step < 4; step += 1) await browser.keys("ArrowDown");
   if (await activePageAction() !== "favorite-toggle") {
     throw new Error(`keyboard navigation missed favorite-toggle; active=${await activePageAction()}`);
   }
@@ -168,9 +167,9 @@ try {
   const ids = await browser.execute(() => [...document.querySelectorAll("[data-page-action-id]")]
     .map((item) => item.getAttribute("data-page-action-id")));
   const expectedIds = [
-    "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-    "copy-link", "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
-    "show-in-folder", "open-default-app", "page-properties",
+    "open", "open-sidebar", "open-new-tab", "open-new-window", "favorite-toggle",
+    "copy-as", "copy-page-ref", "copy-link", "copy-export", "export-pdf",
+    "show-in-folder", "open-default-app", "page-properties", "set-page-icon",
     "rename-page", "delete-page",
   ];
   if (JSON.stringify(ids) !== JSON.stringify(expectedIds)) {

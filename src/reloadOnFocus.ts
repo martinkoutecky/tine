@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Family 10 — reload on focus (Concord L0; master d56219d73, b3d64addee39).
 //
 // The watcher is the primary freshness path and stays so. Some filesystems and
@@ -27,6 +28,7 @@ import { ownedWhen, readOwnedResource, type Owned } from "./owned";
 import { isPublishedExport } from "./publishedBackend";
 import { pushToast } from "./toasts";
 import { graphTransitioning } from "./ui";
+import { onAppReturn } from "./windowRealm";
 
 /** Minimum spacing between focus-driven rescans; below it, a return to the
  *  window is answered by the in-memory replay alone. */
@@ -183,7 +185,7 @@ export function refreshOnReturnToWindow(now = Date.now(), force = false, rebuild
       // stale case too: the new binding's load read the disk itself.
       if (error instanceof StaleFocusRefresh || !bindingCurrent(binding)) return;
       // The watcher stays primary; a failed fallback must clear the notice.
-      pushToast(`Tine couldn't finish checking for external changes. Editing is available, but reopen the page before relying on it being current. (${String(error)})`, "error");
+      pushToast(msg("reload-on-focus-tine-couldn-t-finish-checking-for-external-changes", { error: String(error) }), "error");
     } finally {
       endRefreshNotice();
       releaseActive(refresh);
@@ -212,8 +214,8 @@ let installed = false;
 export function installReloadOnFocus(): void {
   if (installed || typeof window === "undefined" || isPublishedExport()) return;
   installed = true;
-  window.addEventListener("focus", () => void refreshOnReturnToWindow());
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) void refreshOnReturnToWindow(); });
+  // Returning to ANY Tine window is a return to the app (OG-MULTIWINDOW P5).
+  onAppReturn(() => void refreshOnReturnToWindow());
 }
 
 /** Subscribe the window to the watcher's checkout-sized batches and to a
@@ -230,8 +232,8 @@ export function subscribeWatcherFreshness(): () => void {
   if (api.onGraphChangedBulk) void readOwnedResource(owner, api.onGraphChangedBulk((bulk) => trackGraphChangeApplication(applyGraphChangesBulk(bulk))), (u) => u()).then(keep);
   if (api.onGraphWatchStatus) void readOwnedResource(owner, api.onGraphWatchStatus((status) => {
     if (status.binding_generation !== undefined && status.binding_generation !== captureBinding().backendGeneration) return;
-    if (status.refused) pushToast(`Live file notifications are unavailable for this graph (${status.message}). Tine checks for external changes every 3 seconds instead.`, "warn", { sticky: true });
-    else pushToast("Live file notifications are back for this graph.", "info");
+    if (status.refused) pushToast(msg("reload-on-focus-live-file-notifications-are-unavailable-for-this-graph", { message: String(status.message) }), "warn", { sticky: true });
+    else pushToast(msg("reload-on-focus-live-file-notifications-are-back-for-this-graph"), "info");
   }), (u) => u()).then(keep);
   return () => { alive = false; for (const unsub of unsubs) unsub(); };
 }

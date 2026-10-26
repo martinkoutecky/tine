@@ -4,16 +4,14 @@
 //! here is persisted: the queue is derived from disk once per open graph and
 //! refreshed per published change ([`ConflictQueue`]). A file that cannot be
 //! listed, read or diffed is skipped and reported in
-//! [`ConflictInventory::unreadable`]; it never withholds the healthy conflicts
+//! [`ConflictInventory::unreadable`](tine_core::concord_queue::ConflictInventory::unreadable);
+//! it never withholds the healthy conflicts
 //! (I-22). Only a failure of the whole store or area scan fails the inventory.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 
-use tine_core::concord_queue::{
-    decidable_row_count, parse_vcs_marker_sides, vcs_conflict_markers, ConflictInventory,
-    ConflictObject, ConflictSide, ConflictSource, MarkerConflictDiff, SideRole, VcsMarkerConflict,
-};
+use tine_core::concord_queue::{parse_vcs_marker_sides, MarkerConflictDiff};
 use tine_core::date::JournalFormat;
 use tine_core::doc::{self, Document};
 use tine_core::model::{
@@ -21,10 +19,21 @@ use tine_core::model::{
 };
 use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use tine_core::sync_diff::{self, SyncConflictDiff};
-use tine_store::{Area, FileId, FileRev, PageId, SaveBase, Store};
+use tine_store::{Area, FileId, FileRev, Input, PageHost, PageId, SaveBase, Store};
+
+mod queue;
+pub use queue::{conflict_inventory, ConflictQueue};
 
 pub(crate) fn invalid_path() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "invalid file path")
+}
+
+/// A guarded resolve's refusal: `what` changed on disk since the review.
+fn changed(what: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        format!("{what} changed on disk"),
+    )
 }
 
 pub(crate) fn id(store: &Store, rel: &str) -> io::Result<FileId> {
@@ -654,6 +663,7 @@ pub(crate) fn dto(store: &Store, id: &PageId, mut doc: Document) -> PageDto {
 /// four attempts.
 pub fn resolve_sync_conflict(
     store: &Store,
+    host: Option<&PageHost>,
     winner: &str,
     conflict: &str,
     decisions: &HashMap<String, String>,
@@ -683,6 +693,7 @@ pub fn resolve_sync_conflict(
     }
     fold_pair(
         store,
+        host,
         (&win, &conf),
         decisions,
         (base_rev, conflict_rev),
@@ -694,74 +705,49 @@ pub fn resolve_sync_conflict(
 
 /// The guarded two-file fold shared by a sync copy and a duplicate journal
 /// day, once the caller has proved the pairing: `conf` is merged into `win`
-/// per the row decisions and trashed recoverably, in one transaction.
+/// per the row decisions and trashed recoverably. Unsaved input in either
+/// page is refused as a change on disk would be, so the fold never drops it.
+///
+/// With a host, one host operation (DESIGN §3.1) planned from the bytes the
+/// fold read: the winner's write, and for a duplicate day the stray's
+/// deletion as a move's source (the winner's new bytes hold the stray's
+/// rows), so a crash between them completes at relaunch rather than leaving
+/// the stray to fold in again. A sync copy is no page (`Store::as_page`), so
+/// it is trashed after the operation applied, guarded by the bytes the fold
+/// read (DESIGN §3.4, post): a copy changed since is kept. With no host, one
+/// transaction under the retained-writer route, as before P3.
+#[allow(clippy::too_many_arguments)]
 fn fold_pair(
     store: &Store,
+    host: Option<&PageHost>,
     (win, conf): (&FileId, &FileId),
     decisions: &HashMap<String, String>,
-    (base_rev, conflict_rev): (&str, &str),
+    revs: (&str, &str),
     merge_base_rev: Option<&str>,
     bases: &[String],
     pre_choice: &str,
 ) -> io::Result<()> {
+    const EXHAUSTED: &str = "conflict files changed repeatedly during merge";
     let page = store.as_page(win).ok_or_else(invalid_path)?;
-    crate::retry_on_conflict("conflict files changed repeatedly during merge", || {
-        let (mine, win_rev) = read_text(store, win)?;
-        let (theirs, conf_rev) = read_text(store, conf)?;
-        if String::from(win_rev.clone()) != base_rev {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "winner changed on disk",
-            ));
-        }
-        if String::from(conf_rev.clone()) != conflict_rev {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "conflict copy changed on disk",
-            ));
-        }
-        let fmt = format(win);
-        if fmt == Format::Org
-            && (!tine_core::org::org_editable(&mine) || !tine_core::org::org_editable(&theirs))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "an org file in this pair does not round-trip; not merging",
-            ));
-        }
-        let mine_doc = parse(&mine, fmt);
-        let their_doc = parse(&theirs, format(conf));
-        // Only a `"merged"` row reads the base (mine/theirs/both do not), so a
-        // base that is gone or different blocks nothing else: a ledger read
-        // failure never refuses a resolve. For a merged row, scenario:
-        // sync-service delivery or an honest concurrent instance moved the
-        // ledger between review and apply; the user must review the body the
-        // merge would now compute.
-        let wants_merged = decisions.values().any(|d| d == "merged");
-        let base_doc = match (merge_base_rev, wants_merged) {
-            (Some(token), true) => match pick_base(bases, &mine, &theirs) {
-                Some((base, current)) if current == token => Some(parse(base, fmt)),
-                _ => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::AlreadyExists,
-                        "merge base changed since the review",
-                    ))
-                }
-            },
-            _ => None,
-        };
-        // A forged `"merged"` decision on a 2-way review refuses the whole
-        // resolve (malformed input).
-        let roots = sync_diff::merge_blocks3(
-            base_doc.as_ref().map(|doc| doc.roots.as_slice()),
-            &mine_doc.roots,
-            &their_doc.roots,
-            None,
+    let copy = store.as_page(conf);
+    let refused = |key: &str| match copy.as_ref() {
+        Some(copy) if copy.as_str().eq_ignore_ascii_case(key) => changed("conflict copy"),
+        _ => changed("winner"),
+    };
+    let fold = || {
+        let pair = (win, conf);
+        folded(
+            store,
+            &page,
+            pair,
             decisions,
+            revs,
+            merge_base_rev,
+            bases,
+            pre_choice,
         )
-        .map_err(merge_refused)?;
-        let pre_block = choose_pre(pre_choice, fmt, &mine_doc, &their_doc)?;
-        let merged = dto(store, &page, Document { pre_block, roots });
+    };
+    let transaction = |fold: &Folded, include_source: bool| {
         let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
         tx.save_page(
             &[
@@ -769,17 +755,162 @@ fn fold_pair(
                 tine_store::EditKind::DeletePage,
             ],
             &page,
-            SaveBase::Existing(win_rev),
-            &merged,
+            SaveBase::Existing(fold.win_rev.clone()),
+            &fold.doc,
         );
-        tx.trash(conf, conf_rev);
-        Ok(crate::commit_retry(tx.commit())?.then_some(()))
+        if include_source {
+            tx.trash(conf, fold.conf_rev.clone(), tine_store::TrashIf::Any);
+        }
+        tx
+    };
+    let Some(running) = host else {
+        let discover = || Ok(crate::retained::pages(store, [win, conf]));
+        return crate::retained::reserved(host, Input::Refuse, discover, refused, |_| {
+            crate::retry_on_conflict(EXHAUSTED, || {
+                let fold = fold()?;
+                Ok(crate::commit_retry(transaction(&fold, true).commit())?.then_some(()))
+            })
+        });
+    };
+    let mut copy_rev = None;
+    let plan = || {
+        let fold = fold()?;
+        if copy.is_none() {
+            copy_rev = Some(fold.conf_rev.clone());
+        }
+        let mut op = crate::retained::plan(transaction(&fold, copy.is_some()))?;
+        if let Some(source) = &copy {
+            op.moved = Some((page.clone(), source.clone()));
+        }
+        Ok(Some(op))
+    };
+    let touched = crate::retained::pages(store, [win, conf]);
+    let applied = crate::retained::operation(
+        running,
+        Input::Refuse,
+        &touched,
+        "the merge",
+        EXHAUSTED,
+        refused,
+        plan,
+    );
+    // Set by a plan only for a sync copy, which is no page of the operation.
+    let Some(rev) = copy_rev else {
+        return applied;
+    };
+    applied.map_err(|error| match error.kind() {
+        // `Uncertain`: the merge may still complete; the copy stays.
+        io::ErrorKind::TimedOut => io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("{error} The conflict copy was kept."),
+        ),
+        _ => error,
+    })?;
+    // Scenario: sync-service delivery changed the copy after the review.
+    let kept = || {
+        io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "the conflict copy changed on disk and was kept",
+        )
+    };
+    trash_copy(store, conf, rev)
+        .and_then(|trashed| trashed.ok_or_else(kept))
+        .map_err(|error| crate::after_partial("The merge was saved", error))
+}
+
+/// The pair's fold as the review decided it, from the texts read now.
+struct Folded {
+    doc: PageDto,
+    win_rev: FileRev,
+    conf_rev: FileRev,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn folded(
+    store: &Store,
+    page: &PageId,
+    (win, conf): (&FileId, &FileId),
+    decisions: &HashMap<String, String>,
+    (base_rev, conflict_rev): (&str, &str),
+    merge_base_rev: Option<&str>,
+    bases: &[String],
+    pre_choice: &str,
+) -> io::Result<Folded> {
+    let (mine, win_rev) = read_text(store, win)?;
+    let (theirs, conf_rev) = read_text(store, conf)?;
+    if String::from(win_rev.clone()) != base_rev {
+        return Err(changed("winner"));
+    }
+    if String::from(conf_rev.clone()) != conflict_rev {
+        return Err(changed("conflict copy"));
+    }
+    let fmt = format(win);
+    if fmt == Format::Org
+        && (!tine_core::org::org_editable(&mine) || !tine_core::org::org_editable(&theirs))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "an org file in this pair does not round-trip; not merging",
+        ));
+    }
+    let mine_doc = parse(&mine, fmt);
+    let their_doc = parse(&theirs, format(conf));
+    // Only a `"merged"` row reads the base (mine/theirs/both do not), so a
+    // base that is gone or different blocks nothing else: a ledger read
+    // failure never refuses a resolve. For a merged row, scenario:
+    // sync-service delivery or an honest concurrent instance moved the
+    // ledger between review and apply; the user must review the body the
+    // merge would now compute.
+    let wants_merged = decisions.values().any(|d| d == "merged");
+    let base_doc = match (merge_base_rev, wants_merged) {
+        (Some(token), true) => match pick_base(bases, &mine, &theirs) {
+            Some((base, current)) if current == token => Some(parse(base, fmt)),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "merge base changed since the review",
+                ))
+            }
+        },
+        _ => None,
+    };
+    // A forged `"merged"` decision on a 2-way review refuses the whole
+    // resolve (malformed input).
+    let roots = sync_diff::merge_blocks3(
+        base_doc.as_ref().map(|doc| doc.roots.as_slice()),
+        &mine_doc.roots,
+        &their_doc.roots,
+        None,
+        decisions,
+    )
+    .map_err(merge_refused)?;
+    let pre_block = choose_pre(pre_choice, fmt, &mine_doc, &their_doc)?;
+    let doc = dto(store, page, Document { pre_block, roots });
+    Ok(Folded {
+        doc,
+        win_rev,
+        conf_rev,
     })
 }
 
-/// Recoverably trash only a sync copy, with four revision-guard retries. Cost
-/// O(copy bytes) per attempt.
-pub fn trash_sync_conflict(store: &Store, conflict: &str) -> io::Result<()> {
+/// Trash a sync-conflict copy over `rev`, the bytes last read: no page
+/// (`Store::as_page` names none: `tests/host_op_conflicts.rs`
+/// `a_sync_copy_is_never_a_page`), so no host operation. `None`: the copy
+/// changed since.
+fn trash_copy(store: &Store, copy: &FileId, rev: FileRev) -> io::Result<Option<()>> {
+    let mut tx = store.transaction(None);
+    tx.trash(copy, rev, tine_store::TrashIf::Any);
+    Ok(crate::commit_retry(tx.commit())?.then_some(()))
+}
+
+/// Recoverably trash only a sync copy, with four revision-guard retries. The
+/// copy is no page, so neither a host operation nor a reservation fences
+/// it. Cost O(copy bytes) per attempt.
+pub fn trash_sync_conflict(
+    store: &Store,
+    _host: Option<&PageHost>,
+    conflict: &str,
+) -> io::Result<()> {
     let conf = id(store, conflict)?;
     let stem = conf
         .as_str()
@@ -791,12 +922,18 @@ pub fn trash_sync_conflict(store: &Store, conflict: &str) -> io::Result<()> {
         return Err(invalid_path());
     }
     crate::retry_on_conflict("conflict copy changed repeatedly during trash", || {
-        crate::trash_current(
-            store,
-            &conf,
-            Some(tine_store::PARSE_INPUT_MAX_BYTES),
-            "no such conflict file",
-        )
+        let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
+        let rev = match store.read(&conf, max) {
+            Ok((_, rev)) => rev,
+            Err(tine_store::StoreError::NotFound) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "no such conflict file",
+                ))
+            }
+            Err(error) => return Err(crate::store_error(error)),
+        };
+        trash_copy(store, &conf, rev)
     })
 }
 
@@ -829,8 +966,10 @@ pub fn duplicate_journal_diff(
 /// change re-sorted the day; never a merge of two unrelated pages); a
 /// cross-format pair (malformed pairing: an Org body would be rewritten as
 /// Markdown or the reverse). Cost O(journal listing + both file bytes).
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_duplicate_journal_day(
     store: &Store,
+    host: Option<&PageHost>,
     canonical: &str,
     stray: &str,
     decisions: &HashMap<String, String>,
@@ -876,6 +1015,7 @@ pub fn resolve_duplicate_journal_day(
     }
     fold_pair(
         store,
+        host,
         (&keep, &other),
         decisions,
         (base_rev, stray_rev),
@@ -883,459 +1023,6 @@ pub fn resolve_duplicate_journal_day(
         &[],
         pre_choice,
     )
-}
-
-/// Queue objects for every duplicate journal day: the keeper is Mine, each
-/// stray a Theirs side, and the row count is the keeper against the FIRST
-/// stray (a day with three files resolves pairwise; the queue re-derives with
-/// one file fewer after each fold). Id `journal:<keeper path>` is stable for
-/// the same disk state. Cost O(journal listing + duplicate file bytes).
-fn journal_objects(store: &Store, bad: &mut Unreadable) -> io::Result<Vec<ConflictObject>> {
-    let mut out = Vec::new();
-    bad.journal_days.clear();
-    for day in crate::journals::journal_conflicts(store)? {
-        for file in &day.files {
-            if let Some(reason) = &file.preview_error {
-                bad.journal_days.insert(file.path.clone(), reason.clone());
-            }
-        }
-        let [keeper, strays @ ..] = day.files.as_slice() else {
-            continue;
-        };
-        let Some(first) = strays.first() else {
-            continue;
-        };
-        let side = |role, file: &tine_core::model::JournalFile| ConflictSide {
-            role,
-            label: file.name.clone(),
-            path: Some(file.path.clone()),
-        };
-        // A day whose pair cannot be diffed stays queued without row choices
-        // (as a cross-format pair does), and the unreadable file is reported.
-        let diff = match duplicate_journal_diff(store, &keeper.path, &first.path) {
-            Ok(diff) => diff,
-            Err(error) if store_failed(&error) => return Err(error),
-            Err(error) => {
-                if ![keeper, first].iter().any(|f| f.preview_error.is_some()) {
-                    bad.journal_days
-                        .insert(first.path.clone(), error.to_string());
-                }
-                None
-            }
-        };
-        out.push(ConflictObject {
-            id: format!("journal:{}", keeper.path),
-            source: ConflictSource::DuplicateJournal,
-            page_name: day.title.clone(),
-            page_path: keeper.path.clone(),
-            kind: PageKind::Journal,
-            sides: std::iter::once(side(SideRole::Mine, keeper))
-                .chain(strays.iter().map(|stray| side(SideRole::Theirs, stray)))
-                .collect(),
-            block_conflicts: diff.as_ref().map(|d| decidable_row_count(&d.rows)),
-            markers: Vec::new(),
-        });
-    }
-    Ok(out)
-}
-
-/// The marker listing entry for one page or journal file, or `None` when it
-/// is not a graph page, is a sync copy, is unreadable, or carries no column-0
-/// VCS marker. Such files stay real, readable pages; the store refuses to save
-/// them (R-VCS-MARKERS). Read failures are errors, never absence: the caller
-/// reports the file as unreadable and keeps the rest. Cost: O(1)
-/// for a page the store has observed without an anchor line
-/// (`Store::vcs_anchor_state`, no read); otherwise one bounded read, O(file
-/// bytes), where a byte prefilter skips the UTF-8 check and line scan for files
-/// without an anchor marker.
-fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConflict>> {
-    let Some((kind, stem, name)) = graph_text_title(store, file) else {
-        return Ok(None);
-    };
-    if sync_conflict_base(&stem).is_some() {
-        return Ok(None);
-    }
-    // A page the store has observed with no anchor line cannot be marker-
-    // bearing: no read. (Cached pages are readable, within the parse limit and
-    // valid UTF-8, so the read below could not have failed for them either.)
-    if store.vcs_anchor_state(file) == Some(false) {
-        return Ok(None);
-    }
-    let (bytes, _) = match store.read(file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-        Ok(value) => value,
-        Err(tine_store::StoreError::NotFound) => return Ok(None),
-        Err(error) => return Err(crate::store_error(error)),
-    };
-    if !tine_core::concord_queue::has_vcs_anchor(&bytes) {
-        return Ok(None);
-    }
-    let text = std::str::from_utf8(&bytes)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let markers = vcs_conflict_markers(text, format(file));
-    Ok((!markers.is_empty()).then(|| VcsMarkerConflict {
-        path: file.as_str().to_owned(),
-        name,
-        kind,
-        markers: markers.iter().map(|m| m.to_string()).collect(),
-    }))
-}
-
-/// Marker-bearing pages. A file that cannot be read is skipped and reported;
-/// a failed area scan propagates. Unreadable listing entries are recorded by
-/// [`sync_copies`], which walks the same listings. Cost: O(pages) store
-/// lookups plus one read per page that is uncached or may carry an anchor line
-/// (none in an unmarked graph; was O(graph bytes), GH #623).
-fn list_vcs_marker_pages(
-    store: &Store,
-    bad: &mut Unreadable,
-) -> io::Result<Vec<VcsMarkerConflict>> {
-    let mut out = Vec::new();
-    for area in [Area::Journals, Area::Pages] {
-        for entry in area_listing(store, area)?.0 {
-            let found = marker_entry(store, &entry.id);
-            out.extend(bad.file(entry.id.as_str(), found)?.flatten());
-        }
-    }
-    out.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(out)
-}
-
-/// The queue object for one listed copy; `None` for a stray whose winner is
-/// gone (a one-sided file, not a conflict; the overview discards it). Cost:
-/// one 2-way diff, O(both file bytes + blocks).
-fn copy_object(store: &Store, copy: &SyncConflict) -> io::Result<Option<ConflictObject>> {
-    let Some(winner) = copy.base_path.clone() else {
-        return Ok(None);
-    };
-    let diff = sync_conflict_diff(store, &winner, &copy.path, &[])?;
-    Ok(Some(ConflictObject {
-        id: format!("copy:{}", copy.path),
-        source: ConflictSource::SyncCopy,
-        page_name: copy.base_name.clone(),
-        page_path: winner.clone(),
-        kind: copy.kind,
-        sides: vec![
-            ConflictSide {
-                role: SideRole::Mine,
-                label: "This device".to_string(),
-                path: Some(winner),
-            },
-            ConflictSide {
-                role: SideRole::Theirs,
-                label: if copy.tag.is_empty() {
-                    "Conflict copy".to_string()
-                } else {
-                    copy.tag.clone()
-                },
-                path: Some(copy.path.clone()),
-            },
-        ],
-        block_conflicts: diff.as_ref().map(|d| decidable_row_count(&d.rows)),
-        markers: Vec::new(),
-    }))
-}
-
-/// The queue object for one marker-bearing page. Cost O(file bytes + blocks).
-fn marker_object(store: &Store, marked: &VcsMarkerConflict) -> io::Result<ConflictObject> {
-    let parsed = vcs_marker_conflict_diff(store, &marked.path)?;
-    let label = |pick: fn(&MarkerConflictDiff) -> &str, fallback: &str| {
-        parsed
-            .as_ref()
-            .map(pick)
-            .filter(|l| !l.is_empty())
-            .unwrap_or(fallback)
-            .to_string()
-    };
-    let mut sides = vec![
-        ConflictSide {
-            role: SideRole::Mine,
-            label: label(|p| p.mine_label.as_str(), "Local side"),
-            path: None,
-        },
-        ConflictSide {
-            role: SideRole::Theirs,
-            label: label(|p| p.theirs_label.as_str(), "Merged-in side"),
-            path: None,
-        },
-    ];
-    if parsed.as_ref().is_some_and(|p| p.diff.three_way) {
-        sides.push(ConflictSide {
-            role: SideRole::Base,
-            label: "Common ancestor".to_string(),
-            path: None,
-        });
-    }
-    Ok(ConflictObject {
-        id: format!("markers:{}", marked.path),
-        source: ConflictSource::VcsMarkers,
-        page_name: marked.name.clone(),
-        page_path: marked.path.clone(),
-        kind: marked.kind,
-        sides,
-        block_conflicts: parsed.as_ref().map(|p| decidable_row_count(&p.diff.rows)),
-        markers: marked.markers.clone(),
-    })
-}
-
-/// The graph config file as a store change names it.
-const CONFIG: &str = "logseq/config.edn";
-
-fn sort_queue(queue: &mut [ConflictObject]) {
-    queue.sort_by(|a, b| a.page_name.cmp(&b.page_name).then_with(|| a.id.cmp(&b.id)));
-}
-
-/// The Concord conflict queue: ONE derived inventory of everything on disk
-/// that needs the user's judgement — sync-tool copies paired with their
-/// winner, and marker-bearing pages. Never persisted and never an authority:
-/// the same disk state recomputes the same objects with the same ids, and
-/// every resolve re-checks the files it writes. A copy whose winner is gone is
-/// a stray, not a two-sided conflict, and stays out (the overview discards it).
-/// Cost: the two whole-graph listings (one bounded read of every page and
-/// journal file) plus one diff per queued item (conflicts are few).
-pub fn conflict_inventory(store: &Store) -> io::Result<ConflictInventory> {
-    Ok(derive(store)?.published())
-}
-
-/// The inventory with what the walk could not read, kept by source.
-#[derive(Clone)]
-struct Derived {
-    inventory: ConflictInventory,
-    bad: Unreadable,
-}
-
-impl Derived {
-    fn published(&self) -> ConflictInventory {
-        ConflictInventory {
-            unreadable: self.bad.rows(),
-            ..self.inventory.clone()
-        }
-    }
-}
-
-fn derive(store: &Store) -> io::Result<Derived> {
-    let mut bad = Unreadable::default();
-    let sync_conflicts = sync_copies(store, &mut bad)?;
-    let vcs_markers = list_vcs_marker_pages(store, &mut bad)?;
-    let mut queue = journal_objects(store, &mut bad)?;
-    for copy in &sync_conflicts {
-        queue.extend(bad.file(&copy.path, copy_object(store, copy))?.flatten());
-    }
-    for marked in &vcs_markers {
-        queue.extend(bad.file(&marked.path, marker_object(store, marked))?);
-    }
-    sort_queue(&mut queue);
-    Ok(Derived {
-        inventory: ConflictInventory {
-            sync_conflicts,
-            vcs_markers,
-            queue,
-            unreadable: Vec::new(),
-        },
-        bad,
-    })
-}
-
-/// The derived conflict queue of one open graph, held in memory only and
-/// never persisted. [`ConflictQueue::inventory`] walks the whole graph once
-/// (at graph open) and afterwards answers from memory;
-/// [`ConflictQueue::refresh_files`] re-derives only the entries a published
-/// change can have affected. Every answer equals what [`conflict_inventory`]
-/// would compute from the same disk state; resolves never trust it.
-#[derive(Default)]
-pub struct ConflictQueue {
-    derived: std::sync::Mutex<Option<Derived>>,
-    problem: std::sync::Mutex<Option<tine_store::IoError>>,
-}
-
-impl ConflictQueue {
-    /// The inventory: one full [`conflict_inventory`] walk the first time
-    /// (O(graph text bytes), about 72 ms on the 1,075-file anonymized graph),
-    /// then a clone of the in-memory answer (O(conflicts)). The walk holds the
-    /// queue's lock, so no concurrent [`Self::refresh_files`] can be lost.
-    pub fn inventory(&self, store: &Store) -> io::Result<ConflictInventory> {
-        let mut derived = self.derived.lock().unwrap_or_else(|e| e.into_inner());
-        let mut problem = self.problem.lock().unwrap_or_else(|e| e.into_inner());
-        if derived.is_none() || problem.is_some() {
-            match derive(store) {
-                Ok(value) => {
-                    *derived = Some(value);
-                    *problem = None;
-                }
-                Err(error) => {
-                    *problem = Some(tine_store::IoError::from(io::Error::new(
-                        error.kind(),
-                        error.to_string(),
-                    )));
-                    return Err(error);
-                }
-            }
-        }
-        Ok(derived.as_ref().unwrap().published())
-    }
-
-    /// Re-derive what one published store change can affect. An external
-    /// change (watcher, scan) re-derives every changed file, so a marker or
-    /// copy written while the graph is open enters the queue on its next
-    /// event. An own change (a Tine save) re-derives only files the queue
-    /// already names or that are sync copies, so an ordinary save costs no
-    /// read here. Returns whether the queue changed.
-    pub fn refresh_change(&self, store: &Store, change: &tine_store::Change) -> io::Result<bool> {
-        let files: Vec<FileId> = {
-            let derived = self.derived.lock().unwrap_or_else(|e| e.into_inner());
-            let Some(Derived { inventory, bad }) = derived.as_ref() else {
-                return Ok(false);
-            };
-            let named = |path: &str| {
-                sync_copy_winner(path).is_some()
-                    || bad.files.contains_key(path)
-                    || bad.journal_days.contains_key(path)
-                    || inventory.vcs_markers.iter().any(|m| m.path == path)
-                    || inventory.sync_conflicts.iter().any(|c| {
-                        c.path == path || sync_copy_winner(&c.path).as_deref() == Some(path)
-                    })
-                    || path == CONFIG
-                    || inventory.queue.iter().any(|o| {
-                        o.source == ConflictSource::DuplicateJournal
-                            && o.sides.iter().any(|s| s.path.as_deref() == Some(path))
-                    })
-            };
-            change
-                .files
-                .iter()
-                .filter(|(file, _, _)| {
-                    change.origin == tine_store::Origin::External || named(file.as_str())
-                })
-                .map(|(file, _, _)| file.clone())
-                .collect()
-        };
-        if files.is_empty() {
-            Ok(false)
-        } else {
-            self.refresh_files(store, &files)
-        }
-    }
-
-    /// Re-derive the entries `files` can affect: each file's own copy or
-    /// marker entry, and every copy whose winner is one of them. A changed file
-    /// that cannot be read is reported in `unreadable` (and leaves it once
-    /// readable); only a closed store or failed area scan errors. Returns
-    /// whether the queue or listings changed. Before the first
-    /// [`Self::inventory`] it does nothing and returns `false` (that walk will
-    /// read the current disk). Idempotent: it re-reads the files, so applying
-    /// the same change twice is harmless. Cost: one bounded read per changed
-    /// page or journal file plus one diff per affected copy, O(changed bytes);
-    /// a changed journal file adds one journal-directory listing to re-derive
-    /// the duplicate days (O(J)); no page-directory walk.
-    pub fn refresh_files(&self, store: &Store, files: &[FileId]) -> io::Result<bool> {
-        let mut derived = self.derived.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(current) = derived.as_ref() else {
-            return Ok(false);
-        };
-        let before = serde_json::to_string(&current.published()).ok();
-        let Derived {
-            mut inventory,
-            mut bad,
-        } = current.clone();
-        let result = (|| -> io::Result<()> {
-            let exists = |rel: &str| -> io::Result<bool> {
-                let file = id(store, rel)?;
-                match store.open_read(&file) {
-                    Ok(_) => Ok(true),
-                    Err(tine_store::StoreError::NotFound) => Ok(false),
-                    Err(error) => Err(crate::store_error(error)),
-                }
-            };
-            let mut copies: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-            // A config change can move the journal date formats, which re-titles
-            // the duplicate days and can re-pick their keeper.
-            let mut journals = files.iter().any(|f| f.as_str() == CONFIG);
-            for file in files {
-                let Some((kind, ..)) = graph_text_title(store, file) else {
-                    continue;
-                };
-                journals |= kind == PageKind::Journal;
-                let path = file.as_str();
-                if sync_copy_winner(path).is_some() {
-                    copies.insert(path.to_owned());
-                    continue;
-                }
-                inventory.vcs_markers.retain(|m| m.path != path);
-                bad.files.remove(path);
-                let found = marker_entry(store, file);
-                inventory
-                    .vcs_markers
-                    .extend(bad.file(path, found)?.flatten());
-                copies.extend(
-                    inventory
-                        .sync_conflicts
-                        .iter()
-                        .filter(|c| sync_copy_winner(&c.path).as_deref() == Some(path))
-                        .map(|c| c.path.clone()),
-                );
-            }
-            for copy in &copies {
-                inventory.sync_conflicts.retain(|c| &c.path != copy);
-                bad.files.remove(copy);
-                let file = FileId::from(copy.clone());
-                let present = exists(copy);
-                if bad.file(copy, present)?.unwrap_or(false) {
-                    let entry = sync_copy_entry(store, &file, exists);
-                    inventory
-                        .sync_conflicts
-                        .extend(bad.file(copy, entry)?.flatten());
-                }
-            }
-            inventory.vcs_markers.sort_by(|a, b| a.path.cmp(&b.path));
-            sort_copies(&mut inventory.sync_conflicts);
-            let touched = |object: &ConflictObject| match object.source {
-                ConflictSource::DuplicateJournal => journals,
-                ConflictSource::SyncCopy => object
-                    .sides
-                    .iter()
-                    .any(|s| s.path.as_ref().is_some_and(|p| copies.contains(p))),
-                _ => files.iter().any(|f| f.as_str() == object.page_path),
-            };
-            inventory.queue.retain(|object| !touched(object));
-            for copy in inventory
-                .sync_conflicts
-                .iter()
-                .filter(|c| copies.contains(&c.path))
-            {
-                let object = copy_object(store, copy);
-                inventory
-                    .queue
-                    .extend(bad.file(&copy.path, object)?.flatten());
-            }
-            for marked in inventory
-                .vcs_markers
-                .iter()
-                .filter(|m| files.iter().any(|f| f.as_str() == m.path))
-            {
-                let object = marker_object(store, marked);
-                inventory.queue.extend(bad.file(&marked.path, object)?);
-            }
-            if journals {
-                bad.journals_listing = area_listing(store, Area::Journals)?.1;
-                inventory.queue.extend(journal_objects(store, &mut bad)?);
-            }
-            sort_queue(&mut inventory.queue);
-            Ok(())
-        })();
-        let mut problem = self.problem.lock().unwrap_or_else(|e| e.into_inner());
-        match result {
-            Ok(()) => {
-                let next = Derived { inventory, bad };
-                let changed = serde_json::to_string(&next.published()).ok() != before;
-                *derived = Some(next);
-                *problem = None;
-                Ok(changed)
-            }
-            Err(error) => {
-                *problem = Some(io::Error::new(error.kind(), error.to_string()).into());
-                Err(error)
-            }
-        }
-    }
 }
 
 /// Block diff of a marker-bearing page's own sides: 3-way against the diff3
@@ -1396,62 +1083,109 @@ pub fn vcs_marker_conflict_diff(
 /// four attempts.
 pub fn resolve_vcs_marker_conflict(
     store: &Store,
+    host: Option<&PageHost>,
     rel: &str,
     decisions: &HashMap<String, String>,
     base_rev: &str,
     pre_choice: &str,
 ) -> io::Result<()> {
+    const EXHAUSTED: &str = "marker file changed repeatedly during resolve";
     let file = id(store, rel)?;
     let page = store.as_page(&file).ok_or_else(invalid_path)?;
-    crate::retry_on_conflict("marker file changed repeatedly during resolve", || {
+    // A retained writer (STEP3 §7): unsaved input on the page is refused as
+    // a change on disk would be.
+    let refused = |_: &str| changed("file");
+    // The review's text, read now. Scenario: the VCS or an external editor
+    // changed the file after the review was computed; the user must review
+    // the new version.
+    let reviewed = || {
         let (content, rev) = read_text(store, &file)?;
-        // Scenario: the VCS or an external editor changed the file after the
-        // review was computed; the user must review the new version.
         if String::from(rev.clone()) != base_rev {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "file changed on disk",
-            ));
+            return Err(changed("file"));
         }
-        let Some(sides) = parse_vcs_marker_sides(&content, format(&file)) else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "no VCS merge conflict markers to resolve",
-            ));
-        };
-        let fmt = format(&file);
-        // Scenario: malformed imported Org — a side that does not round-trip
-        // would be rewritten lossily.
-        if fmt == Format::Org
-            && (!tine_core::org::org_editable(&sides.mine)
-                || !tine_core::org::org_editable(&sides.theirs))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "an org side of this merge does not round-trip; not resolving",
-            ));
-        }
-        let mine = parse(&sides.mine, fmt);
-        let theirs = parse(&sides.theirs, fmt);
-        let base = sides.base.as_deref().map(|text| parse(text, fmt));
-        let artifact = sides.suggested.as_deref().map(|text| parse(text, fmt));
-        let roots = sync_diff::merge_blocks3(
-            base.as_ref().map(|doc| doc.roots.as_slice()),
-            &mine.roots,
-            &theirs.roots,
-            artifact.as_ref().map(|doc| doc.roots.as_slice()),
-            decisions,
-        )
-        .map_err(merge_refused)?;
-        let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs)?;
-        let merged = dto(store, &page, Document { pre_block, roots });
+        let merged = marker_resolution(store, &file, &page, &content, decisions, pre_choice)?;
+        Ok((content, rev, merged))
+    };
+    let transaction = |rev, merged: &PageDto| {
         let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
         tx.save_page(
             &[tine_store::EditKind::ReplacePage],
             &page,
             SaveBase::ResolvingMarkers(rev),
-            &merged,
+            merged,
         );
-        Ok(crate::commit_retry(tx.commit())?.then_some(()))
-    })
+        tx
+    };
+    let Some(running) = host else {
+        let discover = || Ok(vec![page.clone()]);
+        return crate::retained::reserved(None, Input::Refuse, discover, refused, |_| {
+            crate::retry_on_conflict(EXHAUSTED, || {
+                let (_, rev, merged) = reviewed()?;
+                Ok(crate::commit_retry(transaction(rev, &merged).commit())?.then_some(()))
+            })
+        });
+    };
+    // C4: the durable non-page marker copy precedes the read-only planner.
+    let (content, rev, merged) = reviewed()?;
+    transaction(rev, &merged).plan().map_err(crate::why_error)?;
+    store
+        .stage_marker_copy(&file, content.as_bytes())
+        .map_err(crate::why_error)?;
+    let plan = || {
+        let (_, rev, merged) = reviewed()?;
+        crate::retained::plan(transaction(rev, &merged)).map(Some)
+    };
+    crate::retained::operation(
+        running,
+        Input::Refuse,
+        std::slice::from_ref(&page),
+        "resolving the merge",
+        EXHAUSTED,
+        refused,
+        plan,
+    )
+}
+
+/// The page a marker resolution writes: the review's `decisions` over the
+/// marker sides of `content`, with the chosen pre-block.
+fn marker_resolution(
+    store: &Store,
+    file: &FileId,
+    page: &PageId,
+    content: &str,
+    decisions: &HashMap<String, String>,
+    pre_choice: &str,
+) -> io::Result<PageDto> {
+    let fmt = format(file);
+    let Some(sides) = parse_vcs_marker_sides(content, fmt) else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "no VCS merge conflict markers to resolve",
+        ));
+    };
+    // Scenario: malformed imported Org — a side that does not round-trip
+    // would be rewritten lossily.
+    if fmt == Format::Org
+        && (!tine_core::org::org_editable(&sides.mine)
+            || !tine_core::org::org_editable(&sides.theirs))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "an org side of this merge does not round-trip; not resolving",
+        ));
+    }
+    let mine = parse(&sides.mine, fmt);
+    let theirs = parse(&sides.theirs, fmt);
+    let base = sides.base.as_deref().map(|text| parse(text, fmt));
+    let artifact = sides.suggested.as_deref().map(|text| parse(text, fmt));
+    let roots = sync_diff::merge_blocks3(
+        base.as_ref().map(|doc| doc.roots.as_slice()),
+        &mine.roots,
+        &theirs.roots,
+        artifact.as_ref().map(|doc| doc.roots.as_slice()),
+        decisions,
+    )
+    .map_err(merge_refused)?;
+    let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs)?;
+    Ok(dto(store, page, Document { pre_block, roots }))
 }

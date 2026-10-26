@@ -84,6 +84,104 @@ fn write_checkpoint(root: &Path, cp: &Path) {
     store.close();
 }
 
+#[test]
+fn gh699_old_property_extraction_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/B.md"),
+        "alias:: [[Bee]] [[Buzz]]\ntags:: #eng #exec #founder\n\n- body\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    // Format 14 may retain combined tag facets and aliases from raw splitting.
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&14_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let view = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(parse_passes(&store) > 0, "old derived state must rebuild");
+    assert!(!view.graph.alias_owner_paths("buzz").unwrap().is_empty());
+    let crate::QueryResult::Simple(groups) = view
+        .query("(page-tags eng)", crate::QueryDialect::Simple)
+        .unwrap()
+    else {
+        panic!("simple rows")
+    };
+    assert_eq!(groups.len(), 1);
+    store.close();
+}
+
+#[test]
+fn pre_headline_tag_checkpoints_rebuild_org_page_references() {
+    let root = graph();
+    fs::write(root.path().join("pages/C.org"), "* headline :Plugins:\n").unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    // Format 9 can retain projections, indexes and query/backlink answers
+    // built before Org headline tags contributed page references.
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&9_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert_eq!(graph.backlinks("plugins").unwrap().len(), 1);
+    store.close();
+}
+
+#[test]
+fn configured_page_property_references_survive_a_warm_checkpoint() {
+    let root = graph();
+    let cp = root.path().join("launch.bin");
+    fs::write(
+        root.path().join("logseq/config.edn"),
+        "{:property/separated-by-commas #{:related}}",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("pages/A.md"),
+        "related:: Target，Other\n\n- body\n",
+    )
+    .unwrap();
+    let written = open_cp(root.path(), &cp);
+    let check = |store: &Store| {
+        let graph = store.whole_graph_reconciled().unwrap();
+        let crate::QueryResult::Simple(groups) = graph
+            .query("[[Target]]", crate::QueryDialect::Simple)
+            .unwrap()
+        else {
+            panic!("simple rows")
+        };
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].blocks[0].page_property);
+        assert_eq!(graph.backlinks("Target").unwrap().len(), 1);
+    };
+    check(&written);
+    assert!(matches!(
+        written.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    written.close();
+    let loaded = open_cp(root.path(), &cp);
+    check(&loaded);
+    // This query was never memoized before close: the loaded header projection
+    // itself must retain the configured reference meaning.
+    let graph = loaded.whole_graph_reconciled().unwrap();
+    let crate::QueryResult::Simple(groups) = graph
+        .query("[[Other]]", crate::QueryDialect::Simple)
+        .unwrap()
+    else {
+        panic!("simple rows")
+    };
+    assert_eq!(groups.len(), 1);
+    assert!(groups[0].blocks[0].page_property);
+    assert_eq!(graph.backlinks("Other").unwrap().len(), 1);
+    assert_eq!(load_outcome(&loaded), "loaded");
+    loaded.close();
+}
+
 fn publisher(store: &Store) -> Publisher {
     Publisher {
         path: PathBuf::new(),
@@ -381,7 +479,7 @@ fn rewrite_body(cp: &Path, root: &Path, edit: impl FnOnce(&mut Body<PagesOut>)) 
 #[test]
 fn an_unusable_checkpoint_falls_back_to_a_full_build() {
     type Damage = fn(&Path, &Path);
-    let cases: [(&str, &str, Damage); 10] = [
+    let cases: [(&str, &str, Damage); 11] = [
         ("missing", "missing", |cp, _| fs::remove_file(cp).unwrap()),
         ("empty", "format", |cp, _| fs::write(cp, b"").unwrap()),
         ("torn inside the preamble", "format", |cp, _| {
@@ -406,6 +504,11 @@ fn an_unusable_checkpoint_falls_back_to_a_full_build() {
         ("format version", "format", |cp, _| {
             let mut bytes = fs::read(cp).unwrap();
             bytes[8..12].copy_from_slice(&(FORMAT + 1).to_le_bytes());
+            fs::write(cp, bytes).unwrap()
+        }),
+        ("previous reference projection", "format", |cp, _| {
+            let mut bytes = fs::read(cp).unwrap();
+            bytes[8..12].copy_from_slice(&11u32.to_le_bytes());
             fs::write(cp, bytes).unwrap()
         }),
         ("parser", "parser", |cp, _| {
@@ -568,7 +671,7 @@ fn r5_an_unseen_rewrite_is_served_until_rescan_but_page_reads_see_disk() {
         "a page open reads disk"
     );
     assert_eq!(read.rev, FileRev::from_bytes(b"- links [[Two]]\n"));
-    store.rebuild_graph().unwrap();
+    store.refresh(crate::Depth::Rebuild).unwrap();
     assert_eq!(backlink_pages(&store, "Two"), vec!["A".to_owned()]);
     assert!(backlink_pages(&store, "One").is_empty());
 }
@@ -600,7 +703,7 @@ fn rescan_replaces_the_checkpoint() {
     unseen_rewrite(root.path(), &cp, "pages/A.md", "- links [[Two]]\n", false);
     let store = open_cp(root.path(), &cp);
     store.whole_graph_reconciled().unwrap();
-    store.rebuild_graph().unwrap();
+    store.refresh(crate::Depth::Rebuild).unwrap();
     // The Rescan's request is answered; wait for it through a second one.
     assert!(matches!(
         store.write_checkpoint_now(),
@@ -785,13 +888,13 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (8, GOLDEN),
+        (15, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
 
 #[cfg(unix)]
-const GOLDEN: &str = "eab33d188c073d3f2ff3cb185c82c07503eb5adb01204d95587d39fc529a4f38";
+const GOLDEN: &str = "40529d02594af1188bfb297cb803427e2c44d10698778d716fa971f666ce90e6";
 
 /// GH #623 (FORMAT 6): which cached pages carried a VCS anchor line travels
 /// in the checkpoint, so a warm launch answers the conflict inventory with no
@@ -848,7 +951,27 @@ fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
     use tine_core::config::Config;
     const BASE: &str = ":preferred-format :markdown";
     // (field, the edited config's entries, keyed)
-    let cases: [(&str, String, bool); 33] = [
+    let cases: [(&str, String, bool); 37] = [
+        (
+            "default_journal_queries",
+            format!("{BASE} :default-queries {{:journals [{{:query (task TODO)}}]}}"),
+            false,
+        ),
+        (
+            "scheduled_future_days",
+            format!("{BASE} :scheduled/future-days 14"),
+            false,
+        ),
+        (
+            "disable_scheduled_and_deadline_query",
+            format!("{BASE} :feature/disable-scheduled-and-deadline-query? true"),
+            false,
+        ),
+        (
+            "journal_config_diagnostics",
+            format!("{BASE} :scheduled/future-days nope"),
+            false,
+        ),
         (
             "journals_dir",
             format!("{BASE} :journals-directory \"days\""),
@@ -1274,4 +1397,37 @@ fn a_read_only_session_that_builds_a_lazy_index_is_checkpointed() {
         "lazy state the checkpoint already holds is not a change"
     );
     next.close();
+}
+
+/// R2 (REVIEW-AH2-AW1-plan): a checkpoint's rows, indexes and claimants
+/// carry no owner provenance, so while any page is held (unindexed or
+/// indexed) the whole checkpoint is declined and the launch builds.
+#[test]
+fn a_checkpoint_is_declined_whole_while_a_page_is_held() {
+    let root = graph();
+    let dir = tempfile::tempdir().unwrap();
+    let cp = dir.path().join("graph.bin");
+    write_checkpoint(root.path(), &cp);
+    let bytes = fs::read(&cp).unwrap();
+    let len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    let header: Header = postcard::from_bytes(&bytes[16..16 + len]).unwrap();
+    let installs = |held: Option<Option<&str>>| {
+        let graph = crate::model::Graph::open(&header.root);
+        if let Some(published) = held {
+            graph.hold_unhosted("pages/A.md");
+            if let Some(text) = published {
+                let bytes = Some(Arc::from(text.as_bytes()));
+                assert!(graph.publish_owned("pages/A.md", bytes, None).is_ok());
+            }
+        }
+        let body = decode(&bytes, &header.root, &header.config_key).unwrap();
+        let config = (*graph.current_config()).clone();
+        graph.checkpoint_install(body.graph, config).is_some()
+    };
+    assert!(installs(None), "control: nothing held");
+    assert!(!installs(Some(None)), "R2: installed while a page is held");
+    assert!(
+        !installs(Some(Some("- owner\n"))),
+        "R2: installed while a held page is indexed"
+    );
 }

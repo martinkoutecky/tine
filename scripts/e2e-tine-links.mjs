@@ -50,7 +50,7 @@ async function chooseCopy() {
   await browser.$('[role="dialog"]').waitForDisplayed({timeout:5000});
   // Let the native compositor present the chooser before screenshot evidence.
   await poll(300);
-  await browser.saveScreenshot(path.join(tmp,"graph-choice.png"));
+  await evidenceShot("graph-choice.png");
   assert.equal(await browser.execute(() => {
     const dialog = document.querySelector('[role="dialog"]');
     const rect = dialog.getBoundingClientRect();
@@ -59,6 +59,18 @@ async function chooseCopy() {
   const button = await browser.$('[role="dialog"] button');
   assert.equal(await button.getText(),graph);
   await button.click();
+}
+// Screenshots here are evidence, not assertions. Local WebKitWebDriver can
+// stall a screenshot GET on this journey (seen since 2026-10-14 on og builds
+// too, while every DOM command still answers), so each one is bounded and a
+// skipped one is recorded instead of failing the journey.
+async function evidenceShot(name) {
+  const timeout = new Promise((resolve) => setTimeout(() => resolve("timeout"), 20000));
+  const outcome = await Promise.race([browser.saveScreenshot(path.join(tmp, name)).then(() => "saved", (error) => `error: ${error.message}`), timeout]);
+  if (outcome !== "saved") {
+    fs.appendFileSync(path.join(tmp, "screenshots-skipped.txt"), `${name}: ${outcome}\n`);
+    console.warn(`screenshot ${name} skipped (${outcome}); journey assertions continue`);
+  }
 }
 async function clipboard(command, text = null) {
   return browser.executeAsync((cmd,value,done) => globalThis.__TAURI_INTERNALS__.invoke(`plugin:clipboard-manager|${cmd}`, value === null ? {} : {text:value}).then(done, (error) => done({error:String(error)})),command,text);
@@ -75,7 +87,7 @@ try {
   await chooseCopy();
   await browser.waitUntil(() => browser.execute(() => document.querySelector("h1.page-title")?.textContent === "Link Page"), {timeout:20000,timeoutMsg:"cold external URL did not open its page"});
   assert.equal(fs.readFileSync(path.join(graph,"pages/Link Page.md"),"utf8"),pageBytes);
-  await browser.saveScreenshot(path.join(tmp,"page-link.png"));
+  await evidenceShot("page-link.png");
   await forward(`tine://block/${blockId}`);
   await browser.waitUntil(() => browser.execute(() => document.querySelector(".zoomed-block")?.textContent.includes("Child proof")), {timeout:20000,timeoutMsg:"warm UUID-only URL did not zoom to the block"});
   assert.equal(await browser.$('[role="dialog"][aria-label="Choose graph for Tine link"]').isExisting(),false,"remembered copy must not prompt again");
@@ -91,6 +103,8 @@ try {
   await openPageByName(browser,"Copy Source");
   await clipboard("write_text","sentinel");
   await browser.execute(() => document.querySelector('[data-page-actions-trigger]')?.click());
+  // Copy link sits in the "Copy as" submenu (7082edcea), shown on hover.
+  await browser.$('[data-page-action-id="copy-as"]').moveTo();
   await browser.$('[data-page-action-id="copy-link"]').click();
   await browser.waitUntil(async () => (await clipboard("read_text")) === `tine://page/Copy%20Source?graph=${graphId}`,{timeout:10000,timeoutMsg:"Page Copy link did not publish its external URL"});
   await clipboard("write_text","sentinel");
@@ -123,7 +137,7 @@ try {
   await browser.waitUntil(() => browser.execute(() => document.querySelector("h1.page-title")?.textContent === "Link Page"), {timeout:15000,timeoutMsg:"a link received by another graph window must reach its existing owner"});
   await browser.switchToWindow(peer);
   assert.equal(await browser.execute(() => document.querySelector("h1.page-title")?.textContent),"Copy Source","handoff must keep the receiving window's route");
-  await browser.saveScreenshot(path.join(tmp,"peer-window.png"));
+  await evidenceShot("peer-window.png");
   console.log(`PASS: cold/warm links, remembered graph-copy choice, missing-target refusal, durable menu copy, and graph-window handoff. Evidence: ${tmp}`);
 } catch (error) {
   if (browser) { await browser.saveScreenshot(path.join(tmp,"failure.png")).catch(() => {}); fs.writeFileSync(path.join(tmp,"failure.txt"),await browser.execute(() => document.body.innerText).catch(() => "unavailable")); }

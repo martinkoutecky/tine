@@ -4,12 +4,16 @@
 // setFavorites.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "./graph"; // installs the Favorites page door, as at app start
-import { backend, type SavePageEntry } from "./backend";
+import { backend } from "./backend";
+import { installDiskHost } from "./diskHost.test.support";
+import { bindTestHost } from "./document/host/wiring.test.support";
 import { bumpDataRev, graphMeta, setGraphMeta } from "./graphSession";
 import {
   addFavoriteGroup, deleteFavoriteGroup, favorites, favoritesLayout, moveFavoriteRow,
   renameFavoriteGroup, seedFavorites, setFavoriteRowCollapsed, toggleFavorite,
+  favoriteBlock, isFavoriteBlock,
 } from "./favorites";
+import { ensurePageLoaded } from "./document";
 import { layoutToMarkdown } from "./favoritesLayout";
 import { renamePageInNavigation } from "./ui";
 import { toasts, setToasts } from "./toasts";
@@ -28,12 +32,14 @@ const fromDisk = (bs: BlockDto[], f: Format = "md"): BlockDto[] =>
   bs.map((x) => ({ ...x, collapsed: COLLAPSED[f].test(x.raw), children: fromDisk(x.children, f) }));
 // As the store: a new page takes the graph's preferred format (pages/<name>.org in an Org graph).
 const preferred = (): Format => graphMeta()?.preferred_format ?? "md";
-const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)); };
+// A page write is a page-host round trip (open, submit, publication, close), so
+// let several task turns pass, not one.
+const settle = async () => { for (let turn = 0; turn < 8; turn++) { for (let i = 0; i < 30; i++) await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)); } };
 const md = () => layoutToMarkdown(favoritesLayout());
 const line = (x: BlockDto, d: number): string => `${"\t".repeat(d)}- ${x.raw}\n${x.children.map((c) => line(c, d + 1)).join("")}`;
 const shape = (page: DiskPage) => ({ pre: page.pre_block, text: page.blocks.map((x) => line(x, 0)).join("") });
 
-beforeEach(() => {
+beforeEach(async () => {
   disk = new Map();
   config = { names: [], page: null };
   writes = [];
@@ -44,14 +50,22 @@ beforeEach(() => {
   });
   vi.spyOn(api, "resolvePage").mockImplementation(async (name: string) =>
     disk.has(name) ? { kind: "existing", id: `pages/${name}.${disk.get(name)!.format ?? "md"}`, others: [] } : { kind: "absent", id: `pages/${name}.${preferred()}` });
-  vi.spyOn(api, "savePages").mockImplementation(async (entries: SavePageEntry[]) => {
-    const [entry] = entries;
-    const current = disk.get(entry.page.name);
-    if (String(current?.rev ?? null) !== String(entry.baseRev)) return { failed: { index: 0, family: "conflict", undoFailed: [] } };
-    const rev = (current?.rev ?? 0) + 1;
-    disk.set(entry.page.name, { pre_block: entry.page.pre_block, blocks: toDisk(entry.page.blocks), rev, format: current?.format ?? preferred() });
-    writes.push(`page:${entry.page.name}:${entry.kinds.join(",")}`);
-    return { ok: [String(rev)] };
+  installDiskHost(await bindTestHost(), {
+    read: (_key, name) => {
+      const page = disk.get(name);
+      // The host parses the file: every block gets its own runtime id.
+      let n = 0;
+      const ids = (bs: BlockDto[]): BlockDto[] => bs.map((x) => ({ ...x, id: `${name}-${++n}`, children: ids(x.children) }));
+      return page ? { name, kind: "page", title: name, pre_block: page.pre_block, blocks: ids(fromDisk(page.blocks, page.format)),
+        rev: String(page.rev), format: page.format ?? "md" } : null;
+    },
+    write: (_key, dto, kinds) => {
+      const current = disk.get(dto.name);
+      const rev = (current?.rev ?? 0) + 1;
+      disk.set(dto.name, { pre_block: dto.pre_block, blocks: toDisk(dto.blocks), rev, format: current?.format ?? preferred() });
+      writes.push(`page:${dto.name}:${kinds.join(",")}`);
+      return String(rev);
+    },
   });
   vi.spyOn(api, "setFavorites").mockImplementation(async (names: string[], page?: string | null) => {
     config = { names: [...names], page: page ?? config.page };
@@ -62,6 +76,36 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); setToasts([]); setGraphMeta(null); });
 
 describe("favorites arrangement page", () => {
+  it("GH #570: favourite action publishes the source ID before the Favorites row through the page host", async () => {
+    disk.set("Source", { pre_block: null, blocks: [b("important block")], rev: 1 });
+    ensurePageLoaded({ name: "Source", title: "Source", kind: "page", id: "pages/Source.md", rev: "1", format: "md", pre_block: null,
+      blocks: [{ ...b("important block"), id: "Source-1" }] });
+    await favoriteBlock("Source-1");
+    await settle();
+    const target = disk.get("Source")!.blocks[0].raw;
+    expect(target).toContain("id::");
+    const uuid = favoritesLayout()[0].blockId!;
+    expect(target).toContain(uuid);
+    expect(shape(disk.get("Favorites")!).text).toContain(`((${uuid}))`);
+    expect(isFavoriteBlock(uuid)).toBe(true);
+    expect(config.names).toEqual([]);
+    expect(writes.findIndex(w => w.startsWith("page:Source:"))).toBeLessThan(writes.findIndex(w => w.startsWith("page:Favorites:")));
+  });
+  it("GH #570: block rows survive reopen and live edits without entering config favorites", async () => {
+    const uuid = "57000000-0000-4000-8000-000000000001";
+    disk.set("Favorites", { pre_block: "tine/favorites:: true", blocks: [b("Work", [b(`((${uuid}))`), b("[[A]]")])], rev: 1 });
+    seedFavorites(["A"], "Favorites");
+    await settle();
+    expect(favoritesLayout()[0].children[0].blockId).toBe(uuid);
+    expect(writes).toEqual([]);
+    addFavoriteGroup("Home");
+    await settle();
+    expect(config.names).toEqual(["A"]);
+    expect(shape(disk.get("Favorites")!).text).toContain(`((${uuid}))`);
+    disk.set("Favorites", { pre_block: "tine/favorites:: true", blocks: [b("[[A]]")], rev: 3 });
+    bumpDataRev(); await settle();
+    expect(favoritesLayout().some(node => node.blockId)).toBe(false);
+  });
   it("a flat list never grows a page; the first label creates it, page first, then config", async () => {
     toggleFavorite("A");
     toggleFavorite("B");

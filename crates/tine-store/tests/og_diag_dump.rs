@@ -63,6 +63,7 @@ fn n(value: &Value) -> u64 {
 
 #[test]
 fn the_dump_never_names_the_graph() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = fixture();
     let dump = store.diagnostics().to_string();
     let root = dir.path().to_string_lossy().to_string();
@@ -120,6 +121,7 @@ fn the_dump_never_names_the_graph() {
 
 #[test]
 fn shape_counts_what_the_graph_holds() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, store) = fixture();
     let shape = store.diagnostics()["shape"].clone();
     assert_eq!(shape["ready"], true);
@@ -144,6 +146,7 @@ fn shape_counts_what_the_graph_holds() {
 
 #[test]
 fn launch_phases_separate_reading_from_parsing() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, store) = fixture();
     let dump = store.diagnostics();
     let launch = &dump["launch"];
@@ -192,9 +195,10 @@ fn latest_diff(dump: &Value, trigger: &str) -> Option<Value> {
 
 #[test]
 fn rescan_and_saves_are_recorded() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, store) = fixture();
     let before = n(&store.diagnostics()["fullDiffs"]["total"]);
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let dump = store.diagnostics();
     // The poll watcher runs its own full diff every cycle, so an entry is found
     // by its trigger, not assumed to be the last one.
@@ -203,7 +207,7 @@ fn rescan_and_saves_are_recorded() {
     assert!(n(&rescan["files"]) >= 5);
 
     // The Settings button is the forced rebuild and says so in the report.
-    store.rebuild_graph().unwrap();
+    store.refresh(tine_store::Depth::Rebuild).unwrap();
     let rebuilt = latest_diff(&store.diagnostics(), "rebuild_command").expect("rebuild recorded");
     assert!(n(&rebuilt["files"]) >= 5);
 
@@ -230,6 +234,7 @@ fn rescan_and_saves_are_recorded() {
 /// write and a launch served from the checkpoint.
 #[test]
 fn the_checkpoint_section_is_closed_tokens_only() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = fixture();
     let cp_dir = tempfile::tempdir().unwrap();
     let cp = cp_dir.path().join("graph.bin");
@@ -246,7 +251,7 @@ fn the_checkpoint_section_is_closed_tokens_only() {
         .0
     };
     let first = open();
-    first.scan_refresh().unwrap();
+    first.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(matches!(
         first.write_checkpoint_now(),
         Some(tine_store::CheckpointWrite::Written { .. })
@@ -256,7 +261,7 @@ fn the_checkpoint_section_is_closed_tokens_only() {
     assert!(n(&written["last"]["fileBytes"]) > 0);
     first.close();
     let second = open();
-    second.scan_refresh().unwrap();
+    second.refresh(tine_store::Depth::Stamps).unwrap();
     let section = second.diagnostics()["checkpoint"].clone();
     assert_eq!(section["load"]["outcome"], "loaded");
     assert!(n(&section["load"]["bytes"]) > 0);
@@ -305,12 +310,13 @@ fn the_checkpoint_section_is_closed_tokens_only() {
 
 #[test]
 fn page_reads_and_asset_walks_are_recorded_for_the_focus_return_diagnosis() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, store) = fixture();
     let before = store.diagnostics();
     let walks = n(&before["assetWalks"]["total"]);
     let reads = n(&before["pageWriterWaits"]["all"]["count"]);
     store.page(&PageId::from("pages/Hub.md")).unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let after = store.diagnostics();
     assert_eq!(n(&after["pageWriterWaits"]["all"]["count"]), reads + 1);
     // The watcher thread may add a walk of its own, so at least this one.

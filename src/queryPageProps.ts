@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 import { backend } from "./backend";
 import { ensurePageLoaded, pageByName, reportPageLoadRefusal } from "./document";
 import { graphOwner, readOwned } from "./owned";
@@ -17,7 +18,7 @@ export async function openPagePropertiesFromRow(row: { name: string; kind: PageK
     const result = await readOwned(owner, backend().getPage(row.name, row.kind));
     if (result.kind === "stale") return;
     if (!result.value) {
-      pushToast(`"${row.name}" is no longer there, so its properties cannot be edited.`, "error");
+      pushToast(msg("query-page-props-is-no-longer-there-so-its-properties-cannot", { name: String(row.name) }), "error");
       return;
     }
     const refusal = ensurePageLoaded(result.value);

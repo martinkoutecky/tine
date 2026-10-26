@@ -8,6 +8,7 @@
 // picker emits, the phrase each node reads as, and the tree edits.
 
 import { describe, it, expect } from "vitest";
+import { renderEnglish } from "../i18n";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -102,7 +103,7 @@ describe("leaf constructors mirror the OG parser's IR", () => {
     });
   });
 
-  it("`(task …)` is `task in [...]`, and an empty pick is OG's open-task set", () => {
+  it("`(task …)` is `task in [...]`, and an empty list stays empty: OG's bare `(task)` adds no condition (D-18)", () => {
     expect(taskFilter(["TODO", "DOING"])).toEqual({
       kind: "leaf",
       leaf: {
@@ -112,21 +113,18 @@ describe("leaf constructors mirror the OG parser's IR", () => {
         value: { kind: "list", items: [{ kind: "text", text: "TODO" }, { kind: "text", text: "DOING" }] },
       },
     });
-    // og.rs: "OG drops `(task)` with no markers; Tine's shipped behaviour reads
-    // it as any open task and the corpus depends on it."
+    // og.rs reads a bare `(task)` as `task in []` (Filter::is_dropped_clause);
+    // a TS default list here would be a second, different meaning (GH #422).
     const empty = taskFilter([]);
-    expect(empty.kind === "leaf" && empty.leaf.kind === "attr" && empty.leaf.value).toEqual({
-      kind: "list",
-      items: ["TODO", "DOING", "NOW", "LATER"].map((text) => ({ kind: "text", text })),
-    });
+    expect(empty.kind === "leaf" && empty.leaf.kind === "attr" && empty.leaf.value).toEqual({ kind: "list", items: [] });
+    expect(filterLabel(empty)).toBe("task: no markers");
   });
 
-  it("`(priority …)` defaults to A/B/C, matching og.rs", () => {
+  it("`(priority …)` keeps its levels; an empty list is OG's bare `(priority)` (D-18)", () => {
     const empty = priorityFilter([]);
-    expect(empty.kind === "leaf" && empty.leaf.kind === "attr" && empty.leaf.value).toEqual({
-      kind: "list",
-      items: ["A", "B", "C"].map((text) => ({ kind: "text", text })),
-    });
+    expect(empty.kind === "leaf" && empty.leaf.kind === "attr" && empty.leaf.value).toEqual({ kind: "list", items: [] });
+    expect(filterLabel(empty)).toBe("priority: no levels");
+    expect(filterLabel(priorityFilter(["A"]))).toBe("priority: A");
   });
 
   it("`(property k v)` is `props any (key = k AND value = v)` (og.rs::property_leaf)", () => {
@@ -864,7 +862,7 @@ describe("filterPhrase / querySentence", () => {
     for (let i = 0; i < 64; i++) deep = { kind: "and", items: [pageRefFilter(`level${i}`), deep] };
     const sentence = querySentence({ anchor: "block", filter: deep });
     expect(sentence.length).toBeLessThan(24);
-    expect(said(sentence)).toContain(ADVANCED_PHRASE);
+    expect(said(sentence)).toContain(renderEnglish(ADVANCED_PHRASE));
     expect(said(sentence).length).toBeLessThan(240);
 
     // Relation predicates are levels too, so a deep `any(children, …)` chain
@@ -874,7 +872,7 @@ describe("filterPhrase / querySentence", () => {
       rel = { kind: "leaf", leaf: { kind: "rel", rel: "children", quant: "any", pred: rel } };
     }
     expect(filterLabel(rel).length).toBeLessThan(120);
-    expect(filterLabel(rel)).toContain(ADVANCED_PHRASE);
+    expect(filterLabel(rel)).toContain(renderEnglish(ADVANCED_PHRASE));
 
     // And so is `off`.
     let off: Filter = pageRefFilter("bottom");
@@ -1390,7 +1388,7 @@ describe("no ⟨advanced⟩ for a shape the builder wrote (GH #619 item 5)", () 
         kind: "and",
         items: [pageRefFilter("x"), { kind: "or", items: [filter, pageRefFilter("y")] }],
       };
-      expect(said(querySentence({ anchor: "block", filter: nested })), name).not.toContain(ADVANCED_PHRASE);
+      expect(said(querySentence({ anchor: "block", filter: nested })), name).not.toContain(renderEnglish(ADVANCED_PHRASE));
     }
   });
 
@@ -1406,7 +1404,7 @@ describe("no ⟨advanced⟩ for a shape the builder wrote (GH #619 item 5)", () 
     for (let i = 0; i < 64; i++) {
       rel = { kind: "leaf", leaf: { kind: "rel", rel: "page", quant: "any", pred: rel } };
     }
-    expect(filterLabel(rel)).toContain(ADVANCED_PHRASE);
+    expect(filterLabel(rel)).toContain(renderEnglish(ADVANCED_PHRASE));
     expect(filterLabel(rel).length).toBeLessThan(120);
   });
 });

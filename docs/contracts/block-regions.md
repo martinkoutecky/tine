@@ -1,6 +1,6 @@
 # Block regions and structural edits
 
-`crates/tine-core/src/block_regions.rs` owns source structure for one raw
+`crates/tine-outline/src/block_regions.rs` owns source structure for one raw
 Markdown or Org block. Native code and `crates/lsdoc-wasm` compile the same
 implementation. lsdoc supplies ownership; it follows mldoc's grammar, including
 Org source blocks on the Markdown path and mldoc's fence-closing behavior.

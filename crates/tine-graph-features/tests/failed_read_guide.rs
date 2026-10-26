@@ -1,5 +1,6 @@
 #[test]
 fn bundled_recovery_guide_explains_failed_reads_and_safe_retries() {
+    let _integration_guard = crate::integration_lock();
     let guide = tine_core::guide::bundled_guide_pages()
         .into_iter()
         .find(|page| page.title == "Reference/Troubleshooting and recovery")

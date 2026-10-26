@@ -40,6 +40,28 @@ afterEach(() => {
 });
 
 describe("Linked References filters", () => {
+  it.each([false, true])("offers one bulk toggle for linked/unlinked groups (unlinked=%s)", async (unlinked) => {
+    const groups: RefGroup[] = ["A", "B"].map(page => ({ page, kind: "page", blocks: [block(page, "Target")] }));
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue(groups);
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue(groups);
+    const { ReferenceSection } = await import("./LinkedReferences");
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <ReferenceSection name="Target" unlinked={unlinked} />, root);
+    try {
+      await tick(); await tick();
+      if (unlinked) root.querySelector<HTMLElement>(".references-header")!.click();
+      const controls = root.querySelectorAll<HTMLButtonElement>(".reference-bulk-controls button");
+      expect(controls).toHaveLength(1);
+      expect(controls[0].textContent).toBe("Collapse all");
+      root.querySelector<HTMLButtonElement>(".reference-group-disclosure")!.click();
+      expect(controls[0].textContent).toBe("Expand all");
+      controls[0].click();
+      expect(root.querySelectorAll(".test-ref-group")).toHaveLength(2);
+      expect(controls[0].textContent).toBe("Collapse all");
+      controls[0].click();
+      expect(root.querySelectorAll(".test-ref-group")).toHaveLength(0);
+    } finally { dispose(); }
+  });
   it("offers batch export for visible linked references", async () => {
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([
       { page: "Source", kind: "page", blocks: [block("a", "[[Target]]")] },
@@ -71,14 +93,14 @@ describe("Linked References filters", () => {
       expect(root.querySelector(".test-ref-group")).not.toBeNull();
     } finally { dispose(); }
   });
-  it("unions include chips and narrows available chips to text matches", async () => {
+  it("intersects include chips like OG filter-blocks and narrows available chips to text matches", async () => {
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([{
       page: "Source", kind: "page", blocks: [
         block("a", "apple [[Target]]"), block("b", "banana [[Target]]"),
       ],
     }]);
     vi.spyOn(backend(), "getBacklinkFilterContext").mockResolvedValue({ entries: [
-      { page: "Source", kind: "page", block_id: "a", text: "apple", facets: ["red"] },
+      { page: "Source", kind: "page", block_id: "a", text: "apple", facets: ["red", "yellow"] },
       { page: "Source", kind: "page", block_id: "b", text: "banana", facets: ["yellow"] },
     ] });
     const root = document.createElement("div");
@@ -90,15 +112,18 @@ describe("Linked References filters", () => {
       await tick(); await tick();
       const chip = (name: string) => [...root.querySelectorAll<HTMLButtonElement>(".ref-filter-chip")]
         .find((el) => el.textContent?.includes(name));
-      chip("red")!.click(); chip("yellow")!.click();
+      chip("yellow")!.click();
       expect(root.querySelector(".references-count")?.textContent).toBe("2");
+      // OG block.cljs filter-blocks: a reference must carry every included page.
+      chip("red")!.click();
+      expect(root.querySelector(".references-count")?.textContent, "includes intersect, as in OG").toBe("1");
       const input = root.querySelector<HTMLInputElement>(".reference-filter-search")!;
-      input.value = "apple";
+      input.value = "banana";
       input.dispatchEvent(new Event("input", { bubbles: true }));
       await wait(150);
-      expect(root.querySelector(".references-count")?.textContent).toBe("1");
-      expect(chip("red")?.textContent).toContain("1");
-      expect(chip("yellow")?.textContent).toContain("0");
+      expect(root.querySelector(".references-count")?.textContent).toBe("0");
+      expect(chip("red")?.textContent).toContain("0");
+      expect(chip("yellow")?.textContent).toContain("1");
     } finally { dispose(); }
   });
   it("folds NFC/NFD spellings of one tag into one filter chip (DUP-2)", async () => {

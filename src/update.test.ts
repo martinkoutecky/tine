@@ -1,12 +1,15 @@
 import { IDENTITY } from "../scripts/lib/app-identity.mjs";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { renderEnglish, type UiText } from "./i18n";
 
 type Platform = "desktop" | "android" | "ios";
 type ToastCall = [string, string, { sticky?: boolean; action?: { label: string; run: () => void } }?];
 
 function toastCalls(mock: { mock: { calls: unknown[][] } }): ToastCall[] {
-  return mock.mock.calls as unknown as ToastCall[];
+  return mock.mock.calls.map(([text, kind, options]) => [
+    typeof text === "string" ? text : renderEnglish(text as UiText), kind, options,
+  ]) as ToastCall[];
 }
 
 async function loadUpdate(opts: {
@@ -20,6 +23,8 @@ async function loadUpdate(opts: {
   architecture?: string;
   packaging?: string;
   packagingReject?: boolean;
+  /** Successive gpu_env() answers (an Error rejects); the last one repeats. */
+  packagingProbes?: Array<object | Error>;
   updaterReject?: Error;
   updaterUpdate?: object;
   channel?: "stable" | "beta";
@@ -32,14 +37,23 @@ async function loadUpdate(opts: {
   });
   const openExternalMock = vi.fn(async () => {});
   let nextToastId = 40;
-  const pushToastMock = vi.fn(() => ++nextToastId);
+  const pushToastMock = vi.fn<(...args: unknown[]) => number>(() => ++nextToastId);
   const dismissToastMock = vi.fn();
   const openSettingsMock = vi.fn();
   const diagnosticFrontendEventMock = vi.fn(async () => {});
   const appArchitectureMock = vi.fn(async () => opts.architecture ?? "x86_64");
+  let probe = 0;
   const gpuEnvMock = vi.fn(async () => {
     if (opts.packagingReject) throw new Error("package probe unavailable");
-    return { software_forced: false, appimage: false, packaged: opts.packaging === "msix" };
+    if (opts.packagingProbes) {
+      const answer = opts.packagingProbes[Math.min(probe++, opts.packagingProbes.length - 1)];
+      if (answer instanceof Error) throw answer;
+      return answer;
+    }
+    return {
+      software_forced: false, appimage: false, flatpak: opts.packaging === "flatpak", packaged: opts.packaging === "msix",
+      portable: opts.packaging === "portable",
+    };
   });
   const getVersionMock = vi.fn(async () => opts.version ?? "0.5.3");
   const updaterCheckMock = opts.updaterReject
@@ -62,8 +76,12 @@ async function loadUpdate(opts: {
   }));
   vi.doMock("./platform", () => ({ platformKind: platformKindMock }));
   vi.doMock("./toasts", () => ({
-    pushToast: pushToastMock,
-    pushToastUnique: pushToastMock,
+    pushToast: (...args: [string | UiText, ...unknown[]]) => pushToastMock(typeof args[0] === "string" ? args[0] : renderEnglish(args[0]), ...args.slice(1).map((value) => {
+      if (!value || typeof value !== "object" || !("action" in value)) return value;
+      const options = value as { action?: { label: string | UiText; run: () => void } };
+      return options.action ? { ...options, action: { ...options.action, label: typeof options.action.label === "string" ? options.action.label : renderEnglish(options.action.label) } } : options;
+    })),
+    pushToastUnique: (...args: [string | UiText, ...unknown[]]) => pushToastMock(typeof args[0] === "string" ? args[0] : renderEnglish(args[0]), ...args.slice(1)),
     dismissToast: dismissToastMock,
   }));
   vi.doMock("./ui", () => ({ openSettings: openSettingsMock }));
@@ -76,7 +94,6 @@ async function loadUpdate(opts: {
   const update = await import("./update");
   return {
     update,
-    gpuEnvMock,
     getAppBoolMock,
     setAppBoolMock,
     platformKindMock,
@@ -110,23 +127,10 @@ describe("MSIX update policy", () => {
   it("never checks or offers an update from an MSIX", async () => {
     const { update, updaterCheckMock, pushToastMock } = await loadUpdate({ packaging: "msix" });
     await update.checkForUpdate();
+    await update.installUpdateForTest();
     expect(await update.checkForUpdateNow()).toEqual({ kind: "unavailable" });
     expect(updaterCheckMock).not.toHaveBeenCalled();
     expect(pushToastMock).not.toHaveBeenCalled();
-  });
-  it("blocks an existing install action when the package probe reports MSIX", async () => {
-    const download = vi.fn();
-    const { update, gpuEnvMock, updaterCheckMock, pushToastMock, openExternalMock } = await loadUpdate({
-      updaterUpdate: { version: "0.6.0-beta.1", close: vi.fn(), download },
-    });
-    expect((await update.checkForUpdateNow()).kind).toBe("available");
-    gpuEnvMock.mockResolvedValue({ software_forced: false, appimage: false, packaged: true });
-    const checks = updaterCheckMock.mock.calls.length;
-    toastCalls(pushToastMock)[0][2]!.action!.run();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(updaterCheckMock).toHaveBeenCalledTimes(checks);
-    expect(download).not.toHaveBeenCalled();
-    expect(openExternalMock).not.toHaveBeenCalled();
   });
   it("a failed package probe retains notification but blocks the install action", async () => {
     const download = vi.fn();
@@ -140,6 +144,42 @@ describe("MSIX update policy", () => {
     expect(updaterCheckMock).toHaveBeenCalledTimes(checks);
     expect(download).not.toHaveBeenCalled();
     expect(openExternalMock).not.toHaveBeenCalled();
+  });
+  it("installs only on an affirmative in-place answer from one packaging probe (GH #719 r1)", async () => {
+    const env = (fields: object) => ({ software_forced: false, appimage: false, ...fields });
+    const portable = env({ packaged: false, flatpak: false, portable: true });
+    const installed = env({ packaged: false, flatpak: false, portable: false });
+    const cases: Array<[string, Array<object | Error>, boolean]> = [
+      // The reviewer's case: the first read says portable, a second read rejects.
+      ["portable, then the second probe rejects", [portable, new Error("probe unavailable")], false],
+      ["the probe rejects", [new Error("probe unavailable")], false],
+      ["portable is not answered", [env({ packaged: false, flatpak: false })], false],
+      ["package identity is not answered", [env({ packaged: null, flatpak: false, portable: false })], false],
+      ["affirmatively installed in place", [installed], true],
+    ];
+    for (const [name, probes, installs] of cases) {
+      const download = vi.fn(async () => {});
+      const install = vi.fn(async () => {});
+      const { update, relaunchMock } = await loadUpdate({
+        packagingProbes: probes, version: "0.5.3",
+        updaterUpdate: { version: "0.6.0-beta.1", close: vi.fn(async () => {}), download, install },
+      });
+      update.setUpdateExitGuard({ prepare: async () => "accepted", reset: () => {} });
+      await update.installUpdateForTest("0.6.0-beta.1");
+      expect(install, name).toHaveBeenCalledTimes(installs ? 1 : 0);
+      expect(download, name).toHaveBeenCalledTimes(installs ? 1 : 0);
+      if (!installs) expect(relaunchMock, name).not.toHaveBeenCalled();
+      update.setUpdateExitGuard(null);
+    }
+  });
+  it("resolves packaging from one answer, in-place only when every probe says false", async () => {
+    const { update } = await loadUpdate({});
+    expect(update.resolveUpdatePackaging({ packaged: false, flatpak: false, portable: false })).toBe("in-place");
+    expect(update.resolveUpdatePackaging({ packaged: true, flatpak: false, portable: false })).toBe("msix");
+    expect(update.resolveUpdatePackaging({ packaged: false, flatpak: true, portable: false })).toBe("flatpak");
+    expect(update.resolveUpdatePackaging({ packaged: false, flatpak: false, portable: true })).toBe("portable");
+    expect(update.resolveUpdatePackaging({ packaged: null, flatpak: false, portable: false })).toBe("unknown");
+    expect(update.resolveUpdatePackaging({ packaged: false, flatpak: false })).toBe("unknown");
   });
 });
 const triple = (v: string) => (/(\d+)\.(\d+)\.(\d+)/.exec(v) ?? []).slice(1).map(Number);
@@ -205,7 +245,7 @@ describe("update checks", () => {
     expect(settings.checkForUpdatesAutomatically()).toBe(false);
     await vi.waitFor(() => expect(settings.checkForUpdatesAutomatically()).toBe(true));
     expect(setAppBoolMock).toHaveBeenCalledWith("check_for_updates_automatically", false);
-    expect(pushToastMock).toHaveBeenCalledWith("Could not save automatic update preference.", "error");
+    expect(toastCalls(pushToastMock)).toContainEqual(["Could not save automatic update preference.", "error", undefined]);
   });
 
   it("GH #618: a late startup read cannot overwrite a newer toggle", async () => {
@@ -337,25 +377,76 @@ describe("update checks", () => {
     expect(pushToastMock).not.toHaveBeenCalled();
   });
 
-  it("keeps macOS on the manual releases page while still learning the version from check()", async () => {
+  it("GH #405: macOS downloads, saves and installs, then offers a guarded restart", async () => {
     vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)" });
     mockLatest("v0.6.0-beta.1");
-    const { update, pushToastMock, updaterCheckMock, openExternalMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
+    const download = vi.fn(async () => {});
+    const install = vi.fn(async () => {});
+    const { update, pushToastMock, updaterCheckMock, openExternalMock, relaunchMock } = await loadUpdate({ platform: "desktop", version: "0.5.3", updaterUpdate: { version: "0.6.0-beta.1", download, install, close: vi.fn(async () => {}) } });
+    update.setUpdateExitGuard({ prepare: async () => "accepted", reset: vi.fn() });
 
     await update.checkForUpdate();
-    expect(updaterCheckMock).toHaveBeenCalledOnce();
     const offer = toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0-beta.1 is available"));
     offer?.[2]?.action?.run();
-    await vi.waitFor(() => expect(openExternalMock).toHaveBeenCalledWith("https://github.com/martinkoutecky/tine/releases/tag/beta"));
-    expect(updaterCheckMock, "manual mode never runs the in-place installer").toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(install).toHaveBeenCalledOnce());
+    expect(download).toHaveBeenCalledOnce();
+    expect(openExternalMock).not.toHaveBeenCalled();
+    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(updaterCheckMock).toHaveBeenCalledTimes(2);
+    const restart = toastCalls(pushToastMock).find(([message]) => message.includes("Restart to use"));
+    expect(restart?.[2]?.action?.label).toBe("Restart");
+    restart?.[2]?.action?.run();
+    await vi.waitFor(() => expect(relaunchMock).toHaveBeenCalledOnce());
   });
 
-  it("points the manual releases fallback at the beta release page", async () => {
+  it.each([
+    `failed to install the update and to restore the previous app, which was left at /Applications/${IDENTITY.productName} (previous version).app`,
+    `failed to install the update and to restore the previous app, which was left at /Users/test/${IDENTITY.productName} (previous version).app`,
+    "failed to install the update and to restore the previous app, which was left at /tmp/updater-backup/Previous.app",
+    "PreviousAppNotRestored",
+    "Permission denied",
+  ])("GH #405: macOS install failure explains bundle recovery and opens the manual fallback: %s", async (failure) => {
+    vi.stubGlobal("navigator", { userAgent: "Macintosh; Intel Mac OS X" });
+    const reset = vi.fn();
+    const loaded = await loadUpdate({ updaterUpdate: {
+      version: "0.6.0-beta.1", download: async () => {},
+      install: async () => { throw new Error(failure); }, close: async () => {},
+    } });
+    loaded.update.setUpdateExitGuard({ prepare: async () => "accepted", reset });
+    await loaded.update.installUpdateForTest();
+    expect(reset).toHaveBeenCalledOnce();
+    expect(loaded.relaunchMock).not.toHaveBeenCalled();
+    expect(loaded.openExternalMock).toHaveBeenCalledOnce();
+    const error = toastCalls(loaded.pushToastMock).find(([, severity]) => severity === "error");
+    expect(error?.[0]).toContain(`${IDENTITY.productName} (previous version).app`);
+    expect(error?.[0]).toContain("beside");
+    expect(error?.[2]?.action?.label).toBe("Download manually");
+    if (failure.includes("which was left at ")) expect(error?.[0]).toContain(failure.split("which was left at ")[1]);
+  });
+
+  it.each(["minisign signature verification failed", "The signature verification failed"])("GH #405: macOS minisign rejection opens the manual fallback before saving or installing: %s", async (failure) => {
+    vi.stubGlobal("navigator", { userAgent: "Macintosh; Intel Mac OS X" });
+    const install = vi.fn();
+    const prepare = vi.fn(async () => "accepted" as const);
+    const download = vi.fn(async () => { throw new Error(failure); });
+    const loaded = await loadUpdate({ updaterUpdate: {
+      version: "0.6.0-beta.1", download,
+      install, close: async () => {},
+    } });
+    loaded.update.setUpdateExitGuard({ prepare, reset: vi.fn() });
+    await loaded.update.installUpdateForTest();
+    expect(download).toHaveBeenCalledOnce();
+    expect(install).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(loaded.openExternalMock).toHaveBeenCalledExactlyOnceWith("https://github.com/martinkoutecky/tine/releases/tag/v0.6.0-beta.1");
+  });
+
+  it("without a known offered version, the manual fallback opens the releases list (each Beta has its own release)", async () => {
     const { update, openExternalMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
 
     update.openReleasesPage();
 
-    expect(openExternalMock).toHaveBeenCalledWith("https://github.com/martinkoutecky/tine/releases/tag/beta");
+    expect(openExternalMock).toHaveBeenCalledWith("https://github.com/martinkoutecky/tine/releases");
   });
 
   it.each(["android", "ios"] as const)("never checks or offers self-update on %s", async (platform) => {
@@ -467,6 +558,95 @@ describe("update checks", () => {
 
     offer?.[2]?.action?.run();
     expect(openExternalMock).toHaveBeenCalledOnce();
+  });
+
+  it("a Flatpak never attempts the in-place install: it offers a manual download and no error (Beta Flatpak review B1)", async () => {
+    mockLatest("v0.6.0-beta.1");
+    const { update, pushToastMock, updaterCheckMock, openExternalMock, diagnosticFrontendEventMock } =
+      await loadUpdate({ platform: "desktop", packaging: "flatpak", version: "0.5.3" });
+
+    await expect(update.checkForUpdateNow()).resolves.toMatchObject({ kind: "available", manual: true });
+    const offer = toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0-beta.1 is available"));
+    expect(offer?.[0]).toContain("Flatpak");
+    expect(offer?.[2]).toMatchObject({ sticky: true, action: { label: "Download manually" } });
+    expect(toastCalls(pushToastMock).some(([, , options]) => options?.action?.label === "Install update")).toBe(false);
+
+    offer?.[2]?.action?.run();
+    // The offered Beta's own release, never a page listing the other channel's installers.
+    expect(openExternalMock).toHaveBeenCalledExactlyOnceWith("https://github.com/martinkoutecky/tine/releases/tag/v0.6.0-beta.1");
+    // Only the version check ran: nothing downloaded, installed or relaunched, nothing failed.
+    expect(updaterCheckMock).toHaveBeenCalledOnce();
+    expect(toastCalls(pushToastMock).some(([, kind]) => kind === "error")).toBe(false);
+    expect(diagnosticFrontendEventMock).not.toHaveBeenCalledWith("updater_failure", expect.anything());
+  });
+
+  it("a portable Windows build never runs the installer: it offers the new ZIP, not Install update (GH #719)", async () => {
+    mockLatest("v0.6.0-beta.1");
+    const { update, pushToastMock, updaterCheckMock, openExternalMock, relaunchMock, diagnosticFrontendEventMock } =
+      await loadUpdate({ platform: "desktop", packaging: "portable", version: "0.5.3" });
+
+    await expect(update.checkForUpdateNow()).resolves.toMatchObject({ kind: "available", manual: true });
+    const offer = toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0-beta.1 is available"));
+    expect(offer?.[0]).toContain("portable ZIP");
+    expect(offer?.[2]).toMatchObject({ sticky: true, action: { label: "Download manually" } });
+    expect(toastCalls(pushToastMock).some(([, , options]) => options?.action?.label === "Install update")).toBe(false);
+
+    offer?.[2]?.action?.run();
+    expect(openExternalMock).toHaveBeenCalledExactlyOnceWith("https://github.com/martinkoutecky/tine/releases/tag/v0.6.0-beta.1");
+    // A stale Install update action refuses too: the installer would add an
+    // installed copy under the host's per-user folders.
+    await update.installUpdateForTest("0.6.0-beta.1");
+    expect(updaterCheckMock, "only the version check ran").toHaveBeenCalledOnce();
+    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(openExternalMock).toHaveBeenCalledTimes(2);
+    expect(diagnosticFrontendEventMock).not.toHaveBeenCalledWith("updater_failure", expect.anything());
+  });
+
+  it("the Install update action keeps the offered Beta when its fresh check fails or finds nothing", async () => {
+    for (const recheck of ["rejects", "null"] as const) {
+      mockLatest("v0.6.0-beta.1");
+      const { update, pushToastMock, updaterCheckMock, openExternalMock, relaunchMock } =
+        await loadUpdate({ platform: "desktop", packaging: "native", version: "0.5.3" });
+      await expect(update.checkForUpdateNow()).resolves.toMatchObject({ kind: "available", version: "0.6.0-beta.1" });
+      const offer = toastCalls(pushToastMock).find(([, , options]) => options?.action?.label === "Install update");
+      if (recheck === "rejects") updaterCheckMock.mockRejectedValueOnce(new Error("network unreachable"));
+      else updaterCheckMock.mockResolvedValueOnce(null);
+      offer?.[2]?.action?.run();
+      await vi.waitFor(() => expect(openExternalMock, recheck).toHaveBeenCalledOnce());
+      expect(openExternalMock).toHaveBeenCalledWith("https://github.com/martinkoutecky/tine/releases/tag/v0.6.0-beta.1");
+      expect(relaunchMock).not.toHaveBeenCalled();
+    }
+  });
+
+  it("the About tab's Releases link opens the version it shows as available", async () => {
+    mockLatest("v0.6.0-beta.1");
+    const { update, openExternalMock } = await loadUpdate({ platform: "desktop", packaging: "native", version: "0.5.3" });
+    update.openReleasesPage("0.6.0-beta.1");
+    update.openReleasesPage();
+    expect(openExternalMock.mock.calls).toEqual([
+      ["https://github.com/martinkoutecky/tine/releases/tag/v0.6.0-beta.1"],
+      ["https://github.com/martinkoutecky/tine/releases"],
+    ]);
+  });
+
+  it("a stale Install update action on a Flatpak opens the releases page instead of installing", async () => {
+    mockLatest("v0.6.0-beta.1");
+    const { update, updaterCheckMock, openExternalMock, relaunchMock } =
+      await loadUpdate({ platform: "desktop", packaging: "flatpak", version: "0.5.3" });
+    // The exported singleton offer path decides on the probe, so reaching the
+    // installer requires bypassing it; the installer entry itself must also refuse.
+    await update.installUpdateForTest();
+    expect(updaterCheckMock).not.toHaveBeenCalled();
+    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(openExternalMock).toHaveBeenCalledOnce();
+  });
+
+  it("a native build still offers Install update (the Flatpak branch is not the default)", async () => {
+    mockLatest("v0.6.0-beta.1");
+    const { update } = await loadUpdate({ platform: "desktop", packaging: "native", version: "0.5.3" });
+    const status = await update.checkForUpdateNow();
+    expect(status).toMatchObject({ kind: "available" });
+    expect(status).not.toHaveProperty("manual");
   });
 
   it("records a fixed stage/cause for a failed install and points the user at Diagnostics (GH #343)", async () => {

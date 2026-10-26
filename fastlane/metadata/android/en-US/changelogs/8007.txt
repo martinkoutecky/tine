@@ -1,0 +1,1 @@
+Seventh Tine 0.8 Beta, fixes for the stable candidate. A query export no longer publishes pages marked public:: false. A rare Markdown quote no longer crashes Tine at graph load. A page with template:: in its own properties is listed as a template, as in Logseq.

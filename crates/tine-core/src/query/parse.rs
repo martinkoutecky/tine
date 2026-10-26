@@ -221,7 +221,13 @@ fn advanced_source_query(form: &str, og_options: String) -> (Query, ViewSettings
         DiagnosticKind::Syntax,
         "this is an advanced (datalog) query, not the simple DSL",
     ));
-    (query, ViewSettings::default())
+    // A recognised result transform runs as the view's sort (Martin
+    // 2026-10-11); any other refuses the query whole at resolution.
+    let view = ViewSettings {
+        sort: super::advanced_patterns::advanced_result_sort(form).unwrap_or_default(),
+        ..ViewSettings::default()
+    };
+    (query, view)
 }
 
 fn refuse_tql_source(form: &str, og_options: String) -> (Query, ViewSettings) {
@@ -437,7 +443,7 @@ pub fn resolve_for_execution(
 
     let (lowered, ran, ignored) = advanced_pred(original, context.current_page.as_deref(), today);
     let mut bound = Query {
-        anchor: query.anchor,
+        anchor: lowered.as_ref().map_or(query.anchor, |q| q.anchor),
         filter: lowered
             .as_ref()
             .map_or(Filter::False, |query| query.filter.clone()),
@@ -448,10 +454,19 @@ pub fn resolve_for_execution(
     };
     let supported = lowered.is_some();
     if !supported {
-        bound.diagnostics.push(Diagnostic::new(
-            DiagnosticKind::Syntax,
-            unsupported_message(&ignored),
-        ));
+        let mut message = unsupported_message(&ignored);
+        if let Some(tql) = super::advanced_patterns::advanced_row_suggestion(
+            original,
+            context.current_page.as_deref(),
+            today,
+        ) {
+            message.push_str(&format!(
+                ". To query the underlying rows without :result-transform, use TQL: {tql}"
+            ));
+        }
+        bound
+            .diagnostics
+            .push(Diagnostic::new(DiagnosticKind::Syntax, message));
     }
     ResolvedQuery {
         query: bound,

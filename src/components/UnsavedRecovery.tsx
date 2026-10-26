@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 // The unsaved-changes recovery panel (GH #540, master dc3f2104b). Opened when the
 // user declines to discard at close, or from a failed-save toast. It lists every
 // page whose edits are not on disk and offers the ways out that never lose text:
@@ -8,7 +9,6 @@ import { flushAll, unsavedDrafts } from "../document";
 import { mainPaneRouter } from "../router";
 import { writeClipboardText } from "../clipboard";
 import { closeUnsavedRecovery, unsavedRecoveryOpen } from "../unsavedRecovery";
-import { dismissEarlierDraft, dismissHeldDraft, earlierDrafts, switchHeldDrafts } from "../draftStore";
 import { registerTransientLayer } from "../transientLayers";
 import { DEFAULT_EXPORT_OPTIONS, exportOutline, type ExportNode } from "../editor/exportText";
 import type { PageDto } from "../types";
@@ -35,8 +35,8 @@ function RecoveryDraft(props: { page: PageDto }): JSX.Element {
   };
   return <div class="recovery-draft">
     <pre tabIndex={0}>{recoveryDraftText(props.page)}</pre>
-    <button onClick={() => void copy(false)}>Copy draft</button>
-    <button onClick={() => void copy(true)}>Copy complete recovery data</button>
+    <button class="settings-btn" type="button" onClick={() => void copy(false)}>{t("unsaved-recovery-copy-draft")}</button>
+    <button class="settings-btn" type="button" onClick={() => void copy(true)}>{t("unsaved-recovery-copy-complete-recovery-data")}</button>
     <p role="status">{message()}</p>
   </div>;
 }
@@ -50,7 +50,7 @@ function RecoveryPanel(): JSX.Element {
   const [busy, setBusy] = createSignal(false);
   const [message, setMessage] = createSignal("");
   let root: HTMLDivElement | undefined;
-  // The engine's dirty/saving sets are not signals; poll while the panel is open.
+  // The page client's state is not one signal; poll while the panel is open.
   const refresh = () => {
     const next = unsavedDrafts();
     if (JSON.stringify(next) !== JSON.stringify(pages())) setPages(next);
@@ -76,36 +76,24 @@ function RecoveryPanel(): JSX.Element {
     }
   };
   return <div class="modal-overlay">
-    <div ref={root} tabIndex={-1} class="unsaved-recovery-panel" role="dialog" aria-modal="true" aria-label="Unsaved changes">
-      <h2>Unsaved changes</h2>
-      <p>{pages().length} affected {pages().length === 1 ? "page" : "pages"}. Review or copy your drafts before closing. Copying does not save the graph.</p>
-      <button disabled={busy()} onClick={() => void retry()}>{busy() ? "Saving…" : "Retry saving"}</button>
-      <button onClick={closeUnsavedRecovery}>Keep working</button>
+    <div ref={root} tabIndex={-1} class="unsaved-recovery-panel" role="dialog" aria-modal="true" aria-label={t("unsaved-recovery-unsaved-changes")}>
+      <h2>{t("unsaved-recovery-unsaved-changes")}</h2>
+      <p>{t("unsaved-recovery-summary", { count: pages().length })}</p>
+      <button class="settings-btn" type="button" disabled={busy()} onClick={() => void retry()}>{busy() ? t("unsaved-recovery-saving") : t("unsaved-recovery-retry-saving")}</button>
+      <button class="settings-btn" type="button" onClick={closeUnsavedRecovery}>{t("unsaved-recovery-keep-working")}</button>
       <p role="status">{message()}</p>
-      <Show when={pages().length === 0 && earlierDrafts().length === 0 && switchHeldDrafts().length === 0}><p>No pending page drafts. If closing still fails, check pending attachments and storage status.</p></Show>
+      <Show when={pages().length === 0}><p>{t("unsaved-recovery-no-pending-page-drafts-if-closing-still-fails")}</p></Show>
       <For each={pages()}>{(entry) => <section class="unsaved-recovery-entry">
         <h3>{entry.name} — {entry.state}</h3>
-        <button onClick={() => {
+        <button class="settings-btn" type="button" onClick={() => {
           const kind = entry.page?.kind ?? "page";
           closeUnsavedRecovery();
           if (entry.path) mainPaneRouter.openFile(entry.path, entry.name, kind, { inPlace: true });
           else mainPaneRouter.openPage(entry.name, kind, { inPlace: true });
-        }}>{entry.state === "Conflict" ? "Open page to resolve the conflict" : "Open page"}</button>
-        <Show when={entry.page} fallback={<p>No page draft is available in this window.</p>}>
+        }}>{entry.state === "Conflict" ? t("unsaved-recovery-open-page-to-resolve-the-conflict") : t("unsaved-recovery-open-page")}</button>
+        <Show when={entry.page} fallback={<p>{t("unsaved-recovery-no-page-draft-is-available-in-this-window")}</p>}>
           {(page) => <RecoveryDraft page={page()} />}
         </Show>
-      </section>}</For>
-      <For each={earlierDrafts()}>{(record) => <section class="unsaved-recovery-entry">
-        <h3>{record.page_name} — kept from an earlier session ({new Date(record.saved_at).toLocaleString()})</h3>
-        <p>This draft was never saved to the page's file. Copy what you need into the page, then dismiss it.</p>
-        <RecoveryDraft page={record.page} />
-        <button onClick={() => void dismissEarlierDraft(record.id)}>Dismiss this draft</button>
-      </section>}</For>
-      <For each={switchHeldDrafts()}>{(entry) => <section class="unsaved-recovery-entry">
-        <h3>{entry.record.page_name} — from the previous graph ({entry.root})</h3>
-        <p>Typed while that graph was being switched away from; Tine could not keep a crash-safe copy, so it exists only in this window. Copy it into the page, then dismiss it.</p>
-        <RecoveryDraft page={entry.record.page} />
-        <button onClick={() => dismissHeldDraft(entry.record.id)}>Dismiss this draft</button>
       </section>}</For>
     </div>
   </div>;

@@ -73,6 +73,7 @@ fn staged_copies(root: &Path) -> Vec<Vec<u8>> {
 
 #[test]
 fn marker_bearing_page_is_never_rewritten_by_save() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("refuse");
     let file = root.join("pages/Merge.md");
     fs::write(&file, MARKED).unwrap();
@@ -125,6 +126,7 @@ fn marker_bearing_page_is_never_rewritten_by_save() {
 
 #[test]
 fn resolving_markers_stages_the_preresolution_file_in_recoverable_trash() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("resolve");
     let file = root.join("pages/Merge.md");
     fs::write(&file, MARKED).unwrap();
@@ -177,6 +179,7 @@ fn resolving_markers_stages_the_preresolution_file_in_recoverable_trash() {
 
 #[test]
 fn a_stale_resolution_writes_and_stages_nothing() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("stale");
     let file = root.join("pages/Merge.md");
     fs::write(&file, MARKED).unwrap();
@@ -214,6 +217,7 @@ fn a_stale_resolution_writes_and_stages_nothing() {
 
 #[test]
 fn a_failed_resolution_restores_the_file_and_withdraws_its_copy() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("rollback");
     let file = root.join("pages/Merge.md");
     fs::write(&file, MARKED).unwrap();
@@ -265,6 +269,7 @@ fn a_failed_resolution_restores_the_file_and_withdraws_its_copy() {
 
 #[test]
 fn a_marker_page_refusal_names_its_refusal_family() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("family");
     fs::write(root.join("pages/Merge.md"), MARKED).unwrap();
     let store = open(&root);
@@ -293,6 +298,7 @@ fn a_marker_page_refusal_names_its_refusal_family() {
 
 #[test]
 fn crash_marker_resolution_worker() {
+    let _integration_guard = crate::integration_lock();
     let Ok(root) = std::env::var("TINE_F8_CRASH_ROOT") else {
         return;
     };
@@ -322,12 +328,13 @@ fn crash_marker_resolution_worker() {
 /// the new state and the pre-resolution bytes survive in trash either way.
 #[test]
 fn a_crash_during_resolution_never_loses_a_side() {
+    let _integration_guard = crate::integration_lock();
     for (boundary, expected_live) in [("stage", MARKED), ("written", "- mine\n")] {
         let root = scratch("crash");
         fs::write(root.join("pages/Merge.md"), MARKED).unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
-            .arg("crash_marker_resolution_worker")
+            .arg("f8_vcs_markers::crash_marker_resolution_worker")
             .arg("--nocapture")
             .env("TINE_F8_CRASH_ROOT", &root)
             .env("TINE_F8_CRASH_BOUNDARY", boundary)

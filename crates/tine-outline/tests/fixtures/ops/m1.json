@@ -1,0 +1,4439 @@
+{
+ "_comment": "Outline-kernel M1 verb fixtures (DESIGN §9). `expect` is recorded from the window's TS functions by src/document/edits/kernelFixtures.test.ts (TINE_RECORD_KERNEL_FIXTURES=1) and checked against the Rust kernel by crates/tine-outline/tests/ops_fixtures.rs. A difference is investigated, never resolved by editing `expect` alone. Keys created by a verb are n0, n1, ...; focus is the editor offset (UTF-16, hidden properties removed), null keeps the caret. A case's `note` records an investigated difference from the pre-kernel TS that `expect` now takes.",
+ "cases": [
+  {
+   "name": "split: middle of a line",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "hello world"
+     },
+     {
+      "key": "b",
+      "raw": "next"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 5
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "hello"
+      },
+      {
+       "key": "n0",
+       "raw": " world"
+      },
+      {
+       "key": "b",
+       "raw": "next"
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: at the end",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "hello"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 5
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "hello"
+      },
+      {
+       "key": "n0",
+       "raw": ""
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: at offset 0 inserts an empty block before, the original keeps its key",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "hello"
+     },
+     {
+      "key": "b",
+      "raw": "x"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 0
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "n0",
+       "raw": ""
+      },
+      {
+       "key": "a",
+       "raw": "hello"
+      },
+      {
+       "key": "b",
+       "raw": "x"
+      }
+     ]
+    },
+    "kinds": [
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: blank head at a line boundary keeps only the later text on the original",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "\nhello"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 1
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "n0",
+       "raw": ""
+      },
+      {
+       "key": "a",
+       "raw": "hello"
+      }
+     ]
+    },
+    "kinds": [
+     "insert-blocks",
+     "save-block"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: caret at end of line one splits at the break (GH #361)",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "ab\ncd"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 2
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "ab"
+      },
+      {
+       "key": "n0",
+       "raw": "cd"
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: caret at start of line two splits at the same break (GH #361)",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "ab\ncd"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 3
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "ab"
+      },
+      {
+       "key": "n0",
+       "raw": "cd"
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: visible children take the new block as first child",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "parent text",
+      "children": [
+       {
+        "key": "c",
+        "raw": "child"
+       }
+      ]
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 6,
+    "children_visible": true
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "parent",
+       "children": [
+        {
+         "key": "n0",
+         "raw": " text"
+        },
+        {
+         "key": "c",
+         "raw": "child"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: collapsed children leave the new block a sibling",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "parent text\ncollapsed:: true",
+      "children": [
+       {
+        "key": "c",
+        "raw": "child"
+       }
+      ]
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 6,
+    "children_visible": false
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "parent\ncollapsed:: true",
+       "children": [
+        {
+         "key": "c",
+         "raw": "child"
+        }
+       ],
+       "collapsed": true
+      },
+      {
+       "key": "n0",
+       "raw": " text"
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: force_child on a leaf",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "leaf text"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 4,
+    "force_child": true
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "leaf",
+       "children": [
+        {
+         "key": "n0",
+         "raw": " text"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: head of a zoom root keeps the new block inside",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "zoomed",
+      "children": [
+       {
+        "key": "c",
+        "raw": "child"
+       }
+      ]
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 0,
+    "children_visible": true,
+    "keep_start_in_scope": true
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "zoomed",
+       "children": [
+        {
+         "key": "n0",
+         "raw": ""
+        },
+        {
+         "key": "c",
+         "raw": "child"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: hidden id stays on the original",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "hello world\nid:: 650e8400-e29b-41d4-a716-446655440001"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 5
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "hello\nid:: 650e8400-e29b-41d4-a716-446655440001"
+      },
+      {
+       "key": "n0",
+       "raw": " world"
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: ordered item propagates its list type",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one two\nlogseq.order-list-type:: number"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 3
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "one\nlogseq.order-list-type:: number"
+      },
+      {
+       "key": "n0",
+       "raw": " two\nlogseq.order-list-type:: number"
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: ordered head split makes an ordered empty block",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "item\nlogseq.order-list-type:: number"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 0
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "n0",
+       "raw": "logseq.order-list-type:: number"
+      },
+      {
+       "key": "a",
+       "raw": "item\nlogseq.order-list-type:: number"
+      }
+     ]
+    },
+    "kinds": [
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: user property stays visible text and splits with it",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "title\nowner:: me"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 5
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "title"
+      },
+      {
+       "key": "n0",
+       "raw": "owner:: me"
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: multibyte text before the caret",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "é😀 tail"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 6
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "é😀"
+      },
+      {
+       "key": "n0",
+       "raw": " tail"
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: org drawer stays on the original",
+   "page": {
+    "name": "P",
+    "format": "org",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "org title\n:PROPERTIES:\n:id: 650e8400-e29b-41d4-a716-446655440001\n:END:\nbody"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 3
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "org",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "org\n:PROPERTIES:\n:id: 650e8400-e29b-41d4-a716-446655440001\n:END:"
+      },
+      {
+       "key": "n0",
+       "raw": " title\nbody"
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: nested block splits among its siblings",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "p",
+      "raw": "parent",
+      "children": [
+       {
+        "key": "a",
+        "raw": "one two"
+       },
+       {
+        "key": "b",
+        "raw": "three"
+       }
+      ]
+     }
+    ]
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 3,
+    "children_visible": false
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "p",
+       "raw": "parent",
+       "children": [
+        {
+         "key": "a",
+         "raw": "one"
+        },
+        {
+         "key": "n0",
+         "raw": " two"
+        },
+        {
+         "key": "b",
+         "raw": "three"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "split: read-only page refuses",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "hello"
+     }
+    ],
+    "read_only": true
+   },
+   "verb": {
+    "verb": "split",
+    "key": "a",
+    "raw_offset": 2
+   },
+   "expect": {
+    "refused": true,
+    "reason": "read_only"
+   }
+  },
+  {
+   "name": "merge: next sibling into this one",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one"
+     },
+     {
+      "key": "b",
+      "raw": "two"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "merge",
+    "survivor": "a",
+    "absorbed": "b"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "onetwo"
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "move-blocks",
+     "delete-blocks"
+    ],
+    "focus": {
+     "key": "a",
+     "editor_offset": 3
+    }
+   }
+  },
+  {
+   "name": "merge: absorbed children follow the survivor's",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a child"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "two",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b child"
+       }
+      ]
+     }
+    ]
+   },
+   "verb": {
+    "verb": "merge",
+    "survivor": "a1",
+    "absorbed": "b"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "one",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "a childtwo",
+         "children": [
+          {
+           "key": "b1",
+           "raw": "b child"
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "move-blocks",
+     "delete-blocks"
+    ],
+    "focus": {
+     "key": "a1",
+     "editor_offset": 7
+    }
+   }
+  },
+  {
+   "name": "merge: first child into its parent goes after the other children",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "parent",
+      "children": [
+       {
+        "key": "c1",
+        "raw": "first",
+        "children": [
+         {
+          "key": "g",
+          "raw": "grand"
+         }
+        ]
+       },
+       {
+        "key": "c2",
+        "raw": "second"
+       }
+      ]
+     }
+    ]
+   },
+   "verb": {
+    "verb": "merge",
+    "survivor": "a",
+    "absorbed": "c1"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "parentfirst",
+       "children": [
+        {
+         "key": "c2",
+         "raw": "second"
+        },
+        {
+         "key": "g",
+         "raw": "grand"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "move-blocks",
+     "delete-blocks"
+    ],
+    "focus": {
+     "key": "a",
+     "editor_offset": 6
+    }
+   }
+  },
+  {
+   "name": "merge: survivor without id takes the absorbed id",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one"
+     },
+     {
+      "key": "b",
+      "raw": "two\nid:: 650e8400-e29b-41d4-a716-446655440002"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "merge",
+    "survivor": "a",
+    "absorbed": "b"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "onetwo\nid:: 650e8400-e29b-41d4-a716-446655440002"
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "move-blocks",
+     "delete-blocks"
+    ],
+    "focus": {
+     "key": "a",
+     "editor_offset": 3
+    }
+   }
+  },
+  {
+   "name": "merge: survivor keeps its own id and the absorbed id is dropped",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one\nid:: 650e8400-e29b-41d4-a716-446655440001"
+     },
+     {
+      "key": "b",
+      "raw": "two\nid:: 650e8400-e29b-41d4-a716-446655440002"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "merge",
+    "survivor": "a",
+    "absorbed": "b"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "onetwo\nid:: 650e8400-e29b-41d4-a716-446655440001"
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "move-blocks",
+     "delete-blocks"
+    ],
+    "focus": {
+     "key": "a",
+     "editor_offset": 3
+    }
+   }
+  },
+  {
+   "name": "merge: hidden collapsed stays with the survivor",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one\ncollapsed:: true",
+      "children": [
+       {
+        "key": "x",
+        "raw": "kid"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "two"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "merge",
+    "survivor": "x",
+    "absorbed": "b"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "one\ncollapsed:: true",
+       "children": [
+        {
+         "key": "x",
+         "raw": "kidtwo"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "move-blocks",
+     "delete-blocks"
+    ],
+    "focus": {
+     "key": "x",
+     "editor_offset": 3
+    }
+   }
+  },
+  {
+   "name": "merge: org ids move into the survivor drawer",
+   "page": {
+    "name": "P",
+    "format": "org",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one"
+     },
+     {
+      "key": "b",
+      "raw": "two\n:PROPERTIES:\n:id: 650e8400-e29b-41d4-a716-446655440002\n:END:"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "merge",
+    "survivor": "a",
+    "absorbed": "b"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "org",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "onetwo\n:PROPERTIES:\n:id: 650e8400-e29b-41d4-a716-446655440002\n:END:"
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "move-blocks",
+     "delete-blocks"
+    ],
+    "focus": {
+     "key": "a",
+     "editor_offset": 3
+    }
+   }
+  },
+  {
+   "name": "merge: multiline survivor joins at its end",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "line one\nline two"
+     },
+     {
+      "key": "b",
+      "raw": "more"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "merge",
+    "survivor": "a",
+    "absorbed": "b"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "line one\nline twomore"
+      }
+     ]
+    },
+    "kinds": [
+     "save-block",
+     "move-blocks",
+     "delete-blocks"
+    ],
+    "focus": {
+     "key": "a",
+     "editor_offset": 17
+    }
+   }
+  },
+  {
+   "name": "merge: read-only page refuses",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one"
+     },
+     {
+      "key": "b",
+      "raw": "two"
+     }
+    ],
+    "read_only": true
+   },
+   "verb": {
+    "verb": "merge",
+    "survivor": "a",
+    "absorbed": "b"
+   },
+   "expect": {
+    "refused": true,
+    "reason": "read_only"
+   }
+  },
+  {
+   "name": "indent: becomes the last child of the previous sibling",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "kid"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "two",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b kid"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "three"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "indent",
+    "keys": [
+     "b"
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "one",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "kid"
+        },
+        {
+         "key": "b",
+         "raw": "two",
+         "children": [
+          {
+           "key": "b1",
+           "raw": "b kid"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "key": "c",
+       "raw": "three"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": {
+     "key": "b",
+     "editor_offset": null
+    }
+   }
+  },
+  {
+   "name": "indent: first sibling refuses",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one"
+     },
+     {
+      "key": "b",
+      "raw": "two"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "indent",
+    "keys": [
+     "a"
+    ]
+   },
+   "expect": {
+    "refused": true,
+    "reason": "no_outline_step"
+   }
+  },
+  {
+   "name": "indent: a collapsed new parent is expanded in the file too",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one\ncollapsed:: true",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "kid"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "two"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "indent",
+    "keys": [
+     "b"
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "one",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "kid"
+        },
+        {
+         "key": "b",
+         "raw": "two"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": {
+     "key": "b",
+     "editor_offset": null
+    }
+   }
+  },
+  {
+   "name": "indent: org collapsed property is removed from the new parent",
+   "page": {
+    "name": "P",
+    "format": "org",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one\n:PROPERTIES:\n:collapsed: true\n:END:",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "kid"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "two"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "indent",
+    "keys": [
+     "b"
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "org",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "one",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "kid"
+        },
+        {
+         "key": "b",
+         "raw": "two"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": {
+     "key": "b",
+     "editor_offset": null
+    }
+   }
+  },
+  {
+   "name": "indent: the page-header root is never a parent",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "h",
+      "raw": "title:: Page"
+     },
+     {
+      "key": "b",
+      "raw": "body"
+     }
+    ],
+    "header_root": "h"
+   },
+   "verb": {
+    "verb": "indent",
+    "keys": [
+     "b"
+    ]
+   },
+   "expect": {
+    "refused": true,
+    "reason": "header_root"
+   }
+  },
+  {
+   "name": "indent: an ordinary properties root may be a parent",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "h",
+      "raw": "tags:: x"
+     },
+     {
+      "key": "b",
+      "raw": "body"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "indent",
+    "keys": [
+     "b"
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "h",
+       "raw": "tags:: x",
+       "children": [
+        {
+         "key": "b",
+         "raw": "body"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": {
+     "key": "b",
+     "editor_offset": null
+    }
+   }
+  },
+  {
+   "name": "outdent: takes the following siblings as its children",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "p",
+      "raw": "parent",
+      "children": [
+       {
+        "key": "a",
+        "raw": "one"
+       },
+       {
+        "key": "b",
+        "raw": "two",
+        "children": [
+         {
+          "key": "b1",
+          "raw": "kid"
+         }
+        ]
+       },
+       {
+        "key": "c",
+        "raw": "three"
+       },
+       {
+        "key": "d",
+        "raw": "four"
+       }
+      ]
+     },
+     {
+      "key": "q",
+      "raw": "after"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "outdent",
+    "logical": false,
+    "keys": [
+     "b"
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "p",
+       "raw": "parent",
+       "children": [
+        {
+         "key": "a",
+         "raw": "one"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "raw": "two",
+       "children": [
+        {
+         "key": "b1",
+         "raw": "kid"
+        },
+        {
+         "key": "c",
+         "raw": "three"
+        },
+        {
+         "key": "d",
+         "raw": "four"
+        }
+       ]
+      },
+      {
+       "key": "q",
+       "raw": "after"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks"
+    ],
+    "focus": {
+     "key": "b",
+     "editor_offset": null
+    }
+   }
+  },
+  {
+   "name": "outdent: logical outdenting moves the block alone",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "p",
+      "raw": "parent",
+      "children": [
+       {
+        "key": "a",
+        "raw": "one"
+       },
+       {
+        "key": "b",
+        "raw": "two",
+        "children": [
+         {
+          "key": "b1",
+          "raw": "kid"
+         }
+        ]
+       },
+       {
+        "key": "c",
+        "raw": "three"
+       }
+      ]
+     },
+     {
+      "key": "q",
+      "raw": "after"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "outdent",
+    "logical": true,
+    "keys": [
+     "b"
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "p",
+       "raw": "parent",
+       "children": [
+        {
+         "key": "a",
+         "raw": "one"
+        },
+        {
+         "key": "c",
+         "raw": "three"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "raw": "two",
+       "children": [
+        {
+         "key": "b1",
+         "raw": "kid"
+        }
+       ]
+      },
+      {
+       "key": "q",
+       "raw": "after"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks"
+    ],
+    "focus": {
+     "key": "b",
+     "editor_offset": null
+    }
+   }
+  },
+  {
+   "name": "outdent: a root refuses",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "outdent",
+    "logical": false,
+    "keys": [
+     "a"
+    ]
+   },
+   "expect": {
+    "refused": true,
+    "reason": "no_outline_step"
+   }
+  },
+  {
+   "name": "outdent: from depth two lands after its parent",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "r",
+      "raw": "root",
+      "children": [
+       {
+        "key": "p",
+        "raw": "parent",
+        "children": [
+         {
+          "key": "a",
+          "raw": "one"
+         },
+         {
+          "key": "b",
+          "raw": "two"
+         }
+        ]
+       },
+       {
+        "key": "s",
+        "raw": "sibling"
+       }
+      ]
+     }
+    ]
+   },
+   "verb": {
+    "verb": "outdent",
+    "logical": false,
+    "keys": [
+     "a"
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "r",
+       "raw": "root",
+       "children": [
+        {
+         "key": "p",
+         "raw": "parent"
+        },
+        {
+         "key": "a",
+         "raw": "one",
+         "children": [
+          {
+           "key": "b",
+           "raw": "two"
+          }
+         ]
+        },
+        {
+         "key": "s",
+         "raw": "sibling"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks"
+    ],
+    "focus": {
+     "key": "a",
+     "editor_offset": null
+    }
+   }
+  },
+  {
+   "name": "delete: removes the subtree",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "kid",
+        "children": [
+         {
+          "key": "a2",
+          "raw": "grandkid"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "two"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "delete",
+    "keys": [
+     "a"
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "b",
+       "raw": "two"
+      }
+     ]
+    },
+    "kinds": [
+     "delete-blocks"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "delete: a nested block",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "kid"
+       },
+       {
+        "key": "a2",
+        "raw": "kid two"
+       }
+      ]
+     }
+    ]
+   },
+   "verb": {
+    "verb": "delete",
+    "keys": [
+     "a1"
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "one",
+       "children": [
+        {
+         "key": "a2",
+         "raw": "kid two"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "delete-blocks"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "insert_empty_child: at position 0",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "kid"
+       }
+      ]
+     }
+    ]
+   },
+   "verb": {
+    "verb": "insert_empty_child",
+    "parent": "a",
+    "at": 0
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "one",
+       "children": [
+        {
+         "key": "n0",
+         "raw": ""
+        },
+        {
+         "key": "a1",
+         "raw": "kid"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "insert_empty_child: at the end",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "kid"
+       }
+      ]
+     }
+    ]
+   },
+   "verb": {
+    "verb": "insert_empty_child",
+    "parent": "a",
+    "at": 1
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "one",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "kid"
+        },
+        {
+         "key": "n0",
+         "raw": ""
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "insert-blocks"
+    ],
+    "focus": {
+     "key": "n0",
+     "editor_offset": 0
+    }
+   }
+  },
+  {
+   "name": "insert_empty_child: past the end refuses",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "one"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "insert_empty_child",
+    "parent": "a",
+    "at": 2
+   },
+   "expect": {
+    "refused": true,
+    "reason": "incomplete"
+   }
+  },
+  {
+   "name": "move_up_down: down swaps with the next sibling",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_up_down",
+    "keys": [
+     "a1"
+    ],
+    "up": false
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a2",
+         "raw": "a2"
+        },
+        {
+         "key": "a1",
+         "raw": "a1"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "raw": "b",
+       "children": [
+        {
+         "key": "b1",
+         "raw": "b1"
+        }
+       ]
+      },
+      {
+       "key": "c",
+       "raw": "c"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_up_down: up swaps with the previous sibling",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_up_down",
+    "keys": [
+     "b"
+    ],
+    "up": true
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "b",
+       "raw": "b",
+       "children": [
+        {
+         "key": "b1",
+         "raw": "b1"
+        }
+       ]
+      },
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "a1"
+        },
+        {
+         "key": "a2",
+         "raw": "a2"
+        }
+       ]
+      },
+      {
+       "key": "c",
+       "raw": "c"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_up_down: down at a child-list edge enters the next parent sibling first",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_up_down",
+    "keys": [
+     "a2"
+    ],
+    "up": false
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "a1"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "raw": "b",
+       "children": [
+        {
+         "key": "a2",
+         "raw": "a2"
+        },
+        {
+         "key": "b1",
+         "raw": "b1"
+        }
+       ]
+      },
+      {
+       "key": "c",
+       "raw": "c"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_up_down: up at a child-list edge enters the previous parent sibling last",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_up_down",
+    "keys": [
+     "b1"
+    ],
+    "up": true
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "a1"
+        },
+        {
+         "key": "a2",
+         "raw": "a2"
+        },
+        {
+         "key": "b1",
+         "raw": "b1"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "raw": "b"
+      },
+      {
+       "key": "c",
+       "raw": "c"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_up_down: a root at the page edge refuses",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_up_down",
+    "keys": [
+     "a"
+    ],
+    "up": true
+   },
+   "expect": {
+    "refused": true,
+    "reason": "no_outline_step"
+   }
+  },
+  {
+   "name": "move_up_down: a nested block with no parent sibling beyond refuses",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_up_down",
+    "keys": [
+     "a1"
+    ],
+    "up": true
+   },
+   "expect": {
+    "refused": true,
+    "reason": "no_outline_step"
+   }
+  },
+  {
+   "name": "move_up_down: a reparented block inherits the list type",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b\nlogseq.order-list-type:: number",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_up_down",
+    "keys": [
+     "a2"
+    ],
+    "up": false
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "a1"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "raw": "b\nlogseq.order-list-type:: number",
+       "children": [
+        {
+         "key": "a2",
+         "raw": "a2\nlogseq.order-list-type:: number"
+        },
+        {
+         "key": "b1",
+         "raw": "b1"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": null
+   },
+   "note": "Kernel labels the rewrite a block save. The pre-kernel moveItem meant to (moves.ts:326 at 19d0be578) but read node.parent from the live store after the move, so it always sent move-blocks alone. Kinds are diagnostic labels."
+  },
+  {
+   "name": "move_up_down: a reparented block keeps its own list type",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2\nlogseq.order-list-type:: bullet"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b\nlogseq.order-list-type:: number",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_up_down",
+    "keys": [
+     "a2"
+    ],
+    "up": false
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "a1"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "raw": "b\nlogseq.order-list-type:: number",
+       "children": [
+        {
+         "key": "a2",
+         "raw": "a2\nlogseq.order-list-type:: bullet"
+        },
+        {
+         "key": "b1",
+         "raw": "b1"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_up_down: org reparent writes the list type in a drawer",
+   "page": {
+    "name": "P",
+    "format": "org",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b\n:PROPERTIES:\n:logseq.order-list-type: number\n:END:",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_up_down",
+    "keys": [
+     "a2"
+    ],
+    "up": false
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "org",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "a1"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "raw": "b\n:PROPERTIES:\n:logseq.order-list-type: number\n:END:",
+       "children": [
+        {
+         "key": "a2",
+         "raw": "a2\n:PROPERTIES:\n:logseq.order-list-type: number\n:END:"
+        },
+        {
+         "key": "b1",
+         "raw": "b1"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": null
+   },
+   "note": "As the md case: the rewrite is a block save."
+  },
+  {
+   "name": "move_up_down: a read-only page refuses",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ],
+    "read_only": true
+   },
+   "verb": {
+    "verb": "move_up_down",
+    "keys": [
+     "a1"
+    ],
+    "up": false
+   },
+   "expect": {
+    "refused": true,
+    "reason": "read_only"
+   }
+  },
+  {
+   "name": "move_up_down: a selection moves down together",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a"
+     },
+     {
+      "key": "b",
+      "raw": "b"
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     },
+     {
+      "key": "d",
+      "raw": "d"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_up_down",
+    "keys": [
+     "a",
+     "b"
+    ],
+    "up": false,
+    "within_siblings": true
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "c",
+       "raw": "c"
+      },
+      {
+       "key": "a",
+       "raw": "a"
+      },
+      {
+       "key": "b",
+       "raw": "b"
+      },
+      {
+       "key": "d",
+       "raw": "d"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_up_down: a selection moves up together",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a"
+     },
+     {
+      "key": "b",
+      "raw": "b"
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     },
+     {
+      "key": "d",
+      "raw": "d"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_up_down",
+    "keys": [
+     "c",
+     "d"
+    ],
+    "up": true,
+    "within_siblings": true
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a"
+      },
+      {
+       "key": "c",
+       "raw": "c"
+      },
+      {
+       "key": "d",
+       "raw": "d"
+      },
+      {
+       "key": "b",
+       "raw": "b"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_up_down: a selection whose lead is at the edge refuses",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a"
+     },
+     {
+      "key": "b",
+      "raw": "b"
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     },
+     {
+      "key": "d",
+      "raw": "d"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_up_down",
+    "keys": [
+     "c",
+     "d"
+    ],
+    "up": false,
+    "within_siblings": true
+   },
+   "expect": {
+    "refused": true,
+    "reason": "no_outline_step"
+   }
+  },
+  {
+   "name": "move_up_down: a selection across parents moves each key in its own list",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_up_down",
+    "keys": [
+     "a2",
+     "b"
+    ],
+    "up": false,
+    "within_siblings": true
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "a1"
+        },
+        {
+         "key": "a2",
+         "raw": "a2"
+        }
+       ]
+      },
+      {
+       "key": "c",
+       "raw": "c"
+      },
+      {
+       "key": "b",
+       "raw": "b",
+       "children": [
+        {
+         "key": "b1",
+         "raw": "b1"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_to: before a target",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a"
+     },
+     {
+      "key": "b",
+      "raw": "b"
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     },
+     {
+      "key": "d",
+      "raw": "d"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_to",
+    "keys": [
+     "c"
+    ],
+    "to": {
+     "at": "before",
+     "key": "a"
+    },
+    "inherit_from": "a"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "c",
+       "raw": "c"
+      },
+      {
+       "key": "a",
+       "raw": "a"
+      },
+      {
+       "key": "b",
+       "raw": "b"
+      },
+      {
+       "key": "d",
+       "raw": "d"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_to: after a target",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a"
+     },
+     {
+      "key": "b",
+      "raw": "b"
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     },
+     {
+      "key": "d",
+      "raw": "d"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_to",
+    "keys": [
+     "a"
+    ],
+    "to": {
+     "at": "after",
+     "key": "c"
+    },
+    "inherit_from": "c"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "b",
+       "raw": "b"
+      },
+      {
+       "key": "c",
+       "raw": "c"
+      },
+      {
+       "key": "a",
+       "raw": "a"
+      },
+      {
+       "key": "d",
+       "raw": "d"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_to: after a target's last child",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_to",
+    "keys": [
+     "c"
+    ],
+    "to": {
+     "at": "last_child",
+     "key": "b"
+    },
+    "inherit_from": "b"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "a1"
+        },
+        {
+         "key": "a2",
+         "raw": "a2"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "raw": "b",
+       "children": [
+        {
+         "key": "b1",
+         "raw": "b1"
+        },
+        {
+         "key": "c",
+         "raw": "c"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_to: several keys land together in order",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a"
+     },
+     {
+      "key": "b",
+      "raw": "b"
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     },
+     {
+      "key": "d",
+      "raw": "d"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_to",
+    "keys": [
+     "b",
+     "d"
+    ],
+    "to": {
+     "at": "before",
+     "key": "a"
+    },
+    "inherit_from": "a"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "b",
+       "raw": "b"
+      },
+      {
+       "key": "d",
+       "raw": "d"
+      },
+      {
+       "key": "a",
+       "raw": "a"
+      },
+      {
+       "key": "c",
+       "raw": "c"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_to: a key inside another moved key goes with it",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_to",
+    "keys": [
+     "a",
+     "a1"
+    ],
+    "to": {
+     "at": "after",
+     "key": "c"
+    },
+    "inherit_from": "c"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "b",
+       "raw": "b",
+       "children": [
+        {
+         "key": "b1",
+         "raw": "b1"
+        }
+       ]
+      },
+      {
+       "key": "c",
+       "raw": "c"
+      },
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "a1"
+        },
+        {
+         "key": "a2",
+         "raw": "a2"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_to: a nested block to a root position",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_to",
+    "keys": [
+     "a2"
+    ],
+    "to": {
+     "at": "after",
+     "key": "c"
+    },
+    "inherit_from": "c"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "a1"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "raw": "b",
+       "children": [
+        {
+         "key": "b1",
+         "raw": "b1"
+        }
+       ]
+      },
+      {
+       "key": "c",
+       "raw": "c"
+      },
+      {
+       "key": "a2",
+       "raw": "a2"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_to: into its own subtree refuses",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_to",
+    "keys": [
+     "a"
+    ],
+    "to": {
+     "at": "last_child",
+     "key": "a1"
+    },
+    "inherit_from": "a1"
+   },
+   "expect": {
+    "refused": true,
+    "reason": "cycle"
+   }
+  },
+  {
+   "name": "move_to: onto itself refuses",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a"
+     },
+     {
+      "key": "b",
+      "raw": "b"
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     },
+     {
+      "key": "d",
+      "raw": "d"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_to",
+    "keys": [
+     "b"
+    ],
+    "to": {
+     "at": "after",
+     "key": "b"
+    },
+    "inherit_from": "b"
+   },
+   "expect": {
+    "refused": true,
+    "reason": "cycle"
+   }
+  },
+  {
+   "name": "move_to: the target's list type is inherited",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a"
+     },
+     {
+      "key": "b",
+      "raw": "b\nlogseq.order-list-type:: number"
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_to",
+    "keys": [
+     "a"
+    ],
+    "to": {
+     "at": "after",
+     "key": "b"
+    },
+    "inherit_from": "b"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "b",
+       "raw": "b\nlogseq.order-list-type:: number"
+      },
+      {
+       "key": "a",
+       "raw": "a\nlogseq.order-list-type:: number"
+      },
+      {
+       "key": "c",
+       "raw": "c"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_to: an own list type is kept",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a\nlogseq.order-list-type:: bullet"
+     },
+     {
+      "key": "b",
+      "raw": "b\nlogseq.order-list-type:: number"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_to",
+    "keys": [
+     "a"
+    ],
+    "to": {
+     "at": "after",
+     "key": "b"
+    },
+    "inherit_from": "b"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "b",
+       "raw": "b\nlogseq.order-list-type:: number"
+      },
+      {
+       "key": "a",
+       "raw": "a\nlogseq.order-list-type:: bullet"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_to: a slot further down the same list counts the list before the move",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a"
+     },
+     {
+      "key": "b",
+      "raw": "b"
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_to",
+    "keys": [
+     "a"
+    ],
+    "to": {
+     "at": "slot",
+     "parent": null,
+     "page": "P",
+     "index": 2
+    },
+    "inherit_from": null
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "b",
+       "raw": "b"
+      },
+      {
+       "key": "a",
+       "raw": "a"
+      },
+      {
+       "key": "c",
+       "raw": "c"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks"
+    ],
+    "focus": null
+   },
+   "note": "Kernel labels a move without a list-type source move-blocks alone; the pre-kernel moveBlock (test-only caller) always added save-block."
+  },
+  {
+   "name": "move_to: a slot under a parent",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "move_to",
+    "keys": [
+     "c"
+    ],
+    "to": {
+     "at": "slot",
+     "parent": "a",
+     "page": "P",
+     "index": 0
+    },
+    "inherit_from": "a"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "c",
+         "raw": "c"
+        },
+        {
+         "key": "a1",
+         "raw": "a1"
+        },
+        {
+         "key": "a2",
+         "raw": "a2"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "raw": "b",
+       "children": [
+        {
+         "key": "b1",
+         "raw": "b1"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "move_to: a read-only page refuses",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a"
+     },
+     {
+      "key": "b",
+      "raw": "b"
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     },
+     {
+      "key": "d",
+      "raw": "d"
+     }
+    ],
+    "read_only": true
+   },
+   "verb": {
+    "verb": "move_to",
+    "keys": [
+     "c"
+    ],
+    "to": {
+     "at": "before",
+     "key": "a"
+    },
+    "inherit_from": "a"
+   },
+   "expect": {
+    "refused": true,
+    "reason": "read_only"
+   }
+  },
+  {
+   "name": "indent: a selection becomes the last children of the previous sibling",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a"
+     },
+     {
+      "key": "b",
+      "raw": "b"
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     },
+     {
+      "key": "d",
+      "raw": "d"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "indent",
+    "keys": [
+     "b",
+     "c"
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "b",
+         "raw": "b"
+        },
+        {
+         "key": "c",
+         "raw": "c"
+        }
+       ]
+      },
+      {
+       "key": "d",
+       "raw": "d"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": null
+   },
+   "note": "Kernel indent labels one block and a selection alike (move + save: the new parent is expanded); the pre-kernel indentSelection sent move-blocks alone."
+  },
+  {
+   "name": "indent: a selection expands a collapsed new parent",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a\ncollapsed:: true",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b"
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "indent",
+    "keys": [
+     "b",
+     "c"
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "a1"
+        },
+        {
+         "key": "b",
+         "raw": "b"
+        },
+        {
+         "key": "c",
+         "raw": "c"
+        }
+       ]
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": null
+   },
+   "note": "As above."
+  },
+  {
+   "name": "indent: a selection across parents joins the first key's previous sibling",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "indent",
+    "keys": [
+     "a2",
+     "b"
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "a1",
+         "children": [
+          {
+           "key": "a2",
+           "raw": "a2"
+          },
+          {
+           "key": "b",
+           "raw": "b",
+           "children": [
+            {
+             "key": "b1",
+             "raw": "b1"
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "key": "c",
+       "raw": "c"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks",
+     "save-block"
+    ],
+    "focus": null
+   },
+   "note": "As above."
+  },
+  {
+   "name": "indent: a selection under the page-header root refuses",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "h",
+      "raw": "title:: x"
+     },
+     {
+      "key": "b",
+      "raw": "b"
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ],
+    "header_root": "h"
+   },
+   "verb": {
+    "verb": "indent",
+    "keys": [
+     "b",
+     "c"
+    ]
+   },
+   "expect": {
+    "refused": true,
+    "reason": "header_root"
+   }
+  },
+  {
+   "name": "outdent: a selection lands after its parent, alone",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       },
+       {
+        "key": "a3",
+        "raw": "a3"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "outdent",
+    "keys": [
+     "a1",
+     "a2"
+    ],
+    "logical": true
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a3",
+         "raw": "a3"
+        }
+       ]
+      },
+      {
+       "key": "a1",
+       "raw": "a1"
+      },
+      {
+       "key": "a2",
+       "raw": "a2"
+      },
+      {
+       "key": "b",
+       "raw": "b"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "outdent: a selection across parents lands after the first key's parent",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1",
+        "children": [
+         {
+          "key": "x1",
+          "raw": "x1"
+         }
+        ]
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "outdent",
+    "keys": [
+     "x1",
+     "a2"
+    ],
+    "logical": true
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "a1"
+        },
+        {
+         "key": "x1",
+         "raw": "x1"
+        },
+        {
+         "key": "a2",
+         "raw": "a2"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "raw": "b"
+      }
+     ]
+    },
+    "kinds": [
+     "move-blocks"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "delete: a selection removes every subtree",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "delete",
+    "keys": [
+     "a",
+     "b"
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "c",
+       "raw": "c"
+      }
+     ]
+    },
+    "kinds": [
+     "delete-blocks"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "delete: a selection across depths",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a",
+      "children": [
+       {
+        "key": "a1",
+        "raw": "a1"
+       },
+       {
+        "key": "a2",
+        "raw": "a2"
+       }
+      ]
+     },
+     {
+      "key": "b",
+      "raw": "b",
+      "children": [
+       {
+        "key": "b1",
+        "raw": "b1"
+       }
+      ]
+     },
+     {
+      "key": "c",
+      "raw": "c"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "delete",
+    "keys": [
+     "a2",
+     "b"
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "a",
+       "children": [
+        {
+         "key": "a1",
+         "raw": "a1"
+        }
+       ]
+      },
+      {
+       "key": "c",
+       "raw": "c"
+      }
+     ]
+    },
+    "kinds": [
+     "delete-blocks"
+    ],
+    "focus": null
+   }
+  },
+  {
+   "name": "indent: the page-header block is never a parent, even after something moved above it",
+   "note": "M1 review F3: the window used to send the header block only as the first root.",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a"
+     },
+     {
+      "key": "h",
+      "raw": "title:: Page"
+     },
+     {
+      "key": "b",
+      "raw": "body"
+     }
+    ],
+    "header_root": "h"
+   },
+   "verb": {
+    "verb": "indent",
+    "keys": [
+     "b"
+    ]
+   },
+   "expect": {
+    "refused": true,
+    "reason": "header_root"
+   }
+  }
+ ]
+}

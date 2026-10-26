@@ -35,8 +35,8 @@ export const ATTRS: readonly Attr[] = [
 ];
 
 /** One relation of the anchor row. */
-export type Rel = "refs" | "tags" | "props" | "children" | "parent" | "ancestors" | "descendants" | "blocks" | "page";
-export const RELS: readonly Rel[] = ["refs", "tags", "props", "children", "parent", "ancestors", "descendants", "blocks", "page"];
+export type Rel = "refs" | "direct_refs" | "tags" | "props" | "children" | "parent" | "ancestors" | "descendants" | "blocks" | "page";
+export const RELS: readonly Rel[] = ["refs", "direct_refs", "tags", "props", "children", "parent", "ancestors", "descendants", "blocks", "page"];
 
 /** OData §5.1.1.13 quantifiers: `any` is false and `every` true on an empty collection (Q5). */
 export type Quant = "any" | "none" | "every";
@@ -188,6 +188,20 @@ export interface ParsedQuery extends ScopedDisplaySettings {
   legacy_table?: boolean;
   query: Query;
   view: ViewSettings;
+  /** The D-18 on-query cue (`wire_parse.rs` `OgQueryHint`), present only for a
+   *  valid Logseq query with a bare `(task)` / `(priority)` or no condition. */
+  og_hint?: OgQueryHint;
+}
+
+/** A Logseq form that adds no condition, and its explicit rewrites. Rust owns
+ *  both the detection and the rewritten queries (D-18, GH #422); the marker
+ *  lists come from its one marker source. */
+export interface OgQueryHint {
+  date_windows?: boolean;
+  bare: ("task" | "priority")[];
+  /** The query keeps no condition, so — as in Logseq — it shows nothing. */
+  no_conditions: boolean;
+  rewrites: { rewrite: "open_tasks" | "any_task" | "priorities" | "convert"; query: Query }[];
 }
 
 /** A query with at least one ENABLED diagnostic is invalid: it returns zero results plus its diagnostics (§3.5). */

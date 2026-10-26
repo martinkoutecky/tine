@@ -34,7 +34,7 @@ describe("MSIX manifest and workflow contract", () => {
   });
   it("enumerates every shipped platform for package detection", () => {
     const source = fs.readFileSync("src-tauri/src/platform.rs", "utf8");
-    const detection = source.slice(source.indexOf('/// Package identity'), source.indexOf('pub(crate) fn gpu_env'));
+    const detection = source.slice(source.indexOf('/// Package identity'), source.indexOf('/// Whether the process runs inside a Flatpak'));
     for (const os of ["windows", "linux", "macos", "ios", "android"]) expect(detection).toContain(`target_os = "${os}"`);
     expect(detection).not.toContain("cfg(not(");
     expect(detection.match(/unsafe \{/g)).toHaveLength(1);

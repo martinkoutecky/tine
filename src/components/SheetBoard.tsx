@@ -1,7 +1,12 @@
+import { focusOnMount } from "../focusOnMount";
+import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
+import { t, msg } from "../i18n";
 import { sheetSourceRows } from "../sheet/sheetRows";
+import { QueryResultTask, openQueryResult } from "./QueryResultTask";
 import { displayLimitThrough, sheetCellMenu } from "../sheet/interactions";
 import { cellIsSelected } from "../sheet/selection";
 import { clearOnBindingInvalidated } from "../binding";
+import { resultWriteTarget } from "./queryResultIdentity";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { blockPageReadOnly, formatForBlock, formatForPage, readPageProperty, readPageProperties, node as docNode } from "../document";
@@ -53,6 +58,7 @@ import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydra
 import { registerTransientLayer } from "../transientLayers";
 
 import { appNow } from "../journal";
+import { elementFromPointIn, windowOf } from "../windowRealm";
 interface RowRecord extends FormulaEvalRow {}
 
 type BoardColumn = BoardColumnOf<RowRecord>;
@@ -107,7 +113,7 @@ export function SheetBoard(props: {
       if (this.owns(pointerId, cancel)) activeBoardDrag = null;
     },
     targetAtPoint(x, y) {
-      const column = (document.elementFromPoint(x, y) as HTMLElement | null)
+      const column = (elementFromPointIn(boardElement, x, y) as HTMLElement | null)
         ?.closest(".sheet-board-column") as HTMLElement | null;
       if (!column || column.closest(".sheet-board") !== boardElement) return null;
       const col = Number(column.dataset.boardCol);
@@ -157,13 +163,13 @@ export function SheetBoard(props: {
     if (!pending) return;
     if (queryRowsVersion() === pending.groups) return;
     if (!allRows().some((row) => row.id === pending.id)) {
-      pushToast("Moved out of this query's results", "info");
+      pushToast(msg("sheet-sheet-board-moved-out-of-this-query-s-results"), "info");
     }
     setPendingEjection(null);
   });
 
   const baseColumns = createMemo<BoardColumn[]>(() => {
-    if (ungrouped()) return [{ key: null, label: "All results", rows: rows() }];
+    if (ungrouped()) return [{ key: null, label: t("sheet-sheet-board-all-results"), rows: rows() }];
     const now = appNow();
     return buildBoardColumns(rows(), groupBy(), schemaFields(), {
       formulas: formulas(),
@@ -196,7 +202,7 @@ export function SheetBoard(props: {
         const rowKey = formulaRowKey(candidate);
         membership.set(JSON.stringify([rowKey, columnId]), point);
         if (!first.has(rowKey)) first.set(rowKey, point);
-        if (liveFormulaRowNode(candidate)) {
+        if (liveFormulaRowNode(candidate, "mount")) {
           if (byBlockId.has(candidate.id)) byBlockId.set(candidate.id, null);
           else byBlockId.set(candidate.id, { ...point, rowKey, columnId });
         }
@@ -409,7 +415,7 @@ export function SheetBoard(props: {
     const exists = columns().some((col) => col.key === tag);
     if (!isBareTagName(tag) || exists) {
       setTagInputInvalid(true);
-      if (tag && !exists) pushToast("Invalid tag name", "warn");
+      if (tag && !exists) pushToast(msg("sheet-sheet-board-invalid-tag-name"), "warn");
       return false;
     }
     addEmptyTagColumn(props.ownerId, tag);
@@ -420,19 +426,19 @@ export function SheetBoard(props: {
 
   return (
     <div class="sheet-board-wrap">
-      <Show when={!blockPageReadOnly(props.ownerId)}>
+      <Show when={props.rowSource !== "query" && !blockPageReadOnly(props.ownerId)}>
         <div class="sheet-board-toolbar">
-          <span>Group by</span>
+          <span>{t("sheet-sheet-board-group-by")}</span>
           <select
             class="sheet-board-groupby"
             value={ungrouped() ? "" : groupBy()}
-            aria-label="Group by"
+            aria-label={t("sheet-sheet-board-group-by")}
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onChange={(e) => setBoardGroupBy(props.ownerId, e.currentTarget.value as FieldId | "")}
           >
             <Show when={props.rowSource === "query"}>
-              <option value="">No grouping</option>
+              <option value="">{t("sheet-sheet-board-no-grouping")}</option>
             </Show>
             <For each={groupByOptions()}>
               {(field) => <option value={field}>{fieldLabel(field)}</option>}
@@ -440,7 +446,7 @@ export function SheetBoard(props: {
           </select>
         </div>
       </Show>
-      <Show when={columns().length > 0} fallback={<div class="sheet-board sheet-empty">empty board</div>}>
+      <Show when={columns().length > 0} fallback={<div class="sheet-board sheet-empty">{t("sheet-sheet-board-empty-board")}</div>}>
         <div
           ref={boardElement}
           class="sheet-board"
@@ -452,8 +458,7 @@ export function SheetBoard(props: {
           <Show when={filterError()}>
             {(err) => (
               <span class="sheet-filter-error" title={err()}>
-                Filter disabled
-              </span>
+                {t("sheet-sheet-table-filter-disabled")}</span>
             )}
           </Show>
           <For each={displayedColumns()}>
@@ -472,6 +477,7 @@ export function SheetBoard(props: {
                   <For each={col.rows}>
                     {(row, rowIndex) => (
                       <BoardCard
+                        query={props.rowSource === "query"}
                         ownerId={props.ownerId}
                         surfaceId={surfaceId}
                         row={row}
@@ -503,7 +509,7 @@ export function SheetBoard(props: {
                 fallback={
                   <button
                     class="sheet-board-add-tag-ghost"
-                    title="Add tag column"
+                    title={t("sheet-sheet-board-add-tag-column")}
                     onClick={(e) => {
                       e.stopPropagation();
                       setAddingTag(true);
@@ -511,15 +517,15 @@ export function SheetBoard(props: {
                     }}
                   >
                     <span class="sheet-ghost-plus">+</span>
-                    <span>new tag</span>
+                    <span>{t("sheet-sheet-board-new-tag")}</span>
                   </button>
                 }
               >
                 <input
                   class="sheet-board-add-tag-input"
                   classList={{ "sheet-input-invalid": tagInputInvalid() }}
-                  autofocus
-                  placeholder="new-tag"
+                  ref={(input) => focusOnMount(input)}
+                  placeholder={t("sheet-sheet-board-new-tag-2")}
                   onPointerDown={(e) => e.stopPropagation()}
                   onMouseDown={(e) => e.stopPropagation()}
                   onInput={() => setTagInputInvalid(false)}
@@ -549,8 +555,7 @@ export function SheetBoard(props: {
             setRenderLimit((limit) => limit + SHEET_RENDER_PAGE);
           }}
         >
-          Load {Math.min(SHEET_RENDER_PAGE, rows().length - displayedRows().length)} more cards
-          ({displayedRows().length} of {rows().length})
+          {t("sheet-load-more", { kind: "cards", count: Math.min(SHEET_RENDER_PAGE, rows().length - displayedRows().length), shown: displayedRows().length, total: rows().length })}
         </button>
       </Show>
     </div>
@@ -558,7 +563,7 @@ export function SheetBoard(props: {
 }
 
 function observedFieldsForRows(rows: readonly RowRecord[], includePage: boolean): FieldId[] {
-  const loadedIds = rows.filter((r) => liveFormulaRowNode(r)).map((r) => r.id);
+  const loadedIds = rows.filter((r) => liveFormulaRowNode(r, "mount")).map((r) => r.id);
   if (loadedIds.length === rows.length) return fieldIdsForBlocks(loadedIds, { includePage });
   return fieldIdsForRecords(rows, includePage);
 }
@@ -590,6 +595,7 @@ export function resetBoardCardVirtualizationForTests() {
 }
 
 function BoardCard(props: {
+  query: boolean;
   ownerId: string;
   surfaceId: string;
   row: RowRecord;
@@ -635,6 +641,7 @@ function BoardCard(props: {
   });
 
   const select = () => setCellSel(cell());
+  let suppressDragClick = false;
   let cancelActiveDrag: (() => void) | null = null;
   let observedDragVersion = props.dragVersion;
   createEffect(() => {
@@ -646,10 +653,12 @@ function BoardCard(props: {
   onCleanup(() => cancelActiveDrag?.());
 
   const beginPointerDrag = (e: PointerEvent) => {
+    suppressDragClick = false;
     if (!props.canMove) return;
     if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
     cancelActiveDrag?.();
     const card = e.currentTarget as HTMLElement;
+    const dragWindow = windowOf(card); // the drag's own window (P1)
     if (typeof card.setPointerCapture === "function" && typeof e.pointerId === "number") {
       card.setPointerCapture(e.pointerId);
     }
@@ -677,24 +686,25 @@ function BoardCard(props: {
       ghost.setAttribute("aria-hidden", "true");
       ghost.style.width = `${rect.width}px`;
       ghost.style.minHeight = `${rect.height}px`;
-      document.body.appendChild(ghost);
-      document.body.classList.add("sheet-board-dragging");
+      dragWindow.document.body.appendChild(ghost);
+      dragWindow.document.body.classList.add("sheet-board-dragging");
       updateGhost(ev);
       props.setDrag(dragState());
     };
     const cleanup = () => {
+      if (moved) setDragSelectionSuppressed(false, card);
       ghost?.remove();
       ghost = null;
-      if (!document.body.querySelector(".sheet-board-drag-ghost")) {
-        document.body.classList.remove("sheet-board-dragging");
+      if (!dragWindow.document.body.querySelector(".sheet-board-drag-ghost")) {
+        dragWindow.document.body.classList.remove("sheet-board-dragging");
       }
       props.setDrag(null);
     };
     const removeListeners = () => {
-      window.removeEventListener("pointermove", onMove, true);
-      window.removeEventListener("pointerup", onUp, true);
-      window.removeEventListener("pointercancel", onPointerCancel, true);
-      window.removeEventListener("blur", onCancel, true);
+      dragWindow.removeEventListener("pointermove", onMove, true);
+      dragWindow.removeEventListener("pointerup", onUp, true);
+      dragWindow.removeEventListener("pointercancel", onPointerCancel, true);
+      dragWindow.removeEventListener("blur", onCancel);
       card.removeEventListener("lostpointercapture", onLostPointerCapture, true);
     };
     const onMove = (ev: PointerEvent) => {
@@ -702,8 +712,11 @@ function BoardCard(props: {
       if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
       if (!moved) {
         moved = true;
+        setDragSelectionSuppressed(true, card);
+        suppressDragClick = true;
         createGhost(ev);
       } else updateGhost(ev);
+      dropSelection(card);
       const target = props.dragCoordinator.targetAtPoint(ev.clientX, ev.clientY);
       const nextOverCol = target?.col ?? null;
       const nextTargetColumnId = target?.columnId ?? null;
@@ -768,17 +781,21 @@ function BoardCard(props: {
         return true;
       },
     });
-    window.addEventListener("pointermove", onMove, true);
-    window.addEventListener("pointerup", onUp, true);
-    window.addEventListener("pointercancel", onPointerCancel, true);
-    window.addEventListener("blur", onCancel, true);
+    dragWindow.addEventListener("pointermove", onMove, true);
+    dragWindow.addEventListener("pointerup", onUp, true);
+    dragWindow.addEventListener("pointercancel", onPointerCancel, true);
+    // Element blur follows a press outside an editor. Only leaving this window
+    // cancels the gesture; blur does not bubble, so listen without capture.
+    dragWindow.addEventListener("blur", onCancel);
     card.addEventListener("lostpointercapture", onLostPointerCapture, true);
     cancelActiveDrag = onCancel;
   };
 
   const onClick = (e: MouseEvent) => {
     e.stopPropagation();
+    if (suppressDragClick) { suppressDragClick = false; return; }
     select();
+    if (props.query) openQueryResult(props.row, e);
   };
   const onDoubleClick = (e: MouseEvent) => {
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -796,7 +813,7 @@ function BoardCard(props: {
     if (field === "priority") cycleField(props.row.id, "priority");
     else if (field === "scheduled" || field === "deadline") {
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      openDatePicker(props.row.id, field, rect.left, rect.bottom + 4);
+      openDatePicker(props.row.id, field, rect.left, rect.bottom + 4, resultWriteTarget(props.row));
     }
   };
   const openCellMenu = (e: MouseEvent) => {
@@ -837,10 +854,10 @@ function BoardCard(props: {
       style={bgColor() ? { background: bgColor() } : undefined}
       ref={observeCard}
     >
-      <Show when={near() && liveFormulaRowNode(props.row)}>
+      <Show when={near() && liveFormulaRowNode(props.row, "mount")}>
         <button
           class="sheet-cell-handle sheet-card-handle"
-          title="Card menu"
+          title={t("sheet-sheet-board-card-menu")}
           onPointerDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -862,6 +879,7 @@ function BoardCard(props: {
             fallback={<div class="sheet-board-card-title sheet-cell-defer">{boardRowTitle(props.row)}</div>}
           >
             <div class="sheet-board-card-title">
+              <Show when={props.query}><QueryResultTask row={props.row} /></Show>
               <InlineText text={boardRowTitle(props.row)} format={fmt()} />
             </div>
             <CardChips row={props.row} groupBy={props.groupBy} onFieldClick={onChipClick} />

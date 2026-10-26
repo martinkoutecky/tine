@@ -85,6 +85,7 @@ pub(crate) async fn resolve_sync_conflict(
         };
         let outcome = tine_graph_features::conflicts::resolve_sync_conflict(
             &slot.store,
+            slot.host_slot()?.running(),
             &winner,
             &conflict,
             &decisions,
@@ -110,8 +111,12 @@ pub(crate) async fn trash_sync_conflict(
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     crate::state::off_ui(move || {
-        let outcome = tine_graph_features::conflicts::trash_sync_conflict(&slot.store, &conflict)
-            .map_err(|e| e.to_string());
+        let outcome = tine_graph_features::conflicts::trash_sync_conflict(
+            &slot.store,
+            slot.host_slot()?.running(),
+            &conflict,
+        )
+        .map_err(|e| e.to_string());
         settle_queue(&slot, &[&conflict]);
         outcome
     })
@@ -154,6 +159,7 @@ pub(crate) async fn resolve_duplicate_journal_day(
     tauri::async_runtime::spawn_blocking(move || {
         let outcome = tine_graph_features::conflicts::resolve_duplicate_journal_day(
             &slot.store,
+            slot.host_slot()?.running(),
             &canonical,
             &stray,
             &decisions,
@@ -218,6 +224,7 @@ pub(crate) async fn resolve_vcs_marker_conflict(
     tauri::async_runtime::spawn_blocking(move || {
         let outcome = tine_graph_features::conflicts::resolve_vcs_marker_conflict(
             &slot.store,
+            slot.host_slot()?.running(),
             &path,
             &decisions,
             &base_rev,
@@ -269,17 +276,15 @@ pub(crate) async fn live_conflict_diff(
     .map_err(|error| error.to_string())?
 }
 
-/// Resolve a reviewed live-draft conflict: recompute the review from the same
-/// draft and the disk at `conflict_rev`, apply `decisions`, and write the page
-/// in one guarded transaction. Returns the written page (with its revision)
-/// for the editor to install; "conflict" when the disk or the reviewed base
-/// moved since the review (nothing written).
+/// Compose a reviewed live-draft conflict's result, read-only (step 3b R6):
+/// recompute the review from the same draft and the disk at `conflict_rev`
+/// and apply `decisions`. The page host's client submits the answer as a
+/// resolve at `conflict_rev`; "conflict" when the disk or the reviewed base
+/// moved since the review.
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn resolve_live_conflict(
+pub(crate) async fn merge_live_conflict(
     path: String,
     page: tine_core::model::PageDto,
-    base_rev: Option<String>,
     conflict_rev: String,
     merge_base_rev: Option<String>,
     decisions: std::collections::HashMap<String, String>,
@@ -293,11 +298,10 @@ pub(crate) async fn resolve_live_conflict(
         } else {
             Vec::new()
         };
-        tine_graph_features::live_conflict::resolve_live_conflict(
+        tine_graph_features::live_conflict::merge_live_conflict(
             &slot.store,
             &path,
             &page,
-            base_rev.as_deref(),
             &conflict_rev,
             merge_base_rev.as_deref(),
             &bases,

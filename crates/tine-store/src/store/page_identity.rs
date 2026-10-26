@@ -10,17 +10,27 @@ fn in_directory(path: &str, directory: &str) -> bool {
 }
 
 impl Store {
-    /// Whether the page file `file` carried a VCS anchor line (`<<<<<<< ` or
-    /// `>>>>>>> ` at column 0) in the bytes the store last observed for it,
-    /// from state it already holds (the launch pass reads every file once and
-    /// the launch checkpoint carries the answer; saves and external changes
-    /// refresh it with the revision they record). `Some(false)` means reading
-    /// the file cannot find an anchor line; `Some(true)` means it may, so the
-    /// caller scans the bytes; `None` means the page is not in the page cache
-    /// (still loading, or never cached: shadow journals, sync copies,
-    /// unreadable or oversized files), so only a read can tell. Touches no
-    /// file. Cost O(1).
+    /// Whether the page file `file` may carry a VCS anchor line (`<<<<<<< ` or
+    /// `>>>>>>> ` at column 0), from state the store already holds (the launch
+    /// pass reads every file once and the launch checkpoint carries the
+    /// answer; saves and external changes refresh it with the revision they
+    /// record). `false` means reading the file cannot find an anchor line in
+    /// the bytes last observed; `true` means it may, or that the store cannot
+    /// tell (the page is still loading or never cached: shadow journals, sync
+    /// copies, unreadable or oversized files; or the store is closed), so the
+    /// caller reads and scans. Touches no file. Cost O(1).
+    pub fn may_carry_vcs_markers(&self, file: &FileId) -> bool {
+        self.vcs_anchor_flag(file) != Some(false)
+    }
+
+    /// Test oracle: the tri-state behind [`Store::may_carry_vcs_markers`].
+    /// `None` = not in the page cache (or closed), so only a read can tell.
+    #[cfg(any(test, feature = "test-faults"))]
     pub fn vcs_anchor_state(&self, file: &FileId) -> Option<bool> {
+        self.vcs_anchor_flag(file)
+    }
+
+    fn vcs_anchor_flag(&self, file: &FileId) -> Option<bool> {
         if self.is_closed() {
             return None;
         }
@@ -32,7 +42,9 @@ impl Store {
     /// another case spelling. Canonicalization reveals the disk spelling;
     /// accept it only when case is the entire difference and it remains an
     /// eligible graph text file. The normal page path guard runs afterward.
-    pub(super) fn disk_spelling_for_case_alias(&self, id: &PageId) -> Option<PageId> {
+    /// A spelling resolver only (for a read and a new host key): which page
+    /// a path names is [`crate::model::Graph::identify`]'s (B1).
+    pub(crate) fn disk_spelling(&self, id: &PageId) -> Option<PageId> {
         let root = canonical_existing_path(&self.graph.root).ok()?;
         let actual = canonical_existing_path(&root.join(id.as_str())).ok()?;
         let rel = actual.strip_prefix(&root).ok()?;

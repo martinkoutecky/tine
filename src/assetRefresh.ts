@@ -13,6 +13,7 @@ import { backend } from "./backend";
 import { captureBinding } from "./binding";
 import { invalidateAsset, refreshAsset } from "./assetCache";
 import { ownedWhen, readOwnedResource } from "./owned";
+import { onAppReturn } from "./windowRealm";
 
 const pending = new Set<string>();
 let installed = false;
@@ -26,10 +27,8 @@ function flush(): void {
 function install(): void {
   if (installed || typeof window === "undefined") return;
   installed = true;
-  window.addEventListener("focus", flush);
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) flush();
-  });
+  // Returning to ANY Tine window refreshes (OG-MULTIWINDOW P5).
+  onAppReturn(flush);
 }
 
 /** Mark an asset for refresh when Tine next regains focus. Call right after

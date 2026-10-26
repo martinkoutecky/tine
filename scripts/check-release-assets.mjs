@@ -9,16 +9,17 @@ import os from "node:os";
 import path from "node:path";
 import { candidateProblems, releaseLayout } from "./release-layout.mjs";
 
-import { BETA_TAG, STABLE_CHANNEL, releaseVersion } from "./release-policy.mjs";
+import { BETA_TAG, STABLE_CHANNEL, releaseVersion, updaterAssetUrl } from "./release-policy.mjs";
 
 const tag = process.argv[2];
 const version = process.argv[3];
-if (!version || (tag !== BETA_TAG && tag !== `v${version}`)) {
-  console.error("usage: check-release-assets.mjs (beta | v<VERSION>) VERSION");
+// Every release, Beta or stable, is published at its own tag v<version>. The
+// frozen legacy `beta` bridge is checked by retire-beta-tag.mjs instead.
+if (!version || tag !== `v${version}`) {
+  console.error("usage: check-release-assets.mjs v<VERSION> VERSION");
   process.exit(2);
 }
 const channel = releaseVersion(version).sequence ? BETA_TAG : STABLE_CHANNEL;
-if ((channel === BETA_TAG) !== (tag === BETA_TAG)) throw new Error(`${tag} does not match the ${channel} channel of ${version}`);
 const layout = releaseLayout(version);
 const gh = (...args) =>
   execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
@@ -40,6 +41,17 @@ try {
   for (const name of layout.platformAssets) fs.writeFileSync(path.join(local, name), "remote-asset-present");
   fs.copyFileSync(path.join(temp, "latest.json"), path.join(local, "latest.json"));
   problems.push(...candidateProblems(local, version, channel));
+  // tine.page and the legacy bridge serve a Beta's zsync files away from its
+  // AppImage, so each must name its AppImage by absolute URL into this tag.
+  if (channel === BETA_TAG) {
+    for (const zsync of layout.platformAssets.filter((name) => name.endsWith(".AppImage.zsync"))) {
+      gh("release", "download", tag, "--pattern", zsync, "--dir", temp, "--clobber");
+      const bytes = fs.readFileSync(path.join(temp, zsync));
+      const url = /^URL: (.+)$/m.exec(bytes.subarray(0, bytes.indexOf("\n\n")).toString("utf8"))?.[1];
+      const expected = updaterAssetUrl(process.env.GITHUB_REPOSITORY ?? "martinkoutecky/tine", zsync.slice(0, -".zsync".length), channel, version);
+      if (url !== expected) problems.push(`${zsync} URL is ${url}, expected ${expected}`);
+    }
+  }
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

@@ -5,6 +5,7 @@
 // store and are keyboard-wired; this only adds the pointer entry point.
 
 import { selectBlock, extendSelectionTo } from "./document";
+import { documentOf, onEachWindow } from "./windowRealm";
 
 // Interactive chrome whose drags mean something else (bullet = reorder handle,
 // links/buttons/chips = clicks). A text-selection drag must not start on these.
@@ -12,8 +13,8 @@ const CHROME = ".bullet-container, .block-controls, .collapse-toggle, a, button,
 const SHEET_INTERNAL =
   ".block-sheet-container, .sheet-grid, .sheet-table, .sheet-board, .sheet-cell, .sheet-board-card";
 
-function blockIdAt(x: number, y: number, paneId: string | null): string | null {
-  const el = document.elementFromPoint(x, y);
+function blockIdAt(doc: Document, x: number, y: number, paneId: string | null): string | null {
+  const el = doc.elementFromPoint(x, y);
   if (paneId) {
     const overPane = el?.closest("[data-pane-id]")?.getAttribute("data-pane-id") ?? null;
     if (overPane !== paneId) return null;
@@ -49,7 +50,7 @@ export function installBlockSelectionDrag(): () => void {
       armed = false; // button was released without a mouseup reaching us
       return;
     }
-    const overId = blockIdAt(e.clientX, e.clientY, startPaneId);
+    const overId = blockIdAt(documentOf(e), e.clientX, e.clientY, startPaneId);
     if (overId === null) return; // off the outline — keep current selection
     // Still inside the start block and haven't crossed yet: leave the native
     // in-textarea text selection alone (this is the "select part of a bullet" case).
@@ -59,11 +60,11 @@ export function installBlockSelectionDrag(): () => void {
       selectBlock(startId); // exits editing (commits via blur), anchor = focus = start
     }
     extendSelectionTo(overId);
-    window.getSelection()?.removeAllRanges(); // drop the half-formed text highlight
+    documentOf(e).getSelection()?.removeAllRanges(); // drop the half-formed text highlight
     e.preventDefault();
   };
 
-  const onMouseUp = () => {
+  const onMouseUp = (e: MouseEvent) => {
     armed = false;
     startPaneId = null;
     if (!converting) return;
@@ -74,18 +75,24 @@ export function installBlockSelectionDrag(): () => void {
     const swallow = (ev: MouseEvent) => {
       ev.preventDefault();
       ev.stopPropagation();
-      document.removeEventListener("click", swallow, true);
+      doc.removeEventListener("click", swallow, true);
     };
-    document.addEventListener("click", swallow, true);
-    setTimeout(() => document.removeEventListener("click", swallow, true), 0);
+    // The synthetic click lands in the window the drag happened in.
+    const doc = documentOf(e);
+    doc.addEventListener("click", swallow, true);
+    setTimeout(() => doc.removeEventListener("click", swallow, true), 0);
   };
 
-  document.addEventListener("mousedown", onMouseDown, true);
-  document.addEventListener("mousemove", onMouseMove, true);
-  document.addEventListener("mouseup", onMouseUp, true);
-  return () => {
-    document.removeEventListener("mousedown", onMouseDown, true);
-    document.removeEventListener("mousemove", onMouseMove, true);
-    document.removeEventListener("mouseup", onMouseUp, true);
-  };
+  // Every Tine window (main and workspace popups) gets the gesture.
+  return onEachWindow((win) => {
+    const doc = win.document;
+    doc.addEventListener("mousedown", onMouseDown, true);
+    doc.addEventListener("mousemove", onMouseMove, true);
+    doc.addEventListener("mouseup", onMouseUp, true);
+    return () => {
+      doc.removeEventListener("mousedown", onMouseDown, true);
+      doc.removeEventListener("mousemove", onMouseMove, true);
+      doc.removeEventListener("mouseup", onMouseUp, true);
+    };
+  });
 }

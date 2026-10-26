@@ -856,6 +856,14 @@ impl Lower<'_> {
                 Some(page) => Filter::page_ref(page),
                 None => Filter::False,
             },
+            ("direct_ref", 1) if scope == Scope::Block => match self.string_arg(args[0]) {
+                Some(page) => Filter::rel(
+                    Rel::DirectRefs,
+                    Quant::Any,
+                    Filter::attr(Attr::Name, CmpOp::Eq, Value::text(page)),
+                ),
+                None => Filter::False,
+            },
             ("tag", 1) if scope == Scope::Block => match self.string_arg(args[0]) {
                 Some(tag) => Filter::rel(
                     Rel::Tags,

@@ -68,6 +68,7 @@ fn dto(name: &str, raw: &str) -> PageDto {
 /// beside the target through a `.restore.tmp` temp) of a 250-byte asset name.
 #[test]
 fn y1_streamed_import_of_a_long_asset_name_lands() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("y1");
     let name = format!("{}.pdf", "a".repeat(246));
     assert_eq!(name.len(), 250);
@@ -99,6 +100,7 @@ fn y1_streamed_import_of_a_long_asset_name_lands() {
 /// under a fitting unique name, keeping the extension.
 #[test]
 fn y2_unique_collision_name_of_a_long_asset_fits() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("y2u");
     let name = format!("{}.pdf", "b".repeat(250));
     assert_eq!(name.len(), 254);
@@ -118,6 +120,7 @@ fn y2_unique_collision_name_of_a_long_asset_fits() {
 /// recoverable trash under a fitting name that keeps its extension.
 #[test]
 fn y2_trashing_a_long_asset_and_page_keeps_a_recoverable_copy() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("y2t");
     let name = format!("{}.png", "c".repeat(250));
     assert_eq!(name.len(), 254);
@@ -132,9 +135,32 @@ fn y2_trashing_a_long_asset_and_page_keeps_a_recoverable_copy() {
     let title = "漢".repeat(84);
     let rel = format!("pages/{title}.md");
     fs::write(root.join(&rel), "- long page\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
-    pages::delete_page_expected(&store, &title, PageKind::Page, None, None)
-        .expect("delete an 84-char page");
+    // A page's deletion is the page host's (STEP3 §7): the identity checks,
+    // then page_owed and page_wait until it is published (Q-P2b-5).
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+    let session = serde_json::to_value(host.window_reloaded()).unwrap()["session"]
+        .as_u64()
+        .unwrap();
+    let page = PageId::from(rel.as_str());
+    assert_eq!(
+        pages::delete_page_expected(&store, &host, session, &title, PageKind::Page, None)
+            .expect("delete an 84-char page"),
+        tine_store::PageOperation::Applied
+    );
+    let needs: Vec<_> = host
+        .owed(session, Some(std::slice::from_ref(&page)))
+        .unwrap()
+        .into_iter()
+        .map(|(key, version)| (key, version, None))
+        .collect();
+    let bound = std::time::Duration::from_secs(20);
+    assert_eq!(
+        host.wait_published(session, &needs, bound),
+        tine_store::PageOperation::Applied
+    );
+    drop(host);
     assert!(!root.join(&rel).exists());
     let pages_trash = names(&root.join("logseq/.tine-trash/pages"));
     assert_eq!(pages_trash.len(), 1, "{pages_trash:?}");
@@ -148,6 +174,7 @@ fn y2_trashing_a_long_asset_and_page_keeps_a_recoverable_copy() {
 /// pre-resolution bytes under a fitting conflict-trash name.
 #[test]
 fn y2_marker_resolution_of_a_long_page_stages_its_recovery_copy() {
+    let _integration_guard = crate::integration_lock();
     const MARKED: &str = "<<<<<<< HEAD\n- mine\n=======\n- theirs\n>>>>>>> feature\n";
     let (root, _) = fixture("y2m");
     let title = "漢".repeat(84);
@@ -181,6 +208,7 @@ fn y2_marker_resolution_of_a_long_page_stages_its_recovery_copy() {
 /// twin, a 256-byte name no filesystem can hold: that means "no twin".
 #[test]
 fn y3_create_of_a_255_byte_page_name_is_not_refused_by_the_twin_probe() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("y3");
     let title = "字".repeat(84);
     let rel = format!("pages/{title}.md");

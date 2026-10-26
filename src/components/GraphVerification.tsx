@@ -1,3 +1,4 @@
+import { msg, t } from "../i18n";
 // Settings → Help & diagnostics → "Verify synchronized graph": fingerprint the
 // exact bytes of this device's Markdown and Org files and compare them with the
 // report from another device, naming every path that differs (master 749bfb2b1).
@@ -64,7 +65,7 @@ export function GraphVerification(): JSX.Element {
       const result = await readOwned(owner, backend().createGraphVerification(id));
       if (result.kind === "current") {
         setReport(result.value);
-        if (!result.value.complete) pushToast("Graph verification was incomplete", "error");
+        if (!result.value.complete) pushToast(msg("graph-verification-graph-verification-was-incomplete"), "error");
       }
     } catch (error) {
       if (owner() && !isCancellation(error)) reportUiFailure("graph-verification", error);
@@ -88,10 +89,10 @@ export function GraphVerification(): JSX.Element {
     if (!current) return;
     try {
       await writeClipboardText(current.text);
-      pushToast("Graph verification report copied", "success");
+      pushToast(msg("graph-verification-graph-verification-report-copied"), "success");
     } catch (error) {
       dbg(`graph verification copy failed: ${String(error)}`);
-      pushToast("Could not copy the graph verification report.", "error");
+      pushToast(msg("graph-verification-could-not-copy-the-graph-verification-report"), "error");
     }
   };
 
@@ -100,10 +101,10 @@ export function GraphVerification(): JSX.Element {
     if (!current) return;
     try {
       const saved = await writeOwned(bindingOwner(() => !disposed), backend().saveGraphVerificationReport(current.text));
-      if (saved.kind === "current" && saved.value) pushToast("Graph verification report saved", "success");
+      if (saved.kind === "current" && saved.value) pushToast(msg("graph-verification-graph-verification-report-saved"), "success");
     } catch (error) {
       dbg(`graph verification save failed: ${String(error)}`);
-      pushToast("Could not save the graph verification report.", "error");
+      pushToast(msg("graph-verification-could-not-save-the-graph-verification-report"), "error");
     }
   };
 
@@ -117,35 +118,32 @@ export function GraphVerification(): JSX.Element {
       ));
     } catch (error) {
       setComparison(null);
-      pushToast(`Could not compare the reports: ${error instanceof Error ? error.message : "invalid report."}`, "error");
+      pushToast(msg("graph-verification-could-not-compare-the-reports", { error: String(error instanceof Error ? error.message : "invalid report.") }), "error");
     }
   };
 
   return (
     <div class="diagnostics-verification">
-      <h3>Verify synchronized graph</h3>
-      <p>
-        Compare the exact Markdown and Org file bytes on two devices. The report includes file
-        paths and page names, but not file contents. Nothing is uploaded automatically.
-      </p>
+      <h3>{t("graph-verification-verify-synchronized-graph")}</h3>
+      <p>{t("graph-verification-compare-the-exact-markdown-and-org-file-bytes")}</p>
       <div class="diagnostics-actions">
-        <button type="button" class="primary" disabled={operation() !== null} onClick={() => void create()}>
-          {operation() ? "Verifying…" : "Create graph verification report"}
+        <button type="button" class="settings-btn settings-btn-primary" disabled={operation() !== null} onClick={() => void create()}>
+          {operation() ? t("graph-verification-verifying") : t("graph-verification-create-graph-verification-report")}
         </button>
         <Show when={operation()}>
-          <button type="button" onClick={() => void cancel()}>Cancel</button>
+          <button class="settings-btn" type="button" onClick={() => void cancel()}>{t("graph-verification-cancel")}</button>
         </Show>
         <Show when={report()}>
-          <button type="button" onClick={() => void copy()}>Copy graph report</button>
+          <button class="settings-btn" type="button" onClick={() => void copy()}>{t("graph-verification-copy-graph-report")}</button>
           <Show when={!isMobilePlatform}>
-            <button type="button" onClick={() => void save()}>Save graph report…</button>
+            <button class="settings-btn" type="button" onClick={() => void save()}>{t("graph-verification-save-graph-report")}</button>
           </Show>
         </Show>
       </div>
       <Show when={operation() !== null ? progress() : null}>
         {(current) => (
           <p class="settings-hint">
-            {current().total === 0 ? "Reading graph file list…" : `${current().processed} / ${current().total} files`}
+            {current().total === 0 ? t("graph-verification-reading-graph-file-list") : t("graph-verification-files", { processed: String(current().processed), total: String(current().total) })}
           </p>
         )}
       </Show>
@@ -153,24 +151,21 @@ export function GraphVerification(): JSX.Element {
         {(current) => (
           <>
             <p class="settings-hint">
-              {current().complete ? "Complete" : "Incomplete"} · {current().totalFiles} files · {current().totalBytes} bytes
-            </p>
+              {t("graph-verification-summary", { complete: current().complete ? 1 : 0, files: String(current().totalFiles), bytes: String(current().totalBytes) })}</p>
             <label class="diagnostics-preview">
-              <span>Report preview · {current().suggestedFileName}</span>
+              <span>{t("graph-verification-preview-file", { file: current().suggestedFileName })}</span>
               <textarea readonly spellcheck={false} value={current().text} />
             </label>
             <label class="diagnostics-preview">
-              <span>Report from the other device</span>
+              <span>{t("graph-verification-report-from-the-other-device")}</span>
               <textarea
                 spellcheck={false}
                 value={other()}
                 onInput={(event) => setOther(event.currentTarget.value)}
-                placeholder="Paste the graph verification report here"
+                placeholder={t("graph-verification-paste-the-graph-verification-report-here")}
               />
             </label>
-            <button type="button" class="primary" disabled={!other().trim()} onClick={compare}>
-              Compare reports
-            </button>
+            <button type="button" class="settings-btn settings-btn-primary" disabled={!other().trim()} onClick={compare}>{t("graph-verification-compare-reports")}</button>
           </>
         )}
       </Show>
@@ -178,10 +173,10 @@ export function GraphVerification(): JSX.Element {
         {(result) => (
           <div class="diagnostics-comparison">
             <Show when={result().matches}>
-              <p><strong>The source file sets and bytes match.</strong></p>
+              <p><strong>{t("graph-verification-the-source-file-sets-and-bytes-match")}</strong></p>
             </Show>
             <Show when={result().incomplete}>
-              <p><strong>At least one report is incomplete. No match can be confirmed.</strong></p>
+              <p><strong>{t("graph-verification-at-least-one-report-is-incomplete-no-match")}</strong></p>
             </Show>
             <For each={[
               ["Only on this device", result().localOnly],

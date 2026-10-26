@@ -23,6 +23,7 @@ import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import type { BlockDto, PageDto, PageEntry } from "../types";
 import { Block } from "./Block";
+import { autoPairing, setAutoPairing } from "../ui";
 
 beforeAll(() => initParser());
 
@@ -94,6 +95,75 @@ function legacyImeEnter(textarea: HTMLTextAreaElement) {
 }
 
 describe("IME composition", () => {
+  for (const pairing of [false, true]) {
+    for (const composition of [false, true]) {
+      for (const [opener, normalized, caret] of [["（（", "(())", 2], ["【【", "[[]]", 2], ["《〈", "<", 1]] as const) {
+        it(`opens matching completion for ${opener}, composition=${composition}, autoPairing=${pairing}`, async () => {
+          vi.useFakeTimers();
+          const previousPairing = autoPairing();
+          setAutoPairing(pairing);
+          const search = vi.spyOn(backend(), "search").mockResolvedValue([]);
+          const quickSwitch = vi.spyOn(backend(), "quickSwitch").mockResolvedValue([pageEntry("Parity Target")]);
+          loadSingle(page(""));
+          startEditing("ime-composition", 0);
+          const { root, dispose } = mount(() => <Block id="ime-composition" />);
+          try {
+            const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+            setRawSpy.mockClear();
+            if (composition) {
+              compositionStart(textarea);
+              composingInput(textarea, opener);
+              expect(textarea.value).toBe(opener);
+              expect(setRawSpy).not.toHaveBeenCalled();
+              compositionEnd(textarea);
+            } else {
+              input(textarea, opener[0]);
+              input(textarea, opener);
+            }
+            expect(textarea.value).toBe(normalized);
+            expect(textarea.selectionStart).toBe(caret);
+            expect(doc.byId["ime-composition"].raw).toBe(normalized);
+            await vi.advanceTimersByTimeAsync(100);
+            if (opener === "（（") {
+              expect(search).toHaveBeenCalledWith("", 20, "block-picker");
+              expect(document.body.querySelector(".autocomplete")).not.toBeNull();
+            } else if (opener === "【【") {
+              // Blank page search has no rows, exactly like ASCII [[. A query
+              // proves the normalized opener retained the active page trigger.
+              input(textarea, "[[P]]", 3);
+              await vi.advanceTimersByTimeAsync(100);
+              expect(quickSwitch).toHaveBeenCalled();
+              expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity Target");
+            } else {
+              expect(document.body.querySelector(".autocomplete .ac-label")).not.toBeNull();
+            }
+          } finally {
+            dispose();
+            setAutoPairing(previousPairing);
+          }
+        });
+      }
+    }
+  }
+
+  for (const opener of ["（", "【"]) {
+    it(`wraps a selection with ${opener} through the existing keyboard path`, async () => {
+      loadSingle(page("hello"));
+      startEditing("ime-composition", 0);
+      const { root, dispose } = mount(() => <Block id="ime-composition" />);
+      try {
+        const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+        textarea.setSelectionRange(1, 4);
+        textarea.dispatchEvent(new KeyboardEvent("keydown", { key: opener, bubbles: true, cancelable: true }));
+        await Promise.resolve();
+        expect(textarea.value).toBe(opener === "（" ? "h(ell)o" : "h[ell]o");
+        expect(textarea.value.slice(textarea.selectionStart, textarea.selectionEnd)).toBe("ell");
+      } finally {
+        dispose();
+      }
+    });
+  }
+
   it("enters the composition transaction from a composing input when compositionstart never fired", () => {
     loadSingle(page(""));
     startEditing("ime-composition", 0);
@@ -151,7 +221,7 @@ describe("IME composition", () => {
       expect(setRawSpy).toHaveBeenCalledTimes(1);
       expect(autosize).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(100);
-      expect(quickSwitch).toHaveBeenLastCalledWith("Pa", 100);
+      expect(quickSwitch).toHaveBeenLastCalledWith("Pa", 100, { pageName: "IME composition", blockId: "ime-composition", originalRaw: "" }, false);
 
       input(textarea, "[[Pa");
       expect(setRawSpy).toHaveBeenCalledTimes(1);
@@ -164,7 +234,7 @@ describe("IME composition", () => {
       expect(setRawSpy).toHaveBeenCalledTimes(2);
       expect(autosize).toHaveBeenCalledTimes(2);
       await vi.advanceTimersByTimeAsync(100);
-      expect(quickSwitch).toHaveBeenLastCalledWith("Par", 100);
+      expect(quickSwitch).toHaveBeenLastCalledWith("Par", 100, { pageName: "IME composition", blockId: "ime-composition", originalRaw: "" }, false);
     } finally {
       dispose();
     }

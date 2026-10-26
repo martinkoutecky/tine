@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { For, Show, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { dataRev } from "../graphSession";
@@ -6,6 +7,7 @@ import { isPublishedExport } from "../publishedBackend";
 import { readOr } from "../resourceRead";
 import { PageRef } from "../render/inline";
 import { ResourceFailure } from "./ResourceFailure";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
 
 /** OG page.cljs tagged-pages: list pages whose page tags contain this name.
  * The existing query door owns membership (including normalization and Org).
@@ -36,11 +38,11 @@ export function TaggedPages(props: { name: string }): JSX.Element {
     <Show when={rows()?.pages.length}>
       <section class="tagged-pages linked-references">
         <button type="button" class="references-header" aria-expanded={!collapsed()} onClick={() => setCollapsed(!collapsed())}>
-          <span aria-hidden="true">{collapsed() ? "▸" : "▾"}</span> Pages tagged with "{props.name}"
+          <ReferenceDisclosure collapsed={collapsed()} />{t("tagged-pages-heading", { name: props.name })}
         </button>
         <Show when={!collapsed()}>
           <ul><For each={rows()?.pages}>{page => <li><PageRef name={page.name} alias={page.name} /></li>}</For></ul>
-          <Show when={rows()?.exceeded}><div role="status">Some tagged pages are omitted because the query result limit was reached.</div></Show>
+          <Show when={rows()?.exceeded}><div role="status">{t("tagged-pages-some-tagged-pages-are-omitted-because-the-query")}</div></Show>
         </Show>
       </section>
     </Show>

@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { ContextMenu, deletePageMenuLabel, pageMenuAvailability } from "./ContextMenu";
 import { initParser } from "../render/parse";
-import { blockProperty, pageByName, resetStore } from "../document";
+import { blockProperty, pageByName, readPageProperty, resetStore } from "../document";
 import { editingId, endEdit } from "../editorController";
 import { type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
@@ -13,7 +13,10 @@ import { backend } from "../backend";
 import { clearClipboardPayload, peekClipboardPayload } from "../clipboard";
 import { setToasts, toasts } from "../toasts";
 import { focusedRouter } from "../panes";
-import { clearConflict, markConflict } from "../document/save/engine";
+import { Toasts } from "./Toasts";
+import { bindTestHost } from "../document/host/wiring.test.support";
+import { conflictedInHost, openAsLoaded } from "./hostConflict.test.support";
+import { reloadPage } from "../document/workingSet";
 
 describe("PageMenu page-kind availability", () => {
   it("keeps rename page-only but exposes delete for pages and journals", () => {
@@ -74,6 +77,25 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       closeContextMenu();
       resetStore();
     }
+  });
+
+  it.each(["page", "writable block", "read-only block"])("GH #705: %s menu confirms a background tab", (source) => {
+    load(source === "read-only block");
+    const router = focusedRouter();
+    router.resetTabsToJournals();
+    const before = router.activeTab();
+    const count = router.tabs().length;
+    const dispose = mount(() => <><ContextMenu /><Toasts /></>);
+    try {
+      if (source === "page") openPageContextMenu(10, 10, "P");
+      else openContextMenu(10, 10, "leaf");
+      const action = [...document.querySelectorAll<HTMLElement>(".ctx-item")].find(el => el.textContent?.trim() === "Open in new tab")!;
+      action.click();
+      expect(router.tabs()).toHaveLength(count + 1);
+      expect(router.activeTab()).toBe(before);
+      expect(toasts().some(toast => toast.message === "Opened in a new tab" && toast.text.kind === "msg" && !toast.sticky)).toBe(true);
+      expect(document.querySelector(".toast-info .toast-msg")?.textContent).toBe("Opened in a new tab");
+    } finally { dispose(); router.resetTabsToJournals(); }
   });
 
   // The long-left swipe opens this menu on the selected block as the analogue of
@@ -184,11 +206,51 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     dispose();
   });
 
+  it.each(["md", "org"] as const)("sets short text and removes a page icon from the menu through the %s property writer", async (format) => {
+    load();
+    setDoc("pages", 0, "format", format);
+    const dispose = mount(() => <ContextMenu />);
+    try {
+      openPageContextMenu(10, 10, "P", "page", true);
+      const actions = [...document.querySelectorAll<HTMLElement>("[data-page-action-id]")].map(el => el.dataset.pageActionId);
+      expect(actions.indexOf("set-page-icon")).toBe(actions.indexOf("page-properties") + 1);
+      document.querySelector<HTMLButtonElement>('[data-page-action-id="set-page-icon"]')!.click();
+      const input = document.querySelector<HTMLInputElement>('[data-page-icon-input]')!;
+      input.value = "AB";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      expect(readPageProperty("P", "icon")).toBe("AB");
+      expect(pageByName("P")?.preBlock).toContain(format === "org" ? "#+icon: AB" : "icon:: AB");
+      openPageContextMenu(10, 10, "P", "page", true);
+      document.querySelector<HTMLButtonElement>('[data-page-action-id="remove-page-icon"]')!.click();
+      expect(readPageProperty("P", "icon")).toBeNull();
+    } finally { dispose(); }
+  });
+
+  it("refuses an icon draft after the page is replaced", () => {
+    load();
+    const dispose = mount(() => <ContextMenu />);
+    try {
+      openPageContextMenu(10, 10, "P", "page", true);
+      document.querySelector<HTMLButtonElement>('[data-page-action-id="set-page-icon"]')!.click();
+      const input = document.querySelector<HTMLInputElement>('[data-page-icon-input]')!;
+      input.value = "AB";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      reloadPage({ name: "P", title: "P", kind: "page", id: pageByName("P")!.id, pre_block: "icon:: external",
+        blocks: [{ id: "external", raw: "External body", collapsed: false, children: [] }] });
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      expect(readPageProperty("P", "icon")).toBe("external");
+      expect(toasts().some(toast => toast.kind === "error" && toast.message.includes("reopen"))).toBe(true);
+    } finally { dispose(); }
+  });
+
   it("does not delete a colliding page after an old graph confirmation", async () => {
     load();
+    // Bound: a delete could reach the host, so the refusal is the menu's.
+    await bindTestHost();
     let finish!: (confirmed: boolean) => void;
     vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
-    const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue(undefined as never);
+    const remove = vi.spyOn(backend(), "pageDelete");
     const dispose = mount(() => <ContextMenu />);
     openPageContextMenu(10, 10, "P", "page", true);
     const action = [...document.querySelectorAll<HTMLElement>(".ctx-item")]
@@ -206,9 +268,11 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
   it.each([true, false])("pins the page file before Delete confirmation (explicit path %s)", async (explicit) => {
     load();
     setDoc("pages", 0, "id", "pages/one.md");
+    // Bound: a delete could reach the host, so the refusal is the menu's.
+    await bindTestHost();
     let finish!: (confirmed: boolean) => void;
     vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
-    const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue();
+    const remove = vi.spyOn(backend(), "pageDelete");
     const dispose = mount(() => <ContextMenu />);
     openPageContextMenu(10, 10, { name: "P", pageKind: "page", ...(explicit ? { path: "pages/one.md" } : {}) }, true);
     [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.includes("Delete page"))!.click();
@@ -223,7 +287,8 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
 
   it("reopening a page menu replaces the previous file target", async () => {
     load(); setDoc("pages", 0, "id", "pages/one.md");
-    const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue();
+    const host = await bindTestHost();
+    const remove = vi.spyOn(backend(), "pageDelete");
     vi.spyOn(backend(), "confirm").mockResolvedValue(true);
     const dispose = mount(() => <ContextMenu />);
     openPageContextMenu(10, 10, { name: "P", pageKind: "page", path: "pages/one.md" }, true);
@@ -232,8 +297,23 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     const action = document.querySelector<HTMLElement>('[data-page-action-id="delete-page"]');
     expect(action).not.toBeNull();
     action!.click();
-    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith("P", "page", "pages/two.md"));
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(host.session, "P", "page", "pages/two.md"));
     dispose();
+  });
+
+  it("GH #687: delete failure toast carries the storage refusal", async () => {
+    load();
+    await bindTestHost();
+    vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+    vi.spyOn(backend(), "pageDelete").mockRejectedValue(new Error("Storage permission denied"));
+    const dispose = mount(() => <ContextMenu />);
+    try {
+      openPageContextMenu(10, 10, "P", "page", true);
+      document.querySelector<HTMLElement>('[data-page-action-id="delete-page"]')!.click();
+      await vi.waitFor(() => expect(toasts().some(t => t.message.includes("Delete failed") && t.message.includes("Storage permission denied"))).toBe(true));
+      expect(toasts().find(t => t.message.includes("Delete failed"))?.text.kind).toBe("msg");
+      expect(pageByName("P")).toBeDefined();
+    } finally { dispose(); }
   });
 
   it("context Copy/Cut block each leave a fresh exact private payload", async () => {
@@ -319,16 +399,16 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     dispose();
   });
 
-  it("reports page Markdown Copy failure when the page read returns nothing", async () => {
+  it("keeps page references in Copy as and removes the duplicate Markdown row", async () => {
     load();
-    vi.spyOn(backend(), "getPage").mockResolvedValue(null);
-    const write = vi.spyOn(backend(), "writeText");
+    const write = vi.spyOn(backend(), "writeText").mockResolvedValue();
     const dispose = mount(() => <ContextMenu />);
     openPageContextMenu(10, 10, "P", "page");
-    document.querySelector<HTMLButtonElement>('[data-page-action-id="copy-page-markdown"]')!.click();
-    await vi.waitFor(() => expect(toasts().some((toast) => toast.kind === "error")).toBe(true));
-    expect(write).not.toHaveBeenCalled();
-    expect(toasts().some((toast) => toast.message === "Copied page as Markdown")).toBe(false);
+    expect(document.querySelector('[data-page-action-id="copy-page-markdown"]')).toBeNull();
+    const copyAs = document.querySelector('[data-page-action-id="copy-as"]')!;
+    expect(copyAs.textContent).toContain("Copy as");
+    copyAs.querySelector<HTMLButtonElement>('[data-page-action-id="copy-page-ref"]')!.click();
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith("[[P]]"));
     dispose();
   });
 
@@ -380,13 +460,13 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       "open-sidebar",
       "open-new-tab",
       "favorite-toggle",
-      "copy-link", "copy-page-ref",
+      "copy-as", "copy-page-ref", "copy-link",
       "copy-export",
-      "copy-page-markdown",
       "export-pdf",
       "show-in-folder",
       "open-default-app",
       "page-properties",
+      "set-page-icon",
       "rename-page",
       "delete-page",
     ]);
@@ -414,7 +494,11 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     expect(activeId()).toBe("delete-page");
     press("Home");
     expect(activeId()).toBe("open");
-    expect(menu.querySelectorAll('[role="menuitem"]')).toHaveLength(14);
+    menu.querySelector<HTMLElement>('[data-page-action-id="copy-as"]')!.focus();
+    press("ArrowDown");
+    expect(activeId()).toBe("copy-page-ref");
+    press("ArrowDown");
+    expect(activeId()).toBe("copy-link");
     dispose();
   });
 
@@ -515,7 +599,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "P", "page", true);
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-      "copy-link", "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
+      "copy-as", "copy-page-ref", "copy-link", "copy-export", "export-pdf",
       "show-in-folder", "open-default-app",
     ]);
     closeContextMenu();
@@ -527,19 +611,20 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "2000-01-01", "journal", true);
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-      "copy-link", "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
+      "copy-as", "copy-page-ref", "copy-link", "copy-export", "export-pdf",
       "show-in-folder", "open-default-app", "page-properties",
+      "set-page-icon",
       "carry-unfinished", "delete-journal",
     ]);
     dispose();
   });
 
-  it("opens the shared export modal with the page root forest and preserves page Markdown/PDF actions", () => {
+  it("opens the shared export modal with the page root forest and preserves PDF", () => {
     load();
     const dispose = mount(() => <ContextMenu />);
 
     openPageContextMenu(10, 10, "P", "page", true);
-    expect(menuLabels()).toContain("Copy page as Markdown");
+    expect(menuLabels()).not.toContain("Copy page as Markdown");
     expect(menuLabels()).toContain("Export to PDF…");
     document.querySelector<HTMLButtonElement>('[data-page-action-id="copy-export"]')!.click();
 
@@ -687,7 +772,7 @@ describe("page file actions on a conflicted page (GH #490)", () => {
   });
   afterEach(() => {
     vi.restoreAllMocks();
-    clearConflict("P");
+    resetStore();
     closeContextMenu();
     clearTransientLayersForTest();
     document.body.innerHTML = "";
@@ -717,9 +802,11 @@ describe("page file actions on a conflicted page (GH #490)", () => {
   for (const [label, reveal] of [["Open with default app", false], ["Show in folder", true]] as const) {
     it(`${label}: opens the file as it stands on disk and says the draft is not in it`, async () => {
       loadPage();
-      markConflict("P");
+      const host = await bindTestHost();
+      openAsLoaded(host);
+      await conflictedInHost(host, "P", "pages/P.md");
       const open = vi.spyOn(backend(), "openPageFile").mockResolvedValue(undefined as never);
-      const save = vi.spyOn(backend(), "savePages");
+      const save = vi.spyOn(backend(), "pageSubmit");
       setToasts([]);
       const dispose = mount(() => <ContextMenu />);
       openPageContextMenu(10, 10, "P", "page", true);

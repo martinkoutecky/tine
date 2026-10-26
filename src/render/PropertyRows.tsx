@@ -1,6 +1,7 @@
 import { For, Show, createMemo, type JSX } from "solid-js";
 import type { Format } from "./ast";
-import { InlineText, PageRef } from "./inline";
+import { PageRef } from "./inline";
+import { PagePropertyValue } from "../components/PagePropertyValue";
 import { isRenderHiddenProp, propertyKeyNorm } from "./block";
 import { graphMeta } from "../graphSession";
 
@@ -16,7 +17,7 @@ export function PropertyRows(props: {
     <span class="block-properties">
       <For each={visible()}>{([key, value]) => <span class="prop block-property">
         <span class="prop-key block-property-key"><PageRef name={key} alias={key} blockId={props.blockId} /></span>{": "}
-        <span class="prop-value block-property-val"><InlineText text={value} format={props.format} macroExpansion={props.macroExpansion} /></span>
+        <span class="prop-value block-property-val"><PagePropertyValue propertyKey={key} value={value} format={props.format} blockId={props.blockId} macroExpansion={props.macroExpansion} /></span>
       </span>}</For>
     </span>
   </Show>;

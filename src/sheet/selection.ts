@@ -1,9 +1,11 @@
+import { shortcutKey } from "../shortcutKey";
+import { msg } from "../i18n";
 import { createRoot, createSignal } from "solid-js";
 import { pushToast } from "../toasts";
 import { clearSelection, selectBlock, prevVisible, nextVisible, blockIsGridView, withUndoUnit, blockPageReadOnly, formatForBlock, node as docNode } from "../document";
-import { editingId, endEdit, startEditing } from "../editorController";
+import { editingId, endEdit, prepareEditEntry, startEditing } from "../editorController";
 import { graphOwner } from "../owned";
-import { isSheetCellHidden, splitProps } from "../editor/properties";
+import { SHEET_CELL_HIDE, splitProps } from "../editor/properties";
 import {
   registerEditingStartListener,
   registerModeResetListener,
@@ -32,6 +34,7 @@ import {
   type SheetPoint,
   type SheetRect,
 } from "./mutations";
+import { queryAllWindows, queryAllWindowsAll, requestFrame } from "../windowRealm";
 
 export const SEAM_STEPPING = true;
 
@@ -106,7 +109,7 @@ function inferUniqueMountedSurface(gridId: string): string | undefined {
   if (typeof document === "undefined") return undefined;
   const esc = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(gridId) : gridId.replace(/["\\]/g, "\\$&");
   const surfaces = new Set(
-    [...document.querySelectorAll<HTMLElement>(`[data-sheet-grid-id="${esc}"][data-sheet-surface-id]`)]
+    queryAllWindowsAll<HTMLElement>(`[data-sheet-grid-id="${esc}"][data-sheet-surface-id]`)
       .map((el) => el.dataset.sheetSurfaceId)
       .filter((value): value is string => !!value)
   );
@@ -593,7 +596,8 @@ export function startCellEditing(sel: CellSelInput, offset?: number): boolean {
   if (blockPageReadOnly(blockId)) return false; // org round-trip gate (review finding)
   const node = docNode(blockId);
   if (!node) return false;
-  const visibleLen = splitProps(node.raw, isSheetCellHidden, formatForBlock(blockId)).visible.length;
+  const visibleLen = splitProps(node.raw, SHEET_CELL_HIDE, formatForBlock(blockId)).visible.length;
+  if (!prepareEditEntry()) return false;
   setCellSel(scoped);
   startEditing(blockId, offset ?? visibleLen, cellOwner(scoped));
   return true;
@@ -824,7 +828,7 @@ function cellElement(sel: CellSelInput): HTMLElement | null {
   const esc = (value: string) =>
     typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
   const surface = sel.surfaceId ? `[data-sheet-surface-id="${esc(sel.surfaceId)}"]` : "";
-  return document.querySelector(
+  return queryAllWindows<HTMLElement>(
     `.sheet-cell[data-sheet-grid-id="${esc(sel.gridId)}"]${surface}[data-row="${sel.row}"][data-col="${sel.col}"]`
   );
 }
@@ -852,7 +856,7 @@ function replaceThroughMountedEditor(sel: CellSelInput, text: string): void {
   };
   queueMicrotask(() => {
     if (apply()) return;
-    if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => apply());
+    if (typeof requestAnimationFrame === "function") requestFrame(cellElement(sel), () => apply());
     else setTimeout(() => apply(), 0);
   });
 }
@@ -1020,7 +1024,7 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
   const sel = cellSel();
   if (!sel) return false;
   const mod = e.ctrlKey || e.metaKey;
-  const key = e.key.toLowerCase();
+  const key = shortcutKey(e);
   const arrowDir = navDirectionForKey(e.key);
 
   // Sheet-specific chords first — mod/alt combos and Tab are surface commands,
@@ -1045,7 +1049,7 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
   if (mod && !e.altKey && !e.shiftKey && key === "r" && !isSeamSel(sel)) return fillSheetSelection(sel, "right");
   if (mod && !e.altKey && !e.shiftKey && key === "c" && !isSeamSel(sel)) {
     void copySheetSelection(sel)
-      .catch(() => pushToast("Couldn't copy cells: clipboard write failed.", "error"));
+      .catch(() => pushToast(msg("sheet-couldn-t-copy-cells-clipboard-write-failed"), "error"));
     return true;
   }
   if (mod && !e.altKey && !e.shiftKey && key === "x" && !isSeamSel(sel)) {

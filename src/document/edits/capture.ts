@@ -1,5 +1,5 @@
 import { journalTitle, appNow } from "../../journal";
-import { OUTLINE_MAX_DEPTH, outlineDepth, parseOutline, type OutlineNode } from "../../editor/outline";
+import { outlineMaxDepth, outlineDepth, parseOutline, type OutlineNode } from "../../editor/outline";
 import { type PageKind } from "../../types";
 import { bindingOwner } from "../../owned";
 import { pageByName, freshId, setDoc } from "../model";
@@ -9,7 +9,7 @@ import { pageWritable } from "./properties";
 import { insertOutlineAfter, deleteBlock } from "./blocks";
 import { withUndoUnit } from "../history";
 import { produce } from "solid-js/store";
-import { markDirty, flushPage, baseRevFor } from "../save/engine";
+import { markDirty, flushPage, baseRevFor } from "../host/wiring";
 
 /** Append a quick-capture (Logseq outline markdown, as produced by the capture
  *  window's editor — usually one bullet, but templates/multi-line paste can make
@@ -75,7 +75,7 @@ async function captureOutlineInto(
   gate?: () => Promise<boolean>,
 ): Promise<boolean> {
   // Captured blocks land at root level, so the outline's own depth is the result's (I-22).
-  if (!nodes.length || outlineDepth(nodes) > OUTLINE_MAX_DEPTH) return false;
+  if (!nodes.length || outlineDepth(nodes) > outlineMaxDepth()) return false;
   const owner = bindingOwner();
   // Admit the file the name resolves to. Another file holding the name is
   // replaced when it has no unsaved input; when it has, stop rather than append

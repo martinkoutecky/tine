@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
@@ -11,7 +11,9 @@ const forbidden = ["/aux/", "/home/"].map((prefix) => prefix + "koutecky");
 it("GH #579: tracked files use portable paths", () => {
   const files = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" })
     .split("\0").filter(Boolean);
-  const violations = files.flatMap((file) => {
+  // A tracked file deleted in the working tree (pending in an uncommitted
+  // change) carries no paths into the next commit.
+  const violations = files.filter((file) => existsSync(path.join(root, file))).flatMap((file) => {
     const text = readFileSync(path.join(root, file), "utf8");
     return text.split("\n").flatMap((line, index) =>
       forbidden.some((prefix) => line.includes(prefix)) ? [`${file}:${index + 1}`] : []);

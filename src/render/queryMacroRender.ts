@@ -12,10 +12,12 @@ function shiftInline(inline: Inline, by: number): Inline {
   return shifted;
 }
 
-/** Overlay the query reader's complete spans on lsdoc's accepted macro nodes.
- * lsdoc ends a macro at the first `}}`, including a map's closing brace.
- * Only bytes claimed by the shared reader are removed from following nodes. */
-export function queryMacroRenderRun(inlines: Inline[], raw: string, format?: Format): { inline: Inline; extent?: MacroExtent }[] {
+export function hasQueryMacroCandidate(inlines: Inline[]): boolean {
+  return inlines.some(inline => inline.k === "macro" && isQueryMacroName(inline.name) && !!inline.span);
+}
+
+/** Build source coordinates once for all the inline flows of this raw value. */
+export function queryMacroRenderExtents(raw: string) {
   const shift = 2 - utf8ByteLength(raw.slice(0, raw.length - raw.trimStart().length));
   // Extents are ordered and disjoint: convert coordinates in one forward pass.
   let unit = 0, byte = 0;
@@ -24,10 +26,20 @@ export function queryMacroRenderRun(inlines: Inline[], raw: string, format?: For
     unit = target;
     return byte + shift;
   };
-  const extents = new Map(queryMacroExtents(raw).map((extent) => [
+  return new Map(queryMacroExtents(raw).map((extent) => [
     toSourceByte(extent.start),
     { extent, end: toSourceByte(extent.end) },
   ]));
+}
+
+/** Overlay the query reader's complete spans on lsdoc's accepted macro nodes.
+ * lsdoc ends a macro at the first `}}`, including a map's closing brace.
+ * Only bytes claimed by the shared reader are removed from following nodes. */
+export function queryMacroRenderRun(inlines: Inline[], raw: string, format?: Format,
+  sourceExtents?: ReturnType<typeof queryMacroRenderExtents>): { inline: Inline; extent?: MacroExtent }[] {
+  if (!hasQueryMacroCandidate(inlines)) return inlines.map(inline => ({ inline }));
+  const extents = sourceExtents ?? queryMacroRenderExtents(raw);
+  const shift = 2 - utf8ByteLength(raw.slice(0, raw.length - raw.trimStart().length));
   const reconcile = (nodes: Inline[]): { inline: Inline; extent?: MacroExtent }[] => {
     const out: { inline: Inline; extent?: MacroExtent }[] = [];
     let claimed = -1;

@@ -22,7 +22,7 @@
 //! names with O(log P) tree updates. Keep the caller's unsaved edits on a
 //! refusal. Multi-file commit is not crash atomic.
 //!
-//! `Store::scan_refresh` compares file modification time and length, so a
+//! `Store::refresh(Depth::Stamps)` compares file modification time and length, so a
 //! same-length edit with unchanged timestamp may remain unseen. It waits for
 //! the initial parse. Poll mode scans O(P) file metadata and re-hashes
 //! `logseq/config.edn` every three seconds; notification mode silently falls
@@ -33,9 +33,9 @@
 
 use crate::path_identity::canonical_existing_path;
 mod page_identity;
+#[cfg(any(test, feature = "test-faults"))]
 mod save_failure;
-use std::collections::{BTreeMap, VecDeque};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -52,7 +52,9 @@ use tine_core::model::{
     PageEntry, PageKind, RefGroup, TemplateDto,
 };
 pub use tine_core::model::{FileId, PageId};
-use tine_core::query::{AdvancedResult, QueryExportBatch, QueryExportSpec};
+#[cfg(any(test, feature = "test-faults"))]
+use tine_core::query::AdvancedResult;
+use tine_core::query::{QueryExportBatch, QueryExportSpec};
 use tine_core::query_plan::QueryExecution;
 
 use crate::model::{CheckedOpenError, Graph, ReadSnapshot};
@@ -150,6 +152,24 @@ pub struct OpenOptions {
     pub launch_checkpoint: Option<PathBuf>,
 }
 
+/// How deep a [`Store::refresh`] looks at the graph on disk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Depth {
+    /// Trust a file whose modification time, length and identity are
+    /// unchanged; hash only files whose stamps moved. The watcher's and the
+    /// window-focus rescan's depth.
+    Stamps,
+    /// Hash every graph file, publishing the ones whose bytes differ from the
+    /// recorded revision as ordinary external changes (a sync client or a
+    /// restore tool can rewrite a file and put its stamp back). For a
+    /// consumer that must see every byte on disk, such as an export.
+    Bytes,
+    /// [`Self::Bytes`], then re-read and re-parse every file through the
+    /// cold-launch build and replace the page cache, the name index and the
+    /// read evaluator: the Settings "Rescan graph" button.
+    Rebuild,
+}
+
 /// How the store observes graph files after opening.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WatchMode {
@@ -195,7 +215,7 @@ pub enum ChangeKind {
     Removed,
 }
 
-/// One published graph change; subscriptions deliver generations in order.
+/// One published graph change; subscriptions deliver revisions in order.
 /// `Change` is `Send + Sync` and can cross worker-thread boundaries.
 /// Its Serialize implementation emits a bounded derived-answer wire: `rev`,
 /// `inventoryChanged` (name/alias/reference-name or unreadable inventory inputs),
@@ -205,7 +225,7 @@ pub enum ChangeKind {
 /// materialization. Initial publication may include all counts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Change {
-    /// Generation after this change.
+    /// Graph revision after this change.
     pub graph_rev: GraphRev,
     /// Whether this store or an external actor supplied the final bytes in
     /// this publication. Rollback can emit separate Own and External changes.
@@ -213,7 +233,7 @@ pub struct Change {
     /// Affected graph files, including `logseq/config.edn` when observed, with
     /// resulting revisions when present. An external config edit enters this
     /// feed on the watcher cycle that observes it (an event naming the file, a
-    /// rescan, or every poll cycle) or on `scan_refresh()`, only when its bytes
+    /// rescan, or every poll cycle) or on `refresh()`, only when its bytes
     /// changed. An own config create or replace lists its config file tuple in
     /// the same transaction publication.
     /// Trash destinations are not listed. A committed transaction or restore
@@ -324,11 +344,13 @@ struct Snapshot {
 }
 
 mod answer_changes;
+mod asset_inventory;
 pub(crate) mod checkpoint;
 mod diagnostics;
 #[cfg(test)]
 mod fold_save_tests;
 mod inventory;
+mod name_search;
 #[cfg(test)]
 mod page_open_tests;
 mod page_read;
@@ -606,8 +628,10 @@ impl Subscription {
         }
     }
 
-    /// Take the next queued change without waiting, or `None` when none is ready.
-    /// Returns a typed end reason after close or displacement.
+    /// Take the next queued change without waiting, or `None` when none is
+    /// queued. Returns a typed end reason after close or displacement. A test
+    /// oracle (SURFACE.txt rule 4): production waits with `recv`.
+    #[cfg(any(test, feature = "test-faults"))]
     pub fn try_recv(&self) -> Result<Option<Change>, SubscriptionEnd> {
         let mut state = self.feed.state.lock().unwrap();
         if state.closed {
@@ -698,7 +722,7 @@ impl std::fmt::Display for OpenError {
 }
 
 /// Effective config. While `problem` is set, reads are read-only and mutations
-/// refuse unknown destinations. `scan_refresh()` retries the read after repair.
+/// refuse unknown destinations. `refresh()` retries the read after repair.
 #[derive(Clone)]
 pub struct ConfigState {
     /// Effective graph config, defaulted when loading config failed. A changed
@@ -708,7 +732,8 @@ pub struct ConfigState {
     /// without a date claim if neither the new format nor a fallback parses
     /// their stem; callers must plan any file migration separately.
     pub config: Arc<tine_core::config::Config>,
-    /// Config read error, if one occurred. Missing config is not an error.
+    /// Config read error, if one occurred. A missing config is not an error,
+    /// unless an iCloud placeholder stands in for it (`missing_config_problem`).
     /// Unrecognized or malformed config values may default individually and do
     /// not set this field. Journal format strings are not validated here:
     /// unsupported format characters become literal text, and a format that
@@ -717,6 +742,30 @@ pub struct ConfigState {
     pub problem: Option<crate::IoError>,
     /// Final component of the validated assets directory, for backup layout.
     pub assets_directory_name: String,
+    /// The recoverable asset trash location, for display in user-facing
+    /// errors only; never a write target (graph writes take a [`FileId`]).
+    pub asset_trash_location: PathBuf,
+}
+
+impl ConfigState {
+    /// The effective config state of `graph` with its layout display fields.
+    pub(crate) fn of(
+        graph: &crate::model::Graph,
+        config: Arc<tine_core::config::Config>,
+        problem: Option<crate::IoError>,
+    ) -> Self {
+        Self {
+            config,
+            problem,
+            assets_directory_name: graph
+                .assets_path()
+                .file_name()
+                .and_then(|part| part.to_str())
+                .unwrap_or("dir")
+                .to_owned(),
+            asset_trash_location: graph.root.join("logseq/.tine-trash/assets"),
+        }
+    }
 }
 
 impl std::ops::Deref for ConfigState {
@@ -867,16 +916,11 @@ impl Store {
             &graph,
             graph.list_pages_shared().as_ref(),
         )));
-        let config_state = Arc::new(RwLock::new(ConfigState {
-            config: Arc::new(graph.config.clone()),
-            problem: None,
-            assets_directory_name: graph
-                .assets_path()
-                .file_name()
-                .and_then(|part| part.to_str())
-                .unwrap_or("dir")
-                .to_owned(),
-        }));
+        let config_state = Arc::new(RwLock::new(ConfigState::of(
+            &graph,
+            Arc::new(graph.config.clone()),
+            None,
+        )));
         let changes = Arc::new(ChangeFeed::new(
             Arc::clone(&graph),
             Arc::clone(&config_state),
@@ -905,12 +949,43 @@ impl Store {
         }
     }
 
-    /// Scaffold a graph in an empty parent, or in the first unused `tine-demo`
-    /// child when the parent is nonempty. Use the returned path as the actual
-    /// graph root. Cost O(siblings probed + seed bytes). Partial failures leave
-    /// created files in place and identify the failing path.
+    /// Suggest the first unoccupied notes child. Any entry, including an empty
+    /// directory or dangling symlink, occupies a name. Cost O(names probed).
+    pub fn suggest_graph_name(parent: &Path) -> Result<String, OpenError> {
+        if parent.as_os_str().is_empty() || !parent.is_dir() {
+            return Err(OpenError::NotAFolder(parent.to_path_buf()));
+        }
+        for number in 1usize.. {
+            let name = if number == 1 {
+                "notes".to_string()
+            } else {
+                format!("notes-{number}")
+            };
+            let path = parent.join(&name);
+            match fs::symlink_metadata(&path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(name),
+                Ok(_) => {}
+                Err(error) => {
+                    return Err(OpenError::CreateFailed {
+                        path,
+                        cause: error.into(),
+                    })
+                }
+            }
+        }
+        Err(OpenError::CreateFailed {
+            path: parent.to_path_buf(),
+            cause: std::io::Error::other("No unused graph folder name.").into(),
+        })
+    }
+
+    /// Create only the named child, reusing it only when it is an empty real
+    /// directory. Every file publication is no-clobber, including concurrent
+    /// creators and external files arriving during scaffolding. Partial failures
+    /// leave created files in place and identify the failing path. Cost O(seed bytes).
     pub fn create_graph(
         parent: &Path,
+        name: &str,
         seed: &[(Area, String, Vec<u8>)],
     ) -> Result<PathBuf, OpenError> {
         if parent.as_os_str().is_empty() || !parent.is_dir() {
@@ -920,39 +995,35 @@ impl Store {
             path: path.to_path_buf(),
             cause: error.into(),
         };
-        crate::path_identity::check_new_graph_parent(parent)?;
-        let empty = fs::read_dir(parent)
-            .map_err(|error| failed(parent, error))?
-            .next()
-            .is_none();
-        let root = if empty {
-            parent.to_path_buf()
-        } else {
-            let mut number = 1usize;
-            loop {
-                let name = if number == 1 {
-                    "tine-demo".to_string()
-                } else {
-                    format!("tine-demo-{number}")
-                };
-                let candidate = parent.join(name);
-                match fs::create_dir(&candidate) {
-                    Ok(()) => break candidate,
-                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                        number = number.checked_add(1).ok_or_else(|| {
-                            failed(
-                                &candidate,
-                                std::io::Error::other("no unused demo folder name"),
-                            )
-                        })?;
-                    }
-                    Err(error) => return Err(failed(&candidate, error)),
+        if name.chars().any(char::is_control)
+            || name.ends_with(' ')
+            || !crate::model::portable_component(name.trim())
+        {
+            return Err(failed(parent, std::io::Error::new(std::io::ErrorKind::InvalidInput,
+                "Choose a non-empty graph name without path separators, control characters or <>:\"/\\|?*. Names cannot be . or .., end with a dot or space, or use a Windows device name (CON, NUL, COM1, etc.).")));
+        }
+        let root = crate::path_identity::new_graph_root(parent, name.trim())?;
+        match fs::create_dir(&root) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let metadata = fs::symlink_metadata(&root).map_err(|error| failed(&root, error))?;
+                if !metadata.is_dir()
+                    || fs::read_dir(&root)
+                        .map_err(|error| failed(&root, error))?
+                        .next()
+                        .transpose()
+                        .map_err(|error| failed(&root, error))?
+                        .is_some()
+                {
+                    return Err(failed(&root, std::io::Error::new(std::io::ErrorKind::AlreadyExists,
+                        "This graph folder already exists and is not empty (or is not a directory). Choose another name.")));
                 }
             }
-        };
+            Err(error) => return Err(failed(&root, error)),
+        }
         for area in ["logseq", "pages", "journals", "assets"] {
             let dir = root.join(area);
-            fs::create_dir_all(&dir).map_err(|error| failed(&dir, error))?;
+            fs::create_dir(&dir).map_err(|error| failed(&dir, error))?;
         }
         let config = root.join("logseq/config.edn");
         let supplied_config = seed
@@ -1035,16 +1106,16 @@ impl Store {
     /// A caller that applies the configured journal template must wait for
     /// `WholeGraph::templates()`; saving a new journal does not add it.
     /// [`Self::whole_graph`] waits for background parsing. Partial scans report
-    /// unreadable entries; [`Self::scan_refresh`] retries failed parsing.
+    /// unreadable entries; [`Self::refresh`] retries failed parsing.
     /// Direct reads/writes remain available after a parse failure, without
-    /// publishing until `scan_refresh()` succeeds. The returned
+    /// publishing until `refresh()` succeeds. The returned
     /// `GraphMeta` is a snapshot of open-time settings. After a config change,
     /// callers can derive fresh display metadata with
     /// `GraphMeta::from_config` and `JournalFormat::new` from `Store::config()`;
     /// reopening also refreshes it but restarts this store's revision sequence.
     /// External observations during loading publish after the initial parse.
     /// On failed initial load, the watcher also defers external publication
-    /// until `scan_refresh()` successfully retries. Recovery's completion
+    /// until `refresh()` successfully retries. Recovery's completion
     /// publication has no file tuples; reconciliation may publish observed
     /// differences separately. Use the recovered view to refresh graph-wide answers.
     /// Unsafe layouts, unapproved external targets, and I/O return [`OpenError`].
@@ -1076,16 +1147,7 @@ impl Store {
         let journal_ids = journal_ids_from_entries(&graph, &journals);
         let problem = graph.config_read_problem.clone();
         let graph = Arc::new(graph);
-        let config = ConfigState {
-            config: Arc::new(graph.config.clone()),
-            problem,
-            assets_directory_name: graph
-                .assets_path()
-                .file_name()
-                .and_then(|part| part.to_str())
-                .unwrap_or("dir")
-                .to_owned(),
-        };
+        let config = ConfigState::of(&graph, Arc::new(graph.config.clone()), problem);
         let meta = tine_core::model::GraphMeta::from_config(
             root.display().to_string(),
             &config.config,
@@ -1221,7 +1283,7 @@ impl Store {
     /// (I-12). Does not wait for the graph parse, but may wait for a
     /// concurrent configuration update and its O(P + B) reparse. An external
     /// `logseq/config.edn` edit is taken in by the watcher cycle that sees it
-    /// (or `scan_refresh()`) when its bytes changed; one that names a page or
+    /// (or `refresh()`) when its bytes changed; one that names a page or
     /// journal directory escaping the graph is not taken in, and this keeps
     /// answering the last good config. Own config writes and restore reload
     /// before publication. The store accepts raw config EDN through
@@ -1230,10 +1292,12 @@ impl Store {
         self.config_state.read().unwrap().clone()
     }
 
-    /// Whether graph-wide answers are ready, without waiting for parsing or
-    /// recovery. `Ok(false)` means still loading; `Err(Failed)` means `page()`
-    /// can still read files but graph publication waits for `scan_refresh()`;
+    /// Test oracle: whether graph-wide answers are ready, without waiting
+    /// for parsing or recovery. Production asks domain questions instead
+    /// (`page_named` routes on readiness internally). `Ok(false)` means still loading; `Err(Failed)` means `page()`
+    /// can still read files but graph publication waits for `refresh()`;
     /// `Err(Closed)` means this store is closed.
+    #[cfg(any(test, feature = "test-faults"))]
     pub fn is_graph_ready(&self) -> Result<bool, LoadError> {
         match &*self.load.status.lock().unwrap() {
             LoadStatus::Loading => Ok(false),
@@ -1243,6 +1307,14 @@ impl Store {
             }),
             LoadStatus::Closed => Err(LoadError::Closed),
         }
+    }
+
+    /// Tests (REVIEW-3b-P2b-2 N3): true once the watcher has reconciled
+    /// every notification of a write made before the call and no racy
+    /// follow-up is due (`watch/test_drain.rs`); false at `timeout`.
+    #[cfg(feature = "test-faults")]
+    pub fn watcher_drained_for_tests(&self, timeout: std::time::Duration) -> bool {
+        self.watch.drained_for_tests(timeout)
     }
 
     /// Stop observation, wait for an in-flight writer, end the subscription,
@@ -1272,8 +1344,7 @@ impl Store {
     /// has a separate `Origin::Own` publication once a complete snapshot is
     /// available. Writer serialization orders these publications; whichever
     /// comes first has a view containing the save.
-    /// Failed load is observed without waiting by calling `is_graph_ready()`;
-    /// `whole_graph()` also returns the failure, but no `Change` announces it;
+    /// A failed load is returned by `whole_graph()`, but no `Change` announces it;
     /// no page read or write publishes while it remains failed.
     /// Multi-window clients must fan this single stream out themselves. A slow
     /// consumer can retain an unbounded number of queued changes in memory;
@@ -1299,62 +1370,62 @@ impl Store {
     }
 
     /// Wait for the initial graph parse, retrying it if it previously failed,
-    /// then reconcile page, journal and config files. Normal runtime calls
-    /// also reconcile configured asset metadata; failed-load recovery leaves asset
-    /// catch-up to the watcher. A graph-text file is considered unchanged
-    /// when its modification time and length both match the previous scan;
-    /// same-length edits with preserved timestamps can therefore be missed.
-    /// Cost O(P metadata + bytes of files detected as changed + config bytes
-    /// hashed + asset metadata), plus load wait. Unchanged-config runtime graph-text walks run off-writer and retry on change.
-    /// Config changes enumerate and reparse O(P + B) pages/blocks under the writer before publication.
-    /// Recovery from a failed initial load also parses the whole graph
-    /// synchronously before reconciliation. A concurrent edit can make that
-    /// recovery parse fail; retry with another explicit call after edits settle.
-    /// A previously unreadable subtree is retried on this full scan; newly
-    /// accessible files can then enter the resulting view.
-    /// After a failed initial load, a successful retry
-    /// publishes a fresh completion generation with no file tuples even if no file changed during
-    /// reconciliation or an older snapshot exists.
-    /// Own writes made while failed update the watcher baseline and enter the
-    /// recovered view without being relabeled as External file changes.
+    /// then reconcile page, journal and config files at `depth`. Normal
+    /// runtime calls also reconcile configured asset metadata (assets are
+    /// metadata-only by contract at every depth); failed-load recovery leaves
+    /// asset catch-up to the watcher.
+    ///
+    /// [`Depth::Stamps`] considers a graph-text file unchanged when its
+    /// modification time and length both match the previous scan, so
+    /// same-length edits with preserved timestamps can be missed. Cost O(P
+    /// metadata + bytes of files detected as changed + config bytes hashed +
+    /// asset metadata), plus load wait. Unchanged-config runtime graph-text
+    /// walks run off-writer and retry on change. [`Depth::Bytes`] hashes
+    /// every graph-text file instead: O(graph bytes). [`Depth::Rebuild`] does
+    /// that and then re-reads and re-parses every file through the cold-launch
+    /// build, replacing the page cache, the name index and the read evaluator
+    /// (O(graph bytes) twice plus the cold-launch parse); it runs on the
+    /// caller's thread, so call it from a worker. An open editor keeps its
+    /// base revision, so a save made over a file a refresh found changed is
+    /// refused like any other stale save.
+    ///
+    /// Config changes enumerate and reparse O(P + B) pages/blocks under the
+    /// writer before publication. Recovery from a failed initial load parses
+    /// the whole graph synchronously before reconciliation, at every depth
+    /// (already a cold build). A concurrent edit can make that recovery parse
+    /// fail; retry with another explicit call after edits settle. A
+    /// previously unreadable subtree is retried on this full scan; newly
+    /// accessible files can then enter the resulting view. After a failed
+    /// initial load, a successful retry publishes a fresh completion
+    /// generation with no file tuples even if no file changed during
+    /// reconciliation or an older snapshot exists. Own writes made while
+    /// failed update the watcher baseline and enter the recovered view
+    /// without being relabeled as External file changes.
     /// Returns `LoadError::Closed` after close or `LoadError::Failed` for a
-    /// lost root or unsafe config layout, such as a
-    /// configured page directory that escapes the graph through a symlink.
-    /// A failed initial load is retried only by this explicit call; watcher
-    /// ticks do not retry it. A continuous stream of edits can keep the
-    /// initial background parse in `Loading` indefinitely.
-    /// A failed refresh after an earlier successful load returns an error but
-    /// leaves the last published `WholeGraph` view available.
+    /// lost root or unsafe config layout, such as a configured page directory
+    /// that escapes the graph through a symlink. A failed initial load is
+    /// retried only by this explicit call; watcher ticks do not retry it. A
+    /// continuous stream of edits can keep the initial background parse in
+    /// `Loading` indefinitely. A failed refresh after an earlier successful
+    /// load returns an error but leaves the last published `WholeGraph` view
+    /// available.
     ///
-    /// Returns the change-feed revision through which this scan's changes are
-    /// published: a subscriber that has received it has received them all.
-    pub fn scan_refresh(&self) -> Result<GraphRev, LoadError> {
-        self.watch.scan_refresh()?;
-        Ok(self.changes.rev())
-    }
-
-    /// Forced full rebuild: the Settings "Rescan graph" button. Where
-    /// [`Self::scan_refresh`] trusts a file whose modification time, length
-    /// and identity are unchanged, this ignores every stamp, revision and
-    /// cache: it hashes every graph file (publishing the ones whose bytes
-    /// differ from the recorded revision as ordinary external changes), then
-    /// re-reads and re-parses every file through the cold-launch build and
-    /// replaces the page cache, the name index and the read evaluator with
-    /// the result. Assets are metadata-only by contract and are compared as
-    /// usual. Cost O(graph bytes) twice (hash, then parse) plus the cold-launch
-    /// parse; it runs on the caller's thread, so call it from a worker. An
-    /// open editor keeps its base revision, so a save made over a file this
-    /// rebuild found changed is refused like any other stale save.
-    ///
-    /// Returns the change-feed revision through which its changes are
-    /// published, like `scan_refresh`. A graph whose load failed is retried
-    /// exactly as `scan_refresh` retries it, which is already a cold build.
-    pub fn rebuild_graph(&self) -> Result<GraphRev, LoadError> {
-        self.watch.rebuild_all()?;
-        self.changes
-            .checkpoint
-            .get()
-            .inspect(|signal| signal.request());
+    /// Returns the change-feed revision through which this refresh's changes
+    /// are published: a subscriber that has received it has received them all.
+    pub fn refresh(&self, depth: Depth) -> Result<GraphRev, LoadError> {
+        match depth {
+            Depth::Stamps => self.watch.scan_refresh()?,
+            Depth::Bytes => self
+                .watch
+                .scan_refresh_with(crate::launch_diag::DiffTrigger::Bytes)?,
+            Depth::Rebuild => {
+                self.watch.rebuild_all()?;
+                self.changes
+                    .checkpoint
+                    .get()
+                    .inspect(|signal| signal.request());
+            }
+        }
         Ok(self.changes.rev())
     }
 
@@ -1370,7 +1441,7 @@ impl Store {
     /// Return a cached canonical journal id or propose a configured path (directory,
     /// filename format, preferred extension). The day index covers accessible files
     /// before open and refreshes before relevant publications: direct reads/writes,
-    /// transactions, restore, watcher and scan_refresh. Cost O(format + path bytes);
+    /// transactions, restore, watcher and refresh. Cost O(format + path bytes);
     /// no parse or disk read. Unreadable subtrees or unobserved external creations
     /// can yield a duplicate-day proposal. It does not indicate existence: `page(id)`
     /// may return `NotFound`. Invalid `Day` is not rejected and may yield nonsense.
@@ -1527,11 +1598,6 @@ impl Store {
         let id = FileId::from(format!("{directory}/{rel}"));
         self.validate_file(&id)?;
         Ok(id)
-    }
-
-    /// Display the recoverable asset trash location in a user-facing error.
-    pub fn asset_trash_location_for_user(&self) -> PathBuf {
-        self.graph.root.join("logseq/.tine-trash/assets")
     }
 
     /// Read one file's bytes and its raw-byte revision without updating the
@@ -1848,7 +1914,7 @@ impl Store {
     /// A readable duplicate-day stray is returned but never published or
     /// added to graph-wide answers. Missing files do not wait for initial
     /// parsing; present files remain directly readable after a failed initial
-    /// parse, with publication deferred until successful `scan_refresh()`.
+    /// parse, with publication deferred until successful `refresh()`.
     /// An accessible path below an unreadable directory is read directly.
     /// Observed edits may wait for parsing, another writer, restore or site
     /// publication. Case aliases return the file's actual disk spelling.
@@ -1863,13 +1929,19 @@ impl Store {
     /// same bytes, and the load or launch diff takes the file in, so a page
     /// opens in parse time whatever the graph is doing. Target parse costs
     /// O(bytes + blocks); publication adds O(P) metadata. Reads write no
-    /// page bytes.
+    /// page bytes. A page a page host holds answers the bytes the host last
+    /// indexed and publishes nothing (A-V4): a write parses the bytes its
+    /// revision guards with [`Store::page_of`] instead.
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
             if self.is_closed() {
                 return Err(StoreError::Closed);
             }
-            let (id, path, entry) = self.page_target(id)?;
+            let (id, path) = self.page_spot(id)?;
+            if let Some(doc) = self.held_page(&path)? {
+                return self.page_read(id, doc);
+            }
+            let entry = self.page_entry(&id, &path)?;
             let doc = self.parse_page(&path, &entry, false)?;
             return self.page_read(id, doc);
         }
@@ -1880,7 +1952,12 @@ impl Store {
         if self.is_closed() {
             return Err(StoreError::Closed);
         }
-        let (id, path, entry) = self.page_target(id)?;
+        let (id, path) = self.page_spot(id)?;
+        // A held page is answered before its file is read (A-H1).
+        if let Some(doc) = self.held_page(&path)? {
+            return self.page_read(id, doc);
+        }
+        let entry = self.page_entry(&id, &path)?;
         let canonical = self.canonical_claim(&entry);
         let read = self.page_read(id, self.parse_page(&path, &entry, canonical)?)?;
         if self.graph.cache_generation() != before_generation
@@ -1891,51 +1968,47 @@ impl Store {
         Ok(read)
     }
 
-    /// Parse one page file: the canonical claimant through the cache (which
-    /// it reconciles), any other file directly.
-    fn parse_page(
-        &self,
-        path: &Path,
-        entry: &PageEntry,
-        canonical: bool,
-    ) -> Result<PageDto, StoreError> {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            #[cfg(test)]
-            if fs::read_to_string(&path)
-                .is_ok_and(|text| text.contains("__TINE_TEST_PAGE_PARSE_PANIC__"))
-            {
-                panic!("deterministic test page parser panic");
+    /// Resolve a page name (or alias) and read its current file: the one
+    /// page-by-name door (GH #623). Cost O(index lookup + page bytes).
+    ///
+    /// Before the graph is ready, a name some file claims opens from that
+    /// file without waiting for the index (the file-name listing below):
+    /// claimant order ranks a file named for the page above any `title::`
+    /// claimant, so this is the page the index would pick. A name only the
+    /// index can resolve (an alias) or one no file claims waits for the
+    /// graph, so a name the index could still resolve never reads as absent.
+    /// Once ready, the published index resolves the name; an alias reads its
+    /// first owner. After a failed initial parse, the file-name listing
+    /// answers. A closed store returns `StoreError::Closed`. A resolved file
+    /// that has disappeared reads as `None`. It writes no page bytes.
+    pub fn page_named(&self, name: &str, kind: PageKind) -> Result<Option<PageRead>, StoreError> {
+        if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
+            if let Some(read) = self.page_named_from_files(name, kind)? {
+                return Ok(Some(read));
             }
-            if canonical {
-                self.graph.load_page(entry).map(Some)
-            } else {
-                self.graph.load_by_validated_path(path)
-            }
-        }))
-        .map_err(|panic| {
-            let reason = panic
-                .downcast_ref::<String>()
-                .cloned()
-                .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
-                .unwrap_or_else(|| "page parser panicked".to_owned());
-            StoreError::Unparseable(reason)
-        })?
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::InvalidData
-                && error
-                    .get_ref()
-                    .and_then(|inner| inner.downcast_ref::<crate::model::ParseInputTooLarge>())
-                    .is_none()
-            {
-                StoreError::Undecodable
-            } else {
-                StoreError::from_io(error)
-            }
-        })?
-        .ok_or(StoreError::NotFound)
+        }
+        let resolved = match self.whole_graph() {
+            Ok(view) => view.resolve(name, kind == PageKind::Journal),
+            Err(LoadError::Failed { .. }) => return self.page_named_from_files(name, kind),
+            Err(LoadError::Closed) => return Err(StoreError::Closed),
+        };
+        // `resolve` builds an alias only with at least one owner.
+        let id = match resolved {
+            Resolved::Existing { id, .. } => id,
+            Resolved::Alias { owners } => match owners.into_iter().next() {
+                Some(id) => id,
+                None => return Ok(None),
+            },
+            Resolved::Absent { .. } => return Ok(None),
+        };
+        match self.page(&id) {
+            Ok(read) => Ok(Some(read)),
+            Err(StoreError::NotFound) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
-    /// Read an ordinary page by effective name, or a journal by its file
+    /// The file-name listing answer: read an ordinary page by effective name, or a journal by its file
     /// stem or parseable display title, without waiting for the initial
     /// parse. A page some file is named for is found from a listing of file
     /// names and the matching files; otherwise the first lookup or
@@ -1949,7 +2022,11 @@ impl Store {
     /// listed in `unreadable_files()` and one bad file never blocks the graph.
     /// The selected file is read through `page()`, with the same safety, revision, and publication
     /// rules, including lock wait and read errors. It writes no page bytes.
-    pub fn page_named(&self, name: &str, kind: PageKind) -> Result<Option<PageRead>, StoreError> {
+    fn page_named_from_files(
+        &self,
+        name: &str,
+        kind: PageKind,
+    ) -> Result<Option<PageRead>, StoreError> {
         let lookup = if kind == PageKind::Journal {
             self.graph
                 .current_journal_format()
@@ -1975,8 +2052,8 @@ impl Store {
     /// the wait; a held view never waits for later writes and its answers do
     /// not change. After a failed parse,
     /// later calls return `LoadError::Failed` without another parse attempt
-    /// until `scan_refresh()` retries it. Use `is_graph_ready()` to inspect the
-    /// state without waiting, or call this from a worker thread to wait.
+    /// until `refresh()` retries it. Call this from a worker thread to
+    /// wait.
     /// The initial load restarts if an external edit invalidates a parse pass;
     /// continuous edits can keep this wait open indefinitely.
     /// An own save during loading can build the first cache synchronously for
@@ -1985,7 +2062,7 @@ impl Store {
     /// No partial graph generation is available after failure.
     /// A launch checkpoint (ADR 0070) is served before Ready, while the launch
     /// diff reconciles edits made while closed; an operation acting on the
-    /// whole graph's answers waits for Ready first (`scan_refresh` does;
+    /// whole graph's answers waits for Ready first (`refresh` does;
     /// inside the crate, `whole_graph_reconciled`).
     pub fn whole_graph(&self) -> Result<WholeGraph, LoadError> {
         self.whole_graph_when(true)
@@ -1994,8 +2071,11 @@ impl Store {
     /// [`Self::whole_graph`] that never serves the launch checkpoint before
     /// the launch diff: graph-wide destructive operations (delete, rename,
     /// merge, orphan cleanup) wait for it, since an external edit made while
-    /// Tine was closed may have added a reference the checkpoint lacks.
-    pub(crate) fn whole_graph_reconciled(&self) -> Result<WholeGraph, LoadError> {
+    /// Tine was closed may have added a reference the checkpoint lacks. A
+    /// one-shot lookup that found nothing in a served checkpoint asks again
+    /// here (a cold-start `tine://` link, GH #181): the edit may have added
+    /// its target.
+    pub fn whole_graph_reconciled(&self) -> Result<WholeGraph, LoadError> {
         self.whole_graph_when(false)
     }
 
@@ -2299,6 +2379,7 @@ pub enum SaveOutcome {
 }
 
 impl SaveOutcome {
+    #[cfg(any(test, feature = "test-faults"))]
     fn from_failed_step(why: crate::Why, id: &PageId) -> Self {
         match why {
             crate::Why::Conflict {
@@ -2334,29 +2415,6 @@ impl SaveOutcome {
             crate::Why::Failed(error) => SaveOutcome::Io(error),
         }
     }
-}
-
-/// Result of one ordered page-save request.
-#[derive(Debug)]
-pub enum SavePagesOutcome {
-    /// One result per input entry, in the same order.
-    Ok {
-        /// One Saved or Unchanged revision per entry.
-        outcomes: Vec<SaveOutcome>,
-        /// The save's published answer delta, or None for unchanged/unpublished saves.
-        change: Option<Change>,
-    },
-    /// The failed entry and any entries whose rollback could not restore disk.
-    Failed {
-        /// Zero-based failed input entry.
-        index: usize,
-        /// Refusal or I/O failure for that entry.
-        outcome: SaveOutcome,
-        /// Graph-relative file locations whose earlier bytes could not be restored.
-        undo_failed: Vec<FileId>,
-        /// Graph-relative locations omitted from the final publication.
-        publication_errors: Vec<FileId>,
-    },
 }
 
 /// Parsed page and the raw-byte revision used for a guarded save.
@@ -2419,10 +2477,25 @@ pub struct InventoryEntry {
 
 /// Graph inventory entries in page-key order.
 pub struct Inventory(pub Vec<InventoryEntry>);
+
+/// Which names a [`WholeGraph::inventory`] lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InventoryScope<'a> {
+    /// Every name: file-claimed names, aliases and reference-only names.
+    All,
+    /// Referenced journal dates, including dates without a file, once per day.
+    /// Uses the explicit-reference index; excludes ordinary date-page identity.
+    ReferencedJournals,
+    /// Only the file-claimed names whose page key is this key or lies under
+    /// `key/` (a page and its namespace descendants): what a rename moves.
+    FilesAtOrUnder(&'a str),
+}
 /// Inputs for the query-plan graph search.
 pub struct SearchRequest {
     /// Search expression.
     pub text: String,
+    /// Request-local name expansion; legacy callers pass false.
+    pub transliteration: bool,
     /// Restrict search to this physical page id, including a chosen twin; an
     /// alias does not broaden the scope. An absent file produces an empty
     /// result; check existence separately if it matters.
@@ -2441,7 +2514,9 @@ pub struct SearchRequest {
     /// Effective Blocks Display view, independent of the Pages section.
     pub block_view: Option<tine_core::query::ir::ViewSettings>,
 }
-/// Syntax used to evaluate a `{{query}}` expression.
+/// Test oracle: syntax for [`WholeGraph::query`], the legacy block-group bridge.
+/// Production queries run through [`WholeGraph::query_ir`].
+#[cfg(any(test, feature = "test-faults"))]
 pub enum QueryDialect {
     /// Simple query expression.
     Simple,
@@ -2501,7 +2576,8 @@ impl TryFrom<IrAnswer> for tine_core::query::ir::QueryResult {
     }
 }
 
-/// Answer shape matching the requested query dialect.
+/// Test oracle: answer shape of [`WholeGraph::query`].
+#[cfg(any(test, feature = "test-faults"))]
 pub enum QueryResult {
     /// Simple query reference groups.
     Simple(Arc<Vec<RefGroup>>),
@@ -2540,7 +2616,7 @@ pub enum LoadError {
     /// root or unsafe config layout. Continuous edits instead keep the load
     /// in `Loading` while its parse restarts. After an initial failure, `page()` can still
     /// read a present file and guarded saves can write, but neither publishes
-    /// a graph generation until successful `scan_refresh()` recovery.
+    /// a graph generation until successful `refresh()` recovery.
     Failed {
         /// Human-readable failure reason.
         reason: String,
@@ -2770,15 +2846,22 @@ impl WholeGraph {
         &self.unreadable
     }
 
-    /// IDs of parsed page files in this stable view, without constructing an
-    /// owned corpus. Only pages included in this view are returned. Cost O(P).
-    pub fn parsed_page_ids(&self) -> Vec<PageId> {
-        self.graph.with_pages(|pages| {
-            pages
-                .iter()
-                .filter_map(|(entry, _)| entry.rel_path.clone())
-                .collect()
-        })
+    /// Last-modified time, in Unix seconds, of each page file this view holds,
+    /// keyed by graph-relative path (the `id` of an inventory `existing`
+    /// target), in path order. The times are the ones captured with this
+    /// view's page table (the launch stamp pass, then each save or watcher
+    /// reconcile), the same ones `(sort-by modified)` reads: a copy of data
+    /// already in memory, with no stat, no file read and no persisted record.
+    /// A file with no recorded time, or one before 1970, is absent. Cost O(P).
+    pub fn page_modified(&self) -> Vec<(String, i64)> {
+        self.graph
+            .observed_page_mtimes()
+            .iter()
+            .filter_map(|(path, time)| {
+                let elapsed = time.duration_since(std::time::UNIX_EPOCH).ok()?;
+                Some((path.clone(), i64::try_from(elapsed.as_secs()).ok()?))
+            })
+            .collect()
     }
 
     /// Return an owned `Corpus` of pages in this view for evaluation. Cost
@@ -2806,17 +2889,13 @@ impl WholeGraph {
     /// Asset names mentioned in page preambles or blocks, including decoded URL
     /// spellings and the first segment of nested image references. Cost
     /// O(P + B + scanned text bytes) on every call. This does not infer a
-    /// sidecar reference merely from its PDF base name.
-    pub fn referenced_assets(&self) -> Arc<HashSet<String>> {
+    /// sidecar reference merely from its PDF base name. Parsed pages only:
+    /// orphan safety uses [`Store::referenced_assets`] (set-aside files too).
+    pub(crate) fn referenced_assets(&self) -> Arc<HashSet<String>> {
         let mut names = HashSet::new();
         self.graph.with_pages(|pages| {
             for (_, doc) in pages {
-                if let Some(pre) = &doc.pre_block {
-                    crate::model::collect_asset_refs(pre, &mut names);
-                }
-                for block in &doc.roots {
-                    crate::model::collect_block_asset_refs(block, &mut names);
-                }
+                tine_core::asset_refs::collect_document_asset_refs(doc, &mut names);
             }
         });
         Arc::new(names)
@@ -2848,9 +2927,13 @@ impl WholeGraph {
             .iter()
             .filter(|(entry, doc)| {
                 candidates.indexed
-                    || crate::query::document_explicit_reference_names(entry, doc)
-                        .iter()
-                        .any(|name| keys.contains(name))
+                    || crate::query::document_explicit_reference_names(
+                        entry,
+                        doc,
+                        self.graph.config(),
+                    )
+                    .iter()
+                    .any(|name| keys.contains(name))
             })
             .map(|(entry, _)| PageId::from(entry.rel_path_str()))
             .collect();
@@ -2946,6 +3029,10 @@ impl WholeGraph {
         Ok(())
     }
 
+    /// Test oracle: the legacy simple/advanced bridge, kept to pin legacy-vs-IR
+    /// parity and the bridge budgets in tests. Production runs every query
+    /// through [`WholeGraph::query_ir`].
+    ///
     /// Execute one simple or advanced query macro over this stable view.
     /// This entry carries no page context, so `:current-page` has no binding
     /// here; the IR path binds it through `ExecutionContext::on_page`. A simple
@@ -2955,6 +3042,7 @@ impl WholeGraph {
     /// `QueryError::ResultTooLarge` without a partial answer. Query cost
     /// is O(P + B) graph-wide; exact page-name scopes visit only their owners
     /// unless property coercions or used-as-tag require graph-wide facts.
+    #[cfg(any(test, feature = "test-faults"))]
     pub fn query(&self, source: &str, dialect: QueryDialect) -> Result<QueryResult, QueryError> {
         if let Err(reason) = tine_core::query::admit_source(source) {
             return Err(QueryError::Parse(match reason {
@@ -3064,6 +3152,7 @@ impl WholeGraph {
                 .unwrap_or(tine_core::query::ir::FriendlyPageMatchScope::Names),
             req.page_view.clone(),
             req.block_view.clone(),
+            req.transliteration,
         );
         if result.cancelled {
             Err(QueryError::Cancelled)
@@ -3206,16 +3295,6 @@ impl WholeGraph {
     /// O(distinct referenced ids) entries; later reads clone that cached map.
     pub fn block_ref_counts(&self) -> Arc<HashMap<String, usize>> {
         self.graph.public_block_ref_counts()
-    }
-
-    /// `[[` completion over pages, journals, aliases and referenced names.
-    /// A first call can traverse all page blocks and reference text to build
-    /// indexes; later calls scan page, alias, and referenced-name candidates
-    /// and rank or sort matches, returning at most `limit` entries. Once an
-    /// index has been built, a later publication carries it forward by updating
-    /// changed pages; the first completion after every save does not rescan B.
-    pub fn complete_page_names(&self, text: &str, limit: usize) -> Vec<PageEntry> {
-        crate::query::quick_switch(&self.graph, text, limit)
     }
 
     /// Literal `((` block search, O(B) per call, at most `limit` blocks.
@@ -3380,6 +3459,61 @@ fn export_bytes_error(bytes: usize) -> QueryError {
 }
 
 #[cfg(test)]
+mod graph_name_tests {
+    use super::*;
+
+    #[test]
+    fn suggestion_skips_every_existing_entry() {
+        let temp = tempfile::tempdir().unwrap();
+        assert_eq!(Store::suggest_graph_name(temp.path()).unwrap(), "notes");
+        fs::create_dir(temp.path().join("notes")).unwrap();
+        assert_eq!(Store::suggest_graph_name(temp.path()).unwrap(), "notes-2");
+        fs::write(temp.path().join("notes-2"), b"keep").unwrap();
+        assert_eq!(Store::suggest_graph_name(temp.path()).unwrap(), "notes-3");
+    }
+
+    #[test]
+    fn graph_names_are_portable_and_trimmed() {
+        for name in [
+            "", " ", ".", "..", "a/b", "a\\b", "a<", "a>", "a:", "a\"", "a|", "a?", "a*", "a\0",
+            "a\n", "a.", "a ", "CON", "nul.txt", "PRN", "AUX", "com1", "COM9.txt", "LPT1", "LPT9",
+            "COM¹",
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            assert!(
+                Store::create_graph(temp.path(), name, &[]).is_err(),
+                "{name:?}"
+            );
+            assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 0, "{name:?}");
+        }
+        let temp = tempfile::tempdir().unwrap();
+        assert_eq!(
+            Store::create_graph(temp.path(), "  My notes", &[]).unwrap(),
+            temp.path().join("My notes")
+        );
+    }
+
+    #[test]
+    fn creation_refuses_nonempty_and_uses_empty_child() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("notes");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("keep"), b"untouched").unwrap();
+        let error = Store::create_graph(temp.path(), "notes", &[]).unwrap_err();
+        assert!(format!("{error}").contains("not empty"));
+        assert_eq!(fs::read(root.join("keep")).unwrap(), b"untouched");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        fs::create_dir(temp.path().join("empty")).unwrap();
+        assert_eq!(
+            Store::create_graph(temp.path(), "empty", &[]).unwrap(),
+            temp.path().join("empty")
+        );
+        assert!(temp.path().join("empty/logseq/config.edn").is_file());
+        assert!(!temp.path().join("logseq").exists());
+    }
+}
+
+#[cfg(test)]
 mod rev5_tests {
     use super::*;
     use std::sync::mpsc;
@@ -3407,7 +3541,7 @@ mod rev5_tests {
         fs::write(pages.join("Café.md"), "- file wins over alias\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
         let view = store.whole_graph().unwrap();
-        let inventory = view.inventory();
+        let inventory = view.inventory(crate::InventoryScope::All);
         let ordered_names: Vec<_> = inventory.0.iter().map(|entry| entry.name.clone()).collect();
         let mut legacy_order = ordered_names.clone();
         legacy_order.sort_by(|a, b| {
@@ -3549,7 +3683,7 @@ mod rev5_tests {
             matches!(tx.commit(), crate::TxOutcome::Committed { graph_rev, .. } if graph_rev == prior)
         );
         assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         let recovered = store.whole_graph().unwrap();
         assert!(recovered.rev() > prior);
         assert!(recovered.corpus().pages.iter().any(|page| {
@@ -3616,7 +3750,7 @@ mod rev5_tests {
         assert!(changes.try_recv().unwrap().is_none());
         assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
 
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(matches!(store.is_graph_ready(), Ok(true)));
         let view = store.whole_graph().unwrap();
         assert!(view.corpus().pages.iter().any(|page| {
@@ -3657,7 +3791,8 @@ mod rev5_tests {
             .lock()
             .unwrap() = Some(Arc::clone(&pause));
         let recovery_store = Arc::clone(&store);
-        let recovery = std::thread::spawn(move || recovery_store.scan_refresh().unwrap());
+        let recovery =
+            std::thread::spawn(move || recovery_store.refresh(crate::Depth::Stamps).unwrap());
         wait_hook(&pause);
         let save_store = Arc::clone(&store);
         let (attempting, attempted) = mpsc::channel();
@@ -3712,7 +3847,7 @@ mod rev5_tests {
         let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
         *store.changes.snapshot_publish_pause.lock().unwrap() = Some(Arc::clone(&pause));
         let recovery_store = Arc::clone(&store);
-        let recovery = std::thread::spawn(move || recovery_store.scan_refresh());
+        let recovery = std::thread::spawn(move || recovery_store.refresh(crate::Depth::Stamps));
         wait_hook(&pause);
         assert!(matches!(
             store.is_graph_ready(),
@@ -3862,10 +3997,15 @@ mod rev5_tests {
             view.resolve("Meta", false),
             Resolved::Existing { .. }
         ));
-        assert!(view.inventory().0.iter().any(|entry| entry.name == "Meta"));
+        assert!(view
+            .inventory(crate::InventoryScope::All)
+            .0
+            .iter()
+            .any(|entry| entry.name == "Meta"));
         assert_eq!(
             view.search(
                 &SearchRequest {
+                    transliteration: false,
                     text: "ordinary".into(),
                     within: None,
                     page_limit: 10,
@@ -4019,7 +4159,7 @@ mod rev5_tests {
             .lock()
             .unwrap() = Some(Arc::clone(&pause));
         let recovery_store = Arc::clone(&store);
-        let recovery = std::thread::spawn(move || recovery_store.scan_refresh());
+        let recovery = std::thread::spawn(move || recovery_store.refresh(crate::Depth::Stamps));
         wait_hook(&pause);
         store.close();
         release_hook(&pause);
@@ -4062,7 +4202,7 @@ mod rev5_tests {
         fs::write(&path, "- second external\n").unwrap();
         release_hook(&pause);
         assert!(reader.join().unwrap().is_ok());
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(store
             .whole_graph()
             .unwrap()
@@ -4120,7 +4260,7 @@ mod rev5_tests {
         fs::write(&path, "- external winner\n").unwrap();
         release_hook(&pause);
         assert!(matches!(save.join().unwrap(), SaveOutcome::Saved(_)));
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(store
             .whole_graph()
             .unwrap()
@@ -4345,7 +4485,7 @@ mod rev5_tests {
             .iter()
             .any(|(id, kind, _)| { id == &a.file() && *kind == ChangeKind::Removed }));
         let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
-        tx.trash(&b.file(), read_b.rev);
+        tx.trash(&b.file(), read_b.rev, crate::TrashIf::Any);
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         let trashed = changes.try_recv().unwrap().expect("own trash change");
         assert_eq!(trashed.origin, Origin::Own);
@@ -4390,7 +4530,7 @@ mod rev5_tests {
             .files
             .iter()
             .any(|(id, _, _)| id == &stream_id));
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present streamed asset was removed by a full watcher scan"
@@ -4400,7 +4540,7 @@ mod rev5_tests {
         tx.create(&bytes_id, crate::Content::Bytes(b"byte content".to_vec()));
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present byte asset was removed by a full watcher scan"
@@ -4413,7 +4553,7 @@ mod rev5_tests {
         );
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present replaced asset was removed by a full watcher scan"
@@ -4428,7 +4568,7 @@ mod rev5_tests {
         );
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present moved asset was removed by a full watcher scan"
@@ -4437,10 +4577,11 @@ mod rev5_tests {
         tx.trash(
             &moved_id,
             FileRev::from_file(&root.join("assets/moved.bin")).unwrap(),
+            crate::TrashIf::Any,
         );
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "trashed asset was reported twice"
@@ -4482,7 +4623,7 @@ mod rev5_tests {
             .unwrap() = Some(Arc::clone(&pause));
         fs::remove_file(&path).unwrap();
         let scanning = Arc::clone(&store);
-        let scan = std::thread::spawn(move || scanning.scan_refresh());
+        let scan = std::thread::spawn(move || scanning.refresh(crate::Depth::Stamps));
         wait_hook(&pause);
         fs::write(&path, "- present\n").unwrap();
         release_hook(&pause);
@@ -4505,7 +4646,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .inventory()
+            .inventory(crate::InventoryScope::All)
             .0
             .iter()
             .any(|entry| entry.name == "Present"));
@@ -4541,7 +4682,7 @@ mod rev5_tests {
         );
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present config was removed by page inventory scan"
@@ -4704,7 +4845,7 @@ mod rev5_tests {
             .any(|(id, _)| id == &a.file()));
         let mut trash_tx = store.transaction(Some(crate::EditKind::ReplacePage));
         let b = PageId::from("pages/B.md");
-        trash_tx.trash(&b.file(), b_rev);
+        trash_tx.trash(&b.file(), b_rev, crate::TrashIf::Any);
         assert!(matches!(
             trash_tx.commit(),
             crate::TxOutcome::Committed { .. }
@@ -4969,7 +5110,7 @@ mod rev5_tests {
                     let _ = view.backlinks("Target").unwrap();
                     let _ = view.query("[[Target]]", QueryDialect::Simple).unwrap();
                     let _ = view.resolve("External", false);
-                    let _ = view.inventory();
+                    let _ = view.inventory(crate::InventoryScope::All);
                     assert_eq!(view.rev(), rev);
                     assert_eq!(view.corpus().pages.len(), page_count);
                     reads.fetch_add(1, Ordering::Relaxed);
@@ -5004,7 +5145,7 @@ mod rev5_tests {
             let mut n = 0;
             while !watch_stop.load(Ordering::Acquire) {
                 fs::write(&external, format!("- outside {n}\n")).unwrap();
-                watch_store.scan_refresh().unwrap();
+                watch_store.refresh(crate::Depth::Stamps).unwrap();
                 n += 1;
             }
         }));
@@ -5053,7 +5194,7 @@ mod rev5_tests {
                 "inventory",
                 format!(
                     "{:?}",
-                    view.inventory()
+                    view.inventory(crate::InventoryScope::All)
                         .0
                         .iter()
                         .map(|entry| &entry.name)
@@ -5074,6 +5215,7 @@ mod rev5_tests {
                     "{:?}",
                     view.search(
                         &SearchRequest {
+                            transliteration: false,
                             text: "Target".into(),
                             within: None,
                             page_limit: 10,
@@ -5118,7 +5260,10 @@ mod rev5_tests {
                 "complete_page_names",
                 format!(
                     "{:?}",
-                    view.complete_page_names("", 20)
+                    view.complete_page_names("", 20, None, false, None)
+                        .into_iter()
+                        .map(|(page, _)| page)
+                        .collect::<Vec<_>>()
                         .iter()
                         .map(|entry| &entry.name)
                         .collect::<Vec<_>>()
@@ -5170,7 +5315,7 @@ mod rev5_tests {
         let original_answers = view_answers(&old);
         let old_corpus = old.corpus().pages.len();
         let old_backlinks = old.backlinks("Target").unwrap().len();
-        let old_inventory = old.inventory().0.len();
+        let old_inventory = old.inventory(crate::InventoryScope::All).0.len();
         assert!(matches!(
             old.resolve("Added", false),
             Resolved::Absent { .. }
@@ -5231,12 +5376,15 @@ mod rev5_tests {
         assert_eq!(view_answers(&old), original_answers);
 
         fs::write(root.join("pages/Added.md"), "- [[Target]] after\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         let fresh = store.whole_graph().unwrap();
         assert!(fresh.rev() != old.rev());
         assert_eq!(old.corpus().pages.len(), old_corpus);
         assert_eq!(old.backlinks("Target").unwrap().len(), old_backlinks);
-        assert_eq!(old.inventory().0.len(), old_inventory);
+        assert_eq!(
+            old.inventory(crate::InventoryScope::All).0.len(),
+            old_inventory
+        );
         assert!(matches!(
             old.resolve("Added", false),
             Resolved::Absent { .. }

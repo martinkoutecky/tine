@@ -1,3 +1,4 @@
+import { msg, t, render, type Msg } from "../i18n";
 import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { dispatchFocusedEditorCommand, blurFocusedEditor, focusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
 import { runGlobalCommand } from "../keybindings";
@@ -22,27 +23,30 @@ type ToolbarIcon =
   | "slash";
 
 type ToolbarAction =
-  | { label: string; icon: ToolbarIcon; kind: "editor"; command: MobileEditorCommandId }
-  | { label: string; icon: ToolbarIcon; kind: "global"; command: "editor/undo" | "editor/redo" };
+  | { label: Msg; icon: ToolbarIcon; kind: "editor"; command: MobileEditorCommandId }
+  | { label: Msg; icon: ToolbarIcon; kind: "global"; command: "editor/undo" | "editor/redo" };
 
 const ACTIONS: ToolbarAction[] = [
-  { label: "Outdent", icon: "outdent", kind: "editor", command: "editor/outdent" },
-  { label: "Indent", icon: "indent", kind: "editor", command: "editor/indent" },
-  { label: "Move block up", icon: "move-up", kind: "editor", command: "editor/move-block-up" },
-  { label: "Move block down", icon: "move-down", kind: "editor", command: "editor/move-block-down" },
-  { label: "Soft newline", icon: "soft-newline", kind: "editor", command: "editor/soft-newline" },
-  { label: "TODO", icon: "todo", kind: "editor", command: "editor/cycle-todo" },
-  { label: "Camera", icon: "camera", kind: "editor", command: "editor/capture-photo" },
-  { label: "Voice memo", icon: "mic", kind: "editor", command: "editor/voice-memo" },
-  { label: "Undo", icon: "undo", kind: "global", command: "editor/undo" },
-  { label: "Redo", icon: "redo", kind: "global", command: "editor/redo" },
-  { label: "Date picker", icon: "date", kind: "editor", command: "editor/open-date-picker" },
-  { label: "Page reference", icon: "page-ref", kind: "editor", command: "editor/insert-page-ref" },
-  { label: "Block reference", icon: "block-ref", kind: "editor", command: "editor/insert-block-ref" },
-  { label: "Slash menu", icon: "slash", kind: "editor", command: "editor/open-slash-menu" },
+  { label: msg("mobile-keyboard-toolbar-outdent"), icon: "outdent", kind: "editor", command: "editor/outdent" },
+  { label: msg("mobile-keyboard-toolbar-indent"), icon: "indent", kind: "editor", command: "editor/indent" },
+  { label: msg("mobile-keyboard-toolbar-move-block-up"), icon: "move-up", kind: "editor", command: "editor/move-block-up" },
+  { label: msg("mobile-keyboard-toolbar-move-block-down"), icon: "move-down", kind: "editor", command: "editor/move-block-down" },
+  { label: msg("mobile-keyboard-toolbar-soft-newline"), icon: "soft-newline", kind: "editor", command: "editor/soft-newline" },
+  { label: msg("mobile-keyboard-toolbar-todo"), icon: "todo", kind: "editor", command: "editor/cycle-todo" },
+  { label: msg("mobile-keyboard-toolbar-camera"), icon: "camera", kind: "editor", command: "editor/capture-photo" },
+  { label: msg("mobile-keyboard-toolbar-voice-memo"), icon: "mic", kind: "editor", command: "editor/voice-memo" },
+  { label: msg("mobile-keyboard-toolbar-undo"), icon: "undo", kind: "global", command: "editor/undo" },
+  { label: msg("mobile-keyboard-toolbar-redo"), icon: "redo", kind: "global", command: "editor/redo" },
+  { label: msg("mobile-keyboard-toolbar-date-picker"), icon: "date", kind: "editor", command: "editor/open-date-picker" },
+  { label: msg("mobile-keyboard-toolbar-page-reference"), icon: "page-ref", kind: "editor", command: "editor/insert-page-ref" },
+  { label: msg("mobile-keyboard-toolbar-block-reference"), icon: "block-ref", kind: "editor", command: "editor/insert-block-ref" },
+  { label: msg("mobile-keyboard-toolbar-slash-menu"), icon: "slash", kind: "editor", command: "editor/open-slash-menu" },
 ];
 
 const KEYBOARD_GAP_THRESHOLD = 48;
+/** Dispatched on window by Android's MainActivity with `detail: true|false`
+ *  whenever the soft keyboard's visibility changes (GH #716). */
+export const NATIVE_IME_EVENT = "tine-ime";
 const EDITOR_TOOLBAR_MARGIN = 8;
 
 function activeEditorHasFocus(): boolean {
@@ -67,7 +71,7 @@ export function revealFocusedEditorAboveToolbar(toolbarTop: number): boolean {
   const overlap = editor.getBoundingClientRect().bottom + EDITOR_TOOLBAR_MARGIN - toolbarTop;
   if (overlap <= 0) return false;
   const scroller = editor.closest<HTMLElement>(
-    ".main-content, .right-sidebar-scroll, .left-sidebar-scroll",
+    ".main-content, .right-sidebar, .left-sidebar-scroll",
   );
   if (scroller) scroller.scrollTop += overlap;
   else window.scrollBy({ top: overlap });
@@ -115,12 +119,25 @@ export function MobileKeyboardToolbar(): JSX.Element {
   const [keyboardVisible, setKeyboardVisible] = createSignal(false);
   const [focusedFallback, setFocusedFallback] = createSignal(false);
   let revealFrame = 0;
+  // Android pads the WebView itself above the IME (MainActivity), so there the
+  // keyboard looks exactly like a window resize. MainActivity reports the real
+  // IME state as a `tine-ime` event; until one arrives (iOS, a browser, or an
+  // Android page that has not seen a change yet) the visual viewport decides.
+  let nativeIme: boolean | undefined;
+  // A focused editor with no keyboard keeps the dock (hardware keyboard) only
+  // until a keyboard has been seen: once Back or the IME's hide key closes it,
+  // the editor stays focused but the dock yields to the navigation row, like
+  // OG's keyboardWillHide (show-toolbar? false, show-tabbar? true) (GH #716).
+  let keyboardSeen = false;
 
   const updateDock = () => {
     const top = viewportKeyboardTop();
+    const keyboardUp = nativeIme ?? window.innerHeight - top > KEYBOARD_GAP_THRESHOLD;
+    const focused = activeEditorHasFocus();
+    keyboardSeen = focused && (keyboardSeen || keyboardUp);
     setDockTop(top);
-    setKeyboardVisible(window.innerHeight - top > KEYBOARD_GAP_THRESHOLD);
-    setFocusedFallback(activeEditorHasFocus());
+    setKeyboardVisible(keyboardUp);
+    setFocusedFallback(focused && !keyboardSeen);
   };
 
   onMount(() => {
@@ -145,7 +162,12 @@ export function MobileKeyboardToolbar(): JSX.Element {
         scheduleEditorReveal();
       }
     };
+    const updateFromNativeIme = (event: Event) => {
+      nativeIme = (event as CustomEvent<unknown>).detail === true;
+      updateViewport();
+    };
     updateDock();
+    window.addEventListener(NATIVE_IME_EVENT, updateFromNativeIme);
     vv?.addEventListener("resize", updateViewport);
     vv?.addEventListener("scroll", updateViewport);
     window.addEventListener("resize", updateViewport);
@@ -153,6 +175,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
     window.addEventListener("focusout", updateAfterFocusChange);
     document.addEventListener("input", revealAfterEditorInput, true);
     onCleanup(() => {
+      window.removeEventListener(NATIVE_IME_EVENT, updateFromNativeIme);
       vv?.removeEventListener("resize", updateViewport);
       vv?.removeEventListener("scroll", updateViewport);
       window.removeEventListener("resize", updateViewport);
@@ -198,12 +221,16 @@ export function MobileKeyboardToolbar(): JSX.Element {
     dockTop(); // re-measure when the keyboard/dock moves
     const root = typeof document !== "undefined" ? document.documentElement : null;
     if (!root) return;
+    // The editing dock replaces the bottom navigation row while it is up.
+    root.toggleAttribute("data-mobile-editing-dock", shown);
     if (!shown) {
       root.style.removeProperty("--mobile-kb-toolbar-lift");
       return;
     }
     requestAnimationFrame(() => {
-      if (!toolbarRef) return;
+      // The dock may have hidden since (the keyboard closed in the same
+      // resize); measuring it now would publish a lift from a 0 top (GH #716).
+      if (!toolbarRef || !visible()) return;
       const top = toolbarRef.getBoundingClientRect().top;
       const lift = Math.max(0, window.innerHeight - top) + 8;
       root.style.setProperty("--mobile-kb-toolbar-lift", `${lift}px`);
@@ -213,6 +240,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
   onCleanup(() => {
     if (typeof document !== "undefined") {
       document.documentElement.style.removeProperty("--mobile-kb-toolbar-lift");
+      document.documentElement.removeAttribute("data-mobile-editing-dock");
     }
   });
 
@@ -220,7 +248,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
     // The viewport grows while the keyboard closes. Keep the button under the
     // active pointer until its trailing click is consumed; otherwise a mounted
     // toolbar can still move away and expose the note before pointer-up.
-    top: `calc(${Math.max(0, hideGestureDockTop() ?? dockTop())}px - env(safe-area-inset-bottom))`,
+    top: `calc(${Math.max(0, hideGestureDockTop() ?? dockTop())}px - var(--system-inset-bottom))`,
   });
   const keepEditorFocus = (e: Event) => e.preventDefault();
 
@@ -320,7 +348,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
         class="mobile-keyboard-toolbar"
         data-mobile-keyboard-toolbar
         role="toolbar"
-        aria-label="Editor toolbar"
+        aria-label={t("mobile-keyboard-toolbar-editor-toolbar")}
         hidden={!visible()}
         style={{ ...style(), display: visible() ? undefined : "none" }}
       >
@@ -333,8 +361,8 @@ export function MobileKeyboardToolbar(): JSX.Element {
                 type="button"
                 class="mobile-keyboard-toolbar-btn"
                 classList={{ recording: action.icon === "mic" && isRecordingAudio() }}
-                title={action.icon === "mic" && isRecordingAudio() ? "Stop recording" : action.label}
-                aria-label={action.icon === "mic" && isRecordingAudio() ? "Stop recording" : action.label}
+                title={action.icon === "mic" && isRecordingAudio() ? t("mobile-keyboard-toolbar-stop-recording") : render(action.label)}
+                aria-label={action.icon === "mic" && isRecordingAudio() ? t("mobile-keyboard-toolbar-stop-recording") : render(action.label)}
                 onPointerDown={tap.onPointerDown}
                 onPointerUp={tap.onPointerUp}
                 onPointerCancel={tap.onPointerCancel}
@@ -355,8 +383,8 @@ export function MobileKeyboardToolbar(): JSX.Element {
         <button
           type="button"
           class="mobile-keyboard-toolbar-btn mobile-keyboard-toolbar-hide"
-          title="Hide keyboard"
-          aria-label="Hide keyboard"
+          title={t("mobile-keyboard-toolbar-hide-keyboard")}
+          aria-label={t("mobile-keyboard-toolbar-hide-keyboard")}
           onPointerDown={(e) => {
             beginHideGesture(e);
             hideTap.onPointerDown(e);

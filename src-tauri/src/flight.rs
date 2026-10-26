@@ -45,9 +45,6 @@ pub(crate) const FLIGHT_SCHEMA_VERSION: u8 = 1;
 pub(crate) const FLIGHT_MAX_BYTES: usize = 1024 * 1024;
 /// A dirty recorder is republished at most this often (og ADR 0058).
 pub(crate) const FLUSH_INTERVAL: Duration = Duration::from_secs(30);
-/// A save that finished faster than this and succeeded is not recorded, so
-/// ordinary typing does not evict the rare events a report exists for.
-const SAVE_EVENT_THRESHOLD_MS: u64 = 150;
 
 struct FlightRing {
     lines: VecDeque<String>,
@@ -97,7 +94,7 @@ static DIRTY: AtomicBool = AtomicBool::new(false);
 
 static FLIGHT: Mutex<FlightRing> = Mutex::new(FlightRing::new());
 /// One bounded latency histogram per timing name in [`TIMING_NAMES`].
-static TIMINGS: Mutex<BTreeMap<&'static str, tine_store::LatencyHist>> =
+static TIMINGS: Mutex<BTreeMap<&'static str, tine_core::latency::LatencyHist>> =
     Mutex::new(BTreeMap::new());
 static START: OnceLock<std::time::Instant> = OnceLock::new();
 
@@ -296,50 +293,6 @@ pub(crate) fn persisted_state() -> (bool, bool) {
     }
 }
 
-/// The fixed family of a page-save result: the save wire's own closed tokens,
-/// with an `io:<ErrorKind>` family split into `io` plus the bounded kind.
-/// Anything else (never produced today) is recorded as `other`.
-fn save_family_fields(family: &str, fields: &mut Map<String, Value>) {
-    const FAMILIES: [&str; 10] = [
-        "ok",
-        "conflict",
-        "deleted",
-        "read-only",
-        "invalid-target",
-        "twin",
-        "repeated",
-        "closed",
-        "asset-too-large",
-        "publication-incomplete",
-    ];
-    if let Some(kind) = family.strip_prefix("io:") {
-        fields.insert("outcome".into(), json!("io"));
-        if !kind.is_empty() && kind.len() <= 40 && kind.bytes().all(|b| b.is_ascii_alphanumeric()) {
-            fields.insert("ioKind".into(), json!(kind));
-        }
-    } else if let Some(token) = FAMILIES.iter().find(|token| **token == family) {
-        fields.insert("outcome".into(), json!(token));
-    } else {
-        fields.insert("outcome".into(), json!("other"));
-    }
-}
-
-/// Record one `save_pages` call that failed or took at least 150 ms
-/// (`direct.save`): its outcome family, how many pages it carried and its
-/// duration. Page identity, paths and error prose never enter the event.
-/// `failure` is the save wire's failure family, `None` for success.
-pub(crate) fn record_save(failure: Option<&str>, pages: usize, elapsed: std::time::Duration) {
-    let total_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
-    if failure.is_none() && total_ms < SAVE_EVENT_THRESHOLD_MS {
-        return;
-    }
-    let mut fields = Map::new();
-    save_family_fields(failure.unwrap_or("ok"), &mut fields);
-    fields.insert("pages".into(), json!(pages));
-    fields.insert("totalMs".into(), json!(total_ms));
-    record_fixed_event("direct.save", fields);
-}
-
 /// How one external batch fared in the watcher: milliseconds and counts, never
 /// a path. Carried by `watcher.batch` events and the watcher's devtools ring.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
@@ -516,6 +469,7 @@ const UPDATER_CAUSES: [&str; 7] = [
 /// (`frontend.error_toast`: that an error toast was shown; never its text,
 /// which may name pages — the opt-in debug log has it). Any other kind, or a
 /// token outside its list, drops the event.
+/// `journal_feed` records only an allowlisted publication-stage reason.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diagnostic_frontend_event(
@@ -527,7 +481,18 @@ pub(crate) fn diagnostic_frontend_event(
     updater_cause: Option<String>,
     close_reason: Option<String>,
     pages: Option<u64>,
+    journal_feed_reason: Option<String>,
+    journal_feed_cause: Option<String>,
 ) {
+    if kind == "journal_feed" {
+        if let Some(fields) = journal_feed_event_fields(
+            journal_feed_reason.as_deref(),
+            journal_feed_cause.as_deref(),
+        ) {
+            record_fixed_event("journal.feed", fields);
+        }
+        return;
+    }
     if let Some((event, fields)) = frontend_event_fields(
         &kind,
         line,
@@ -539,6 +504,73 @@ pub(crate) fn diagnostic_frontend_event(
         pages,
     ) {
         record_fixed_event(event, fields);
+    }
+}
+
+/// GH #671: reject unknown tokens at the native trust boundary, even if a
+/// frontend caller supplies graph content in place of a reason.
+fn journal_feed_event_fields(
+    reason: Option<&str>,
+    cause: Option<&str>,
+) -> Option<Map<String, Value>> {
+    let reason = reason.filter(|value| {
+        matches!(
+            *value,
+            "template-deferred"
+                | "template-stale"
+                | "template-error"
+                | "template-day-changed"
+                | "active-edit"
+                | "owner-retired"
+                | "window-unbound"
+                | "read-stale"
+                | "day-mismatch"
+                | "generation-changed"
+                | "admission-stale"
+                | "admission-refused"
+                | "feed-error"
+                | "route-unpublished"
+        )
+    })?;
+    let mut fields = Map::new();
+    fields.insert("reason".into(), json!(reason));
+    if let Some(cause) = cause {
+        let cause = ["empty-rejection", "other-rejection"]
+            .into_iter()
+            .find(|allowed| *allowed == cause)?;
+        fields.insert("cause".into(), json!(cause));
+    }
+    Some(fields)
+}
+
+/// GH #181: a link's quick closed-graph check ruled out `ruled_out` graphs and
+/// no graph resolved the target, so they were fully opened; `rescued` of them
+/// held it (each one a prefilter false negative). Counts only, never paths.
+pub(crate) fn link_probe_rescue(ruled_out: u64, rescued: u64) {
+    let mut fields = Map::new();
+    fields.insert("ruledOut".into(), json!(ruled_out));
+    fields.insert("rescued".into(), json!(rescued));
+    record_fixed_event("link.probe.rescue", fields);
+}
+
+/// Capture the typed native failure before the bridge turns it into free text.
+/// Error messages can contain graph paths and must never enter this report.
+pub(crate) fn journal_feed_io_failure(kind: std::io::ErrorKind) {
+    let mut fields = Map::new();
+    fields.insert("reason".into(), json!(journal_feed_io_reason(kind)));
+    record_fixed_event("journal.feed.read_failed", fields);
+}
+
+fn journal_feed_io_reason(kind: std::io::ErrorKind) -> &'static str {
+    use std::io::ErrorKind;
+    match kind {
+        ErrorKind::PermissionDenied => "permission-denied",
+        ErrorKind::NotFound => "not-found",
+        ErrorKind::BrokenPipe => "broken-pipe",
+        ErrorKind::InvalidData => "invalid-data",
+        ErrorKind::Interrupted => "interrupted",
+        ErrorKind::TimedOut => "timed-out",
+        _ => "other-io",
     }
 }
 
@@ -824,16 +856,11 @@ mod tests {
 
     #[test]
     fn a_report_carries_recorded_events_and_the_build_but_no_free_text() {
-        let _ = diagnostic_ipc_event("save_pages".into(), "slow".into(), 612);
-        record_save(
-            Some("io:PermissionDenied"),
-            2,
-            std::time::Duration::from_millis(3),
-        );
-        record_save(
-            Some("/home/someone/graph/pages/secret.md"),
+        diagnostic_ipc_event("page_submit".into(), "slow".into(), 612);
+        diagnostic_ipc_event(
+            "/home/someone/graph/pages/secret.md".into(),
+            "slow".into(),
             1,
-            std::time::Duration::ZERO,
         );
         let report = build_diagnostic_report(
             Some(1),
@@ -845,14 +872,8 @@ mod tests {
         let parsed: Value = serde_json::from_str(&report.text).unwrap();
         let events = parsed["sessions"]["current"].as_array().unwrap();
         assert!(events.iter().any(|event| event["event"] == "ipc.command"
-            && event["command"] == "save_pages"
+            && event["command"] == "page_submit"
             && event["elapsedMs"] == 612));
-        assert!(events.iter().any(|event| event["event"] == "direct.save"
-            && event["outcome"] == "io"
-            && event["ioKind"] == "PermissionDenied"));
-        assert!(events
-            .iter()
-            .any(|event| event["event"] == "direct.save" && event["outcome"] == "other"));
         assert_eq!(parsed["app"]["buildCommit"], "abcdef1");
         assert!(parsed["app"]["buildTime"].is_null());
         assert_eq!(parsed["runtime"]["retainedAcrossRuns"], false);
@@ -907,7 +928,7 @@ mod tests {
     #[test]
     fn unknown_commands_phases_and_self_timings_are_not_recorded() {
         diagnostic_ipc_event("My secret page".into(), "slow".into(), 1);
-        diagnostic_ipc_event("save_pages".into(), "a path /tmp/x".into(), 1);
+        diagnostic_ipc_event("page_submit".into(), "a path /tmp/x".into(), 1);
         diagnostic_ipc_event("diagnostic_report".into(), "slow".into(), 1);
         let ring = FLIGHT.lock().unwrap();
         for forbidden in [
@@ -1006,6 +1027,60 @@ mod tests {
         }
     }
 
+    #[test]
+    fn journal_feed_reasons_are_closed_and_never_record_graph_content() {
+        for reason in [
+            "template-deferred",
+            "template-stale",
+            "template-error",
+            "template-day-changed",
+            "active-edit",
+            "owner-retired",
+            "window-unbound",
+            "read-stale",
+            "day-mismatch",
+            "generation-changed",
+            "admission-stale",
+            "admission-refused",
+            "feed-error",
+            "route-unpublished",
+        ] {
+            let fields = journal_feed_event_fields(Some(reason), None).unwrap();
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields["reason"], json!(reason));
+        }
+        for reason in [
+            None,
+            Some("Daily Template"),
+            Some("/private/graph"),
+            Some("read failed: secret page"),
+        ] {
+            assert!(journal_feed_event_fields(reason, None).is_none());
+        }
+        for cause in ["empty-rejection", "other-rejection"] {
+            let fields = journal_feed_event_fields(Some("feed-error"), Some(cause)).unwrap();
+            assert_eq!(fields["cause"], json!(cause));
+            assert_eq!(fields.len(), 2);
+        }
+        assert!(journal_feed_event_fields(Some("feed-error"), Some("/private/graph")).is_none());
+    }
+
+    #[test]
+    fn journal_feed_native_failures_use_typed_io_categories() {
+        use std::io::ErrorKind;
+        for (kind, reason) in [
+            (ErrorKind::PermissionDenied, "permission-denied"),
+            (ErrorKind::NotFound, "not-found"),
+            (ErrorKind::BrokenPipe, "broken-pipe"),
+            (ErrorKind::InvalidData, "invalid-data"),
+            (ErrorKind::Interrupted, "interrupted"),
+            (ErrorKind::TimedOut, "timed-out"),
+            (ErrorKind::Other, "other-io"),
+        ] {
+            assert_eq!(journal_feed_io_reason(kind), reason);
+        }
+    }
+
     /// The frontend names every command it times from its own list; the two
     /// lists must stay equal, and a timed command must be a registered one.
     #[test]
@@ -1030,17 +1105,6 @@ mod tests {
                 assert!(crate::command_surface::is_known_command(name), "{name}");
             }
         }
-    }
-
-    #[test]
-    fn a_fast_successful_save_is_not_an_event() {
-        let before: Vec<String> = FLIGHT.lock().unwrap().lines.iter().cloned().collect();
-        record_save(None, 1, std::time::Duration::from_millis(3));
-        let after: Vec<String> = FLIGHT.lock().unwrap().lines.iter().cloned().collect();
-        let added: Vec<_> = after.iter().filter(|line| !before.contains(line)).collect();
-        assert!(!added
-            .iter()
-            .any(|line| line.contains("\"outcome\":\"ok\"") && line.contains("\"totalMs\":3")));
     }
 
     #[test]
@@ -1263,12 +1327,7 @@ mod tests {
                 mark_clean_shutdown();
             }
             "killed" => std::process::abort(),
-            "edits" => {
-                // Ordinary saves of a 1-block and a 60-block page: fast, ok.
-                for _ in 0..500 {
-                    record_save(None, 1, std::time::Duration::from_millis(4));
-                    record_save(None, 60, std::time::Duration::from_millis(40));
-                }
+            "clean" => {
                 println!("PROBE-DIRTY {}", DIRTY.load(Ordering::Acquire));
                 mark_clean_shutdown();
             }
@@ -1309,17 +1368,24 @@ mod tests {
         String::from_utf8_lossy(&output.stdout).into_owned()
     }
 
-    /// I-25 unit cost: an edit writes nothing to diagnostics. Fast successful
-    /// saves record no event, so the recorder never becomes dirty and the
-    /// flusher never rewrites the history because of typing.
+    /// I-25 unit cost: an edit writes nothing to diagnostics. The edit path
+    /// (`page_commands.rs`, the page host's commands) never reaches the
+    /// recorder, so typing never dirties it and the flusher never rewrites
+    /// the history because of it; a clean launch leaves only its two files.
     #[test]
-    fn ordinary_saves_cost_no_diagnostic_bytes() {
+    fn ordinary_edits_cost_no_diagnostic_bytes() {
+        let edits = include_str!("page_commands.rs");
+        for recorder in ["flight::", "record_fixed_event"] {
+            assert!(
+                !edits.contains(recorder),
+                "I-25: an edit records no diagnostic event; page_commands.rs names {recorder}"
+            );
+        }
         let temp = tempfile::tempdir().unwrap();
         let dir = temp.path().join("diagnostics");
-        let output = launch_output(&dir, "edits");
+        let output = launch_output(&dir, "clean");
         assert!(output.contains("PROBE-DIRTY false"), "{output}");
         let history = std::fs::read_to_string(dir.join(crate::flight_store::HISTORY_FILE)).unwrap();
-        assert!(!history.contains("direct.save"), "{history}");
         let files: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())

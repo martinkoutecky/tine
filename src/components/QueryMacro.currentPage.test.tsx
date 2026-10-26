@@ -255,6 +255,25 @@ describe("query `<% current page %>` dispatch to the focused pane (GH #301)", ()
     } finally { dispose(); }
   });
 
+  it("passes a complete advanced map and focused page to the live query engine", async () => {
+    const argument = '{:query [:find (pull ?b [*]) :in $ ?current-page :where [?p :block/name ?current-page] [?b :block/refs ?p] [?b :block/marker "TODO"]] :inputs [:current-page]}';
+    loadQueryDoc(`{{query ${argument}}}`, "advanced");
+    const rows: RefGroup[] = [{
+      page: "Second", kind: "page",
+      blocks: [{ id: "second-hit", raw: "TODO from second [[Public]]", collapsed: false, children: [] }],
+    }];
+    const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(rows, { ran: ["current-page-ref", "marker"] }));
+    openPage("Public", "page");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("from second"));
+      expect(backend().parseQuery).toHaveBeenCalledWith(argument, "macro_query", []);
+      expect(ranText(run.mock.calls.at(-1))).toBe(argument);
+      expect(run.mock.calls.at(-1)?.[2]).toEqual({ current_page: "Public" });
+      expect(root.textContent).not.toContain("No matching blocks");
+    } finally { dispose(); }
+  });
+
   it("keeps an advanced query without the live keyword owner-bound and navigation-independent", async () => {
     loadQueryDoc('{{query {:query [:find (pull ?b [*]) :where (task ?b "TODO")] :inputs ["example :current-page"]}}}', "advanced");
     const runQuery = vi

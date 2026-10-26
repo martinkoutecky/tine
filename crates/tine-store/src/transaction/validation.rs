@@ -5,7 +5,7 @@ use std::path::Path;
 use super::io_helpers::{content_refusal, failed};
 use super::{Content, FileId, Refusal, RenameMap, Store, Why};
 
-pub(super) fn rewrite(
+pub(crate) fn rewrite(
     old: &[u8],
     path: &Path,
     map: &RenameMap,
@@ -15,29 +15,17 @@ pub(super) fn rewrite(
     crate::cost_counters::transaction_rewrite();
     let text = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
     let is_org = path.extension().and_then(|ext| ext.to_str()) == Some("org");
-    let rewritten = rewritten_text(text, is_org, map, name_format);
+    let rewritten = tine_core::refs::rename_rewrite(text, is_org, &map.0, name_format);
     refuse_read_only_org(text.as_bytes(), rewritten.as_bytes(), is_org)?;
     Ok(rewritten.into_bytes())
 }
 
-/// The store's one reference rewriter: `map`'s links, tags and `tags::`
-/// values in `text`. Pure, O(text).
-pub(super) fn rewritten_text(
-    text: &str,
-    is_org: bool,
-    map: &RenameMap,
-    name_format: tine_core::config::FileNameFormat,
-) -> String {
-    let renames: std::collections::HashMap<String, String> = map
-        .0
-        .iter()
-        .map(|(from, to)| (tine_core::refs::normalize(from), to.clone()))
-        .collect();
-    tine_core::refs::rename_tags_property_multi(
-        &tine_core::refs::rename_refs_multi(text, &renames, is_org, name_format),
-        &renames,
-        is_org,
-    )
+/// [`rewrite`]'s result `new`, which the rename planner computed from exactly
+/// `old` (GH #623): only the Org round-trip refusal is decided again.
+pub(crate) fn prepared(old: &[u8], new: Vec<u8>, path: &Path) -> Result<Vec<u8>, Why> {
+    let is_org = path.extension().and_then(|ext| ext.to_str()) == Some("org");
+    refuse_read_only_org(old, &new, is_org)?;
+    Ok(new)
 }
 
 /// Refuse changing an Org file that does not round-trip. Scenario: malformed
@@ -56,7 +44,7 @@ pub(super) fn refuse_read_only_org(old: &[u8], new: &[u8], is_org: bool) -> Resu
 /// the same guarded transaction when it still names the old identity; a custom
 /// title remains untouched. A non-round-tripping Org file is refused rather
 /// than rewritten.
-pub(super) fn rewrite_move(
+pub(crate) fn rewrite_move(
     old: &[u8],
     path: &Path,
     map: &RenameMap,
@@ -165,10 +153,20 @@ pub(super) fn validate_config_content(store: &Store, content: &Content) -> Resul
 }
 
 pub(super) fn validate_page_content(file: &FileId, content: &Content) -> Result<(), Why> {
+    page_content_bytes(file, content).map(drop)
+}
+
+/// Stage raw creation bytes with the same bounds and validation on the
+/// transaction and planning paths.
+pub(super) fn page_content_bytes<'a>(
+    file: &FileId,
+    content: &'a Content,
+) -> Result<std::borrow::Cow<'a, [u8]>, Why> {
     match content {
         Content::Bytes(bytes) => {
             crate::model::validate_parse_bytes_for_path(bytes, Path::new(file.as_str()))
-                .map_err(content_refusal)
+                .map_err(content_refusal)?;
+            Ok(std::borrow::Cow::Borrowed(bytes))
         }
         Content::Stream { source, max_bytes } => {
             use std::io::Read;
@@ -186,7 +184,8 @@ pub(super) fn validate_page_content(file: &FileId, content: &Content) -> Result<
                 ))));
             }
             crate::model::validate_parse_bytes_for_path(&bytes, Path::new(file.as_str()))
-                .map_err(content_refusal)
+                .map_err(content_refusal)?;
+            Ok(std::borrow::Cow::Owned(bytes))
         }
     }
 }

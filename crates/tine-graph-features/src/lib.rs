@@ -7,6 +7,7 @@
 pub mod assets;
 pub mod config;
 pub mod conflicts;
+pub mod custom_css;
 pub mod graph_verification;
 pub mod guide;
 pub mod journals;
@@ -20,9 +21,9 @@ pub mod publish;
 pub mod publish_query;
 mod render;
 mod render_query_cache;
+mod retained;
 pub use render::{SheetExport, SheetInput};
 pub mod search;
-pub mod sources;
 
 use std::io;
 use tine_store::{FileId, Refusal, Store, StoreError, TxOutcome, Why};
@@ -113,39 +114,51 @@ fn tx_error(outcome: TxOutcome) -> io::Result<Vec<tine_store::StepResult>> {
                         .collect::<Vec<_>>(), ", ")
                 ))));
             }
-            Err(match why {
-                Why::Conflict { .. } => {
-                    io::Error::new(io::ErrorKind::WouldBlock, "concurrent graph write")
-                }
-                Why::Failed(error) => io::Error::new(error.kind, error.message),
-                Why::Refused(refusal) => match refusal {
-                    Refusal::ReadOnly(message) | Refusal::InvalidTarget(message) => {
-                        io::Error::new(io::ErrorKind::InvalidInput, message)
-                    }
-                    Refusal::Twin { .. } => {
-                        io::Error::new(io::ErrorKind::AlreadyExists, "twin page")
-                    }
-                    Refusal::Undecodable => {
-                        io::Error::new(io::ErrorKind::InvalidData, "undecodable file")
-                    }
-                    Refusal::RepeatedFile(_) => {
-                        io::Error::new(io::ErrorKind::InvalidInput, "repeated file")
-                    }
-                    Refusal::Closed => io::Error::new(io::ErrorKind::BrokenPipe, "store closed"),
-                    Refusal::AssetReferenced => {
-                        io::Error::new(io::ErrorKind::InvalidInput, assets::AssetReferenced)
-                    }
-                    Refusal::UnreadableOwner { file } => io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "{} cannot be read and may already be this page",
-                            file.as_str()
-                        ),
-                    ),
-                },
-            })
+            Err(why_error(why))
         }
     }
+}
+
+/// A refusal or failure as the caller's I/O error.
+fn why_error(why: Why) -> io::Error {
+    match why {
+        Why::Conflict { .. } => io::Error::new(io::ErrorKind::WouldBlock, "concurrent graph write"),
+        Why::Failed(error) => io::Error::new(error.kind, error.message),
+        Why::Refused(refusal) => match refusal {
+            Refusal::ReadOnly(message) | Refusal::InvalidTarget(message) => {
+                io::Error::new(io::ErrorKind::InvalidInput, message)
+            }
+            Refusal::Twin { .. } => io::Error::new(io::ErrorKind::AlreadyExists, "twin page"),
+            Refusal::Undecodable => io::Error::new(io::ErrorKind::InvalidData, "undecodable file"),
+            Refusal::RepeatedFile(_) => {
+                io::Error::new(io::ErrorKind::InvalidInput, "repeated file")
+            }
+            Refusal::Closed => io::Error::new(io::ErrorKind::BrokenPipe, "store closed"),
+            Refusal::AssetReferenced => {
+                io::Error::new(io::ErrorKind::InvalidInput, assets::AssetReferenced)
+            }
+            Refusal::UnreadableOwner { file } => io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{} cannot be read and may already be this page",
+                    file.as_str()
+                ),
+            ),
+        },
+    }
+}
+
+/// A failure after part of an operation already completed. The error keeps
+/// its kind, which callers branch on, and its message leads with what was
+/// saved, so the user is not told the whole operation failed (P3 review #7).
+fn after_partial(done: &str, error: io::Error) -> io::Error {
+    let text = error.to_string();
+    let mut chars = text.chars();
+    let rest: String = chars
+        .next()
+        .map(|first| first.to_lowercase().chain(chars).collect())
+        .unwrap_or_default();
+    io::Error::new(error.kind(), format!("{done}, but {rest}"))
 }
 
 fn is_conflict(outcome: &TxOutcome) -> bool {
@@ -154,11 +167,19 @@ fn is_conflict(outcome: &TxOutcome) -> bool {
     } if rollback.undo_failed.is_empty() && publication_errors.is_empty())
 }
 
+// `retry_on_conflict` attempts on this thread: the bound a test counts.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn retry_on_conflict<T>(
     exhausted: &'static str,
     mut attempt: impl FnMut() -> io::Result<Option<T>>,
 ) -> io::Result<T> {
     for _ in 0..4 {
+        #[cfg(test)]
+        ATTEMPTS.with(|n| n.set(n.get() + 1));
         if let Some(value) = attempt()? {
             return Ok(value);
         }
@@ -185,13 +206,21 @@ fn trash_current(
         Err(StoreError::NotFound) => return Err(io::Error::new(io::ErrorKind::NotFound, missing)),
         Err(error) => return Err(store_error(error)),
     };
+    Ok(commit_retry(trash_transaction(store, id, rev).commit())?.then_some(()))
+}
+
+fn trash_transaction<'a>(
+    store: &'a Store,
+    id: &FileId,
+    rev: tine_store::FileRev,
+) -> tine_store::Transaction<'a> {
     let mut tx = if store.as_page(id).is_some() {
         store.transaction(Some(tine_store::EditKind::DeletePage))
     } else {
         store.transaction(None)
     };
-    tx.trash(id, rev);
-    Ok(commit_retry(tx.commit())?.then_some(()))
+    tx.trash(id, rev, tine_store::TrashIf::Any);
+    tx
 }
 
 #[cfg(test)]

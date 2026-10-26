@@ -5,7 +5,7 @@
 //! (evaluating 'page_header_json')" and one page refused to display. Native
 //! tine-core hid the same bug behind `catch_unwind`. Invariants: I-2 (one bad
 //! file must not refuse the graph), I-22 (every lsdoc call goes through
-//! `crates/lsdoc-block-parse.rs`). Exemplar: `parse_text_bounded`.
+//! `crates/tine-outline/src/lsdoc_block_parse.rs`). Exemplar: `parse_text_bounded`.
 
 use tine_core::block_regions::page_header;
 

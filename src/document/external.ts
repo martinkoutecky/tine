@@ -1,4 +1,6 @@
+import { msg } from "../i18n";
 import { applyGraphAnswers } from "../graphAnswers";
+import { beginResultsChange } from "../queryResultsEpoch";
 import { backend, type GraphChange, type GraphAnswersChange } from "../backend";
 import { captureBinding, bindingCurrent } from "../binding";
 import { conflictPolicyAlwaysAsk, holdExternalChange, installHeldExternalChangeApplier } from "../conflictPolicy";
@@ -6,11 +8,10 @@ import { pushToast } from "../toasts";
 import { readOwned, bindingOwner } from "../owned";
 import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
 import { toLoadablePage } from "./convert";
-import type { PageDto } from "../types";
 import { doc, feedNames, pageByName } from "./model";
-import { applyObservedDivergence, isConflicted } from "./save/engine";
+import { acceptHeldPush, hostHolds, isConflicted } from "./host/wiring";
 import { deferExternalReload, installDeferredReloadReplay } from "./deferredReload";
-import { loadedContentEquals, rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, reportPageLoadRefusal, restoreTodayJournalInFeed } from "./workingSet";
+import { rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, reportPageLoadRefusal, restoreTodayJournalInFeed } from "./workingSet";
 
 /** Route and feed actions belong to the app; the document module owns the
  * decision to call them. The snapshot keeps one watcher event on one UI view. */
@@ -39,7 +40,8 @@ export function installExternalChangeUiHandler(capture: () => ExternalChangeUi):
 }
 
 /** Apply an already-observed watcher change to frontend graph revisions and
- * loaded pages. Reload a safe loaded page, mark an edited page conflicted, or
+ * loaded pages. Reload a safe loaded page, leave a page the host holds to its
+ * mail (the host detects conflicts), defer a held one, or
  * notify route/feed UI about a removal. The watcher/backend has already
  * updated disk and its cache; this function does not persist the change.
  * Page reads may reject. Cost follows the affected page and current UI state. */
@@ -48,10 +50,14 @@ export async function applyGraphChange(c: GraphChange, bypassPolicy = false): Pr
   if (c.binding_generation !== undefined && c.binding_generation !== binding.backendGeneration) return;
   // The watcher has already updated the backend graph cache. Invalidate even
   // when this page is outside the bounded frontend working set.
-  applyGraphAnswers(c.answers);
-  bumpDataRev();
-  if (c.created || c.removed) bumpPageInventoryRev();
-  await applyObservedChange(c, captureExternalChangeUi?.(), bypassPolicy);
+  const finish = beginResultsChange();
+  try {
+    applyGraphAnswers(c.answers);
+    bumpDataRev();
+    if (c.created || c.removed) bumpPageInventoryRev();
+    await applyObservedChange(c, captureExternalChangeUi?.(), bypassPolicy);
+  }
+  finally { finish(); }
 }
 
 /** One checkout-sized watcher batch (`graph-changed-bulk`, over 32 pages;
@@ -65,6 +71,8 @@ export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; bind
   applyGraphAnswers(bulk.answers);
   const changes = bulk.changes;
   if (!changes.length) return;
+  const finish = beginResultsChange();
+  try {
   bumpDataRev();
   for (const change of changes) applyGraphAnswers(change.answers);
   if (changes.some((c) => c.created || c.removed)) bumpPageInventoryRev();
@@ -81,7 +89,8 @@ export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; bind
   }
   if (!bindingCurrent(binding)) return;
   if (restart || (ui?.journalsOpen && changes.some((c) => c.kind === "journal"))) ui?.restartJournalFeed();
-  pushToast(`${changes.length} pages updated externally${conflicts ? ` · ${conflicts} conflict${conflicts === 1 ? "" : "s"} to review` : ""}`, "info");
+  pushToast(msg("document-external-updates", { pages: changes.length, conflicts }), "info");
+  } finally { finish(); }
 }
 
 async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefined, bypassPolicy: boolean): Promise<void> {
@@ -93,34 +102,24 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
   const currentName = loadedName ?? c.name;
   // `c.path` names the loaded file only when `loadedName` was found by it.
   const disp = reloadDisposition(currentName, loadedName ? c.path : undefined);
-  const markObservedConflict = async () => {
-    const id = pageByName(currentName)?.id;
-    let revision: string | null | undefined;
-    let observed: (PageDto & { id?: string }) | null = null;
-    try {
-      if (c.removed) revision = null;
-      else {
-        const result = await readOwned(owner, id
-          ? backend().getPageByPath(id)
-          : backend().getPage(currentName, c.kind));
-        if (result.kind === "stale") return;
-        revision = result.value?.rev ?? null;
-        observed = result.value ?? null;
-      }
-    } catch {
-      // Without a fresh observation, the old load revision remains a
-      // conservative guard: Keep mine cannot clobber changed bytes.
-    }
-    if (owner() && pageByName(currentName)?.id === id && reloadDisposition(currentName) === "conflict")
-      applyObservedDivergence(currentName, revision, !!observed && loadedContentEquals(currentName, observed));
-  };
+  // A page the host holds for this window takes the change as host mail (its
+  // text when clean, a conflict over input): nothing to reload here. "Reload
+  // from disk" for a change held by "always ask" installs what the host holds;
+  // a removal waits until the host lets go of the page.
+  if (hostHolds(currentName)) {
+    if (bypassPolicy) acceptHeldPush(currentName);
+    else if (c.removed) deferExternalReload(currentName, c);
+    restartJournalFeed();
+    return;
+  }
+  // Input not yet with the host ("conflict") or a hold ("skip"): replayed
+  // once the page is replaceable.
+  if (disp !== "reload") {
+    deferExternalReload(currentName, c);
+    restartJournalFeed();
+    return;
+  }
   if (c.removed) {
-    if (disp === "conflict") await markObservedConflict();
-    if (disp === "conflict" || disp === "skip") {
-      if (disp === "skip") deferExternalReload(currentName, c);
-      restartJournalFeed();
-      return;
-    }
     ui?.leaveRemovedPage(c.name);
     if (c.kind === "journal" && ui?.journalsOpen) {
       // Another file holding today's name keeps it out of the feed (og J1);
@@ -132,12 +131,6 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
     return;
   }
 
-  if (disp === "conflict") await markObservedConflict();
-  if (disp === "conflict" || disp === "skip") {
-    if (disp === "skip") deferExternalReload(currentName, c);
-    restartJournalFeed();
-    return;
-  }
   // "Always ask": reached only after the conflict/skip branches, so it turns
   // the one SILENT case (a loaded, clean page) into an asked one and changes
   // nothing that already asked or deferred.

@@ -66,8 +66,7 @@ pub fn canonical_group_field(value: &str) -> Option<String> {
     group_field::canonical_group_token(value).map(str::to_owned)
 }
 
-#[path = "../../tine-core/src/page_filename.rs"]
-mod page_filename;
+use tine_outline::page_filename;
 
 /// Encode a Windows-safe Logseq page stem; legacy selects percent-encoded
 /// namespaces, false selects triple-lowbar. O(title bytes), no I/O or failure.
@@ -90,6 +89,14 @@ pub fn split_linkable_property(value: &str) -> Vec<String> {
     value.split(block_regions::is_linkable_property_separator).map(str::to_owned).collect()
 }
 
+/// OG property tokens, shared with native property atomization. O(value bytes).
+#[wasm_bindgen]
+pub fn linkable_property_names(value: &str, is_org: bool) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    tine_outline::property_refs::linkable_names(value, is_org)
+        .into_iter().filter(|name| seen.insert(page_identity::page_key(name))).collect()
+}
+
 #[path = "../../tine-core/src/render_facets.rs"]
 mod render_facets;
 
@@ -106,23 +113,15 @@ pub fn task_checkbox_state(marker: &str) -> Option<bool> {
     render_facets::task_checkbox_state(marker)
 }
 
-#[path = "../../tine-core/src/block_regions.rs"]
-mod block_regions;
-mod render {
-    pub(crate) use crate::lsdoc_block_parse::parse_block;
-    pub(crate) fn parse_text_bounded(text: &str, is_org: bool) -> Option<lsdoc::ast::Projection> {
-        crate::lsdoc_block_parse::parse_text_bounded(text, if is_org { "org" } else { "md" })
-    }
-}
+use tine_outline::block_regions;
+use tine_outline::editor_text;
 
-#[path = "../../tine-core/src/logbook.rs"]
-mod logbook;
+use tine_outline::logbook;
 #[path = "../../tine-core/src/media_mime.rs"]
 mod media_mime;
-#[path = "../../lsdoc-block-parse.rs"]
-mod lsdoc_block_parse;
-#[path = "../../tine-core/src/property_line.rs"]
-mod property_line;
+use tine_outline::lsdoc_block_parse;
+use tine_outline::outline;
+use tine_outline::property_line;
 
 /// Accepted single Markdown property line, using the native borrowed grammar.
 /// O(line bytes), no parse or I/O; malformed input serializes as null.
@@ -214,7 +213,11 @@ pub fn render_block_html(raw: &str, is_org: bool) -> String {
     } else {
         lsdoc::Format::Md
     };
-    let blocks = lsdoc_block_parse::parse_block(raw, is_org);
+    let mut blocks = lsdoc_block_parse::parse_block(raw, is_org);
+    if !is_org {
+        // The same swallowed-row strip as the bundle the app renders (GH #721).
+        block_regions::strip_swallowed_rows(raw, &mut blocks);
+    }
     lsdoc::render_html(&blocks, &lsdoc::RenderOpts { format: rfmt })
 }
 
@@ -305,8 +308,11 @@ pub fn lsdoc_tag() -> String {
 
 #[wasm_bindgen]
 pub fn parse_block_bundle_json(raw: &str, is_org: bool) -> String {
-    let blocks = lsdoc_block_parse::parse_block(raw, is_org);
+    let mut blocks = lsdoc_block_parse::parse_block(raw, is_org);
     let regions = block_regions::from_blocks(raw, is_org, &blocks);
+    if !is_org {
+        block_regions::strip_swallowed_rows(raw, &mut blocks);
+    }
     format!(
         "{{\"blocks\":{},\"regions\":{},\"sole_macro\":{}}}",
         lsdoc::blocks_to_json(&blocks).unwrap(),
@@ -314,22 +320,14 @@ pub fn parse_block_bundle_json(raw: &str, is_org: bool) -> String {
         serde_json::to_string(&standalone_macro::sole_macro(&blocks)).unwrap()
     )
 }
-#[wasm_bindgen]
-pub fn edit_block_regions_json(
-    raw: &str,
-    is_org: bool,
-    regions: &JsValue,
-    request: &JsValue,
-) -> Result<String, JsValue> {
-    use block_regions::{BlockRegions, Drawer, Edit, Planning, Property, Range};
+/// The window's cached regions for exactly `raw`, as the structural editors take them.
+fn regions_from_js(raw: &str, regions: &JsValue) -> Result<block_regions::BlockRegions, JsValue> {
+    use block_regions::{BlockRegions, Drawer, Planning, Property, Range};
     fn get(v: &JsValue, key: &str) -> JsValue {
         js_sys::Reflect::get(v, &JsValue::from_str(key)).unwrap_or(JsValue::UNDEFINED)
     }
     fn text(v: &JsValue, key: &str) -> String {
         get(v, key).as_string().unwrap_or_default()
-    }
-    fn optional(v: &JsValue, key: &str) -> Option<String> {
-        get(v, key).as_string()
     }
     fn array(v: &JsValue, key: &str) -> js_sys::Array {
         js_sys::Array::from(&get(v, key))
@@ -394,6 +392,27 @@ pub fn edit_block_regions_json(
             clocks,
         });
     }
+    Ok(r)
+}
+
+#[wasm_bindgen]
+pub fn edit_block_regions_json(
+    raw: &str,
+    is_org: bool,
+    regions: &JsValue,
+    request: &JsValue,
+) -> Result<String, JsValue> {
+    use block_regions::Edit;
+    fn get(v: &JsValue, key: &str) -> JsValue {
+        js_sys::Reflect::get(v, &JsValue::from_str(key)).unwrap_or(JsValue::UNDEFINED)
+    }
+    fn text(v: &JsValue, key: &str) -> String {
+        get(v, key).as_string().unwrap_or_default()
+    }
+    fn optional(v: &JsValue, key: &str) -> Option<String> {
+        get(v, key).as_string()
+    }
+    let r = regions_from_js(raw, regions)?;
     if text(request, "kind") == "reattach_properties" {
         return r.reattach_org_properties(raw, &text(request, "hidden"))
             .map_err(|e| JsValue::from_str(&e));
@@ -420,6 +439,111 @@ pub fn edit_block_regions_json(
     };
     r.apply(raw, is_org, edit)
         .map_err(|e| JsValue::from_str(&e))
+}
+
+/// The editor's view of one block (outline kernel `editor_text`, twin 13):
+/// `{visible, hidden}` from the window's cached regions for exactly `raw`.
+/// `policy` is a kernel `HidePolicy` as JSON. O(block bytes), no parse.
+#[wasm_bindgen]
+pub fn editor_text_json(raw: &str, is_org: bool, regions: &JsValue, policy: &str) -> Result<String, JsValue> {
+    let r = regions_from_js(raw, regions)?;
+    let p = hide_policy(policy)?;
+    Ok(serde_json::to_string(&editor_text::split_with(raw, is_org, &r, &p)).unwrap())
+}
+
+/// The editor (UTF-16) offset of raw UTF-16 offset `raw_utf16`.
+#[wasm_bindgen]
+pub fn editor_offset_of_raw(raw: &str, is_org: bool, regions: &JsValue, policy: &str, raw_utf16: usize) -> Result<usize, JsValue> {
+    let r = regions_from_js(raw, regions)?;
+    let p = hide_policy(policy)?;
+    let at = editor_text::raw_to_visible_with(raw, is_org, &r, &p, editor_text::utf16_to_byte(raw, raw_utf16));
+    Ok(editor_text::byte_to_utf16(&editor_text::split_with(raw, is_org, &r, &p).visible, at))
+}
+
+/// The raw UTF-8 byte offset (the kernel verbs' unit) of editor offset `editor_utf16`.
+#[wasm_bindgen]
+pub fn raw_byte_of_editor(raw: &str, is_org: bool, regions: &JsValue, policy: &str, editor_utf16: usize) -> Result<usize, JsValue> {
+    let r = regions_from_js(raw, regions)?;
+    let p = hide_policy(policy)?;
+    let visible = editor_text::split_with(raw, is_org, &r, &p).visible;
+    Ok(editor_text::visible_to_raw_with(raw, is_org, &r, &p, editor_text::utf16_to_byte(&visible, editor_utf16)))
+}
+
+/// Editor text plus hidden lines back to raw (`editor_text::join_with`); the
+/// regions are the window's cached ones for exactly `visible` (read for Org).
+#[wasm_bindgen]
+pub fn editor_text_join(visible: &str, hidden: &str, is_org: bool, visible_regions: &JsValue) -> Result<String, JsValue> {
+    let r = if is_org && !hidden.is_empty() { regions_from_js(visible, visible_regions)? } else { block_regions::BlockRegions::default() };
+    editor_text::join_with(visible, hidden, is_org, &r).map_err(|e| JsValue::from_str(&e))
+}
+
+/// Whether hide `policy` hides property `key` (`HidePolicy::hides`).
+#[wasm_bindgen]
+pub fn hide_policy_hides(policy: &str, key: &str) -> Result<bool, JsValue> {
+    Ok(hide_policy(policy)?.hides(key))
+}
+
+/// The kernel's outline depth cap (twin 4).
+#[wasm_bindgen]
+pub fn outline_max_depth() -> usize {
+    outline::OUTLINE_MAX_DEPTH
+}
+
+fn hide_policy(policy: &str) -> Result<editor_text::HidePolicy, JsValue> {
+    serde_json::from_str(policy).map_err(|_| JsValue::from_str("Invalid hide policy"))
+}
+
+/// Run one outline-kernel verb (`outline::apply`). `request` is
+/// `{pages, verb, keys}`; the answer is `{"ok": Change, "editor_offset"}` (the
+/// focus caret in the editor's UTF-16 units) or `{"refused": Reason}`. O(blocks
+/// of the pages passed) to read them, plus the verb's own work.
+#[wasm_bindgen]
+pub fn outline_apply_json(request: &str) -> Result<String, JsValue> {
+    #[derive(serde::Deserialize)]
+    struct Request {
+        pages: Vec<outline::OutlinePage>,
+        verb: outline::Verb,
+        keys: outline::KeySource,
+    }
+    let req: Request = serde_json::from_str(request).map_err(|e| JsValue::from_str(&format!("Invalid outline request: {e}")))?;
+    Ok(match outline::apply(&req.pages, &req.verb, &req.keys) {
+        Err(reason) => serde_json::json!({ "refused": reason }).to_string(),
+        Ok(change) => {
+            let editor_offset = change.focus.as_ref().and_then(|f| {
+                let offset = f.raw_offset?;
+                let (raw, format) = change
+                    .pages
+                    .iter()
+                    .find_map(|patch| {
+                        let u = patch.upserts.iter().find(|u| u.key == f.key)?;
+                        let page = req.pages.iter().find(|p| p.name == patch.name)?;
+                        Some((u.raw.as_str(), page.format))
+                    })
+                    .or_else(|| {
+                        req.pages
+                            .iter()
+                            .find_map(|p| p.blocks.get(&f.key).map(|b| (b.raw.as_str(), p.format)))
+                    })?;
+                let org = format.is_org();
+                let r = block_regions::parse(raw, org);
+                let p = editor_text::HidePolicy::Builtin;
+                let at = editor_text::raw_to_visible_with(raw, org, &r, &p, offset);
+                Some(editor_text::byte_to_utf16(
+                    &editor_text::split_with(raw, org, &r, &p).visible,
+                    at,
+                ))
+            });
+            serde_json::json!({ "ok": change, "editor_offset": editor_offset }).to_string()
+        }
+    })
+}
+
+/// The blocks an outline verb reads (`Verb::reads`), as `[{key, subtree}]`, so
+/// the window can send only those (DESIGN §5.3, §8).
+#[wasm_bindgen]
+pub fn outline_reads_json(verb: &str) -> Result<String, JsValue> {
+    let verb: outline::Verb = serde_json::from_str(verb).map_err(|e| JsValue::from_str(&format!("Invalid outline verb: {e}")))?;
+    serde_json::to_string(&verb.reads()).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 /// Shared comparison form; O(text bytes), no graph access.

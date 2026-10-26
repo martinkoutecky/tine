@@ -368,32 +368,94 @@ impl Filter {
         )
     }
 
+    /// **OG's dropped clause (D-18, GH #422).** In an OG-dialect query, a
+    /// `task` or `priority` membership test against an EMPTY list is how a bare
+    /// `(task)`, `(todo)` or `(priority)` reads. OG `build-task` /
+    /// `build-priority` (`query_dsl.cljs:279-296`) build nothing for it and
+    /// `build-and-or-not` (`:174-182`) drops the nil clause from its group, so
+    /// it adds no condition. It stays in the tree so the form prints back as
+    /// written, and [`Query::evaluable_filter`] removes it exactly like a
+    /// disabled subtree — for an OG source only: Tine's own dialect reads
+    /// `task in ()` literally (an empty set, matching nothing).
+    pub fn is_dropped_clause(&self) -> bool {
+        matches!(
+            self,
+            Filter::Leaf {
+                leaf: Leaf::Attr {
+                    attr: Attr::Task | Attr::Priority,
+                    op: CmpOp::In,
+                    value: Value::List { items },
+                },
+            } if items.is_empty()
+        )
+    }
+
+    /// Whether any node of the tree is an `Off` subtree.
+    fn has_off(&self) -> bool {
+        match self {
+            Filter::Off { .. } => true,
+            Filter::And { items } | Filter::Or { items } => items.iter().any(Filter::has_off),
+            Filter::Not { inner } => inner.has_off(),
+            Filter::Leaf {
+                leaf: Leaf::Rel { pred, .. },
+            } => pred.has_off(),
+            _ => false,
+        }
+    }
+
     /// **Structural omission (§3.5, N1/M17).** `Off` subtrees are removed
     /// bottom-up BEFORE evaluation: an `And`/`Or` whose children are all removed
     /// is removed, `Not(<removed>)` is removed, and a `Rel` whose `pred` is
     /// entirely removed is removed (never `Any(True)`). `None` means "removed";
-    /// a removed root is [`Filter::True`] at the call site.
+    /// a removed root is read by [`Query::evaluable_filter`].
     pub fn without_off(&self) -> Option<Filter> {
+        self.omitting(true, false)
+    }
+
+    /// [`Filter::without_off`] that also removes OG's dropped clauses
+    /// ([`Filter::is_dropped_clause`]) by the same structural rule, which is
+    /// OG's own: a nil clause leaves its `and`/`or`/`not`, and a group left
+    /// with nothing is itself nil (`build-and-or-not`, `when (seq clauses)`).
+    pub fn without_og_dropped(&self) -> Option<Filter> {
+        self.omitting(true, true)
+    }
+
+    /// Only OG's dropped clauses removed, by the same rule; `Off` subtrees are
+    /// authored content and kept as written (I-4). What a crossing to Tine's
+    /// dialect prints.
+    pub fn without_og_dropped_clauses(&self) -> Option<Filter> {
+        self.omitting(false, true)
+    }
+
+    fn omitting(&self, off: bool, og_dropped: bool) -> Option<Filter> {
         match self {
-            Filter::Off { .. } => None,
+            Filter::Off { .. } if off => None,
+            Filter::Off { .. } => Some(self.clone()),
+            dropped if og_dropped && dropped.is_dropped_clause() => None,
             // An ORIGINALLY EMPTY group is an active constant, not a group
             // emptied by disabling its children (§3.5). `or()` is false and
             // stays false; removing it would make a false query answer `True`.
             Filter::And { items } if items.is_empty() => Some(Filter::True),
             Filter::Or { items } if items.is_empty() => Some(Filter::False),
             Filter::And { items } => {
-                let kept: Vec<Filter> = items.iter().filter_map(Filter::without_off).collect();
+                let kept: Vec<Filter> = items
+                    .iter()
+                    .filter_map(|item| item.omitting(off, og_dropped))
+                    .collect();
                 (!kept.is_empty()).then(|| Filter::And { items: kept })
             }
             Filter::Or { items } => {
-                let kept: Vec<Filter> = items.iter().filter_map(Filter::without_off).collect();
+                let kept: Vec<Filter> = items
+                    .iter()
+                    .filter_map(|item| item.omitting(off, og_dropped))
+                    .collect();
                 (!kept.is_empty()).then(|| Filter::Or { items: kept })
             }
-            Filter::Not { inner } => inner.without_off().map(Filter::not),
+            Filter::Not { inner } => inner.omitting(off, og_dropped).map(Filter::not),
             Filter::Leaf {
                 leaf: Leaf::Rel { rel, quant, pred },
             } => pred
-                .without_off()
+                .omitting(off, og_dropped)
                 .map(|pred| Filter::rel(*rel, *quant, pred)),
             other => Some(other.clone()),
         }
@@ -1012,9 +1074,36 @@ impl Query {
     }
 
     /// The filter as the walk and the lowering evaluate it: `Off` removed
-    /// bottom-up, a fully removed root becoming `True` (§3.5).
+    /// bottom-up (§3.5), and for an OG-dialect source OG's dropped clauses too
+    /// (D-18).
+    ///
+    /// A query with no condition left answers as its dialect says:
+    /// - a root emptied by disabling (`Off`) becomes `True` (§3.5);
+    /// - a root emptied only by OG's dropped clauses is OG's nil query, which
+    ///   runs nothing (`query_dsl.cljs` `parse` / `query`: a nil `:query`
+    ///   never reaches `query-wrapper`), so it becomes `False`;
+    /// - an OG-dialect query written with no condition at all (`{{query }}`)
+    ///   is the same nil query (`parse` returns nil for a blank string, and
+    ///   `components/query.cljs` `custom-query-inner` renders nothing), so it
+    ///   becomes `False` too. Tine's own dialect keeps `@page` = every page.
     pub fn evaluable_filter(&self) -> Filter {
-        self.filter.without_off().unwrap_or(Filter::True)
+        let og = matches!(self.source, Source::Og { .. });
+        if og && matches!(&self.filter, Filter::True) {
+            return Filter::False;
+        }
+        if og && matches!(&self.filter, Filter::And { items } if items.is_empty()) {
+            return Filter::False;
+        }
+        let omitted = if og {
+            self.filter.without_og_dropped()
+        } else {
+            self.filter.without_off()
+        };
+        match omitted {
+            Some(filter) => filter,
+            None if self.filter.has_off() => Filter::True,
+            None => Filter::False,
+        }
     }
 }
 

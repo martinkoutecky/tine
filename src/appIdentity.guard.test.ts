@@ -22,7 +22,9 @@ function files(dir: string, keep: RegExp): string[] {
 
 const SHORTCUTS = "src-tauri/gen/android/app/src/main/res/xml/shortcuts.xml";
 const DERIVED = ["src-tauri/app-identity.json", "src-tauri/tauri.conf.json", "src-tauri/gen/android/app/build.gradle.kts", SHORTCUTS];
-// The released identity's packaging: Flatpak names its files and ids by it; its
+// The released identity's packaging: Flatpak names its files and ids by it; other
+// identities are derived from those files at build time
+// (scripts/derive-flatpak-identity.mjs, .github/workflows/flatpak.yml). Its
 // workflow refuses an experiment tree (.github/workflows/flatpak.yml). The iOS
 // Info.ios.plist names the iCloud container Apple registered for the release
 // identity; ios-testflight.yml refuses an experiment tree before signing, and
@@ -47,7 +49,7 @@ describe("app identity switch", () => {
     const conf = JSON.parse(fs.readFileSync(path.join(ROOT, "src-tauri/tauri.conf.json"), "utf8"));
     const endpoints = conf.plugins?.updater?.endpoints;
     expect(endpoints).toEqual([SHIP === "experiment"
-      ? "https://github.com/martinkoutecky/tine/releases/download/beta/latest.json"
+      ? "https://tine.page/updates/beta/latest.json"
       : "https://github.com/martinkoutecky/tine/releases/latest/download/latest.json"]);
     expect(/-beta\.\d+$/.test(conf.version)).toBe(SHIP === "experiment");
   });
@@ -100,7 +102,10 @@ describe("app identity switch", () => {
     expect(IDENTITIES.release.androidApplicationId).toBe("page.tine.app");
     const manifest = fs.readFileSync(path.join(ROOT, "flatpak/page.tine.Tine.yml"), "utf8");
     expect(manifest).toMatch(new RegExp(`^id: ${IDENTITIES.release.identifier.replace(/\./g, "\\.")}$`, "m"));
-    expect(fs.readFileSync(path.join(ROOT, ".github/workflows/flatpak.yml"), "utf8")).toContain('["ship"] != "release"');
+    // The workflow no longer hard-codes the released identity: it passes its `identity`
+    // input to scripts/derive-flatpak-identity.mjs, which refuses any identity the
+    // tree does not ship (covered in src/flatpakPackaging.guard.test.ts).
+    expect(fs.readFileSync(path.join(ROOT, ".github/workflows/flatpak.yml"), "utf8")).toContain("derive-flatpak-identity.mjs --identity");
   });
 
   it("the experiment config seed exists only while the build ships an experiment identity", () => {

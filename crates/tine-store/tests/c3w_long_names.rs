@@ -46,6 +46,7 @@ fn dto(name: &str, raw: &str) -> PageDto {
 
 #[test]
 fn w1_page_with_a_near_limit_file_name_saves_and_creates() {
+    let _integration_guard = crate::integration_lock();
     // 84 CJK chars = 252 bytes + ".md" = 255 bytes: the longest legal name. A
     // create is exercised up to 83 chars: at 84, `.org` twin probing in
     // transaction.rs (`disk_twin`) is refused by the OS (recorded C3W pending;

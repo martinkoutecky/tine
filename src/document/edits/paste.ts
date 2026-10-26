@@ -1,9 +1,11 @@
+import { msg } from "../../i18n";
 import { type Format } from "../../types";
-import { splitProps, hideAll, joinProps, isBuiltinHidden } from "../../editor/properties";
+import { splitProps, HIDE_ALL, HIDE_ID, joinProps, BUILTIN_HIDE } from "../../editor/properties";
 import { type ClipboardBlock, type ClipboardPayloadSlot, consumeCutGrant } from "../../clipboard";
 import { doc, Node, formatForPage, freshId, setDoc, hasLoadedIdentityCollision, loadedIdentityCollisions } from "../model";
 import { graphTransitioning } from "../../ui";
-import { pageInstanceGeneration, markDirty, flushCutSourcePages, cutSourcePagesRetired } from "../save/engine";
+import { pageInstanceGeneration } from "../instance";
+import { cutSourcePagesRetired, flushCutSourcePages, markDirty } from "../host/wiring";
 import { graphEpoch, graphMeta } from "../../graphSession";
 import { ownedWhen, readOwned } from "../../owned";
 import { unwrap, produce } from "solid-js/store";
@@ -90,7 +92,7 @@ export function sanitizeOutlineIdsForPaste(
       const blockIds = clipboardIdsForBlock({ raw: node.raw, sourceFormat: format, children: [] });
       return {
         raw: blockIds.some((id) => collisions.has(id.toLowerCase()))
-          ? splitProps(node.raw, (key) => key.toLowerCase() === "id", format).visible : node.raw,
+          ? splitProps(node.raw, HIDE_ID, format).visible : node.raw,
         children: node.children.map(clean),
       };
     };
@@ -106,13 +108,13 @@ function clipboardRawForTarget(
   if (block.sourceFormat === targetFormat) {
     return preserveIds
       ? block.raw
-      : splitProps(block.raw, (key) => key.toLowerCase() === "id", block.sourceFormat).visible;
+      : splitProps(block.raw, HIDE_ID, block.sourceFormat).visible;
   }
 
   // splitProps/joinProps classify metadata but deliberately do not translate
   // syntax. Map the ordered key/value stream explicitly so every property keeps
   // its relative order across Markdown `key:: value` and Org drawer forms.
-  const visible = splitProps(block.raw, hideAll, block.sourceFormat).visible;
+  const visible = splitProps(block.raw, HIDE_ALL, block.sourceFormat).visible;
   const properties = clipboardProperties(block.raw, block.sourceFormat)
     .filter((property) => preserveIds || property.key.toLowerCase() !== "id");
   const translated = properties.map(({ key, value }) =>
@@ -186,10 +188,10 @@ function insertClipboardBlocksSync(
   // Same shared ceiling as every other outline inserter (I-22): a deeper page
   // would be refused by save/page admission after the edit appeared to land.
   if (!outlineFits(targetId, blocks)) {
-    pushToast("Pasted outline is too deep", "error");
+    pushToast(msg("paste-pasted-outline-is-too-deep"), "error");
     return null;
   }
-  if (warnCopy) pushToast("Pasted as a copy; references to these blocks will not follow.", "error");
+  if (warnCopy) pushToast(msg("paste-pasted-as-a-copy-references-to-these-blocks"), "error");
   const targetFormat = formatForPage(target.page);
   const prepared = blocks.map(function prepare(block): {
     id: string;
@@ -206,7 +208,7 @@ function insertClipboardBlocksSync(
       children: block.children.map(prepare),
     };
   });
-  const visible = splitProps(target.raw, isBuiltinHidden, targetFormat).visible;
+  const visible = splitProps(target.raw, BUILTIN_HIDE, targetFormat).visible;
   const replaceHost = target.children.length === 0
     && visible.trim() === ""
     && existingBlockId(target.raw, targetFormat) === null

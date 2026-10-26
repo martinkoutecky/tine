@@ -3,6 +3,10 @@ import { displayPropertyPatch, isLegacyBareColumnList, mergeQueryAggregateValue,
   normalizeQueryDisplayDraft, queryScopedDisplayPropertyPatch } from "./queryViewProperties";
 
 describe("query display persistence", () => {
+  it("keeps an explicit empty column override distinct from absent defaults", () => {
+    expect(displayPropertyPatch({ columns: [] })).toContainEqual(["tine.columns", ""]);
+    expect(displayPropertyPatch({})).toContainEqual(["tine.columns", null]);
+  });
   it("writes ordered sorts, columns, summaries and an explicit clear without touching schema", () => {
     const patch = displayPropertyPatch({
       view: "table", sort: [["priority", "desc"], ["page", "asc"]],

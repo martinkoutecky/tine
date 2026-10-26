@@ -9,9 +9,12 @@ import { depthOf } from "./tree";
 import { reloadPage } from "./workingSet";
 import { setToasts, toasts } from "../toasts";
 import { setGraphMeta } from "../graphSession";
-import { OUTLINE_MAX_DEPTH } from "../editor/outline";
+import { outlineMaxDepth } from "../editor/outline";
 import type { ClipboardBlock, ClipboardPayloadSlot } from "../clipboard";
 import type { BlockDto, PageDto } from "../types";
+import { answerOpensFromDocument } from "./host/documentHost.test.support";
+import { bindTestHost } from "./host/wiring.test.support";
+import { transferInProgress } from "./host/wiring";
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
 const block = (id: string, raw: string, children: BlockDto[] = []): BlockDto => ({ id, raw, collapsed: false, children });
@@ -34,13 +37,16 @@ function chainClipboard(levels: number): ClipboardBlock[] {
 }
 
 beforeAll(() => initParser());
-beforeEach(() => {
+beforeEach(async () => {
   resetStore();
   setToasts([]);
-  vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map((_, i) => `saved-${i}`) }));
+  answerOpensFromDocument(await bindTestHost());
   vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) => ids.map(() => null));
 });
-afterEach(() => {
+afterEach(async () => {
+  // A multi-page move keeps persisting after its intent returns: let it finish
+  // before the store is reset under it.
+  await vi.waitFor(() => expect(transferInProgress()).toBe(false));
   setGraphMeta(null);
   resetStore();
   setToasts([]);
@@ -70,7 +76,7 @@ describe("og c3w W6", () => {
     loadFeed([page("P", [block(uuid(10), "host")])]);
     setGraphMeta({ root: "/graph" } as any);
     const before = Object.keys(doc.byId).length;
-    const slot: ClipboardPayloadSlot = { op: "copy", generation: 0, graph: "/graph", text: "", blocks: chainClipboard(OUTLINE_MAX_DEPTH + 1), sourcePages: [] } as any;
+    const slot: ClipboardPayloadSlot = { op: "copy", generation: 0, graph: "/graph", text: "", blocks: chainClipboard(outlineMaxDepth() + 1), sourcePages: [] } as any;
     expect(await pasteClipboardPayload(uuid(10), slot)).toBeNull();
     expect(Object.keys(doc.byId).length).toBe(before);
     expect(isDirty("P")).toBe(false);
@@ -79,19 +85,19 @@ describe("og c3w W6", () => {
   it("a private-clipboard paste exactly at the cap still lands", async () => {
     loadFeed([page("P", [block(uuid(10), "host")])]);
     setGraphMeta({ root: "/graph" } as any);
-    const slot: ClipboardPayloadSlot = { op: "copy", generation: 0, graph: "/graph", text: "", blocks: chainClipboard(OUTLINE_MAX_DEPTH), sourcePages: [] } as any;
+    const slot: ClipboardPayloadSlot = { op: "copy", generation: 0, graph: "/graph", text: "", blocks: chainClipboard(outlineMaxDepth()), sourcePages: [] } as any;
     expect(await pasteClipboardPayload(uuid(10), slot)).not.toBeNull();
-    expect(maxDepth()).toBe(OUTLINE_MAX_DEPTH - 1);
+    expect(maxDepth()).toBe(outlineMaxDepth() - 1);
   });
 
   it("a nested (child) relative drop checks the depth under the target", async () => {
-    loadFeed([page("A", [chainDto(OUTLINE_MAX_DEPTH, 1000)]), page("B", [block(uuid(20), "target")])]);
-    expect(maxDepth()).toBe(OUTLINE_MAX_DEPTH - 1);
+    loadFeed([page("A", [chainDto(outlineMaxDepth(), 1000)]), page("B", [block(uuid(20), "target")])]);
+    expect(maxDepth()).toBe(outlineMaxDepth() - 1);
     expect(await moveBlocksRelative([uuid(1001)], uuid(20), "child")).toBe(false);
-    expect(maxDepth()).toBe(OUTLINE_MAX_DEPTH - 1);
+    expect(maxDepth()).toBe(outlineMaxDepth() - 1);
     expect(doc.byId[uuid(1001)].page).toBe("A");
     // The same subtree still fits beside the target.
     expect(await moveBlocksRelative([uuid(1001)], uuid(20), "after")).toBe(true);
-    expect(maxDepth()).toBe(OUTLINE_MAX_DEPTH - 1);
+    expect(maxDepth()).toBe(outlineMaxDepth() - 1);
   });
 });

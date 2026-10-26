@@ -1,15 +1,20 @@
+import { msg } from "./i18n";
 import { render } from "solid-js/web";
 import { App } from "./App";
 import "./session";
+import { installWorkspaceWindowSession } from "./session";
 import { restoreSession } from "./router";
 import { initParser } from "./render/parse";
 import { applyTheme, applyAccent } from "./ui";
 import { pushToast } from "./toasts";
 import { startCommunityExtensions } from "./plugins/startup";
 import { backend, isTauri } from "./backend";
+import { startUiLanguage } from "./i18n/preference";
 import { installBackendClock } from "./journal";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { installWorkspaceWindows, installWorkspaceWindowShell } from "./workspaceWindows";
+import { renderWorkspaceWindowShell } from "./components/WorkspaceWindowShell";
 // Full upstream Inter variable fonts retain OpenType stylistic sets/character
 // variants. Fontsource's per-script static subsets stripped them (GH #298).
 import "./styles/inter.css";
@@ -24,6 +29,7 @@ import "./lsShimInstall";
 import { installSystemInsetOwner } from "./systemInsets";
 import { installPlatformAttribute } from "./nativeChrome";
 import { installEditableEmojiPlatform } from "./editableEmoji";
+import { installTextareaPrimarySelectionGuard } from "./textareaPrimarySelection";
 import "./styles/editableEmoji.css";
 import "./styles/app.css";
 import "./styles/touchGestures.css"; // after app.css: its .sel-toolbar-mobile overrides .sel-toolbar
@@ -33,7 +39,9 @@ import "./styles/themePresentation.css";
 import "./styles/pdf-workspace.css";
 import "./styles/settingsControls.css";
 import "./styles/query.css";
+import "./styles/query-calm.css";
 import "./styles/conflicts.css";
+import "./styles/allPages.css";
 import "./styles/region-failure.css";
 import "./styles/published.css";
 
@@ -47,22 +55,30 @@ installPlatformAttribute();
 if (isTauri()) installBackendClock(() => backend().localClock());
 installSystemInsetOwner();
 installEditableEmojiPlatform();
+installTextareaPrimarySelectionGuard();
 applyTheme();
 applyAccent();
+// Workspace windows (desktop): wired before the session restore reopens them.
+installWorkspaceWindowShell(renderWorkspaceWindowShell);
+if (!isPublishedExport()) installWorkspaceWindows(installWorkspaceWindowSession);
 if (isPublishedExport()) document.documentElement.classList.add("tine-published");
 const communityExtensionsReady = isPublishedExport() ? Promise.resolve() : startCommunityExtensions()
   .then(({ pluginInitialization }) => {
     void pluginInitialization.catch((error) =>
-      pushToast(`Plugins unavailable: ${String(error)}`, "error")
+      pushToast(msg("ui-main-plugins-unavailable", { value1: String(error) }), "error")
     );
   })
-  .catch((error) => pushToast(`Community extensions unavailable: ${String(error)}`, "error"));
+  .catch((error) => pushToast(msg("ui-main-community-extensions-unavailable", { value1: String(error) }), "error"));
 
 // Restore the saved tab session before first paint, so tabs come back without a
 // flash. Capped so a slow/stuck backend read can never block startup — worst
 // case we paint the default journals tab and the session is simply not restored.
 async function revealMainWindowAfterStableFrame(): Promise<void> {
   if (!isTauri()) return;
+  // Start-minimized to the tray (GH #625): native created this window hidden on
+  // purpose and shows it from the tray icon or a second launch. Nothing below
+  // waits on a frame, so the app finishes loading while hidden.
+  if ((globalThis as { __TINE_START_HIDDEN__?: boolean }).__TINE_START_HIDDEN__) return;
   // The window starts hidden, so the user never sees the default white webview,
   // unthemed controls, or an empty root. A hidden WebKit view may throttle
   // requestAnimationFrame indefinitely, so wait one microtask after Solid mounts
@@ -100,4 +116,5 @@ void Promise.all([
   isPublishedExport() ? Promise.resolve() : parserSettled.then(() => Promise.race([restoreSession(), new Promise((r) => setTimeout(r, 1500))])),
   communityExtensionsReady,
   publishedSnapshotReady,
+  startUiLanguage(),
 ]).then(mount, () => { if (!isPublishedExport()) mount(); else console.error("published app startup failed"); });

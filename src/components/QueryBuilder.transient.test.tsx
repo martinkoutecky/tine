@@ -2,6 +2,7 @@
 // the Display-panel popover family is Q4b's; registry keys are read off the
 // QueryListbox add-condition picker instead of the (Q4b) vocabulary picker.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { renderEnglish } from "../i18n";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { autocompleteFacets, backend } from "../backend";
@@ -192,7 +193,7 @@ describe("QueryBuilder transient ownership (post-GH #161)", () => {
     const { host, open, dispose } = mountBuilder(nested(depth, taskFilter(["TODO"])));
     try {
       const sentence = host.querySelector(".qs-sentence")!;
-      expect(sentence.textContent).toContain(ADVANCED_PHRASE);
+      expect(sentence.textContent).toContain(renderEnglish(ADVANCED_PHRASE));
       expect(sentence.querySelectorAll(".qs-seg").length).toBeLessThanOrEqual(8);
 
       const sheet = open();

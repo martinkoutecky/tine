@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MAIN_WINDOW_ID, registerWindow } from "./windowRealm";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
-import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal } from "./keybindings";
-import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherOpen, switcherPluginBlock } from "./ui";
+import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal, runGlobalCommand } from "./keybindings";
+import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherMode, switcherOpen, switcherPluginBlock } from "./ui";
 import { makePdfRoute } from "./router";
 import { bumpGraphEpoch, setGraphMeta } from "./graphSession";
 import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
@@ -10,7 +11,7 @@ import { exitPaneSelect, paneSel } from "./paneSelect";
 import { clearSelection, hasSelection, moveSelection, resetStore, selectBlock, selectedIds, setRaw, undo } from "./document";
 import { loadSingle } from "./document/workingSet";
 import { doc, setDoc } from "./document/model";
-import { endEdit, startEditing } from "./editorController";
+import { editingId, endEdit, startEditing } from "./editorController";
 import { pluginManager } from "./plugins/manager";
 import * as router from "./router";
 import type { PaneSnapshot } from "./router";
@@ -43,9 +44,11 @@ it("keeps unbound commands in the palette and offers reset zoom and pane control
   expect(defaults["ui/reset-zoom"]).toBe("");
   expect(defaults["pane/toggle-maximize"]).toBe("mod+alt+m");
   expect(defaults["pane/grow-width"]).toBe("");
+  expect(defaults["editor/select-embedding-block"]).toBe("");
   installFakeWindow();
   const dispose = installKeybindings({ "go/home": "false" });
   expect(paletteCommands().find((command) => command.id === "go/home")?.binding).toBe("");
+  expect(paletteCommands().find((command) => command.id === "editor/select-embedding-block")?.label).toBe("Select embedding block");
   dispose();
   restoreFakeGlobals?.();
 });
@@ -75,6 +78,7 @@ function installFakeWindow() {
   const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
   const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
   const fakeWindow = {
+    getSelection: () => null,
     addEventListener(type: string, listener: EventListener, options?: boolean | AddEventListenerOptions) {
       listeners.push({ type, listener, capture: options === true || !!(options as AddEventListenerOptions | undefined)?.capture });
     },
@@ -85,17 +89,23 @@ function installFakeWindow() {
     },
   };
 
+  const fakeDocument = {
+    activeElement: null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  // A window owns its document and refers to itself, as a real one does.
+  Object.assign(fakeWindow, { document: fakeDocument, window: fakeWindow });
+
   Object.defineProperty(globalThis, "window", { value: fakeWindow, configurable: true });
-  Object.defineProperty(globalThis, "document", {
-    value: {
-      activeElement: null,
-      querySelector: () => null,
-      querySelectorAll: () => [],
-    },
-    configurable: true,
-  });
+  Object.defineProperty(globalThis, "document", { value: fakeDocument, configurable: true });
+
+  // The app registers its real main window at load (src/windowRealm.ts); this
+  // node-pool fake stands in for it so installKeybindings' onEachWindow reaches it.
+  const unregisterFake = registerWindow(MAIN_WINDOW_ID, fakeWindow as unknown as Window);
 
   restoreFakeGlobals = () => {
+    unregisterFake();
     if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
     else delete (globalThis as { window?: Window }).window;
     if (documentDescriptor) Object.defineProperty(globalThis, "document", documentDescriptor);
@@ -184,6 +194,60 @@ const pageSnapshot = (name: string): PaneSnapshot => ({
 const journalsSnapshot = (): PaneSnapshot => ({
   tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],
   activeIndex: 0,
+});
+
+it("GH #663 exposes unbound page-name and content search commands", () => {
+  for (const mode of ["pages", "content"] as const) {
+    const command = paletteCommands().find((c) => c.id === `go/search-${mode}`);
+    expect(command).toBeDefined();
+    expect(command!.binding).toBe("");
+    command!.run();
+    expect(switcherOpen()).toBe(true);
+    expect(switcherMode()).toBe(mode);
+    closeSwitcher();
+  }
+});
+
+it("GH #428 can remap Escape to editing a single selected block", () => {
+  loadSingle({ name: "Selection", kind: "page", title: "Selection", pre_block: null, blocks: [
+    { id: "selected", raw: "Body", collapsed: false, children: [] },
+    { id: "second", raw: "Other", collapsed: false, children: [] },
+  ] });
+  const fake = installFakeWindow();
+  const dispose = installKeybindings({ "editor/edit-selected-block": "esc" });
+  selectBlock("selected");
+  fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+  expect(editingId()).toBe("selected");
+  expect(hasSelection()).toBe(false);
+  expect(paneSel()).toBeNull();
+  endEdit("blur");
+  selectBlock("selected");
+  moveSelection(1, true);
+  paletteCommands().find((c) => c.id === "editor/edit-selected-block")!.run();
+  expect(editingId()).toBeNull();
+  expect(selectedIds()).toHaveLength(2);
+  dispose();
+});
+
+it("GH #587 activates visible tab slots in the focused pane, with slot nine meaning last", () => {
+  const snapshot: PaneSnapshot = {
+    tabs: Array.from({ length: 11 }, (_, i) => ({ history: [{ kind: "page" as const, name: `Tab ${i + 1}`, pageKind: "page" as const }], pos: 0, pinned: i === 0 })),
+    activeIndex: 0,
+  };
+  resetPaneLayoutToSingle(pageSnapshot("Main"));
+  const other = splitRootAtEdge("right", "main", { snapshot })!;
+  focusPane(other);
+  for (const slot of [3, 8, 9, 1]) {
+    const command = commandDefaults().find((c) => c.id === `tab/activate-${slot}`);
+    expect(command).toBeDefined();
+    expect(command!.binding).toBe("");
+    expect(runGlobalCommand(command!.id)).toBe(true);
+    expect(paneRouter(other).route()).toMatchObject({ name: `Tab ${slot === 9 ? 11 : slot}` });
+    expect(paneRouter("main").route()).toMatchObject({ name: "Main" });
+  }
+  resetPaneLayoutToSingle(pageSnapshot("Only"));
+  runGlobalCommand("tab/activate-8");
+  expect(paneRouter("main").route()).toMatchObject({ name: "Only" });
 });
 
 afterEach(() => {
@@ -345,6 +409,8 @@ describe("keyboard binding strings", () => {
       const macBindings = await import("./keybindings");
       expect(macBindings.eventToBindingString(keyEvent({ key: "k", code: "KeyK", ctrlKey: true }))).toBe("ctrl+k");
       expect(macBindings.eventToBindingString(keyEvent({ key: "k", code: "KeyK", metaKey: true }))).toBe("mod+k");
+      expect(macBindings.eventToBindingString(keyEvent({ key: "л", code: "KeyK", ctrlKey: true }))).toBe("ctrl+k");
+      expect(macBindings.eventToBindingString(keyEvent({ key: "л", code: "KeyK", metaKey: true }))).toBe("mod+k");
     } finally {
       vi.unstubAllGlobals();
       vi.resetModules();
@@ -756,12 +822,12 @@ describe("pane-select Esc cascade", () => {
   });
 
   it("declares current-page block search as a remappable Mod-Shift-K command", () => {
-    expect(commandDefaults()).toContainEqual({
+    expect(commandDefaults()).toContainEqual(expect.objectContaining({
       id: "go/search-current-page",
       label: "Search blocks in current page",
       binding: "mod+shift+k",
       scope: "global",
-    });
+    }));
   });
 
   it("typing on a selected edge materializes an embryo pane that Escape unsplits", () => {

@@ -21,8 +21,11 @@ pub(crate) fn prepare(
         .collect()
 }
 
+/// Extract the WebProcess extension and register it for every window built
+/// afterwards. Never returns an error: a failure logs and costs only the
+/// YouTube identity.
 #[cfg(target_os = "linux")]
-pub(crate) fn create_windows(app: &mut tauri::App, windows: &[tauri::utils::config::WindowConfig]) {
+pub(crate) fn install_extension(app: &mut tauri::App) {
     use tauri::Manager;
     let extract = || -> std::io::Result<tempfile::TempDir> {
         let dir = tempfile::Builder::new().prefix("tine-youtube-").tempdir()?;
@@ -38,6 +41,13 @@ pub(crate) fn create_windows(app: &mut tauri::App, windows: &[tauri::utils::conf
         }
         Err(error) => crate::debug::diag_private("youtube-identity-unavailable", error.to_string()),
     }
+}
+
+/// Build the startup windows other than `main` (which `workspace_windows`
+/// builds). Call after `main`: a WebDriver session attaches to the first
+/// window the process creates, and every native journey assumes that is `main`.
+#[cfg(target_os = "linux")]
+pub(crate) fn create_windows(app: &mut tauri::App, windows: &[tauri::utils::config::WindowConfig]) {
     // Never returns an error: Tauri panics on an error from `.setup` (I-22).
     // A window the extension cannot accompany is retried without it, so
     // YouTube identity is the only thing a failure here can cost.

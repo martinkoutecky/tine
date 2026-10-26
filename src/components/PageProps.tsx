@@ -1,15 +1,17 @@
+import { msg, t } from "../i18n";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { pagePropsPanel, closePageProps, type PropsPanelScope } from "../ui";
 import {
   blockPageReadOnly, blockProperty, formatForBlock, node, pageByName,
   readPageProperties, readPageProperty, setBlockProperty, setPageProperty,
 } from "../document";
-import { PAGE_PROP_SPECS, isEditablePropertyKey, isSheetCellHidden, type PagePropSpec } from "../editor/properties";
+import { PAGE_PROP_SPECS, isEditablePropertyKey, SHEET_CELL_HIDE, hides, type PagePropSpec } from "../editor/properties";
 import { facetsOf } from "../render/facets";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 import { bindingCurrent, type Binding } from "../binding";
 import { pushToast } from "../toasts";
 import "../styles/props-panel.css";
+import { viewportOf } from "../windowRealm";
 
 // Properties panel: labelled fields for the properties of a page's pre-block or
 // of one block. Every field reads the current value and writes back through the
@@ -28,7 +30,7 @@ export function PageProps(): JSX.Element {
 // Machine-managed keys (`id`, `collapsed`, `logseq.order-list-type`, `tine.*`)
 // keep their own surfaces. Same question as the sheet-cell editor asks, so it
 // delegates rather than minting a second hidden set.
-const machineManaged = (key: string) => isSheetCellHidden(key.toLowerCase());
+const machineManaged = (key: string) => hides(SHEET_CELL_HIDE, key);
 
 function existingProperties(scope: PropsPanelScope): [string, string][] {
   if (scope.kind === "page") return readPageProperties(scope.name);
@@ -50,10 +52,10 @@ const subjectOf = (scope: PropsPanelScope): object | undefined =>
  *  otherwise it is refused visibly and the panel closes, so a typed edit is
  *  never dropped silently and never overwrites an intervening change. */
 function writeOne(scope: PropsPanelScope, binding: Binding, subject: object | undefined, key: string, value: string | null): boolean {
-  const stale = !bindingCurrent(binding) ? "The graph changed" : !subject || subjectOf(scope) !== subject
-    ? `This ${scope.kind} changed or was reloaded` : null;
+  const stale = !bindingCurrent(binding) ? "graph" : !subject || subjectOf(scope) !== subject
+    ? scope.kind : null;
   if (stale) {
-    pushToast(`${stale} while its properties panel was open, so "${key}" was not saved. Reopen the panel to edit it.`, "error");
+    pushToast(msg("page-props-stale-panel", { stale, key }), "error");
     closePageProps();
     return false;
   }
@@ -71,9 +73,9 @@ function scopeWritable(scope: PropsPanelScope): boolean {
 }
 
 function scopeLabel(scope: PropsPanelScope): { title: string; subject: string } {
-  if (scope.kind === "page") return { title: "Page properties", subject: scope.name };
+  if (scope.kind === "page") return { title: t("page-props-page-properties"), subject: scope.name };
   const first = (node(scope.id)?.raw ?? "").split("\n")[0]?.trim() ?? "";
-  return { title: "Block properties", subject: first.length > 48 ? `${first.slice(0, 48)}…` : first };
+  return { title: t("page-props-block-properties"), subject: first.length > 48 ? `${first.slice(0, 48)}…` : first };
 }
 
 /** Presets (page scope only, shown even when absent) then every other property
@@ -94,8 +96,9 @@ const sameKeys = (a: PagePropSpec[], b: PagePropSpec[]) =>
   a.length === b.length && a.every((row, i) => row.key === b[i].key);
 
 function Panel(props: { scope: PropsPanelScope; x: number; y: number; binding: Binding }): JSX.Element {
-  const w = typeof window !== "undefined" ? window.innerWidth : 1280;
-  const h = typeof window !== "undefined" ? window.innerHeight : 800;
+  const viewport = typeof window !== "undefined" ? viewportOf() : { width: 1280, height: 800 };
+  const w = viewport.width;
+  const h = viewport.height;
   const left = Math.max(8, Math.min(props.x, w - 332));
   // Anchor at the click, then once mounted lift the panel up by its measured
   // height so its full content stays on-screen — no scrollbar for normal content.
@@ -128,13 +131,13 @@ function Panel(props: { scope: PropsPanelScope; x: number; y: number; binding: B
         </div>
         <Show
           when={writable()}
-          fallback={<div class="pp-hint">This {props.scope.kind} is read-only or no longer loaded, so its properties cannot be changed here.</div>}
+          fallback={<div class="pp-hint">{t("page-props-read-only", { kind: props.scope.kind })}</div>}
         >
           <For each={rows()}>{(spec) => <Field scope={props.scope} spec={spec} write={write} />}</For>
           <AddRow scope={props.scope} write={write} />
         </Show>
         <div class="pp-foot">
-          <button class="pp-done" onClick={closePageProps}>Done</button>
+          <button class="pp-done" onClick={closePageProps}>{t("page-props-done")}</button>
         </div>
       </div>
     </div>
@@ -187,15 +190,15 @@ function Field(props: { scope: PropsPanelScope; spec: PagePropSpec; write: Write
       <div class="pp-row-head">
         <label class="pp-label">{props.spec.label}</label>
         <Show when={removable}>
-          <button class="pp-remove" title={`Remove ${props.spec.key}`} onClick={() => write(null)}>Remove</button>
+          <button class="pp-remove" title={t("page-props-remove", { key: String(props.spec.key) })} onClick={() => write(null)}>{t("page-props-remove-action")}</button>
         </Show>
       </div>
       <input
         class="pp-input"
         disabled={!editable}
-        title={editable ? undefined : "Tine can remove this key but not rewrite it: keys may use letters, numbers, _, ., / or -."}
+        title={editable ? undefined : t("page-props-tine-can-remove-this-key-but-not-rewrite")}
         value={v()}
-        placeholder={props.spec.kind === "list" ? "comma, separated" : ""}
+        placeholder={props.spec.kind === "list" ? t("page-props-comma-separated") : ""}
         onInput={(e) => setV(e.currentTarget.value)}
         onKeyDown={(e) => {
           e.stopPropagation();
@@ -227,9 +230,9 @@ function AddRow(props: { scope: PropsPanelScope; write: Write }): JSX.Element {
   const refusal = createMemo(() => {
     const k = trimmed();
     if (!k) return null;
-    if (!isEditablePropertyKey(k)) return "Keys may use only letters, numbers, _, ., / or -, so every Tine reader finds them again.";
-    if (machineManaged(k)) return `"${k}" is managed by Tine and cannot be set here.`;
-    if (readOne(props.scope, k) !== null) return `"${k}" already exists; edit its row above.`;
+    if (!isEditablePropertyKey(k)) return t("page-prose-key-grammar");
+    if (machineManaged(k)) return t("page-prose-key-managed", { key: k });
+    if (readOne(props.scope, k) !== null) return t("page-prose-key-exists", { key: k });
     return null;
   });
   const valid = () => !!trimmed() && !refusal();
@@ -246,13 +249,13 @@ function AddRow(props: { scope: PropsPanelScope; write: Write }): JSX.Element {
   };
   return (
     <div class="pp-field pp-add">
-      <label class="pp-label">Add a property</label>
+      <label class="pp-label">{t("page-props-add-a-property")}</label>
       <div class="pp-add-row">
-        <input class="pp-input pp-add-key" value={key()} placeholder="key" onInput={(e) => setKey(e.currentTarget.value)} onKeyDown={onKeyDown} />
-        <input class="pp-input pp-add-value" value={value()} placeholder="value" onInput={(e) => setValue(e.currentTarget.value)} onKeyDown={onKeyDown} />
-        <button class="pp-add-commit" disabled={!valid()} onClick={commit}>Add</button>
+        <input class="pp-input pp-add-key" value={key()} placeholder={t("page-props-key")} onInput={(e) => setKey(e.currentTarget.value)} onKeyDown={onKeyDown} />
+        <input class="pp-input pp-add-value" value={value()} placeholder={t("page-props-value")} onInput={(e) => setValue(e.currentTarget.value)} onKeyDown={onKeyDown} />
+        <button class="pp-add-commit" disabled={!valid()} onClick={commit}>{t("page-props-add")}</button>
       </div>
-      <Show when={refusal()} fallback={<div class="pp-hint">Any key you like, written to the file as an ordinary property.</div>}>
+      <Show when={refusal()} fallback={<div class="pp-hint">{t("page-props-any-key-you-like-written-to-the-file")}</div>}>
         <div class="pp-hint pp-error">{refusal()}</div>
       </Show>
     </div>

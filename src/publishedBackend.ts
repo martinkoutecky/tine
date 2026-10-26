@@ -82,8 +82,6 @@ let snapshotPromise: Promise<PublishedSnapshot> | null = null;
 /** Largest snapshot document a viewer will read (I-22). Far above any real export;
  *  a larger body is a wrong or hostile file and refuses visibly. */
 export const PUBLISHED_SNAPSHOT_MAX_BYTES = 512 * 1024 * 1024;
-/** Largest asset `readAsset` buffers when the caller names no cap of its own (I-22). */
-export const PUBLISHED_ASSET_MAX_BYTES = 256 * 1024 * 1024;
 
 /** Read a response body of at most `max` bytes: a declared length over the cap refuses
  *  before any byte is read, and a body that outgrows it (no or wrong length) is cancelled
@@ -416,6 +414,11 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       }));
       return { rev: "0", entries, unreadable: [] };
     },
+    // A published export carries no file times: the Updated column shows dashes.
+    async pageModified() {
+      return { rev: "0", modified: [] };
+    },
+    async pageBacklinkCounts(): Promise<[string, number][]> { return []; },
     async resolvePage(name: string, kind: "journal" | "page") {
       const snapshot = await load();
       const page = pageByName(snapshot, name);
@@ -533,7 +536,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return collect(snapshot, (block) => includesFolded(block.raw, wanted.folded), limit);
     },
     quickSwitch,
-    async captureQuickSwitch(query: string, limit: number): Promise<PageEntry[]> {
+    async captureQuickSwitch(query: string, limit: number, _transliteration = false): Promise<PageEntry[]> {
       return quickSwitch(query, limit);
     },
     async queryFacets() {
@@ -576,7 +579,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
      *  aliases and block text from the snapshot — navigation, not a query. A
      *  query-language search (any other consumer) is refused: the export holds
      *  answers, not an index. */
-    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane?: string, _explain?: boolean, scope?: QueryPageScope, _pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, _views?: { page: ViewSettings; block: ViewSettings }): Promise<QueryExecution> {
+    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane?: string, _explain?: boolean, scope?: QueryPageScope, _pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, _views?: { page: ViewSettings; block: ViewSettings }, _transliteration = false): Promise<QueryExecution> {
       const snapshot = await load();
       if (lane !== "quick-switch" && lane !== "quick-switch:current-page") throw await staticQueryRefusal();
       const wanted = literalNeedle(source);
@@ -616,13 +619,13 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     // ---- assets and the browser ----
     // A refused or missing asset rejects (I-9): an empty byte array reads as a valid empty
     // file and blanks a PDF or image with no cause. The live backend rejects the same way.
-    async readAsset(name: string, maxBytes?: number) {
+    async readAsset(name: string, maxBytes: number) {
       await load();
       const url = assetUrl(name);
       if (!url) throw new Error(`asset ${name}: not a file inside the published assets`);
       const response = await fetch(url);
       if (!response.ok) throw new Error(`asset ${name}: HTTP ${response.status}`);
-      return readBounded(response, maxBytes ?? PUBLISHED_ASSET_MAX_BYTES, `asset ${name}`);
+      return readBounded(response, maxBytes, `asset ${name}`);
     },
     async streamAsset(name: string) {
       await load();
@@ -659,7 +662,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return [];
     },
     async gpuEnv() {
-      return { software_forced: false, appimage: false, packaged: false };
+      return { software_forced: false, appimage: false, flatpak: false, packaged: false, portable: false };
     },
     // A published export has no backend clock; the browser's is the authority.
     async localClock() {
@@ -691,6 +694,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async setAppString(key: string, value: string) {
       appStrings.set(key, value);
     },
+    async setUiLocale() {},
     async loadSession() {
       return session;
     },
@@ -794,8 +798,10 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     },
     async applySpellcheck() {},
     async setSystemBarAppearance() {},
-    async quit() {},
     async closeGraphWindow() {},
+    async trayApply() {
+      return { supported: false, active: false, problem: null };
+    },
     async openDevtools() {},
     async captureTarget() {
       return "main";
@@ -803,9 +809,6 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async bindCaptureGraph() {},
     async defaultGraphParent() {
       return "";
-    },
-    async graphSourceFiles() {
-      return { files: [], skipped: [] };
     },
     async conflictInventory() {
       return { sync_conflicts: [], vcs_markers: [], queue: [] };
@@ -853,11 +856,26 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     onGraphChangedBulk: unsubscribed,
     onAssetChanged: unsubscribed,
     onGraphConfigChanged: unsubscribed,
+    onCustomCssChanged: unsubscribed,
     onGraphReopened: unsubscribed,
     onQueryProjectionChanged: unsubscribed,
     onGraphWatchStatus: unsubscribed,
     onGraphUnreadablePages: unsubscribed,
     onGraphVerificationProgress: unsubscribed,
+    // A read-only export binds a page host that never holds a page: every page
+    // command is refused, so there is no mail, no debt and no draft file.
+    async pageWindowReloaded() {
+      return { session: 1, nextId: 1 };
+    },
+    async pageOwed() {
+      return [];
+    },
+    onPageMail: unsubscribed,
+    onGraphOpenWaiting: unsubscribed,
+    onGraphOpenOwnerWaiting: unsubscribed,
+    async legacyDraftsFile() {
+      return null;
+    },
   };
 
   const explicit: Record<string, unknown> = { ...answered, ...constant };
@@ -881,6 +899,8 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
  *  `Backend` method to be in exactly one. */
 export const PUBLISHED_ANSWERED_METHODS = [
   "pageInventory",
+  "pageModified",
+  "pageBacklinkCounts",
   "resolvePage",
   "loadGraph",
   "inspectGraphAccess",
@@ -969,14 +989,14 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "getWatchMode",
   "listSpellcheckDictionaries",
   "applySpellcheck",
+  "setUiLocale",
   "setSystemBarAppearance",
-  "quit",
   "closeGraphWindow",
+  "trayApply",
   "openDevtools",
   "captureTarget",
   "bindCaptureGraph",
   "defaultGraphParent",
-  "graphSourceFiles",
   "conflictInventory",
   "listJournalConflicts",
   "listSyncConflicts",
@@ -998,11 +1018,18 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "onGraphChangedBulk",
   "onAssetChanged",
   "onGraphConfigChanged",
+  "onCustomCssChanged",
   "onGraphReopened",
   "onQueryProjectionChanged",
   "onGraphWatchStatus",
   "onGraphUnreadablePages",
   "onGraphVerificationProgress",
+  "pageWindowReloaded",
+  "pageOwed",
+  "onPageMail",
+  "onGraphOpenWaiting",
+  "onGraphOpenOwnerWaiting",
+  "legacyDraftsFile",
 ] as const;
 
 /** Refused with `PublishedExportReadOnlyError`: writes, sync, install,
@@ -1024,6 +1051,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "verifyPluginRegistry",
   "storePluginRegistryCache",
   "createGraph",
+  "suggestGraphName",
   "savePage",
   "beginDirectCrossPageMove",
   "finishDirectCrossPageMove",
@@ -1032,6 +1060,9 @@ export const PUBLISHED_REFUSED_METHODS = [
   "deletePage",
   "renamePage",
   "publishHtml",
+  "revealExport",
+  "readCssFile",
+  "saveCssFile",
   "publishQueryPlan",
   "publishQuery",
   "pagePrintHtml",
@@ -1052,6 +1083,8 @@ export const PUBLISHED_REFUSED_METHODS = [
   "setDefaultJournalTemplate",
   "setStartOfWeek",
   "openPageFile",
+  "openGraphFile",
+  "editCustomCss",
   "editAssetExternal",
   "trashAsset",
   "emptyAssetTrash",
@@ -1085,6 +1118,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "stopRecording",
   "cancelRecording",
   "copyImageToClipboard",
+  "copyAssetFileToClipboard",
   "writeHighlights",
   "savePdfAreaImage",
   "rollbackPdfAreaImage",
@@ -1096,6 +1130,16 @@ export const PUBLISHED_REFUSED_METHODS = [
   "createGraphVerification",
   "cancelGraphVerification",
   "saveGraphVerificationReport",
+  "pageOpen",
+  "pageSubmit",
+  "pageMove",
+  "pageDiscard",
+  "pageClose",
+  "pageDelete",
+  "pageWait",
+  "pageSaveNow",
+  "pageDraftsRetry",
+  "mergeLiveConflict",
 ] as const;
 
 /** Optional `Backend` members a published export leaves absent. */

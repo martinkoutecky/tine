@@ -462,7 +462,6 @@ fn og_expressible_queries_round_trip_through_the_og_printer() {
         "(namespace Project)",
         "(journal)",
         "(page-tags public private)",
-        "(between scheduled today +7d)",
         // GH #619: the builder's "In a journal page" condition (OG's `between`
         // over a range wider than any journal date; OG's rule needs a journal).
         "(between -2000y +2000y)",
@@ -499,6 +498,34 @@ fn the_og_printer_refuses_what_og_cannot_say() {
             matches!(&printed, Err(d) if d.kind == DiagnosticKind::NotApplicable),
             "{source} printed as {printed:?}"
         );
+    }
+}
+
+#[test]
+fn scheduled_deadline_windows_are_saved_only_in_tine_query() {
+    for field in ["scheduled", "deadline"] {
+        let window = format!("(between {field} today +7d)");
+        for source in [
+            window.clone(),
+            format!("(and {window} (task TODO))"),
+            format!("(or {window} (task TODO))"),
+            format!("(not {window})"),
+            format!("(and (task TODO) (or {window} (priority A)))"),
+        ] {
+            let (refused, view) = og(&source);
+            assert!(refused.is_invalid());
+            let hint = crate::query::wire_parse::og_query_hint(&refused).unwrap();
+            let query = hint.rewrites[0].query.clone();
+            assert!(!og_expressible(&query, &view), "{source}");
+            assert!(
+                matches!(query_print(&query, &view, PrintDialect::Og, false),
+                Err(d) if d.kind == DiagnosticKind::NotApplicable),
+                "{source}"
+            );
+            let printed = query_print(&query, &view, PrintDialect::TqlMacro, false).unwrap();
+            assert!(printed.contains(field), "{printed}");
+            assert_eq!(tql(&printed).normalized().filter, query.normalized().filter);
+        }
     }
 }
 
@@ -699,21 +726,15 @@ fn a_quoted_value_survives_the_og_escaping() {
 fn the_og_printer_writes_bare_exactly_the_tokens_the_resolver_reads() {
     let today = JournalDate::from_ordinal(20260904);
     for (source, expected) in [
-        (
-            "(between scheduled 2026_01_05 today)",
-            "(between scheduled 2026_01_05 today)",
-        ),
-        (
-            "(between scheduled [[-7D]] today)",
-            "(between scheduled [[-7D]] today)",
-        ),
-        ("(between scheduled -7d NOW)", "(between scheduled -7d NOW)"),
+        ("(between 2026_01_05 today)", "(between 2026_01_05 today)"),
+        ("(between [[-7D]] today)", "(between [[-7D]] today)"),
+        ("(between -7d NOW)", "(between -7d NOW)"),
     ] {
         let (query, view) = og(source);
         assert!(!query.is_invalid(), "{source}: {:?}", query.diagnostics);
         let printed = print_og(&query, &view, false).expect(source);
         assert_eq!(printed, expected, "{source}");
-        let Some(literal) = printed.split_whitespace().nth(2) else {
+        let Some(literal) = printed.split_whitespace().nth(1) else {
             panic!("{printed}")
         };
         let bare = !literal.starts_with("[[");
@@ -1231,5 +1252,106 @@ fn the_print_dialect_wire_names_are_the_query_print_command_values() {
             serde_json::from_str::<PrintDialect>(&format!("\"{wire}\"")).unwrap(),
             dialect
         );
+    }
+}
+
+/// GH #422, D-18: a bare `(task)` / `(priority)` prints back to OG exactly as
+/// written (it is kept in the tree), while a crossing to Tine's dialect leaves
+/// it out — TQL reads `task in ()` literally as an empty set, so printing it
+/// would turn "no condition" into "nothing". Disabled subtrees stay (I-4).
+/// A TQL source's own `task in ()` is Tine's and prints unchanged.
+#[test]
+fn a_dropped_bare_clause_round_trips_in_og_and_is_left_out_of_tql() {
+    for (form, tql_text) in [
+        ("(task)", "@block"),
+        ("(and (task) [[x]])", "@block and [[x]]"),
+        ("(or (priority) [[x]])", "@block and [[x]]"),
+        ("(and [[x]] (not (task)))", "@block and [[x]]"),
+    ] {
+        let (query, view) = og(form);
+        assert!(og_expressible(&query, &view), "{form}");
+        assert_eq!(
+            query_print(&query, &view, PrintDialect::Og, false).unwrap(),
+            form,
+            "the OG text is kept as written"
+        );
+        assert_eq!(
+            query_print(&query, &view, PrintDialect::TqlMacro, false).unwrap(),
+            tql_text,
+            "{form}"
+        );
+        let pane = query_print(&query, &view, PrintDialect::Tql, false).unwrap();
+        assert!(!pane.contains("in ()"), "{form}: {pane}");
+    }
+    let mut disabled = og("(and (task) [[x]])").0;
+    let Filter::And { items } = &mut disabled.filter else {
+        panic!("expected siblings")
+    };
+    items[1] = Filter::off(items[1].clone());
+    let printed = query_print(
+        &disabled,
+        &ViewSettings::default(),
+        PrintDialect::TqlMacro,
+        false,
+    )
+    .unwrap();
+    assert!(printed.contains("off("), "{printed}");
+    assert!(!printed.contains("in ()"), "{printed}");
+    let own = tql("@block and task in ()");
+    assert!(own.filter.is_dropped_clause());
+    assert_eq!(
+        query_print(
+            &own,
+            &ViewSettings::default(),
+            PrintDialect::TqlMacro,
+            false
+        )
+        .unwrap(),
+        "@block and task in ()"
+    );
+    assert_eq!(
+        own.evaluable_filter(),
+        own.filter,
+        "Tine's dialect reads it literally"
+    );
+}
+
+/// GH #619 c6: Pages and blocks reads the other family by printing the block
+/// query under `@page`. A `page.` hop from a block row is the page row itself
+/// there (`og::rebase_to_page`), so it prints as the bare page attribute:
+/// `@page` accepts `name`, never `page.name` (SPEC §5 attribute table).
+#[test]
+fn a_page_hop_prints_as_the_page_row_itself_at_page() {
+    for (block, page) in [
+        (
+            "prop('task') is not null and page.name = 'QueriesPagesAndBlock'",
+            "@page and prop('task') is not null and name = 'QueriesPagesAndBlock'",
+        ),
+        (
+            "page.name like 'proj/%' or page.journal = true",
+            "@page and name like 'proj/%' or journal = true",
+        ),
+        (
+            "page_prop('type') = 'book'",
+            "@page and prop('type') = 'book'",
+        ),
+    ] {
+        let mut query = tql(block);
+        assert!(!query.is_invalid(), "{block}: {:?}", query.diagnostics);
+        query.anchor = Anchor::Page;
+        let printed = print_tql(&query);
+        assert_eq!(printed, page, "{block}");
+        let again = tql(&printed);
+        assert!(!again.is_invalid(), "{printed}: {:?}", again.diagnostics);
+        let mut macro_form = query.clone();
+        macro_form.source = Source::Builder;
+        let saved = query_print(
+            &macro_form,
+            &ViewSettings::default(),
+            PrintDialect::TqlMacro,
+            false,
+        )
+        .unwrap();
+        assert!(saved.contains(page), "{block} (macro): {saved}");
     }
 }

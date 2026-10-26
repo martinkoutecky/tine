@@ -15,13 +15,16 @@ vi.mock("../graph", async (importOriginal) => ({
 }));
 import { Settings } from "./Settings";
 
+/** A restore the native side completed: the page host relaunched under a new session. */
+const RESTORED = { error: null, reloaded: { session: 2, nextId: 1 } };
+
 afterEach(() => { closeSettings(); setToasts([]); vi.restoreAllMocks(); document.body.innerHTML = ""; });
 
 it("reports an aborted graph reload after restore without claiming success", async () => {
   vi.spyOn(backend(), "getBackupKeep").mockResolvedValue(12);
   vi.spyOn(backend(), "listBackups").mockResolvedValue([{ stamp: "2026-07-22_12-00-00", files: 1 }]);
   vi.spyOn(backend(), "confirm").mockResolvedValue(true);
-  vi.spyOn(backend(), "restoreBackup").mockResolvedValue();
+  vi.spyOn(backend(), "restoreBackup").mockResolvedValue(RESTORED);
   controls.flush.mockResolvedValue(true);
   controls.load.mockResolvedValue({ kind: "aborted" });
   const root = document.createElement("div");
@@ -44,7 +47,7 @@ it("does not restore a backup after its confirmation outlives the graph", async 
   vi.spyOn(backend(), "listBackups").mockResolvedValue([{ stamp: "2026-07-22_12-00-00", files: 1 }]);
   let finish!: (confirmed: boolean) => void;
   vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
-  const restoreBackup = vi.spyOn(backend(), "restoreBackup").mockResolvedValue();
+  const restoreBackup = vi.spyOn(backend(), "restoreBackup").mockResolvedValue(RESTORED);
   controls.flush.mockResolvedValue(true);
   const root = document.createElement("div");
   document.body.append(root);
@@ -67,7 +70,7 @@ it("does not clear a newer graph transition when an old restore finishes", async
   vi.spyOn(backend(), "listBackups").mockResolvedValue([{ stamp: "2026-07-22_12-00-00", files: 1 }]);
   vi.spyOn(backend(), "confirm").mockResolvedValue(true);
   let finish!: () => void;
-  vi.spyOn(backend(), "restoreBackup").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  vi.spyOn(backend(), "restoreBackup").mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve(RESTORED); }));
   controls.flush.mockResolvedValue(true);
   const root = document.createElement("div");
   document.body.append(root);

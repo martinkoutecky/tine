@@ -1,3 +1,4 @@
+import { msg, t } from "./i18n";
 /** Confirm, flush dirty pages, then restore backup.stamp; when is display text.
  * Native restore validates the snapshot, takes a safety snapshot, and may replace
  * graph pages, asset sidecars and config. A native failure may leave changed files
@@ -8,7 +9,7 @@
  * snapshot file counts and bytes, and graph reload. */
 import { backend, type BackupInfo } from "./backend";
 import { bindingOwner, ownedWhen, readOwned, writeOwned } from "./owned";
-import { flushAll } from "./document";
+import { consumedAnswer, flushAll } from "./document";
 import { loadGraphPath } from "./graph";
 import { graphMeta } from "./graphSession";
 import { pushToast } from "./toasts";
@@ -35,30 +36,37 @@ export async function restoreBackupFromSettings(
   let transitioning = false;
   try {
     const confirmed = await readOwned(owner, backend().confirm(
-      `Restore the snapshot from ${when}?\n\n` +
-        `This restores the ${backup.files} file(s) in that backup to their original locations. ` +
-        `Your current state is snapshotted first, so this is reversible.`
+      t("backup-restore-confirmation", { when, files: String(backup.files) })
     ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     setGraphTransitioning(true);
     transitioning = true;
     if (!(await flushAll())) {
-      if (owner()) pushToast("Some pages couldn't be saved — resolve conflicts before restoring.", "error");
+      if (owner()) pushToast(msg("backup-restore-some-pages-couldn-t-be-saved-resolve-conflicts"), "error");
       return;
     }
     if (!owner()) return;
-    const restored = await writeOwned(owner, backend().restoreBackup(backup.stamp, "replace-page"));
+    const restored = await writeOwned(owner, backend().restoreBackup(backup.stamp, "replace-page", consumedAnswer()));
     if (restored.kind === "stale") return;
+    const { error, reloaded } = restored.value;
+    // A stop that could not save every page restores nothing (the host keeps running).
+    if (error && !reloaded) throw error;
+    // The page host relaunched on the tree as it now is (after a partial
+    // failure too): reload, which rebinds this window to it.
     const outcome = await loadGraphPath(root, { forceRefresh: true, transitionHeld: true });
     if (!ownsTransition()) return;
     if (outcome.kind !== "loaded" && outcome.kind !== "already_current") {
-      pushToast("Snapshot restored, but the graph couldn't be reloaded. Reopen it to see the restored files.", "error");
+      pushToast(msg("backup-restore-snapshot-restored-but-the-graph-couldn-t-be"), "error");
       return;
     }
-    pushToast(`Restored snapshot from ${when}`, "success");
+    if (error) {
+      pushToast(msg("backup-restore-restore-failed-part-way", { error: String(error) }), "error", { sticky: true });
+      return;
+    }
+    pushToast(msg("backup-restore-restored-snapshot-from", { when: String(when) }), "success");
     refresh();
   } catch (error) {
-    pushToast(`Restore failed: ${String(error)}`, "error");
+    pushToast(msg("backup-restore-restore-failed", { error: String(error) }), "error");
   } finally {
     if (transitioning && ownsTransition()) setGraphTransitioning(false);
     setBusy(false);

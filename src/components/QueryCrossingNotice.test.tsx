@@ -1,3 +1,4 @@
+import { openCalmQuery } from "../tests/calmQueryActions";
 // Ported from master src/components/QueryCrossingNotice.test.tsx.
 // **The user half of the persisted-form crossing (SPEC §4.3 "Notice", §7.5; T3).**
 //
@@ -25,6 +26,7 @@ import { initParser } from "../render/parse";
 import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { flushPage, resetStore, setRaw, toggleUndoRedoMode, undo } from "../document";
+import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
 import { historyPageOnlyMode } from "../document/history";
 import { doc, setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import { resetCrossingNoticeForTests as resetDismissedNoticesForTests } from "./Macro";
@@ -113,24 +115,10 @@ function parsedAs(text: string): ParsedQuery {
 /** The text pane lives in the SHEET's footer now, and the sheet is portalled to
  *  <body> (`.query-block`'s own compositing layer would otherwise trap it), so
  *  the pane is reached by opening the sheet and querying the document. */
-async function openSheet(root: HTMLElement): Promise<HTMLElement> {
-  const gear = await vi.waitFor(() => {
-    const found = root.querySelector<HTMLButtonElement>(".qs-gear");
-    if (!found) throw new Error("the query sentence never appeared");
-    return found;
-  });
-  if (!document.querySelector(".qs-sheet")) gear.click();
-  return await vi.waitFor(() => {
-    const sheet = document.querySelector<HTMLElement>(".qs-sheet");
-    if (!sheet) throw new Error("the sheet never opened");
-    return sheet;
-  });
-}
-
 /** P4 retired the `<details>` disclosure: inside an open sheet the pane is
  *  visible and editable (§7.5). Opening the sheet is opening the pane. */
 async function openPane(root: HTMLElement): Promise<HTMLTextAreaElement> {
-  const sheet = await openSheet(root);
+  const sheet = await openCalmQuery(root, "Edit as text");
   return await vi.waitFor(() => {
     const input = sheet.querySelector<HTMLTextAreaElement>(".query-text-pane-input");
     if (!input) throw new Error("the pane has no input");
@@ -468,7 +456,7 @@ describe("C5: the notice is one instance that changes host with the sheet", () =
 
       // Shut the sheet: the notice is still there, still one, and now inline
       // under the block where the reader is.
-      root.querySelector<HTMLButtonElement>(".qs-gear")!.click();
+      root.querySelector<HTMLButtonElement>(".qc-done")!.click();
       await settle();
       expect(document.querySelector(".qs-sheet")).toBeNull();
       const inline = await waitForNotice(root);
@@ -479,7 +467,7 @@ describe("C5: the notice is one instance that changes host with the sheet", () =
       expect(inline.querySelector(".query-crossing-notice-undo")).not.toBeNull();
 
       // ...and back again, without ever being two.
-      root.querySelector<HTMLButtonElement>(".qs-gear")!.click();
+      await openCalmQuery(root, "Edit as text");
       await settle();
       const reopened = await waitForNotice(root);
       expect(document.querySelectorAll(".query-crossing-notice")).toHaveLength(1);
@@ -523,12 +511,13 @@ describe("C5: the notice is one instance that changes host with the sheet", () =
 // itself is temp+fsync+rename (the audited path); this pins that the two edits
 // reach it in the same page payload, and that undo takes both back together.
 describe("the crossing save is one page write", () => {
-  it("persists the renamed macro and its tine.* view key in a single savePages payload", async () => {
+  it("persists the renamed macro and its tine.* view key in a single page submit", async () => {
     // The OG text carries the sort; TQL cannot, so the crossing moves it to
     // `tine.sort` on the same block.
     load("{{query (task TODO) (sort-by priority desc)}}");
     arrangeCrossing();
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-2"] });
+    await bindTestHost();
+    const save = vi.spyOn(backend(), "pageSubmit");
     vi.spyOn(backend(), "parseQuery").mockImplementation(async (source: string) => ({
       ...parsedAs(source), view: { sort: [["priority", "desc"]] },
     }));
@@ -548,7 +537,7 @@ describe("the crossing save is one page write", () => {
 
       expect(await flushPage("Sheet")).toBe(true);
       expect(save).toHaveBeenCalledTimes(1);
-      const written = JSON.stringify(save.mock.calls[0][0]);
+      const written = JSON.stringify(submittedPages(save, "Sheet")[0]);
       expect(written).toContain("{{tine-query -- task DONE}}");
       expect(written).toContain("tine.sort:: priority desc");
 

@@ -27,20 +27,26 @@ impl Transaction<'_> {
                 graph_rev: self.store.changes.rev(),
             })
     }
-    /// Queue recoverable trash of an unreferenced asset. Commit checks the
-    /// latest published graph under the writer, refusing partial inventories
-    /// and referenced assets. Cost O(B + source bytes); unobserved external
-    /// arrivals can still race after this check. Generic trash has no such
-    /// orphan requirement (for example intentional PDF annotation removal).
-    pub fn trash_orphan_asset(&mut self, file: &FileId, expected: FileRev) -> &mut Self {
-        self.steps.push(Step::Trash {
-            file: file.clone(),
-            expected,
-            orphan_only: true,
-        });
-        self
+    /// The [`Transaction::expect_view`] precondition, under the writer: a
+    /// publication or a config delivery since the plan's view is a conflict
+    /// (in-scope scenario: an external editor or sync service changes a
+    /// referrer or `config.edn` between plan and commit; the caller replans).
+    pub(super) fn stale_view(&self) -> Option<TxOutcome> {
+        let (rev, config) = self.view.as_ref()?;
+        let current = self.store.changes.rev();
+        if *rev == current && std::sync::Arc::ptr_eq(config, &self.store.config().config) {
+            return None;
+        }
+        let file = FileId::from("logseq/config.edn".to_owned());
+        let disk = FileRev::from_file(&self.store.graph.root.join(file.as_str())).ok();
+        Some(TxOutcome::NotCommitted {
+            step: 0,
+            why: Why::Conflict { file, disk },
+            rollback: Rollback::default(),
+            publication_errors: Vec::new(),
+            graph_rev: current,
+        })
     }
-
     // Disk/permission failures or a published external reference invalidate an
     // orphan claim. The caller holds the writer, so publication cannot race
     // this check and trash; unobserved external edits remain outside this lock.
@@ -59,12 +65,11 @@ impl Transaction<'_> {
                     .into(),
             )
         })?;
-        if !view.unreadable_files().is_empty() {
-            return Err(Why::Failed(
-                io::Error::other("asset reference inventory is partial").into(),
-            ));
-        }
-        if view.referenced_assets().contains(name) {
+        let referenced = self
+            .store
+            .referenced_assets_in(&view)
+            .map_err(|error| Why::Failed(error.into()))?;
+        if referenced.contains(name) {
             return Err(Why::Refused(Refusal::AssetReferenced));
         }
         Ok(())

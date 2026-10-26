@@ -14,14 +14,10 @@ use tine_core::model::{
 use tine_graph_features::journals::{self, JournalFilenameMigration};
 use tine_graph_features::{config, IncompleteTransaction as IncompleteTx};
 use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
-#[cfg(test)]
-use tine_store::{SaveOutcome, SavePagesOutcome};
 mod discovery;
-mod save_wire;
-use discovery::{page_inventory_wire, resolve_name, PageInventoryWire};
-use save_wire::SavePagesWire;
-#[cfg(test)]
-use save_wire::{save_outcome_to_wire, save_pages_outcome_to_wire};
+use discovery::{
+    page_inventory_wire, page_modified_wire, resolve_name, PageInventoryWire, PageModifiedWire,
+};
 
 fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
     tine_graph_features::assets::error_for_user(&slot.store, error)
@@ -125,7 +121,9 @@ pub(crate) fn sync_conflict_error(error: std::io::Error) -> String {
     }
 }
 
-fn feature_asset_access_error(error: tine_graph_features::assets::AssetAccessError) -> String {
+pub(crate) fn feature_asset_access_error(
+    error: tine_graph_features::assets::AssetAccessError,
+) -> String {
     match error {
         tine_graph_features::assets::AssetAccessError::BadName => "bad asset name".into(),
         tine_graph_features::assets::AssetAccessError::StreamSymlink => {
@@ -243,7 +241,7 @@ fn refuse_bound_graph_path(
     Ok(resolved)
 }
 
-mod query_error_wire;
+pub(crate) mod query_error_wire;
 use query_error_wire::{query_error, reference_error};
 
 #[tauri::command]
@@ -263,7 +261,7 @@ pub(crate) async fn save_workspaces(
     crate::settings::save_workspaces(data, app, state).await
 }
 
-fn feature_search_error(error: tine_graph_features::search::SearchError) -> String {
+pub(crate) fn feature_search_error(error: tine_graph_features::search::SearchError) -> String {
     match error {
         tine_graph_features::search::SearchError::Load(error) => {
             format!("graph load failed: {error:?}")
@@ -335,40 +333,24 @@ pub(crate) async fn page_inventory(state: GraphContext<'_>) -> Result<PageInvent
     .map_err(|error| error.to_string())?
 }
 
-#[derive(Serialize)]
-pub(crate) struct JournalFeedPage {
-    pages: Vec<PageWire>,
-    next_before_day: Option<i64>,
-    done: bool,
-    as_of_day: i64,
-    /// Journals this page skipped as unreadable (`path: reason`); omitted when
-    /// none.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    unreadable: Vec<String>,
-}
-
-/// Feed-only pagination by ordinal day.
+/// Last-modified time of every page file, for the All pages view's Updated
+/// column: a one-shot read of times the store already holds (no stat, no
+/// persisted record). Graph-wide off-thread.
 #[tauri::command]
-pub(crate) async fn journal_feed_page(
-    limit: usize,
-    before_day: Option<i64>,
-    state: GraphContext<'_>,
-) -> Result<JournalFeedPage, String> {
+pub(crate) async fn page_modified(state: GraphContext<'_>) -> Result<PageModifiedWire, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let feed = tine_graph_features::journals::feed_page(&slot.store, limit, before_day)
-            .map_err(|error| error.to_string())?;
-        Ok(JournalFeedPage {
-            pages: feed.pages.into_iter().map(page_dto).collect(),
-            next_before_day: feed.next_before_day,
-            done: feed.done,
-            as_of_day: feed.as_of_day,
-            unreadable: feed.unreadable,
-        })
+        slot.store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))
+            .map(|view| page_modified_wire(&view))
     })
     .await
     .map_err(|error| error.to_string())?
 }
+
+mod journals_feed;
+pub(crate) use journals_feed::*;
 #[tauri::command]
 pub(crate) async fn get_page(
     name: String,
@@ -403,218 +385,13 @@ pub(crate) async fn resolve_page(
     .map_err(|error| error.to_string())?
 }
 
-/// Raw text of every Markdown/Org file in the open graph (`pages/`, plus
-/// `journals/` when `include_journals`), for the "Help improve Tine" diff panel.
-/// Mirrors `lsdoc/tools/graph-check.mjs`'s file scan: skips files over 8 MB, tags
-/// format by extension, returns graph-root-relative paths sorted for stable
-/// output, and names every file it skipped. Read-only and local — the panel
-/// makes no network calls.
-#[tauri::command]
-pub(crate) async fn graph_source_files(
-    include_journals: bool,
-    state: GraphContext<'_>,
-) -> Result<tine_graph_features::sources::GraphSources, String> {
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::sources::graph_source_files(&slot.store, include_journals)
-            .map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SavePageEntry {
-    id: String,
-    page: PageDto,
-    base_rev: Option<String>,
-    #[serde(default)]
-    force: bool,
-    kinds: Vec<tine_store::EditKind>,
-}
-
-fn log_save_kinds(entries: &[SavePageEntry]) {
-    if crate::debug::debug_enabled() {
-        for entry in entries {
-            crate::debug::diag_private(
-                "edit-kinds",
-                format!("{}: {:?}", entry.page.name, entry.kinds),
-            );
-        }
-    }
-}
-
-/// Require a current graph binding and nonempty edit kinds, then prepare
-/// bases and run one ordered guarded page transaction. A missing/stale
-/// binding or empty kinds returns command Err; preparation and transaction
-/// failures return a Failed wire value. Force reads current UTF-8 bytes for
-/// each affected base. Empty input returns Failed at placeholder index 0.
-/// A failed or slow call is recorded as a fixed-shape `direct.save` event.
-///
-/// The transaction takes the store writer, which waits behind a watcher cycle
-/// or a checkpoint capture, so it runs on the blocking pool (R3, og-flow3; the
-/// shape of 96531bd2a). Save ordering is unchanged: the frontend serializes
-/// each page's saves (and a group behind its members) and issues `save_pages`
-/// through its ordered lane, and the per-page base-revision guard inside
-/// `save_pages_wire` is untouched.
-#[tauri::command]
-pub(crate) async fn save_pages(
-    entries: Vec<SavePageEntry>,
-    state: GraphContext<'_>,
-) -> Result<SavePagesWire, String> {
-    let slot = slot_for_context(&state)?;
-    if entries.iter().any(|entry| entry.kinds.is_empty()) {
-        return Err("OG-RULES Rule 8: every page write declares a non-empty edit kind list; exemplar src/document/save/engine.ts".into());
-    }
-    log_save_kinds(&entries);
-    let entries: Vec<_> = entries
-        .into_iter()
-        .map(|entry| {
-            (
-                PageId::from(entry.id),
-                entry.page,
-                entry.base_rev,
-                entry.force,
-                entry.kinds,
-            )
-        })
-        .collect();
-    crate::state::off_ui(move || {
-        Ok(save_wire::save_pages_wire(
-            &slot.store,
-            &entries,
-            tine_graph_features::pages::save_pages,
-        ))
-    })
-    .await
-}
-
 #[cfg(test)]
-mod save_wire_tests {
+mod wire_family_tests {
     use super::*;
 
     #[test]
-    fn save_wire_families_are_distinct() {
-        const RULE: &str = "I-9: save failure families stay fixed while recovery locations remain explicit; exemplar commands::save_outcome_to_wire";
-        assert_eq!(
-            save_outcome_to_wire(SaveOutcome::Conflict {
-                disk: String::from("rev").into()
-            }),
-            Err("conflict".into()),
-            "{RULE}"
-        );
-        assert_eq!(
-            save_outcome_to_wire(SaveOutcome::Deleted),
-            Err("deleted".into()),
-            "{RULE}"
-        );
-        assert_eq!(
-            save_outcome_to_wire(SaveOutcome::Twin {
-                existing: PageId::from("pages/secret.md".to_string())
-            }),
-            Err("twin".into()),
-            "{RULE}"
-        );
-        assert_eq!(
-            save_outcome_to_wire(SaveOutcome::Io(
-                std::io::Error::new(std::io::ErrorKind::PermissionDenied, "/secret/path").into()
-            )),
-            Err("io:PermissionDenied".into()),
-            "{RULE}"
-        );
-        let wire = save_pages_outcome_to_wire(SavePagesOutcome::Failed {
-            index: 2,
-            outcome: SaveOutcome::Repeated,
-            undo_failed: vec![tine_store::FileId::from("pages/A.md".to_string())],
-            publication_errors: Vec::new(),
-        });
-        let encoded = serde_json::to_string(&wire).unwrap();
-        assert_eq!(
-            encoded, r#"{"failed":{"index":2,"family":"repeated","undoFailed":["pages/A.md"]}}"#,
-            "{RULE}"
-        );
-        let incomplete = save_pages_outcome_to_wire(SavePagesOutcome::Failed {
-            index: 0,
-            outcome: SaveOutcome::Io(std::io::Error::other("publication failed").into()),
-            undo_failed: Vec::new(),
-            publication_errors: vec![tine_store::FileId::from("pages/A.md".to_string())],
-        });
-        assert_eq!(
-            serde_json::to_string(&incomplete).unwrap(),
-            r#"{"failed":{"index":0,"family":"publication-incomplete","undoFailed":[],"publicationErrors":["pages/A.md"]}}"#,
-            "{RULE}"
-        );
-        let families = [
-            (
-                SaveOutcome::Conflict {
-                    disk: "private-rev".to_string().into(),
-                },
-                "conflict",
-            ),
-            (SaveOutcome::Deleted, "deleted"),
-            (
-                SaveOutcome::Twin {
-                    existing: PageId::from("pages/private-title.md"),
-                },
-                "twin",
-            ),
-            (SaveOutcome::Repeated, "repeated"),
-            (SaveOutcome::ReadOnly("private title".into()), "read-only"),
-            (
-                SaveOutcome::InvalidTarget("/private/path".into()),
-                "invalid-target",
-            ),
-            (SaveOutcome::Closed, "closed"),
-            (
-                SaveOutcome::Io(
-                    std::io::Error::new(std::io::ErrorKind::PermissionDenied, "/private/path")
-                        .into(),
-                ),
-                "io:PermissionDenied",
-            ),
-        ];
-        // R-CREATE-UNREADABLE-OWNER: its own family, and the unreadable file
-        // travels as an explicit recovery location the toast can name.
-        let owner = serde_json::to_string(&save_pages_outcome_to_wire(SavePagesOutcome::Failed {
-            index: 0,
-            outcome: SaveOutcome::UnreadableOwner {
-                file: tine_store::FileId::from("pages/Other.md".to_string()),
-            },
-            undo_failed: Vec::new(),
-            publication_errors: Vec::new(),
-        }))
-        .unwrap();
-        assert_eq!(
-            owner,
-            r#"{"failed":{"index":0,"family":"unreadable-owner","undoFailed":[],"unreadableOwner":"pages/Other.md"}}"#,
-            "{RULE}"
-        );
-        let mut seen = std::collections::HashSet::new();
-        assert!(seen.insert("unreadable-owner"), "{RULE}");
-        for (outcome, family) in families {
-            let encoded =
-                serde_json::to_string(&save_pages_outcome_to_wire(SavePagesOutcome::Failed {
-                    index: 1,
-                    outcome,
-                    undo_failed: vec![tine_store::FileId::from("pages/A.md".to_string())],
-                    publication_errors: Vec::new(),
-                }))
-                .unwrap();
-            let rev_field = if family == "conflict" {
-                r#","diskRev":"private-rev""#
-            } else {
-                ""
-            };
-            assert_eq!(
-                encoded,
-                format!(
-                    r#"{{"failed":{{"index":1,"family":"{family}"{rev_field},"undoFailed":["pages/A.md"]}}}}"#
-                ),
-                "{RULE}"
-            );
-            assert!(seen.insert(family), "{RULE}");
-        }
+    fn failure_families_are_distinct() {
+        const RULE: &str = "I-9: failure families stay fixed while recovery locations remain explicit; exemplar commands::sync_conflict_error";
         assert_eq!(
             asset_error(StoreError::TooLarge { limit: 12, len: 13 }),
             "asset-too-large",
@@ -626,6 +403,13 @@ mod save_wire_tests {
             )),
             "not-found",
             "{RULE}"
+        );
+        assert_eq!(
+            read_asset_error(tine_graph_features::assets::AssetAccessError::Store(
+                StoreError::TooLarge { limit: 12, len: 13 }
+            )),
+            "asset-too-large",
+            "L-1: a capped read keeps the UI's existing refusal token"
         );
         assert_eq!(
             sync_conflict_error(std::io::Error::new(
@@ -671,8 +455,12 @@ pub(crate) async fn copy_guide_into_graph(
 ) -> Result<tine_graph_features::guide::GuideCopyResult, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::guide::copy_guide_into_graph(&slot.store, &title)
-            .map_err(|error| error.to_string())
+        tine_graph_features::guide::copy_guide_into_graph(
+            &slot.store,
+            slot.host_slot()?.running(),
+            &title,
+        )
+        .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -769,28 +557,6 @@ pub(crate) async fn block_referrers(
 }
 
 #[tauri::command]
-pub(crate) async fn delete_page(
-    name: String,
-    kind: PageKind,
-    expected_path: Option<String>,
-    state: GraphContext<'_>,
-) -> Result<(), String> {
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::pages::delete_page_expected(
-            &slot.store,
-            &name,
-            kind,
-            expected_path.as_deref(),
-            None,
-        )
-        .map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
 pub(crate) async fn rename_page(
     old: String,
     new: String,
@@ -801,8 +567,12 @@ pub(crate) async fn rename_page(
 ) -> Result<tine_graph_features::pages::RenameReport, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
+        // A rename is the page host's (STEP3 §7): a revoked slot is the
+        // stale-binding refusal, an off one refuses with no write. One
+        // statement-temporary guard (A-K3, `host_slot_guard_tests.rs`).
         tine_graph_features::pages::rename_or_merge_page(
             &slot.store,
+            slot.host_slot()?.running().ok_or("no page host")?,
             &old,
             &new,
             expected_path.as_deref(),
@@ -824,7 +594,6 @@ mod graph_wide_command_boundary_tests {
             "get_backlinks",
             "get_unlinked_refs",
             "rename_page",
-            "delete_page",
             "merge_pages",
             "rename_file_to_page",
         ] {
@@ -848,6 +617,28 @@ pub(crate) async fn publish_html(state: GraphContext<'_>) -> Result<(String, usi
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Reveal an exported site using the shared desktop file-manager helper.
+#[tauri::command]
+pub(crate) async fn reveal_export(path: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            let path = std::path::Path::new(&path);
+            if !path.is_absolute() || !path.is_dir() {
+                return Err("export folder is unavailable".into());
+            }
+            reveal_page_source(path)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = path;
+        Err("showing an export folder is available on desktop only".into())
+    }
 }
 
 /// Render one page to a self-contained HTML document (assets inlined, no sidebar)
@@ -905,11 +696,13 @@ pub(crate) async fn run_graph_search(
     page_limit: usize,
     block_limit: usize,
     lane: Option<String>,
+    lane_seq: Option<u64>,
     explain: bool,
     scope: Option<QueryPageScope>,
     page_match_scope: Option<tine_core::query::ir::FriendlyPageMatchScope>,
     page_view: Option<tine_core::query::ir::ViewSettings>,
     block_view: Option<tine_core::query::ir::ViewSettings>,
+    transliteration: Option<bool>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query_plan::QueryExecution, String> {
     let slot = slot_for_context(&state)?;
@@ -919,18 +712,20 @@ pub(crate) async fn run_graph_search(
         path: scope.path,
     });
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::search::run_graph_search(
+        tine_graph_features::search::run_graph_search_sequenced(
             &slot.store,
             &slot.block_search_lanes,
             source,
             page_limit,
             block_limit,
             lane.as_deref(),
+            lane_seq,
             explain,
             scope,
             page_match_scope,
             page_view,
             block_view,
+            transliteration.unwrap_or(false),
         )
         .map_err(feature_search_error)
     })
@@ -1123,21 +918,46 @@ pub(crate) async fn read_custom_css(state: GraphContext<'_>) -> Result<String, S
     .await
 }
 
+/// Create `logseq/custom.css` when it is missing (one guarded no-replace write)
+/// and open it in the OS default editor. Desktop only: the mobile builds have no
+/// editor hand-off, so they refuse before touching the graph. Rust owns the path;
+/// the WebView supplies none. Cost: O(path components) plus one small create.
+#[tauri::command]
+pub(crate) async fn edit_custom_css(state: GraphContext<'_>) -> Result<(), String> {
+    #[cfg(not(desktop))]
+    {
+        let _ = state;
+        Err(
+            "custom.css opens in a desktop editor; edit logseq/custom.css in the graph folder"
+                .into(),
+        )
+    }
+    #[cfg(desktop)]
+    with_config_store(&state, move |store| {
+        let path = tine_graph_features::custom_css::ensure_custom_css(store)
+            .map_err(|error| error.to_string())?;
+        open_page_source_with_os(&path, false)
+    })
+    .await
+}
+
 #[tauri::command]
 pub(crate) async fn search(
     query: String,
     limit: usize,
     lane: Option<String>,
+    lane_seq: Option<u64>,
     state: GraphContext<'_>,
 ) -> Result<Vec<RefGroup>, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::search::find_blocks(
+        tine_graph_features::search::find_blocks_sequenced(
             &slot.store,
             &slot.block_search_lanes,
             &query,
             limit,
             lane.as_deref(),
+            lane_seq,
         )
         .map_err(feature_search_error)
     })
@@ -1149,17 +969,56 @@ pub(crate) async fn search(
 pub(crate) async fn quick_switch(
     query: String,
     limit: usize,
+    editor_block_id: Option<String>,
+    editor_original_raw: Option<String>,
+    editor_page_name: Option<String>,
+    editor_session: Option<String>,
+    transliteration: Option<bool>,
     state: GraphContext<'_>,
-) -> Result<Vec<PageEntry>, String> {
+) -> Result<Vec<CompletionPageEntry>, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         slot.store
             .whole_graph()
-            .map(|view| view.complete_page_names(&query, limit))
+            .map(
+                |view| match (editor_page_name, editor_block_id, editor_original_raw) {
+                    (Some(page), Some(id), Some(original)) => view.complete_page_names(
+                        &query,
+                        limit,
+                        Some((&page, &id, &original)),
+                        transliteration.unwrap_or(false),
+                        editor_session.as_deref(),
+                    ),
+                    _ => view.complete_page_names(
+                        &query,
+                        limit,
+                        None,
+                        transliteration.unwrap_or(false),
+                        None,
+                    ),
+                },
+            )
+            .map(completion_entries)
             .map_err(|e| format!("graph load failed: {e:?}"))
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Request-local DTO: PageEntry's persisted inventory shape is unchanged.
+#[derive(serde::Serialize)]
+pub(crate) struct CompletionPageEntry {
+    #[serde(flatten)]
+    page: PageEntry,
+    match_class: tine_core::query_plan::ObjectiveMatchClass,
+}
+
+fn completion_entries(
+    hits: Vec<(PageEntry, tine_core::query_plan::ObjectiveMatchClass)>,
+) -> Vec<CompletionPageEntry> {
+    hits.into_iter()
+        .map(|(page, match_class)| CompletionPageEntry { page, match_class })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1175,7 +1034,11 @@ fn capture_quick_switch_for(
         .store
         .whole_graph()
         .map_err(|e| format!("graph load failed: {e:?}"))?;
-    Ok(view.complete_page_names(query, limit.min(8)))
+    Ok(view
+        .complete_page_names(query, limit.min(8), None, false, None)
+        .into_iter()
+        .map(|(page, _)| page)
+        .collect())
 }
 
 /// The sole graph-backed capability exposed to Quick Capture. It is deliberately
@@ -1185,17 +1048,24 @@ fn capture_quick_switch_for(
 pub(crate) async fn capture_quick_switch(
     query: String,
     limit: usize,
+    transliteration: Option<bool>,
     binding_generation: Option<u64>,
     window: WebviewWindow,
     state: State<'_, AppState>,
-) -> Result<Vec<PageEntry>, String> {
+) -> Result<Vec<CompletionPageEntry>, String> {
     let slot = capture_quick_switch_slot(&state, window.label(), binding_generation)?;
     tauri::async_runtime::spawn_blocking(move || {
         let view = slot
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
-        Ok(view.complete_page_names(&query, limit.min(8)))
+        Ok(completion_entries(view.complete_page_names(
+            &query,
+            limit.min(8),
+            None,
+            transliteration.unwrap_or(false),
+            None,
+        )))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1305,7 +1175,7 @@ mod capture_quick_switch_tests {
     fn capture_binding_never_grants_generic_graphcontext_mutation_access() {
         let (state, base) = state_with_selected_graph();
         let generation = state.capture_graph_binding().unwrap().binding_generation;
-        // `save_pages` and other mutations resolve through GraphContext, which
+        // `page_submit` and other mutations resolve through GraphContext, which
         // uses this normal window-slot path and therefore has no capture fallback.
         assert_eq!(
             slot_for_bound_window(&state, "capture", Some(generation))
@@ -1320,7 +1190,7 @@ mod capture_quick_switch_tests {
 /// Run a whole-graph read on the blocking pool. `Store::whole_graph` waits for
 /// the initial parse (seconds on a 10k-page graph); a synchronous Tauri command
 /// runs on the main thread and would freeze the webview for that whole wait.
-async fn off_ui_graph_read<T: Send + 'static>(
+pub(crate) async fn off_ui_graph_read<T: Send + 'static>(
     state: &GraphContext<'_>,
     read: impl FnOnce(WholeGraph) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
@@ -1392,9 +1262,10 @@ pub(crate) async fn preview_block(
 #[tauri::command]
 pub(crate) fn read_asset(
     name: String,
-    max_bytes: Option<u64>,
+    max_bytes: u64,
     state: GraphContext<'_>,
 ) -> Result<tauri::ipc::Response, String> {
+    // L-1: a missing maxBytes fails IPC deserialization before any file read.
     // Return RAW bytes (not a JSON number[]), so a multi-MB PDF/image isn't
     // serialized element-by-element and re-parsed on the JS side — the frontend
     // receives an ArrayBuffer directly.
@@ -1428,35 +1299,31 @@ pub(crate) fn stream_asset_path(name: String, state: GraphContext<'_>) -> Result
     Ok(format!("{}/{}", slot.binding_generation, name))
 }
 
-/// Quit the app cleanly. On Linux, first SIGKILL WebKitGTK's helper subprocesses so
-/// they don't run their buggy GL-driver atexit teardown and dump a SIGABRT core on
-/// exit (GH #28). The JS close handler calls this only AFTER `flushAll()`/
-/// `flushSession()` have resolved, so tearing the web process down hard loses no
-/// edits. Then hand off to Tauri's normal exit (the main process still tears down
-/// the way it always has — no dump there). On non-Linux this is just `app.exit(0)`.
-#[tauri::command]
-pub(crate) fn tine_quit(app: tauri::AppHandle) {
-    #[cfg(target_os = "linux")]
-    crate::platform::kill_webkit_children();
-    app.exit(0);
-}
-
-/// Close only the calling graph window. The final graph window still performs
-/// the process-wide WebKit cleanup before exit; the hidden capture window never
-/// keeps the process alive by itself.
+/// Close only the calling graph window; the JS close handler calls this
+/// after its own flush. While another graph window exists, the window is
+/// destroyed and its `Destroyed` hook releases its graph. The last one
+/// first unbinds its graph, which retires a running page host, and leaves
+/// the exit to `exit_after_retirement` once the retirement is idle (G6: an
+/// exit never skips a host's saves). It stays until the exit, so WebKit's
+/// helpers are killed before its graceful teardown (GH #28, ADR 0029).
 #[tauri::command]
 pub(crate) fn close_graph_window(
     window: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::state::AppState>,
 ) -> Result<(), String> {
-    if state.graphs.read().unwrap().len() <= 1 {
-        #[cfg(target_os = "linux")]
-        crate::platform::kill_webkit_children();
-        app.exit(0);
-        return Ok(());
+    use tauri::Manager;
+    let label = window.label();
+    let others = app
+        .webview_windows()
+        .keys()
+        .any(|other| other != label && crate::graph_window(other));
+    if others {
+        return window.destroy().map_err(|e| e.to_string());
     }
-    window.destroy().map_err(|e| e.to_string())
+    crate::state::release_window_graph(&state.graphs, label);
+    crate::exit_after_retirement(&app, label);
+    Ok(())
 }
 
 /// Toggle the WebView developer tools (WebKit Web Inspector) for theme/CSS
@@ -1684,6 +1551,30 @@ fn read_text_file_from_path(p: &std::path::Path, state: &AppState) -> Result<Str
     const MAX_BYTES: u64 = 10 * 1024 * 1024;
     let bytes = crate::device_io::read_regular_file_bounded(&resolved, MAX_BYTES)?;
     String::from_utf8(bytes).map_err(|e| e.to_string())
+}
+
+/// Open a graph-relative file or folder that a file link resolved to
+/// (GH #457) in the OS default app. `crate::platform::graph_relative_target`
+/// refuses a path that leaves the graph folder, including through a symlink,
+/// and a missing target. Read-only OS handoff on the blocking pool (I-21);
+/// iOS/Android refuse, as for `open_asset`.
+#[tauri::command]
+pub(crate) async fn open_graph_file(path: String, state: GraphContext<'_>) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = crate::platform::graph_relative_target(&slot.root_key, &path)?;
+        #[cfg(desktop)]
+        {
+            open_page_source(&target)
+        }
+        #[cfg(not(desktop))]
+        {
+            let _ = target;
+            Err("opening files from links is available on desktop only".to_string())
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Open an `assets/`-relative file, directory, or (empty name) the assets root (GH #367)
@@ -2233,8 +2124,12 @@ pub(crate) async fn apply_journal_filename_migrations(
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         crate::backup::snapshot_before_rewrite(&app, &slot, "pre-journal-rename")?;
-        let result = journals::migrate_journal_filenames(&slot.store, &migrations)
-            .map_err(|error| error.to_string())?;
+        let result = journals::migrate_journal_filenames(
+            &slot.store,
+            slot.host_slot()?.running(),
+            &migrations,
+        )
+        .map_err(|error| error.to_string())?;
         Ok(result)
     })
     .await
@@ -2249,8 +2144,12 @@ pub(crate) async fn trash_journal_file(
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     crate::state::off_ui(move || {
-        tine_graph_features::journals::trash_journal_file(&slot.store, &name)
-            .map_err(|e| e.to_string())
+        tine_graph_features::journals::trash_journal_file(
+            &slot.store,
+            slot.host_slot()?.running(),
+            &name,
+        )
+        .map_err(|e| e.to_string())
     })
     .await
 }
@@ -2294,8 +2193,13 @@ pub(crate) async fn merge_pages(
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::pages::merge_pages(&slot.store, &src, &dst)
-            .map_err(graph_write_error_to_wire)
+        tine_graph_features::pages::merge_pages(
+            &slot.store,
+            slot.host_slot()?.running(),
+            &src,
+            &dst,
+        )
+        .map_err(graph_write_error_to_wire)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2332,8 +2236,13 @@ pub(crate) async fn rename_file_to_page(
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::pages::rename_file_to_page(&slot.store, &path, &new_name)
-            .map_err(|error| error.to_string())
+        tine_graph_features::pages::rename_file_to_page(
+            &slot.store,
+            slot.host_slot()?.running(),
+            &path,
+            &new_name,
+        )
+        .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2394,6 +2303,7 @@ pub(crate) async fn write_highlights(
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::pdf::write_highlights(
             &slot.store,
+            slot.host_slot()?.running(),
             &pdf,
             &label,
             &highlights,

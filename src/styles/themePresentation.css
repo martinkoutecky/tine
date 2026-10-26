@@ -14,17 +14,17 @@
  * `.block-content`/`.block-editor`, so the bullet column (one line box tall) grows
  * with the text instead of being left behind at the default 26px (GH #459). */
 html[data-theme-content-typography="editorial-serif"] .page-section {
-  --tine-editable-font: "Iowan Old Style", "Palatino Linotype", "Book Antiqua",
-    Palatino, Georgia, var(--tine-editable-emoji-font), serif;
-  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino,
-    Georgia, serif;
-  font-size: 19px;
+  --tine-editable-font: var(--tine-editable-font-user, "Iowan Old Style", "Palatino Linotype", "Book Antiqua",
+    Palatino, Georgia, var(--tine-editable-emoji-font), serif);
+  font-family: var(--tine-content-font, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino,
+    Georgia, serif);
+  font-size: var(--tine-font-size, 19px);
   --ls-block-line-height: 30px;
 }
 
 html[data-theme-journal-header="editorial"] .journal-title {
-  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino,
-    Georgia, serif;
+  font-family: var(--tine-content-font, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino,
+    Georgia, serif);
   font-size: 34px;
   font-weight: 700;
 }
@@ -67,7 +67,7 @@ html[data-theme-journal-header="editorial"] .page-title-row.journal-today .page-
 
 .today-task-summary {
   color: var(--text-secondary);
-  font-family: var(--ls-font-family);
+  font-family: var(--tine-content-font, var(--ls-font-family));
   font-size: 16px;
   line-height: 1.35;
 }

@@ -1,7 +1,14 @@
 // One answer for release routing and version validation. App identity and updater
 // channel are independent: the identity flip must not opt Beta into stable updates.
+// `BETA_TAG` names the Beta channel. From 0.8.0-beta.3 each Beta is published
+// to its own immutable release v<version> and Beta builds read a fixed manifest
+// on tine.page (pages.yml, scripts/pages-beta-manifest.mjs). The GitHub release
+// at the old moving tag `beta` stays, frozen at 0.8.0-beta.3, as the bridge for
+// installs that still read LEGACY_BETA_ENDPOINT (docs/VERSIONING.md).
 export const BETA_TAG = "beta";
-export const BETA_ENDPOINT = "https://github.com/martinkoutecky/tine/releases/download/beta/latest.json";
+export const BETA_UPDATES = "https://tine.page/updates/beta/";
+export const BETA_ENDPOINT = `${BETA_UPDATES}latest.json`;
+export const LEGACY_BETA_ENDPOINT = "https://github.com/martinkoutecky/tine/releases/download/beta/latest.json";
 export const STABLE_CHANNEL = "stable";
 export const STABLE_ENDPOINT = "https://github.com/martinkoutecky/tine/releases/latest/download/latest.json";
 
@@ -33,14 +40,24 @@ export function releaseChannel(conf) {
   throw new Error("release builds must use exactly the beta or the stable updater endpoint");
 }
 
-/** The release name in AppImage zsync update information: `beta`, or GitHub's `latest` keyword. */
-export function zsyncReleaseName(conf) {
-  return releaseChannel(conf) === BETA_TAG ? BETA_TAG : "latest";
+/**
+ * AppImage update information for an AppImage asset name. Stable reads GitHub's
+ * latest release; Beta reads the fixed per-architecture zsync file on tine.page,
+ * selected by the same release choice as the Beta manifest.
+ */
+export function appImageUpdateInformation(conf, repository, appimage) {
+  if (releaseChannel(conf) !== BETA_TAG) {
+    return `gh-releases-zsync|${repository.replace("/", "|")}|latest|${appimage.replace(conf.version, "*")}.zsync`;
+  }
+  const arch = /_(amd64|aarch64)\.AppImage$/.exec(appimage)?.[1];
+  if (!arch) throw new Error(`cannot tell the architecture of ${appimage}`);
+  return `zsync|${BETA_UPDATES}${arch}.AppImage.zsync`;
 }
 
-/** The GitHub release a channel publishes to: the moving `beta` tag, or `v<version>`. */
+/** The GitHub release a build publishes to: always `v<version>` (Betas as prereleases). */
 export function releaseTag(conf) {
-  return releaseChannel(conf) === BETA_TAG ? BETA_TAG : `v${conf.version}`;
+  releaseChannel(conf);
+  return `v${conf.version}`;
 }
 
 export function packagingProblems(conf, ship) {
@@ -68,8 +85,10 @@ export function publicationPlan({ conf, mode, publish, tag }) {
   return { channel, publish, prerelease: !stable, latest: stable };
 }
 
-export function updaterAssetUrl(repository, asset, channel = "stable") {
+/** Stable assets resolve through GitHub's latest alias; a Beta's through its own immutable tag. */
+export function updaterAssetUrl(repository, asset, channel = "stable", version) {
   if (channel !== STABLE_CHANNEL && channel !== BETA_TAG) throw new Error(`unknown updater channel ${channel}`);
-  const route = channel === BETA_TAG ? `download/${BETA_TAG}` : "latest/download";
+  if (channel === BETA_TAG && !releaseVersion(version).sequence) throw new Error(`a Beta asset URL needs a -beta.N version, not ${version}`);
+  const route = channel === BETA_TAG ? `download/v${version}` : "latest/download";
   return `https://github.com/${repository}/releases/${route}/${asset}`;
 }

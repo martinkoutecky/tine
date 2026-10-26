@@ -8,7 +8,7 @@
      the toolbar instead of overlapping it (var is unset otherwise → 16px). The
      toolbar branch already clears the keyboard, so only the resting branch adds
      the gesture-bar inset. */
-  bottom: max(calc(var(--overlay-inset-bottom, 0px) + 16px), var(--mobile-kb-toolbar-lift, 16px));
+  bottom: max(calc(var(--overlay-inset-bottom, 0px) + 16px + var(--mobile-navigation-height, 0px)), var(--mobile-kb-toolbar-lift, 16px));
   z-index: 118;
 }
 
@@ -162,7 +162,7 @@
   border-radius: 4px;
   background: var(--code-bg);
   color: var(--text-primary);
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 11.5px;
 }
 
@@ -376,7 +376,7 @@
        fall back to 12px plus the gesture-bar inset when the toolbar isn't up.
        This is the width at which Android actually renders, so dropping the
        inset here would undo the base rule on exactly the devices that need it. */
-    bottom: max(calc(var(--overlay-inset-bottom, 0px) + 12px), var(--mobile-kb-toolbar-lift, 12px));
+    bottom: max(calc(var(--overlay-inset-bottom, 0px) + 12px + var(--mobile-navigation-height, 0px)), var(--mobile-kb-toolbar-lift, 12px));
   }
 
   .help-table {

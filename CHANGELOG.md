@@ -8,6 +8,195 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-26
+
+Tine 0.8.0 makes the Tine Beta line stable. It is Tine Beta 0.8.0-beta.12
+(the twelve Beta sections below list everything it changed since 0.7.0; the
+0.7.1 to 0.7.4 fixes are included) plus the macOS command-line fix in this
+section. Your settings, graphs and sessions carry over from 0.7.x. The
+highlights: a command line on Linux and macOS for reading pages, journals,
+search and queries; the interface in Simplified Chinese; the Android share
+sheet, launcher shortcuts and a Quick capture tile, and an iOS share
+extension; a Journal sections page for choosing what today's journal shows;
+page icons; and saving moved into one background page host per graph, so
+every edit is saved as you type, from any window.
+
+### Changed
+- Stable Tine now carries the 0.8 Beta line. Beta keeps its separate app and update channel, and continues with the next development line.
+
+### Fixed
+
+- macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
+
+## [0.8.0-beta.12] - 2026-10-24
+
+Fixes for the 0.8.0 stable candidate: pasting a copied link keeps its URL (GH #759), opening a PDF no longer pulls the reader back to the top of the page (GH #672), a backlink to a highlight of a PDF that was not open scrolls to it, multiline Org blocks no longer add blank lines at the end of the file (GH #741), and hidden id:: and collapsed:: lines stay in the block's property group. Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
+
+### Fixed
+
+- Pasting a copied link keeps its URL and inserts it at the caret, preserving surrounding text. Inline HTML formatting is retained, with links in the page's Markdown or Org format (GH #759).
+- Following a backlink or block reference to a highlight of a PDF that was not open yet now scrolls to that highlight, as Logseq does, instead of opening the PDF with the highlight marked but off-screen. The scroll waits for the page to finish drawing, happens once, and is dropped if you scroll yourself first (card hCAoxs).
+- Opening a PDF no longer pulls the reader back to the top of the page about a tenth of a second later: following a backlink to a highlight of a PDF that was not open yet, or scrolling right after opening one, could be undone by a leftover zoom adjustment from opening (GH #672).
+- Editing a multiline Org block no longer adds permanent blank lines at the end of the file when autosave runs just after Shift+Enter (GH #741).
+- Editing a Markdown block that has its own properties keeps the hidden `id::` and `collapsed::` lines in the same property group, as Logseq writes them. Before, they moved below the body text, where Logseq ignores them, so references to the block could break in Logseq (internal: REG-HIDDEN-PROPS-STAY-IN-THE-GROUP).
+
+## [0.8.0-beta.11] - 2026-10-24
+
+Fixes for the 0.8.0 stable candidate: restoring a session keeps every tab on its last page, changing outline levels on long pages with images no longer makes the view jump (GH #745), the mobile editing toolbar works above the sidebar drawers (GH #751), page-property rows in Linked References keep their look after an edit (GH #753), switching table cells saves the previous edit (GH #754), and board cards drag even when another editor had focus (GH #756). Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
+
+### Fixed
+
+- Restoring a saved session keeps every tab on its last page, with its order, pins and active tab, instead of replacing the active page with the graph's configured home (internal card PVTI_lAHOAAbLVc4BhPsyzhDC3x4).
+- A stopped graph owner releases its lock at once, even while a process spawned at that moment still holds an inherited copy of the lock file's handle; before, the next owner could briefly find the graph still locked (internal: REG-OWNER-LOCK-INHERITED-DESCRIPTOR).
+- Switching table cells by double-click saves the previous edit; invalid numbers keep their editor open (GH #754).
+- Board cards drag between columns even when an editor outside the board has focus, without selecting text during the drag (GH #756).
+- Changing a block between outline levels one and two on long pages with images above no longer makes the view jump; structural edits preserve loaded image and measured window geometry (GH #745).
+- Page-property rows in Linked References keep the same appearance after editing, including other groups showing the same page (GH #753).
+- On mobile, the bottom editing toolbar stays usable above either sidebar drawer, acts on its focused editor, and reveals the editor above the keyboard while popups remain accessible (GH #751).
+- After a restore from backup, a page that was being edited when the restore began closes normally once editing ends, instead of staying open for the rest of the session. A component draft open across the restore (for example a table cell) no longer keeps holding back newer file content from that page after it closes (internal: REG-HOST-REBIND-ACQUISITION-RELEASE).
+
+## [0.8.0-beta.10] - 2026-10-23
+
+Fixes for the 0.8.0 stable candidate: wide query result tables sit inside the page again (GH #749, a regression since 0.8.0-beta.6), the macOS app icon matches other apps' size (GH #747), and data-safety fixes from the 0.8 audit. Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
+
+### Fixed
+
+- Wide tables in query results sit inside the page again instead of being shifted to the right and cut off (GH #749).
+- The macOS app icon keeps Apple's icon-grid margin, so the Dock no longer shows Tine larger than other apps (GH #747).
+- A save no longer stalls, and renames or moves no longer report Busy, when another writer releases a page at the moment Tine's page host goes to sleep: the host's path-lock retry could be dropped, leaving it waiting for an unrelated wake (internal: page-host driver lost wakeup).
+- Settings → unused assets now keeps images referenced only by a duplicate journal file for the same day, including references in its page properties. Moving an asset to trash checks those files too, and refuses if one cannot be read or analyzed (audit L8-03).
+- A page being deleted stops accepting typing, paste, property and sheet edits until the delete answers. If deletion fails or is not confirmed, the page becomes editable again with its text intact; input can no longer slip past unsaved-text tracking during deletion (audit L9-06).
+- A draft whose name is an alias is added to its owner only once even when the owner's save is not confirmed. A later edit replaces the landed copy instead of appending a second copy, and a refused landing keeps the draft recoverable (audit L9-05).
+- Renaming a page preserves longer tags such as `#foo+bar`, `#c++`, `#R&D` and `#foo🎉` when only their prefix matches, and updates complete tags before trailing punctuation such as `#foo.`. Renaming `c++` also updates `#c++` (audit L3-02).
+
+## [0.8.0-beta.9] - 2026-10-22
+
+One fix for the 0.8.0 stable candidate: typing no longer freezes on pages with many references (GH #746), a regression since 0.8.0-beta.1. Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
+
+### Fixed
+
+- **Holding a key on a large graph no longer makes typing stall more and more.** While you type, Tine saves the page about once a second, and after each save it refreshes the linked and unlinked references, page icons, block references and queries. When one refresh took longer than a second, the next one started before it finished, the refreshes piled up and competed with your typing. Now a refresh waits for the previous one to finish, and the saves made meanwhile are covered by one refresh afterwards, so the views still end up showing your latest text. Related to GH #746 (UI-GH746-REFRESH-ROUNDS-DO-NOT-PILE-UP).
+- **Typing no longer freezes for a moment every second or two on a page with many unlinked or linked references.** After each save, the references at the bottom of the page reload. With every reload, Tine also rebuilt the index behind the references filter, over every reference and all of its child blocks. It did that even with the section collapsed and the filter closed, which could take most of a second. Now the index is built only while you use the filter or its search. A reload also keeps the references on screen instead of showing "Loading…", and leaves unchanged rows alone instead of drawing them again. GH #746 (UI-GH746-REFERENCE-REFRESH-COST).
+
+## [0.8.0-beta.8] - 2026-10-22
+
+Two fixes for the 0.8.0 stable candidate. Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
+
+### Fixed
+
+- **Typing `DOING` no longer sends the rest of your text to the end of the block, and a stray `CLOCK:` line no longer blanks the page.** The clock-in that Tine writes under a task (the `:LOGBOOK:` lines) moved the caret to the end of the block, so the next characters you typed landed after `:END:`; the caret now stays on the task line. Typing on after `DOING` also no longer adds a second clock-in line. A `CLOCK:` line that is not inside a complete `:LOGBOOK:` drawer (for example `:END:  test`) used to make the page show "This page could not be displayed" (`TypeError: Cannot read properties of undefined (reading 'year')`); it now renders as a time stamp, and any other time stamp shape Tine does not know renders as nothing instead of failing (GH #741, UI-GH741-DOING-CLOCK-IN). This happened on stable 0.7.x too.
+- **On a long page with images, pressing Enter, Backspace or another structural key no longer throws the view back down or loses the block you were editing (most visible on Windows)**: the edit briefly re-lays out the blocks around it, and the editor no longer lets the webview scroll to that interim position; the view now moves only as far as showing the caret needs, and not at all while it is already visible, below any pinned parent rows. Not new in 0.8 (GH #745).
+
+## [0.8.0-beta.7] - 2026-10-21
+
+### Fixed
+
+- **A query export no longer publishes pages marked `public:: false`**, as every other export already did: when the query matches such a page, the page, its results and its share of the result count stay out of the export, and the review lists only the pages that are exported. A query that matches only such pages is refused (REG-QUERY-EXPORT-PRIVATE-PAGES).
+- A Markdown file with a quote whose first line is a `#+NAME: VALUE` line followed by a `key::` line no longer crashes Tine when the graph loads (the parser recursed until the stack overflowed; lsdoc v0.5.10, REG-OG-GH644-F2-QUOTE-PROPERTY-GROUP).
+- A page marked `template::` in its own property header (the lines at the top of the page, before the first bullet, or an Org page's `#+TEMPLATE:` line or head drawer) is now listed as a template, as in Logseq: `/` shows it as **Template: Name** and typing `/template` lists it with the others, and choosing it inserts the page's property lines as one block, without the `template::` line and with `<% today %>` and the like filled in. Before, only a `template::` on a block counted, so a page that Logseq listed as a template was missing from Tine (discussion #729, UI-GH729-PAGE-PROPERTY-TEMPLATE). The template is the property header only, not the page's blocks below it; `template-including-parent:: false` on a header therefore inserts nothing. Ctrl+K never listed templates in Logseq either.
+
+## [0.8.0-beta.6] - 2026-10-19
+
+### Changed
+
+- Settings search: the setting a result jumps to is highlighted for about two seconds, so it is easy to spot on a long tab (GH #706).
+
+### Fixed
+
+- The "Some page files couldn't be read" notice now names the files (the first five, then "and N more") instead of pointing to a debug log that is off by default, so you can find the broken file; Copy on the notice copies the full list (GitHub discussion #727).
+- Right-clicking a block in a query's results and choosing Cut or Delete now removes that block from its own page, as in Logseq, instead of removing the query block itself. The same holds for blocks inside a block embed (the embed's first row still acts on the embed). A right click in a query table no longer offers the query block's Cut or Delete (GH #726).
+- Pressing Enter at the very start of a page's properties (click the page properties, move the caret to the start, press Enter) no longer stops the page saving with "Couldn't save … Tine keeps trying" and leaves every later edit on that page unsaved. As in Logseq, Enter there adds a line inside the properties, which is dropped when you leave them; the properties stay the page header. Moving a block above the page properties (Alt+Shift+Up on the first block, or dropping a block above them) is now refused for the same reason. A page left in that state by an earlier build saves again once you delete the empty block above its properties (GH #210 F1).
+- **Typing in the Search tab (and the `((` block picker) can no longer end on "Search superseded by a newer request" with no results**: when the search for an earlier keystroke reached the search engine after the search for the latest one, it cancelled the latest. Each search now carries the order it was issued in, and the engine ignores one that was overtaken (REG-OG-SEARCH-LANE-ORDER).
+- Sticky parent bullets stay inside their own subtree: a pinned `1a` no longer covers the next row at its own level or above (its sibling `1b`, or `2`). That row now pushes the pin up and out, as a section header in a list, and a pin covers only its own descendants (GH #717).
+- Settings search: a one-character query such as "发" matches setting descriptions again, as it did before 0.8.0-beta.5. A result found only through its description now shows that description, with the match highlighted, so it no longer looks unrelated. In a non-English interface a single letter such as "S" matches only text shown in that language, not the hidden English names; words of two or more characters still match the English names too (GH #706).
+- Windows portable: the portable ZIP now keeps Tine's settings, sessions, backups, plugins, diagnostics and WebView2 data in a `tine-data` folder next to `Tine.exe` instead of in `%APPDATA%` and `%LOCALAPPDATA%`, so Tine runs from a USB drive without leaving app data on the computer (GH #719). It is the `tine-data` folder in the ZIP that makes Tine portable; the installer and the Microsoft Store app are unchanged. A portable Tine offers new versions as a download instead of running the installer, which would have added an installed copy. Earlier portable runs left their settings in AppData; Tine does not move or delete them, and `tine-data\README.txt` says how to copy them over. If the `tine-data` folder cannot be written, Tine does not start and says which folder to move; it never falls back to AppData. A `tine-data` folder inside an installed Tine's folder, or a link named `tine-data`, does not make it portable.
+- A block whose `collapsed:: true` line follows a quote (as Logseq on Android writes it) now keeps its first collapse after a restart: Tine moves that line above the quote, where it is read as the block's collapse state (Logseq itself opens such a block expanded). Publish, print and search no longer show the line as quote text, and the command line's property and text edits put metadata above a final quote instead of inside it (GH #721).
+- A quote now ends at an `ID::` or `Id::` line as it does at `id::`, as in Logseq; before, the uppercase line was shown as part of the quote (lsdoc v0.5.9, GH #721).
+
+## [0.8.0-beta.5] - 2026-10-18
+
+### Fixed
+
+- A table, grid or board block that is the first block of a page and has its view set but no title yet is no longer rewritten as page properties when the page saves, so typing its title or adding rows no longer raises "Page-header properties must contain only valid key:: value lines" (often twice) or leaves the page unsaved. When that message is shown for a real page-properties block it now names the first line that is not a `key:: value` property (or says the block has child blocks), appears once however often you leave the editor, and is no longer shown for a block that is not the page's first block (GH #210). Choosing "Show children as: Outline" on such a block (which leaves its column-width settings behind) keeps it a block too, and setting an alias, icon or filter on that page no longer writes into the table block.
+- Repeatedly collapsing a block whose `collapsed:: true` line follows a quote (as Logseq on Android writes it) no longer stacks extra `collapsed:: true` lines or shows them as text; existing stacked lines are removed on the next collapse toggle (GH #721).
+- Linux: middle-click pasting text selected in a block into a rich-text app (Tuta, Anki, ...) now pastes only the selection. Before, selecting the last line of a block (a one-line block, or Select All) also pasted the editor's own markup (`<div contenteditable="plaintext-only">`), the selection toolbar's button labels and the text of the blocks below (GH #530).
+- Queries: folding a query block's bullet now folds its results too, as in Logseq, also when the block has no children (GH #619).
+- Queries on Windows: one click on a query's title starts the rename with the caret in the field; before, every rename after the first needed a second click. The same fix applies to the other fields that open focused (query builder values, table and board cells, context menu search) (GH #619).
+- Queries: the options in **Find blocks ▾** and the other builder menus stay on one line instead of wrapping word by word, and a menu opened in one query is no longer drawn under the query below it (GH #619).
+- Queries: a page condition reads *Page is X* / *Page is not X* / *Page is in namespace X* instead of *On page is X* (GH #619).
+- Queries: with **Pages and blocks**, a condition on the block's page (such as *Page is X*) now finds that page in the Pages section instead of saying "`page.name` is not a field of this query" (GH #619).
+- A query block with children no longer shows a second, clipped copy of the live query in the sticky parent row while you scroll its children (GH #619).
+- Phones and tablets: Sidebar, Search, Back and Forward are in the top bar again by default, in the same place whether or not you are editing, as in stable and on desktop. The bottom row from Beta 4 is now a setting, **Navigation buttons at the bottom** (Settings → Appearance, off by default, this device only), for thumb reach (GH #716, GH #598).
+- Phones with **Navigation buttons at the bottom** on: closing the keyboard with Back or the keyboard's own hide key brings back the bottom row (sidebar, Search, Back, Forward). Before, the block stayed in editing, so the editing toolbar stayed in the row's place without a keyboard, and the help button could jump off screen. Tap the block to bring the keyboard and the editing toolbar back (GH #716).
+- A query that lists a block you just edited no longer sometimes stays at "Loading query results…" with a count of 0 after you leave the editor, until some later change re-ran it (UI-QUERY-STUCK-LOADING-AFTER-EDIT). Leaving the editor briefly marked the page busy without telling the query blocks, so a result that arrived in that moment was dropped and never asked for again.
+- Sticky parent bullets appear as their row reaches its place in the sticky stack, so they no longer pop up over the next child while scrolling (GH #717; GH #718).
+- On phones and tablets, which have no tab strip, **Open in new tab** is no longer offered in page, block and preview menus, and Ctrl/Cmd-click, middle-click and Ctrl/Cmd+Enter in Search open the link in place instead of in a background tab you cannot reach; use **Open in sidebar** there. Desktop is unchanged (GH #705).
+- All pages: the header no longer shows a lone "JOURNAL DATE" line under PAGE, and a "—" no longer strikes through the first letter of the next row (the journal-date cell had no grid column). The journal-date column now appears only while "Show journals" is on, and its checkbox is drawn from the theme instead of a white native box on dark surfaces (UI-ALL-PAGES-GRID-001).
+- Settings search no longer lists unrelated settings for a one-character query such as "发" (a single character now matches only a setting's name, keywords and aliases, not its description), puts settings whose name matches before those matching only their description, and scrolls to a result whose control appears a moment after the tab opens, such as Developer tools (GH #706).
+- Org graphs: a page you create from Search (Ctrl+K), with **Customize** for Today's sections, or by opening a page or journal that has no file yet is now edited as Org from the start. Before, until Tine next read the file, a property added to it (a block id from **Copy block ref**, a page property, a collapsed or heading flag) was written Markdown-style (`id:: …`) into the `.org` file, where Logseq and Tine show it as text instead of reading it as a property (ORG-CREATED-FORMAT).
+- Unlinked References show every mention that fits the excerpt as a highlight again, and the numbered circles come back only for mentions past the excerpt, as before 0.8.0-beta.1 (GH #200; GH #556's one-highlight-at-a-time change is reverted, its bullet that opens the source block stays).
+
+## [0.8.0-beta.4] - 2026-10-17
+
+### Changed
+
+- **Collapse (one level)** and **Expand (one level)** (formerly "… children (one level)") now include the block itself: collapsing folds the block once its children are all folded, and expanding a folded block first opens only the block (GH #696).
+
+### Fixed
+
+- Typing and deleting in a zoomed block no longer scans every block on its page, including journal and sidebar views (GH #248).
+- Sticky parent bullets show the parent's rendered text (bold, links, block references) instead of raw markup, and each pinned bullet lines up with its block's own bullet instead of sitting one level to the left. They no longer cover Settings, menus or toolbars (GH #643).
+- A block opened in the right sidebar is titled with its page and its parent blocks (the nearest three, after "⋯"), as in Logseq; clicking a parent shows that block in the card instead (GH #640).
+- The optional block embed breadcrumb shows the embedded block's parent blocks after its page, not just the page, in the same smaller, muted style as Linked References, starting at the embedded bullet (GH #440).
+- The parent-block trail above query results and Linked References shows bold, links and other formatting rendered, instead of raw text such as `**Queue**` (GH #643).
+- Windows: a save made while the previous save of the same page was still replacing the file could be refused with "write target escapes graph root"; Tine now checks the page again, and only if it still cannot inspect it reports a save error, keeping the text unsaved in the window rather than calling it outside the graph (REG-WIN-WRITE-TARGET-TRANSIENT).
+- A block link that starts Tine now opens its block the first time, even when the block was linked after Tine last closed; before, the first click reported the target missing and only a second click worked (GH #181).
+- Search tab: ArrowUp on the first result now returns to the search box instead of jumping to the last result, and the results no longer wrap around at either end (GH #697).
+
+## [0.8.0-beta.3] - 2026-10-17
+
+### Added
+
+- The Journal sections page explains what it controls and links to its Guide in the right sidebar (GH #710).
+- Custom CSS can set `--tine-danger-color` to override error and destructive-action colors (UI-DANGER-THEME-CONTRAST).
+
+### Changed
+
+- Appearance starts with Themes and keeps fine-tuning, Custom CSS and content widths in searchable Advanced settings; numbered tab/pane and resize commands stay in Shortcuts, task carry uses the configured day count, empty Namespaces stays hidden, and Commands offers New workspace… (UI census 2026-10).
+- Page and block menus group reference, embed and link copying under **Copy as ▸**; page menus omit duplicate Markdown copying and show Find in page only on mobile, sidebar item menus keep contextual actions, and references and query results use one fold toggle (UI census 2026-10).
+- Upcoming is now off by default; add `{{upcoming}}` to the Journal sections page to show future journal references in that position (GH #710).
+- Build: consolidate Rust integration tests into one executable per crate and omit third-party debug data to reduce linking time and disk writes.
+- An Android share now opens the journal where it landed and reveals the last shared item in the batch, while keeping the Captured notice (GH #608).
+- Desktop image copy offers the original graph asset file even when its preview exceeds the limit, plus a bitmap for image-only apps after validating the decoded size, including PNG headers (GH #700).
+- Soft now uses EllisMorrow's refined middle-range palette, with darker light surfaces, brighter dark surfaces, warm highlights and quieter active navigation and scrollbars (GH #649).
+- Tine Beta checks for updates at a fixed address on tine.page, and each Beta is published as its own release (`vX.Y.Z-beta.N`) instead of replacing the files of a moving `beta` release; older Betas still find this one (discussion #682).
+
+### Fixed
+
+- Chinese IME `（（` now becomes `(())` and opens block search, through ordinary input or composition; full-width selection wrapping and `《〈` block commands also match their ASCII equivalents (GH #53).
+- Inline checklist and task checkboxes have larger touch targets on phones without changing their appearance or indentation (GH #691).
+- Preview source clicks switch to the opened tab, preview actions keep the preview open, and **Open in new tab** confirms its background tab on desktop and mobile (GH #363, GH #705).
+- Page icon saving and recovery, diagnostics, workspace and query actions use themed buttons instead of native browser bevels (UI-SW-BUTTONS).
+- Settings search highlights matching Latin and Chinese text in result labels (GH #706).
+- Chinese slash-menu rows show English keywords followed by Chinese glosses; English matching and inserted syntax stay unchanged (GH #107).
+- Journal carry buttons appear on title-row hover or keyboard focus, and stay visible on devices without hover (UI-CENSUS-7).
+- Removed the parser comparison runner from Help & diagnostics; diagnostic reports, rescan and graph verification remain available (UI-CENSUS-18).
+- Alt-dragging one block from a query result or an ordinary outline bullet now inserts a saved block reference while keeping the source in place (GH #494).
+- Image macros retain Copy image when previews are unavailable, and an open image viewer keeps file copy after an asset refresh (GH #700).
+- Plain navigation now switches to an already-open page tab even when one route uses the page name and the other its file path, preserving the source tab (GH #711).
+- Query table column choices now come from the current results instead of offering unrelated graph properties; saved choices survive changes to the results (GH #680).
+- Shortcuts and shortcut recording recognize the physical Latin letter or digit on non-Latin keyboard layouts, including Cyrillic, while text input and Latin layouts keep their behavior (GH #709).
+- Settings search shows only matching results instead of appending unrelated tab controls, and finds more settings and tools (GH #706).
+- With "Click a block reference to zoom in" turned on, clicking a reference to a block on another page now zooms into that block; before, nothing happened (GH #708).
+- Removing the last query condition restores the empty-state prompt (GH #551); Search tab selection toggles off, keeps actions above results and preserves page and block labels (GH #387).
+- Tab split drop zones grow with each pane on all four sides; dropping just below its tab strip now splits above it, matching the preview (GH #499).
+- All pages matches the typography of neighboring sidebar headings in English and Chinese (GH #335).
+- Search view labels, validation messages and deeper query options follow the interface language, including Simplified Chinese (GH #107).
+- Error and destructive-action text and error borders stay readable in every bundled light and dark color scheme (UI-DANGER-THEME-CONTRAST).
+- Today's journal waits for agenda and default-query results before showing their sections, avoiding a loading flash when switching graphs (discussion #617).
+- iOS: launching Tine no longer shows a red "Could not apply interface zoom." error; the interface zoom setting now applies on iOS (UI-IOS-ZOOM-TOAST-ON-LAUNCH).
+- A block link can no longer fail with "Tine link target not found in any known graph" when the quick check of closed graphs misses its block: Tine fully opens the graphs it ruled out before reporting the link as not found (GH #181).
+
 ## [0.7.4] - 2026-10-16
 
 ### Fixed
@@ -21,6 +210,97 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Phones: query headers keep their title and view buttons readable, wrapping the buttons onto a second line instead of breaking words letter by letter (UI-MOBILE-QUERY-HEADER-WRAP).
 - Android: granting All files access while opening a graph now continues straight to the folder picker; it no longer needs a second tap (UI-ANDROID-ALL-FILES-ONE-TAP).
 - Phones: the left sidebar starts closed, so it no longer covers the journal after the first graph opens (UI-MOBILE-LEFT-DRAWER-STARTS-CLOSED).
+
+## [0.8.0-beta.2] - 2026-10-15
+
+### Added
+
+- Plugin API 0.3 adds the `color` setting type. Tine Beta runs both 0.2 and 0.3 plugins; the plugin registry offers each Tine only the versions its plugin API runs, so an older Tine keeps the last version it accepts instead of refusing an update.
+- **Today's sections page**: Customize today's sections… (hover today's journal) creates a *Journal sections* page holding today's queries and the agenda; its query blocks then decide what shows under today's journal, editable in Tine itself instead of `config.edn` (which Tine never writes and Logseq keeps using). Delete the page to return to `config.edn` (GH #605).
+- Set an emoji or short text page icon from the page menu, and remove it there (GH #346).
+- Optional Mandarin Pinyin and syllable-initial matching for Han page titles and aliases, preserving native-name relevance (GH #151).
+- An unbound Duplicate block above (with children) command beside Duplicate below, with fresh identities, cursor following and one Undo (GH #379).
+- Unbound commands for page-name-only and block-content-only search (GH #663).
+- An unbound Edit selected block command, remappable to Escape, while preserving the default selection ladder (GH #428).
+- Bindable commands to activate tabs 1–8 and the last tab in the focused pane; unbound by default because Ctrl/Cmd+1–9 already focus panes (GH #587).
+
+### Changed
+
+- Existing `{{query}}` blocks with scheduled/deadline date windows now ask to be converted to `{{tine-query}}`, preserving their date-window meaning with Undo (GH #422).
+- The Linux Flatpak is built on the GNOME 49 runtime (was 48), which Tine's updated Tauri needs.
+
+### Fixed
+
+- Adding a block on today's journal no longer makes the results under it (Scheduled & Deadline and other queries) briefly lose their children, dates and breadcrumbs until the query reruns (UI-QUERY-RESULT-EPOCH-FLICKER).
+- On Linux and macOS, shutting down, logging out, closing Tine's terminal or pressing Ctrl+C now ends Tine through its normal Quit within a few seconds, so the next launch no longer says Tine did not close cleanly (GH #701).
+- Switching a query's view, grouping, columns or totals no longer rewrites the query text you wrote, such as `(todo …)` becoming `(task …)` (UI-QUERY-DISPLAY-KEEPS-AUTHORED-TEXT).
+- Image copy avoids redundant PNG encoding and base64 transport and immediately shows progress (GH #700).
+- Space-separated tags and page references in property values now render as separate links and agree with page tag facets and alias resolution (GH #699).
+- Repeated **Expand children (one level)** presses now open the next collapsed level, until the whole subtree is expanded (GH #696).
+- Search tabs support Up/Down to highlight results and Enter to open them, including sidebar, background-tab and other-pane modifiers (GH #697).
+- Page embeds can fold to their page-name line with the host block's mouse or keyboard fold; the choice is saved on the host without changing the embedded page (GH #694).
+- Find in page now prefills a single-line text selection and activates its first match; absent or multiline selections keep the previous query (GH #695).
+- Android status and navigation bar backgrounds follow the active theme and custom CSS live, with icons chosen for contrast (GH #693).
+- Query renames keep results visible, and inline query saves keep keyboard focus so Escape and Done return to the query (GH #502, GH #619).
+- Android: granting All files access while opening a graph now continues straight to the folder picker; it no longer needs a second tap (UI-ANDROID-ALL-FILES-ONE-TAP).
+- Phones: the left sidebar starts closed, so it no longer covers the journal after the first graph opens (UI-MOBILE-LEFT-DRAWER-STARTS-CLOSED).
+- Nested inline checkboxes now indent by the same clear step as child blocks (GH #691).
+- Query blocks keep their bounded box at rest, and an advanced query no longer shows the "Advanced query — ran" line until you open its View panel (GH #502).
+- Pages and journals whose file has no body (emptied in Tine, 0 bytes on disk, or page properties only) can be edited again: clicking the empty bullet no longer drops the caret at once (GH #689).
+- Conflict headings and choices, resting query sentences, and helper-produced interface text now follow Chinese and live language changes; the literal ratchet also follows UI helper results and displayed arguments (GH #107).
+- Simplified Chinese now covers the complete interface catalog, including settings, queries, context menus and recovery dialogs (GH #107, GH #123).
+- Query, sheet and date controls and document notices use the localization catalog while preserving authored query syntax (GH #107).
+- Remaining Settings, page actions and page notices use the localization catalog and follow live interface language changes (GH #107).
+- Cold Tine block links skip loading known graphs that cannot contain the target, while preserving graph-copy choices and missing-target errors (GH #181).
+- Localized rich-text sentences share one renderer that preserves literal graph text, with clearer tags and variables for translators (GH #107).
+- Interface text across the app (shell, settings, help, plugins, editor, PDF, rendering, notices) now comes from the localization catalog, so it can be translated; English wording, graph syntax and English command matching are unchanged (GH #107).
+- Customize today's sections stays bound to the graph where it was clicked, and its Settings note loads without crashing or resetting the dialog (GH #605).
+- Page icons in Favorites, Recent, All pages and the right sidebar follow live header edits and external file changes without reopening the graph (GH #346).
+- Linked References filter chips merge each page's aliases under its canonical name, count each reference block once, and save canonical filters in Logseq's `filters::` property (GH #433). Several included chips now narrow to references carrying all of them, as in Logseq (previously any of them).
+- Bullet threading highlights a continuous active ancestry in both display modes, with configurable thickness, theme-aware or custom color, and optional hierarchy colors (GH #129, [bullet-threading plugin #2](https://github.com/martinkoutecky/tine-plugin-bullet-threading/issues/2)).
+- **Page previews keep page actions reachable:** use the preview header's … button after holding a mobile page link or tag (GH #655).
+- **All pages in the sidebar opens the full view directly**, including from the mobile navigation drawer (GH #335).
+- Scheduled/deadline query windows now save as `{{tine-query …}}` instead of Logseq syntax that silently drops the date condition (GH #422).
+- Referenced journal days appear in the Journals feed without creating a file; future mentions are grouped in collapsed Upcoming above today (GH #481).
+- Authored parent-relative and absolute file links can open outside the graph folder through the existing desktop file opener, with the resolved path on hover and no strike-through (GH #457).
+- NEXT journal queries saved in Logseq configs now support direct journal references and exclusive date bounds; unsupported config queries show their title and a plain explanation with expandable technical details (GH #690).
+- Open query date and enum controls recheck their source before saving; refused Table edits keep the typed draft, authored IDs resolve within their page, and clean host settlement avoids duplicate query reads (GH #585, GH #551).
+- Query and Search actions skip changed or stale positional results after external or structural changes and refresh once changes settle; task clicks retain their graph binding, saved date comparisons reopen intact with correctly labelled operators, exports honor empty columns regardless of property case, and All pages coalesces backlink refreshes (GH #387, GH #551, GH #585, GH #653, GH #680, GH #681).
+- Query blocks now rest with title, count and results, with inline editing and one accessible menu; task actions, result copy with page/date titles and hierarchy, visible column choices, relative date comparisons, bulk List folding and sortable All pages backlinks are available (GH #502, GH #585, GH #387, GH #619, GH #606, GH #680, GH #653, GH #551, GH #681).
+- **Crash recovery no longer switches off on Android** ("Crash recovery is off for this graph … Permission denied"). Tine tried to sync system folders above its own app data, which Android does not allow. GH #685
+- Tab drops at all four pane edges split the hovered pane, matching the drop preview even at the layout's outer edges (GH #499).
+- Raw HTML iframe dimensions honor numeric HTML attributes as pixels, percentages and inline sizing without the default embed width cap (GH #54).
+- Page `icon::` remains visible and editable in the page-properties block while still decorating the title (GH #346).
+- Page-delete failure toasts include the known refusal or storage error through localized messages (GH #687).
+- Journals startup with a daily template keeps pending work owned by the replacement view after session restoration, avoiding a spurious feed-read error; diagnostic reports also record withheld stages and typed read failures without graph content (GH #671).
+- Pinyin page completion preserves native-match priority, survives autosave, follows preference changes across windows, and updates cached keys only for changed names (GH #151).
+- Bullet threading's "Active ancestry only" mode now emphasizes the edited block's connectors in the accent color, as the original Logseq plugin does (GH #614).
+- In-app graph and global CSS share guarded saves and safe mode; saves reconcile newer disk styles and background flushing retains recoverable conflicting drafts (GH #372).
+- HTML export remembers its destination, offers Show in folder on desktop and is discoverable in the command palette (GH #616).
+- macOS updates download, verify and install in place, then offer a restart; failed installations explain how to recover the previous app and offer a manual download, using Tauri 2.12.3 and updater 2.13.3 (GH #405).
+- Dragging a block into an empty page in the right sidebar has regression coverage; Beta already supported the move (GH #524).
+- Splitting the lower pane beneath an existing top row has regression coverage; Beta already preserved the layout (GH #499).
+- Workspace and tab overflow menus open stably on hover and no longer close while crossing the gap to the menu (GH #593).
+- Alt-clicking a bullet keeps its block zoom when creating a destination pane (GH #639).
+- Reopening a right-sidebar page or block brings its existing card to the top, expands it and focuses it (GH #677).
+- config.edn reader discards (`#_`) are accepted as legal EDN; the GH #332 `:graph-view {:layout : grid}` shape has a graph-open regression keeping pages and journals readable (GH #332).
+- Journals navigation uses the same notebook icon in the sidebar and topbar (GH #673).
+- Markdown horizontal rules align with the centre of their outline bullets (GH #678).
+- Markdown quote and callout collapse metadata stays outside quoted content (GH #684).
+- Clicking an in-block Markdown task list checkbox toggles its item without entering edit mode (GH #683).
+- Android image paste can read content-URI clipboard bytes when the WebView exposes an empty file, while retaining the 64 MiB limit (GH #654); selecting text in another block on mobile opens its editor with the selection and docked formatting toolbar (GH #375).
+- Mobile Search, sidebar and page-history actions are reachable from a bottom navigation row (GH #598, GH #160); holding a page reference or tag opens the shared page preview without navigating (GH #655).
+- Scrolling nested outlines keeps offscreen ancestors pinned through the root, with a desktop/mobile setting (GH #643).
+- The unbound **Select embedding block** command selects an embed's macro host for ordinary block shortcuts (GH #641).
+- Date pickers omit the redundant apply/cancel help line (GH #667).
+- Editing a code region after a soft break preserves the surrounding layout; bare references render its code cards (GH #510).
+- Task-marker pages include their tasks in editable Linked References (GH #487).
+- Reference headers place copy beside filter; Unlinked References has independent text and facet filters (GH #398).
+- Read-only hover previews show the source title and page properties and offer source-page and block navigation (GH #363, GH #417, GH #674).
+- Fine-tuning offers optional block embed breadcrumbs, off by default (GH #440).
+- Favorites page block-reference rows appear in the sidebar and can be added from the block menu after saving their source ID (GH #570).
+- Journal feed backlinks refresh on published feed-source edits while keeping editors inside reference results stable (GH #481).
+- A page merge, rename or deletion that waited the full 10 seconds for another rename to finish could report "Couldn't confirm the merge yet; Tine keeps trying to finish it" for an operation that would never run; it now reports that another rename is still finishing and nothing changed (REG-PAGEHOST-ADMISSION-DEADLINE-RACE).
 
 ## [0.7.2] - 2026-10-13
 
@@ -44,12 +324,127 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A page that changed on disk while you were editing one of its blocks (a Syncthing delivery, another editor) now keeps the new text and your editor stays open on that block. Before, on Windows and Android an open code block, or a block whose SCHEDULED/DEADLINE line was not yet in its usual place, could write its old text back over the change and save it, and the editor closed (UI-CARRY-RELOAD-STALE-BLUR).
 - iOS (discussion #421): the folder-choice message now names both places a graph can live, On My iPhone → TineOutline and iCloud Drive → TineOutline. It said "inside On My iPhone", which read as if another app's folder there (such as Logseq's) would work.
 
+## [0.8.0-beta.1] - 2026-10-13
+
+### Added
+
+- Command line on Linux and macOS: read pages (including open unsaved edits), journals, blocks and linked references, search, run queries, list pages and check the graph's owner, with text or `--json` output. Read commands use the app when it has the graph open; otherwise they start `tine serve`, which hands over when the app opens it. These commands do not edit notes. On Windows the owner endpoint is unavailable: reads and `serve` report `unsupported` and exit 5; the app still opens graphs normally. The Guide's **Command line** page explains usage and scripting output.
+- Windows MSIX installs show that updates come from the Microsoft Store and disable Tine's self-updater (GH #307).
+- Interface language: Settings → Appearance → **Language** offers English and Simplified Chinese (简体中文), or the system's language. It applies live in every window and the tray menu, the startup screen follows from the next launch, and the choice is remembered per device; notes are never translated. In this first step the command palette, keyboard-shortcut list and notifications' own controls are translated; the rest of the interface follows (GH #107).
+- Settings → Appearance has a **Fine-tuning** section for small visual details, so they do not each become a setting of their own: how embedded blocks look (shaded box, or accent line and dot only), the underline on links to the web or a file (solid, dotted, none) and how strongly links to pages that do not exist yet stand out. Each starts at Tine's default look and has a Reset; choices are saved on this device, `logseq/custom.css` still outranks them, and **Disable custom CSS** switches them off with it. Later visual preferences are added as rows of one table (GH #610, UI-GH610-STYLE-KNOBS).
+- Colored text from Logseq notes shows its color: `[:span {:style "color: red"} "x"]` (and `background-color`, `text-decoration-color`) render as written. Only those three color properties are read from `style`; layout, positioning and anything that fetches stay stripped. `==x==` and `^^x^^` highlight as before. The static-HTML export still drops `style` (GH #243, UI-GH243-COLORED-HICCUP-SPANS).
+- Common Logseq advanced queries translate automatically: tagged-page name lookups with string inputs, numeric and relative scheduled/deadline windows, direct page references, and scheduled-or-deadline alternatives. Strict date bounds and page results are preserved; unsupported queries refuse whole and translatable rows beneath a result transform get a TQL suggestion. Graph-supplied code never runs (GH #628).
+- Logseq journal configuration: `:default-queries {:journals [...]}` renders beneath today's blocks with independent query errors; `:feature/disable-scheduled-and-deadline-query?` hides the agenda and `:scheduled/future-days` controls its horizon. Config edits apply live (GH #223, GH #629).
+- Deleting referenced blocks shows how many references are now broken, with **Undo** to restore the blocks and their ids (GH #635).
+- Merging blocks with Backspace/Delete shows how many references now point to the surviving block, or broke when both blocks had ids, with **Undo** (GH #652).
+- Tick a task's checkbox inside a `((block reference))`, a reference row or a hover preview to complete or reopen the referenced task on its own page, with the same undo and save as its own checkbox. A task changed elsewhere since the reference was drawn is left alone and the reference catches up (GH #518).
+- Linked References: click a page's properties row (a page that links here from `tags::` or another page property) to fix its property names and values in place, with the same editor, undo and save as on that page; an Org page opens its properties panel (GH #486).
+- **Move block up/down** inside an embed, Linked References or a query result moves the source block as before; when the panel cannot show where it went, a short notice says which page it moved in, with **Show** to open it (GH #641).
+- Linked and Unlinked References: click a breadcrumb ancestor to show its subtree inline while keeping your place; Shift+click opens it in the right sidebar. Inline context resets when the reference group closes (GH #526).
+- Android: Tine appears in the share sheet. Shared text, links and images become a new block at the bottom of today's journal, the same place quick capture files to, with the same "Captured to today's journal" notice. If an item can't be added yet, for example because no graph is open or saving fails, Tine keeps it and retries the next time it opens. A retry never loses the item; it can add it twice only if Tine is closed or crashes right after the journal was saved, or when an old share is reopened from Android's recent apps after Tine was closed. A share Tine can't save whole (more than 32 images, a file over 64 MiB, a non-image file, a file from Tine itself) is refused with a message instead of being saved in part (GH #608, REG-GH608-SHARE-INBOX-EXACTLY-ONCE).
+- Android: long-press the launcher icon for **Today**, **Quick capture** and **Search**. A **Quick capture** Quick Settings tile (with the Tine mark) opens today's journal with an empty block ready for typing (REG-GH608-ANDROID-SHARE-TARGET). Search and quick capture open with the keyboard already up (UI-ANDROID-ROUTE-KEYBOARD).
+- iOS: a **Tine** share extension saves text, web pages, links and up to five images ("Saved to Tine"), and they land at the bottom of today's journal the next time you open Tine. Pages of the open graph appear in Spotlight search; hidden pages never do. The Shortcuts app and Siri offer **Add to Tine journal**, **Search Tine** and **Open page**, and the Home Screen icon has **Today's journal**, **Quick capture** and **Search** quick actions (REG-IOS-NATIVE-INTEGRATIONS).
+- Shared items are shaped like Logseq's mobile share on each platform, using Logseq's `:quick-capture-templates` from `config.edn`. On Android links become titled links, video links become `{{video}}` embeds and posts on X become `{{twitter}}` embeds; on iOS the shared text and link are kept as they are (REG-GH608-SHARE-SHAPE-OG).
+- `tine://today`, `tine://capture`, `tine://search?q=…` and `tine://page/<name>` open those places in the current graph. They only navigate and never write (REG-NATIVE-APP-ROUTES).
+- Keyboard block commands, assignable in Settings > Keyboard shortcuts and listed in the command palette, with no default key (Logseq binds none): **Copy block refs of the selected blocks** (GH #576), **Paste as link** (GH #448), **Duplicate block below (with children)** (GH #379), **Insert child block** (GH #634), **Collapse children (one level)** and **Expand children (one level)** (GH #525), and **Search for the selected text** (GH #633).
+- The Ctrl/Cmd+Shift+V "paste as plain text" key is now listed in the shortcut reference and the Guide (GH #513).
+- Right sidebar: each item has a ⋯ menu with **Close**, **Close others**, **Close all**, **Collapse**/**Expand**, **Collapse others**, **Collapse all**, **Expand all**, and **Open as page** for a page item, as in Logseq (GH #462).
+- Settings → **Graph** shows the open graph's folder, with **Show in folder** on desktop to open it in Finder, File Explorer or your file manager. The graph menu's right-click **Show in folder** does the same for any remembered graph (GH #447).
+- A link to a file by its path in the graph, such as `[report](files/report.pdf)`, `[report](../files/report.pdf)` or Org `[[file:../files/a.txt][a]]`, opens that file on desktop, read from the graph folder as Logseq does. A link whose path points outside the graph folder, including an absolute path, is shown struck through and is never opened (GH #457).
+- Find in page can replace: the arrow at the left of the find bar opens **Replace with**, with **Replace** (the highlighted match) and **Replace all** (every match on the page you opened Find in, as one Undo step). It edits the text you see, as typing would, so link addresses and hidden properties are never changed (GH #208). Find in page is also in each page's **⋯** menu, so phones can open it (GH #338).
+- **All pages** view: the sidebar's All pages section now ends in **Open the full list…**, which opens every page of the graph in the main pane as a scrolling table (a graph of tens of thousands of pages stays quick: only the visible rows are drawn). It opens with the most recently changed pages first and shows each page file's **Updated** time (one read when the view opens; nothing is stored). Sort by name, by updated time, or journals by day; filter by name; tick **Show journals** to include daily pages. Rows open with the usual click, Shift-click, Ctrl/Cmd- or middle-click and Alt-click gestures. Created and backlink-count columns, multi-select and delete are not part of this view yet (GH #335).
+
+### Changed
+
+- YouTube timestamps seek the matching video across panes and the right sidebar, or the last played video when no preceding embed identifies one; with no playback history they keep Logseq's preceding-player fallback.
+
+- Links to the web or a file are underlined (as in Logseq) while links to pages are not, so the two kinds read differently at a glance. The line is the new `--tine-external-link-underline` token (GH #430, UI-GH430-EXTERNAL-LINK-UNDERLINE).
+- Links to pages that do not exist yet are easier to read: a dimmed link tint instead of pale grey, still dotted, now at least 4.5:1 contrast on the built-in light and dark palettes. Restyle it with the new `--tine-missing-page-color` token (GH #432, UI-GH432-MISSING-PAGE-LINK-READABLE).
+- Arrows and dashes (`->`, `<-`, `=>`, `--`, `---`) now show as you typed them, as in Logseq. **Typographic replacements** in Settings is off by default; a device that never chose keeps the typed characters, and one that had relied on the old default (nothing was stored) needs to pick **On (while reading)** again (GH #583, UI-GH583-ARROWS-RENDER-AS-TYPED).
+- Saving moved into one background page host per graph: every edit is saved as you type, from any window, and keeps saving after the page closes. If a file changes on disk while you have unsaved text on that page, the page shows a comparison where you keep your edits or take the disk version, block by block. Unsaved text survives a crash: the next start puts it back on its page, saves it, and names each recovered page; it is never written over a file that changed meanwhile. Closing the last window while a page still cannot be saved reopens the graph and names those pages instead of quitting. Switching graphs waits until a running rename finishes.
+- A conflict over a page whose file was deleted on disk offers **Use disk version** (accept the deletion) and **Keep mine** (recreate the file) directly in the conflict bar (GH #541).
+
+- **Create a new graph** asks for its name, suggesting `notes`, then `notes-2`, and so on when taken. The graph is always created in a named child folder; invalid names and nonempty existing folders show an inline refusal so you can choose another name (GH #621).
+
+- Security: updated HTML sanitizers and desktop updater TLS dependencies, plus compatible dependency fixes from the review in discussion #564.
+
+- Queries: a bare `(task)` or `(priority)` in a `{{query}}` now adds no condition, as in Logseq, instead of meaning TODO/DOING/NOW/LATER or A/B/C; `(task)` alone, like an empty `{{query}}`, shows nothing. A note on such a query explains this and offers **Open tasks** (every unfinished marker, including WAITING, WAIT, STARTED and IN-PROGRESS), **Any task** or **A, B or C**, which rewrite the query with explicit markers. Queries with explicit markers are unchanged (GH #422).
+- Tabs are wider by default: they stretch to fill the strip up to 260px and share it evenly down to 144px before the strip scrolls (GH #529).
+- A zoomed tab whose block is not loaded yet (a background tab after a restart) reads "Page › …" instead of repeating the page's own tab name (GH #528).
+- Dropping a dragged tab anywhere on a pane's tab bar, not just beside a tab, puts it last in that pane (GH #527).
+- The right sidebar can be dragged up to 70% of the window (it was fixed at 800px), keeping at least 360px for the main pane; keyboard resizing follows the same limit (GH #521).
+
+### Fixed
+
+- Android: the native library is aligned for 16 KB memory pages, which Google Play requires and newer Android devices can use; release builds also produce the app bundle Google Play takes.
+- Linkable page-property values, including Org aliases and graph-configured comma-separated properties, appear in page-reference queries and Linked References (Kalem parity).
+
+- Org headline tags now appear in page-reference queries and Linked References (Kalem parity).
+- Advanced `page-property` queries return the bound pages; queries for blocks on those pages keep returning blocks (Kalem parity).
+- Backlinks and queries now include references through namespace children, matching Logseq.
+- Template insertion and new-journal templates preserve each block's saved collapsed state (GH #670).
+- Following a PDF backlink navigates once and leaves scrolling free; following the same target again still navigates to it (GH #672).
+- Page and tag autocomplete preserve authored alias casing and offer matching aliases alongside their page (GH #675, GH #676).
+
+- Representable Windows graph paths display without verbatim prefixes; stored canonical paths retain existing graph identity (REG-WIN-GRAPH-PATH).
+- Cold launches from a Tine link restore the last graph before handling the link (UI-WIN-LINK-COLD-START).
+- New graphs refuse Windows access to WSL1 backing rootfs folders; existing graphs warn and remain openable, with advice to use `\\wsl.localhost\<distro>\…` (UI-WIN-WSL-ROOTFS).
+- Opening another graph replaces the previous graph's undismissed Guide announcement (UI-WIN-GUIDE-TOAST-ONCE).
+
+- Links to other apps' URL schemes, such as `zotero://`, `obsidian://` or `shortcuts://` on iOS, open in that app after a prompt that shows the whole link, instead of failing with "unsupported url scheme". Web, mail and `file:` links open as before, and `javascript:`/`data:` links never open (GH #503).
+- A page's `icon::` now also shows in the left sidebar's Favorites (in place of the star), Recent and All pages lists and on the right sidebar's page items, as in Logseq; before it showed only on the page title and in links to the page (GH #346, UI-GH346-PAGE-ICON-SURFACES). Image icons are not part of this change.
+- Linked References filter chips are listed alphabetically instead of by count (GH #433).
+- Page embeds show the embedded page's name above its blocks, and the blocks line up with the surrounding outline on desktop and phone (GH #439).
+- Unlinked References highlight one mention at a time. The numbered circles move the highlight within the block without leaving the page, the highlighted mention opens the page at that spot, and the bullet opens the block (GH #556).
+- A page that changed on disk while you were editing one of its blocks (a Syncthing delivery, another editor) now keeps the new text and your editor stays open on that block. Before, on Windows and Android an open code block, or a block whose SCHEDULED/DEADLINE line was not yet in its usual place, could write its old text back over the change and save it, and the editor closed (UI-CARRY-RELOAD-STALE-BLUR).
+- Graph settings: when `logseq/config.edn` disappears while a graph is open (iCloud offloading it, a sync tool replacing it), Tine keeps the settings it read, as Logseq does, instead of switching to the defaults. Before, namespace pages could show as `xxx___yyy` and new ones were written under Logseq's old file names. A graph whose `config.edn` is still in iCloud and not downloaded opens read-only rather than with guessed settings (REG-OG-CONFIG-VANISH-KEEPS-FORMAT).
+- Journals: Logseq's default NOW query from `config.edn` runs, ordered by priority with unprioritised tasks last, instead of showing a "query not run" notice; its `:result-transform` is the one Tine recognises. Default journal queries with no results now show nothing, as in Logseq (REG-OG-DEFAULT-NOW-QUERY).
+- Block text stays visible immediately after applying a deadline or scheduled date; open editors resize after programmatic content changes (GH #668).
+- Query results keep an edited block in place until editing finishes, so replacing TODO with CANCELED can complete and save normally (GH #659).
+- Linked and Unlinked References, block reference panels, embeds and routed query results refresh membership after settled edits through one shared lifecycle (GH #660).
+- Linked and Unlinked References, their page groups, and query headers use the same collapse triangle size and alignment (GH #658).
+- Calendar keyboard focus uses a visible accent-colored outline in light and dark themes, including Soft (GH #596).
+- Page and tag completion closes when you click or move the caret out of the link you were typing. Before, the popup stayed open, Arrow keys went to it, and Enter rewrote the earlier link (UI-OG-AUTOCOMPLETE-CLOSE-OUTSIDE).
+- Internal: asset reads require an explicit byte limit at the IPC and backend boundaries, preventing an omitted limit from buffering an entire file (L-1).
+- Children nested under a page-properties block stay reachable for deletion or moving into the outline; repaired pages save normally, and Tab no longer nests the first body block under a transient page header (GH #638).
+- New graph messages describe whether the graph opened, was already open, or was created but could not be opened; the last case names the folder and offers Open graph to try again (GH #621).
+- Android: choosing a cloud provider folder now explains that Tine needs a folder on the device's own storage and suggests syncing to a local folder, then opening it (GH #630).
+- A block opened in the right sidebar now shows its source page name in the header (GH #640).
+- Outline editing (GH #632): Tab and Shift+Tab indent and outdent blocks starting with a Markdown list marker when the caret is on the first body line. List items on later lines keep their in-block indentation.
+- Embeds (GH #642): Enter at the end of a collapsed embed creates a sibling after its host, including at the end of a page, without changing the embedded source. Undo removes the new sibling.
+- iOS (discussion #421): the folder-choice message now names both places a graph can live, On My iPhone → TineOutline and iCloud Drive → TineOutline. It said "inside On My iPhone", which read as if another app's folder there (such as Logseq's) would work.
+
 ## [0.7.1] - 2026-10-08
 
 ### Changed
 
 - Security: updated HTML sanitizers and desktop updater TLS dependencies, plus compatible dependency fixes from the review in discussion #564.
 
+## [0.7.0-beta.3] - 2026-10-08
+
+### Added
+- Linux: each Beta release now includes an installable **Flatpak** bundle, `Tine-Beta_<version>_x86_64.flatpak` (`flatpak install --user` the downloaded file). It uses the Beta identity (`page.tine.TineBeta`), so it installs beside a stable Tine Flatpak with its own data, includes the library the system tray needs, and is updated by installing the next bundle by hand (its update notice offers the download instead of trying to install in place). The release workflow builds it with the other platforms and a failed Flatpak build blocks the release.
+- Desktop: optional system-tray icon. Settings → Appearance adds **Show Tine in the system tray** (menu: Open Tine, Quick Capture, Quit), **Minimize to tray** (minimizing the main window hides it instead of leaving it in the taskbar) and **Start minimized to tray** (launch with the main window hidden, graph already loaded). All three are off by default; closing the main window still quits; a desktop without a tray host keeps the window shown and says so in Settings, and a tray host that disappears while Tine runs brings the hidden window back (GH #625, UI-OG-GH625).
+- Desktop: **Open in new window** opens a page in a separate OS window (page right-click menu, the page title's ⋯ menu, or the command palette's **Open current page in new window**). Each window has its own tabs, splits and back/forward history, and no sidebars; edits save and undo exactly as in the main window, closing a window from its title bar keeps text typed just before, and open windows (up to 8) come back at the next launch. Switching graphs closes them. Documented in Workflows > Keep context visible (UI-OG-MULTIWINDOW).
+- Theming (GH #610): a documented set of **`--tine-*` tokens** for `logseq/custom.css`: `--tine-embed-bg`, `--tine-embed-accent`, `--tine-bullet-color`, `--tine-bullet-size`, `--tine-tag-color`, `--tine-highlight-bg`, `--tine-content-width`, `--tine-content-width-wide`, `--tine-page-title-size`, `--tine-font-size`, `--tine-content-font`, `--tine-mono-font` and `--tine-editable-font`. Each starts unset (declared under `:where(:root)`, so a plain `html { --tine-...: ... }` or `:root { ... }` rule in custom.css wins), nothing looks different until you set one, and Logseq's `--ls-*` colors keep working unchanged. The font tokens also apply under the editorial page Style preset, and `--tine-mono-font` reaches every monospace surface (code blocks, org timestamps, inline code, editors, diagnostics). The contract (`docs/contracts/theme-tokens.md`) promises that removing or renaming a token gets a **Changed** entry here, and a guard test fails when a documented token is missing from the CSS or a `--tine-*` name ships undocumented.
+- Guide (GH #610): a new page, **Customize Tine's look**, covers where `logseq/custom.css` lives, theme versus custom.css precedence, the token table, ten copy-paste recipes (remove the embed shade, change bullet color, wider content, a different font, and more) and how to find what styles an element.
+- Settings → Appearance → **Custom CSS** (GH #610): **Edit custom.css** (desktop) creates the file with a commented starter if the graph has none and opens it in your editor; saving it re-applies it live in the open window, with no restart and no reopening the graph (every platform with a file watcher, no new polling); **Disable custom CSS** is a session-only safe mode so a broken stylesheet can always be recovered from; **Developer tools** (desktop, also Ctrl+Shift+J, Cmd+Shift+J on macOS) opens the inspector to see what styles an element (opened and closed again on a release build under Linux; **Disable custom CSS** is also in the command palette, so it stays reachable if a stylesheet hides Settings). **Edit custom.css** opens the file with your system's default app for `.css` files, which may not be a text editor; choose one there. If a live re-read fails, the previous stylesheet stays applied and Tine retries once before it says so; a failure at graph open applies none.
+- Theme gallery (GH #649): **Soft**, a medium-brightness palette. Light mode is a warm medium-light neutral and dark mode a neutral medium-dark; the whole surface system moves together (page, sidebars, tabs, menus, code blocks, borders, hover and selection, text) and every text color stays at or above 4.5:1 contrast, including text on accent-filled labels and buttons, links on the selection overlay, muted text on tertiary surfaces and the bullet and checkbox markers (3:1), checked by a test computed from the palette. Accent-filled labels read their text color from a new `--on-accent` token that only Soft defines, so the stock themes look the same.
+
+### Changed
+
+- Queries (GH #651): the Guide now says why a task nested under another matching task has no row of its own in the Table, Board or result count. Tine follows Logseq's rule, a match is dropped from the top level only when its immediate parent also matches (the List shows it inside that parent), and a match under a block that does not match, such as after narrowing the query so the parent stops matching, is its own row. Pinned for every presentation by a store test and a real-app journey; no behaviour change.
+
+### Fixed
+
+- Android (GH #654): the copy button on an image (on the picture itself and in the full-screen view) always answered "Couldn't copy the image", because the system clipboard plugin Tine used cannot put an image on the Android clipboard. Tine now stages the picture in its cache and puts it on the Android clipboard through the app's own file provider, which is how Android apps share images. What could not be checked without a device is whether pasting that clipboard image into a block adds it as a picture on every Android version (UI-OG-GH654).
+- Opening pages: a single page whose properties were followed by a blank line and then a `#+` directive (for example `title:: X`, a blank line, `#+description: y`, or an Org file-level property drawer before `#+title:`) made every link and tag fail with "Couldn't open this page: task N panicked with message \"byte range starts at N+1 but ends at N\"" and left `[[` completion with no pages. Such pages now open and keep their title, and a page whose title cannot be read no longer stops the rest of the graph from loading (GH #644, REG-OG-GH644).
+- External edits: a page changed on disk (by Syncthing, Dropbox or another editor) stayed stale while one of its blocks was open in the editor, which includes leaving Tine for another app with the caret still in a block; it updated only after you pressed Escape or navigated away and back, and typing into the stale block then raised a conflict. The page now updates in place and the editor stays on the same block (found by its `id::`, else by its place in the outline), with the caret kept; if the change deleted that block the editor closes. A change still waits while text is being composed with an input method, and a different file taking the page's name is still refused while you edit (REG-OG-RELOAD-WHILE-EDITING).
+- macOS (GH #650): Beta builds are now Developer ID signed and notarized, so macOS no longer refuses to open them with "Apple could not verify…". The Beta release workflow's macOS lane now signs the universal app and DMG, notarizes it, and independently checks the signature, the stapled notarization ticket and Gatekeeper acceptance before the build can be assembled; it fails if a signing secret is missing. Stable builds were already signed.
+- Saving: a page whose unsaved text already matched the file on disk (for example because a sync tool delivered the same text) counted as saved without making that file durable, and its crash-safe copy was dropped; a power cut right after could lose the text. Such a save now flushes the file to disk before counting as saved (REG-OG-G26-EQUAL-BYTES-DURABLE).
+- Crash-safe copies: when the store of crash-safe copies for a graph could not be read, Tine moved it aside (keeping its bytes) and started an empty one without saying so. It now shows a sticky error naming where the old file went (REG-OG-G37-DRAFT-STORE-SET-ASIDE-REPORTED).
+- Desktop: quitting while several windows are open no longer exits before every window has saved. Previously, a window that finished closing first (for example a main window with no graph open) could end the app while another graph window was still writing its last edit (UI-OG-GH625).
+- Linux release checks: the multi-window change had made the main window the second window the app creates (after Quick Capture), so WebDriver-driven journeys drove the hidden capture window and 35 of 45 catalog journeys failed; main is created first again. The tray journey's own D-Bus session bus now listens on a filesystem socket so it can connect on Ubuntu runners (REG-OG-CATFIX-MAIN-FIRST, REG-OG-CATFIX-TRAY-BUS).
 ## [0.7.0] - 2026-10-08
 
 Tine 0.7.0 makes the Tine Beta line stable. It is Tine Beta 0.7.0-beta.2 (the
@@ -6595,10 +6990,7 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.7.4...HEAD
-[0.7.4]: https://github.com/martinkoutecky/tine/compare/v0.7.3...v0.7.4
-[0.7.3]: https://github.com/martinkoutecky/tine/compare/v0.7.2...v0.7.3
-[0.7.2]: https://github.com/martinkoutecky/tine/compare/v0.7.1...v0.7.2
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.7.0...HEAD
 [0.6.98]: https://github.com/martinkoutecky/tine/compare/v0.6.97...v0.6.98
 [0.6.90]: https://github.com/martinkoutecky/tine/compare/v0.6.5...v0.6.90
 [0.6.0]: https://github.com/martinkoutecky/tine/compare/v0.5.10...v0.6.0

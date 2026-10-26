@@ -76,6 +76,8 @@ import {
   Listbox,
   ListboxOption,
 } from "./querySheetParts";
+import { documentOf, listen } from "../windowRealm";
+import { t, msg, render } from "../i18n";
 
 export {
   QuerySentence,
@@ -155,8 +157,9 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
         cancelReorderFocus();
         return;
       }
-      const active = document.activeElement;
-      if (active !== intent.origin && active !== document.body) {
+      const doc = documentOf(sheetEl);
+      const active = doc.activeElement;
+      if (active !== intent.origin && active !== doc.body) {
         cancelReorderFocus();
         return;
       }
@@ -170,7 +173,8 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
     if (immediate) focus();
     else queueMicrotask(focus);
   };
-  onMount(() => document.addEventListener("focusin", handleFocusChange, true));
+  let stopFocusListen: (() => void) | undefined;
+  onMount(() => { stopFocusListen = listen(sheetEl, "focusin", handleFocusChange, { capture: true, on: "document" }); });
 
   /** **A loc is a path into a ROOT REVISION, not a node's identity.**
   *
@@ -193,7 +197,7 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
     restoreReorderFocus(intent);
   });
   onCleanup(() => {
-    document.removeEventListener("focusin", handleFocusChange, true);
+    stopFocusListen?.();
     cancelReorderFocus();
     cancelQuerySheetReorder();
   });
@@ -239,7 +243,7 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
         sourceRoot: root,
         expectedRoot: reorderRootRevision(next),
         target: [...pos.parentLoc, to],
-        origin: document.activeElement === origin ? origin : null,
+        origin: documentOf(sheetEl).activeElement === origin ? origin : null,
         saved: false,
         scheduled: false,
       };
@@ -322,7 +326,7 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
       class="qs-sheet"
       classList={{ "qs-sheet-stale": props.stale }}
       role="group"
-      aria-label="Query filter"
+      aria-label={t("query-query-sheet-query-filter")}
       onClick={stop}
     >
       <AnchorLine
@@ -356,7 +360,7 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
       </Show>
       <Show when={isEmpty() && props.suggestions().length > 0}>
         <div class="qs-try">
-          <span class="qs-try-label">Try:</span>
+          <span class="qs-try-label">{t("query-query-sheet-try")}</span>
           <For each={props.suggestions()}>
             {(key) => (
               <button
@@ -401,7 +405,7 @@ function NodeList(props: {
             <div
               class="qs-rows"
               role="list"
-              aria-label={props.isRoot ? "Query conditions" : `Conditions, ${group.header}`}
+              aria-label={props.isRoot ? t("query-query-sheet-query-conditions") : t("query-query-sheet-conditions", { value1: group.header })}
             >
               <For each={group.children}>
                 {(child, index) => {
@@ -470,12 +474,12 @@ function GroupHeader(props: {
   };
   return (
     <div class="qs-group-header">
-      <DragHandle pos={props.pos} label="Move group" controls={props.controls} />
-      <SelectBox pos={props.pos} label="Select group" controls={props.controls} />
+      <DragHandle pos={props.pos} label={t("query-prose-move-group")} controls={props.controls} />
+      <SelectBox pos={props.pos} label={t("query-prose-select-group")} controls={props.controls} />
       <button
         type="button"
         class="qs-group-op"
-        title="Switch between all of / any of"
+        title={t("query-query-sheet-switch-between-all-of-any-of")}
         onClick={(e) => {
           stop(e);
           cycle();
@@ -488,7 +492,7 @@ function GroupHeader(props: {
           ref={menuTrigger}
           type="button"
           class="qs-row-menu"
-          aria-label="Group actions"
+          aria-label={t("query-query-sheet-group-actions")}
           aria-haspopup="listbox"
           aria-expanded={open() ? "true" : "false"}
           aria-controls={menuId}
@@ -508,16 +512,16 @@ function GroupHeader(props: {
           {(rootRef) => (
             <Listbox
               id={menuId}
-              label="Group actions"
+              label={t("query-prose-group-actions")}
               rootRef={rootRef}
               options={[
                 ...moveOptions(props.pos),
-                { key: "none", label: props.group.negated ? "Remove none of" : "None of" },
+                { key: "none", label: props.group.negated ? t("query-query-sheet-remove-none-of") : t("query-query-sheet-parts-none-of") },
                 // A group inside a `not`/`off` has no list to splice its rows into, and inventing one is a De Morgan rewrite …
                 ...(unwrapAt(root(), props.group.opLoc) !== root()
-                  ? [{ key: "ungroup", label: "Ungroup" }]
+                  ? [{ key: "ungroup", label: t("query-query-sheet-ungroup") }]
                   : []),
-                { key: "remove", label: "Remove" },
+                { key: "remove", label: t("query-query-sheet-remove") },
               ]}
               onPick={(key) => {
                 props.sheet.setOpenMenu(null);
@@ -544,7 +548,7 @@ function GroupHeader(props: {
         loc={props.group.loc}
         disabled={props.group.disabled}
         inherited={props.group.inherited}
-        label="Group enabled"
+        label={t("query-prose-group-enabled")}
         controls={props.controls}
       />
       <Show when={offLabel(props.group)}>
@@ -589,7 +593,7 @@ function AdvancedChip(props: {
   controls: SheetControls;
   pos: SiblingPos;
 }): JSX.Element {
-  const phrase = () => `${ADVANCED_PHRASE} ${filterLabel(props.node.filter)}`;
+  const phrase = () => t("query-prose-advanced-clause", { advanced: render(ADVANCED_PHRASE), clause: filterLabel(props.node.filter) });
   return (
     <div
       class="qs-row qs-row-advanced"
@@ -602,17 +606,17 @@ function AdvancedChip(props: {
       }}
     >
       {/* A folded subtree is a sibling like any other: it selects, it moves and it disables. */}
-      <DragHandle pos={props.pos} label="Move condition" controls={props.controls} />
-      <SelectBox pos={props.pos} label="Select condition" controls={props.controls} />
+      <DragHandle pos={props.pos} label={t("query-prose-move-condition")} controls={props.controls} />
+      <SelectBox pos={props.pos} label={t("query-prose-select-condition")} controls={props.controls} />
       <Show
         when={props.sheet.onEditText}
-        fallback={<span class="qs-advanced" title="edit in the query text below">{phrase()}</span>}
+        fallback={<span class="qs-advanced" title={t("query-query-sheet-edit-in-the-query-text-below")}>{phrase()}</span>}
       >
         <button
           type="button"
           class="qs-advanced qs-advanced-open"
-          title="Edit this part in the query text below"
-          aria-label={`Edit in the query text: ${filterLabel(props.node.filter)}`}
+          title={t("query-query-sheet-edit-this-part-in-the-query-text-below")}
+          aria-label={t("query-query-sheet-edit-in-the-query-text", { value1: filterLabel(props.node.filter) })}
           onClick={(e) => {
             stop(e);
             props.sheet.onEditText?.();
@@ -625,7 +629,7 @@ function AdvancedChip(props: {
         loc={props.node.loc}
         disabled={props.node.disabled}
         inherited={props.node.inherited}
-        label="Condition enabled"
+        label={t("query-prose-condition-enabled")}
         controls={props.controls}
       />
       <Show when={offLabel(props.node)}>
@@ -635,8 +639,8 @@ function AdvancedChip(props: {
       <button
         type="button"
         class="qs-row-remove"
-        aria-label="Remove condition"
-        title="Remove"
+        aria-label={t("query-query-sheet-remove-condition")}
+        title={t("query-query-sheet-remove")}
         onClick={(e) => {
           stop(e);
           props.sheet.apply(removeAt(props.sheet.root(), props.node.loc));
@@ -667,7 +671,7 @@ function AdvancedMenu(props: {
           ref={trigger}
           type="button"
           class="qs-row-menu"
-          aria-label="Row actions"
+          aria-label={t("query-query-sheet-row-actions")}
           aria-haspopup="listbox"
           aria-expanded={open() ? "true" : "false"}
           aria-controls={menuId}
@@ -687,7 +691,7 @@ function AdvancedMenu(props: {
           {(rootRef) => (
             <Listbox
               id={menuId}
-              label="Row actions"
+              label={t("query-prose-row-actions")}
               rootRef={rootRef}
               options={moveOptions(props.pos)}
               onPick={(key) => {
@@ -721,20 +725,27 @@ function QueryRow(props: {
   const effective = createMemo(() => effectiveFor(props.sheet.registry, property()?.key));
   const fieldLabel = () => {
     const test = property();
-    if (test) return test.throughPage ? "Page property" : "Property";
+    if (test) return test.throughPage ? t("query-prose-page-property") : t("query-prose-property");
     const k = kind();
     // A scheduled/deadline/journal-date range names its date, not the generic "Between dates" (GH #619 item 5).
     const dated = betweenRowField(core());
-    if (dated && dated !== "any") return BETWEEN_FIELD_LABEL[dated];
-    return k ? FIELD_LABELS[k] : "Condition";
+    if (dated && dated !== "any") return render(BETWEEN_FIELD_LABEL[dated]);
+    return k ? render(FIELD_LABELS[k]) : t("query-filter-condition");
   };
   const operatorLabel = () => {
     const test = property();
     if (test) return propertyOperatorLabel(test.id, effective().cardinality);
     const k = kind();
-    if (!k) return props.node.negated ? "not" : "matches";
+    const filter = core();
+    if ((k === "scheduled" || k === "deadline") && filter.kind === "leaf" && filter.leaf.kind === "attr") {
+      const op = filter.leaf.op;
+      const symbol = { gt: ">", ge: "≥", eq: "=", lt: "<", le: "≤" }[op as "gt" | "ge" | "eq" | "lt" | "le"];
+      if (symbol) return props.node.negated ? t("query-prose-not-symbol", { symbol }) : symbol;
+      if (op === "is_not_set") return render(props.node.negated ? KIND_PHRASE[k].positive : KIND_PHRASE[k].negative);
+    }
+    if (!k) return props.node.negated ? t("query-prose-not") : t("query-prose-matches");
     const phrase = KIND_PHRASE[k];
-    return props.node.negated ? phrase.negative : phrase.positive;
+    return render(props.node.negated ? phrase.negative : phrase.positive);
   };
   const diagnostic = () => {
     const leaf = raw();
@@ -751,7 +762,7 @@ function QueryRow(props: {
   /** Why the row is waiting, in the control's own tooltip: an indexing read
   *  ends by itself, a failure does not, and the two must not read alike. */
   const propertyWaitReason = () =>
-    props.sheet.registry.failure()?.message ?? "Reading this graph's properties…";
+    props.sheet.registry.failure()?.message ?? t("query-prose-reading-this-graph-s-properties");
 
   const key = (purpose: string) => `${purpose}:${locKey(props.node.loc)}`;
   const menuOpen = (purpose: string) => props.sheet.openMenu() === key(purpose);
@@ -839,6 +850,15 @@ function QueryRow(props: {
     props.sheet.setOpenMenu(null);
   };
 
+  const planningComparison = () => {
+    const filter = core();
+    const k = kind();
+    return (k === "scheduled" || k === "deadline") && filter.kind === "leaf"
+      && filter.leaf.kind === "attr" && filter.leaf.value.kind === "date"
+      && ["eq", "gt", "ge", "lt", "le"].includes(filter.leaf.op) ? filter.leaf : null;
+  };
+  const comparisonSymbols = { eq: "=", gt: ">", ge: "≥", lt: "<", le: "≤" } as const;
+
   return (
     <div
       class="qs-row"
@@ -852,8 +872,8 @@ function QueryRow(props: {
       }}
     >
       {/* A disabled row is still a row: it can be selected, moved and dragged. */}
-      <DragHandle pos={props.pos} label="Move condition" controls={props.controls} />
-      <SelectBox pos={props.pos} label="Select condition" controls={props.controls} />
+      <DragHandle pos={props.pos} label={t("query-prose-move-condition")} controls={props.controls} />
+      <SelectBox pos={props.pos} label={t("query-prose-select-condition")} controls={props.controls} />
       <Show
         when={!raw()}
         fallback={
@@ -861,12 +881,12 @@ function QueryRow(props: {
             {/* A retained leaf: the decoded text, the diagnostic, and a ×. */}
             <span class="qs-raw-text">{raw()!.text}</span>
             <span class="qs-raw-message" role={props.node.disabled ? undefined : "alert"}>
-              {diagnostic()?.message ?? "This condition was not understood."}
+              {diagnostic()?.message ?? t("query-query-sheet-this-condition-was-not-understood")}
             </span>
             <Show when={diagnostic()?.suggestions?.length}>
               {/* Rust's OWN alternatives (§4.3.2). */}
               <span class="qs-raw-suggestions">
-                Did you mean{" "}
+                {t("query-query-sheet-did-you-mean")}{" "}
                 <For each={diagnostic()!.suggestions!.slice(0, 4)}>
                   {(suggestion, index) => (
                     <>
@@ -889,8 +909,7 @@ function QueryRow(props: {
                   props.sheet.onEditText?.();
                 }}
               >
-                Edit as text
-              </button>
+                {t("query-query-sheet-edit-as-text")}</button>
             </Show>
           </>
         }
@@ -974,17 +993,31 @@ function QueryRow(props: {
                 fallback={
                   <Listbox
                     id={opMenuId}
-                    label="Condition operator"
+                    label={t("query-prose-condition-operator")}
                     rootRef={rootRef}
                     options={(() => {
                       const k = kind();
-                      const phrase = k ? KIND_PHRASE[k] : { positive: "matches", negative: "does not match" };
+                      const comparison = planningComparison();
+                      if (comparison) return [
+                        ...Object.entries(comparisonSymbols).map(([key, label]) => ({ key, label, active: key === comparison.op })),
+                        { key: "negate", label: props.node.negated ? comparisonSymbols[comparison.op as keyof typeof comparisonSymbols]
+                          : t("query-calm-negated-operator", { operator: comparisonSymbols[comparison.op as keyof typeof comparisonSymbols] }), active: props.node.negated },
+                      ];
+                      const phrase = k ? KIND_PHRASE[k] : { positive: msg("query-filter-matches"), negative: msg("query-filter-does-not-match") };
                       return [
-                        { key: "positive", label: phrase.positive, active: !props.node.negated },
-                        { key: "negative", label: phrase.negative, active: props.node.negated },
+                        { key: "positive", label: render(phrase.positive), active: !props.node.negated },
+                        { key: "negative", label: render(phrase.negative), active: props.node.negated },
                       ];
                     })()}
                     onPick={(picked) => {
+                      const comparison = planningComparison();
+                      if (comparison) {
+                        if (picked === "negate") return toggleNegated();
+                        const filter: Filter = { kind: "leaf", leaf: { ...comparison, op: picked as "eq" | "gt" | "ge" | "lt" | "le" } };
+                        replaceRow(props.node.negated ? { kind: "not", inner: filter } : filter);
+                        props.sheet.setOpenMenu(null);
+                        return;
+                      }
                       if ((picked === "negative") !== props.node.negated) toggleNegated();
                       else props.sheet.setOpenMenu(null);
                     }}
@@ -994,7 +1027,7 @@ function QueryRow(props: {
                 {(test) => (
                   <Listbox
                     id={opMenuId}
-                    label="Condition operator"
+                    label={t("query-prose-condition-operator")}
                     rootRef={rootRef}
                     options={(() => {
                       const offered = propertyOperators(effective());
@@ -1032,7 +1065,7 @@ function QueryRow(props: {
                   type="button"
                   class="qs-value"
                   disabled={props.node.disabled}
-                  aria-label="Condition value"
+                  aria-label={t("query-query-sheet-condition-value")}
                   onClick={(e) => {
                     stop(e);
                     const k = kind();
@@ -1052,6 +1085,7 @@ function QueryRow(props: {
                   {(rootRef) => (
                     <div ref={rootRef} class="qs-menu" onClick={stop}>
                       <ValueEditor
+                        initial={core()}
                         kind={(props.sheet.openMenu() ?? "").split(":").pop() as BuilderLeafKind}
                         onCommit={(filter) => {
                           props.sheet.setOpenMenu(null);
@@ -1080,7 +1114,7 @@ function QueryRow(props: {
         loc={props.node.loc}
         disabled={props.node.disabled}
         inherited={props.node.inherited}
-        label="Condition enabled"
+        label={t("query-prose-condition-enabled")}
         controls={props.controls}
       />
       <span class="qs-menu-wrap">
@@ -1088,7 +1122,7 @@ function QueryRow(props: {
           ref={rowMenuTrigger}
           type="button"
           class="qs-row-menu"
-          aria-label="Row actions"
+          aria-label={t("query-query-sheet-row-actions")}
           aria-haspopup="listbox"
           aria-expanded={menuOpen("row") ? "true" : "false"}
           aria-controls={rowMenuId}
@@ -1108,9 +1142,9 @@ function QueryRow(props: {
           {(rootRef) => (
             <Listbox
               id={rowMenuId}
-              label="Row actions"
+              label={t("query-prose-row-actions")}
               rootRef={rootRef}
-              options={[...moveOptions(props.pos), { key: "remove", label: "Remove" }]}
+              options={[...moveOptions(props.pos), { key: "remove", label: t("query-query-sheet-remove") }]}
               onPick={(picked) => {
                 props.sheet.setOpenMenu(null);
                 if (pickMoveOption(picked, props.pos, props.node, props.sheet, props.controls)) return;
@@ -1123,8 +1157,8 @@ function QueryRow(props: {
       <button
         type="button"
         class="qs-row-remove"
-        aria-label="Remove condition"
-        title="Remove"
+        aria-label={t("query-query-sheet-remove-condition")}
+        title={t("query-query-sheet-remove")}
         onClick={(e) => {
           stop(e);
           props.sheet.apply(removeAt(root(), props.node.loc));

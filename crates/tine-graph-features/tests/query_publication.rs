@@ -36,6 +36,7 @@ fn bundle() -> Vec<(String, Vec<u8>)> {
 
 #[test]
 fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
+    let _integration_guard = crate::integration_lock();
     let (graph, _output, store) = fixture();
     let request = QueryExportRequest {
         argument: "(task TODO)".into(),
@@ -60,7 +61,7 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
         "public:: true\n- TODO changed\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(publish_query(&store, &request, &plan.fingerprint, &bundle()).is_err());
     assert!(!graph.join("published-queries/my-todos").exists());
 
@@ -92,6 +93,7 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
 
 #[test]
 fn live_publication_is_selection_closed_and_only_uses_a_picked_external_folder() {
+    let _integration_guard = crate::integration_lock();
     let (graph, output, store) = fixture();
     let public = publish_live(&store, &output, "Public site", false, &bundle()).unwrap();
     assert_eq!(public.pages, 1);
@@ -110,13 +112,14 @@ fn live_publication_is_selection_closed_and_only_uses_a_picked_external_folder()
 
 #[test]
 fn live_snapshot_bakes_queries_on_selected_pages_and_closes_their_rows() {
+    let _integration_guard = crate::integration_lock();
     let (graph, output, store) = fixture();
     fs::write(
         graph.join("pages/Public.md"),
         "public:: true\n- TODO selected\n- {{query (task DOING)}}\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     publish_live(&store, &output, "Dashboard", false, &bundle()).unwrap();
     let snapshot: serde_json::Value =
         serde_json::from_slice(&fs::read(output.join("dashboard/app/snapshot.json")).unwrap())
@@ -132,13 +135,14 @@ fn live_snapshot_bakes_queries_on_selected_pages_and_closes_their_rows() {
 /// pages outside a query export. Exercise both page and block query renderers.
 #[test]
 fn query_export_nested_queries_do_not_disclose_outside_match_counts() {
+    let _integration_guard = crate::integration_lock();
     let (graph, _output, store) = fixture();
     fs::write(
         graph.join("pages/Public.md"),
         "public:: true\n- TODO selected\n- {{query (task DOING)}}\n- {{tine-query @page}}\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let request = QueryExportRequest {
         argument: "(task TODO)".into(),
         dialect: QueryTextDialect::MacroQuery,
@@ -168,13 +172,14 @@ fn query_export_nested_queries_do_not_disclose_outside_match_counts() {
 
 #[test]
 fn static_fallback_renders_tql_page_rows_from_the_ir_answerer() {
+    let _integration_guard = crate::integration_lock();
     let (graph, output, store) = fixture();
     fs::write(
         graph.join("pages/Public.md"),
         "public:: true\n- {{tine-query @page}}\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     publish_live(&store, &output, "Page query", false, &bundle()).unwrap();
     let html = fs::read_to_string(output.join("page-query/public.html")).unwrap();
     assert!(html.contains("query-count\">1</span>"), "{html}");
@@ -184,13 +189,14 @@ fn static_fallback_renders_tql_page_rows_from_the_ir_answerer() {
 
 #[test]
 fn selected_static_page_keeps_outside_references_inert() {
+    let _integration_guard = crate::integration_lock();
     let (graph, _output, store) = fixture();
     fs::write(
         graph.join("pages/Public.md"),
         "public:: true\n- TODO selected [[Secret]] and #secret\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let request = QueryExportRequest {
         argument: "(task TODO)".into(),
         dialect: QueryTextDialect::MacroQuery,
@@ -213,6 +219,7 @@ fn selected_static_page_keeps_outside_references_inert() {
 
 #[test]
 fn live_export_artifact_cost_is_bounded_per_selected_block() {
+    let _integration_guard = crate::integration_lock();
     fn bytes_under(path: &std::path::Path) -> u64 {
         fs::read_dir(path)
             .unwrap()
@@ -230,7 +237,7 @@ fn live_export_artifact_cost_is_bounded_per_selected_block() {
     for (count, name) in [(1, "one"), (60, "sixty")] {
         let source = format!("public:: true\n{}", "- TODO selected\n".repeat(count));
         fs::write(graph.join("pages/Public.md"), source).unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         publish_live(&store, &output, name, false, &bundle()).unwrap();
         let request = QueryExportRequest {
             argument: "(task TODO)".into(),
@@ -269,6 +276,7 @@ fn live_export_artifact_cost_is_bounded_per_selected_block() {
 #[test]
 #[ignore = "run with TINE_QUERY_E2E_PARENT and a built dist/ for the browser smoke"]
 fn build_real_query_site_for_browser_smoke() {
+    let _integration_guard = crate::integration_lock();
     let parent = PathBuf::from(std::env::var("TINE_QUERY_E2E_PARENT").unwrap());
     fs::create_dir_all(&parent).unwrap();
     let graph_path = std::env::var("TINE_QUERY_E2E_GRAPH").ok();
@@ -316,6 +324,7 @@ fn build_real_query_site_for_browser_smoke() {
 /// these is ordinary text a user can type; none may abort the export.
 #[test]
 fn live_publication_survives_multibyte_text_at_every_probed_offset() {
+    let _integration_guard = crate::integration_lock();
     let (graph, output, store) = fixture();
     fs::write(
         graph.join("pages/Public.md"),
@@ -333,7 +342,7 @@ fn live_publication_survives_multibyte_text_at_every_probed_offset() {
         ),
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     publish_live(&store, &output, "Multibyte", false, &bundle()).unwrap();
     assert!(output.join("multibyte/app/snapshot.json").is_file());
     store.close();
@@ -343,9 +352,10 @@ fn live_publication_survives_multibyte_text_at_every_probed_offset() {
 /// a graph with no `public:: true` page; nothing non-public reaches the export.
 #[test]
 fn live_publication_of_a_graph_without_public_pages_exports_nothing() {
+    let _integration_guard = crate::integration_lock();
     let (graph, output, store) = fixture();
     fs::write(graph.join("pages/Public.md"), "- alpha body\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let receipt = publish_live(&store, &output, "Nothing public", false, &bundle()).unwrap();
     assert_eq!(
         receipt.pages, 0,
@@ -372,13 +382,14 @@ fn live_publication_of_a_graph_without_public_pages_exports_nothing() {
 
 #[test]
 fn query_export_uses_the_graph_leaf_and_reports_missing_assets() {
+    let _integration_guard = crate::integration_lock();
     let (graph, _output, store) = fixture();
     fs::write(
         graph.join("pages/Public.md"),
         "- TODO ![missing](../assets/missing.png)\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let request = QueryExportRequest {
         argument: "(task TODO)".into(),
         dialect: QueryTextDialect::MacroQuery,
@@ -410,6 +421,7 @@ fn query_export_uses_the_graph_leaf_and_reports_missing_assets() {
 
 #[test]
 fn query_export_default_budget_accepts_assets_above_the_old_ceiling() {
+    let _integration_guard = crate::integration_lock();
     let (graph, _output, store) = fixture();
     fs::create_dir_all(graph.join("assets")).unwrap();
     fs::File::create(graph.join("assets/video.mp4"))
@@ -421,7 +433,7 @@ fn query_export_default_budget_accepts_assets_above_the_old_ceiling() {
         "- TODO [video](../assets/video.mp4)\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let request = QueryExportRequest {
         argument: "(task TODO)".into(),
         dialect: QueryTextDialect::MacroQuery,
@@ -444,6 +456,7 @@ fn query_export_default_budget_accepts_assets_above_the_old_ceiling() {
 
 #[test]
 fn query_leaf_assets_survive_a_move_and_budget_refusal_leaves_old_output() {
+    let _integration_guard = crate::integration_lock();
     let (graph, output, store) = fixture();
     for (path, bytes) in [
         ("left/pic.png", b"left".as_slice()),
@@ -458,7 +471,7 @@ fn query_leaf_assets_survive_a_move_and_budget_refusal_leaves_old_output() {
     }
     let text = "- TODO assets\n  ![left](../assets/left/pic.png) ![right](../assets/right/pic.png)\n  [PDF](../assets/notes.pdf) [audio](../assets/clip.ogg) ![space](../assets/space%20name.png)\n";
     fs::write(graph.join("pages/Public.md"), text).unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let mut request = QueryExportRequest {
         argument: "(task TODO)".into(),
         dialect: QueryTextDialect::MacroQuery,
@@ -527,5 +540,71 @@ fn query_leaf_assets_survive_a_move_and_budget_refusal_leaves_old_output() {
         fs::read(graph.join("pages/Public.md")).unwrap(),
         text.as_bytes()
     );
+    store.close();
+}
+
+fn todo_request(argument: &str, current_page: Option<&str>, name: &str) -> QueryExportRequest {
+    QueryExportRequest {
+        argument: argument.into(),
+        dialect: QueryTextDialect::MacroQuery,
+        properties: vec![],
+        current_page: current_page.map(Into::into),
+        name: name.into(),
+        host_block_id: None,
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
+    }
+}
+
+/// REG-QUERY-EXPORT-PRIVATE-PAGES: a query export publishes the pages its query
+/// selects minus `public:: false` pages (Markdown or Org), and neither the
+/// published answer nor the row count carries their rows.
+#[test]
+fn query_export_leaves_out_private_pages() {
+    let _integration_guard = crate::integration_lock();
+    let (graph, _output, store) = fixture();
+    fs::write(
+        graph.join("pages/Private.md"),
+        "public:: false\n- TODO private text\n",
+    )
+    .unwrap();
+    fs::write(
+        graph.join("pages/Org private.org"),
+        "#+public: false\n* TODO private org\n",
+    )
+    .unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    let request = todo_request("(task TODO)", Some("Public"), "All TODOs");
+    let plan = plan_query(&store, &request).unwrap();
+    let names: Vec<_> = plan.pages.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["Public"]);
+    assert_eq!(plan.row_count, 1, "private rows are not counted");
+    publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
+    let text =
+        fs::read_to_string(graph.join("published-queries/all-todos/app/snapshot.json")).unwrap();
+    assert!(text.contains("TODO selected"));
+    for leaked in ["private text", "private org"] {
+        assert!(!text.contains(leaked), "{leaked} was published");
+    }
+    let pages = fs::read_to_string(graph.join("published-queries/all-todos/pages.html")).unwrap();
+    for name in ["Private", "Org private"] {
+        assert!(!pages.contains(name), "{name} is listed: {pages}");
+    }
+    store.close();
+}
+
+#[test]
+fn query_export_refuses_when_every_selected_page_is_private() {
+    let _integration_guard = crate::integration_lock();
+    let (graph, _output, store) = fixture();
+    fs::write(
+        graph.join("pages/Private.md"),
+        "public:: false\n- DONE only private\n",
+    )
+    .unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    let error = plan_query(&store, &todo_request("(task DONE)", None, "Done")).unwrap_err();
+    assert!(error.to_string().contains("public:: false"), "{error}");
     store.close();
 }

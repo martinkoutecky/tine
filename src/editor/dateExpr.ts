@@ -1,3 +1,4 @@
+import { msg, render } from "../i18n";
 // Frontend resolver for the `between` date tokens the Rust engine understands
 // (query.rs::resolve_date_token / parse_relative). Used by the query builder to
 // preview a typed bound as a concrete date and to offer one-click relative
@@ -8,6 +9,15 @@
 // golden file as the Rust resolver (tests/fixtures/i12-date-token-golden.json).
 
 import { journalTitle, appNow, localCalendarDate } from "../journal";
+
+// Deferred catalog messages; property getters resolve in the consuming computation.
+const UI_MESSAGES = {
+  "editor-today": msg("editor-today"),
+  "editor-last-7-days": msg("editor-last-7-days"),
+  "editor-last-30-days": msg("editor-last-30-days"),
+  "editor-next-7-days": msg("editor-next-7-days"),
+  "editor-this-week": msg("editor-this-week"),
+};
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
@@ -104,9 +114,9 @@ export interface DatePreset {
   end: string;
 }
 export const DATE_PRESETS: DatePreset[] = [
-  { label: "Today", start: "today", end: "today" },
-  { label: "Last 7 days", start: "-7d", end: "today" },
-  { label: "Last 30 days", start: "-30d", end: "today" },
-  { label: "Next 7 days", start: "today", end: "+7d" },
-  { label: "This week", start: "-1w", end: "+1w" },
+  { get label() { return render(UI_MESSAGES["editor-today"]); }, start: "today", end: "today" },
+  { get label() { return render(UI_MESSAGES["editor-last-7-days"]); }, start: "-7d", end: "today" },
+  { get label() { return render(UI_MESSAGES["editor-last-30-days"]); }, start: "-30d", end: "today" },
+  { get label() { return render(UI_MESSAGES["editor-next-7-days"]); }, start: "today", end: "+7d" },
+  { get label() { return render(UI_MESSAGES["editor-this-week"]); }, start: "-1w", end: "+1w" },
 ];

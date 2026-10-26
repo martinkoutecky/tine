@@ -1,4 +1,6 @@
-import { createEffect, createSignal, createUniqueId, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
+import { shortcutKey } from "../shortcutKey";
+import { msg } from "../i18n";
+import { createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import * as pdfjs from "pdfjs-dist";
 import { sanitizeOutlineItems, type PdfOutlineItem } from "./pdfOutline";
 import { PdfViewerView } from "./pdfViewerView";
@@ -35,6 +37,7 @@ import { PDF_THEME_KEY, MAX_PDF_BYTES, MAX_PDF_PAGES, PDF_CANVAS_CACHE_PIXEL_BUD
   PDF_CANVAS_CACHE_PAGE_CAP, storedPdfTheme, isPdfPageRef, discardPdfDocument,
   isPdfAreaModifier, pageDimensionsError, safeCanvasSize, cropPdfArea,
   errorMessage, type PendingArea, type PdfTarget } from "./pdfViewerPrimitives";
+import { newIntersectionObserver, requestFrame, useOwnerWindow } from "../windowRealm";
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 export { PDF_CANVAS_CACHE_PIXEL_BUDGET, isPdfAreaModifier } from "./pdfViewerPrimitives";
@@ -58,6 +61,8 @@ export function PdfViewer(props: {
   onViewState?: (state: { page: number; scale: number }) => void;
 }): JSX.Element {
   const owner = props.owner, binding = captureBinding();
+  // The Tine window this viewer renders in: its listeners and frames live there.
+  const ownerWindow = useOwnerWindow();
   const instanceStem = `pdf-viewer-${createUniqueId()}`;
   const findLayerId = `${instanceStem}-find`;
   const surfaceLayerId = `${instanceStem}-surface`;
@@ -94,7 +99,7 @@ export function PdfViewer(props: {
   const [curPage, setCurPage] = createSignal(1);
   const [pageField, setPageField] = createSignal("1");
   let pageInputFocused = false;
-  let scrollRaf: number | undefined;
+  let scrollRaf: (() => void) | undefined;
   let viewStateReady = false;
   let viewStateBaseline: { page: number; scale: number } | null = null;
   const [theme, setTheme] = createSignal<PdfTheme>(storedPdfTheme());
@@ -183,6 +188,13 @@ export function PdfViewer(props: {
   let zoomAnchorPage: number | null = null;
   let zoomAnchorOffsetInPage = 0;
   let zoomSettling = false;
+  // The exact highlight a navigation is still owed a centre-scroll for. It is
+  // set when the navigation starts and consumed by applyPendingHighlight once the
+  // target page is rasterized at the current scale (its overlay exists and is at
+  // the right size). navigateToTarget's own `await renderPage` is not enough: a
+  // supersede (IntersectionObserver, zoom settle) makes that call return before
+  // the overlay is painted, so whoever finishes the raster applies the scroll.
+  let pendingHighlight: { id: string; page: number; current: () => boolean } | null = null;
   // The text layer (hundreds of glyph spans on a math page) is rebuilt OFF the
   // zoom hot path: the canvas sharpens immediately, the text catches up shortly
   // after the view settles. `textScale[n]` is the scale its text was built at;
@@ -261,7 +273,7 @@ export function PdfViewer(props: {
 
   const copyCreatedHighlightRef = async (id: string) => {
     await writeClipboardText(`((${id}))`);
-    pushToast("Copied highlight ref", "success");
+    pushToast(msg("pdf-copied-highlight-ref"), "success");
   };
   // An OG/externally-created sidecar can outlive or predate its annotation
   // block. Reuse the paired guarded writer before exposing the id: it upserts
@@ -359,7 +371,7 @@ export function PdfViewer(props: {
     io?.disconnect();
     // Modest prefetch margin: render/text only pages near the viewport, so a
     // fresh open doesn't do heavy text-layer work for a whole screenful ahead.
-    io = new IntersectionObserver(onIntersect, { root: scrollRef, rootMargin: "200px 0px" });
+    io = newIntersectionObserver(scrollRef, onIntersect, { root: scrollRef, rootMargin: "200px 0px" });
 
     const s = scale();
     for (let n = 1; n <= pdfDoc.numPages; n++) {
@@ -381,7 +393,7 @@ export function PdfViewer(props: {
       pageEls[n] = wrap;
       textLayers[n] = textLayer;
       hlLayers[n] = hl;
-      io.observe(wrap);
+      io?.observe(wrap);
     }
   }
 
@@ -412,6 +424,7 @@ export function PdfViewer(props: {
     if (renderedScale[n] === s) {
       setCanvasTransform(n, 1);
       if (s > 3 && tilePages[n] && pageEls[n]) pdfTiles.refresh(tilePages[n], n, pageEls[n], scrollRef, s);
+      if (pendingHighlight?.page === n) applyPendingHighlight();
       return;
     }
     const wrap = pageEls[n];
@@ -464,7 +477,7 @@ export function PdfViewer(props: {
       .reduce((total, pageNumber) => total + (canvasPixels[pageNumber] ?? 0), 0);
     const availablePixels = Math.max(1, PDF_CANVAS_CACHE_PIXEL_BUDGET
       - (s > 3 ? PDF_TILE_PIXEL_BUDGET : 0) - otherVisiblePixels);
-    const canvasSize = safeCanvasSize(viewport.width, viewport.height, availablePixels);
+    const canvasSize = safeCanvasSize(viewport.width, viewport.height, availablePixels, wrap);
     if (!canvasSize) {
       failPdf(`PDF page ${n} couldn't be sized safely for rendering.`);
       return;
@@ -505,6 +518,7 @@ export function PdfViewer(props: {
     renderedPixelRatio[n] = dpr;
     clearTransform(n);
     repaintPage(n);
+    if (pendingHighlight?.page === n) applyPendingHighlight();
     scheduleText(n);
     touchLru(n);
     evictCanvases();
@@ -544,6 +558,7 @@ export function PdfViewer(props: {
     pageEls[page]?.scrollIntoView({ block: "start" });
 
     if (!highlight) {
+      pendingHighlight = null;
       for (const element of scrollRef.querySelectorAll(".pdf-hl-target")) {
         element.classList.remove("pdf-hl-target");
       }
@@ -552,19 +567,44 @@ export function PdfViewer(props: {
 
     // OG carries the highlight entity through open-block-ref! and scrolls the
     // finder to that exact highlight. Render the destination page first so the
-    // overlay exists even when it was outside the lazy viewport.
-    await renderPage(page);
-    if (!current()) return;
-    const layer = hlLayers[page];
-    const exact = layer
-      ? Array.from(layer.querySelectorAll<HTMLElement>(".pdf-hl"))
-          .find((element) => element.dataset.highlightId === highlight.id)
-      : undefined;
+    // overlay exists even when it was outside the lazy viewport. The scroll is
+    // applied once, by whichever raster of that page completes (see
+    // pendingHighlight): this call returns early when another request for the
+    // same page supersedes its raster.
+    pendingHighlight = { id: highlight.id, page, current };
     for (const element of scrollRef.querySelectorAll(".pdf-hl-target")) {
       element.classList.remove("pdf-hl-target");
     }
-    exact?.classList.add("pdf-hl-target");
-    exact?.scrollIntoView({ block: "center", inline: "nearest" });
+    await renderPage(page);
+    if (!current()) return;
+    applyPendingHighlight();
+  }
+
+  // Centre the pending highlight once its page is painted at the current scale
+  // and no zoom is settling (a settle would write its page anchor over the
+  // scroll). Otherwise leave it pending: the next completed raster of the page
+  // (the settle re-renders the visible pages) retries. Runs at most once per
+  // navigation; the reader's own scrolling cancels it.
+  function applyPendingHighlight() {
+    const pending = pendingHighlight;
+    if (!pending) return;
+    if (!pending.current() || disposed) {
+      pendingHighlight = null;
+      return;
+    }
+    if (zoomSettling || renderedScale[pending.page] !== scale()) return;
+    const layer = hlLayers[pending.page];
+    const exact = layer
+      ? Array.from(layer.querySelectorAll<HTMLElement>(".pdf-hl"))
+          .find((element) => element.dataset.highlightId === pending.id)
+      : undefined;
+    if (!exact) return;
+    pendingHighlight = null;
+    for (const element of scrollRef.querySelectorAll(".pdf-hl-target")) {
+      element.classList.remove("pdf-hl-target");
+    }
+    exact.classList.add("pdf-hl-target");
+    exact.scrollIntoView({ block: "center", inline: "nearest" });
   }
 
   // Record `n` as most-recently rendered.
@@ -772,7 +812,13 @@ export function PdfViewer(props: {
   }
 
   function onZoom() {
-    if (!pdfDoc) return;
+    // The saved/fit scale is applied before the page layout exists, and the
+    // layout is then built at that scale: nothing to resize, re-anchor or
+    // settle. Arming the settle timer here made it fire 120 ms later (or later
+    // still on a loaded machine) and write the page-top anchor over the
+    // backlink's exact-highlight scroll or over the reader's own scrolling
+    // (GH #672).
+    if (!pdfDoc || !pageEls[1]) return;
     const s = scale();
     if (!zoomSettling) {
       const anchor = curPage();
@@ -816,13 +862,13 @@ export function PdfViewer(props: {
     clearTimeout(textTimer);
     findController.cancel();
     if (scrollRaf !== undefined) {
-      cancelAnimationFrame(scrollRaf);
+      scrollRaf();
       scrollRaf = undefined;
     }
     for (const k of Object.keys(tasks)) tasks[Number(k)]?.cancel();
     for (const k of Object.keys(textInflight)) cancelInflightText(Number(k));
-    window.removeEventListener("mousemove", onAreaMove);
-    window.removeEventListener("mouseup", onAreaUp);
+    ownerWindow.removeEventListener("mousemove", onAreaMove);
+    ownerWindow.removeEventListener("mouseup", onAreaUp);
     areaDrag?.band.remove();
     areaDrag = null;
   }
@@ -844,7 +890,7 @@ export function PdfViewer(props: {
     } catch (error) {
       if (!loadOwner()) return;
       highlightState.load([]);
-      pushToast(`Couldn't load PDF annotations. (${String(error)})`, "error");
+      pushToast(msg("pdf-couldn-t-load-pdf-annotations", { detail: String(error) }), "error");
     }
     let bytes: Uint8Array;
     try {
@@ -946,9 +992,13 @@ export function PdfViewer(props: {
   }));
   // A new intent within the same asset must navigate without remounting the
   // PDF. Asset switches are handled by KeyedPdfViewer's filename key.
+  // Route updates also report scrolling/zooming. Memo equality keeps those
+  // updates from replaying an unchanged intent; a fresh serial still navigates
+  // even when its destination is identical to the previous one.
+  const navigationKey = createMemo(() => props.navigationKey?.() ?? "none");
   createEffect(
     on(
-      () => props.navigationKey?.() ?? "none",
+      navigationKey,
       () => {
         const target = untrack(() => props.navigation?.());
         if (viewStateReady && target?.filename === props.filename) {
@@ -1018,6 +1068,7 @@ export function PdfViewer(props: {
   // Ctrl/Cmd + wheel zooms (like a PDF reader); modifier-added momentum tails are only consumed.
   let wheelZoomState: WheelZoomGestureState = {};
   const onWheel = (e: WheelEvent) => {
+    pendingHighlight = null; // the reader took over the scroll position
     const decision = decideWheelZoomGesture(wheelZoomState, e.ctrlKey || e.metaKey, e.timeStamp);
     wheelZoomState = decision.state;
     if (!decision.consume) return;
@@ -1031,7 +1082,7 @@ export function PdfViewer(props: {
   // preventDefault stops the webview's own page zoom.
   const onKeyZoom = (e: KeyboardEvent) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-    if (e.key === "f" || e.key === "F") {
+    if (shortcutKey(e) === "f") {
       e.preventDefault();
       openFind();
       return;
@@ -1045,14 +1096,14 @@ export function PdfViewer(props: {
     } else if (e.key === "-" || e.key === "_") {
       e.preventDefault();
       zoomBy(1 / 1.1);
-    } else if (e.key === "0") {
+    } else if (shortcutKey(e) === "0") {
       e.preventDefault();
       setScale(fitWidthScale());
     }
   };
   onMount(() => {
-    window.addEventListener("keydown", onKeyZoom);
-    onCleanup(() => window.removeEventListener("keydown", onKeyZoom));
+    ownerWindow.addEventListener("keydown", onKeyZoom);
+    onCleanup(() => ownerWindow.removeEventListener("keydown", onKeyZoom));
   });
 
   const captureTextSelection = (target: EventTarget | null, anchor?: { x: number; y: number }) => {
@@ -1065,6 +1116,7 @@ export function PdfViewer(props: {
   };
   const onMouseUp = (e: MouseEvent) => captureTextSelection(e.target, { x: e.clientX, y: e.clientY });
   const onTouchSelectionEnd = (e: TouchEvent) => {
+    pendingHighlight = null;
     if (!isMobilePlatform) return;
     const touch = e.changedTouches?.[0];
     queueMicrotask(() => captureTextSelection(e.target,
@@ -1079,10 +1131,10 @@ export function PdfViewer(props: {
         if (!findOpen()) captureTextSelection(viewerRootEl ?? null);
       }, 120);
     };
-    document.addEventListener("selectionchange", selectionChanged);
+    ownerWindow.document.addEventListener("selectionchange", selectionChanged);
     onCleanup(() => {
       clearTimeout(timer);
-      document.removeEventListener("selectionchange", selectionChanged);
+      ownerWindow.document.removeEventListener("selectionchange", selectionChanged);
     });
   });
 
@@ -1098,7 +1150,7 @@ export function PdfViewer(props: {
       image: null,
     };
     highlightState.edit([...highlights(), h]);
-    window.getSelection()?.removeAllRanges();
+    ownerWindow.getSelection()?.removeAllRanges();
     closeHighlightMenu();
     pending = null;
     if (await persist()) await copyCreatedHighlightRef(h.id);
@@ -1119,6 +1171,7 @@ export function PdfViewer(props: {
     };
   };
   const onAreaDown = (e: MouseEvent) => {
+    pendingHighlight = null; // includes a scrollbar drag
     if ((!areaMode() && !areaModifier(e)) || e.button !== 0) return;
     const wrap = (e.target as HTMLElement).closest(".pdf-page") as HTMLElement | null;
     if (!wrap) return;
@@ -1130,8 +1183,8 @@ export function PdfViewer(props: {
     band.className = "pdf-area-band";
     wrap.appendChild(band);
     areaDrag = { page: Number(wrap.dataset.page), wrap, startX: start.x, startY: start.y, band };
-    window.addEventListener("mousemove", onAreaMove);
-    window.addEventListener("mouseup", onAreaUp, { once: true });
+    ownerWindow.addEventListener("mousemove", onAreaMove);
+    ownerWindow.addEventListener("mouseup", onAreaUp, { once: true });
   };
   const onAreaMove = (e: MouseEvent) => {
     if (!areaDrag) return;
@@ -1144,7 +1197,7 @@ export function PdfViewer(props: {
     });
   };
   const onAreaUp = (e: MouseEvent) => {
-    window.removeEventListener("mousemove", onAreaMove);
+    ownerWindow.removeEventListener("mousemove", onAreaMove);
     const drag = areaDrag;
     areaDrag = null;
     if (!drag) return;
@@ -1179,7 +1232,7 @@ export function PdfViewer(props: {
       renderedPixelRatio[page] ?? 1, renderPage);
     if (!highlightGraphOwner()) return false;
     if (!bytes) {
-      pushToast("Couldn't capture that region — try again.", "error");
+      pushToast(msg("pdf-couldn-t-capture-that-region-try-again"), "error");
       return false;
     }
     const id = crypto.randomUUID();
@@ -1190,7 +1243,7 @@ export function PdfViewer(props: {
         backend().savePdfAreaImage(props.filename, page, id, stamp, bytes, binding.backendGeneration)));
       if (image.kind === "stale") return false;
     } catch (e) {
-      pushToast(`Couldn't save the area image — try again. (${String(e)})`, "error");
+      pushToast(msg("pdf-couldn-t-save-the-area-image-try-again", { detail: String(e) }), "error");
       return false;
     }
     const h: Highlight = {
@@ -1285,7 +1338,7 @@ export function PdfViewer(props: {
       if (tilePages[n] && pageEls[n]) pdfTiles.refresh(tilePages[n], n, pageEls[n], scrollRef, scale());
     }
     if (scrollRaf !== undefined) return;
-    scrollRaf = requestAnimationFrame(updateCurPage);
+    scrollRaf = requestFrame(scrollRef, updateCurPage);
   };
   // Keep the page field showing the scrolled page (unless it's being edited).
   createEffect(() => {

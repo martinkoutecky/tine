@@ -71,8 +71,7 @@ impl Core {
             let config = self.graph.current_config();
             let began = Instant::now();
             let observed = SystemTime::now();
-            let dirs = self.dirs.read().unwrap().clone();
-            let (files, errors, times) = self.collect_full(&dirs, &config);
+            let (files, errors, times) = self.collect_full(&config);
             let prepared = PreparedWalk {
                 began,
                 observed,
@@ -155,8 +154,9 @@ impl Core {
             .as_ref()
             .map_or_else(Instant::now, |walk| walk.began);
         let mut walk = CollectTimes::default();
-        // A rebuild ignores the stamp shortcut: every file is hashed.
-        let force = matches!(trigger, DiffTrigger::Rebuild);
+        // A rebuild or a bytes refresh ignores the stamp shortcut: every
+        // file is hashed.
+        let force = matches!(trigger, DiffTrigger::Rebuild | DiffTrigger::Bytes);
         let result = self.reconcile_walk(
             paths,
             include_config,
@@ -247,7 +247,6 @@ impl Core {
         // A changed config can change which files are graph text (`:hidden`,
         // page and journal directories), so it takes a full scan.
         let paths = if config_changed { None } else { paths };
-        let dirs = self.dirs.read().unwrap().clone();
         let mut snapshot = self.snapshot.lock().unwrap();
         let (mut now, mut unreadable) = if let Some(paths) = paths {
             (
@@ -267,7 +266,7 @@ impl Core {
         } else {
             let (files, errors, times) = match prepared {
                 Some(walk) => (walk.files, walk.errors, walk.times),
-                None => self.collect_full(&dirs, &self.graph.current_config()),
+                None => self.collect_full(&self.graph.current_config()),
             };
             *walk = times;
             walk.full = true;
@@ -327,6 +326,9 @@ impl Core {
             files.push(config_file);
         }
         let mut pages = Vec::new();
+        let mut forwarded = Vec::new();
+        // One identity pass for the cycle (REVIEW-3a4 #6).
+        let mut identities = crate::model::entry_identity::Memo::default();
         for path in names {
             let before = snapshot.get(&path);
             if before.is_some() && !now.contains_key(&path) {
@@ -392,6 +394,23 @@ impl Core {
             let Some(id) = self.file_id(&path) else {
                 continue;
             };
+            // STEP3 §5: the owner observes, indexes and publishes this read.
+            // B1: a path of unknown identity against the held keys is never
+            // installed from disk; each candidate's owner observes its page.
+            let owners = match self.graph.held_identity_in(&mut identities, &path) {
+                crate::model::entry_identity::Identity::Key(key) => vec![key],
+                crate::model::entry_identity::Identity::Unknown { candidates, .. } => {
+                    // Reread from disk when they release it (REVIEW-3a4 #3).
+                    self.graph.note_withheld(&candidates, &path);
+                    candidates
+                }
+                _ => Vec::new(),
+            };
+            if !owners.is_empty() {
+                forwarded.extend(owners);
+                retry_baseline(&mut now, &path, before);
+                continue;
+            }
             if tine_core::model::path_is_sync_conflict(&path) {
                 // Conflict copies are in the file feed so the window adapter can
                 // refresh the conflicts panel, but never enter the page cache.
@@ -472,6 +491,11 @@ impl Core {
         };
         drop(racy);
         drop(snapshot);
+        if !forwarded.is_empty() {
+            if let Some(forward) = self.forward.lock().unwrap().as_ref() {
+                forward(forwarded);
+            }
+        }
         walk.changed = files.len() as u64;
         if let Some(deferred) = deferred {
             // The launch diff: its findings ride the Ready publication.
@@ -493,14 +517,13 @@ impl Core {
 
     fn collect_full(
         &self,
-        dirs: &[PathBuf; 1],
         config: &tine_core::Config,
     ) -> (
         HashMap<PathBuf, Stamp>,
         HashMap<PathBuf, String>,
         CollectTimes,
     ) {
-        let found = collect_with_errors(dirs, config);
+        let found = collect_with_errors(&self.graph.root, config);
         #[cfg(test)]
         crate::store::pause_at_hook(&self.full_walk_pause);
         #[cfg(test)]
@@ -545,7 +568,7 @@ mod tests {
         let (_dir, store) = open();
         let core = store.watch.core_for_load();
         core.full_walk_locked_files.store(0, Ordering::Relaxed);
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         let files = core.full_walk_locked_files.load(Ordering::Relaxed);
         store.close();
         assert_eq!(files, 0,
@@ -560,7 +583,7 @@ mod tests {
             Arc::new((Mutex::new((false, false)), std::sync::Condvar::new()));
         *core.full_walk_pause.lock().unwrap() = Some(Arc::clone(&pause));
         let reader = Arc::clone(&store);
-        let scan = std::thread::spawn(move || reader.scan_refresh().unwrap());
+        let scan = std::thread::spawn(move || reader.refresh(crate::Depth::Stamps).unwrap());
         let (state, ready) = &*pause;
         let mut waiting = state.lock().unwrap();
         while !waiting.0 {
@@ -638,7 +661,7 @@ mod tests {
             "{:hidden [\"pages/P2.md\"]}\n",
         )
         .unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert_eq!(
             store.page(&PageId::from("pages/P0.md")).unwrap().doc.blocks[0].raw,
             "delivered content"

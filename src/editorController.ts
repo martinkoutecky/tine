@@ -3,6 +3,7 @@ import { captureEditorScrollAnchor } from "./editor/scrollAnchor";
 import { batch, createSignal } from "solid-js";
 import { renderedBlocks } from "./lazyObserve";
 import { notifyClearOutlineSelection, notifyEditingStarted } from "./modeHooks";
+import { requestFrame } from "./windowRealm";
 
 // Where to put the caret when a block starts editing. Either a concrete offset
 // (clicks, splits, most callers) OR a column descriptor for cross-block Up/Down
@@ -54,6 +55,18 @@ const [caretTarget, setCaretTarget] = createSignal<{ id: string; offset: CaretPo
 const [activeSurface, setActiveSurface] = createSignal<string | null>(null);
 const pendingFocusSurface = new Map<string, string>();
 
+// Native property inputs hold a draft outside the document. Editor handoffs
+// must commit it before replacing/focusing another editor, even without blur.
+const editEntryGuards = new Set<() => boolean>();
+export function registerEditEntryGuard(guard: () => boolean): () => void {
+  editEntryGuards.add(guard);
+  return () => editEntryGuards.delete(guard);
+}
+export function prepareEditEntry(): boolean {
+  for (const guard of editEntryGuards) if (!guard()) return false;
+  return true;
+}
+
 export interface HistoryEditorContext {
   blockId: string;
   selectionStart: number;
@@ -98,7 +111,7 @@ export function captureRawHistoryViewport(blockId: string): (() => void) | undef
   if (!target || !viewport) return;
   const anchor = captureEditorScrollAnchor(viewport.editor, viewport.scroller);
   if (!anchor) return;
-  return () => requestAnimationFrame(() => {
+  return () => void requestFrame(viewport.editor, () => {
     const restored = [...historyEditorTargets].find((candidate) =>
       candidate.blockId === blockId && candidate.surface === target.surface && candidate.focused?.());
     anchor.restore(restored?.viewport?.().editor ?? null);
@@ -209,6 +222,7 @@ export function startEditing(
   surface: string | null = null,
   preserveHistoryRestore = false,
 ) {
+  if (!prepareEditEntry()) return;
   revealOutlineBlock(id);
   if (!preserveHistoryRestore) setPendingHistoryEditorRestore(null);
   notifyEditingStarted(id, owner);

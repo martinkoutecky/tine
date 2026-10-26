@@ -9,6 +9,8 @@ import { type FeedPage, type Node } from "../document/model";
 import { doc, setDoc } from "../document/model";
 import { journalTitle } from "../journal";
 import { setColumnAggregate } from "./mutations";
+import { bindTestHost } from "../document/host/wiring.test.support";
+import { openAsLoaded } from "../components/hostConflict.test.support";
 
 beforeAll(async () => {
   await initParser();
@@ -55,10 +57,16 @@ it("setColumnAggregate refuses read-only owners (footer bypassed the gridPage ga
 it("appending to an empty today journal undoes in one step (anchor/insert/delete = one unit)", async () => {
   const today = journalTitle(new Date());
   setDoc({ byId: {}, pages: [page(today, "journal", [])], feed: [today], loaded: true });
-  const before = pageToDto(today);
+  // The append lands through the page host, which read the (empty) day shown.
+  const open = openAsLoaded(await bindTestHost());
+  try {
+    const before = pageToDto(today);
 
-  expect(await appendToTodayJournal("#Tag ")).toBe(true);
-  undo();
+    expect(await appendToTodayJournal("#Tag ")).toBe(true);
+    undo();
 
-  expect(pageToDto(today)).toEqual(before);
+    expect(pageToDto(today)).toEqual(before);
+  } finally {
+    open.mockRestore();
+  }
 });

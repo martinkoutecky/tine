@@ -104,6 +104,12 @@ pub fn serialize_org_with(doc: &Document, trailing: usize) -> String {
         emit_org(block, 1, &mut out);
     }
     let mut s = out.join("\n");
+    // The parser assigns the final LF run to the document, not its last
+    // block. A live editor can still submit a block ending in LF (for example
+    // autosave between Shift+Enter and the next character). Do not add those
+    // bytes to `trailing`: the next save would retain them as file trivia and
+    // the file would grow blank lines depending on the autosave schedule.
+    s.truncate(s.trim_end_matches('\n').len());
     s.push_str(&"\n".repeat(trailing));
     s
 }
@@ -235,6 +241,47 @@ mod tests {
         for (name, src) in corpus() {
             assert!(org_editable(src), "expected `{name}` to be editable");
         }
+    }
+
+    #[test]
+    fn org_autosaved_drawer_prefix_does_not_grow_file_terminator() {
+        let typed = "plain\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END: suffix";
+        for trailing in [0, 1, 2] {
+            let original = format!("* plain{}", "\n".repeat(trailing));
+            // Any prefix can reach autosave while the user pauses or the host
+            // is busy, including each Shift+Enter before the next character.
+            for pause in 1..=typed.len() {
+                let mut doc = parse_org(&original);
+                doc.roots[0].raw = typed[..pause].to_string();
+                let saved = serialize_org_detect(&doc, Some(&original));
+                doc.roots[0].raw = typed.to_string();
+                assert_eq!(
+                    serialize_org_detect(&doc, Some(&saved)),
+                    format!("* {typed}{}", "\n".repeat(trailing)),
+                    "autosave at prefix {pause}, original trailing {trailing}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn org_live_final_newlines_leave_interior_separators_alone() {
+        let src = "#+TITLE: Notes\n\n* first\n\n* parent\n** child\n\n";
+        let mut doc = parse_org(src);
+        doc.roots[1].children[0].raw = "child\n\n\n".into();
+        assert_eq!(serialize_org_detect(&doc, Some(src)), src);
+        // Only EOF has document-owned trivia. A newline before another block
+        // or before children is still authored block content.
+        doc.roots[1].raw = "parent\n".into();
+        assert_eq!(
+            serialize_org_detect(&doc, Some(src)),
+            "#+TITLE: Notes\n\n* first\n\n* parent\n\n** child\n\n"
+        );
+        let pre_only = Document {
+            pre_block: Some("#+TITLE: Notes\n".into()),
+            roots: Vec::new(),
+        };
+        assert_eq!(serialize_org(&pre_only), "#+TITLE: Notes\n");
     }
 
     #[test]

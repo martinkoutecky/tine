@@ -1,5 +1,7 @@
+import { msg } from "../i18n";
 import { FeedPage, Node, doc, pageByName, setDoc, hasLoadedIdentityCollision } from "./model";
-import { addDirty, pageInstanceGeneration, pageInstanceGenerations, persistTogether, scheduleSave, type TransferEdge } from "./save/engine";
+import { capturePages, markDirty as addDirty, persistTransfer, transferInProgress } from "./host/wiring";
+import { pageInstanceGeneration, pageInstanceGenerations } from "./instance";
 import { type Route } from "../routeTypes";
 import { type HistorySidebarContext, captureHistorySidebarContext, restoreHistorySidebarContext } from "../ui";
 import { type HistoryEditorContext, captureHistoryEditorContext, captureRawHistoryViewport, editingId, endEdit, restoreHistoryEditorContext } from "../editorController";
@@ -222,7 +224,7 @@ function staleInstances(e: UndoEntry): string[] {
  *  as "undo did nothing", which is how this class of bug hides. */
 function discardStaleHistory(stale: readonly string[]): void {
   for (const name of stale) invalidateUndoForPage(name);
-  pushToast("Undo history for this page was discarded: the page was reloaded since those edits", "info");
+  pushToast(msg("history-undo-history-for-this-page-was-discarded-the"), "info");
 }
 
 // Hand-rolled clones — Node/FeedPage are flat (primitives + a string[]), so a
@@ -474,9 +476,9 @@ export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
   }
 }
 
-function transferOrder(entry: UndoEntry, inverse: UndoEntry): TransferEdge[] {
+function transferOrder(entry: UndoEntry, inverse: UndoEntry): (readonly [string, string])[] {
   if (entry.kind !== "snap" || inverse.kind !== "snap") return [];
-  const transfers: TransferEdge[] = [];
+  const transfers: (readonly [string, string])[] = [];
   for (const [id, next] of Object.entries(entry.nodes)) {
     const previous = inverse.nodes[id];
     if (!previous || previous.page === next.page) continue;
@@ -491,19 +493,20 @@ function transferOrder(entry: UndoEntry, inverse: UndoEntry): TransferEdge[] {
  *  instance that is gone (evicted, reloaded, rebound, forgotten): that page's
  *  history is then dropped with an info toast instead of replayed (GH #305). */
 export function undo(): boolean {
-  if (graphRewriteFrozen()) return false;
+  // A transfer in progress holds its pages' host text apart from the display.
+  if (graphRewriteFrozen() || transferInProgress()) return false;
   const entry = popHistoryEntry(undoStack);
   if (!entry) return false;
   const stale = staleInstances(entry);
   if (stale.length) { discardStaleHistory(stale); return false; }
   const restoreViewport = entry.kind === "raw" ? captureRawHistoryViewport(entry.id) : undefined;
+  const before = entry.kind === "snap" && entry.dirty.length > 1 ? capturePages(entry.dirty) : null;
   const inverse = applyEntry(entry);
-  if (entry.kind === "snap" && entry.dirty.length > 1) void persistTogether(entry.dirty, "replace-page", transferOrder(entry, inverse));
+  if (before) void persistTransfer(before, "replace-page", transferOrder(entry, inverse));
   redoStack.push(inverse);
   lastUndoTag = null;
   bumpHistory();
   endEdit("undo");
-  scheduleSave();
   restoreEntryContext(entry.context);
   restoreViewport?.();
   return true;
@@ -514,7 +517,7 @@ export function undo(): boolean {
  *  now present elsewhere, show an error and clear the redo stack. Otherwise
  *  restore its pages and UI context and schedule a save. */
 export function redo() {
-  if (graphRewriteFrozen()) return;
+  if (graphRewriteFrozen() || transferInProgress()) return;
   const entry = popHistoryEntry(redoStack);
   if (!entry) return;
   const stale = staleInstances(entry);
@@ -524,17 +527,17 @@ export function redo() {
     // remain valid without it, including in page-only mode where the tagged
     // entry may have been selected from the middle of the global stack.
     redoStack = [];
-    pushToast("Redo skipped: a block with the same id now exists", "error");
+    pushToast(msg("history-redo-skipped-a-block-with-the-same-id"), "error");
     return;
   }
   const restoreViewport = entry.kind === "raw" ? captureRawHistoryViewport(entry.id) : undefined;
+  const before = entry.kind === "snap" && entry.dirty.length > 1 ? capturePages(entry.dirty) : null;
   const inverse = applyEntry(entry);
-  if (entry.kind === "snap" && entry.dirty.length > 1) void persistTogether(entry.dirty, "replace-page", transferOrder(entry, inverse));
+  if (before) void persistTransfer(before, "replace-page", transferOrder(entry, inverse));
   undoStack.push(inverse);
   lastUndoTag = null;
   bumpHistory();
   endEdit("redo");
-  scheduleSave();
   restoreEntryContext(entry.context);
   restoreViewport?.();
 }

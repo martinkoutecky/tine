@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 /** Graph preferences. Writes apply immediately and serialize per key and graph
  * binding. A graph switch rejects queued writes with a toast; an in-flight
  * persist may finish. Failed active writes restore the last confirmed value.
@@ -51,7 +52,7 @@ export function changeGraphSetting<K extends keyof GraphMeta>(
 ): void {
   const meta = graphMeta();
   if (!meta) {
-    void persist(value).catch(() => pushToast(`Could not save ${label}.`, "error"));
+    void persist(value).catch(() => pushToast(msg("graph-preferences-could-not-save", { label: String(label) }), "error"));
     return;
   }
   if (meta[key] === value) return;

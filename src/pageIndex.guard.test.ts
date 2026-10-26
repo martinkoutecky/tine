@@ -10,15 +10,18 @@ const RULE = "I-12/I-25: one name answerer: the store; the frontend caches `page
 
 const INVENTORY_OWNER = "src/pageIndex.ts";
 // `resolvePage` answers ONE name for a save that has no file id yet (B15b): the
-// first save of a working-set page, journal seed/template, QuickSwitcher Create
-// and query materialize. It never feeds a name map.
+// journal seed/template, QuickSwitcher Create and query materialize. (A working-set
+// page's first save resolves inside the `page_open` port, STEP3 §3.1.) It never
+// feeds a name map.
 const RESOLVE_FOR_SAVE = new Set([
-  "src/document/save/engine.ts",
   "src/graph.ts",
   "src/components/QuickSwitcher.tsx",
   "src/components/QueryWorkspace.tsx",
 ]);
-const DEFINITIONS = new Set(["src/backend.ts", "src/mock.ts"]);
+// Backends that implement `page_open` (which resolves a page with no file yet),
+// including the test-only page-host fakes that stand in for the native port.
+const DEFINITIONS = new Set(["src/backend.ts", "src/mock.ts",
+  "src/components/fileHost.test.support.ts", "src/diskHost.test.support.ts"]);
 const FORBIDDEN_NAMES = new Set(["aliasMap", "setAliasMap", "resolveAlias"]);
 const DELETED_METHODS = new Set(["listPages", "pageAliases", "referencedPageNames", "pageExistsBatch", "pageIsMissing"]);
 const DELETED_COMMANDS = new Set(["list_pages", "page_aliases", "referenced_page_names"]);

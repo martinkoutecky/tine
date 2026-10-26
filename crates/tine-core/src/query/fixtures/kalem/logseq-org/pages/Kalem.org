@@ -1,0 +1,19 @@
+#+title: Kalem
+#+alias: Editor
+#+tags: software
+
+* An editor of [[Org]] files #software
+:PROPERTIES:
+:ID: 6512c0de-0002-4000-8000-000000000001
+:END:
+** Its core: Org, Markdown, CSV, LaTeX
+** Its plugins: [[Project/Plugins]]
+* TODO [#A] Read the Book
+SCHEDULED: <2026-10-12 Mon>
+:LOGBOOK:
+CLOCK: [2026-10-10 Sat 09:00]--[2026-10-10 Sat 09:30] =>  0:30
+:END:
+* Code is no link
+#+BEGIN_SRC rust
+// [[not a link]]
+#+END_SRC

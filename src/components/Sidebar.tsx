@@ -1,6 +1,9 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
-import { openConflicts, openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
-import { openSwitcher, favorites, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
+import { For, Show, createEffect, createResource, createSignal, onCleanup, type JSX } from "solid-js";
+import { pageIconPrefix } from "../pageIconBatch";
+import { msg, t } from "../i18n";
+import { JournalsIcon } from "./JournalsIcon";
+import { openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
+import { openSwitcher, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
 import { graphMeta } from "../graphSession";
 import { openRouteInOtherPane } from "../panes";
@@ -10,11 +13,11 @@ import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type 
 import { reportGraphOpenFailure } from "../graphOpenFailure";
 import { backend } from "../backend";
 import { graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
-import { allPages as allGraphPages, pageListLabels } from "../pages";
-import { navigationName } from "../pageIndex";
+import { allPageNames, navigationName } from "../pageIndex";
 import { SidebarTitle } from "./SidebarTitle";
 import { NamespaceTree } from "./Namespace";
 import { SidebarFavorites } from "./SidebarFavorites";
+import { favoriteCount } from "../favorites";
 import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
 import { writeClipboardText } from "../clipboard";
@@ -22,12 +25,7 @@ import { isMobilePlatform } from "../nativeChrome";
 import { graphRowMenuActions } from "./graphRowMenu";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
-
-// Cap the rendered "All pages" list. Beyond this, rendering every row (each
-// reading route() for its active state) makes both the initial render and every
-// navigation O(pages); past a few hundred the list isn't scannable anyway, so we
-// show the first N alphabetically and point the rest at search (Ctrl-K).
-const ALL_PAGES_CAP = 300;
+import { queryAllWindows } from "../windowRealm";
 
 export function sidebarPageTarget(name: string, kind: PageKind): { name: string; kind: PageKind } {
   return { name: kind === "page" ? navigationName(name) : name, kind };
@@ -81,24 +79,7 @@ export function Sidebar(props: {
   onActiveNavigationComplete?: () => void;
   graphActions?: GraphNavigationActions;
 } = {}): JSX.Element {
-  // The whole-graph page list is the shared, graph-epoch-keyed resource (see
-  // src/pages.ts) — fetched once per graph generation and shared with the
-  // namespace tree/macro/hierarchy, not a sidebar-private fetch. Epoch keying
-  // still fixes the old "graph still loading at mount" race (it refetches when
-  // the graph becomes ready).
-  const [showAll, setShowAll] = createSignal(false);
   const [showNs, setShowNs] = createSignal(false);
-
-  // Filter + sort ONCE per page-list change (memoized), not on every render /
-  // navigation as the inline `.filter().sort()` in JSX did.
-  const allPages = createMemo(() =>
-    (allGraphPages() ?? [])
-      .filter((p) => p.kind === "page")
-      .sort((a, b) => a.name.localeCompare(b.name))
-  );
-  // Built once per page-list change; asking each row to disambiguate itself
-  // scanned the whole list per row (O(rows x pages) per render).
-  const pageLabel = createMemo(() => pageListLabels(allPages()));
 
   // `path` disambiguates nested pages that share a basename (#21 Phase 2). It's
   // optional: favorites / recent are keyed by name only, so they match on name
@@ -111,14 +92,6 @@ export function Sidebar(props: {
       (path === undefined || !r.path || r.path === path)
     );
   };
-  const openEntry = (path: string, name: string) => {
-    path ? openFile(path, name, "page") : openPage(name, "page");
-    props.onActiveNavigationComplete?.();
-  };
-  const openAllPagesTab = (p: { name: string; path?: string }) =>
-    p.path
-      ? openInNewTab({ kind: "page", name: p.name, pageKind: "page", path: p.path })
-      : openPageInNewTab(p.name, "page");
   // Sidebar page rows follow the shared modified-click contract (linkGesture.ts):
   // Shift → right sidebar (GH #63), Ctrl/Cmd or middle → background tab, Alt →
   // other pane. The mousedown half suppresses shift-range selection (GH #42).
@@ -131,7 +104,7 @@ export function Sidebar(props: {
   return (
     <div class="left-sidebar-inner">
       <div class="sidebar-header">
-        <div class="app-logo">Tine</div>
+        <div class="app-logo">{t("sidebar-tine")}</div>
         <GraphSwitcher
           onActiveNavigationComplete={props.onActiveNavigationComplete}
           actions={props.graphActions ?? graphNavigationActions}
@@ -146,11 +119,11 @@ export function Sidebar(props: {
           onMouseDown={internalLinkMouseDown}
           onAuxClick={(e) => internalLinkAuxClick(e, () => openInNewTab({ kind: "journals" }))}
         >
-          <Icon name="journals" />
-          <span>Journals</span>
+          <JournalsIcon />
+          <span>{t("sidebar-journals")}</span>
         </div>
 
-        <Show when={favorites().length > 0}>
+        <Show when={favoriteCount() > 0}>
           <div class="nav-section">
             <button
               type="button"
@@ -160,12 +133,11 @@ export function Sidebar(props: {
               aria-controls="sidebar-favorites-list"
               onClick={toggleFavoritesSection}
             >
-              <span class="nav-toggle-caret" classList={{ open: favoritesSectionExpanded() }}>▸</span>
-              FAVORITES
-              <span class="nav-section-count">{favorites().length}</span>
+              <span class="nav-toggle-caret" classList={{ open: favoritesSectionExpanded() }}>▸</span>{t("sidebar-favorites")}<span class="nav-section-count">{favoriteCount()}</span>
             </button>
             <Show when={favoritesSectionExpanded()}>
               <SidebarFavorites
+                onActiveNavigationComplete={props.onActiveNavigationComplete}
                 isActive={(name) => isActive(name)}
                 targetName={(name, kind) => sidebarPageTarget(name, kind).name}
                 open={(name, kind, gesture, point) =>
@@ -185,9 +157,7 @@ export function Sidebar(props: {
               aria-controls="sidebar-recent-list"
               onClick={toggleRecentSection}
             >
-              <span class="nav-toggle-caret" classList={{ open: recentSectionExpanded() }}>▸</span>
-              RECENT
-              <span class="nav-section-count">{recentPages().length}</span>
+              <span class="nav-toggle-caret" classList={{ open: recentSectionExpanded() }}>▸</span>{t("sidebar-recent")}<span class="nav-section-count">{recentPages().length}</span>
             </button>
             <Show when={recentSectionExpanded()}>
               <div id="sidebar-recent-list">
@@ -212,7 +182,7 @@ export function Sidebar(props: {
                           openPageContextMenu(e.clientX, e.clientY, target());
                         }}
                       >
-                        <SidebarTitle text={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
+                        <SidebarTitle text={pageIconPrefix(r.name) + (r.name.startsWith("hls__") ? r.name.slice(5) : r.name)} fullTitle={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
                       </div>
                     );
                   }}
@@ -223,65 +193,31 @@ export function Sidebar(props: {
         </Show>
 
         <div class="nav-section">
-          <div
-            class="nav-section-header nav-section-toggle"
-            onClick={() => setShowAll(!showAll())}
+          <button
+            type="button"
+            class="nav-section-header nav-all-pages-open"
+            classList={{ active: route().kind === "all-pages" }}
+            onClick={() => { openAllPages(); props.onActiveNavigationComplete?.(); }}
           >
-            <span class="nav-toggle-caret" classList={{ open: showAll() }}>▸</span>
-            ALL PAGES
-            <Show when={allGraphPages()}>
-              <span class="nav-section-count">{allPages().length}</span>
-            </Show>
-          </div>
-          <Show when={showAll() && allGraphPages()}>
-            <For each={allPages().slice(0, ALL_PAGES_CAP)}>
-              {(p) => (
-                <div
-                  class="nav-page"
-                  classList={{ active: isActive(p.name, p.path) }}
-                  onMouseDown={shiftGuard}
-                  onClick={(e) => {
-                    const dest = internalLinkDest(e);
-                    if (dest === "sidebar") openPageInSidebar({ name: p.name, pageKind: "page", path: p.path });
-                    else if (dest === "background") openAllPagesTab(p);
-                    else if (dest === "pane") openRouteInOtherPane({ kind: "page", name: p.name, pageKind: "page", ...(p.path ? { path: p.path } : {}) });
-                    else openEntry(p.path, p.name);
-                  }}
-                  onAuxClick={(e) => internalLinkAuxClick(e, () => openAllPagesTab(p))}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    openPageContextMenu(e.clientX, e.clientY, { name: p.name, pageKind: "page", path: p.path });
-                  }}
-                >
-                  <SidebarTitle text={pageLabel()(p)} />
-                </div>
-              )}
-            </For>
-            <Show when={allPages().length > ALL_PAGES_CAP}>
-              <div class="nav-page nav-page-more" onClick={() => openSwitcher()}>
-                +{allPages().length - ALL_PAGES_CAP} more — search to open…
-              </div>
-            </Show>
-          </Show>
+            {t("pages-all-title")}
+          </button>
         </div>
 
-        <div class="nav-section">
+        <Show when={allPageNames().some((name) => name.includes("/"))}><div class="nav-section">
           <div
             class="nav-section-header nav-section-toggle"
             onClick={() => setShowNs(!showNs())}
           >
-            <span class="nav-toggle-caret" classList={{ open: showNs() }}>▸</span>
-            NAMESPACES
-          </div>
+            <span class="nav-toggle-caret" classList={{ open: showNs() }}>▸</span>{t("sidebar-namespaces")}</div>
           <Show when={showNs()}>
             <NamespaceTree onPageContextMenu={openRowMenu} onActiveNavigationComplete={props.onActiveNavigationComplete} />
           </Show>
-        </div>
+        </div></Show>
       </div>
 
       <div class="sidebar-footer">
         <ConflictQueueBadge onActiveNavigationComplete={props.onActiveNavigationComplete} />
-        <button class="new-page-btn" onClick={() => openSwitcher()}>+ New page</button>
+        <button class="new-page-btn" onClick={() => openSwitcher()}>{t("sidebar-new-page")}</button>
       </div>
     </div>
   );
@@ -291,7 +227,7 @@ export function Sidebar(props: {
 // same). Falls back to "No graph" when none is loaded (e.g. mock/first run).
 function graphDisplayName(): string {
   const root = graphMeta()?.display_root ?? graphMeta()?.root;
-  if (!root) return "No graph";
+  if (!root) return t("navigation-prose-no-graph");
   const base = root.replace(/[/\\]+$/, "").split(/[/\\]/).pop();
   return base || root;
 }
@@ -346,7 +282,7 @@ export function GraphSwitcher(props: {
     if (!open()) return;
     const unregister = registerTransientLayer({
       id: "graph-switch-menu",
-      root: () => document.querySelector(".graph-switch-menu"),
+      root: () => queryAllWindows<HTMLElement>(".graph-switch-menu"),
       dismiss: () => { close(); return true; },
     });
     onCleanup(unregister);
@@ -415,13 +351,13 @@ export function GraphSwitcher(props: {
                 <span class="graph-switch-row-name">{graph.name}</span>
                 <button
                   class="graph-switch-remove"
-                  title={`Remove ${graph.name} from this list`}
-                  aria-label={`Remove ${graph.name} from this list`}
+                  title={t("sidebar-remove-from-this-list", { name: String(graph.name) })}
+                  aria-label={t("sidebar-remove-from-this-list", { name: String(graph.name) })}
                   onClick={(event) => {
                     event.stopPropagation();
                     void writeOwned(ownedWhen(() => alive), backend().forgetKnownGraph(graph.path))
                       .then((result) => { if (result.kind === "current") void refetch(); })
-                      .catch((error) => pushToast(`Couldn't remove graph. (${String(error)})`, "error"));
+                      .catch((error) => pushToast(msg("sidebar-couldn-t-remove-graph", { error: String(error) }), "error"));
                   }}
                 >
                   ×
@@ -443,11 +379,9 @@ export function GraphSwitcher(props: {
                 // Target-specific failures are reported by switchGraph after the
                 // picker returns a path, so their Retry keeps that path. A
                 // rejection here is a picker failure with no target to retry.
-                .catch((error) => pushToast(`Couldn't open the graph picker. (${String(error)})`, "error"));
+                .catch((error) => pushToast(msg("sidebar-couldn-t-open-the-graph-picker", { error: String(error) }), "error"));
             }}
-          >
-            Open graph…
-          </div>
+          >{t("sidebar-open-graph")}</div>
           <div
             class="ctx-item"
             onClick={() => {
@@ -456,11 +390,9 @@ export function GraphSwitcher(props: {
                 .then((outcome) => {
                   if (outcome.kind === "loaded" || outcome.kind === "already_current") props.onActiveNavigationComplete?.();
                 })
-                .catch((error) => pushToast(`Couldn't create the graph. (${String(error)})`, "error"));
+                .catch((error) => pushToast(msg("sidebar-couldn-t-create-the-graph", { error: String(error) }), "error"));
             }}
-          >
-            New graph…
-          </div>
+          >{t("sidebar-new-graph")}</div>
         </div>
       </Show>
     </div>
@@ -477,25 +409,10 @@ export function ConflictQueueBadge(props: { onActiveNavigationComplete?: () => v
   const count = pendingConflictCount;
   return (
     <Show when={count()}>
-      <button class="conflict-queue-badge" title="Review the pages that need a decision" onClick={() => { openConflicts(); props.onActiveNavigationComplete?.(); }}>
+      <button class="conflict-queue-badge" title={t("sidebar-review-the-pages-that-need-a-decision")} onClick={() => { openConflicts(); props.onActiveNavigationComplete?.(); }}>
         <span class="conflict-queue-dot" aria-hidden="true" />
-        {count()} conflict{count() === 1 ? "" : "s"}
+        {t("sidebar-conflict-count", { count: count() })}
       </button>
     </Show>
   );
-}
-
-function Icon(props: { name: string }): JSX.Element {
-  // Minimal inline icons; the real Tabler set comes later.
-  if (props.name === "journals") {
-    return (
-      <svg viewBox="0 0 24 24" class="nav-icon">
-        <rect x="4" y="5" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" />
-        <line x1="4" y1="9" x2="20" y2="9" stroke="currentColor" stroke-width="1.6" />
-        <line x1="9" y1="3" x2="9" y2="7" stroke="currentColor" stroke-width="1.6" />
-        <line x1="15" y1="3" x2="15" y2="7" stroke="currentColor" stroke-width="1.6" />
-      </svg>
-    );
-  }
-  return <span />;
 }

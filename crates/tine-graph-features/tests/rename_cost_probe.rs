@@ -1,12 +1,23 @@
 //! Rename unit-cost probe (I-25, fam 16). Ignored: run with
 //! `TINE_RENAME_PROBE_ROOT=<copy of a generated 10k graph> TINE_RENAME_PROBE_OLD=..`
-//! `cargo test -p tine-graph-features --release --test rename_cost_probe -- --ignored --nocapture`.
+//! `cargo test -p tine-graph-features --release --test integration rename_cost_probe:: -- --ignored --nocapture`.
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
 use tine_graph_features::pages;
 use tine_store::Store;
+
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
 
 fn snapshot(root: &Path) -> BTreeMap<String, Vec<u8>> {
     let mut out = BTreeMap::new();
@@ -34,18 +45,22 @@ fn bytes_read() -> u64 {
 #[test]
 #[ignore]
 fn rename_cost_at_scale() {
+    let _integration_guard = crate::integration_lock();
     let root = std::path::PathBuf::from(std::env::var("TINE_RENAME_PROBE_ROOT").unwrap());
     let old = std::env::var("TINE_RENAME_PROBE_OLD").unwrap();
     let new = format!("{old} renamed");
     let before = snapshot(&root);
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let warm = Instant::now();
     store.whole_graph().unwrap();
     let warm = warm.elapsed();
     let read_before = bytes_read();
     tine_store::cost_counters::reset();
     let started = Instant::now();
-    pages::rename_page_expected(&store, &old, &new, None).unwrap();
+    hosted(&store, |host| {
+        pages::rename_page_expected(&store, host, &old, &new, None)
+    })
+    .unwrap();
     let rename = started.elapsed();
     let counts = tine_store::cost_counters::snapshot();
     let read = bytes_read() - read_before;

@@ -8,7 +8,7 @@ icon:: 🛟
 	- 1. If the disk version is the one you want, choose **Use disk version** — Tine re-reads the file. Copy your unsaved text somewhere first if you still need parts of it.
 	- 2. If your version is right, choose **Keep mine (overwrite)** — Tine writes yours over the file.
 	- 3. To keep parts of both, open the page: a panel at its top compares **Your unsaved edits** with **The file on disk now** block by block. Choose per block, then **Apply resolution**. When Tine still has the version you started editing from, it pre-selects each side's own change. If the file changes again before you apply, nothing is written and the comparison refreshes.
-	- 4. What you should see: the banner clears and the page saves normally again. Until you choose, that page is skipped by saving rather than silently clobbered. If Tine closes first, your unsaved text is kept, and the same comparison appears on that page after the next start (even when the page itself cannot be opened).
+	- 4. What you should see: the banner clears and the page saves normally again. Until you choose, that page is skipped by saving rather than silently clobbered. If Tine closes first, your unsaved text is kept, and the same comparison appears on that page after the next start, with the same banner until you choose. If the file was deleted on disk, the banner reads “*Page* was deleted on disk”: **Use disk version** accepts the deletion, and **Keep mine (overwrite)** writes your text back as the file.
 - ## Restore a deleted page or journal
 	- 1. Open `logseq/.tine-trash/pages/` or `logseq/.tine-trash/journals/` inside your graph. Deleted files have a timestamp followed by `__` before their original name.
 	- 2. Remove the timestamp and `__`, then move the file into the configured pages or journals folder. For a page that originally lived elsewhere, you may return it to that location instead.
@@ -32,7 +32,7 @@ icon:: 🛟
 	- 3. What you should see: a snapshot is taken first, the files take their date names, and the days appear in the journal feed.
 - ## Tine will not start
 	- 1. Set `TINE_DEBUG=1` in the environment when you launch Tine, reproduce the problem, then quit.
-	- 2. By default the log is `tine-debug.log` in your platform's temporary folder; `TINE_DEBUG_LOG=/path` overrides it.
+	- 2. By default the log is `tine-debug.log` in your platform's temporary folder (portable Windows Tine: in `tine-data\<app id>\local\logs` beside `Tine.exe`); `TINE_DEBUG_LOG=/path` overrides it.
 	- 3. What you should see: a timestamped trace covering the environment, startup milestones, and any panic with a backtrace. It records no note content — send that file with your report.
 	- 4. On Linux, if the window never appears at all, launch once with `TINE_GPU=0`: a rare GPU/WebKitGTK rendering failure then falls back to software rendering.
 - ## Tine could not open your last graph
@@ -80,17 +80,15 @@ icon:: 🛟
 	- 2. On one device choose **Copy graph report** (or **Save graph report…** on desktop) and paste it into the box **Report from the other device** on the other, then choose **Compare reports**.
 	- 3. What you should see: either “The source file sets and bytes match”, or lists named **Only on this device**, **Only on the other device** and **Different bytes** with the file paths. The report holds paths and checksums, never file contents; nothing is uploaded and nothing in your graph changes.
 	- 4. If a file changed while Tine was reading it, the report says **Incomplete** and no match is confirmed: let the sync settle and create the report again.
-- ## Something parses or renders wrong
-	- 1. Open Settings → **Help & diagnostics** → **Help improve Tine's parser**, choose what to run (**Both**, **Divergences**, or **Speed**) and press **Run comparison**: Tine runs its own parser and Logseq's parser over your graph, locally, and lists the places they disagree. Known intentional parser differences are not offered as bugs; they are counted under the details.
-	- 2. Copy the report shown there — every snippet is anonymized (page names and words are scrubbed, markup shape kept) and re-verified to still reproduce the divergence before it is shown. Nothing is uploaded.
-	- 3. What you should see: a local report that you can paste into an issue.
 - ## A graph file could not be read
 	- If **config.edn could not be read** appears, the graph opens read-only so a missing setting cannot send new files to the wrong folder. Read your available pages, repair the file or its permissions in `logseq/config.edn`, then reopen the graph. Settings shows the same problem until that reopen.
-	- If **custom.css could not be read** appears, Tine applies no custom CSS for that open. Repair `logseq/custom.css` or its permissions and reopen the graph to try again.
+	- If **custom.css could not be read** appears, Tine applies no custom CSS for that open if the failure happens while the graph opens; if it happens on an edit while the graph is open, the previous version stays applied (Tine retries once before it tells you). Repair `logseq/custom.css` or its permissions and save it again; Tine re-applies the file when it changes, and reopening the graph tries again too. **Settings → Appearance → Custom CSS → Disable custom CSS** ignores the file for the rest of the session if a stylesheet makes the window hard to use.
+	- If **Some page files couldn't be read** appears, the notice names those files (the first five, then how many more), and **Copy** on the notice copies the full list.
 	- A failed journal scan or page discovery does not mean those files are absent. The graph remains open; repair the unreadable file or folder and retry. A failed conflict refresh keeps the last successful conflict list, which may be out of date.
 	- An asset that gained a reference after an orphan scan is kept when you choose Trash. Refresh the orphan scan before trying again. With external editors or sync, wait for their changes to appear in Tine first: a change it has not observed can still race deletion.
 	- Cancelling graph verification makes no report and raises no error message. If a source file is replaced during verification, its report is incomplete; finish syncing or editing and create another report.
 - ## Switch between stable Tine and Tine Beta
+	- Each Beta has its own release page, tagged `vX.Y.Z-beta.N`. Beta's in-app updater checks `https://tine.page/updates/beta/latest.json` for the newest Beta; older Betas still find the new release. For a manual download, choose that version's Beta release page.
 	- Master ships stable **Tine**; **Tine Beta** is a separate app for testing upcoming changes, with its own settings and Beta updates. Stable gets only stable updates, and Beta gets only Beta updates.
 	- Close Tine before switching builds. On its first configured desktop launch, Tine Beta copies compatible settings from stable Tine and leaves stable app data intact. If it opens Welcome, choose your existing graph folder; do not delete application data to recover it. Android's separate Beta app needs its graph folder selected again.
 	- To return to stable Tine, close Tine Beta and launch stable Tine; your graph files stay where they were. Save your edits before switching. In Settings → About, **Copy version** copies the app name and full version, including the Beta sequence, for a bug report.

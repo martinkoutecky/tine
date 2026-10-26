@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { topTransientLayer } from "./transientLayers";
+import { isNodeValue, mainWindow } from "./windowRealm";
 
 export type DrawerSide = "left" | "right";
 export type DrawerDismissReason = "explicit" | "scrim" | "escape" | "back" | "navigation";
@@ -7,7 +8,7 @@ export type DrawerDismissReason = "explicit" | "scrim" | "escape" | "back" | "na
 export function isMobileDrawerViewport(width: number) {
   return width < 640;
 }
-export function mobileDrawerMatches(media = typeof matchMedia === "function" && matchMedia("(max-width: 639px)").matches) {
+export function mobileDrawerMatches(media = typeof mainWindow?.matchMedia === "function" && mainWindow.matchMedia("(max-width: 639px)").matches) {
   return media;
 }
 
@@ -16,8 +17,8 @@ export { mobileDrawerMode };
 
 /** Installs the sole reactive classifier.  It deliberately has no CSS twin. */
 export function installMobileDrawerMode(): () => void {
-  if (typeof matchMedia !== "function") return () => {};
-  const query = matchMedia("(max-width: 639px)");
+  if (typeof mainWindow?.matchMedia !== "function") return () => {};
+  const query = mainWindow.matchMedia("(max-width: 639px)");
   const update = () => setMobileDrawerMode(mobileDrawerMatches(query.matches));
   update();
   query.addEventListener?.("change", update);
@@ -33,7 +34,7 @@ export function captureDrawerOpener(trigger?: HTMLElement | null) {
 export function takeDrawerOpener() { const value = opener; opener = null; return value; }
 export function clearDrawerOpener() { opener = null; }
 export function focusMainContent() {
-  const main = document.querySelector<HTMLElement>(".pane-focused .main-content, .main-content");
+  const main = mainWindow.document.querySelector<HTMLElement>(".pane-focused .main-content, .main-content");
   main?.focus?.();
 }
 export function restoreDrawerFocus(reason: DrawerDismissReason) {
@@ -80,10 +81,10 @@ export function trapDrawerTab(event: KeyboardEvent, root: HTMLElement) {
   const items = drawerFocusables(root);
   if (!items.length) { event.preventDefault(); root.focus(); return; }
   const first = items[0], last = items[items.length - 1];
-  const active = document.activeElement;
-  if (event.shiftKey && (active === first || active === root || !(active instanceof Node) || !root.contains(active))) {
+  const active = mainWindow.document.activeElement;
+  if (event.shiftKey && (active === first || active === root || !isNodeValue(active) || !root.contains(active))) {
     event.preventDefault(); last.focus();
-  } else if (!event.shiftKey && (active === last || active === root || !(active instanceof Node) || !root.contains(active))) {
+  } else if (!event.shiftKey && (active === last || active === root || !isNodeValue(active) || !root.contains(active))) {
     event.preventDefault(); first.focus();
   }
 }
@@ -92,8 +93,8 @@ export function trapDrawerTab(event: KeyboardEvent, root: HTMLElement) {
  * key. Keep it in the drawer unless a higher transient owns it. */
 export function containDrawerFocus(root: HTMLElement) {
   if (higherTransientOwnsFocus()) return;
-  const focused = document.activeElement;
-  if (focused instanceof Node && root.contains(focused)) return;
+  const focused = mainWindow.document.activeElement;
+  if (isNodeValue(focused) && root.contains(focused)) return;
   (drawerFocusables(root)[0] ?? root).focus();
 }
 
@@ -102,6 +103,6 @@ export function containDrawerFocus(root: HTMLElement) {
  * of ui.ts's visibility store. */
 export function focusDrawer(side: DrawerSide) {
   if (higherTransientOwnsFocus()) return;
-  const root = document.querySelector<HTMLElement>(side === "left" ? ".left-sidebar" : ".right-sidebar");
+  const root = mainWindow.document.querySelector<HTMLElement>(side === "left" ? ".left-sidebar" : ".right-sidebar");
   if (root) containDrawerFocus(root);
 }

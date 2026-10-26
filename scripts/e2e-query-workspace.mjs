@@ -14,11 +14,12 @@ const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
 const TD = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(process.env.CARGO_HOME, "bin", "tauri-driver") : "tauri-driver");
 const DRIVER_BASE = Number(process.env.E2E_DRIVER_PORT || 4492);
 const NATIVE_BASE = Number(process.env.E2E_NATIVE_PORT || 4493);
-const TMP = "/tmp/tine-query-workspace-e2e";
+const TMP_ROOT = path.resolve(process.env.E2E_TMP_ROOT || process.env.TMPDIR || "/tmp");
+fs.mkdirSync(TMP_ROOT, { recursive: true });
+const TMP = fs.mkdtempSync(path.join(TMP_ROOT, "tine-query-workspace-e2e-"));
 const GRAPH = `${TMP}/graph`;
 const ARTIFACTS = process.env.E2E_ARTIFACT_DIR || `${TMP}/artifacts`;
 
-fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 fs.mkdirSync(ARTIFACTS, { recursive: true });
@@ -124,11 +125,29 @@ async function presentationButton(browser, label) {
   throw new Error(`missing ${label} presentation button`);
 }
 
-async function inlineQueryViewButton(browser, label) {
-  for (const button of await browser.$$(".query-view-switcher button")) {
-    if ((await button.getText()).trim() === label) return button;
-  }
-  throw new Error(`missing inline-query ${label} view button`);
+/** The calm query block keeps its view choice in one place: ⋯ → View. */
+async function chooseInlineQueryView(browser, view) {
+  await browser.execute(() => document.querySelector(".query-block .qc-actions > summary")?.scrollIntoView({ block: "center" }));
+  await browser.$(".query-block .qc-actions > summary").click();
+  await browser.waitUntil(() => browser.execute(() => {
+    const id = document.querySelector(".query-block .qc-actions > summary")?.getAttribute("aria-controls");
+    const button = [...(id ? document.getElementById(id)?.querySelectorAll("button") ?? [] : [])].find((b) => b.textContent === "View");
+    if (!button) return false;
+    button.setAttribute("data-e2e-query-action", "view");
+    return true;
+  }), { timeout: 10_000, timeoutMsg: "missing inline-query View action" });
+  await browser.$('[data-e2e-query-action="view"]').click();
+  const marked = await browser.execute((wanted) => {
+    const button = [...document.querySelectorAll('.query-block .qc-panel [aria-label="Query view"] button')].find((b) => b.textContent?.trim() === wanted);
+    button?.setAttribute("data-e2e-query-view", wanted);
+    return !!button;
+  }, view);
+  if (!marked) throw new Error(`missing inline-query ${view} view choice`);
+  await browser.$(`[data-e2e-query-view="${view}"]`).click();
+  await browser.execute(() => document.querySelector(".query-block .qc-panel .qc-done")?.click());
+  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".query-block .qc-panel")), {
+    timeout: 10_000, timeoutMsg: "the inline-query view panel did not close",
+  });
 }
 
 async function assertInPageFind(browser, query, activeSelector, slowTyping = false) {
@@ -229,8 +248,7 @@ await withApp(0, async (browser) => {
     timeout: 10_000, timeoutMsg: "unlinked-reference content did not finish rendering",
   });
   await assertInPageFind(browser, "names Query parity near the start", ".unlinked-references .reference-blocks.inpage-find-active-block");
-  const inlineSearchButton = await inlineQueryViewButton(browser, "Search");
-  await inlineSearchButton.click();
+  await chooseInlineQueryView(browser, "search");
   await browser.waitUntil(async () => (await browser.$$(".query-search-results .query-search-hit")).length === 9, {
     timeout: 10_000, timeoutMsg: "Search presentation dropped ordinary DSL query results",
   });
@@ -715,12 +733,19 @@ await withApp(2, async (browser) => {
     timeoutMsg: "third facet click did not clear the persisted include/exclude state",
   });
 
-  const linkedBulk = await browser.$$(".linked-references .reference-bulk-controls button");
-  await linkedBulk[0].click();
+  // The bulk action is one state-dependent toggle. Reacquire it by its
+  // current label so both linked and unlinked groups prove each transition.
+  async function bulkReferenceAction(section, label) {
+    const controls = await browser.$(`${section} .reference-bulk-controls`);
+    const action = await controls.$(`button=${label}`);
+    await action.waitForDisplayed({ timeout: 5_000 });
+    await action.click();
+  }
+  await bulkReferenceAction(".linked-references", "Collapse all");
   await browser.waitUntil(async () => (await browser.$$(".linked-references .reference-blocks")).length === 0, {
     timeout: 5_000, timeoutMsg: "Collapse all did not unmount linked reference bodies",
   });
-  await linkedBulk[1].click();
+  await bulkReferenceAction(".linked-references", "Expand all");
   await browser.waitUntil(async () => (await browser.$$(".linked-references .reference-blocks")).length === linkedProof.groupCount, {
     timeout: 5_000, timeoutMsg: "Expand all did not restore linked reference bodies",
   });
@@ -737,8 +762,10 @@ await withApp(2, async (browser) => {
     const excerpt = source?.querySelector(".reference-excerpt-text")?.textContent ?? "";
     return {
       groupCount: groups.length,
-      // GH #200: the highlighted mention is its own jump control. A numbered
-      // row is only needed for occurrences outside the excerpt's windows.
+      // GH #200 option A: every mention that fits the excerpt is marked and is
+      // its own jump control; the numbered circles exist only for mentions
+      // past the excerpt, so there are none here.
+      circles: source?.querySelectorAll(".reference-occurrence-jump").length,
       markText: [...(source?.querySelectorAll(".reference-excerpt-mark") ?? [])]
         .map((mark) => mark.textContent?.trim()),
       marksAreControls: [...(source?.querySelectorAll(".reference-excerpt-mark") ?? [])]
@@ -747,6 +774,7 @@ await withApp(2, async (browser) => {
     };
   }, unlinkedRaw);
   if (unlinkedProof.groupCount < 2 || !unlinkedProof.marksAreControls || !unlinkedProof.bounded
+    || unlinkedProof.circles !== 0
     || JSON.stringify(unlinkedProof.markText) !== JSON.stringify(["Query parity", "Query parity"])) {
     throw new Error(`unlinked reference evidence is incomplete: ${JSON.stringify(unlinkedProof)}`);
   }
@@ -758,12 +786,11 @@ await withApp(2, async (browser) => {
   }
   await showFull.click();
 
-  const unlinkedBulk = await browser.$$(".unlinked-references .reference-bulk-controls button");
-  await unlinkedBulk[0].click();
+  await bulkReferenceAction(".unlinked-references", "Collapse all");
   await browser.waitUntil(async () => (await browser.$$(".unlinked-references .reference-blocks")).length === 0, {
     timeout: 5_000, timeoutMsg: "Collapse all did not unmount unlinked reference bodies",
   });
-  await unlinkedBulk[1].click();
+  await bulkReferenceAction(".unlinked-references", "Expand all");
   await browser.waitUntil(async () => (await browser.$$(".unlinked-references .reference-blocks")).length === unlinkedProof.groupCount, {
     timeout: 5_000, timeoutMsg: "Expand all did not restore unlinked reference bodies",
   });
@@ -771,8 +798,10 @@ await withApp(2, async (browser) => {
   const jumped = await browser.execute(() => {
     const source = [...document.querySelectorAll(".unlinked-references .reference-group")]
       .find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Unlinked source");
+    // GH #200 option A: the second highlighted mention is itself the control.
     const jump = source?.querySelectorAll(".reference-excerpt-mark")[1];
-    if (!(jump instanceof HTMLButtonElement)) return false;
+    if (!(jump instanceof HTMLButtonElement)
+      || !jump.getAttribute("aria-label")?.startsWith("Open mention 2 ")) return false;
     jump.click();
     return true;
   });

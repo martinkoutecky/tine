@@ -1,6 +1,17 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
 mod fs {
     pub use std::fs::*;
     use std::path::Path;
@@ -117,13 +128,20 @@ fn fixture(label: &str) -> (PathBuf, Store) {
 
 #[test]
 fn source_scan_guard_clients_touch_no_path() {
+    let _integration_guard = crate::integration_lock();
     for (name, source) in [
         ("lib", include_str!("../src/lib.rs")),
         ("assets", include_str!("../src/assets.rs")),
         ("conflicts", include_str!("../src/conflicts.rs")),
+        ("conflicts/queue", include_str!("../src/conflicts/queue.rs")),
         ("config", include_str!("../src/config.rs")),
+        ("custom_css", include_str!("../src/custom_css.rs")),
         ("journals", include_str!("../src/journals.rs")),
         ("pages", include_str!("../src/pages.rs")),
+        (
+            "pages/merge_payload",
+            include_str!("../src/pages/merge_payload.rs"),
+        ),
         ("pdf", include_str!("../src/pdf.rs")),
         ("guide", include_str!("../src/guide.rs")),
         ("print", include_str!("../src/print.rs")),
@@ -147,7 +165,7 @@ fn source_scan_guard_clients_touch_no_path() {
             if name == "guide" && forbidden == "std::path" {
                 continue; // Public API accepts the device parent folder for graph creation.
             }
-            if matches!(name, "assets" | "pages") && forbidden == "std::path" {
+            if matches!(name, "assets" | "pages" | "custom_css") && forbidden == "std::path" {
                 continue; // Existing-file paths are validated OS hand-offs, not graph I/O.
             }
             assert!(
@@ -176,7 +194,7 @@ fn guide_file_name(title: &str, separator: &str) -> String {
     assert!(
         title
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || " /&,-".contains(c)),
+            .all(|c| c.is_ascii_alphanumeric() || " /&,-'".contains(c)),
         "extend the independent file-name oracle for {title:?}"
     );
     format!("{}.md", title.replace('/', separator))
@@ -218,12 +236,13 @@ fn assert_tree_is(root: &std::path::Path, expected: &std::collections::BTreeMap<
 
 #[test]
 fn guide_creation_writes_the_bundled_templates_and_chooses_a_folder() {
+    let _integration_guard = crate::integration_lock();
     // Literal spot checks pin the independent file-name oracle itself.
     let tree = expected_demo_tree();
     assert_eq!(
         tree.len(),
-        26 + 2,
-        "26 Guide pages, config.edn and the screenshot"
+        27 + 2,
+        "27 Guide pages, config.edn and the screenshot"
     );
     for name in [
         "pages/Welcome to Tine.md",
@@ -237,27 +256,30 @@ fn guide_creation_writes_the_bundled_templates_and_chooses_a_folder() {
     let (empty, _) = fixture("demo-empty-new");
     fs::remove_dir(empty.join("pages")).unwrap();
     fs::remove_dir(empty.join("assets")).unwrap();
-    assert_eq!(guide::create_demo_graph(&empty).unwrap(), empty);
-    assert_tree_is(&empty, &tree);
+    let empty_root = guide::create_demo_graph(&empty, "notes").unwrap();
+    assert_eq!(empty_root, empty.join("notes"));
+    assert_tree_is(&empty_root, &tree);
 
     let (parent, _) = fixture("demo-parent");
     fs::write(parent.join("keep"), b"keep").unwrap();
-    let first = guide::create_demo_graph(&parent).unwrap();
-    assert_eq!(first, parent.join("tine-demo"));
+    let first =
+        guide::create_demo_graph(&parent, &Store::suggest_graph_name(&parent).unwrap()).unwrap();
+    assert_eq!(first, parent.join("notes"));
     assert_tree_is(&first, &tree);
-    let second = guide::create_demo_graph(&parent).unwrap();
-    assert_eq!(second, parent.join("tine-demo-2"));
+    let second =
+        guide::create_demo_graph(&parent, &Store::suggest_graph_name(&parent).unwrap()).unwrap();
+    assert_eq!(second, parent.join("notes-2"));
     assert_tree_is(&second, &tree);
     assert_eq!(fs::read(parent.join("keep")).unwrap(), b"keep");
 
     let file = parent.join("file");
     fs::write(&file, b"x").unwrap();
     assert!(matches!(
-        Store::create_graph(&file, &[]),
+        Store::create_graph(&file, "notes", &[]),
         Err(tine_store::OpenError::NotAFolder(_))
     ));
     assert!(matches!(
-        Store::create_graph(std::path::Path::new(""), &[]),
+        Store::create_graph(std::path::Path::new(""), "notes", &[]),
         Err(tine_store::OpenError::NotAFolder(_))
     ));
 
@@ -272,21 +294,22 @@ fn guide_creation_writes_the_bundled_templates_and_chooses_a_folder() {
         (Area::Assets, "same.bin".to_string(), b"second".to_vec()),
     ];
     assert!(matches!(
-        Store::create_graph(&collision, &duplicate),
+        Store::create_graph(&collision, "notes", &duplicate),
         Err(tine_store::OpenError::CreateFailed { .. })
     ));
     assert_eq!(
-        fs::read(collision.join("tine-demo/assets/same.bin")).unwrap(),
+        fs::read(collision.join("notes/assets/same.bin")).unwrap(),
         b"first"
     );
     assert_eq!(
-        fs::read(collision.join("tine-demo/logseq/config.edn")).unwrap(),
+        fs::read(collision.join("notes/logseq/config.edn")).unwrap(),
         b"{:custom true}\n"
     );
 }
 
 #[test]
 fn guide_copy_rewrites_inter_guide_links_and_keeps_existing_files() {
+    let _integration_guard = crate::integration_lock();
     // Independent rewrite oracle: a Guide link `[[T]]` to a bundled page T
     // becomes `[[tine-guide/T]]` everywhere except inside fenced code, and a
     // leading `title:: T` line is renamed. Plain string work, no parser.
@@ -369,8 +392,8 @@ fn guide_copy_rewrites_inter_guide_links_and_keeps_existing_files() {
             fs::create_dir(new_root.join("assets/quick-capture.png")).unwrap();
             expected.remove("assets/quick-capture.png");
         }
-        store.scan_refresh().unwrap();
-        let actual = guide::copy_guide_into_graph(&store, "Features/Sheets").unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
+        let actual = guide::copy_guide_into_graph(&store, None, "Features/Sheets").unwrap();
         if case == "page" {
             assert!(actual
                 .skipped_pages
@@ -396,7 +419,7 @@ fn guide_copy_rewrites_inter_guide_links_and_keeps_existing_files() {
     }
     let (_, store) = fixture("guide-unknown");
     assert_eq!(
-        guide::copy_guide_into_graph(&store, "missing")
+        guide::copy_guide_into_graph(&store, None, "missing")
             .unwrap_err()
             .to_string(),
         "unknown bundled guide page"
@@ -405,6 +428,7 @@ fn guide_copy_rewrites_inter_guide_links_and_keeps_existing_files() {
 
 #[test]
 fn config_setters_match_legacy_values_and_bytes() {
+    let _integration_guard = crate::integration_lock();
     type New = fn(&Store) -> std::io::Result<()>;
     let operations: [(&str, New); 11] = [
         ("favorites", |s| {
@@ -444,7 +468,7 @@ fn config_setters_match_legacy_values_and_bytes() {
             if let Some(input) = input {
                 fs::write(new_root.join("logseq/config.edn"), input).unwrap();
             }
-            store.scan_refresh().unwrap();
+            store.refresh(tine_store::Depth::Stamps).unwrap();
             let actual = new(&store);
             assert!(actual.is_ok(), "{op_name}/{case_name}: {actual:?}");
             assert_disk_tree(
@@ -458,6 +482,7 @@ fn config_setters_match_legacy_values_and_bytes() {
 
 #[test]
 fn custom_css_matches_legacy_present_absent_and_unreadable() {
+    let _integration_guard = crate::integration_lock();
     for (index, (name, contents)) in [
         ("present", Some(b"body { color: red }".as_slice())),
         ("absent", None),
@@ -483,6 +508,7 @@ fn custom_css_matches_legacy_present_absent_and_unreadable() {
 
 #[test]
 fn config_retry_reapplies_edit_over_external_write() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("config-retry");
     fs::create_dir_all(root.join("logseq")).unwrap();
     fs::write(root.join("logseq/config.edn"), "{:start-of-week 0}\n").unwrap();
@@ -495,6 +521,7 @@ fn config_retry_reapplies_edit_over_external_write() {
 
 #[test]
 fn config_invalid_utf8_error_matches_legacy() {
+    let _integration_guard = crate::integration_lock();
     let (new_root, store) = fixture("config-invalid-utf8-new");
     fs::create_dir_all(new_root.join("logseq")).unwrap();
     fs::write(new_root.join("logseq/config.edn"), b"\xff").unwrap();
@@ -510,13 +537,14 @@ fn config_invalid_utf8_error_matches_legacy() {
 
 #[test]
 fn conflict_clients_match_legacy_values_and_disk_bytes() {
+    let _integration_guard = crate::integration_lock();
     use std::collections::HashMap;
     let (new_root, store) = fixture("conflict-matrix-new");
     let conflict_name = "Foo.sync-conflict-20260705-120000-ABCDEFG.md";
     fs::create_dir_all(new_root.join("journals")).unwrap();
     fs::write(new_root.join("pages/Foo.md"), "- mine\n").unwrap();
     fs::write(new_root.join("pages").join(conflict_name), "- theirs\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_json_value(
         serde_json::to_value(conflicts::list_sync_conflicts(&store).unwrap()).unwrap(),
         "conflict_clients_match_legacy_values_and_disk_bytes",
@@ -533,6 +561,7 @@ fn conflict_clients_match_legacy_values_and_disk_bytes() {
     );
     conflicts::resolve_sync_conflict(
         &store,
+        None,
         "pages/Foo.md",
         &conflict,
         &HashMap::new(),
@@ -551,8 +580,8 @@ fn conflict_clients_match_legacy_values_and_disk_bytes() {
 
     // The separate discard operation preserves the same bytes too.
     fs::write(new_root.join("pages").join(conflict_name), "- next\n").unwrap();
-    store.scan_refresh().unwrap();
-    conflicts::trash_sync_conflict(&store, &conflict).unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    conflicts::trash_sync_conflict(&store, None, &conflict).unwrap();
     assert_disk_tree(
         &new_root,
         "conflict_clients_match_legacy_values_and_disk_bytes",
@@ -562,6 +591,7 @@ fn conflict_clients_match_legacy_values_and_disk_bytes() {
 
 #[test]
 fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
+    let _integration_guard = crate::integration_lock();
     let (new_root, store) = fixture("journal-matrix-new");
     fs::create_dir_all(new_root.join("journals")).unwrap();
     for (name, body) in [
@@ -573,7 +603,7 @@ fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
     ] {
         fs::write(new_root.join("journals").join(name), body).unwrap();
     }
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let new_feed = journals::feed_journals_desc_through(&store, Day(20260620)).unwrap();
     assert_eq!(
         new_feed.iter().map(|(day, _)| day.0).collect::<Vec<_>>(),
@@ -597,7 +627,7 @@ fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
         format!("{listed:?}"),
         r#"[JournalFilenameMigration { from: "Jun 19th, 2026.md", to: "2026_06_19.md" }]"#
     );
-    let migration = journals::migrate_journal_filenames(&store, &listed).unwrap();
+    let migration = journals::migrate_journal_filenames(&store, None, &listed).unwrap();
     assert_eq!((migration.migrated, migration.skipped.len()), (1, 0));
     assert!(new_root.join("journals/Jun 20th, 2026.md").exists());
     assert!(new_root.join("journals/Jun 18th, 2026.org").exists());
@@ -607,7 +637,7 @@ fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
         "journal_clients_match_legacy_feed_conflicts_read_trash_and_migration",
         "after_migration",
     );
-    journals::trash_journal_file(&store, "Jun 20th, 2026.md").unwrap();
+    journals::trash_journal_file(&store, None, "Jun 20th, 2026.md").unwrap();
     assert_disk_tree(
         &new_root,
         "journal_clients_match_legacy_feed_conflicts_read_trash_and_migration",
@@ -617,6 +647,7 @@ fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
 
 #[test]
 fn external_write_during_resolve_rolls_back_winner_and_keeps_external_copy() {
+    let _integration_guard = crate::integration_lock();
     use std::collections::HashMap;
     let (root, store) = fixture("resolve-external");
     fs::write(root.join("pages/Foo.md"), "- mine\n").unwrap();
@@ -628,6 +659,7 @@ fn external_write_during_resolve_rolls_back_winner_and_keeps_external_copy() {
     store.inject_fault(FaultPoint::Stage2MismatchAt(1));
     assert!(conflicts::resolve_sync_conflict(
         &store,
+        None,
         "pages/Foo.md",
         conflict,
         &HashMap::new(),
@@ -644,18 +676,20 @@ fn external_write_during_resolve_rolls_back_winner_and_keeps_external_copy() {
 
 #[test]
 fn resolve_preblock_keep_choices_match_legacy_bytes() {
+    let _integration_guard = crate::integration_lock();
     use std::collections::HashMap;
     for (index, choice) in ["mine", "theirs"].into_iter().enumerate() {
         let (new_root, store) = fixture(&format!("choice-{choice}-new"));
         let conflict = "pages/Foo.sync-conflict-20260705-120000-ABCDEFG.md";
         fs::write(new_root.join("pages/Foo.md"), "alias:: mine\n- shared\n").unwrap();
         fs::write(new_root.join(conflict), "alias:: theirs\n- shared\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         let diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", conflict, &[])
             .unwrap()
             .unwrap();
         conflicts::resolve_sync_conflict(
             &store,
+            None,
             "pages/Foo.md",
             conflict,
             &HashMap::new(),
@@ -680,12 +714,13 @@ fn resolve_preblock_keep_choices_match_legacy_bytes() {
 
 #[test]
 fn failed_journal_repair_restores_legacy_filename() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("journal-repair-rollback");
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::write(root.join("journals/Jun 18th, 2026.md"), "- preserve\n").unwrap();
     let listed = journals::journal_filename_migrations(&store).unwrap();
     store.inject_fault(FaultPoint::MidStepIoAt(0));
-    let migration = journals::migrate_journal_filenames(&store, &listed).unwrap();
+    let migration = journals::migrate_journal_filenames(&store, None, &listed).unwrap();
     assert_eq!(migration.migrated, 0);
     assert_eq!(
         fs::read(root.join("journals/Jun 18th, 2026.md")).unwrap(),
@@ -696,6 +731,7 @@ fn failed_journal_repair_restores_legacy_filename() {
 
 #[test]
 fn save_and_stream_import_match_legacy_collision_names_and_bytes() {
+    let _integration_guard = crate::integration_lock();
     let (a, store) = fixture("asset-new");
     assert_eq!(assets::save_asset(&store, "X", b"one").unwrap(), "X");
     assert_eq!(assets::save_asset(&store, "X", b"two").unwrap(), "X_1");
@@ -734,6 +770,7 @@ fn save_and_stream_import_match_legacy_collision_names_and_bytes() {
 
 #[test]
 fn asset_collisions_put_the_counter_before_a_whole_compound_extension() {
+    let _integration_guard = crate::integration_lock();
     // GH #38: the counter goes BEFORE `.drawio.svg` / `.excalidraw.png` so the
     // collided name still matches the editor affordance; a naive last-dot split
     // would give `flow.drawio_1.svg`. Matching is case-insensitive and keeps the
@@ -771,6 +808,7 @@ fn asset_collisions_put_the_counter_before_a_whole_compound_extension() {
 
 #[test]
 fn an_asset_name_that_leaves_assets_is_refused_by_every_import_door() {
+    let _integration_guard = crate::integration_lock();
     // F5: a frontend-supplied name with a separator or a `.`/`..` component must
     // not reach outside `assets/`; a plain top-level name still works.
     let (root, store) = fixture("asset-traversal");
@@ -794,6 +832,7 @@ fn an_asset_name_that_leaves_assets_is_refused_by_every_import_door() {
 
 #[test]
 fn stream_cap_and_missing_trash_leave_no_asset() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("cap");
     let source = root.join("oversize");
     fs::write(&source, b"123456").unwrap();
@@ -817,6 +856,7 @@ fn stream_cap_and_missing_trash_leave_no_asset() {
 
 #[test]
 fn asset_import_creates_missing_assets_directory() {
+    let _integration_guard = crate::integration_lock();
     let root = std::env::temp_dir().join(format!("tine-missing-assets-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("pages")).unwrap();
@@ -831,6 +871,7 @@ fn asset_import_creates_missing_assets_directory() {
 
 #[test]
 fn pdf_area_image_create_then_replace() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("pdf");
     let name = pdf::write_pdf_area_image(&store, "paper.pdf", 2, "id", 42, b"first").unwrap();
     assert_eq!(name, "paper/2_id_42.png");
@@ -865,6 +906,7 @@ fn highlight(id: &str) -> Highlight {
 
 #[test]
 fn pdf_open_is_read_only_until_first_annotation() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("pdf-read-only");
     let before = disk_tree(&root);
     for _ in 0..2 {
@@ -878,7 +920,7 @@ fn pdf_open_is_read_only_until_first_annotation() {
         );
     }
     let item = highlight("first");
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[item.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[item.clone()], &[]).unwrap();
     let annotated = disk_tree(&root);
     assert!(root.join("assets/paper.edn").exists());
     assert!(root.join("pages/hls__paper.md").exists());
@@ -893,6 +935,7 @@ fn pdf_open_is_read_only_until_first_annotation() {
 
 #[test]
 fn pdf_open_preserves_sidecars_and_never_repairs_missing_notes() {
+    let _integration_guard = crate::integration_lock();
     for pdf_name in ["paper.pdf", "My Paper.pdf"] {
         for key in [
             tine_core::pdf::asset_key(pdf_name),
@@ -947,12 +990,13 @@ fn pdf_open_preserves_sidecars_and_never_repairs_missing_notes() {
 
 #[test]
 fn highlights_first_write_and_update_persist_both_artifacts() {
+    let _integration_guard = crate::integration_lock();
     let (a, store) = fixture("hl-new");
     for (items, base) in [
         (vec![highlight("a")], vec![]),
         (vec![highlight("a"), highlight("b")], vec![highlight("a")]),
     ] {
-        pdf::write_highlights(&store, "paper.pdf", "Paper", &items, &base).unwrap();
+        pdf::write_highlights(&store, None, "paper.pdf", "Paper", &items, &base).unwrap();
         for rel in ["assets/paper.edn", "pages/hls__paper.md"] {
             assert!(!fs::read(a.join(rel)).unwrap().is_empty(), "{rel}");
         }
@@ -962,17 +1006,27 @@ fn highlights_first_write_and_update_persist_both_artifacts() {
 
 #[test]
 fn highlight_save_preserves_external_recolour_when_local_value_is_unchanged() {
+    let _integration_guard = crate::integration_lock();
     let (_root, store) = fixture("hl-external-recolour");
     let loaded = highlight("a");
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
     let mut external = loaded.clone();
     external.color = "green".into();
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[external], &[loaded.clone()]).unwrap();
+    pdf::write_highlights(
+        &store,
+        None,
+        "paper.pdf",
+        "Paper",
+        &[external],
+        &[loaded.clone()],
+    )
+    .unwrap();
 
     let mut added = highlight("b");
     added.color = "blue".into();
     pdf::write_highlights(
         &store,
+        None,
         "paper.pdf",
         "Paper",
         &[loaded.clone(), added],
@@ -988,15 +1042,24 @@ fn highlight_save_preserves_external_recolour_when_local_value_is_unchanged() {
 
 #[test]
 fn highlight_save_merges_disjoint_local_and_external_fields() {
+    let _integration_guard = crate::integration_lock();
     let (_root, store) = fixture("hl-disjoint-fields");
     let loaded = highlight("a");
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
     let mut external = loaded.clone();
     external.text = Some("external text".into());
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[external], &[loaded.clone()]).unwrap();
+    pdf::write_highlights(
+        &store,
+        None,
+        "paper.pdf",
+        "Paper",
+        &[external],
+        &[loaded.clone()],
+    )
+    .unwrap();
     let mut local = loaded.clone();
     local.color = "blue".into();
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[local], &[loaded]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[local], &[loaded]).unwrap();
     let saved = pdf::read_highlights(&store, "paper.pdf");
     assert_eq!(saved[0].color, "blue");
     assert_eq!(
@@ -1008,12 +1071,20 @@ fn highlight_save_merges_disjoint_local_and_external_fields() {
 
 #[test]
 fn highlight_save_keeps_external_deletion_when_local_value_is_unchanged() {
+    let _integration_guard = crate::integration_lock();
     let (_root, store) = fixture("hl-external-deletion");
     let loaded = highlight("a");
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[], &[loaded.clone()]).unwrap();
-    let committed =
-        pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[loaded]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[], &[loaded.clone()]).unwrap();
+    let committed = pdf::write_highlights(
+        &store,
+        None,
+        "paper.pdf",
+        "Paper",
+        &[loaded.clone()],
+        &[loaded],
+    )
+    .unwrap();
     assert!(
         committed.is_empty(),
         "C1 #13: an unchanged local copy must not resurrect an externally deleted highlight"
@@ -1023,10 +1094,11 @@ fn highlight_save_keeps_external_deletion_when_local_value_is_unchanged() {
 
 #[test]
 fn highlight_save_conflicts_when_local_edit_meets_external_deletion() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("hl-edit-after-delete");
     let loaded = highlight("a");
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[], &[loaded.clone()]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[], &[loaded.clone()]).unwrap();
     let before: Vec<_> = ["assets/paper.edn", "pages/hls__paper.md"]
         .iter()
         .map(|rel| fs::read(root.join(rel)).unwrap())
@@ -1034,7 +1106,7 @@ fn highlight_save_conflicts_when_local_edit_meets_external_deletion() {
     let mut local = loaded.clone();
     local.color = "red".into();
     let error =
-        pdf::write_highlights(&store, "paper.pdf", "Paper", &[local], &[loaded]).unwrap_err();
+        pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[local], &[loaded]).unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
     for (rel, expected) in ["assets/paper.edn", "pages/hls__paper.md"]
         .iter()
@@ -1047,17 +1119,27 @@ fn highlight_save_conflicts_when_local_edit_meets_external_deletion() {
 
 #[test]
 fn highlight_save_conflicts_when_local_deletion_meets_external_edit() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("hl-delete-after-edit");
     let loaded = highlight("a");
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
     let mut external = loaded.clone();
     external.color = "green".into();
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[external], &[loaded.clone()]).unwrap();
+    pdf::write_highlights(
+        &store,
+        None,
+        "paper.pdf",
+        "Paper",
+        &[external],
+        &[loaded.clone()],
+    )
+    .unwrap();
     let before: Vec<_> = ["assets/paper.edn", "pages/hls__paper.md"]
         .iter()
         .map(|rel| fs::read(root.join(rel)).unwrap())
         .collect();
-    let error = pdf::write_highlights(&store, "paper.pdf", "Paper", &[], &[loaded]).unwrap_err();
+    let error =
+        pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[], &[loaded]).unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
     for (rel, expected) in ["assets/paper.edn", "pages/hls__paper.md"]
         .iter()
@@ -1070,10 +1152,11 @@ fn highlight_save_conflicts_when_local_deletion_meets_external_edit() {
 
 #[test]
 fn old_vs_new_matrix_on_identical_fixtures() {
+    let _integration_guard = crate::integration_lock();
     let (a, store) = fixture("matrix-new");
     fs::write(a.join("pages/Refs.md"), "- ![](../assets/referenced.png)\n").unwrap();
     fs::write(a.join("assets/referenced.png"), b"kept").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let mut same_index = 0;
     let mut same = |rel: &str| {
         let cases = [
@@ -1250,7 +1333,7 @@ fn old_vs_new_matrix_on_identical_fixtures() {
         (vec![highlight("a")], vec![]),
         (vec![highlight("a"), highlight("b")], vec![highlight("a")]),
     ] {
-        pdf::write_highlights(&store, "paper.pdf", "Paper", &items, &base).unwrap();
+        pdf::write_highlights(&store, None, "paper.pdf", "Paper", &items, &base).unwrap();
         same("assets/paper.edn");
         same("pages/hls__paper.md");
     }
@@ -1259,6 +1342,7 @@ fn old_vs_new_matrix_on_identical_fixtures() {
 
 #[test]
 fn trash_retries_external_write_without_losing_its_bytes() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("retry-trash");
     fs::write(root.join("assets/throwaway"), b"old").unwrap();
     store.inject_fault(FaultPoint::Stage2Mismatch);
@@ -1273,6 +1357,7 @@ fn trash_retries_external_write_without_losing_its_bytes() {
 
 #[test]
 fn area_image_retries_external_write_in_place() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("retry-image");
     pdf::write_pdf_area_image(&store, "paper.pdf", 2, "crop", 12, b"old").unwrap();
     store.inject_fault(FaultPoint::Stage2Mismatch);
@@ -1285,6 +1370,7 @@ fn area_image_retries_external_write_in_place() {
 
 #[test]
 fn highlights_retry_external_sidecar_write_and_preserve_foreign_data() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("retry-highlights");
     fs::write(
         root.join("assets/other.edn"),
@@ -1292,7 +1378,7 @@ fn highlights_retry_external_sidecar_write_and_preserve_foreign_data() {
     )
     .unwrap();
     store.inject_fault(FaultPoint::Stage2ValidSidecar);
-    pdf::write_highlights(&store, "other.pdf", "Other", &[highlight("h")], &[]).unwrap();
+    pdf::write_highlights(&store, None, "other.pdf", "Other", &[highlight("h")], &[]).unwrap();
     let edn = fs::read_to_string(root.join("assets/other.edn")).unwrap();
     assert!(edn.contains("external") && edn.contains("h"));
     assert!(
@@ -1304,6 +1390,7 @@ fn highlights_retry_external_sidecar_write_and_preserve_foreign_data() {
 
 #[test]
 fn legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration() {
+    let _integration_guard = crate::integration_lock();
     let (a, store) = fixture("migration-new");
     let pdf_name = "My Paper.pdf";
     let key = tine_core::pdf::asset_key(pdf_name);
@@ -1325,11 +1412,19 @@ fn legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration() {
         tine_core::doc::serialize(&page),
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     pdf::open_pdf(&store, pdf_name, "My Paper").unwrap();
     assert!(!a.join("assets").join(format!("{key}.edn")).exists());
     assert_eq!(fs::read(a.join("assets").join(format!("{legacy}.edn"))).unwrap(), b"{:highlights [{:id \"one\" :page 1 :position {:page 1 :bounding {:top 0 :left 0 :width 1 :height 1} :rects ()} :content {:text \"one\"} :properties {:color \"yellow\"}}] :extra {}}\n");
-    pdf::write_highlights(&store, pdf_name, "My Paper", &[h.clone()], &[h.clone()]).unwrap();
+    pdf::write_highlights(
+        &store,
+        None,
+        pdf_name,
+        "My Paper",
+        &[h.clone()],
+        &[h.clone()],
+    )
+    .unwrap();
     for rel in [format!("assets/{key}.edn"), format!("pages/hls__{key}.md")] {
         assert_fixture_file(
             &a,
@@ -1342,13 +1437,34 @@ fn legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration() {
     assert!(!a.join("pages").join(format!("hls__{legacy}.md")).exists());
 }
 
+/// og-surface: the trash location shown in asset errors is the absolute
+/// asset trash directory of the open graph (moved from a Store method into the
+/// store's config/layout answer without changing the text).
+#[test]
+fn asset_error_names_the_absolute_trash_location() {
+    let _integration_guard = crate::integration_lock();
+    let (a, store) = fixture("trash-display");
+    let shown = assets::error_for_user(
+        &store,
+        std::io::Error::other("could not create trash directory logseq/.tine-trash/assets: x"),
+    );
+    let trash = fs::canonicalize(&a)
+        .unwrap()
+        .join("logseq/.tine-trash/assets");
+    assert_eq!(
+        shown,
+        format!("could not create trash directory {}: x", trash.display())
+    );
+}
+
 #[test]
 fn blocked_trash_keeps_asset_and_legacy_error_text() {
+    let _integration_guard = crate::integration_lock();
     let (a, store) = fixture("blocked-new");
     fs::create_dir_all(a.join("logseq")).unwrap();
     fs::write(a.join("logseq/.tine-trash"), b"blocked").unwrap();
     fs::write(a.join("assets/photo.png"), b"safe").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let new_error = assets::trash_asset(&store, "photo.png")
         .unwrap_err()
         .to_string();
@@ -1374,10 +1490,11 @@ fn blocked_trash_keeps_asset_and_legacy_error_text() {
 
 #[test]
 fn malformed_sidecar_refusal_matches_legacy_text_and_keeps_bytes() {
+    let _integration_guard = crate::integration_lock();
     let (a, store) = fixture("malformed-new");
     let malformed = b"{:highlights []} trailing";
     fs::write(a.join("assets/paper.edn"), malformed).unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(
         format!(
             "{:?}",
@@ -1390,7 +1507,7 @@ fn malformed_sidecar_refusal_matches_legacy_text_and_keeps_bytes() {
     assert_eq!(
         format!(
             "{:?}",
-            pdf::write_highlights(&store, "paper.pdf", "Paper", &[highlight("h")], &[])
+            pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[highlight("h")], &[])
                 .unwrap_err()
                 .to_string()
         ),
@@ -1401,6 +1518,7 @@ fn malformed_sidecar_refusal_matches_legacy_text_and_keeps_bytes() {
 
 #[test]
 fn annotation_notes_survive_update_with_legacy_bytes() {
+    let _integration_guard = crate::integration_lock();
     let h = highlight("one");
     let mut doc = tine_core::pdf::hls_page_document_for_format(
         "paper.pdf",
@@ -1420,7 +1538,15 @@ fn annotation_notes_survive_update_with_legacy_bytes() {
     .unwrap();
     fs::write(a.join("pages/hls__paper.md"), &page).unwrap();
     let store = Store::open(&a, Default::default()).unwrap().0;
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[h.clone()], &[h.clone()]).unwrap();
+    pdf::write_highlights(
+        &store,
+        None,
+        "paper.pdf",
+        "Paper",
+        &[h.clone()],
+        &[h.clone()],
+    )
+    .unwrap();
     let new_page = fs::read(a.join("pages/hls__paper.md")).unwrap();
     assert!(String::from_utf8_lossy(&new_page).contains("private note"));
     assert_eq!(new_page, b"file:: [Paper](../assets/paper.pdf)\nfile-path:: ../assets/paper.pdf\n\n- one\n  hl-page:: 1\n  hl-color:: yellow\n  ls-type:: annotation\n  id:: one\n\t- private note\n");
@@ -1428,6 +1554,7 @@ fn annotation_notes_survive_update_with_legacy_bytes() {
 
 #[test]
 fn empty_sanitized_pdf_key_keeps_legacy_crop_location() {
+    let _integration_guard = crate::integration_lock();
     let (a, store) = fixture("empty-key-new");
     let pdf_name = "??.pdf";
     assert_eq!(tine_core::pdf::asset_key(pdf_name), "");
@@ -1467,6 +1594,7 @@ fn operation_result(result: &std::io::Result<()>, root: &std::path::Path) -> Str
 
 #[test]
 fn page_rename_matches_legacy_for_refs_namespace_case_and_tags() {
+    let _integration_guard = crate::integration_lock();
     for (index, (label, old_name, new_name, files, config)) in [
         (
             "plain",
@@ -1517,8 +1645,10 @@ fn page_rename_matches_legacy_for_refs_namespace_case_and_tags() {
         if let Some(edn) = config {
             put(&a, "logseq/config.edn", edn);
         }
-        let store = Store::open(&a, Default::default()).unwrap().0;
-        let client = pages::rename_page_expected(&store, old_name, new_name, None);
+        let store = std::sync::Arc::new(Store::open(&a, Default::default()).unwrap().0);
+        let client = hosted(&store, |host| {
+            pages::rename_page_expected(&store, host, old_name, new_name, None)
+        });
         assert_eq!(
             format!("{:?}", operation_result(&client, &a)),
             match index {
@@ -1564,6 +1694,7 @@ fn page_rename_matches_legacy_for_refs_namespace_case_and_tags() {
 
 #[test]
 fn page_rename_refusals_match_legacy_and_keep_disk() {
+    let _integration_guard = crate::integration_lock();
     for (index, (label, files)) in [
         (
             "target-exists",
@@ -1584,10 +1715,12 @@ fn page_rename_refusals_match_legacy_and_keep_disk() {
         for (rel, body) in &files {
             put(&a, rel, body);
         }
-        let store = Store::open(&a, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(Store::open(&a, Default::default()).unwrap().0);
         let before = disk_tree(&a);
         let to = if label == "target-exists" { "y" } else { "z" };
-        let client = pages::rename_page_expected(&store, "x", to, None);
+        let client = hosted(&store, |host| {
+            pages::rename_page_expected(&store, host, "x", to, None)
+        });
         assert_eq!(format!("{:?}", operation_result(&client, &a)), match index { 0 => "\"AlreadyExists: target page identity already exists elsewhere in the graph\"", 1 => "\"PermissionDenied: cannot rename: <root>/pages/ref.org is a read-only .org file (does not round-trip)\"", _ => unreachable!() });
         assert_eq!(disk_tree(&a), before, "{label} client changed disk");
         assert_disk_tree(
@@ -1604,7 +1737,7 @@ fn page_rename_refusals_match_legacy_and_keep_disk() {
 
 #[test]
 fn page_merge_delete_and_rescue_match_legacy_bytes() {
-    use tine_core::model::PageKind;
+    let _integration_guard = crate::integration_lock();
     let (a, _) = fixture("page-operations-new");
     put(
         &a,
@@ -1615,29 +1748,60 @@ fn page_merge_delete_and_rescue_match_legacy_bytes() {
     put(&a, "journals/Loose.md", "- rescued\n");
     put(&a, "pages/delete.md", "- gone\n");
     put(&a, "pages/ref.md", "- [[src]] and [[dst]]\n");
-    let store = Store::open(&a, Default::default()).unwrap().0;
-    pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
+    let store = std::sync::Arc::new(Store::open(&a, Default::default()).unwrap().0);
+    pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md").unwrap();
     assert_disk_tree(
         &a,
         "page_merge_delete_and_rescue_match_legacy_bytes",
         "merge",
     );
-    pages::rename_file_to_page(&store, "journals/Loose.md", "Rescued").unwrap();
+    pages::rename_file_to_page(&store, None, "journals/Loose.md", "Rescued").unwrap();
     assert_disk_tree(
         &a,
         "page_merge_delete_and_rescue_match_legacy_bytes",
         "rescue",
     );
-    let id = store.file_id(Area::Pages, "delete.md").unwrap();
-    let stale = store.read(&id, None).unwrap().1;
+    // A page's deletion is the page host's (STEP3 §7): the identity checks
+    // read the file and bind the host's deletion to those bytes, then
+    // page_owed and page_wait until it is published (Q-P2b-5).
+    let stale = fs::read(a.join("pages/delete.md")).unwrap();
     put(&a, "pages/delete.md", "- later\n");
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let before_delete = disk_tree(&a);
-    assert!(
-        pages::delete_page_expected(&store, "delete", PageKind::Page, None, Some(&stale)).is_err()
-    );
-    assert_eq!(disk_tree(&a), before_delete, "stale delete changed disk");
-    store.scan_refresh().unwrap();
-    pages::delete_page_expected(&store, "delete", PageKind::Page, None, None).unwrap();
+    hosted(&store, |host| {
+        let session = serde_json::to_value(host.window_reloaded()).unwrap()["session"]
+            .as_u64()
+            .unwrap();
+        let page = tine_store::PageId::from("pages/delete.md");
+        assert_eq!(
+            host.delete(session, &page, &stale),
+            tine_store::PageOperation::Refused
+        );
+        assert_eq!(disk_tree(&a), before_delete, "stale delete changed disk");
+        assert_eq!(
+            pages::delete_page_expected(
+                &store,
+                host,
+                session,
+                "delete",
+                tine_core::model::PageKind::Page,
+                None
+            )
+            .unwrap(),
+            tine_store::PageOperation::Applied
+        );
+        let needs: Vec<_> = host
+            .owed(session, Some(std::slice::from_ref(&page)))
+            .unwrap()
+            .into_iter()
+            .map(|(key, version)| (key, version, None))
+            .collect();
+        let bound = std::time::Duration::from_secs(20);
+        assert_eq!(
+            host.wait_published(session, &needs, bound),
+            tine_store::PageOperation::Applied
+        );
+    });
     assert_disk_tree(
         &a,
         "page_merge_delete_and_rescue_match_legacy_bytes",
@@ -1647,6 +1811,7 @@ fn page_merge_delete_and_rescue_match_legacy_bytes() {
 
 #[test]
 fn merge_keeps_source_preamble_text_and_conflicting_properties() {
+    let _integration_guard = crate::integration_lock();
     let (root, _) = fixture("merge-source-preamble");
     put(
         &root,
@@ -1656,7 +1821,7 @@ fn merge_keeps_source_preamble_text_and_conflicting_properties() {
     put(&root, "pages/dst.md", "alias:: Destination alias\n- kept\n");
     let store = Store::open(&root, Default::default()).unwrap().0;
 
-    pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
+    pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md").unwrap();
     let merged = std::fs::read_to_string(root.join("pages/dst.md")).unwrap();
     let parsed = tine_core::doc::parse(&merged);
     assert!(merged.contains("alias:: Destination alias, Source alias"));
@@ -1670,6 +1835,7 @@ fn merge_keeps_source_preamble_text_and_conflicting_properties() {
 
 #[test]
 fn org_merge_and_binary_rescue_match_legacy() {
+    let _integration_guard = crate::integration_lock();
     let (a, _) = fixture("org-merge-new");
     put(&a, "pages/src.org", "* moved\n");
     put(&a, "pages/dst.org", "* kept\n");
@@ -1677,10 +1843,10 @@ fn org_merge_and_binary_rescue_match_legacy() {
     fs::create_dir_all(a.join("journals")).unwrap();
     fs::write(a.join("journals/Loose.md"), [0xff, 0xfe, 0x00]).unwrap();
     let store = Store::open(&a, Default::default()).unwrap().0;
-    let client = pages::merge_pages(&store, "pages/src.org", "pages/dst.org");
+    let client = pages::merge_pages(&store, None, "pages/src.org", "pages/dst.org");
     assert_eq!(operation_result(&client, &a), "ok");
     assert_disk_tree(&a, "org_merge_and_binary_rescue_match_legacy", "org_merge");
-    pages::rename_file_to_page(&store, "journals/Loose.md", "Rescued").unwrap();
+    pages::rename_file_to_page(&store, None, "journals/Loose.md", "Rescued").unwrap();
     assert_disk_tree(
         &a,
         "org_merge_and_binary_rescue_match_legacy",
@@ -1688,30 +1854,75 @@ fn org_merge_and_binary_rescue_match_legacy() {
     );
 }
 
+/// A host rename is custody plus forward completion (STEP3-DESIGN, the
+/// restated rollback tests; SPEC-s3 s3.2). A failure before application is
+/// a refusal with the disk unchanged. After application, a referrer an
+/// external editor changes meanwhile keeps that change (it conflicts, it is
+/// never overwritten), and while it is unresolved the source is never
+/// trashed, so `[[x]]` keeps resolving; the other pages complete forward.
 #[test]
-fn page_rename_retries_external_change_and_rolls_back_third_step_failure() {
-    let (a, _) = fixture("rename-fault-retry");
+fn page_rename_keeps_an_external_referrer_change_and_a_failed_draft_changes_nothing() {
+    let _integration_guard = crate::integration_lock();
+    use tine_store::host_faults::{fail, Phase};
+    let (a, _) = fixture("rename-fault-external");
     put(&a, "pages/x.md", "- [[x]]\n");
     put(&a, "pages/one.md", "- [[x]]\n");
     put(&a, "pages/two.md", "- [[x]]\n");
-    let store = Store::open(&a, Default::default()).unwrap().0;
-    store.inject_fault(FaultPoint::Stage2MismatchAt(1));
-    pages::rename_page_expected(&store, "x", "y", None).unwrap();
-    assert!(a.join("pages/y.md").exists());
+    let store = std::sync::Arc::new(Store::open(&a, Default::default()).unwrap().0);
+    // A disk error fails the destination's first five writes; their backoff
+    // (0.1 + 0.3 + 1 + 3 s, then 10 s) outlasts the caller's 10 s wait.
+    fail(Phase::PageTemp, std::io::ErrorKind::Other, 5);
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+    let renamed = pages::rename_page_expected(&store, &host, "x", "y", None);
+    assert!(
+        renamed.is_err(),
+        "an unwritten destination is never success"
+    );
+    assert!(!a.join("pages/y.md").exists());
+    for page in ["x", "one", "two"] {
+        let path = a.join(format!("pages/{page}.md"));
+        assert_eq!(
+            fs::read(path).unwrap(),
+            b"- [[x]]\n",
+            "s3.2: nothing before dst"
+        );
+    }
+    put(&a, "pages/two.md", "external stage-2");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !(a.join("pages/y.md").exists()
+        && fs::read(a.join("pages/one.md")).unwrap() == b"- [[y]]\n")
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the rename never completed forward"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    // Give a host that ignored the conflict or the order every chance to
+    // overwrite the referrer or trash the source.
+    std::thread::sleep(std::time::Duration::from_millis(500));
     assert_eq!(
         fs::read(a.join("pages/two.md")).unwrap(),
         b"external stage-2"
     );
-    assert_eq!(fs::read(a.join("pages/one.md")).unwrap(), b"- [[y]]\n");
-    let (b, _) = fixture("rename-fault-rollback");
+    assert_eq!(fs::read(a.join("pages/x.md")).unwrap(), b"- [[x]]\n");
+    drop(host);
+
+    let (b, _) = fixture("rename-fault-draft");
     put(&b, "pages/x.md", "- [[x]]\n");
     put(&b, "pages/one.md", "- [[x]]\n");
     put(&b, "pages/two.md", "- [[x]]\n");
-    let store = Store::open(&b, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&b, Default::default()).unwrap().0);
     let before = disk_tree(&b);
-    store.inject_fault(FaultPoint::MidStepIoAt(2));
-    assert!(pages::rename_page_expected(&store, "x", "y", None).is_err());
-    assert_eq!(disk_tree(&b), before, "failed commit changed disk");
+    // A full disk or an app-data disk error: the operation's draft fails.
+    fail(Phase::DraftTemp, std::io::ErrorKind::Other, 10_000);
+    let error = hosted(&store, |host| {
+        pages::rename_page_expected(&store, host, "x", "y", None)
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("nothing changed"), "{error}");
+    assert_eq!(disk_tree(&b), before, "a refused rename changed disk");
 }
 
 /// OG `:block/refs` excludes `{{query}}` arguments, so a page that mentions the
@@ -1719,6 +1930,7 @@ fn page_rename_retries_external_change_and_rolls_back_third_step_failure() {
 /// did this only with a warm reference index; its full-scan fallback rewrote them.
 #[test]
 fn page_rename_leaves_query_only_mentions_alone() {
+    let _integration_guard = crate::integration_lock();
     let (a, _) = fixture("rename-query-only");
     put(&a, "pages/x.md", "- body\n");
     put(
@@ -1727,8 +1939,11 @@ fn page_rename_leaves_query_only_mentions_alone() {
         "- {{query (and (task TODO) [[x]])}}\n",
     );
     put(&a, "pages/ref.md", "- [[x]] and #x\n");
-    let store = Store::open(&a, Default::default()).unwrap().0;
-    pages::rename_page_expected(&store, "x", "y", None).unwrap();
+    let store = std::sync::Arc::new(Store::open(&a, Default::default()).unwrap().0);
+    hosted(&store, |host| {
+        pages::rename_page_expected(&store, host, "x", "y", None)
+    })
+    .unwrap();
     assert_eq!(
         fs::read(a.join("pages/query.md")).unwrap(),
         b"- {{query (and (task TODO) [[x]])}}\n"

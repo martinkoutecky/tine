@@ -33,6 +33,7 @@ const ALLOWED_SWALLOWS: Record<string, string> = {};
 const NAMED_BEST_EFFORT_HELPERS: Record<string, string[]> = {
   "src/assetCache.ts": ["ignoreEvictedAssetCleanupFailure", "revokeEvictedUrl"],
   "src/components/pdfViewerPrimitives.ts": ["ignorePdfDestroyFailure", "discardPdfDocument"],
+  "src/document/host/wiring.ts": ["ignoreSaveHintFailure"],
   "src/plugins/startup.ts": ["observePluginInitializationFailure"],
 };
 
@@ -41,13 +42,13 @@ export function swallowViolations(file: string, source: string): string[] {
     SWALLOW.test(line) || PROSE_BRANCH.test(line) ? [`${file}:${index + 1}`] : []);
 }
 
-it("I-9 ratchets swallowed errors and prose branches; exemplar src/document/save/engine.ts doSave", () => {
+it("I-9 ratchets swallowed errors and prose branches; exemplar src/document/host/wiring.ts hostPort", () => {
   const found = sources("src").flatMap((file) => swallowViolations(file, readFileSync(file, "utf8")));
   expect(Object.keys(ALLOWED_SWALLOWS).length).toBeLessThanOrEqual(FROZEN_SWALLOW_COUNT);
   expect(Object.keys(ALLOWED_SWALLOWS).filter((key) => !ORIGINAL_SWALLOW_KEYS.has(key)),
-    "I-9: allow-list may only shrink; exemplar src/document/save/engine.ts doSave").toEqual([]);
+    "I-9: allow-list may only shrink; exemplar src/document/host/wiring.ts hostPort").toEqual([]);
   expect(found.filter((key) => !ALLOWED_SWALLOWS[key]),
-    "I-9: new swallowed error or prose branch; exemplar src/document/save/engine.ts doSave").toEqual([]);
+    "I-9: new swallowed error or prose branch; exemplar src/document/host/wiring.ts hostPort").toEqual([]);
   expect(Object.keys(ALLOWED_SWALLOWS).filter((key) => !found.includes(key)),
     "I-9: remove stale allow-list entries").toEqual([]);
   for (const [file, helpers] of Object.entries(NAMED_BEST_EFFORT_HELPERS)) {

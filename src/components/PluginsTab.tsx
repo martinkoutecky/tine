@@ -1,3 +1,5 @@
+import { Rich } from "../i18n/Rich";
+import { msg, t } from "../i18n";
 import { FailureBoundary } from "./FailureBoundary";
 // Plugins tab of Settings: the installed/community plugin lists, detail page and
 // per-plugin settings form. Split out of Settings.tsx (2072 lines, over the og size
@@ -53,7 +55,7 @@ function PluginSettingsForm(props: {
     try {
       await pluginManager.setSetting(props.plugin.manifest.id, props.plugin.manifest.version, key, value);
     } catch (error) {
-      pushToast(`Plugin setting could not be saved: ${String(error)}`, "error");
+      pushToast(msg("plugins-plugin-setting-could-not-be-saved", { error: String(error) }), "error");
     } finally {
       release();
     }
@@ -64,7 +66,7 @@ function PluginSettingsForm(props: {
       if (key) await pluginManager.resetSetting(props.plugin.manifest.id, props.plugin.manifest.version, key);
       else await pluginManager.resetSettings(props.plugin.manifest.id, props.plugin.manifest.version);
     } catch (error) {
-      pushToast(`Plugin settings could not be reset: ${String(error)}`, "error");
+      pushToast(msg("plugins-plugin-settings-could-not-be-reset", { error: String(error) }), "error");
     } finally {
       release();
     }
@@ -73,7 +75,7 @@ function PluginSettingsForm(props: {
   return (
     <Show
       when={(props.plugin.manifest.settings?.length ?? 0) > 0}
-      fallback={<p class="settings-hint">This plugin has no configurable settings.</p>}
+      fallback={<p class="settings-hint">{t("plugins-this-plugin-has-no-configurable-settings")}</p>}
     >
       <div class="plugin-settings-list">
         <For each={props.plugin.manifest.settings ?? []}>
@@ -125,21 +127,28 @@ function PluginSettingsForm(props: {
                         }}
                       />
                     </Show>
-                    <Show when={definition.type === "string" && definition.type === "string"}>
+                    <Show when={definition.type === "string" || definition.type === "color"}>
                       <input
                         class="settings-input"
                         type="text"
                         aria-label={definition.label}
                         disabled={props.busy() !== null}
                         value={String(value())}
-                        maxLength={definition.type === "string" ? definition.maxLength : undefined}
+                        maxLength={definition.type === "string" ? definition.maxLength : 100}
                         onChange={(event) => void update(definition.key, event.currentTarget.value)}
                       />
                     </Show>
+                    <Show when={definition.type === "color"}>
+                      <input
+                        type="color"
+                        aria-label={definition.label}
+                        disabled={props.busy() !== null}
+                        value={/^#[0-9a-f]{6}$/i.test(String(value())) ? String(value()) : "#000000"}
+                        onChange={event => void update(definition.key, event.currentTarget.value)}
+                      />
+                    </Show>
                     <Show when={changed()}>
-                      <button class="settings-link" disabled={props.busy() !== null} onClick={() => void reset(definition.key)}>
-                        Reset
-                      </button>
+                      <button class="settings-link" disabled={props.busy() !== null} onClick={() => void reset(definition.key)}>{t("plugins-reset")}</button>
                     </Show>
                   </div>
                 </div>
@@ -148,10 +157,7 @@ function PluginSettingsForm(props: {
           }}
         </For>
       </div>
-      <button class="settings-btn" disabled={props.busy() !== null} onClick={() => void reset()}>
-        Reset all settings
-      </button>
-      <p class="settings-hint">Stored on this device only. Plugin settings are never written into your graph.</p>
+      <button class="settings-btn" disabled={props.busy() !== null} onClick={() => void reset()}>{t("plugins-reset-all-settings")}</button><p class="settings-hint">{t("plugins-stored-on-this-device-only-plugin-settings")}</p>
     </Show>
   );
 }
@@ -183,22 +189,22 @@ function PluginsTabContent(): JSX.Element {
     const manifestFile = selected.find((file) => file.name === "manifest.json") ?? selected.find((file) => file.name.endsWith(".json"));
     const wasmFile = selected.find((file) => file.name.endsWith(".wasm"));
     if (!manifestFile || !wasmFile) {
-      pushToast("Choose both manifest.json and the plugin's .wasm entry.", "error");
+      pushToast(msg("plugins-choose-both-manifest-json-and-the-plugin-s-wasm"), "error");
       return;
     }
     if (manifestFile.size > PLUGIN_MANIFEST_MAX_BYTES || wasmFile.size > PLUGIN_WASM_MAX_BYTES) {
-      pushToast("Plugin package is too large (manifest ≤ 64 KiB, .wasm ≤ 8 MiB).", "error");
+      pushToast(msg("plugins-plugin-package-is-too-large-manifest"), "error");
       return;
     }
     const release = hold("install");
     try {
       const manifest: unknown = JSON.parse(await manifestFile.text());
       const plugin = await pluginManager.install(manifest, new Uint8Array(await wasmFile.arrayBuffer()));
-      pushToast(`${plugin.manifest.name} ${plugin.manifest.version} installed disabled. Review it, then enable it here.`, "info");
+      pushToast(msg("plugins-installed-disabled-review-it-then-enable", { name: plugin.manifest.name, version: plugin.manifest.version }), "info");
       setView("installed");
       setSelectedPluginKey(`${plugin.manifest.id}@${plugin.manifest.version}`);
     } catch (error) {
-      pushToast(`Plugin installation failed: ${String(error)}`, "error");
+      pushToast(msg("plugins-plugin-installation-failed", { error: String(error) }), "error");
     } finally {
       release();
       if (packageInput) packageInput.value = "";
@@ -211,7 +217,7 @@ function PluginsTabContent(): JSX.Element {
       if (enabled) await pluginManager.disable(id);
       else await pluginManager.enable(id, version);
     } catch (error) {
-      pushToast(`Plugin could not be ${enabled ? "disabled" : "enabled"}: ${String(error)}`, "error");
+      pushToast(msg("plugins-plugin-could-not-be", { enabled: enabled ? "disabled" : "enabled", error: String(error) }), "error");
     } finally {
       release();
     }
@@ -223,34 +229,34 @@ function PluginsTabContent(): JSX.Element {
     const release = hold(`${id}@${version}:uninstall`);
     try {
       const result = await readOwned(ownedWhen(() => alive), backend().confirm(
-        `Uninstall ${name} ${version}?\n\nThis removes the plugin from this device. It does not change your graph or notes.`,
-        "Uninstall plugin?"
+        t("plugins-uninstall-this-removes-the-plugin-from", { name: name, version: version }),
+        t("plugins-uninstall-plugin")
       ));
       if (result.kind === "stale" || !result.value) return;
       await pluginManager.uninstall(id, version);
-      pushToast(`${name} ${version} was uninstalled.`, "info");
+      pushToast(msg("plugins-was-uninstalled", { name: name, version: version }), "info");
       if (selectedPluginKey() === `${id}@${version}`) setSelectedPluginKey(null);
     } catch (error) {
-      pushToast(`Plugin could not be uninstalled: ${String(error)}`, "error");
+      pushToast(msg("plugins-plugin-could-not-be-uninstalled", { error: String(error) }), "error");
     } finally {
       release();
     }
   };
 
   const findingSeverityLabel = (severity: PluginSafetyReport["findings"][number]["severity"]): string => {
-    if (severity === "info") return "Information";
-    return `${severity[0].toUpperCase()}${severity.slice(1)}-risk finding`;
+    if (severity === "info") return t("plugins-prose-information");
+    return t("plugins-prose-risk-finding", { severity });
   };
 
   const installCommunity = async (plugin: RegistryPlugin, version: RegistryVersion) => {
     const release = hold(`${plugin.id}@${version.version}`);
     try {
       const installed = await installCommunityPlugin(plugin, version);
-      pushToast(`${installed.manifest.name} installed disabled. Enable it after reviewing its capabilities.`, "info");
+      pushToast(msg("plugins-installed-disabled-enable-it-after-reviewing", { name: installed.manifest.name }), "info");
       setView("installed");
       setSelectedPluginKey(`${installed.manifest.id}@${installed.manifest.version}`);
     } catch (error) {
-      pushToast(`Community plugin installation failed: ${String(error)}`, "error");
+      pushToast(msg("plugins-community-plugin-installation-failed", { error: String(error) }), "error");
     } finally {
       release();
     }
@@ -260,8 +266,7 @@ function PluginsTabContent(): JSX.Element {
     <>
       <Show when={selectedPlugin()} keyed>
         {(plugin) => (
-          <div class="plugin-detail-page">
-            <button class="settings-link plugin-detail-back" onClick={() => setSelectedPluginKey(null)}>← Installed plugins</button>
+          <div class="plugin-detail-page"><button class="settings-link plugin-detail-back" onClick={() => setSelectedPluginKey(null)}>{t("plugins-installed-plugins")}</button>
             <div class="plugin-detail-heading">
               <div>
                 <h2>{plugin.manifest.name}</h2>
@@ -275,53 +280,36 @@ function PluginsTabContent(): JSX.Element {
             </div>
             <p>{plugin.manifest.description}</p>
             <div class="settings-hint">
-              {plugin.manifest.author} · {plugin.manifest.license} · {plugin.manifest.platforms.join(", ")}
-              <br />Capabilities: {plugin.manifest.capabilities.length ? plugin.manifest.capabilities.join(", ") : "none"}
+              {plugin.manifest.author} · {plugin.manifest.license} · {plugin.manifest.platforms.join(", ")}<br />{t("plugins-capabilities-list", { kind: plugin.manifest.capabilities.length ? "some" : "none", capabilities: plugin.manifest.capabilities.join(", ") })}
             </div>
             <Show when={plugin.manifest.portedFrom} keyed>
               {(origin) => (
-                <div class="plugin-origin-card">
-                  <strong>{origin.relationship === "behavioral-port" ? "Behavioral port" : "Source-derived port"}</strong>
-                  <br /><span>From {origin.name} for {origin.ecosystem}; original authors: {origin.authors.join(", ")}.</span>
-                  <br /><button class="settings-link" onClick={() => void backend().openExternal(origin.source)}>Original source at {origin.revision.slice(0, 12)}</button>
+                <div class="plugin-origin-card"><strong>{origin.relationship === "behavioral-port" ? t("plugins-behavioral-port") : t("plugins-source-derived-port")}</strong><br /><span>{t("plugins-from-for-original-authors", { name: origin.name, ecosystem: origin.ecosystem, authors: origin.authors.join(", ") })}</span><br /><button class="settings-link" onClick={() => void backend().openExternal(origin.source)}>{t("plugins-original-source-at", { revision: origin.revision.slice(0, 12) })}</button>
                 </div>
               )}
-            </Show>
-            <div class="settings-section">Settings</div>
-            <PluginSettingsForm plugin={plugin} busy={busy} hold={hold} />
-            <div class="settings-section">Package</div>
-            <div class="plugin-detail-actions">
-              <button class="settings-btn" onClick={() => void backend().openExternal(plugin.manifest.source)}>Details &amp; screenshots</button>
+            </Show><div class="settings-section">{t("plugins-settings")}</div>
+            <PluginSettingsForm plugin={plugin} busy={busy} hold={hold} /><div class="settings-section">{t("plugins-package")}</div>
+            <div class="plugin-detail-actions"><button class="settings-btn" onClick={() => void backend().openExternal(plugin.manifest.source)}>{t("plugins-details-screenshots")}</button>
               <button
                 class="settings-btn settings-btn-danger"
                 disabled={busy() !== null}
                 onClick={() => void uninstallPlugin(plugin)}
-              >
-                {busy() === `${plugin.manifest.id}@${plugin.manifest.version}:uninstall` ? "Uninstalling…" : "Uninstall…"}
+              >{busy() === `${plugin.manifest.id}@${plugin.manifest.version}:uninstall` ? t("plugins-uninstalling") : t("plugins-uninstall")}
               </button>
             </div>
             <Show when={plugin.error}>
-              <div class="settings-hint" style={{ color: "var(--danger, #c44)" }}>{plugin.error}</div>
+              <div class="settings-hint" style={{ color: "var(--tine-danger-color, var(--palette-danger))" }}>{plugin.error}</div>
             </Show>
           </div>
         )}
       </Show>
       <Show when={!selectedPlugin()}>
-        <div class="plugin-settings-nav" role="tablist" aria-label="Plugin settings sections">
-          <button role="tab" aria-selected={view() === "browse"} classList={{ active: view() === "browse" }} onClick={() => setView("browse")}>Browse</button>
-          <button role="tab" aria-selected={view() === "installed"} classList={{ active: view() === "installed" }} onClick={() => setView("installed")}>Installed ({installedPlugins().length})</button>
+        <div class="plugin-settings-nav" role="tablist" aria-label={t("plugins-plugin-settings-sections")}><button role="tab" aria-selected={view() === "browse"} classList={{ active: view() === "browse" }} onClick={() => setView("browse")}>{t("plugins-browse")}</button><button role="tab" aria-selected={view() === "installed"} classList={{ active: view() === "installed" }} onClick={() => setView("installed")}>{t("plugins-installed", { count: installedPlugins().length })}</button>
         </div>
-      <Show when={view() === "browse"}>
-      <div class="settings-section">Experimental plugin platform</div>
-      <p class="settings-hint">
-        Tine plugins are capability-limited WebAssembly guests, not Logseq or Obsidian plugins. They cannot directly
-        access the DOM, Tauri, the network, files, processes, or your graph. A plugin version is installed disabled and
-        runs only after its declared capabilities and entry validate.
-      </p>
+      <Show when={view() === "browse"}><div class="settings-section">{t("plugins-experimental-plugin-platform")}</div>
+      <p class="settings-hint">{t("plugins-tine-plugins-are-capability-limited-webassembly-guests-not")}</p>
       <div class="settings-row">
-        <div>
-          <div class="settings-label">Install a local package</div>
-          <div class="settings-hint">Select its <code>manifest.json</code> and <code>.wasm</code> file together.</div>
+        <div><div class="settings-label">{t("plugins-install-a-local-package")}</div><div class="settings-hint"><Rich message={msg("plugins-select-its-manifest-json-and-wasm-file-together")} slots={{ "code": (children) => <code>{children}</code> }} /></div>
         </div>
         <div>
           <input
@@ -332,30 +320,22 @@ function PluginsTabContent(): JSX.Element {
             style={{ display: "none" }}
             onChange={(event) => void installFiles(event.currentTarget.files)}
           />
-          <button class="settings-btn" disabled={busy() !== null} onClick={() => packageInput?.click()}>
-            {busy() === "install" ? "Validating…" : "Choose package…"}
+          <button class="settings-btn" disabled={busy() !== null} onClick={() => packageInput?.click()}>{busy() === "install" ? t("plugins-validating") : t("plugins-choose-package")}
           </button>
         </div>
       </div>
 
-      <Show when={COMMUNITY_REGISTRY_ENABLED}>
-      <div class="settings-section">Community catalogue</div>
-      <div class="settings-hint">
-        Signed registry · automated deterministic and no-tools AI audits · immutable version digests.
-        <Show when={registryState() === "offline"}> Showing the last verified offline copy.</Show>
-        <Show when={registryState() === "unsafe"}> Installed plugins are held until a signed catalogue can be verified.</Show>
+      <Show when={COMMUNITY_REGISTRY_ENABLED}><div class="settings-section">{t("plugins-community-catalogue")}</div>
+      <div class="settings-hint">{t("plugins-signed-registry-automated-deterministic-and-no-tools")}<Show when={registryState() === "offline"}>{" "}{t("plugins-showing-the-last-verified-offline-copy")}</Show><Show when={registryState() === "unsafe"}>{" "}{t("plugins-installed-plugins-are-held-until-a-signed")}</Show>
         <Show when={registryPersistenceError()}> {registryPersistenceError()}</Show>
       </div>
       <Show
         when={communityPlugins().length > 0}
         fallback={
           <div class="settings-row">
-            <span class="settings-hint">
-              {registryState() === "loading" ? "Checking the signed catalogue…" : "No verified catalogue is available."}
+            <span class="settings-hint">{registryState() === "loading" ? t("plugins-checking-the-signed-catalogue") : t("plugins-no-verified-catalogue-is-available")}
             </span>
-            <button class="settings-btn" disabled={registryState() === "loading"} onClick={() => void refreshCommunityRegistry()}>
-              Retry
-            </button>
+            <button class="settings-btn" disabled={registryState() === "loading"} onClick={() => void refreshCommunityRegistry()}>{t("plugins-retry")}</button>
           </div>
         }
       >
@@ -388,10 +368,10 @@ function PluginsTabContent(): JSX.Element {
             };
             const safetyLabel = () =>
               version().audit.manualApproval
-                ? "Human-reviewed before publication"
+                ? t("plugins-prose-human-reviewed-before-publication")
                 : version().audit.risk === "low"
-                  ? "Low-risk automated pass"
-                  : "Automated review passed";
+                  ? t("plugins-prose-low-risk-automated-pass")
+                  : t("plugins-prose-automated-review-passed");
             return (
               <div class="settings-field">
                 <div class="settings-field-row">
@@ -400,23 +380,19 @@ function PluginsTabContent(): JSX.Element {
                     class="settings-btn"
                     disabled={installed() || busy() !== null || version().audit.status !== "passed" || !available()}
                     onClick={() => void installCommunity(plugin, version())}
-                  >
-                    {installed()
-                      ? "Installed"
+                  >{installed()
+                      ? t("plugins-installed-status")
                       : !currentPlatform()
-                        ? "Checking…"
+                        ? t("plugins-checking")
                         : !available()
-                          ? `Unavailable on ${currentPlatform()}`
+                          ? t("plugins-unavailable-on", { platform: currentPlatform() ?? "" })
                           : busy() === `${plugin.id}@${version().version}`
-                            ? "Verifying…"
-                            : "Install"}
+                            ? t("plugins-verifying")
+                            : t("plugins-install")}
                   </button>
                 </div>
                 <div class="settings-hint settings-field-hint">
-                  {plugin.description}<br />
-                  {plugin.license} · {plugin.aiDevelopment === "none" ? "Human-written" : `AI-${plugin.aiDevelopment}`} · {version().platforms.join(", ")}
-                  <br />Capabilities: {version().capabilities.length ? version().capabilities.join(", ") : "none"}
-                  {" · "}<button class="settings-link" onClick={() => void backend().openExternal(plugin.source)}>Details &amp; screenshots</button>
+                  {plugin.description}<br />{plugin.license}{" · "}{plugin.aiDevelopment === "none" ? t("plugins-human-written") : t("plugins-ai", { developmentMethod: plugin.aiDevelopment })}{" · "}{version().platforms.join(", ")}<br />{t("plugins-capabilities-list", { kind: version().capabilities.length ? "some" : "none", capabilities: version().capabilities.join(", ") })}{" · "}<button class="settings-link" onClick={() => void backend().openExternal(plugin.source)}>{t("plugins-details-screenshots")}</button>
                 </div>
                 <div class="plugin-safety-row">
                   <span
@@ -424,21 +400,16 @@ function PluginsTabContent(): JSX.Element {
                     classList={{ manual: version().audit.manualApproval, low: !version().audit.manualApproval }}
                   >
                     {safetyLabel()}
-                  </span>
-                  <span class="settings-hint">Checked {version().audit.checkedAt.slice(0, 10)}</span>
-                  <button class="settings-link" onClick={() => void showReport()}>
-                    {reportOpen() ? "Hide safety report" : "Safety report"}
+                  </span><span class="settings-hint">{t("plugins-checked", { date: version().audit.checkedAt.slice(0, 10) })}</span>
+                  <button class="settings-link" onClick={() => void showReport()}>{reportOpen() ? t("plugins-hide-safety-report") : t("plugins-safety-report")}
                   </button>
                 </div>
                 <Show when={reportOpen()}>
                   <div class="plugin-safety-report">
-                    <Show when={reportState() === "loading"}>
-                      <div class="settings-hint">Verifying the signed report…</div>
+                    <Show when={reportState() === "loading"}><div class="settings-hint">{t("plugins-verifying-the-signed-report")}</div>
                     </Show>
                     <Show when={reportState() === "error"}>
-                      <div class="settings-hint" style={{ color: "var(--danger, #c44)" }}>
-                        The report could not be fetched and digest-verified.
-                      </div>
+                      <div class="settings-hint" style={{ color: "var(--tine-danger-color, var(--palette-danger))" }}>{t("plugins-the-report-could-not-be-fetched-and")}</div>
                     </Show>
                     <Show when={report()} keyed>
                       {(safety) => (
@@ -446,29 +417,18 @@ function PluginsTabContent(): JSX.Element {
                           <p>{safety.summary}</p>
                           <Show when={safety.manualApproval} keyed>
                             {(approval) => (
-                              <div class="plugin-safety-manual">
-                                <strong>Why human review was required</strong><br />
+                              <div class="plugin-safety-manual"><strong>{t("plugins-why-human-review-was-required")}</strong><br />
                                 <Show
                                   when={version().capabilities.includes("graph.write.block")}
-                                  fallback={<>An automated check found behavior that Tine requires a person to inspect before publication.</>}
-                                >
-                                  This plugin can edit the focused block when you run its command. Tine holds every graph-writing
-                                  plugin for human review, even when the automated checks otherwise pass.
-                                </Show>
-                                <Show when={plugin.id === "page.tine.query-filter"}>
-                                  <br />The audit also caught that an earlier draft could act on the wrong focused block. The
-                                  published plugin was narrowed to query table/board blocks and reviewed again.
-                                </Show>
-                                <br /><span>Signed review record: {approval.note}</span>
+                                  fallback={<>{t("plugins-an-automated-check-found-behavior-that-tine")}</>}
+                                >{t("plugins-this-plugin-can-edit-the-focused-block")}</Show>
+                                <Show when={plugin.id === "page.tine.query-filter"}><br />{t("plugins-the-audit-also-caught-that-an-earlier")}</Show><br /><span>{t("plugins-signed-review-record", { note: approval.note })}</span>
                               </div>
                             )}
                           </Show>
                           <Show when={safety.findings.length > 0}>
                             <div class="plugin-safety-findings">
-                              <div class="settings-hint">
-                                Severity describes possible impact, not reviewer confidence. “Low-risk” means a contained problem
-                                unlikely to affect your notes; “Information” is an observation, not a known harm.
-                              </div>
+                              <div class="settings-hint">{t("plugins-severity-describes-possible-impact-not-reviewer-confidence")}</div>
                               <For each={safety.findings}>
                                 {(finding) => (
                                   <div class="plugin-safety-finding">
@@ -479,14 +439,8 @@ function PluginsTabContent(): JSX.Element {
                               </For>
                             </div>
                           </Show>
-                          <div class="settings-hint">
-                            Source <code title={safety.sourceCommit}>{safety.sourceCommit.slice(0, 12)}</code>
-                            {" · Package "}<code title={version().sha256}>{version().sha256.slice(0, 12)}</code>
-                            {" · Report "}<code title={version().audit.sha256}>{version().audit.sha256.slice(0, 12)}</code>
-                            {" · "}{safety.areasReviewed.length} areas reviewed
-                            {" · "}<button class="settings-link" onClick={() => void backend().openExternal(version().audit.url)}>Raw report</button>
-                          </div>
-                          <div class="settings-hint">Automated review is evidence, not a guarantee.</div>
+                          <div class="settings-hint"><Rich message={msg("plugins-audit-details", { source: safety.sourceCommit.slice(0, 12), package: version().sha256.slice(0, 12), report: version().audit.sha256.slice(0, 12), count: safety.areasReviewed.length })} slots={{ "source-code": (children) => <code title={safety.sourceCommit}>{children}</code>, "package-code": (children) => <code title={version().sha256}>{children}</code>, "report-code": (children) => <code title={version().audit.sha256}>{children}</code> }} />{" · "}<button class="settings-link" onClick={() => void backend().openExternal(version().audit.url)}>{t("plugins-raw-report")}</button>
+                          </div><div class="settings-hint">{t("plugins-automated-review-is-evidence-not-a-guarantee")}</div>
                         </>
                       )}
                     </Show>
@@ -501,10 +455,7 @@ function PluginsTabContent(): JSX.Element {
 
       </Show>
 
-      <Show when={view() === "installed"}>
-
-      <div class="settings-section">Installed</div>
-      <Show when={installedPlugins().length > 0} fallback={<p class="settings-hint">No plugins installed.</p>}>
+      <Show when={view() === "installed"}><div class="settings-section">{t("plugins-installed-status")}</div><Show when={installedPlugins().length > 0} fallback={<p class="settings-hint">{t("plugins-no-plugins-installed")}</p>}>
         <For each={installedPlugins()}>
           {(plugin) => (
             <div class="settings-field">
@@ -516,8 +467,7 @@ function PluginsTabContent(): JSX.Element {
                   <button
                     class="settings-btn"
                     onClick={() => setSelectedPluginKey(`${plugin.manifest.id}@${plugin.manifest.version}`)}
-                  >
-                    {(plugin.manifest.settings?.length ?? 0) > 0 ? "Settings…" : "Details…"}
+                  >{(plugin.manifest.settings?.length ?? 0) > 0 ? t("plugins-open-settings") : t("plugins-details")}
                   </button>
                   <Toggle
                     on={plugin.enabled && plugin.running}
@@ -528,22 +478,18 @@ function PluginsTabContent(): JSX.Element {
                     class="settings-btn settings-btn-danger"
                     disabled={busy() !== null}
                     onClick={() => void uninstallPlugin(plugin)}
-                  >
-                    {busy() === `${plugin.manifest.id}@${plugin.manifest.version}:uninstall` ? "Uninstalling…" : "Uninstall…"}
+                  >{busy() === `${plugin.manifest.id}@${plugin.manifest.version}:uninstall` ? t("plugins-uninstalling") : t("plugins-uninstall")}
                   </button>
                 </div>
               </div>
               <div class="settings-hint settings-field-hint">
                 {plugin.manifest.description}<br />
                 <code>{plugin.manifest.id}</code> · {plugin.manifest.license} · {plugin.manifest.platforms.join(", ")}
-                <Show when={plugin.manifest.aiDevelopment && plugin.manifest.aiDevelopment !== "none"}>
-                  {" · "}AI-{plugin.manifest.aiDevelopment}
-                </Show>
-                <br />Capabilities: {plugin.manifest.capabilities.length ? plugin.manifest.capabilities.join(", ") : "none"}
-                {" · "}<button class="settings-link" onClick={() => void backend().openExternal(plugin.manifest.source)}>Details &amp; screenshots</button>
+                <Show when={plugin.manifest.aiDevelopment && plugin.manifest.aiDevelopment !== "none"}>{" · "}{t("plugins-ai", { developmentMethod: plugin.manifest.aiDevelopment ?? "" })}
+                </Show><br />{t("plugins-capabilities-list", { kind: plugin.manifest.capabilities.length ? "some" : "none", capabilities: plugin.manifest.capabilities.join(", ") })}{" · "}<button class="settings-link" onClick={() => void backend().openExternal(plugin.manifest.source)}>{t("plugins-details-screenshots")}</button>
               </div>
               <Show when={plugin.error}>
-                <div class="settings-hint" style={{ color: "var(--danger, #c44)" }}>{plugin.error}</div>
+                <div class="settings-hint" style={{ color: "var(--tine-danger-color, var(--palette-danger))" }}>{plugin.error}</div>
               </Show>
             </div>
           )}

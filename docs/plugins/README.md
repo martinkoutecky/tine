@@ -1,4 +1,4 @@
-# Tine plugins (experimental API 0.2)
+# Tine plugins (experimental API 0.3)
 
 Tine plugins are small WebAssembly guests. They receive versioned JSON events and
 return inert effects which Tine validates and applies. They do **not** run JavaScript
@@ -71,13 +71,21 @@ over every visible block without a user action, so their block snapshots carry
 raw text only when the plugin declares `graph.read.visible`; otherwise `raw` is
 empty.
 
-API 0.2 effects are notices, focused-block text replacement with an expected-text
+Plugin API effects are notices, focused-block text replacement with an expected-text
 precondition, caret insertion, known block decorations, and plugin-local scalar
 settings. A write effect requires `graph.write.block`, may target only the block Tine
 included in the triggering event, records normal undo, and reaches disk only through
 Tine's existing conflict-checked persistence engine.
 
 ## Platforms
+
+Declarative settings support `boolean`, `enum`, bounded `number`, bounded `string`,
+and `color`. A color's default and stored value are a literal hex, rgb/rgba,
+hsl/hsla color, `transparent`, or empty (the host's theme default). Variables,
+URLs and arbitrary CSS are rejected. `color` needs `apiVersion: "0.3"`: hosts that
+only know API 0.2 parse manifests strictly and would refuse it, so a 0.3 package is
+offered only to hosts that run 0.3, and such hosts keep the last 0.2 version. No
+capability or guest protocol change comes with it.
 
 `platforms` may contain `desktop`, `android`, and `ios`. Omitting it means desktop
 only, and the starter template declares only desktop. Add Android or iOS only after
@@ -99,8 +107,10 @@ retain the signed community catalogue.
 
 ## Compatibility and versioning
 
-The manifest identifies plugin API `0.2`; protocol messages use
-`protocolVersion: 2`. Tine refuses mismatches. During 0.x, a breaking host change
+The manifest identifies plugin API `0.2` or `0.3` (0.3 adds the `color` setting
+type); protocol messages use `protocolVersion: 2`. Tine refuses an API version it
+does not run, and its registry view lists only package versions whose API it runs,
+so an older Tine keeps installing and updating to the newest version it accepts. During 0.x, a breaking host change
 must bump the plugin API, show a clear incompatible state, and leave the old package
 disabled and intact. Published package versions are immutable and addressed by
 `id`, SemVer version, and SHA-256.

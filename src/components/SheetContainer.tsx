@@ -6,6 +6,7 @@ import {
   type JSX,
 } from "solid-js";
 import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
+import { newResizeObserver, requestFrame, viewportOf, windowOf } from "../windowRealm";
 
 function px(value: string): number {
   const n = Number.parseFloat(value);
@@ -18,10 +19,11 @@ function px(value: string): number {
 export function SheetContainer(props: { children: JSX.Element; allowBreakout?: boolean }): JSX.Element {
   let el: HTMLDivElement | undefined;
   let scrollEl: HTMLDivElement | undefined;
-  let frame = 0;
-  let verifyFrame = 0;
+  // Frames run on the container's own window clock (OG-MULTIWINDOW P1).
+  let frame: (() => void) | undefined;
+  let verifyFrame: (() => void) | undefined;
   let verifyBudget = 12;
-  const settleFrames = new Set<number>();
+  const settleFrames = new Set<() => void>();
   const settleTimers = new Set<number>();
   const [hovering, setHovering] = createSignal(false);
   const [corner, setCornerSignal] = createSignal<JSX.Element | null>(null);
@@ -34,7 +36,7 @@ export function SheetContainer(props: { children: JSX.Element; allowBreakout?: b
 
   const measure = () => {
     if (!el) return;
-    frame = 0;
+    frame = undefined;
     const nested = !!el.closest(".sheet-cell");
     const surface = scrollEl?.firstElementChild as HTMLElement | null;
     const style = getComputedStyle(el);
@@ -60,7 +62,8 @@ export function SheetContainer(props: { children: JSX.Element; allowBreakout?: b
     const main = el.closest(".main-content, .rs-item-body, .right-sidebar-body") as HTMLElement | null;
     if (main) {
       const mainRect = main.getBoundingClientRect();
-      const viewportRight = window.visualViewport?.width ?? (window.innerWidth || document.documentElement.clientWidth);
+      const viewport = viewportOf(el);
+      const viewportRight = viewport.visual?.width ?? (viewport.width || el.ownerDocument.documentElement.clientWidth);
       const parentRight = main.parentElement?.getBoundingClientRect().right ?? 0;
       const stableRight = Math.min(
         mainRect.right,
@@ -85,8 +88,8 @@ export function SheetContainer(props: { children: JSX.Element; allowBreakout?: b
 
   const scheduleVerify = () => {
     if (verifyFrame) return;
-    verifyFrame = requestAnimationFrame(() => {
-      verifyFrame = 0;
+    verifyFrame = requestFrame(el, () => {
+      verifyFrame = undefined;
       if (!el || !el.classList.contains("sheet-breakout")) return;
       const main = el.closest(".main-content, .rs-item-body, .right-sidebar-body") as HTMLElement | null;
       if (!main) return;
@@ -105,8 +108,8 @@ export function SheetContainer(props: { children: JSX.Element; allowBreakout?: b
 
   const scheduleMeasureRaw = () => {
     if (frame) return;
-    frame = requestAnimationFrame(() => {
-      frame = requestAnimationFrame(measure);
+    frame = requestFrame(el, () => {
+      frame = requestFrame(el, measure);
     });
   };
 
@@ -117,7 +120,7 @@ export function SheetContainer(props: { children: JSX.Element; allowBreakout?: b
 
   const scheduleMeasureAfterFrames = (frames: number) => {
     const step = (remaining: number) => {
-      const id = requestAnimationFrame(() => {
+      const id = requestFrame(el, () => {
         settleFrames.delete(id);
         if (remaining <= 1) scheduleMeasure();
         else step(remaining - 1);
@@ -137,11 +140,11 @@ export function SheetContainer(props: { children: JSX.Element; allowBreakout?: b
   };
 
   const cancelScheduledMeasures = () => {
-    if (frame) cancelAnimationFrame(frame);
-    frame = 0;
-    if (verifyFrame) cancelAnimationFrame(verifyFrame);
-    verifyFrame = 0;
-    for (const id of settleFrames) cancelAnimationFrame(id);
+    frame?.();
+    frame = undefined;
+    verifyFrame?.();
+    verifyFrame = undefined;
+    for (const cancel of settleFrames) cancel();
     settleFrames.clear();
     for (const id of settleTimers) window.clearTimeout(id);
     settleTimers.clear();
@@ -175,25 +178,27 @@ export function SheetContainer(props: { children: JSX.Element; allowBreakout?: b
         });
     surfaceObserver?.observe(scrollEl!, { childList: true });
     onCleanup(() => surfaceObserver?.disconnect());
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", scheduleMeasure);
+    const ownerWindow = windowOf(el);
+    const realmObserver = newResizeObserver(el, scheduleMeasure);
+    if (!realmObserver) {
+      ownerWindow.addEventListener("resize", scheduleMeasure);
       onCleanup(() => {
         cancelScheduledMeasures();
-        window.removeEventListener("resize", scheduleMeasure);
+        ownerWindow.removeEventListener("resize", scheduleMeasure);
       });
       return;
     }
-    resizeObserver = new ResizeObserver(scheduleMeasure);
+    resizeObserver = realmObserver;
     resizeObserver.observe(el);
     if (main) resizeObserver.observe(main);
     if (scrollEl) resizeObserver.observe(scrollEl);
     if (surface) resizeObserver.observe(surface);
     if (el.parentElement) resizeObserver.observe(el.parentElement);
-    window.addEventListener("resize", scheduleMeasure);
+    ownerWindow.addEventListener("resize", scheduleMeasure);
     onCleanup(() => {
       cancelScheduledMeasures();
       resizeObserver?.disconnect();
-      window.removeEventListener("resize", scheduleMeasure);
+      ownerWindow.removeEventListener("resize", scheduleMeasure);
     });
   });
 

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CLIPBOARD_IMAGE_MAX_PIXELS,
   clipboardImageToPng,
-} from "./backend";
+} from "./clipboardImage";
 
 afterEach(() => {
   vi.restoreAllMocks();

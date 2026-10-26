@@ -6,8 +6,8 @@
   --ls-font-mono: "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco, Consolas,
     "Courier New", monospace;
 
-  --ls-main-content-max-width: 810px;
-  --ls-main-content-max-width-wide: 100%;
+  --ls-main-content-max-width: var(--tine-content-width, 810px);
+  --ls-main-content-max-width-wide: var(--tine-content-width-wide, 100%);
   --ls-left-sidebar-width: 246px;
   --ls-headbar-height: 48px;
   --ls-page-title-size: 28px;
@@ -31,6 +31,46 @@
      Logseq-compatible themes, and custom.css inherit the panel text palette. */
   --scrollbar-thumb: color-mix(in srgb, var(--text-secondary) 42%, transparent);
   --scrollbar-thumb-hover: color-mix(in srgb, var(--text-secondary) 64%, transparent);
+}
+
+/* The public theming tokens (docs/contracts/theme-tokens.md): the small set a
+   user's custom.css may rely on across updates. They are UNSET here
+   (`initial`, the guaranteed-invalid value), so every consumer's
+   `var(--tine-x, <previous value>)` falls through to exactly what Tine drew
+   before the token existed, still following built-in and Logseq-style themes
+   wherever they set the underlying variable. `:where(:root)` has specificity
+   zero, so ANY user rule that sets a token (`:root {...}`, `html {...}`,
+   `body {...}`, a narrower scope) wins, whatever the selector. */
+:where(:root) {
+  --tine-danger-color: initial;
+  --tine-embed-bg: initial;
+  --tine-embed-accent: initial;
+  --tine-bullet-color: initial;
+  --tine-bullet-size: initial;
+  --tine-tag-color: initial;
+  --tine-highlight-bg: initial;
+  --tine-missing-page-color: initial;
+  --tine-external-link-underline: initial;
+  --tine-content-width: initial;
+  --tine-content-width-wide: initial;
+  --tine-page-title-size: initial;
+  --tine-font-size: initial;
+  --tine-content-font: initial;
+  --tine-mono-font: initial;
+  --tine-editable-font: initial;
+  /* What the user set (or nothing): lets a presentation preset that re-scopes
+     --tine-editable-font fall back to the user's value before its own face. */
+  --tine-editable-font-user: var(--tine-editable-font);
+}
+
+/* Semantic defaults shared by every gallery palette; independently checked
+   against all their surfaces in themes/danger.test.ts. Keep these outside the
+   stock surface palette so themes can inherit them without copying colors. */
+:where(html[data-theme="light"]) {
+  --palette-danger: #661010;
+}
+:where(html[data-theme="dark"]) {
+  --palette-danger: #ffd0cc;
 }
 
 html[data-theme="light"] {

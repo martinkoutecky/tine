@@ -1,7 +1,7 @@
 # My Tine plugin
 
 This is the standalone Rust starter for a capability-limited Tine WebAssembly
-plugin. It targets plugin API 0.2 and defaults to desktop support until you have
+plugin. It targets plugin API 0.3 and defaults to desktop support until you have
 tested the package on another platform.
 
 1. Replace the package name, dotted plugin id, author, source URL, and description.

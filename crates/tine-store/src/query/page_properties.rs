@@ -1,38 +1,8 @@
-use super::{property_key_norm, strip_ref};
-use tine_core::doc::{DocBlock, Document};
+use super::property_key_norm;
+use tine_core::doc::Document;
+pub(crate) use tine_core::page_properties::{page_document_is_org, page_property_lines};
 
-/// Page properties owned by lsdoc, including Org directives and head drawers.
-/// O(input bytes + AST nodes), without I/O; literal/prose entries are excluded.
-pub(crate) fn page_property_lines(text: &str, is_org: bool) -> Vec<(String, String)> {
-    tine_core::block_regions::parse_document(text, is_org)
-        .page_properties()
-        .map(|p| {
-            (
-                if is_org {
-                    p.key.to_ascii_lowercase()
-                } else {
-                    p.key.clone()
-                },
-                p.value.clone(),
-            )
-        })
-        .collect()
-}
-
-/// The first root carries the format; an empty document's parser-owned Org
-/// metadata distinguishes an Org drawer/directive preamble from Markdown.
-pub(crate) fn page_document_is_org(doc: &Document) -> bool {
-    doc.roots.first().map(DocBlock::is_org).unwrap_or_else(|| {
-        doc.pre_block.as_deref().is_some_and(|pre| {
-            tine_core::block_regions::parse_document(pre, true)
-                .page_properties()
-                .next()
-                .is_some()
-        })
-    })
-}
-
-/// Extract property pairs and comma-separated tags only from document preblock.
+/// Extract property pairs and parser-tokenized tags from the document preblock.
 /// A properties-only first root is excluded, unlike document_aliases. Malformed
 /// lines are skipped. O(preblock text), without external I/O.
 pub(crate) fn page_facets(doc: &Document) -> (Vec<(String, String)>, Vec<String>) {
@@ -41,11 +11,7 @@ pub(crate) fn page_facets(doc: &Document) -> (Vec<(String, String)>, Vec<String>
     if let Some(pre) = doc.pre_block.as_deref() {
         for (k, v) in page_property_lines(pre, page_document_is_org(doc)) {
             if property_key_norm(&k) == "tags" {
-                tags = v
-                    .split(tine_core::refs::is_linkable_property_separator)
-                    .map(|t| strip_ref(t.trim()))
-                    .filter(|t| !t.is_empty())
-                    .collect();
+                tags = tine_core::property_refs::linkable_names(&v, page_document_is_org(doc));
             }
             props.push((k, v));
         }
@@ -56,6 +22,33 @@ pub(crate) fn page_facets(doc: &Document) -> (Vec<(String, String)>, Vec<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gh699_page_tag_facets_follow_parser_tokens() {
+        for value in [
+            "#eng #exec #founder",
+            "#eng,#exec,#founder",
+            "#eng, #exec, #founder",
+            "[[eng]] [[exec]] [[founder]]",
+        ] {
+            let doc = Document {
+                pre_block: Some(format!("tags:: {value}")),
+                roots: Vec::new(),
+            };
+            assert_eq!(
+                page_facets(&doc).1,
+                vec!["eng", "exec", "founder"],
+                "{value}"
+            );
+        }
+        let doc = Document {
+            pre_block: Some("tags:: #a plain text #b".into()),
+            roots: Vec::new(),
+        };
+        let mut tags = page_facets(&doc).1;
+        tags.sort();
+        assert_eq!(tags, vec!["a", "b", "plain text"]);
+    }
 
     #[test]
     fn org_preamble_does_not_treat_markdown_alias_as_page_property() {

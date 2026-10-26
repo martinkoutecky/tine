@@ -85,14 +85,14 @@ const EDN_SECOND = `{:highlights [{:id #uuid "${SECOND_FIRST_ID}"
 // A self-contained, two-page PDF with nested bookmarks. The parent has an
 // explicit page-reference destination; its child resolves a named destination.
 // The filled red/green/blue rectangles make outline navigation easy to inspect.
-function makeNamedOutlinePdf() {
+function makeNamedOutlinePdf(label = "Outline fixture page one") {
   const firstPageContent = [
     "q",
     "1 0 0 rg", "360 560 160 48 re f",
     "0 0.62 0 rg", "360 490 160 48 re f",
     "0 0.25 1 rg", "360 420 160 48 re f",
     "Q",
-    "BT /F1 22 Tf 72 720 Td (Outline fixture page one) Tj ET",
+    `BT /F1 22 Tf 72 720 Td (${label}) Tj ET`,
     "BT /F1 13 Tf 72 690 Td (Select this deterministic text for a highlight.) Tj ET",
     "BT /F1 13 Tf 72 668 Td (Explicit and named outline destinations are real.) Tj ET",
   ].join("\n");
@@ -149,10 +149,7 @@ fs.writeFileSync(MARKDOWN_PAGE, "- Markdown upload target\n");
 fs.writeFileSync(ORG_PAGE, "* Org upload target\n");
 fs.writeFileSync(PASTE_PAGE, "- Paste target\n");
 fs.writeFileSync(path.join(GRAPH, "assets", "logseq-sample.pdf"), Buffer.from(PDF, "base64"));
-const secondPdf = Buffer.from(PDF, "base64");
-const pdfLabelOffset = secondPdf.indexOf(Buffer.from("Tine PDF viewer"));
-if (pdfLabelOffset < 0) throw new Error("PDF fixture label was not found");
-Buffer.from("Second PDF test").copy(secondPdf, pdfLabelOffset); // same byte length: xref stays valid
+const secondPdf = makeNamedOutlinePdf("Second PDF test");
 fs.writeFileSync(path.join(GRAPH, "assets", "logseq-second.pdf"), secondPdf);
 const sidecar = path.join(GRAPH, "assets", "logseq-sample.edn");
 fs.writeFileSync(sidecar, EDN);
@@ -438,11 +435,19 @@ async function nativeClickSelector(selector, id, text) {
       .map((element) => {
         const rect = element.getBoundingClientRect();
         const style = getComputedStyle(element);
-        const x = rect.left + rect.width / 2;
-        const y = rect.top + rect.height / 2;
+        // Inline references and links can wrap. Their union rectangle may
+        // contain only whitespace; use a fragment that receives the pointer.
+        const point = [...element.getClientRects()].map((fragment) => ({
+          x: fragment.left + fragment.width / 2,
+          y: fragment.top + fragment.height / 2,
+        })).find(({ x, y }) => {
+          const hit = document.elementFromPoint(x, y);
+          return hit && (hit === element || element.contains(hit));
+        });
+        const x = point?.x ?? rect.left + rect.width / 2;
+        const y = point?.y ?? rect.top + rect.height / 2;
         const inViewport = x >= 0 && x < innerWidth && y >= 0 && y < innerHeight;
-        const receivesPointer = inViewport && document.elementsFromPoint(x, y)
-          .some((hit) => hit === element || element.contains(hit));
+        const receivesPointer = inViewport && !!point;
         const actionable = rect.width > 0 && rect.height > 0
           && style.display !== "none" && style.visibility !== "hidden"
           && receivesPointer;
@@ -615,10 +620,22 @@ function assertNear(actual, expected, label, tolerance = 1.25) {
 async function chooseGtkFile(source) {
   if (process.platform !== "linux") throw new Error("literal GTK file chooser automation is Linux-only");
   let raw;
-  try {
-    raw = xdo("search", "--sync", "--onlyvisible", "--name", "^Choose a file$");
-  } catch (error) {
-    throw new Error(`GTK chooser did not appear for ${source}: ${error?.stderr?.toString().trim() || error?.message || error}`);
+  // xdotool walks the whole window tree; a transient window that vanishes
+  // during the walk aborts it with X BadWindow (seen on the hosted release
+  // gate, 2026-10-20). That says nothing about the chooser: search again
+  // until the deadline.
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    try {
+      raw = xdo("search", "--sync", "--onlyvisible", "--name", "^Choose a file$");
+      break;
+    } catch (error) {
+      const detail = error?.stderr?.toString().trim() || error?.message || String(error);
+      if (!/BadWindow/.test(detail) || Date.now() > deadline) {
+        throw new Error(`GTK chooser did not appear for ${source}: ${detail}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
   }
   const ids = raw.split(/\s+/).filter(Boolean);
   const id = ids.at(-1);
@@ -1482,6 +1499,33 @@ try {
   const directReturnedZoom = await browser.$(".pdf-zoom-level").getText();
   if (directReturnedZoom !== "193%") throw new Error(`PDF A did not restore its own state after direct B: ${directReturnedZoom}`);
 
+  // The highlight target must be inside the scroller: waited for up to `waitMs`
+  // (condition-based, polled), then kept there for `holdMs` (a late scroll or a
+  // zoom settle could still move it). Resolves null when it held, else a reason.
+  const observeHighlightInView = (highlightId, { waitMs, holdMs }) => browser.executeAsync((id, wait, hold, done) => {
+    const started = performance.now();
+    let landed = null;
+    const check = () => {
+      const scroll = document.querySelector(".pdf-scroll");
+      const target = document.querySelector(`.pdf-hl-target[data-highlight-id="${id}"]`);
+      const now = performance.now();
+      if (!scroll || !target) {
+        if (landed === null && now - started < wait) return void setTimeout(check, 20);
+        return done({ reason: "missing", scroll: !!scroll, target: !!target });
+      }
+      const s = scroll.getBoundingClientRect();
+      const t = target.getBoundingClientRect();
+      if (t.bottom <= s.top || t.top >= s.bottom) {
+        if (landed === null && now - started < wait) return void setTimeout(check, 20);
+        return done({ reason: "out of view", scrollTop: scroll.scrollTop, scrollRect: [s.top, s.bottom], targetRect: [t.top, t.bottom] });
+      }
+      if (landed === null) landed = now;
+      if (now - landed < hold) setTimeout(check, 20);
+      else done(null);
+    };
+    check();
+  }, highlightId, waitMs, holdMs);
+
   const firstSecondRef = browser.$(`[data-block-ref="${SECOND_FIRST_ID}"]`);
   await firstSecondRef.waitForExist({ timeout: 10_000 });
   await browser.waitUntil(() => browser.execute((highlightId) =>
@@ -1519,6 +1563,13 @@ try {
     }));
     throw new Error(`${error.message}: ${JSON.stringify(diagnostic)}`, { cause: error });
   }
+  // Card hCAoxs: PDF B was not open, so the reader mounted for this reference. Its
+  // exact highlight (near the bottom of the first page) must be scrolled into view,
+  // not merely marked, and must stay there.
+  const coldOpenLeftView = await observeHighlightInView(SECOND_FIRST_ID, { waitMs: 10_000, holdMs: 600 });
+  if (coldOpenLeftView) {
+    throw new Error(`a backlink into a PDF that was not open yet did not scroll to its exact highlight: ${JSON.stringify(coldOpenLeftView)}`);
+  }
   const secondViewerElementId = (await browser.$(".pdf-viewer")).elementId;
   const secondZoom = await browser.$(".pdf-zoom-level").getText();
   if (secondZoom !== "125%") throw new Error(`second PDF inherited the first PDF scale: ${secondZoom}`);
@@ -1526,7 +1577,7 @@ try {
     throw new Error("switching from PDF A wrote A's pending state or baseline into PDF B");
   }
 
-  await browser.$(`[data-block-ref="${SECOND_SECOND_ID}"]`).click();
+  await nativeClickSelector(`[data-block-ref="${SECOND_SECOND_ID}"]`, "second-pdf-second-highlight");
   await browser.waitUntil(() => browser.execute((highlightId) =>
     document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlight-target") === highlightId &&
     document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") === highlightId, SECOND_SECOND_ID), {
@@ -1539,6 +1590,61 @@ try {
   if (fs.readFileSync(secondSidecar, "utf8") !== originalSecondSidecar) {
     throw new Error("same-PDF highlight navigation rewrote the sidecar");
   }
+
+  // GH #672 (late replay): opening a reader at a saved zoom armed a zoom-settle
+  // timer that fired ~120 ms after the mount and wrote the page-top anchor over
+  // this backlink's exact-highlight scroll (and, on a loaded machine, over the
+  // next user scroll: the rare "page input 1" failure below). The highlight must
+  // stay in view for as long as that timer could still be pending.
+  const highlightLeftView = await observeHighlightInView(SECOND_SECOND_ID, { waitMs: 0, holdMs: 600 });
+  if (highlightLeftView) {
+    throw new Error(`GH #672: the backlink's exact highlight was scrolled away after landing: ${JSON.stringify(highlightLeftView)}`);
+  }
+
+  // GH #672: scrolling reports a new page into the route. That report must
+  // not replay the backlink intent, while clicking the same ref again must.
+  await browser.execute(() => {
+    const scroll = document.querySelector(".pdf-scroll");
+    const page = document.querySelector('.pdf-page[data-page="2"]');
+    if (!(scroll instanceof HTMLElement) || !(page instanceof HTMLElement)) throw new Error("missing PDF page two");
+    // A trace for the failure message: the check flakes rarely and has not
+    // reproduced under diagnostics, so the next failure must carry its evidence.
+    const trace = [];
+    window.__gh672Trace = trace;
+    const start = performance.now();
+    const log = (what) => trace.push([Math.round(performance.now() - start), what, scroll.scrollTop,
+      document.querySelector(".pdf-page-input")?.value, document.activeElement?.className ?? null]);
+    scroll.addEventListener("scroll", () => log("scroll"));
+    for (let i = 1; i <= 12; i++) setTimeout(() => log("tick"), i * 250);
+    log("before");
+    scroll.scrollTop = page.offsetTop;
+    log("set");
+    scroll.dispatchEvent(new Event("scroll"));
+  });
+  // The page report is asynchronous; wait for it, then make sure no replayed
+  // backlink intent pulls the reader back afterwards.
+  const pageAfterScroll = async () => browser.$(".pdf-page-input").getValue();
+  await browser.waitUntil(async () => await pageAfterScroll() === "2", { timeout: 5_000 }).catch(() => {});
+  await sleep(500);
+  const settledPage = await pageAfterScroll();
+  if (settledPage !== "2") {
+    const state = await browser.execute(() => {
+      const scroll = document.querySelector(".pdf-scroll");
+      return {
+        scrollTop: scroll?.scrollTop, clientHeight: scroll?.clientHeight, scrollHeight: scroll?.scrollHeight,
+        pages: [...document.querySelectorAll(".pdf-page")].slice(0, 4).map((el) => [el.getAttribute("data-page"), el.offsetTop, el.offsetHeight]),
+        zoom: document.querySelector(".pdf-zoom-level")?.textContent ?? null,
+        active: document.activeElement?.className ?? null, hidden: document.hidden,
+        target: document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlight-target") ?? null,
+        trace: window.__gh672Trace ?? null,
+      };
+    }).catch((error) => ({ unavailable: String(error) }));
+    throw new Error(`GH #672: scrolling after a backlink replayed its page-one target (page input ${JSON.stringify(settledPage)}); state ${JSON.stringify(state)}`);
+  }
+  await browser.$(`[data-block-ref="${SECOND_SECOND_ID}"]`).click();
+  await browser.waitUntil(async () => await browser.$(".pdf-page-input").getValue() === "1", {
+    timeout: 10_000, timeoutMsg: "GH #672: repeating the same backlink did not navigate again",
+  });
 
   // OG direct-link parity: reopening the already-current resource without a
   // page/highlight intent is a no-op, not an implicit jump to page 1. The exact

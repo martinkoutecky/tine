@@ -6,70 +6,30 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
-    <title>Tine Guide</title>
-    <style id="tine-startup-style">
-      html,
-      body,
-      #root {
-        width: 100%;
-        height: 100%;
-        margin: 0;
-      }
-      html,
-      body {
-        background: var(--bg-primary, #ffffff);
-        color: var(--text-primary, #374151);
-      }
-      html[data-theme="dark"],
-      html[data-theme="dark"] body {
-        background: var(--bg-primary, #1a1b1e);
-        color: var(--text-primary, #d1d5db);
-      }
-      .startup-shell {
-        display: flex;
-        height: 100%;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-        font: 500 14px/1.4 system-ui, sans-serif;
-      }
-      .startup-shell-mark {
-        width: 15px;
-        height: 15px;
-        border: 2px solid currentColor;
-        border-right-color: transparent;
-        border-radius: 50%;
-        animation: tine-startup-spin 0.8s linear infinite;
-      }
-      @keyframes tine-startup-spin {
-        to { transform: rotate(360deg); }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .startup-shell-mark { animation: none; }
-      }
-    </style>
-    <script>
-      try {
-        const preference = localStorage.getItem("logseq-claude.theme");
-        const dark = preference === "dark" ||
-          (preference === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
-        document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
-      } catch (_) {
-        // The deterministic light default on <html> remains usable.
-      }
-    </script>
-    <script type="module" crossorigin src="./assets/main-C8kf-asH.js"></script>
-    <link rel="modulepreload" crossorigin href="./assets/app-BBSWYxDX.js">
-    <link rel="stylesheet" crossorigin href="./assets/app-H-D6cp9f.css">
-    <link rel="stylesheet" crossorigin href="./assets/main-UdLNOgRp.css">
+    <title>demo</title>
+    <script src="./assets/startup-theme.js"></script>
+    <script type="module" crossorigin src="./assets/main-C2s2SW1U.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/app-9EDJe0Vt.js">
+    <link rel="modulepreload" crossorigin href="./assets/index-D03wnr1R.js">
+    <link rel="stylesheet" crossorigin href="./assets/app-D0nPtrul.css">
+    <link rel="stylesheet" crossorigin href="./assets/main-QIjnAppd.css">
   </head>
   <body>
     <div id="root">
       <div class="startup-shell" role="status" aria-live="polite">
         <span class="startup-shell-mark" aria-hidden="true"></span>
-        <span>Opening Tine…</span>
+        <span id="startup-shell-text">Opening Tine…</span>
       </div>
     </div>
+    <script>
+      // tine#107: the native shell's text in the last chosen UI language: the
+      // window's own (read when a graph window is built), else the launch's.
+      var bootText = typeof globalThis.__TINE_WINDOW_BOOT_TEXT__ === "string"
+        ? globalThis.__TINE_WINDOW_BOOT_TEXT__ : globalThis.__TINE_BOOT_TEXT__;
+      if (typeof bootText === "string") {
+        document.getElementById("startup-shell-text").textContent = bootText;
+      }
+    </script>
     <script id="tine-engine-check">
       // GH #572. Tine needs the web engine of Safari 15.4 or later: the parser is
       // wasm with reference types (Safari 15) and the frontend uses ES2022
@@ -97,7 +57,7 @@
           "<strong>This system's web engine is too old for Tine.</strong>" +
           "<span>Tine needs the engine of Safari 15.4 or later.</span>" +
           "<span>" + (apple
-            ? "On a Mac, Tine needs macOS 12.3 (Monterey) or later: apps use the web engine that came with macOS, and updating the Safari app alone does not update it. On iPhone or iPad, update to iOS 15.4 or later."
+            ? "On a Mac, Tine needs macOS 12.3 (Monterey) or later: apps use the web engine that came with macOS, and updating the Safari app alone does not update it."
             : "Update your system's web view and restart Tine.") + "</span>" +
           "</div>";
       })();

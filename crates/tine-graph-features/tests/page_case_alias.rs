@@ -31,6 +31,7 @@ fn volume_ignores_case(root: &std::path::Path) -> bool {
 
 #[test]
 fn a_path_saved_under_another_case_spelling_opens_the_file() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("open");
     let ignores_case = volume_ignores_case(&root);
     let alias = PageId::from("pages/Contents.md");

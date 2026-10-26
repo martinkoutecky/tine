@@ -6,7 +6,7 @@ import type { FieldId } from "./fields";
 
 /** Facets for one live or DTO query row; cost is O(one block). */
 export function recordFacets(row: FormulaEvalRow): Facets | null {
-  const n = liveFormulaRowNode(row);
+  const n = liveFormulaRowNode(row, "mount");
   if (n) return facetsOf(n.raw, formatForBlock(row.id));
   return row.dto ? facetsFromDto(row.dto) : null;
 }
@@ -65,11 +65,11 @@ export function tableFieldOrder(
 
 /** A row's raw text, live or from its DTO. O(1). */
 export function rowRaw(row: FormulaEvalRow): string {
-  return liveFormulaRowNode(row)?.raw ?? row.dto?.raw ?? "";
+  return liveFormulaRowNode(row, "mount")?.raw ?? row.dto?.raw ?? "";
 }
 
 /** A table row's title cell text; an empty title over children reads as an em dash. */
 export function tableRowTitle(row: FormulaEvalRow): string {
   const title = visibleBody(rowRaw(row)).join(" ");
-  return title.trim() === "" && (liveFormulaRowNode(row)?.children.length ?? row.dto?.children.length ?? 0) > 0 ? "—" : title;
+  return title.trim() === "" && (liveFormulaRowNode(row, "mount")?.children.length ?? row.dto?.children.length ?? 0) > 0 ? "—" : title;
 }

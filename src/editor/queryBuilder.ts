@@ -1,4 +1,6 @@
 import { isLeafLike } from "./queryIr";
+import { msg, render, t, type MessageId, type Msg } from "../i18n";
+import type { MessageArgs } from "../i18n/messages.gen";
 // The visual builder's model — **over the IR, not over text** (SPEC §7.1, §7.4).
 
 import { MARKERS as TASK_MARKERS } from "../markers";
@@ -86,10 +88,13 @@ export function pageRefFilter(name: string): Filter {
   return rel("refs", attr("name", "eq", { kind: "text", text: name }));
 }
 
-/** `(task …)` — `og.rs` `"task" | "todo"`. */
+/** `(task …)` — `og.rs` `"task" | "todo"`: the markers as given. An empty list
+*  is the IR of a bare `(task)`, which in a Logseq query adds no condition
+*  (D-18, GH #422; `Filter::is_dropped_clause`). The builder never writes it:
+*  the marker pick's Apply needs at least one marker, and "Any status" is the
+*  explicit list {@link anyTaskFilter}. */
 export function taskFilter(markers: string[]): Filter {
-  const picked = markers.length ? markers : ["TODO", "DOING", "NOW", "LATER"];
-  return attr("task", "in", textList(picked));
+  return attr("task", "in", textList(markers));
 }
 
 /** Every task status OG knows: OG `logseq.db.default/built-in-markers`
@@ -125,9 +130,11 @@ export function isAnyTaskStatus(markers: string[]): boolean {
   return covers(OG_TASK_MARKERS) || covers(TASK_MARKERS);
 }
 
-/** `(priority …)` — `og.rs` `"priority"`. */
+/** `(priority …)` — `og.rs` `"priority"`: the levels as given. An empty list is
+*  a bare `(priority)`, which adds no condition (D-18); the builder's pick
+*  needs at least one level, so it never writes one. */
 export function priorityFilter(levels: string[]): Filter {
-  return attr("priority", "in", textList(levels.length ? levels : [...PRIORITIES]));
+  return attr("priority", "in", textList(levels));
 }
 
 /** A typed comparison on a property's VALUE, chosen by {@link propertyOperators}
@@ -324,55 +331,7 @@ export function propertyOperatorLabel(
   id: PropertyOperatorId,
   cardinality: Cardinality = "one",
 ): string {
-  const many = cardinality === "many";
-  switch (id) {
-    case "is":
-      return many ? "contains this value" : "is";
-    case "is_not":
-      return many ? "does not contain this value" : "is not";
-    case "gt":
-      return "is more than";
-    case "ge":
-      return "is at least";
-    case "lt":
-      return "is less than";
-    case "le":
-      return "is at most";
-    case "between":
-      return "is between";
-    case "before":
-      return "before";
-    case "on_or_before":
-      return "on or before";
-    case "after":
-      return "after";
-    case "on_or_after":
-      return "on or after";
-    case "contains":
-      return "contains";
-    case "does_not_contain":
-      return "does not contain";
-    case "starts_with":
-      return "starts with";
-    case "ends_with":
-      return "ends with";
-    case "references":
-      return "references";
-    case "does_not_reference":
-      return "does not reference";
-    case "is_checked":
-      return "is checked";
-    case "is_unchecked":
-      return "is unchecked";
-    case "is_set":
-      return "is set";
-    case "is_not_set":
-      return "is not set";
-    case "is_blank":
-      return "is blank";
-    case "has_other_value":
-      return "has a value other than";
-  }
+  return t("query-prose-property-operator", { op: id, cardinality: cardinality === "many" ? "list" : "scalar" });
 }
 
 /** The number of value inputs an identity collects. */
@@ -868,6 +827,7 @@ export function builderLeafKind(filter: Filter): BuilderLeafKind | null {
     case "scheduled":
     case "deadline":
       if (leaf.op === "is_set") return leaf.attr === "scheduled" ? "scheduled" : "deadline";
+      if (["eq", "gt", "ge", "lt", "le", "is_not_set"].includes(leaf.op)) return leaf.attr;
       return leaf.op === "between" || leaf.op === "ge" || leaf.op === "le" ? "between" : null;
     case "content":
       if (leaf.op === "like") return "content";
@@ -877,101 +837,71 @@ export function builderLeafKind(filter: Filter): BuilderLeafKind | null {
   }
 }
 
-// Human-readable chip labels
-
-const ATTR_PHRASE: Record<Attr, string> = {
-  content: "text",
-  task: "task",
-  priority: "priority",
-  scheduled: "scheduled",
-  deadline: "deadline",
-  created_at: "created",
-  last_modified_at: "last modified",
-  name: "name",
-  journal: "journal",
-  day: "date",
-  namespace: "namespace",
-  used_as_tag: "used as a tag",
-  key: "key",
-  value: "value",
-  atom_count: "values",
-};
-const OP_PHRASE: Record<CmpOp, string> = {
-  eq: "is",
-  not_eq: "is not",
-  lt: "<",
-  le: "≤",
-  gt: ">",
-  ge: "≥",
-  between: "between",
-  in: "is one of",
-  not_in: "is none of",
-  like: "contains",
-  starts_with: "starts with",
-  match: "matches",
-  regex: "matches regex",
-  is_set: "is set",
-  is_not_set: "is not set",
-  is_blank: "is blank",
+// Human-readable chip labels. These are deferred vocabulary, never DSL tokens.
+const ATTR_PHRASE: Record<Attr, Msg> = {
+  content: msg("query-prose-attr-content"),
+  task: msg("query-prose-attr-task"),
+  priority: msg("query-prose-attr-priority"),
+  scheduled: msg("query-prose-attr-scheduled"),
+  deadline: msg("query-prose-attr-deadline"),
+  created_at: msg("query-prose-attr-created-at"),
+  last_modified_at: msg("query-prose-attr-last-modified-at"),
+  name: msg("query-prose-attr-name"),
+  journal: msg("query-prose-attr-journal"),
+  day: msg("query-prose-attr-day"),
+  namespace: msg("query-prose-attr-namespace"),
+  used_as_tag: msg("query-prose-attr-used-as-tag"),
+  key: msg("query-prose-attr-key"),
+  value: msg("query-prose-attr-value"),
+  atom_count: msg("query-prose-attr-atom-count"),
 };
 
 function valuePhrase(value: Value): string {
   switch (value.kind) {
-    case "text":
-      return value.text;
-    case "number":
-      return String(value.number);
-    case "date":
-      return value.literal;
-    case "bool":
-      return value.bool ? "yes" : "no";
-    case "list":
-      return value.items.map(valuePhrase).join(" | ");
-    case "none":
-      return "";
+    case "text": return value.text;
+    case "number": return String(value.number);
+    case "date": return value.literal;
+    case "bool": return t("query-prose-boolean", { value: String(value.bool) });
+    case "list": return value.items.map(valuePhrase).join(" | ");
+    case "none": return "";
   }
 }
 
-/** A relative-date bound in plain words (`-7d` → "7 days ago"); anything else — an
- *  ISO date, a journal title — is shown as typed. Pure display: the stored token
- *  is never rewritten. */
+/** Display relative bounds; authored dates and journal titles pass through. */
 function boundWords(token: string): string {
-  const t = token.trim();
-  switch (t.toLowerCase()) {
+  const tokenText = token.trim();
+  switch (tokenText.toLowerCase()) {
     case "today":
-    case "now":
-      return "today";
-    case "yesterday":
-    case "tomorrow":
-      return t.toLowerCase();
+    case "now": return t("query-prose-today");
+    case "yesterday": return t("query-prose-yesterday");
+    case "tomorrow": return t("query-prose-tomorrow");
   }
-  const rel = /^([+-]?)(\d+)([dwmy])$/i.exec(t);
-  if (!rel) return t;
-  const unit = { d: "day", w: "week", m: "month", y: "year" }[rel[3].toLowerCase() as "d" | "w" | "m" | "y"];
-  const n = parseInt(rel[2], 10);
-  if (n === 0) return "today";
-  return `${n} ${unit}${n === 1 ? "" : "s"} ${rel[1] === "-" ? "ago" : "ahead"}`;
+  const relative = /^([+-]?)(\d+)([dwmy])$/i.exec(tokenText);
+  if (!relative) return tokenText;
+  const count = parseInt(relative[2], 10);
+  if (count === 0) return t("query-prose-today");
+  const messages = {
+    d: "query-prose-relative-days", w: "query-prose-relative-weeks",
+    m: "query-prose-relative-months", y: "query-prose-relative-years",
+  } as const;
+  return t(messages[relative[3].toLowerCase() as keyof typeof messages], { count, direction: relative[1] === "-" ? "ago" : "ahead" });
 }
 
-/** The plain-words reading of a `between` pair: a preset's own name
- *  ("next 7 days"), else "7 days ago to 7 days ahead". */
 function rangeWords(low: string, high: string): string {
-  const preset = DATE_PRESETS.find((p) => p.start === low.trim() && p.end === high.trim());
+  const preset = DATE_PRESETS.find(p => p.start === low.trim() && p.end === high.trim());
   if (preset) return preset.label.toLowerCase();
-  return `${boundWords(low)} to ${boundWords(high)}`;
+  return t("query-prose-date-range", { low: boundWords(low), high: boundWords(high) });
 }
 
-/** What a date condition on `attr` says — shared by the sentence, the row and the
- *  value cell, so "scheduled: next 7 days" is spelled one way everywhere (GH #619). */
 function datePhrase(attr: Attr, leaf: Leaf & { kind: "attr" }): PhraseSegment[] | null {
-  const field = attr === "day" ? "journal date" : ATTR_PHRASE[attr];
+  const field = attr === "day" ? t("query-prose-journal-date-field") : render(ATTR_PHRASE[attr]);
   if (leaf.op === "between" && leaf.value.kind === "list" && leaf.value.items.length === 2) {
-    const [low, high] = leaf.value.items.map((item) => dateOf(item) ?? valuePhrase(item));
-    return [words(`${field}: `), chip(rangeWords(low, high))];
+    const [low, high] = leaf.value.items.map(item => dateOf(item) ?? valuePhrase(item));
+    return phrase("query-prose-field-value", { field: [words(field)], value: [chip(rangeWords(low, high))] });
   }
   if ((leaf.op === "ge" || leaf.op === "le") && leaf.value.kind === "date") {
-    const when = boundWords(leaf.value.literal);
-    return [words(`${field}: `), chip(leaf.op === "ge" ? `from ${when}` : `until ${when}`)];
+    const value = t("query-prose-date-bound", { op: leaf.op, when: boundWords(leaf.value.literal) });
+    return phrase("query-prose-field-value", { field: [words(field)], value: [chip(value)] });
   }
   return null;
 }
@@ -982,69 +912,86 @@ export interface PhraseSegment {
   text: string;
   title?: string;
 }
-
 const seg = (kind: PhraseSegment["kind"], text: string, title?: string): PhraseSegment =>
   title ? { kind, text, title } : { kind, text };
 const words = (text: string): PhraseSegment => seg("text", text);
 const chip = (text: string, title?: string): PhraseSegment => seg("value", text, title);
 const named = (text: string): PhraseSegment => seg("field", text);
 
-/** The one bounded segment a subtree past {@link MAX_QUERY_BUILDER_DEPTH} collapses to. */
-export const ADVANCED_PHRASE = "⟨advanced⟩";
+/**
+ * Fluent owns the complete clause and can reorder every argument. Segment
+ * arguments travel as opaque placeholders; authored content is never parsed as
+ * markup or interpolated back into the format string. Restore the original
+ * segments after formatting so chips, fields and advanced cues keep their roles.
+ */
+type PhraseParts = (PhraseSegment | PhraseParts)[];
 
-/** **The phrase for one filter node — the ONE producer (§7.2).**
-*
-*  `filterLabel` is exactly this, joined; the sentence, the row and the
-*  `⟨advanced⟩` chip all read the same segments. Splitting the phrase into
-*  segments rather than a string is what lets the sentence draw values as chips
-*  without a second phrasing function that would drift from this one (I-12).
-*
-*  **Total by construction (the anti-Jira property, §7.5):** every query the
-*  parser accepts renders in the builder, invalid ones included — so this never
-*  returns "unsupported" and never throws. **Bounded by construction (I-22):**
-*  relation predicates and `off` are levels, and past the cap the answer is one
-*  `advanced` segment. */
+function formatPhrase<I extends MessageId>(id: I, args: { [K in keyof MessageArgs[I]]: string | number | PhraseParts }): PhraseParts {
+  const slots: PhraseParts[] = [];
+  const values: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(args as Record<string, string | number | PhraseParts>)) {
+    if (Array.isArray(value)) {
+      values[key] = "\uFFF0" + slots.length + "\uFFF1";
+      slots.push(value);
+    } else values[key] = value;
+  }
+  // The public helper's mapped arguments retain the generated key checks;
+  // only the internal segment-to-string representation crosses this cast.
+  const text = (t as (id: MessageId, args: Record<string, string | number>) => string)(id, values);
+  const out: PhraseParts = [];
+  const pattern = /\uFFF0(\d+)\uFFF1/g;
+  let start = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index! > start) out.push(words(text.slice(start, match.index)));
+    out.push(slots[Number(match[1])]);
+    start = match.index! + match[0].length;
+  }
+  if (start < text.length) out.push(words(text.slice(start)));
+  return out;
+}
+
+/** Iterative flatten: wide lists stay linear and cannot exhaust the stack. */
+function flattenPhrase(parts: PhraseParts): PhraseSegment[] {
+  const out: PhraseSegment[] = [];
+  const pending = [...parts].reverse();
+  while (pending.length) {
+    const part = pending.pop()!;
+    if (Array.isArray(part)) for (let i = part.length - 1; i >= 0; i--) pending.push(part[i]);
+    else out.push(part);
+  }
+  return out;
+}
+
+function phrase<I extends MessageId>(id: I, args: { [K in keyof MessageArgs[I]]: string | number | PhraseSegment[] }): PhraseSegment[] {
+  return flattenPhrase(formatPhrase(id, args));
+}
+
+export const ADVANCED_PHRASE = msg("query-prose-advanced");
+const advanced = (): PhraseSegment[] => [seg("advanced", render(ADVANCED_PHRASE))];
+
+/** One bounded producer for the row, value cell and resting sentence. */
 export function filterPhrase(filter: Filter, depth = 0): PhraseSegment[] {
-  if (depth >= MAX_QUERY_BUILDER_DEPTH) return [seg("advanced", ADVANCED_PHRASE)];
+  if (depth >= MAX_QUERY_BUILDER_DEPTH) return advanced();
   switch (filter.kind) {
     case "and":
-    case "or":
-      return [words(filter.kind.toUpperCase())];
-    case "not":
-      return [words("NOT")];
-    case "off":
-      return [...filterPhrase(filter.inner, depth + 1), words(" (off)")];
-    case "raw":
-      return [chip(filter.text)];
-    case "true":
-      return [words("everything")];
-    case "false":
-      return [words("nothing")];
-    case "leaf":
-      return leafPhrase(filter, filter.leaf, depth);
+    case "or": return [words(t("query-prose-group", { kind: filter.kind }))];
+    case "not": return [words(t("query-prose-not-group"))];
+    case "off": return phrase("query-prose-off", { inner: filterPhrase(filter.inner, depth + 1) });
+    case "raw": return [chip(filter.text)];
+    case "true": return [words(t("query-prose-everything"))];
+    case "false": return [words(t("query-prose-nothing"))];
+    case "leaf": return leafPhrase(filter, filter.leaf, depth);
   }
 }
 
-/** The phrase for one filter node, as a plain string. */
 export function filterLabel(filter: Filter): string {
-  return filterPhrase(filter)
-    .map((segment) => segment.text)
-    .join("");
+  return filterPhrase(filter).map(segment => segment.text).join("");
 }
 
-/** **What the row's VALUE cell says: the operands, without the prose.**
-*
-*  A row already names its field and its operator in its own two cells, so the
-*  value cell must not repeat them — `Task marker ▾ | is any of ▾ | task: TODO
-*  | DOING` says "task" three times. This is not a second labeller (D-14): it
-*  is the SAME {@link filterPhrase} segments with the prose dropped, so a value
-*  can never drift from the sentence that quotes it. A leaf with no operands at
-*  all (`on journal page`) keeps its whole phrase, because an empty cell would
-*  be nothing to click. */
 export function filterValueLabel(filter: Filter): string {
   const segments = filterPhrase(filter);
-  const values = segments.filter((segment) => segment.kind === "value");
-  return values.length ? values.map((segment) => segment.text).join(" ") : filterLabel(filter);
+  const values = segments.filter(segment => segment.kind === "value");
+  return values.length ? values.map(segment => segment.text).join(" ") : filterLabel(filter);
 }
 
 function leafPhrase(filter: Filter, leaf: Leaf, depth: number): PhraseSegment[] {
@@ -1053,158 +1000,101 @@ function leafPhrase(filter: Filter, leaf: Leaf, depth: number): PhraseSegment[] 
     const inner = asAttrLeaf(leaf.pred);
     const innerText = inner ? (textOf(inner.value) ?? "") : "";
     switch (kind) {
-      case "page":
-        return [chip(innerText)];
-      case "onPage":
-        return [words("page: "), chip(innerText)];
-      case "namespace":
-        return [words("namespace: "), chip(innerText.replace(/\/$/, ""))];
-      case "journal":
-        return [words("on journal page")];
-      default:
-        break;
+      case "page": return [chip(innerText)];
+      case "onPage": return phrase("query-prose-on-page", { value: [chip(innerText)] });
+      case "namespace": return phrase("query-prose-in-namespace", { value: [chip(innerText.replace(/\/$/, ""))] });
+      case "journal": return [words(t("query-prose-on-journal"))];
     }
     if (leaf.rel === "page") {
-      // A shape the builder itself writes is ONE condition, however deep its group sits:
-      // only a predicate the builder cannot re-collect is a nested level (GH #619).
       const inner = filterPhrase(leaf.pred, kind ? depth : depth + 1);
-      return kind === "pageProperty" ? [words("page "), ...inner] : inner;
+      return kind === "pageProperty" ? phrase("query-prose-page-property-clause", { inner }) : inner;
     }
     if (leaf.rel === "props") {
       const parts = propsParts(leaf.pred);
       if (parts) {
         const atom = parts.atom ? asAttrLeaf(parts.atom) : null;
         if (parts.key === "tags" && atom?.op === "in") {
-          return [words("page tags: "), chip((listOf(atom.value) ?? []).join(" | "))];
+          return phrase("query-prose-page-tags", { value: [chip((listOf(atom.value) ?? []).join(" | "))] });
         }
-        if (!parts.atom) return [named(parts.key), words(": any")];
-        if (atom?.op === "eq") {
-          return [named(parts.key), words(": "), chip(valuePhrase(atom.value))];
-        }
+        if (!parts.atom) return phrase("query-prose-property-any", { field: [named(parts.key)] });
+        if (atom?.op === "eq") return phrase("query-prose-field-value", { field: [named(parts.key)], value: [chip(valuePhrase(atom.value))] });
       }
-      // A typed comparison.
       const test = propertyLeafTest(filter);
       if (test) return propertyTestPhrase(test);
     }
-    return [words(`${leaf.quant} ${leaf.rel}: `), ...filterPhrase(leaf.pred, depth + 1)];
+    return phrase("query-prose-relation", { quant: leaf.quant, relation: leaf.rel, inner: filterPhrase(leaf.pred, depth + 1) });
   }
-  // An attribute leaf.
   switch (kind) {
     case "task": {
       const markers = listOf(leaf.value) ?? [];
-      return [words("task: "), chip(isAnyTaskStatus(markers) ? "Any status" : markers.join(" | ") || "any")];
+      const value = isAnyTaskStatus(markers) ? t("query-prose-any-status") : markers.join(" | ") || t("query-prose-no-markers");
+      return phrase("query-prose-task", { value: [chip(value)] });
     }
-    case "priority":
-      return [words("priority: "), chip((listOf(leaf.value) ?? []).join(" | ") || "any")];
+    case "priority": return phrase("query-prose-priority", { value: [chip((listOf(leaf.value) ?? []).join(" | ") || t("query-prose-no-levels"))] });
     case "scheduled":
-      return [words("scheduled")];
     case "deadline":
-      return [words("deadline")];
-    case "content":
-      return [
-        words('text: "'),
-        chip(plainLikeSubstring(textOf(leaf.value) ?? "") ?? valuePhrase(leaf.value)),
-        words('"'),
-      ];
-    case "search":
-      return [words("search: "), chip(valuePhrase(leaf.value))];
-    default:
+      if (leaf.op === "is_set") return [words(render(ATTR_PHRASE[leaf.attr]))];
       break;
+    case "content": return phrase("query-prose-content", { value: [chip(plainLikeSubstring(textOf(leaf.value) ?? "") ?? valuePhrase(leaf.value))] });
+    case "search": return phrase("query-prose-search", { value: [chip(valuePhrase(leaf.value))] });
   }
   if (leaf.attr === "day" || leaf.attr === "scheduled" || leaf.attr === "deadline") {
-    const phrase = datePhrase(leaf.attr, leaf);
-    if (phrase) return phrase;
+    const result = datePhrase(leaf.attr, leaf);
+    if (result) return result;
   }
-  if (leaf.op === "is_set" || leaf.op === "is_not_set" || leaf.op === "is_blank") {
-    return [named(ATTR_PHRASE[leaf.attr]), words(` ${OP_PHRASE[leaf.op]}`)];
-  }
-  return [
-    named(ATTR_PHRASE[leaf.attr]),
-    words(` ${OP_PHRASE[leaf.op]} `),
-    chip(valuePhrase(leaf.value)),
-  ];
+  return phrase("query-prose-attribute-test", { field: [named(render(ATTR_PHRASE[leaf.attr]))], op: leaf.op, value: [chip(valuePhrase(leaf.value))] });
 }
 
-/** `cost is more than 100` — the row's own words, in the sentence. */
 function propertyTestPhrase(test: PropertyLeafTest): PhraseSegment[] {
-  const label = propertyOperatorLabel(test.id);
-  if (!test.values.length) return [named(test.key), words(` ${label}`)];
-  return [named(test.key), words(` ${label} `), chip(test.values.join(" ~ "))];
+  return phrase("query-prose-property-test", { field: [named(test.key)], op: test.id, value: [chip(test.values.join(" ~ "))] });
 }
 
-/** Whether the filter places no condition: true or an empty and. An empty or
- *  is false in the engine and matches nothing. */
 export function isEmptyFilter(filter: Filter): boolean {
-  if (filter.kind === "true") return true;
-  return filter.kind === "and" && filter.items.length === 0;
+  return filter.kind === "true" || (filter.kind === "and" && filter.items.length === 0);
 }
 
 function joinPhrases(parts: PhraseSegment[][], connector: "and" | "or"): PhraseSegment[] {
   if (parts.length === 0) return [];
   if (parts.length === 1) return parts[0];
-  const out: PhraseSegment[] = [];
-  parts.forEach((part, index) => {
-    if (index > 0) {
-      const last = index === parts.length - 1;
-      // A list reads as a list: "a, b, and c" — commas between, the connector once, before the last.
-      if (connector === "and") out.push(words(last ? (parts.length > 2 ? ", and " : " and ") : ", "));
-      else out.push(words(last ? " or " : ", "));
-    }
-    out.push(...part);
-  });
-  return out;
+  // List punctuation belongs to the locale too; fold complete clauses rather
+  // than appending translated connector fragments in an English word order.
+  let out: PhraseParts = parts[0];
+  for (let i = 1; i < parts.length; i++) {
+    out = formatPhrase("query-prose-list", {
+      left: out, right: parts[i], connector,
+      position: i === parts.length - 1 ? (parts.length > 2 ? "last-many" : "last") : "middle",
+    });
+  }
+  return flattenPhrase(out);
 }
 
 function clausePhrase(filter: Filter, depth: number, isRoot: boolean): PhraseSegment[] {
-  if (depth >= MAX_QUERY_BUILDER_DEPTH) return [seg("advanced", ADVANCED_PHRASE)];
+  if (depth >= MAX_QUERY_BUILDER_DEPTH) return advanced();
   switch (filter.kind) {
     case "and":
     case "or": {
       if (filter.items.length === 0) return filterPhrase(filter, depth);
-      // A one-item group needs no parentheses, but it is still a LEVEL: a chain of them is exactly what a hostile …
       if (filter.items.length === 1) return clausePhrase(filter.items[0], depth + 1, isRoot);
-      const parts = filter.items.map((item) => clausePhrase(item, depth + 1, false));
-      const joined = joinPhrases(parts, filter.kind === "or" ? "or" : "and");
-      return isRoot ? joined : [words("("), ...joined, words(")")];
+      const inner = joinPhrases(filter.items.map(item => clausePhrase(item, depth + 1, false)), filter.kind);
+      return isRoot ? inner : phrase("query-prose-parentheses", { inner });
     }
-    case "not": {
-      const inner = isLeafLike(filter.inner)
-        ? clausePhrase(filter.inner, depth, false)
-        : clausePhrase(filter.inner, depth + 1, false);
-      return [words("not "), ...inner];
-    }
+    case "not":
     case "off": {
-      const inner = isLeafLike(filter.inner)
-        ? clausePhrase(filter.inner, depth, false)
-        : clausePhrase(filter.inner, depth + 1, false);
-      return [...inner, words(" (off)")];
+      const inner = clausePhrase(filter.inner, isLeafLike(filter.inner) ? depth : depth + 1, false);
+      return phrase(filter.kind === "not" ? "query-prose-negation" : "query-prose-off", { inner });
     }
-    default:
-      return filterPhrase(filter, depth);
+    default: return filterPhrase(filter, depth);
   }
 }
 
-/**
-* **The resting sentence for a whole query (SPEC §7.2, design §2.1).**
-*
-* One plain-English line whose subject is the anchor — "Blocks where …" /
-* "Pages where …" ("Pages and blocks where …" in both-families mode) — and whose predicate is the filter read as prose, values as
-* soft chips. It says "where" because the sheet's anchor line says "Find
-* blocks where …": the resting line and the editing line are one sentence.
-* An empty filter reads "All blocks" / "All pages": the honest
-* answer, and not a menu.
-*
-* It composes {@link filterPhrase} rather than re-phrasing anything, so the row
-* a user edits and the sentence they read are the same words, and it is bounded
-* by the same cap (I-22).
-*/
+/** Resting text for a whole query; the locale owns subject/predicate order. */
 export function querySentence(query: { anchor: Anchor; filter: Filter; both?: boolean }): PhraseSegment[] {
-  // GH #619 item 9: in "Pages and blocks" mode the subject is both families — never "Blocks where …"
-  // for a query that also lists pages.
-  const plural = query.both ? "pages and blocks" : query.anchor === "page" ? "pages" : "blocks";
-  if (isEmptyFilter(query.filter)) return [words("All "), named(plural)];
-  const subject = query.both ? "Pages and blocks" : plural === "pages" ? "Pages" : "Blocks";
-  return [named(subject), words(" where "), ...clausePhrase(query.filter, 0, true)];
+  const family = query.both ? "both" : query.anchor;
+  if (isEmptyFilter(query.filter)) return [words(t("query-prose-all", { family }))];
+  return phrase("query-prose-sentence", {
+    subject: [named(t("query-prose-subject", { family }))],
+    predicate: clausePhrase(query.filter, 0, true),
+  });
 }
 
 /** The inverse of {@link escapeLike} for a pattern that is exactly `%<literal>%`

@@ -4,8 +4,8 @@ import { expect, it } from "vitest";
 it("I-12: sheet transfers use the shared hidden-key answerer, rename uses parser property spans, hydration never replaces occupied slots", () => {
   const read = (name: string) => readFileSync(new URL(name, import.meta.url), "utf8");
   const mutations = read("./mutations.ts");
-  expect(mutations).toContain("splitProps(visible, isSheetCellHidden, fmt)");
-  expect(mutations).toContain("splitProps(raw, isSheetCellHidden, formatForBlock(id))");
+  expect(mutations).toContain("splitProps(visible, SHEET_CELL_HIDE, fmt)");
+  expect(mutations).toContain("splitProps(raw, SHEET_CELL_HIDE, formatForBlock(id))");
   expect(mutations).not.toContain("rawWithoutId");
   const rename = read("./renameField.ts");
   expect(rename).toContain("blockRegions(raw, format).properties");

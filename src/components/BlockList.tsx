@@ -15,6 +15,7 @@ import { editingId } from "../editorController";
 import { clearOnBindingInvalidated } from "../binding";
 import { listenForOutlinePrint, printingOutline, registerOutlineWindow } from "../outlineViewport";
 import { Block, CollapseSurfaceContext, SurfaceContext } from "./Block";
+import { elementFromPointIn, newIntersectionObserver, newResizeObserver, windowOf } from "../windowRealm";
 
 const GROUP = 24;
 const WINDOW_AT = 80;
@@ -35,10 +36,14 @@ export function BlockList(props: { ids: readonly string[] }): JSX.Element {
 export function blockListProps(idsOf: () => readonly string[]): { readonly each: readonly OutlineEntry[]; children: (entry: OutlineEntry) => JSX.Element } {
   onCleanup(listenForOutlinePrint());
   const collapseSurface = useContext(CollapseSurfaceContext);
-  let previous: readonly OutlineEntry[] = [];
+  const [groups, setGroups] = createSignal<readonly (readonly string[])[]>([]);
+  // Keep the list owner across structural edits. For keys windows by their id
+  // arrays, so unchanged membership must also keep its array identity (and its
+  // mounted images / measured spacer), even when a neighbouring group changes.
+  const windowed: readonly OutlineEntry[] = [{ get groups() { return groups(); } }];
   const entries = (): readonly OutlineEntry[] => {
     const ids = idsOf();
-    if (ids.length <= 1) return previous = ids;
+    if (ids.length <= 1) return ids;
     // A shallow list can still own thousands of expanded descendants. Weight
     // groups by rendered subtree size, capped at the small-list threshold.
     const size = (id: string): number => {
@@ -51,7 +56,7 @@ export function blockListProps(idsOf: () => readonly string[]): { readonly each:
       return count;
     };
     const sizes = ids.map(size);
-    if (sizes.reduce((sum, value) => sum + value, 0) <= WINDOW_AT) return previous = ids;
+    if (sizes.reduce((sum, value) => sum + value, 0) <= WINDOW_AT) return ids;
     const out: string[][] = [];
     let group: string[] = [], weight = 0;
     ids.forEach((id, i) => {
@@ -59,16 +64,18 @@ export function blockListProps(idsOf: () => readonly string[]): { readonly each:
       group.push(id); weight += sizes[i];
     });
     if (group.length) out.push(group);
-    const next: readonly OutlineEntry[] = [{ groups: out }];
-    // Retain group identities when a reactive root getter reads editor state.
-    const same = previous.length === next.length && previous.every((entry, i) => {
-      const other = next[i];
-      if (typeof entry === "string") return entry === other;
-      return typeof other !== "string" && entry.groups.length === other.groups.length
-        && entry.groups.every((ids, g) => ids.length === other.groups[g].length
-          && ids.every((id, j) => id === other.groups[g][j]));
+    const prior = untrack(groups);
+    // Typing/editor-state reads keep the same O(ids) comparison as before;
+    // only a changed grouping needs the identity lookup below.
+    if (out.length === prior.length && out.every((ids, i) => ids.length === prior[i].length
+      && ids.every((id, j) => id === prior[i][j]))) return windowed;
+    const byFirst = new Map(prior.map(ids => [ids[0], ids]));
+    const retained = out.map(ids => {
+      const old = byFirst.get(ids[0]);
+      return old && old.length === ids.length && ids.every((id, i) => id === old[i]) ? old : ids;
     });
-    return same ? previous : previous = next;
+    if (retained.length !== prior.length || retained.some((ids, i) => ids !== prior[i])) setGroups(retained);
+    return windowed;
   };
   // Use the existing For owner alone: legal deep outlines cannot gain another
   // reactive owner at every ancestor without overflowing Solid cleanup.
@@ -84,18 +91,23 @@ function WindowedList(props: { groups: readonly (readonly string[])[] }): JSX.El
   const [width, setWidth] = createSignal(900);
   const [font, setFont] = createSignal("16px sans-serif");
   const callbacks = new WeakMap<Element, (near: boolean) => void>();
-  const observer = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver((entries) => {
-    for (const entry of entries) callbacks.get(entry.target)?.(entry.isIntersecting);
-  }, { rootMargin: "600px 0px" });
+  // Created on first use from the list's own window: an IntersectionObserver's
+  // implicit root is its realm's viewport (OG-MULTIWINDOW P1).
+  let observer: IntersectionObserver | null | undefined;
   onCleanup(() => observer?.disconnect());
   const observe = (host: HTMLElement, callback: (near: boolean) => void) => {
+    if (observer === undefined) {
+      observer = newIntersectionObserver(host, (entries) => {
+        for (const entry of entries) callbacks.get(entry.target)?.(entry.isIntersecting);
+      }, { rootMargin: "600px 0px" });
+    }
     callbacks.set(host, callback); observer?.observe(host);
     return () => { observer?.unobserve(host); callbacks.delete(host); };
   };
   onMount(() => {
     const update = () => batch(() => { setWidth(container.clientWidth || 900); setFont(getComputedStyle(container).font || "16px sans-serif"); });
     update();
-    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    const resize = newResizeObserver(container, update);
     resize?.observe(container);
     onCleanup(() => resize?.disconnect());
   });
@@ -171,15 +183,15 @@ function BlockWindow(props: { ids: readonly string[]; first: boolean; width: num
     const press = (event: MouseEvent) => {
       if (untrack(mounted)) return;
       warm();
-      const target = document.elementFromPoint(event.clientX, event.clientY);
+      const target = elementFromPointIn(host, event.clientX, event.clientY);
       if (target && host.contains(target)) {
         event.stopImmediatePropagation();
-        target.dispatchEvent(new MouseEvent(event.type, event));
+        target.dispatchEvent(new (windowOf(host) as Window & typeof globalThis).MouseEvent(event.type, event));
       }
     };
     host.addEventListener("mousemove", warm, true);
     host.addEventListener("mousedown", press, true);
-    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+    const resize = newResizeObserver(host, () => {
       if (untrack(mounted)) remember();
       else {
         const cached = heights.get(cacheKey());

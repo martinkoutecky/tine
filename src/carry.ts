@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // "Carry unfinished tasks to today" (feature B). The store engine
 // (carryUnfinished) does the tree surgery; this orchestrates loading the days it
 // needs into the working set, then surfaces the result. Days are passed
@@ -39,18 +40,20 @@ async function ensureToday(owner: Owner): Promise<string | null> {
   return pageByName(t) ? t : null;
 }
 
-async function report(n: number, today: string, owner: Owner): Promise<void> {
+async function report({ moved: n, persisted }: { moved: number; persisted: Promise<boolean> }, today: string, owner: Owner): Promise<void> {
+  // A move the host refused was restored and already told the user (P12).
+  if (!(await persisted) || !owner()) return;
   // If a touched page couldn't be saved (conflict / disk error), DON'T reload the
   // journals feed — that would re-read the old files and drop the carried blocks
   // from memory. Leave the move in memory and surface the failure.
   if (!(await flushPage(today)) || !owner()) {
     if (!owner()) return;
-    pushToast("Carry couldn't be saved — resolve the conflict; your moved tasks are kept in the editor.", "error");
+    pushToast(msg("carry-carry-couldn-t-be-saved-resolve-the-conflict"), "error");
     return;
   }
   // TODO(S2): explicit pane handle for the journals feed pane.
   openJournals({ inPlace: true }); // a carry reloads the feed in place, not a new tab
-  pushToast(n ? `Carried ${n} item${n === 1 ? "" : "s"} to today` : "No unfinished tasks to carry");
+  pushToast(msg("carry-result", { count: n }));
 }
 
 /** Carry unfinished tasks from the latest earlier journal with content to
@@ -68,13 +71,13 @@ export async function carryPrevDay(): Promise<void> {
     if (result.kind === "stale") return;
     days = result.value;
   } catch (error) {
-    if (owner()) pushToast(`Could not read journal days for carry: ${String(error)}`, "error");
+    if (owner()) pushToast(msg("carry-could-not-read-journal-days-for-carry", { error: String(error) }), "error");
     return;
   }
   if (!owner()) return;
   const prevKey = days.filter((k) => k < todayKey).sort((a, b) => a - b).pop();
   if (prevKey == null) {
-    pushToast("No previous day with content to carry from");
+    pushToast(msg("carry-no-previous-day-with-content-to-carry-from"));
     return;
   }
   const d = new Date(Math.floor(prevKey / 10000), (Math.floor(prevKey / 100) % 100) - 1, prevKey % 100);
@@ -95,10 +98,9 @@ export async function carryDay(pageName: string): Promise<void> {
     if (!(await ensureLoaded(pageName, "journal", owner))) return;
     if (!owner()) return;
     if (refuseConflictedMove([today, pageName])) return;
-    const n = carryUnfinished([pageName], carryKeepsContext(), carryHeaderText());
-    await report(n, today, owner);
+    await report(carryUnfinished([pageName], carryKeepsContext(), carryHeaderText()), today, owner);
   } catch (error) {
-    if (owner()) pushToast(`Could not carry tasks: ${String(error)}`, "error");
+    if (owner()) pushToast(msg("carry-could-not-carry-tasks", { error: String(error) }), "error");
   }
 }
 
@@ -123,9 +125,8 @@ export async function carryDaysBack(days: number): Promise<void> {
     if (!owner()) return;
     const titles = candidates.filter((_, i) => loaded[i]); // skip days with no file
     if (refuseConflictedMove([today, ...titles])) return;
-    const n = carryUnfinished(titles, carryKeepsContext(), carryHeaderText());
-    await report(n, today, owner);
+    await report(carryUnfinished(titles, carryKeepsContext(), carryHeaderText()), today, owner);
   } catch (error) {
-    if (owner()) pushToast(`Could not carry tasks: ${String(error)}`, "error");
+    if (owner()) pushToast(msg("carry-could-not-carry-tasks", { error: String(error) }), "error");
   }
 }

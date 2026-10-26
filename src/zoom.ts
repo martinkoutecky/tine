@@ -1,3 +1,5 @@
+import { shortcutKey } from "./shortcutKey";
+import { msg } from "./i18n";
 // Interface zoom (UI scale) — like a browser's Ctrl +/-/0. Scales the WHOLE
 // webview uniformly (fonts, spacing, images, the PDF pane, everything) via the
 // native webview zoom-level where the platform implements it. Wry's Android
@@ -13,11 +15,12 @@
 // `activePane` (ui.ts) — this handler bails when the PDF pane is active, and
 // PdfViewer.onKeyZoom bails when it isn't.
 import { createSignal } from "solid-js";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { Webview, getCurrentWebview } from "@tauri-apps/api/webview";
 import { isTauri } from "./backend";
 import { activePane } from "./ui";
 import { platformKind } from "./platform";
 import { pushToast } from "./toasts";
+import { onEachWindow, requestFrame } from "./windowRealm";
 
 const ZOOM_KEY = "logseq-claude.zoom";
 const MIN = 0.5;
@@ -78,7 +81,18 @@ export function applyZoom(): void {
       document.documentElement.style.zoom = "";
       return getCurrentWebview().setZoom(scale);
     })
-    .catch(() => pushToast("Could not apply interface zoom.", "error"));
+    .catch(() => pushToast(msg("zoom-could-not-apply-interface-zoom"), "error"));
+}
+
+/** Apply the stored zoom to workspace window webview `label` (desktop only).
+ * A workspace window is a webview of its own, so main's native zoom does not
+ * reach it; src/workspaceWindows.ts calls this when the window opens and on
+ * every change. Failure toasts. */
+export function applyZoomToWebview(label: string, scale = interfaceZoom()): void {
+  if (!isTauri()) return;
+  void Webview.getByLabel(label)
+    .then((webview) => webview?.setZoom(scale))
+    .catch(() => pushToast(msg("zoom-could-not-apply-interface-zoom"), "error"));
 }
 
 function setZoom(z: number) {
@@ -89,7 +103,7 @@ function setZoom(z: number) {
     if (next === 1) localStorage.removeItem(ZOOM_KEY);
     else localStorage.setItem(ZOOM_KEY, String(next));
   } catch {
-    pushToast("Could not save interface zoom.", "error");
+    pushToast(msg("zoom-could-not-save-interface-zoom"), "error");
   }
   applyZoom();
 }
@@ -140,13 +154,15 @@ export function installInterfaceZoomKeys(): () => void {
     } else if (e.key === "-" || e.key === "_") {
       e.preventDefault();
       zoomOut();
-    } else if (e.key === "0") {
+    } else if (shortcutKey(e) === "0") {
       e.preventDefault();
       zoomReset();
     }
   };
-  window.addEventListener("keydown", onKey, true);
-  return () => window.removeEventListener("keydown", onKey, true);
+  return onEachWindow((win) => {
+    win.addEventListener("keydown", onKey, true);
+    return () => win.removeEventListener("keydown", onKey, true);
+  });
 }
 
 /** Ctrl/Cmd + mouse-wheel → interface zoom, routed by POINTER (not focus): a wheel
@@ -158,10 +174,10 @@ export function installInterfaceZoomKeys(): () => void {
  *  Returns an uninstaller. */
 export function installInterfaceZoomWheel(): () => void {
   let pending = 0;
-  let raf = 0;
+  let raf: (() => void) | undefined;
   let wheelZoomState: WheelZoomGestureState = {};
   const flush = () => {
-    raf = 0;
+    raf = undefined;
     const d = pending;
     pending = 0;
     if (d !== 0) setZoom(interfaceZoom() * (d < 0 ? 1.1 : 1 / 1.1));
@@ -178,11 +194,14 @@ export function installInterfaceZoomWheel(): () => void {
     e.stopPropagation();
     if (!decision.zoom) return;
     pending += e.deltaY; // sign-based step is robust to wheel vs. line deltaMode
-    if (!raf) raf = requestAnimationFrame(flush);
+    if (!raf) raf = requestFrame(e, flush);
   };
-  window.addEventListener("wheel", onWheel, { passive: false, capture: true });
+  const stopWindows = onEachWindow((win) => {
+    win.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    return () => win.removeEventListener("wheel", onWheel, { capture: true } as EventListenerOptions);
+  });
   return () => {
-    window.removeEventListener("wheel", onWheel, { capture: true } as EventListenerOptions);
-    if (raf) cancelAnimationFrame(raf);
+    stopWindows();
+    raf?.();
   };
 }

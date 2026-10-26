@@ -77,6 +77,7 @@ fn assert_no_opted_out(files: &BTreeMap<String, String>) {
 /// removed too, so no embed, query, ref or namespace list can show them.
 #[test]
 fn all_pages_public_config_still_excludes_public_false_pages() {
+    let _integration_guard = crate::integration_lock();
     let pages = opted_out_pages();
     let pages: Vec<_> = pages.iter().map(|(f, t)| (*f, t.as_str())).collect();
     let dir = graph("optout", "{:publishing/all-pages-public? true}\n", &pages);
@@ -92,6 +93,7 @@ fn all_pages_public_config_still_excludes_public_false_pages() {
 /// The explicit "include every page" export is the same OG selection.
 #[test]
 fn every_page_static_export_excludes_public_false_pages() {
+    let _integration_guard = crate::integration_lock();
     let pages = opted_out_pages();
     let pages: Vec<_> = pages.iter().map(|(f, t)| (*f, t.as_str())).collect();
     let dir = graph("optout-static", "{}\n", &pages);
@@ -110,6 +112,7 @@ fn every_page_static_export_excludes_public_false_pages() {
 /// `index.html`) gets a distinct file instead of failing the whole publish.
 #[test]
 fn pages_named_like_site_files_publish_beside_them() {
+    let _integration_guard = crate::integration_lock();
     let dir = graph(
         "reserved",
         "{:publishing/all-pages-public? true}\n",
@@ -144,6 +147,7 @@ fn pages_named_like_site_files_publish_beside_them() {
 /// one anchor answer, also when an authored `id::` looks like a generated one.
 #[test]
 fn reverse_ref_links_land_on_the_referring_block() {
+    let _integration_guard = crate::integration_lock();
     let target = "66666666-6666-4666-8666-666666666666";
     let source =
         "- authored first\n  id:: b0\n- REFERRER_TEXT ((66666666-6666-4666-8666-666666666666))\n";

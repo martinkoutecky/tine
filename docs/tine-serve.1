@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tine-serve 1  "serve " 
+.SH NAME
+tine\-serve \- Run a graph\*(Aqs owner for the command line. Read commands start it when the app does not have the graph open; it exits after 30 idle minutes or when the app opens the graph
+.SH SYNOPSIS
+\fBtine serve\fR [\fB\-\-stop\fR] [\fB\-\-debug\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIGRAPH\fR> 
+.SH DESCRIPTION
+Run a graph\*(Aqs owner for the command line. Read commands start it when the app does not have the graph open; it exits after 30 idle minutes or when the app opens the graph
+.SH OPTIONS
+.TP
+\fB\-\-stop\fR
+Ask the graph\*(Aqs command\-line owner to finish its work and exit
+.TP
+\fB\-\-debug\fR
+Enable diagnostic logging for the desktop app
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIGRAPH\fR>
+

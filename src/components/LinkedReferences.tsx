@@ -1,4 +1,6 @@
 import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
+import { bulkCollapseTarget } from "../collapseToggle";
+import { t } from "../i18n";
 import { For, Show, createResource, createSignal, createMemo, createEffect, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { classifyReferenceLoadError, referenceLoadErrorMessage, type ReferenceLoadError } from "../referenceLoadError";
@@ -19,6 +21,12 @@ import { pageIdentityKey } from "../pageIdentity";
 import { mergeReferenceGroups } from "../referenceGroups";
 import { sectionOverride, setSectionOverride } from "../referenceSectionState";
 import { readOr } from "../resourceRead";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
+import { createMembershipResource, groupsContainEdit } from "../resultMembership";
+import { activeSurface } from "../editorController";
+import { navigationName } from "../pageIndex";
+import { readPageProperty, setPageProperty } from "../document";
+import { parseReferenceFilters, writeReferenceFilters } from "../referenceFilters";
 
 // One identity fold for chips, filters and group merging: the old private `norm`
 // (trim + toLowerCase) split NFC/NFD and boundary-slash spellings of one page
@@ -100,34 +108,49 @@ const referenceCollapseThreshold = () =>
  * exclude chips use the same source-root context; export snapshots visible rows.
  * One backend read per target; a fixed result-limit token selects the bounded
  * alert, other failures a generic alert. */
-export function LinkedReferences(props: { name: string }): JSX.Element {
+export function LinkedReferences(props: { name: string; journalFeed?: boolean }): JSX.Element {
+  return <ReferenceSection name={props.name} journalFeed={props.journalFeed} />;
+}
+
+/** Shared filter and rendering owner for linked and plain-text references. */
+export function ReferenceSection(props: { name: string; unlinked?: boolean; journalFeed?: boolean }): JSX.Element {
+  const section = props.unlinked ? "unlinked" : "linked";
+  const heading = () => t(props.unlinked ? "references-unlinked" : "references-linked");
+  const savedFilterKey = () => props.unlinked ? `unlinked\0${props.name}` : props.name;
   const readScope = {};
   let alive = true;
   onCleanup(() => { alive = false; });
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
-  const [groupsResource] = createResource(
+  const [groupsResource] = createMembershipResource(
+    () => props.name,
     () => props.name,
     async (n) => {
       const owner = latestOwner(readScope, "backlinks", graphOwner(() => alive && props.name === n));
       setLoadError(null);
       try {
-        const result = await readOwned(owner, backend().getBacklinks(n));
+        const result = await readOwned(owner, props.unlinked ? backend().getUnlinkedRefs(n) : backend().getBacklinks(n));
         return result.kind === "current" ? result.value : [];
       } catch (error) {
         if (owner()) setLoadError(classifyReferenceLoadError(error));
         return [];
       }
-    }
+    },
+    // Editing the source in the feed cannot unmount that editor when these
+    // backlinks change. Only an editor inside the result surface needs its
+    // answer retained until blur; source edits may follow published revisions.
+    (groups, id) => (!props.journalFeed || !!activeSurface()?.startsWith("ref:")) && groupsContainEdit(groups, id),
   );
   // The resource loader reports failures through loadError; readOr covers reads.
   const groups = () => readOr(groupsResource, undefined, "linked references");
   const mergedGroups = createMemo(() => mergeReferenceGroups(groups() ?? []));
-  const [collapsedOverride, setCollapsedOverrideSignal] = createSignal<boolean | null>(sectionOverride("linked", props.name) ?? null);
+  // Unlinked's saved override is historically "open", linked's is "collapsed".
+  const savedCollapse = () => props.unlinked ? !(sectionOverride(section, props.name) ?? false) : sectionOverride(section, props.name) ?? null;
+  const [collapsedOverride, setCollapsedOverrideSignal] = createSignal<boolean | null>(savedCollapse());
   const setCollapsedOverride = (value: boolean) => {
-    setSectionOverride("linked", props.name, value);
+    setSectionOverride(section, props.name, props.unlinked ? !value : value);
     setCollapsedOverrideSignal(value);
   };
-  const { groupCollapsed, setGroupCollapsed, setAll, reload: reloadGroupCollapse } = createReferenceGroupCollapse("linked", () => props.name);
+  const { groupCollapsed, setGroupCollapsed, setAll, reload: reloadGroupCollapse } = createReferenceGroupCollapse(section, () => props.name);
   const [filterOpen, setFilterOpen] = createSignal(false);
   const [exportChooserOpen, setExportChooserOpen] = createSignal(false);
   const [searchDraft, setSearchDraft] = createSignal("");
@@ -137,13 +160,27 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     if (searchTimer !== undefined) clearTimeout(searchTimer);
   });
   // page name -> "in" (must also reference) | "out" (must not reference).
-  const [filters, setFilters] = createSignal<FilterMap>(loadFilters(props.name));
+  const [rawFilters, setFilters] = createSignal<FilterMap>(loadFilters(savedFilterKey()));
+  // The existing inventory owns alias precedence and live updates. Resolve at
+  // the shared identity boundary: chips, membership and legacy saved names
+  // must all ask the same answerer, never scan the graph or build an alias map.
+  const filters = createMemo<FilterMap>(() => Object.fromEntries(
+    Object.entries(rawFilters()).map(([name, state]) => [navigationName(name), state])
+  ));
+  createEffect(() => {
+    const property = props.unlinked ? null : readPageProperty(props.name, "filters");
+    setFilters(property === null ? loadFilters(savedFilterKey()) : parseReferenceFilters(property) ?? {});
+  });
+  const persistFilters = (f: FilterMap) => {
+    saveFilters(savedFilterKey(), f);
+    // Unlinked has a separate device filter; OG's page property belongs only
+    // to Linked References. All graph writes use the guarded document intent.
+    if (!props.unlinked) setPageProperty(props.name, "filters", writeReferenceFilters(f));
+  };
   // Reload the saved filter when the page changes.
   createEffect(() => {
-    const page = props.name;
     reloadGroupCollapse();
-    setCollapsedOverrideSignal(sectionOverride("linked", page) ?? null);
-    setFilters(loadFilters(props.name));
+    setCollapsedOverrideSignal(savedCollapse());
     setFilterOpen(false);
     setSearchDraft("");
     setSearchQuery("");
@@ -165,7 +202,13 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   // The "Couldn't index descendant text" row below was unreachable: reading a
   // rejected `nativeContext` threw before any Show could render it.
   const nativeContext = () => readOr(nativeContextResource, undefined, "reference filter index");
-  const fallbackByRoot = createMemo(() =>
+  const parsedSearch = createMemo(() => parseSearchQuery(searchQuery(), searchRemoveAccents()));
+  // GH #746: the filter index (folded search text, page facets) costs a wasm
+  // fold per reference root and is built only while a filter or search needs
+  // it. Memos run eagerly, so an ungated index was rebuilt over every result
+  // (13 MB of unlinked references: 0.7 s) after each save, collapsed or not.
+  const indexNeeded = () => filterOpen() || Object.keys(filters()).length > 0 || parsedSearch().kind !== "empty";
+  const fallbackByRoot = createMemo(() => !indexNeeded() ? new Map<string, SearchableFilterEntry>() :
     new Map(
       mergedGroups().flatMap((group) =>
         group.blocks.map((block) => [
@@ -186,8 +229,13 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   const rootEntry = (group: RefGroup, block: BlockDto) =>
     nativeByRoot().get(filterKey(group.page, group.kind, block.id))
       ?? fallbackByRoot().get(filterKey(group.page, group.kind, block.id))!;
+  const rootFacets = (group: RefGroup, block: BlockDto) => new Map(
+    rootEntry(group, block).facets.map((name) => {
+      const canonical = navigationName(name);
+      return [norm(canonical), canonical] as const;
+    })
+  );
 
-  const parsedSearch = createMemo(() => parseSearchQuery(searchQuery(), searchRemoveAccents()));
   const searchError = createMemo(() => {
     const parsed = parsedSearch();
     return parsed.kind === "invalid" ? parsed.error : null;
@@ -210,10 +258,13 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   // Co-referenced pages/tags and task states in each backlink tree, with counts.
   const coRefs = createMemo(() => {
     const counts = new Map<string, { name: string; count: number }>();
+    // Only the open filter panel shows the chips.
+    if (!filterOpen()) return [];
     for (const g of textMatchedGroups()) {
       for (const b of g.blocks) {
-        for (const name of rootEntry(g, b).facets) {
-          const key = norm(name);
+        // Count reference roots, not spellings: two aliases (or an alias and
+        // the canonical name) in one tree contribute once to this page chip.
+        for (const [key, name] of rootFacets(g, b)) {
           const previous = counts.get(key);
           counts.set(key, { name: previous?.name ?? name, count: (previous?.count ?? 0) + 1 });
         }
@@ -221,7 +272,9 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     }
     return [...counts.values()]
       .map(({ name, count }) => [name, count] as const)
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      // GH #433: alphabetical (case-folded, locale-aware), so chips stay put as
+      // counts change while typing or filtering. OG sorts by count.
+      .sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: "base", numeric: true }) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   });
 
   const orphanFilters = createMemo(() => {
@@ -249,8 +302,8 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     if (filterPending()) return mergedGroups();
     if (!ins.length && !outs.length) return textMatchedGroups();
     return filterGroups(textMatchedGroups(), (group, block) => {
-      const facets = new Set(rootEntry(group, block).facets.map(norm));
-      return (ins.length === 0 || ins.some((name) => facets.has(name)))
+      const facets = rootFacets(group, block);
+      return (ins.length === 0 || ins.every((name) => facets.has(name)))
         && outs.every((name) => !facets.has(name));
     });
   });
@@ -266,7 +319,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     if (current === "in") f[name] = "out";
     else if (current !== "out") f[name] = "in";
     setFilters(f);
-    saveFilters(props.name, f);
+    persistFilters(f);
   };
   const count = () => shown().reduce((acc, g) => acc + g.blocks.length, 0);
   const totalCount = () => mergedGroups().reduce((acc, g) => acc + g.blocks.length, 0);
@@ -293,40 +346,42 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     setSearchDraft("");
     setSearchQuery("");
     setFilters({});
-    saveFilters(props.name, {});
+    persistFilters({});
   };
 
   return (
     <Show
-      when={loadError() === null}
+      when={props.unlinked || loadError() === null}
       fallback={
         <div class="linked-references reference-error" role="alert">
-          <div class="references-header">Linked References</div>
+          <div class="references-header">{heading()}</div>
           <div class="reference-filter-error">
             {referenceLoadErrorMessage(loadError()!)}
           </div>
         </div>
       }
     >
-    <Show when={groups() && mergedGroups().length > 0}>
+    <Show when={props.unlinked || (groups() && mergedGroups().length > 0)}>
       <Show when={exportChooserOpen()}>
-        <ReferenceExportChooser subject="Linked References" groups={shown()} onClose={() => setExportChooserOpen(false)} />
+        <ReferenceExportChooser subject={heading()} groups={shown()} onClose={() => setExportChooserOpen(false)} />
       </Show>
-      <div class="linked-references">
+      <div class={`${section}-references`}>
         <div class="references-header" onClick={() => setCollapsedOverride(!collapsed())}>
-          <span class="ref-collapse" classList={{ collapsed: collapsed() }}>
-            <svg viewBox="0 0 24 24" class="triangle">
-              <path d="M8 5l8 7-8 7z" />
-            </svg>
-          </span>
-          Linked References <span class="references-count">{count()}</span>
+          <ReferenceDisclosure collapsed={collapsed()} />
+          {heading()} <span class="references-count">{count()}</span>
+          <Show when={props.unlinked && groupsResource.loading && groups() === undefined}><span class="references-loading"> {t("references-loading")}</span></Show>
+          <button type="button" class="reference-export-toggle"
+            aria-label={t(props.unlinked ? "references-copy-unlinked" : "references-copy-linked")} title={t(props.unlinked ? "references-copy-unlinked-title" : "references-copy-linked-title")}
+            disabled={!count()}
+            onClick={(event) => { event.stopPropagation(); setExportChooserOpen(true); }}
+          ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z" /></svg></button>
           <button
             type="button"
             class="reference-filter-toggle"
             classList={{ active: filterOpen() || hasActiveFilter() }}
-            aria-label="Filter linked references"
+            aria-label={t(props.unlinked ? "references-filter-unlinked" : "references-filter-linked")}
             aria-expanded={filterOpen()}
-            title="Filter linked references"
+            title={t(props.unlinked ? "references-filter-unlinked" : "references-filter-linked")}
             onClick={(event) => {
               event.stopPropagation();
               setFilterOpen(!filterOpen());
@@ -334,15 +389,14 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.2 7.1v5.4l-3.6 1.8v-7.2z" /></svg>
           </button>
-          <button type="button" class="reference-export-toggle"
-            aria-label="Copy / export linked references" title="Copy / export selected linked references"
-            onClick={(event) => { event.stopPropagation(); setExportChooserOpen(true); }}
-          ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z" /></svg></button>
         </div>
         <Show when={!collapsed()}>
+          <Show when={loadError()}>
+            <div class="reference-filter-error reference-error" role="alert">{referenceLoadErrorMessage(loadError()!)}</div>
+          </Show>
           <Show when={occurrenceLimit().truncated}>
             <div class="reference-truncation" role="status">
-              Showing {occurrenceLimit().shown} of {occurrenceLimit().total} matching occurrences.
+              {t("references-occurrences", { shown: occurrenceLimit().shown, total: occurrenceLimit().total })}
             </div>
           </Show>
           <Show when={filterOpen()}>
@@ -352,15 +406,15 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                   class="reference-filter-search"
                   type="search"
                   value={searchDraft()}
-                  placeholder="Search reference text"
-                  aria-label="Search linked reference text"
+                  placeholder={t("references-search-placeholder")}
+                  aria-label={t(props.unlinked ? "references-search-unlinked" : "references-search-linked")}
                   onInput={(event) => updateSearch(event.currentTarget.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Escape") setFilterOpen(false);
                   }}
                 />
                 <button type="button" class="reference-filter-clear" disabled={!hasActiveFilter()} onClick={clearAllFilters}>
-                  Clear
+                  {t("references-clear")}
                 </button>
               </div>
               <div class="reference-filter-summary">
@@ -368,31 +422,31 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                   when={filterPending()}
                   fallback={
                     <>
-                      {count()} of {totalCount()} references
-                      <Show when={nativeContextResource.loading}> · indexing…</Show>
+                      {t("references-summary", { shown: count(), total: totalCount() })}
+                      <Show when={nativeContextResource.loading}> · {t("references-indexing")}</Show>
                     </>
                   }
                 >
-                  Indexing {totalCount()} references… the filter applies when this finishes
+                  {t("references-index-pending", { total: totalCount() })}
                 </Show>
               </div>
               <Show when={searchError()}>
-                {(error) => <div class="reference-filter-error">Invalid search: {error()}</div>}
+                {(error) => <div class="reference-filter-error">{t("references-invalid-search", { error: error() })}</div>}
               </Show>
               <Show when={nativeContextResource.error}>
-                <div class="reference-filter-error">Couldn’t index descendant text; searching visible root text only.</div>
+                <div class="reference-filter-error">{t("references-index-error")}</div>
               </Show>
               <Show when={nativeContext()?.truncated || nativeContext()?.entries.some((entry) => entry.truncated)}>
-                <div class="reference-filter-warning">Some very large reference trees are searched partially.</div>
+                <div class="reference-filter-warning">{t("references-index-partial")}</div>
               </Show>
               <Show when={coRefs().length > 0 || orphanFilters().length > 0}>
-                <div class="ref-filter" aria-label="Reference facets">
+                <div class="ref-filter" aria-label={t("references-facets")}>
                   <For each={coRefs()}>
                     {([name, n]) => (
                       <button
                         class="ref-filter-chip"
                         classList={{ "f-in": filterState(name) === "in", "f-out": filterState(name) === "out" }}
-                        title="Click: include · again: exclude · again: clear"
+                        title={t("references-facet-cycle")}
                         onClick={() => cycle(name)}
                       >
                         {name} <span class="ref-filter-count">{n}</span>
@@ -403,7 +457,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                     {(name) => (
                       <button class="ref-filter-chip"
                         classList={{ "f-in": filterState(name) === "in", "f-out": filterState(name) === "out" }}
-                        title="No match in the current text search · click to cycle or clear"
+                        title={t("references-facet-orphan")}
                         onClick={() => cycle(name)}
                       >{name} <span class="ref-filter-count">0</span></button>
                     )}
@@ -413,9 +467,8 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
             </div>
           </Show>
           <Show when={shown().length > 1}>
-            <div class="reference-bulk-controls" aria-label="Linked reference page groups">
-              <button type="button" onClick={() => setAllGroups(true)}>Collapse all</button>
-              <button type="button" onClick={() => setAllGroups(false)}>Expand all</button>
+            <div class="reference-bulk-controls" aria-label={t(props.unlinked ? "references-groups-unlinked" : "references-groups-linked")}>
+              <button type="button" onClick={() => setAllGroups(bulkCollapseTarget(shown(), groupCollapsed))}>{t(bulkCollapseTarget(shown(), groupCollapsed) ? "references-collapse-all" : "references-expand-all")}</button>
             </div>
           </Show>
           <For each={shown().map(groupKey)}>
@@ -431,10 +484,10 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                     type="button"
                     class="reference-group-disclosure"
                     aria-expanded={!groupCollapsed(group())}
-                    aria-label={`${groupCollapsed(group()) ? "Expand" : "Collapse"} references from ${group().page}`}
+                    aria-label={t(groupCollapsed(group()) ? "references-expand-group" : "references-collapse-group", { page: group().page })}
                     onClick={() => setGroupCollapsed(group(), !groupCollapsed(group()))}
                   >
-                    {groupCollapsed(group()) ? "▸" : "▾"}
+                    <ReferenceDisclosure collapsed={groupCollapsed(group())} />
                   </button>
                   <button
                     ref={pageButton}
@@ -477,8 +530,10 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                       kind={group().kind}
                       blocks={group().blocks}
                       evidence={group().evidence}
+                      path={group().path}
                       surface="ref"
                       showBreadcrumb
+                      excerpt={props.unlinked}
                     />
                   </div>
                 </Show>

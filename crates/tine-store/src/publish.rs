@@ -1,4 +1,4 @@
-//! Staged publication: Store::publish_site and publish_query_site share the
+//! Staged publication: every Store::publish destination shares the
 //! stage/sync/retire/no-replace/identity protocol. Query destination review is
 //! read-only O(colliding siblings); commit is O(output bytes + retirement),
 //! holds the writer lock and emits no page Change. It never mutates source pages.
@@ -146,6 +146,27 @@ impl Drop for StageCleanup {
     }
 }
 
+/// Where [`Store::publish`] puts a static site.
+#[derive(Clone, Copy, Debug)]
+pub enum PublishDest<'a> {
+    /// `<graph root>/publish`, retiring the previous site into recovery.
+    GraphSite,
+    /// A portable leaf under `<graph root>/published-queries`.
+    QueryLeaf {
+        /// Portable leaf name (lowercase ASCII letters, digits and `-`).
+        folder: &'a str,
+        /// Retire a directory occupying the leaf instead of refusing.
+        replace: bool,
+    },
+    /// A fresh create-only leaf under a user-picked directory outside the graph.
+    External {
+        /// User-chosen parent directory (an OS path input).
+        parent: &'a Path,
+        /// Portable leaf name (lowercase ASCII letters, digits and `-`).
+        leaf: &'a str,
+    },
+}
+
 /// A staged site file writer. Each call writes and fsyncs one new file.
 pub struct SiteWriter {
     stage: PublishStage,
@@ -186,107 +207,13 @@ pub struct PublishReceipt {
 }
 
 impl Store {
-    /// Fold the existing per-document block-reference counter over exactly a
-    /// publication's selected pages. Cost O(selected blocks); no graph bytes
-    /// are read or written. Callers need no cache or index state.
-    pub(crate) fn publication_block_ref_counts(
-        &self,
-        corpus: &tine_core::Corpus,
-    ) -> std::collections::HashMap<String, usize> {
-        let mut counts = std::collections::HashMap::new();
-        for page in &corpus.pages {
-            for (id, count) in crate::model::document_block_ref_counts(&page.document) {
-                *counts.entry(id).or_default() += count;
-            }
-        }
-        counts
-    }
-
-    /// Read assets referenced by exactly the supplied parsed source pages for
-    /// a publication. Candidate names use the store's one asset-ref
-    /// scanner and file-id validator. Missing files warn; oversized live assets
-    /// return TooLarge before publication. Reads are bounded during copying.
-    /// Cost O(selected text + asset bytes), capped by budget. No graph writes.
-    pub(crate) fn publication_assets(
-        &self,
-        corpus: &tine_core::Corpus,
-        budget: u64,
-        warnings: &mut Vec<String>,
-    ) -> Result<Vec<(String, Vec<u8>)>, crate::StoreError> {
-        let mut names = std::collections::HashSet::new();
-        for page in &corpus.pages {
-            if let Some(pre) = &page.document.pre_block {
-                crate::model::collect_asset_refs(pre, &mut names);
-            }
-            for block in &page.document.roots {
-                crate::model::collect_block_asset_refs(block, &mut names);
-            }
-        }
-        // The orphan scanner keeps raw and decoded URL spellings. A browser
-        // decodes the URL, so copy only the decoded name when both were seen.
-        let encoded: Vec<_> = names
-            .iter()
-            .filter(|name| name.contains('%'))
-            .cloned()
-            .collect();
-        for name in encoded {
-            if crate::model::percent_decode(&name) != name {
-                names.remove(&name);
-            }
-        }
-        // The shared orphan answerer also marks ancestors (PDF area-image
-        // directories). Publication copies files, so remove those directory
-        // markers while preserving the complete nested reference.
-        let referenced: Vec<_> = names.iter().cloned().collect();
-        for name in referenced {
-            for parent in Path::new(&name).ancestors().skip(1) {
-                if let Some(parent) = parent.to_str() {
-                    names.remove(parent);
-                }
-            }
-        }
-        let mut names: Vec<_> = names.into_iter().collect();
-        names.sort();
-        let mut out = Vec::new();
-        let mut remaining = budget;
-        for name in names {
-            // The scanner over-collects on purpose (orphan detection must not
-            // miss a reference), so a candidate may be prose after `assets/`
-            // rather than a file name. One that cannot name a file is simply
-            // not an asset: skip it like a missing one instead of failing the
-            // whole publication. A real read failure of an asset still fails.
-            let Ok(id) = self.file_id(crate::Area::Assets, &name) else {
-                continue;
-            };
-            match self.read(&id, Some(remaining)) {
-                Ok((bytes, _)) => {
-                    remaining = remaining.saturating_sub(bytes.len() as u64);
-                    out.push((format!("assets/{name}"), bytes));
-                }
-                Err(crate::StoreError::InvalidTarget(_)) => {
-                    warnings.push(format!("Asset {name} was omitted: not a regular file."));
-                }
-                Err(crate::StoreError::NotFound) => {
-                    warnings.push(format!("Asset {name} was omitted: file not found."));
-                }
-                Err(crate::StoreError::Io(error))
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::InvalidFilename | std::io::ErrorKind::NotADirectory
-                    ) => {}
-                Err(error) => return Err(error),
-            }
-        }
-        Ok(out)
-    }
-
     /// Publish a create-only site under a directory explicitly picked by the
     /// user. The leaf must be a portable name. The parent must exist outside
     /// the graph; even a symlink into the graph is refused. Files are fsynced
     /// in an owned stage and the stage is moved without clobbering an existing
     /// leaf. A failure after the rename can leave a complete but unsynced site;
     /// inspect the named destination before retrying. Cost O(emitted bytes).
-    pub(crate) fn publish_site_external(
+    fn publish_site_external(
         &self,
         parent: &Path,
         leaf: &str,
@@ -360,25 +287,47 @@ impl Store {
         })
     }
 
-    /// Export a static site to `<graph root>/publish`; report retained previous output. Each emitted file is
-    /// fsynced, then the previous site is retired and the new site is moved
-    /// into place without replacing a concurrent winner. A concurrent
-    /// directory that appears at the destination stays live and causes an
-    /// error rather than a successful receipt; the prior site
-    /// remains in recovery. Failure attempts to remove the reserved stage;
-    /// an early setup or cleanup error may leave it on disk. This does not
-    /// emit a graph `Change`. Cost O(emitted bytes + previous-site retirement);
-    /// it blocks page saves and other writes for the full operation, including
+    /// Publish a static site to `dest` through one staged door. Each emitted
+    /// file is fsynced in an owned stage, which then moves into place without
+    /// replacing a concurrent winner. This does not emit a graph `Change`.
+    /// Cost O(emitted bytes + previous-site retirement); a graph destination
+    /// blocks page saves and other writes for the full operation, including
     /// the caller's `emit` closure and each output file's fsync. Prepare
-    /// expensive content before calling and keep `emit` bounded.
-    /// `emit` must not call methods on this store: they can wait for the
-    /// writer lock held here. A callback panic is returned as a failure after
-    /// stage cleanup, so later store calls remain usable.
-    pub fn publish_site(
+    /// expensive content before calling and keep `emit` bounded. `emit` must
+    /// not call methods on this store: they can wait for the writer lock held
+    /// here. A callback panic is returned as a failure after stage cleanup,
+    /// so later store calls remain usable. Failure attempts to remove the
+    /// reserved stage; an early setup or cleanup error may leave it on disk.
+    ///
+    /// - [`PublishDest::GraphSite`]: `<graph root>/publish`. The previous
+    ///   site is retired into recovery; a concurrent directory that appears
+    ///   at the destination stays live and causes an error rather than a
+    ///   successful receipt, and the prior site remains in recovery.
+    /// - [`PublishDest::QueryLeaf`]: a query leaf under `published-queries`.
+    ///   Create refuses a concurrent winner; replace preserves the directory
+    ///   occupying the leaf at commit and reports its recovery path on success
+    ///   or later failure. Stage/retirement/install errors can leave complete
+    ///   output or recovery on disk: inspect reported paths before retrying.
+    /// - [`PublishDest::External`]: a create-only site under a directory
+    ///   explicitly picked by the user. The leaf must be a portable name. The
+    ///   parent must exist outside the graph; even a symlink into the graph is
+    ///   refused. A collision or a changed stage refuses publication. A
+    ///   failure after the rename can leave a complete but unsynced site;
+    ///   inspect the named destination before retrying.
+    pub fn publish(
         &self,
+        dest: PublishDest<'_>,
         emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
     ) -> Result<PublishReceipt, PublishFailed> {
-        self.publish_site_at(None, true, emit)
+        match dest {
+            PublishDest::GraphSite => self.publish_site_at(None, true, emit),
+            PublishDest::QueryLeaf { folder, replace } => {
+                self.publish_site_at(Some(folder), replace, emit)
+            }
+            PublishDest::External { parent, leaf } => {
+                self.publish_site_external(parent, leaf, emit)
+            }
+        }
     }
 
     fn publish_site_at(
@@ -448,39 +397,6 @@ impl Store {
     }
 }
 
-/// Count projected block references over exactly the selected publication
-/// pages. Cost O(selected blocks); source pages are not changed.
-pub fn publication_block_ref_counts(
-    store: &Store,
-    corpus: &tine_core::Corpus,
-) -> std::collections::HashMap<String, usize> {
-    store.publication_block_ref_counts(corpus)
-}
-
-/// Read selected pages' referenced assets through Store's validated asset
-/// reader. Missing assets append warnings; TooLarge refuses the caller-supplied
-/// cumulative byte budget. Cost O(selected text + budget); no graph writes.
-pub fn publication_assets(
-    store: &Store,
-    corpus: &tine_core::Corpus,
-    budget: u64,
-    warnings: &mut Vec<String>,
-) -> Result<Vec<(String, Vec<u8>)>, crate::StoreError> {
-    store.publication_assets(corpus, budget, warnings)
-}
-
-/// Publish a fresh site leaf below an existing user-picked OS directory. The
-/// parent must be outside the graph. Store stages and fsyncs files, then moves
-/// the stage create-only; a collision or changed stage refuses publication.
-pub fn publish_site_external(
-    store: &Store,
-    parent: &std::ffi::OsStr,
-    leaf: &str,
-    emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
-) -> Result<PublishReceipt, PublishFailed> {
-    store.publish_site_external(Path::new(parent), leaf, emit)
-}
-
 fn validate_leaf(leaf: &str) -> io::Result<()> {
     if leaf.is_empty()
         || leaf.len() > 80
@@ -532,21 +448,6 @@ pub fn query_publication_destination(
         occupied,
         suggested,
     ))
-}
-
-/// Commit a query leaf under published-queries through the same staged door as
-/// Store::publish_site. Create refuses a concurrent winner; Replace preserves
-/// the directory occupying the leaf at commit and reports its recovery path on
-/// success or later failure. Cost O(emitted bytes); holds the writer lock, so
-/// emit must not call Store. Stage/retirement/install errors can leave complete
-/// output or recovery on disk: inspect reported paths before retrying.
-pub fn publish_query_site(
-    store: &Store,
-    folder: &str,
-    replace: bool,
-    emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
-) -> Result<PublishReceipt, PublishFailed> {
-    store.publish_site_at(Some(folder), replace, emit)
 }
 
 struct PublishRecovery {
@@ -895,7 +796,7 @@ mod tests {
     fn failed_publish_removes_its_reserved_stage() {
         let (base, _) = roots("cleanup-on-error");
         let store = Store::open(&base, Default::default()).unwrap().0;
-        let result = store.publish_site(&mut |writer| {
+        let result = store.publish(crate::publish::PublishDest::GraphSite, &mut |writer| {
             writer.write("index.html", b"partial")?;
             Err(io::Error::other("emit failed").into())
         });
@@ -903,7 +804,9 @@ mod tests {
         assert!(stage_names(&base).is_empty());
 
         fs::write(base.join("publish"), b"not a directory").unwrap();
-        let result = store.publish_site(&mut |writer| writer.write("index.html", b"partial"));
+        let result = store.publish(crate::publish::PublishDest::GraphSite, &mut |writer| {
+            writer.write("index.html", b"partial")
+        });
         assert!(result.is_err());
         assert!(stage_names(&base).is_empty());
     }
@@ -912,14 +815,16 @@ mod tests {
     fn panicking_emit_cleans_stage_and_leaves_writer_usable() {
         let (base, _) = roots("panic-on-emit");
         let store = Store::open(&base, Default::default()).unwrap().0;
-        let failed = store.publish_site(&mut |writer| {
+        let failed = store.publish(crate::publish::PublishDest::GraphSite, &mut |writer| {
             writer.write("index.html", b"partial")?;
             panic!("injected emitter panic")
         });
         assert!(failed.is_err());
         assert!(stage_names(&base).is_empty());
         let published = store
-            .publish_site(&mut |writer| writer.write("index.html", b"complete"))
+            .publish(crate::publish::PublishDest::GraphSite, &mut |writer| {
+                writer.write("index.html", b"complete")
+            })
             .unwrap();
         assert_eq!(published.files, 1);
         assert_eq!(
@@ -998,7 +903,7 @@ mod tests {
         fs::write(outside.join("style.css"), "outside sentinel").unwrap();
         PUBLISH_STAGE_WRITE_SWAP.with(|slot| *slot.borrow_mut() = Some(outside.clone()));
         let store = Store::open(&base, Default::default()).unwrap().0;
-        let result = store.publish_site(&mut |writer| {
+        let result = store.publish(crate::publish::PublishDest::GraphSite, &mut |writer| {
             writer.write("style.css", b"generated")?;
             writer.write("public.html", b"generated page")
         });
@@ -1019,7 +924,9 @@ mod tests {
         PUBLISH_RECOVERY_SWAP.with(|slot| *slot.borrow_mut() = Some(outside.clone()));
         let store = Store::open(&base, Default::default()).unwrap().0;
         let receipt = store
-            .publish_site(&mut |writer| writer.write("index.html", b"generated"))
+            .publish(crate::publish::PublishDest::GraphSite, &mut |writer| {
+                writer.write("index.html", b"generated")
+            })
             .unwrap();
         assert!(receipt.site.join("index.html").exists());
         assert_eq!(

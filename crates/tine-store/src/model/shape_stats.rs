@@ -20,14 +20,6 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use tine_core::model::PageKind;
 
-impl Graph {
-    /// The built page cache, if one exists. Never builds one: a diagnostics
-    /// dump must not start the whole-graph parse it is meant to explain.
-    pub(crate) fn peek_pages(&self) -> Option<Arc<Pages>> {
-        self.cache.read().unwrap().as_ref().map(Arc::clone)
-    }
-}
-
 /// `{n, min, p10, p50, p90, p99, max, sum}` of `values` (nearest rank).
 /// `n == 0` reports zeros rather than omitting the key.
 pub(crate) fn quantiles(values: &mut [u64]) -> Value {

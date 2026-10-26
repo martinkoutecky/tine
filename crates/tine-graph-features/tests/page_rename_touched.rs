@@ -7,7 +7,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages::{self, RenameOutcome, TouchedPage};
 use tine_store::Store;
 
-fn fixture(label: &str) -> (PathBuf, Store) {
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
+fn fixture(label: &str) -> (PathBuf, std::sync::Arc<Store>) {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-rename-touched-{label}-{}-{}",
@@ -27,7 +38,7 @@ fn fixture(label: &str) -> (PathBuf, Store) {
     ] {
         fs::write(root.join(rel), body).unwrap();
     }
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     (root, store)
 }
 
@@ -51,9 +62,12 @@ fn touched(path: &str, moved: bool) -> TouchedPage {
 
 #[test]
 fn a_rename_reports_every_page_it_moved_or_rewrote_and_nothing_else() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("report");
-    let mut report =
-        pages::rename_or_merge_page(&store, "Target", "Renamed", None, None, &[]).unwrap();
+    let mut report = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Target", "Renamed", None, None, &[])
+    })
+    .unwrap();
     assert_eq!(report.outcome, RenameOutcome::Renamed);
     report.touched.sort_by(|a, b| a.path.cmp(&b.path));
     assert_eq!(
@@ -73,17 +87,21 @@ fn a_rename_reports_every_page_it_moved_or_rewrote_and_nothing_else() {
 
 #[test]
 fn a_rename_refuses_to_write_a_file_with_unsaved_edits_and_changes_nothing() {
+    let _integration_guard = crate::integration_lock();
     for blocked in ["pages/Referrer.md", "pages/Target___Child.md"] {
         let (root, store) = fixture("guarded");
         let before = snapshot(&root);
-        let error = pages::rename_or_merge_page(
-            &store,
-            "Target",
-            "Renamed",
-            None,
-            None,
-            &[blocked.to_owned()],
-        )
+        let error = hosted(&store, |host| {
+            pages::rename_or_merge_page(
+                &store,
+                host,
+                "Target",
+                "Renamed",
+                None,
+                None,
+                &[blocked.to_owned()],
+            )
+        })
         .expect_err("writing a file under unsaved edits must refuse");
         let name = if blocked.contains("Child") {
             "“Target/Child”"
@@ -97,15 +115,19 @@ fn a_rename_refuses_to_write_a_file_with_unsaved_edits_and_changes_nothing() {
 
 #[test]
 fn unsaved_edits_on_an_untouched_page_do_not_block_the_rename() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("untouched");
-    let report = pages::rename_or_merge_page(
-        &store,
-        "Target",
-        "Renamed",
-        None,
-        None,
-        &["pages/Unrelated.md".to_owned()],
-    )
+    let report = hosted(&store, |host| {
+        pages::rename_or_merge_page(
+            &store,
+            host,
+            "Target",
+            "Renamed",
+            None,
+            None,
+            &["pages/Unrelated.md".to_owned()],
+        )
+    })
     .unwrap();
     assert_eq!(report.outcome, RenameOutcome::Renamed);
     assert_eq!(
@@ -116,33 +138,40 @@ fn unsaved_edits_on_an_untouched_page_do_not_block_the_rename() {
 
 #[test]
 fn a_merge_reports_its_survivor_and_source_and_honours_unsaved_paths() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("merge");
     fs::write(root.join("pages/Survivor.md"), "- kept\n").unwrap();
     let store = {
         drop(store);
-        Store::open(&root, Default::default()).unwrap().0
+        std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0)
     };
     let before = snapshot(&root);
-    let error = pages::rename_or_merge_page(
-        &store,
-        "Referrer",
-        "Survivor",
-        None,
-        Some("pages/Survivor.md"),
-        &["pages/Survivor.md".to_owned()],
-    )
+    let error = hosted(&store, |host| {
+        pages::rename_or_merge_page(
+            &store,
+            host,
+            "Referrer",
+            "Survivor",
+            None,
+            Some("pages/Survivor.md"),
+            &["pages/Survivor.md".to_owned()],
+        )
+    })
     .expect_err("the survivor holds unsaved edits");
     assert!(error.to_string().contains("“Survivor”"), "{error}");
     assert_eq!(snapshot(&root), before);
 
-    let mut report = pages::rename_or_merge_page(
-        &store,
-        "Referrer",
-        "Survivor",
-        None,
-        Some("pages/Survivor.md"),
-        &[],
-    )
+    let mut report = hosted(&store, |host| {
+        pages::rename_or_merge_page(
+            &store,
+            host,
+            "Referrer",
+            "Survivor",
+            None,
+            Some("pages/Survivor.md"),
+            &[],
+        )
+    })
     .unwrap();
     assert_eq!(report.outcome, RenameOutcome::Merged);
     report.touched.sort_by(|a, b| a.path.cmp(&b.path));

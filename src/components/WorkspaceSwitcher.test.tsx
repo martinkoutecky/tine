@@ -42,6 +42,24 @@ afterEach(() => {
 });
 
 describe("WorkspaceSwitcher", () => {
+  it("GH #593 keeps the hover menu open across the pointer gap", () => {
+    const host = document.createElement("div"); document.body.append(host);
+    dispose = render(() => <WorkspaceSwitcher />, host);
+    const root = host.querySelector<HTMLElement>("[data-workspace-switcher]")!;
+    vi.useFakeTimers();
+    try {
+      root.dispatchEvent(new MouseEvent("mouseenter"));
+      root.dispatchEvent(new MouseEvent("mouseleave"));
+      vi.advanceTimersByTime(80);
+      expect(root.querySelector(".workspace-quick-menu")).not.toBeNull();
+      root.dispatchEvent(new MouseEvent("mouseenter"));
+      vi.advanceTimersByTime(400);
+      expect(root.querySelector(".workspace-quick-menu")).not.toBeNull();
+      root.dispatchEvent(new MouseEvent("mouseleave"));
+      vi.advanceTimersByTime(400);
+      expect(root.querySelector(".workspace-quick-menu")).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
   it("does not delete the new graph's colliding workspace after an old confirmation", async () => {
     const host = document.createElement("div");
     document.body.appendChild(host);

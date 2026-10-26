@@ -1,12 +1,14 @@
 // In-memory mock backend seeded with a fixture graph. Used only when running
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
-import { split_linkable_property } from "./render/wasm/lsdoc_wasm.js";
+import { linkable_property_names } from "./render/wasm/lsdoc_wasm.js";
 import type { GraphVerificationReport } from "./graphVerification";
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
+import { ASSET_INGRESS_MAX_BYTES } from "./clipboardImage";
 import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
-import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, DraftRecord, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
+import { mockPageHost } from "./mockPageHost";
+import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PageModified, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { previewDtoSubtree } from "./previewProjection";
 import { hlsPageName } from "./pdf";
@@ -89,13 +91,7 @@ function mockReferencedPageNames(pages: PageDto[]): string[] {
       if (!/^(tags|alias|aliases)$/i.test(key)) continue;
       const quoted = value.trim();
       if (quoted.length >= 2 && quoted.startsWith('"') && quoted.endsWith('"')) continue;
-      for (const valuePart of split_linkable_property(value)) {
-        const bare = valuePart.trim().replace(/^#/, "");
-        const name = bare.startsWith("[[") && bare.endsWith("]]")
-          ? bare.slice(2, -2).trim()
-          : bare;
-        add(name);
-      }
+      for (const name of linkable_property_names(value, false)) add(name);
     }
   };
   const visit = (blocks: BlockDto[]) => blocks.forEach((block) => {
@@ -459,13 +455,36 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
       pre_block: null,
       blocks: [b("{{embed ((ui-block-embed-root))}}")],
     },
+    {
+      // GH #439: a whole-page embed among ordinary siblings and children.
+      name: "Page embed regression",
+      kind: "page",
+      title: "Page embed regression",
+      pre_block: null,
+      blocks: [
+        b("Ordinary parent", [
+          b("{{embed [[Page embed source regression]]}}"),
+          b("Ordinary sibling"),
+        ]),
+        b("{{embed [[Page embed source regression]]}}"),
+      ],
+    },
+    {
+      name: "Page embed source regression",
+      kind: "page",
+      title: "Page embed source regression",
+      pre_block: null,
+      blocks: [
+        b("Source root one", [b("Source child", [b("Source grandchild")])]),
+        b("Source root two"),
+      ],
+    },
   );
 }
 
 const mockHighlights: Record<string, { label: string; highlights: Highlight[]; page?: number; scale?: number }> = {};
 // In-memory UI session for the browser mock (no backend file).
 let mockSession: string | null = null;
-const mockDrafts = new Map<string, DraftRecord>();
 let mockWorkspaces: string | null = null;
 let mockGuideAnnounced = false;
 const mockAssets: Record<string, Uint8Array> = {};
@@ -629,7 +648,7 @@ function cloneGuideBlockForCopy(block: BlockDto, copied: Map<string, string>): B
     properties: propertyLines(raw),
   };
 }
-/** Demo/test backend with mutable mock state. savePages is a no-op; writeHighlights replaces its list without three-way merge or production failures. */
+/** Demo/test backend with mutable mock state. Page saves are taken and not written (`mockPageHost`); writeHighlights replaces its list without three-way merge or production failures. */
 // Copy/Export's browser fixture retains local approximations. These are not
 // Backend operations and have no native command; only this mock calls them.
 type MockBackend = Backend & {
@@ -800,11 +819,11 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       mockPluginRegistryCache = { schemaVersion: 1, indexJson, signature: signature.trim() };
     },
     async setSystemBarAppearance(): Promise<void> {},
-    async quit(): Promise<void> {
-      // No-op in the mock/screenshot harness — there's no process to exit.
-    },
     async closeGraphWindow(): Promise<void> {
       // No-op in the mock/screenshot harness.
+    },
+    async trayApply() {
+      return { supported: false, active: false, problem: null };
     },
     async openDevtools(): Promise<void> {
       // No-op in the mock/screenshot harness — no native WebView inspector.
@@ -864,25 +883,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async resolvePage(name: string, kind: "journal" | "page") {
       return mockResolve(name, kind);
     },
-    async graphSourceFiles(includeJournals: boolean) {
-      // Synthetic sources so the diff panel is exercisable against the mock
-      // backend (the real comparison still needs mldoc + lsdoc-wasm at runtime).
-      const files = [
-        { rel: "pages/welcome.md", text: "# Welcome\n- a **bold** note with [[Link]]\n", format: "md" as const },
-        { rel: "pages/tasks.md", text: "- TODO finish #project\n- DONE ship it\n", format: "md" as const },
-      ];
-      if (includeJournals) {
-        files.push({ rel: "journals/2026_07_04.md", text: "- met with [[Alice]] re: $$x^2$$\n", format: "md" as const });
-      }
-      return {
-        files: files.map((f) => ({ ...f, bytes: new TextEncoder().encode(f.text).length })),
-        skipped: [],
-      };
-    },
     graphBindingGeneration: () => 1,
-    async savePages(entries) {
-      return { ok: entries.map(() => "mock-rev") }; // no-op in mock
-    },
+    ...mockPageHost((path) => all.find((p) => mockPagePath(p) === path) ?? null, (name, kind) => mockResolve(name, kind)),
     async guidePages(): Promise<GuidePage[]> {
       return mockGuidePages().map((g) => ({ ...g, page: clonePage(g.page) }));
     },
@@ -915,8 +917,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async setGuideAnnounced(announced: boolean): Promise<void> {
       mockGuideAnnounced = announced;
     },
-    async createGraph(_dir: string): Promise<string> {
-      return "/mock/new-graph"; // no real scaffolding in the browser mock
+    async suggestGraphName(_dir: string): Promise<string> { return "notes"; },
+    async createGraph(dir: string, name: string): Promise<string> {
+      return `${dir.replace(/[\\/]$/, "")}/${name.trim()}`; // no real scaffolding in the browser mock
     },
     async getBacklinks(name: string): Promise<RefGroup[]> {
       const n = name.toLowerCase();
@@ -976,9 +979,6 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async getBlockReferrers(uuid: string): Promise<RefGroup[]> {
       // No exclude → same-page referrers included (matches the backend).
       return collect((b) => blockRefIds(b.raw).includes(uuid));
-    },
-    async deletePage(): Promise<void> {
-      // no-op in mock
     },
     async renamePage(): Promise<import("./types").RenameDone> {
       return { outcome: "unchanged", touched: [] }; // no-op in mock
@@ -1114,6 +1114,12 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async readCustomCss(): Promise<string> {
       return (globalThis as unknown as { __tineMockCustomCss?: string }).__tineMockCustomCss ?? "";
     },
+    async pageModified(): Promise<PageModified> {
+      // Deterministic, distinct times: the first mock page is the newest.
+      const base = Date.UTC(2026, 5, 15, 12, 0, 0) / 1000;
+      return { rev: "0", modified: all.map((p, i) => [mockPagePath(p), base - i * 3600] as [string, number]) };
+    },
+    async pageBacklinkCounts(): Promise<[string, number][]> { return []; },
     async pageIcons(names: string[]): Promise<Record<string, string>> {
       const out: Record<string, string> = {};
       for (const name of names) {
@@ -1181,7 +1187,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       }
       return groups.filter((g) => g.blocks.length > 0);
     },
-    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope, pageMatchScope: import("./editor/queryIr").FriendlyPageMatchScope = "names"): Promise<QueryExecution> {
+    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope, pageMatchScope: import("./editor/queryIr").FriendlyPageMatchScope = "names", _views?: { page: import("./editor/queryIr").ViewSettings; block: import("./editor/queryIr").ViewSettings }, _transliteration = false): Promise<QueryExecution> {
       // Browser-preview approximation only (ADR 0016). Production matching,
       // diagnostics, and UTF-16 evidence come from Rust's QueryPlan evaluator.
       const matcher = parseSearchQuery(source, removeAccents);
@@ -1287,14 +1293,14 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         },
       ];
     },
-    async quickSwitch(query: string, limit: number): Promise<PageEntry[]> {
+    async quickSwitch(query: string, limit: number, _editor?: { pageName: string; blockId: string; originalRaw: string }, _transliteration = false): Promise<PageEntry[]> {
       const q = fold(query.trim());
       return all
         .filter((p) => fold(p.name).includes(q))
         .slice(0, limit)
         .map(mockPageEntry);
     },
-    async captureQuickSwitch(query: string, limit: number): Promise<PageEntry[]> {
+    async captureQuickSwitch(query: string, limit: number, _transliteration = false): Promise<PageEntry[]> {
       return this.quickSwitch(query, limit);
     },
     async resolveBlock(uuid: string): Promise<RefGroup | null> {
@@ -1336,15 +1342,15 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       const { blocks, truncated } = previewDtoSubtree(group.blocks[0], maxNodes, "borrowed");
       return { group: { ...group, blocks }, truncated };
     },
-    async readAsset(name: string, maxBytes?: number): Promise<Uint8Array> {
-      void maxBytes;
-      if (mockAssets[name]) return mockAssets[name];
-      if (name === "sample.pdf") return decodeB64(SAMPLE_PDF_B64);
-      if (name === "voice_memo.wav") return decodeB64(SILENT_WAV_B64);
-      return new Uint8Array();
+    async readAsset(name: string, maxBytes: number): Promise<Uint8Array> {
+      const bytes = mockAssets[name] ?? (name === "sample.pdf" ? decodeB64(SAMPLE_PDF_B64)
+        : name === "voice_memo.wav" ? decodeB64(SILENT_WAV_B64) : new Uint8Array());
+      if (bytes.byteLength > maxBytes) throw "asset-too-large";
+      return bytes;
     },
     async streamAsset(name: string): Promise<string> {
-      const bytes = await this.readAsset(name);
+      // Mock streams buffer bytes; use the existing asset-ingress ceiling.
+      const bytes = await this.readAsset(name, ASSET_INGRESS_MAX_BYTES);
       if (!bytes.length) return "";
       const type = name.toLowerCase().endsWith(".wav") ? "audio/wav" : "application/octet-stream";
       return URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type }));
@@ -1377,6 +1383,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     },
     async openPageFile(): Promise<void> {
       // no OS file manager in the browser mock
+    },
+    async openGraphFile(): Promise<void> {
+      // no OS opener in the browser mock
     },
     async editAssetExternal(): Promise<void> {
       // no external editor in the browser mock
@@ -1435,7 +1444,10 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       const c = (globalThis as { confirm?: (m?: string) => boolean }).confirm;
       return typeof c === "function" ? c(message) : true;
     },
-    async pickFolder(_title?: string): Promise<string | null> {
+    async revealExport(_path: string) {},
+    async readCssFile(_global: boolean) { return { text: "", revision: null }; },
+    async saveCssFile(_global: boolean, text: string, _revision: string | null) { return text; },
+    async pickFolder(_title?: string, _defaultPath?: string): Promise<string | null> {
       return null; // no native dialog in the browser mock
     },
     async pickGraphFolder() {
@@ -1473,6 +1485,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         // ignore
       }
     },
+    async copyAssetFileToClipboard(): Promise<boolean> { return false; },
     async copyImageToClipboard(): Promise<void> {
       // no OS clipboard image write in the browser mock
     },
@@ -1481,6 +1494,10 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     },
     async onAssetChanged(): Promise<() => void> { return () => {}; },
     async onGraphConfigChanged(): Promise<() => void> { return () => {}; },
+    async onCustomCssChanged(): Promise<() => void> { return () => {}; },
+    async editCustomCss(): Promise<void> {
+      // no OS editor in the browser mock
+    },
     async getBackupKeep(): Promise<number> {
       return 12;
     },
@@ -1505,8 +1522,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async listBackups() {
       return [];
     },
-    async restoreBackup(): Promise<void> {
-      // no-op in the browser mock
+    async restoreBackup() {
+      return { error: null, reloaded: null }; // no-op in the browser mock
     },
     async loadSession(): Promise<string | null> {
       return mockSession;
@@ -1514,14 +1531,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async saveSession(data: string): Promise<void> {
       mockSession = data;
     },
-    async loadDrafts(): Promise<DraftRecord[]> {
-      return [...mockDrafts.values()].map((record) => structuredClone(record));
-    },
-    async storeDraft(record: DraftRecord, _graphRoot?: string): Promise<void> {
-      mockDrafts.set(record.id, structuredClone(record));
-    },
-    async retireDraft(id: string): Promise<void> {
-      mockDrafts.delete(id);
+    async legacyDraftsFile() {
+      return null;
     },
     async loadWorkspaces(): Promise<string> {
       if (!mockWorkspaces) {
@@ -1541,7 +1552,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       mockWorkspaces = data; return "durable";
     },
     async gpuEnv(): Promise<GpuEnv> {
-      return { software_forced: false, appimage: false, packaged: false };
+      return { software_forced: false, appimage: false, flatpak: false, packaged: false, portable: false };
     },
     async takeDataHomeFallbackNotice(): Promise<string | null> {
       return null;
@@ -1573,6 +1584,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async setAppString(key: string, value: string): Promise<void> {
       mockAppStrings[key] = value;
     },
+    async setUiLocale(): Promise<void> { /* no native shell in the mock */ },
     async applySpellcheck(): Promise<void> { /* no native webview in the mock */ },
     // A representative set so the picker renders in the browser mock / harness.
     async listSpellcheckDictionaries(): Promise<string[]> { return ["cs_CZ", "de_DE", "en_GB", "en_US", "fr_FR", "sk_SK"]; },

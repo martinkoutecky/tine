@@ -1,3 +1,5 @@
+import { Rich } from "../i18n/Rich";
+import { msg, t } from "../i18n";
 import { For, Show, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { ownedWhen, readOwned } from "../owned";
@@ -28,8 +30,8 @@ const hasPresentation = (installed: InstalledTheme): boolean =>
   Object.keys(installed.manifest.presentation ?? {}).length > 0;
 
 function galleryBadge(theme: GalleryTheme): string {
-  if (theme.modes.length === 1) return theme.modes[0] === "light" ? "Light-only" : "Dark-only";
-  return theme.compat === "full" ? "Full" : "Partial";
+  if (theme.modes.length === 1) return theme.modes[0] === "light" ? t("themes-light-only") : t("themes-dark-only");
+  return theme.compat === "full" ? t("themes-full") : t("themes-partial");
 }
 
 function ThemeGalleryCard(props: {
@@ -70,15 +72,15 @@ export function ThemeSettings(): JSX.Element {
     const file = files?.[0];
     if (!file) return;
     if (file.size > 64 * 1024) {
-      pushToast("Theme manifest exceeds the 64 KiB limit.", "error");
+      pushToast(msg("themes-theme-manifest-exceeds-the-64-kib-limit"), "error");
       return;
     }
     setThemePackageBusy("install");
     try {
       const installed = await installThemePackage(JSON.parse(await file.text()));
-      pushToast(`${installed.manifest.name} ${installed.manifest.version} installed.`, "info");
+      pushToast(msg("themes-installed", { name: installed.manifest.name, version: installed.manifest.version }), "info");
     } catch (error) {
-      pushToast(`Theme installation failed: ${String(error)}`, "error");
+      pushToast(msg("themes-theme-installation-failed", { error: String(error) }), "error");
     } finally {
       setThemePackageBusy(null);
       if (themePackageInput) themePackageInput.value = "";
@@ -86,8 +88,8 @@ export function ThemeSettings(): JSX.Element {
   };
   const uninstallTheme = async (key: string, name: string) => {
     const result = await readOwned(ownedWhen(() => alive), backend().confirm(
-      `Uninstall ${name}?\n\nThis removes the theme from this device. It does not change your graph or custom.css.`,
-      "Uninstall theme?"
+      t("themes-uninstall-this-removes-the-theme-from", { name: name }),
+      t("themes-uninstall-theme")
     ));
     if (result.kind === "stale") return;
     const confirmed = result.value;
@@ -96,9 +98,9 @@ export function ThemeSettings(): JSX.Element {
     try {
       clearThemeSelection(key);
       await uninstallThemePackage(key);
-      pushToast(`${name} was uninstalled.`, "info");
+      pushToast(msg("themes-was-uninstalled", { name: name }), "info");
     } catch (error) {
-      pushToast(`Theme could not be uninstalled: ${String(error)}`, "error");
+      pushToast(msg("themes-theme-could-not-be-uninstalled", { error: String(error) }), "error");
     } finally {
       setThemePackageBusy(null);
     }
@@ -108,42 +110,36 @@ export function ThemeSettings(): JSX.Element {
     setThemePackageBusy(`${themeEntry.id}@${version.version}`);
     try {
       const installed = await installCommunityTheme(themeEntry, version);
-      pushToast(`${installed.manifest.name} ${installed.manifest.version} installed.`, "info");
+      pushToast(msg("themes-installed", { name: installed.manifest.name, version: installed.manifest.version }), "info");
     } catch (error) {
-      pushToast(`Community theme installation failed: ${String(error)}`, "error");
+      pushToast(msg("themes-community-theme-installation-failed", { error: String(error) }), "error");
     } finally {
       setThemePackageBusy(null);
     }
   };
 
   return (
-    <>
-      <div class="settings-section">Themes</div>
+    <><div class="settings-section">{t("themes-themes")}</div>
       <div class="settings-row">
-        <div>
-          <div class="settings-label">Style</div>
-          <div class="settings-hint">Typography, journal headings, and other presentation choices.</div>
+        <div><div class="settings-label">{t("themes-style")}</div><div class="settings-hint">{t("themes-typography-journal-headings-and-other-presentation-choices")}</div>
         </div>
         <select
           class="settings-select"
-          aria-label="Theme style"
+          aria-label={t("themes-theme-style")}
           value={selectedThemeStyle()}
           onChange={(event) => applyThemeStyle(event.currentTarget.value)}
-        >
-          <option value="">Default</option>
+        ><option value="">{t("themes-default")}</option>
           <For each={installedThemes().filter((installed) => !themeVersionIsRevoked(installed.key) && hasPresentation(installed))}>
             {(installed) => <option value={installed.key}>{installed.manifest.name}</option>}
           </For>
         </select>
-      </div>
-
-      <div class="settings-section">Color scheme</div>
+      </div><div class="settings-section">{t("themes-color-scheme")}</div>
       <div class="theme-gallery-grid">
         <ThemeGalleryCard
           id=""
-          name="Default"
+          name={t("themes-default")}
           author="Tine"
-          badge="Stock"
+          badge={t("themes-stock")}
           thumbnail="/theme-thumbnails/default.png"
           selected={selectedThemeColors() === ""}
         />
@@ -160,14 +156,10 @@ export function ThemeSettings(): JSX.Element {
           )}
         </For>
       </div>
-      <div class="settings-hint theme-gallery-hint">
-        Style and colors are independent. Theme packages use validated colors and Tine-owned presentation styles; your <code>logseq/custom.css</code> still takes priority.
-      </div>
+      <div class="settings-hint theme-gallery-hint"><Rich message={msg("themes-style-and-colors-are-independent-theme-packages")} slots={{ "code": (children) => <code>{children}</code> }} /></div>
 
-      <Show when={COMMUNITY_REGISTRY_ENABLED}>
-      <div class="settings-section">Theme packages</div>
-      <Show when={communityThemes().length > 0}>
-        <div class="settings-hint theme-gallery-hint">Signed community themes · inert token manifests · immutable audit digests.</div>
+      <Show when={COMMUNITY_REGISTRY_ENABLED}><div class="settings-section">{t("themes-theme-packages")}</div>
+      <Show when={communityThemes().length > 0}><div class="settings-hint theme-gallery-hint">{t("themes-signed-community-themes-inert-token-manifests")}</div>
         <For each={communityThemes()}>
           {(themeEntry) => {
             const version = () => themeEntry.versions[themeEntry.versions.length - 1];
@@ -179,18 +171,15 @@ export function ThemeSettings(): JSX.Element {
                 <div class="settings-field-row">
                   <div>
                     <div class="settings-label">{themeEntry.name} <span class="settings-hint">v{version().version}</span></div>
-                    <div class="settings-hint settings-field-hint">
-                      {themeEntry.description}<br />{themeEntry.license} · {version().modes.join(" + ")} · {revoked() ? "Revoked by the signed registry" : version().audit.manualApproval ? "Human-reviewed" : "Low-risk automated pass"}
+                    <div class="settings-hint settings-field-hint">{themeEntry.description}<br />{themeEntry.license}{" · "}{version().modes.join(" + ")}{" · "}{revoked() ? t("themes-revoked-by-the-signed-registry") : version().audit.manualApproval ? t("themes-human-reviewed") : t("themes-low-risk-automated-pass")}
                     </div>
                   </div>
-                  <div class="settings-field-control">
-                    <button class="settings-link" onClick={() => void backend().openExternal(themeEntry.source)}>Details &amp; screenshots</button>
+                  <div class="settings-field-control"><button class="settings-link" onClick={() => void backend().openExternal(themeEntry.source)}>{t("themes-details-screenshots")}</button>
                     <button
                       class="settings-btn"
                       disabled={installed() || revoked() || themePackageBusy() !== null || version().audit.status !== "passed"}
                       onClick={() => void installRegistryTheme(themeEntry)}
-                    >
-                      {revoked() ? "Revoked" : installed() ? "Installed" : themePackageBusy() === key() ? "Verifying…" : "Install"}
+                    >{revoked() ? t("themes-revoked") : installed() ? t("themes-installed-status") : themePackageBusy() === key() ? t("themes-verifying") : t("themes-install")}
                     </button>
                   </div>
                 </div>
@@ -201,9 +190,7 @@ export function ThemeSettings(): JSX.Element {
       </Show>
       </Show>
       <div class="settings-row">
-        <div>
-          <div class="settings-label">Install a token theme</div>
-          <div class="settings-hint">Theme packages contain only whitelisted color tokens and metadata—no scripts, selectors, imports, or remote assets.</div>
+        <div><div class="settings-label">{t("themes-install-a-token-theme")}</div><div class="settings-hint">{t("themes-theme-packages-contain-only-whitelisted-color-tokens")}</div>
         </div>
         <div>
           <input
@@ -213,12 +200,10 @@ export function ThemeSettings(): JSX.Element {
             style={{ display: "none" }}
             onChange={(event) => void installThemeFile(event.currentTarget.files)}
           />
-          <button class="settings-btn" disabled={themePackageBusy() !== null} onClick={() => themePackageInput?.click()}>
-            {themePackageBusy() === "install" ? "Validating…" : "Choose theme.json…"}
+          <button class="settings-btn" disabled={themePackageBusy() !== null} onClick={() => themePackageInput?.click()}>{themePackageBusy() === "install" ? t("themes-validating") : t("themes-choose-theme-json")}
           </button>
         </div>
-      </div>
-      <Show when={installedThemes().length > 0} fallback={<p class="settings-hint">No theme packages installed.</p>}>
+      </div><Show when={installedThemes().length > 0} fallback={<p class="settings-hint">{t("themes-no-theme-packages-installed")}</p>}>
         <div class="installed-theme-list">
           <For each={installedThemes()}>
             {(installed) => {
@@ -237,8 +222,7 @@ export function ThemeSettings(): JSX.Element {
                         }}
                       >●</span>
                       <div>
-                        <div class="settings-label">{installed.manifest.name} <span class="settings-hint">v{installed.manifest.version}</span></div>
-                        <div class="settings-hint">{installed.manifest.author} · {installed.manifest.license} · {Object.keys(installed.manifest.modes).join(" + ")}{revoked() ? " · Revoked and disabled" : ""}</div>
+                        <div class="settings-label">{installed.manifest.name} <span class="settings-hint">v{installed.manifest.version}</span></div><div class="settings-hint">{installed.manifest.author}{" · "}{installed.manifest.license}{" · "}{Object.keys(installed.manifest.modes).join(" + ")}{revoked() ? t("themes-revoked-and-disabled") : ""}</div>
                       </div>
                     </div>
                     <div class="settings-field-control">
@@ -246,31 +230,26 @@ export function ThemeSettings(): JSX.Element {
                         class="settings-btn"
                         disabled={revoked() || selectedThemeColors() === installed.key}
                         onClick={() => applyThemeColors(installed.key)}
-                      >
-                        {revoked() ? "Revoked" : selectedThemeColors() === installed.key ? "Colors selected" : "Use colors"}
+                      >{revoked() ? t("themes-revoked") : selectedThemeColors() === installed.key ? t("themes-colors-selected") : t("themes-use-colors")}
                       </button>
                       <Show when={hasPresentation(installed)}>
                         <button
                           class="settings-btn"
                           disabled={revoked() || selectedThemeStyle() === installed.key}
                           onClick={() => applyThemeStyle(installed.key)}
-                        >
-                          {revoked() ? "Revoked" : selectedThemeStyle() === installed.key ? "Style selected" : "Use style"}
+                        >{revoked() ? t("themes-revoked") : selectedThemeStyle() === installed.key ? t("themes-style-selected") : t("themes-use-style")}
                         </button>
-                      </Show>
-                      <button class="settings-link" onClick={() => void backend().openExternal(installed.manifest.source)}>Details</button>
+                      </Show><button class="settings-link" onClick={() => void backend().openExternal(installed.manifest.source)}>{t("themes-details")}</button>
                       <button
                         class="settings-btn settings-btn-danger"
                         disabled={themePackageBusy() !== null}
                         onClick={() => void uninstallTheme(installed.key, installed.manifest.name)}
-                      >
-                        {themePackageBusy() === installed.key ? "Uninstalling…" : "Uninstall…"}
+                      >{themePackageBusy() === installed.key ? t("themes-uninstalling") : t("themes-uninstall")}
                       </button>
                     </div>
                   </div>
                   <div class="settings-hint settings-field-hint">{installed.manifest.description}</div>
-                  <Show when={installed.manifest.portedFrom} keyed>
-                    {(origin) => <div class="settings-hint">Behavioral port of {origin.name} for {origin.ecosystem}, credited to {origin.authors.join(", ")}.</div>}
+                  <Show when={installed.manifest.portedFrom} keyed>{(origin) => <div class="settings-hint">{t("themes-behavioral-port-of-for-credited-to", { name: origin.name, ecosystem: origin.ecosystem, authors: origin.authors.join(", ") })}</div>}
                   </Show>
                 </div>
               );

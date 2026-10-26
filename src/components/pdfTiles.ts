@@ -1,5 +1,6 @@
 import * as pdfjs from "pdfjs-dist";
 import { isMobilePlatform } from "../nativeChrome";
+import { viewportOf } from "../windowRealm";
 
 const TILE_CSS_SIZE = 768;
 const TILE_PIXEL_CAP = 1_572_864;
@@ -118,7 +119,7 @@ export function createPdfTiles(onError: (error: unknown) => void) {
       const width = Math.min(TILE_CSS_SIZE, viewport.width - item.x * TILE_CSS_SIZE);
       const height = Math.min(TILE_CSS_SIZE, viewport.height - item.y * TILE_CSS_SIZE);
       if (width <= 0 || height <= 0) continue;
-      const ratio = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(TILE_PIXEL_CAP / (width * height)));
+      const ratio = Math.min(viewportOf(wrap).dpr, 2, Math.sqrt(TILE_PIXEL_CAP / (width * height)));
       const canvas = document.createElement("canvas");
       canvas.width = Math.max(1, Math.floor(width * ratio));
       canvas.height = Math.max(1, Math.floor(height * ratio));

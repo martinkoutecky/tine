@@ -20,7 +20,7 @@ const COMPOUND_EXTS: &[&str] = &[".drawio.svg", ".excalidraw.svg", ".excalidraw.
 pub fn error_for_user(store: &Store, error: io::Error) -> String {
     error.to_string().replace(
         "logseq/.tine-trash/assets",
-        &store.asset_trash_location_for_user().display().to_string(),
+        &store.config().asset_trash_location.display().to_string(),
     )
 }
 
@@ -102,16 +102,12 @@ fn named_asset(store: &Store, name: &str) -> Result<tine_store::FileId, AssetAcc
         .map_err(AssetAccessError::Store)
 }
 
-/// Read one asset into bytes, optionally bounded by `max_bytes`. An in-area
+/// Read one asset into bytes, bounded by the required `max_bytes`. An in-area
 /// final symlink may resolve; an escape is refused. Cost O(path components + bytes).
-pub fn read_asset(
-    store: &Store,
-    name: &str,
-    max_bytes: Option<u64>,
-) -> Result<Vec<u8>, AssetAccessError> {
+pub fn read_asset(store: &Store, name: &str, max_bytes: u64) -> Result<Vec<u8>, AssetAccessError> {
     let id = named_asset(store, name)?;
     store
-        .read(&id, max_bytes)
+        .read(&id, Some(max_bytes))
         .map(|(bytes, _)| bytes)
         .map_err(AssetAccessError::Store)
 }
@@ -245,7 +241,8 @@ pub fn import_asset_file(store: &Store, name: &str, source: Content) -> io::Resu
 
 /// List top-level unreferenced media. A failed inventory or graph read is an
 /// error, including unreadable entries: a partial scan cannot establish absence
-/// (disk/permission failure). Cost O(asset entries + B); no writes.
+/// (disk/permission failure). Includes set-aside duplicate-day page files.
+/// Cost O(asset entries + P + B + set-aside file bytes); no writes.
 pub fn orphan_assets(store: &Store) -> io::Result<Vec<AssetInfo>> {
     let listing = store.scan_area(Area::Assets, None).map_err(store_error)?;
     if let Some((name, error)) = listing.unreadable.into_iter().next() {
@@ -254,11 +251,7 @@ pub fn orphan_assets(store: &Store) -> io::Result<Vec<AssetInfo>> {
             format!("assets/{name}: {}", error.message),
         ));
     }
-    let graph = store.whole_graph().map_err(|error| match error {
-        tine_store::LoadError::Closed => io::Error::new(io::ErrorKind::BrokenPipe, "store closed"),
-        tine_store::LoadError::Failed { reason } => io::Error::other(reason),
-    })?;
-    let referenced = graph.referenced_assets();
+    let referenced = store.referenced_assets()?;
     Ok(listing
         .files
         .into_iter()
@@ -288,8 +281,9 @@ pub fn orphan_assets(store: &Store) -> io::Result<Vec<AssetInfo>> {
 /// and retries a concurrent external write at most four times. The transaction
 /// rechecks the latest published asset references under its writer lock: an
 /// asset the graph still references stays put and reports
-/// [`TrashOutcome::Referenced`]. Unreadable graph entries refuse trash; an
-/// external arrival not yet published can still race. Cost O(B + file bytes)
+/// [`TrashOutcome::Referenced`]. Set-aside duplicate-day files also count.
+/// Unreadable graph entries refuse trash; an external arrival not yet published
+/// can still race. Cost O(P + B + set-aside bytes + file bytes)
 /// per attempt; a missing asset reports the v0.6.5 `no such asset` error.
 pub fn trash_asset(store: &Store, name: &str) -> io::Result<TrashOutcome> {
     validate_name(name)?;
@@ -303,7 +297,7 @@ pub fn trash_asset(store: &Store, name: &str) -> io::Result<TrashOutcome> {
             Err(error) => return Err(store_error(error)),
         };
         let mut tx = store.transaction(None);
-        tx.trash_orphan_asset(&id, rev);
+        tx.trash(&id, rev, tine_store::TrashIf::UnreferencedAsset);
         Ok(crate::commit_retry(tx.commit())?.then_some(()))
     });
     match moved {

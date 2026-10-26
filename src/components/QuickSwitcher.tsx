@@ -1,3 +1,7 @@
+import { shortcutKey } from "../shortcutKey";
+import { Rich } from "../i18n/Rich";
+import { msg, t } from "../i18n";
+import { nextResultIndex } from "../resultNavigation";
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingIdentity, captureBinding } from "../binding";
@@ -5,6 +9,7 @@ import { bindingOwner, readOwned, writeOwned, type Owned } from "../owned";
 import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPrefill, switcherPluginBlock, recentPages, isFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
 import { createLongPress } from "../render/longPress";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
+import { backgroundTabsAvailable } from "../linkGesture";
 import { graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { openPage, openPageTarget, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route, type PageTarget } from "../router";
@@ -15,13 +20,14 @@ import { SEARCH_SYNTAX } from "../editor/searchQuery";
 import { EmojiText } from "../render/emoji";
 import { SearchResultRow } from "./SearchResultRow";
 import type { MatchSpan, ObjectiveMatchClass, PageKind } from "../types";
-import { rankLauncherItems, recordLauncherActivation } from "../launcherRanking";
+import { rankLauncherItems, recordLauncherActivation, pinyinMatchingEnabled } from "../launcherRanking";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 import { createPage as saveCreatedPage, CreatePageRefusal, switcherPage } from "../document";
 import type { QueryPageScope } from "../types";
 import { blockDtoExternalId } from "../blockIdentity";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
+import { queryAllWindows } from "../windowRealm";
 
 // One selectable result row.
 type Item =
@@ -68,6 +74,7 @@ export function QuickSwitcher(): JSX.Element {
   let inputRef: HTMLInputElement | undefined;
   let resultsRef: HTMLDivElement | undefined;
   let originPaneId: string | null = null;
+  let originPageScope: QueryPageScope | null = null;
   const [currentPageScope, setCurrentPageScope] = createSignal<QueryPageScope | null>(null);
   let wasOpen = false;
   // X11/WebKitGTK pastes the PRIMARY selection into the focused input on ANY
@@ -84,6 +91,8 @@ export function QuickSwitcher(): JSX.Element {
   });
 
   const commandsOnly = () => switcherMode() === "commands";
+  const pagesOnly = () => switcherMode() === "pages";
+  const contentOnly = () => switcherMode() === "content";
   const currentPageOnly = () => currentPageScope() !== null;
   // The backend search/quick-switch IPC keys off a debounced query so holding
   // keys doesn't fire a whole-graph scan per character; local sections (recents,
@@ -101,13 +110,14 @@ export function QuickSwitcher(): JSX.Element {
   const [graphResultsResource, { refetch: retrySearch }] = createResource(
     () => (commandsOnly() ? null : {
       q: debouncedQuery(),
-      pages: currentPageOnly() ? 0 : PAGE_POOL,
-      blocks: BLOCK_POOL,
+      pages: currentPageOnly() || contentOnly() ? 0 : PAGE_POOL,
+      blocks: pagesOnly() ? 0 : BLOCK_POOL,
       scope: currentPageScope(),
       // Hits belong to one graph: a switch re-keys the search so the old graph's
       // rows are neither shown nor reused.
       graphRoot: graphMeta()?.root ?? "",
       binding: bindingIdentity(),
+      transliteration: pinyinMatchingEnabled(),
     }),
     (s) => s && s.q.trim()
       ? backend().runGraphSearch(
@@ -117,12 +127,20 @@ export function QuickSwitcher(): JSX.Element {
           s.scope ? "quick-switch:current-page" : "quick-switch",
           false,
           s.scope ?? undefined,
+          undefined,
+          undefined,
+          s.transliteration,
         )
       : Promise.resolve({ hits: [], diagnostics: [], explanation: { branches: [] }, has_more: { pages: false, blocks: false }, cancelled: false })
   );
   // A failed search says so (below) instead of throwing into the switcher's render
   // or claiming "No matched results".
-  const graphResults = () => readOr(graphResultsResource, undefined, "search results");
+  const graphResults = () => {
+    const result = readOr(graphResultsResource, undefined, "search results");
+    return pinyinMatchingEnabled() || !result ? result : {
+      ...result, hits: result.hits.filter(hit => hit.match_class !== "transliteration"),
+    };
+  };
 
   const currentPageName = () => {
     const scope = currentPageScope();
@@ -138,7 +156,8 @@ export function QuickSwitcher(): JSX.Element {
     const ranked = !ql
       ? paletteCommands(switcherPluginBlock())
       : paletteCommands(switcherPluginBlock())
-          .map((c) => ({ c, s: fuzzyScore(ql, c.label) }))
+          // The English label also matches, so a typed English command name works in any UI language.
+          .map((c) => ({ c, s: Math.max(fuzzyScore(ql, c.label), c.english === c.label ? 0 : fuzzyScore(ql, c.english)) }))
           .filter((x) => x.s > 0)
           .sort((a, b) => b.s - a.s)
           .map((x) => x.c);
@@ -157,7 +176,7 @@ export function QuickSwitcher(): JSX.Element {
 
     // Empty query → recents.
     if (!q) {
-      if (currentPageOnly()) return out;
+      if (currentPageOnly() || contentOnly()) return out;
       const recents: Item[] = recentPages().map((r) => ({
         t: "page",
         name: r.name,
@@ -173,7 +192,7 @@ export function QuickSwitcher(): JSX.Element {
 
     // Page and block membership, diagnostics, and match evidence now come from
     // one Rust QueryPlan execution. Commands/create remain launcher providers.
-    const allPages: Item[] = currentPageOnly() ? [] : (graphResults()?.hits ?? [])
+    const allPages: Item[] = currentPageOnly() || contentOnly() ? [] : (graphResults()?.hits ?? [])
       .filter((hit) => hit.entity === "page")
       .map((hit) => ({
         t: "page",
@@ -204,10 +223,10 @@ export function QuickSwitcher(): JSX.Element {
 
     // Create page (when no exact match exists).
     const exact = pageItems.some((p) => p.t === "page" && p.adaptiveClass === "exact");
-    if (!currentPageOnly() && !exact) out.push({ header: "Create", items: [{ t: "create", name: q }] });
+    if (!currentPageOnly() && !pagesOnly() && !contentOnly() && !exact) out.push({ header: "Create", items: [{ t: "create", name: q }] });
 
     // Commands matching the query.
-    const cmds = embryoPane || currentPageOnly() ? [] : commandItems(q);
+    const cmds = embryoPane || currentPageOnly() || pagesOnly() || contentOnly() ? [] : commandItems(q);
     if (cmds.length) out.push({ header: "Commands", items: cmds });
 
     // Blocks. Gather every match (backend order), then page the whole set so a
@@ -215,7 +234,7 @@ export function QuickSwitcher(): JSX.Element {
     const cur = currentPageName();
     const all: { item: Item; onCur: boolean }[] = [];
     for (const hit of graphResults()?.hits ?? []) {
-      if (hit.entity !== "block" || !hit.display_text.trim()) continue;
+      if (pagesOnly() || hit.entity !== "block" || !hit.display_text.trim()) continue;
       all.push({
         item: {
           t: "block",
@@ -279,16 +298,17 @@ export function QuickSwitcher(): JSX.Element {
       const origin = focusedRouter();
       originPaneId = switcherEmbryo()?.paneId ?? origin.paneId;
       const originRoute = origin.route();
-      setCurrentPageScope(
-        switcherMode() === "current-page" && originRoute.kind === "page"
-          ? { name: originRoute.name, pageKind: originRoute.pageKind, path: originRoute.path }
-          : null,
-      );
+      originPageScope = originRoute.kind === "page"
+        ? { name: originRoute.name, pageKind: originRoute.pageKind, path: originRoute.path }
+        : null;
       setQuery(switcherEmbryo()?.prefill ?? switcherPrefill());
       setSel(0);
       setSyntaxOpen(false);
       queueMicrotask(() => inputRef?.focus());
     }
+    // A shortcut may change modes while the overlay remains open. Keep its
+    // original pane snapshot, but apply page scope only in current-page mode.
+    setCurrentPageScope(open && switcherMode() === "current-page" ? originPageScope : null);
     wasOpen = open;
   });
   // Keep the highlight in range as results change.
@@ -394,6 +414,7 @@ export function QuickSwitcher(): JSX.Element {
   // itself (self-contained and durable — the tab shows exactly what you found);
   // create/command have no background-tab meaning, so they're ignored.
   const openInBackground = async (it: Item) => {
+    if (!backgroundTabsAvailable()) return; // GH #705: no tab strip to reach it
     recordChoice(it);
     if (it.t === "page")
       it.path
@@ -411,7 +432,7 @@ export function QuickSwitcher(): JSX.Element {
     const binding = captureBinding();
     const owner = bindingOwner();
     const stale = (): Owned<null> => {
-      pushToast("The graph changed before the page was created. Try again.", "warn");
+      pushToast(msg("quick-switcher-the-graph-changed-before-the-page-was-created"), "warn");
       return { kind: "stale" };
     };
     try {
@@ -429,11 +450,11 @@ export function QuickSwitcher(): JSX.Element {
         if (!target) throw new Error("resolved page disappeared");
         return { kind: "current", value: { name: target.name, pageKind: target.kind, path: target.id } };
       }
-      const saved = await writeOwned(owner, saveCreatedPage(name, switcherPage(name), { id: resolved.id, bindingGeneration: binding.backendGeneration }));
+      const saved = await writeOwned(owner, saveCreatedPage(name, switcherPage(name), { bindingGeneration: binding.backendGeneration }));
       return saved.kind === "stale" ? stale() : { kind: "current", value: null };
     } catch (error) {
       if (error instanceof CreatePageRefusal && error.reason === "graph-changed") return stale();
-      pushToast(`Could not create “${name}”: ${String(error)}. It will be saved on your first edit.`, "error");
+      pushToast(msg("quick-switcher-could-not-create-it-will-be-saved-on", { name: String(name), error: String(error) }), "error");
       return { kind: "current", value: null };
     }
   };
@@ -446,21 +467,21 @@ export function QuickSwitcher(): JSX.Element {
       if (target) openPageTarget(target);
       else openPage(name, "page");
     } catch (error) {
-      pushToast(`Could not create “${name}”: ${String(error)}`, "error");
+      pushToast(msg("quick-switcher-could-not-create", { name: String(name), error: String(error) }), "error");
     }
   };
 
   const move = (d: number) => {
     const n = flat().length;
-    if (n) setSel((sel() + d + n) % n);
+    if (n) setSel(nextResultIndex(sel(), d, n));
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
     const ctrl = e.ctrlKey;
-    if (e.key === "ArrowDown" || (ctrl && e.key.toLowerCase() === "n")) {
+    if (e.key === "ArrowDown" || (ctrl && shortcutKey(e) === "n")) {
       e.preventDefault();
       move(1);
-    } else if (e.key === "ArrowUp" || (ctrl && e.key.toLowerCase() === "p")) {
+    } else if (e.key === "ArrowUp" || (ctrl && shortcutKey(e) === "p")) {
       e.preventDefault();
       move(-1);
     } else if (e.key === "Enter") {
@@ -472,7 +493,7 @@ export function QuickSwitcher(): JSX.Element {
         const shiftOnly = e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
         const cmdCtrlOnly = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
         if (shiftOnly && !switcherEmbryo() && (it.t === "page" || it.t === "block")) void chooseSidebar(it);
-        else if (cmdCtrlOnly && (it.t === "page" || it.t === "block")) void openInBackground(it);
+        else if (cmdCtrlOnly && backgroundTabsAvailable() && (it.t === "page" || it.t === "block")) void openInBackground(it);
         else if (e.altKey && !switcherEmbryo()) void chooseOther(it);
         else void choose(it);
       }
@@ -491,7 +512,7 @@ export function QuickSwitcher(): JSX.Element {
     if (!switcherOpen()) return;
     const unregister = registerTransientLayer({
       id: "quick-switcher",
-      root: () => document.querySelector(".switcher"),
+      root: () => queryAllWindows<HTMLElement>(".switcher"),
       trigger: () => inputRef ?? null,
       dismiss: () => {
         if (syntaxOpen()) { setSyntaxOpen(false); queueMicrotask(() => inputRef?.focus()); return true; }
@@ -518,7 +539,7 @@ export function QuickSwitcher(): JSX.Element {
             ref={inputRef}
             class="switcher-input"
             type="text"
-            placeholder={commandsOnly() ? "Run a command…" : currentPageOnly() ? "Search blocks in current page…" : "Jump to page, search, or run a command…"}
+            placeholder={commandsOnly() ? t("quick-switcher-run-a-command") : currentPageOnly() ? t("quick-switcher-search-blocks-in-current-page") : t("quick-switcher-jump-to-page-search-or-run-a-command")}
             value={query()}
             role="combobox"
             aria-autocomplete="list"
@@ -580,7 +601,7 @@ export function QuickSwitcher(): JSX.Element {
                               openInBackground(it);
                             } else if (e.button === 0) {
                               const mod = e.ctrlKey || e.metaKey;
-                              if (mod && !e.altKey && !e.shiftKey && (it.t === "page" || it.t === "block"))
+                              if (mod && backgroundTabsAvailable() && !e.altKey && !e.shiftKey && (it.t === "page" || it.t === "block"))
                                 void openInBackground(it);
                               else if (!switcherEmbryo() && e.shiftKey && !e.altKey && !mod && (it.t === "page" || it.t === "block"))
                                 void chooseSidebar(it);
@@ -617,14 +638,10 @@ export function QuickSwitcher(): JSX.Element {
                         e.preventDefault(); // keep input focus; don't close
                         section.loadMore!();
                       }}
-                    >
-                      Load more results…
-                    </div>
+                    >{t("quick-switcher-load-more-results")}</div>
                   </Show>
                   <Show when={section.truncated}>
-                    <div class="switcher-truncated" data-search-truncated={section.truncated}>
-                      More matches exist — narrow your query to see them.
-                    </div>
+                    <div class="switcher-truncated" data-search-truncated={section.truncated}>{t("quick-switcher-more-matches-exist-narrow-your-query-to-see")}</div>
                   </Show>
                 </div>
               )}
@@ -636,14 +653,14 @@ export function QuickSwitcher(): JSX.Element {
             </Show>
             <ResourceFailure of={graphResultsResource} what="search results" onRetry={() => void retrySearch()} />
             <Show when={query().trim() && (graphResultsResource.loading || debouncedQuery() !== query())}>
-              <div class="switcher-empty" role="status">Searching…</div>
+              <div class="switcher-empty" role="status">{t("quick-switcher-searching")}</div>
             </Show>
             <Show when={query().trim() && !graphResultsResource.loading && debouncedQuery() === query() && flat().length === 0 && graphResultsResource.error === undefined && !(graphResults()?.diagnostics.length ?? 0)}>
-              <div class="switcher-empty">No matched results</div>
+              <div class="switcher-empty">{t("quick-switcher-no-matched-results")}</div>
             </Show>
           </div>
           <Show when={syntaxOpen() && !commandsOnly()}>
-            <div id="switcher-search-syntax" class="switcher-syntax" role="region" aria-label="Search syntax">
+            <div id="switcher-search-syntax" class="switcher-syntax" role="region" aria-label={t("quick-switcher-search-syntax")}>
               <For each={SEARCH_SYNTAX}>
                 {(rule) => (
                   <div class="switcher-syntax-row">
@@ -655,9 +672,9 @@ export function QuickSwitcher(): JSX.Element {
             </div>
           </Show>
           <div class="switcher-footer">
-            <span><kbd>↑↓</kbd> navigate</span>
-            <span><kbd>↵</kbd> open</span>
-            <span><kbd>⌘⇧P</kbd> commands</span>
+            <span><kbd>↑↓</kbd>{t("quick-switcher-navigate")}</span>
+            <span><kbd>↵</kbd>{t("quick-switcher-open")}</span>
+            <span><kbd>⌘⇧P</kbd>{t("quick-switcher-commands")}</span>
             <Show when={!commandsOnly()}>
               <Show when={!currentPageOnly()}>
               <button
@@ -666,9 +683,7 @@ export function QuickSwitcher(): JSX.Element {
                 aria-expanded={syntaxOpen()}
                 aria-controls="switcher-search-syntax"
                 onClick={() => setSyntaxOpen((open) => !open)}
-              >
-                Search syntax
-              </button>
+              >{t("quick-switcher-search-syntax")}</button>
               <button
                 type="button"
                 class="switcher-syntax-toggle"
@@ -676,16 +691,14 @@ export function QuickSwitcher(): JSX.Element {
                 onClick={() => {
                   const paneId = originPaneId;
                   if (!paneId || !layoutPaneIds().includes(paneId)) {
-                    pushToast("That pane is no longer available. Close this search and try again.", "error");
+                    pushToast(msg("quick-switcher-that-pane-is-no-longer-available-close-this"), "error");
                     return;
                   }
                   focusPane(paneId);
                   paneRouter(paneId).openQueryInNewTab(query().trim(), "search", true);
                   closeSwitcher();
                 }}
-              >
-                Open search tab
-              </button>
+              >{t("quick-switcher-open-search-tab")}</button>
               </Show>
             </Show>
           </div>
@@ -703,24 +716,24 @@ function Row(props: { item: Item }): JSX.Element {
     case "page":
       return (
         <>
-          <span class="switcher-kind">{it.pageKind === "journal" ? "journal" : "page"}</span>
+          <span class="switcher-kind">{it.pageKind === "journal" ? t("quick-switcher-journal") : t("quick-switcher-page")}</span>
           <span class="switcher-name"><EmojiText text={it.name} /></span>
           {/* GH #353: why did "Research Hub" match "book"? Keep the matched
               alias as display context; navigation still targets the owner. */}
-          <Show when={it.matchedAlias}><span class="switcher-alias">aka {it.matchedAlias}</span></Show>
+          <Show when={it.matchedAlias}><span class="switcher-alias">{t("quick-switcher-alias", { alias: it.matchedAlias! })}</span></Show>
         </>
       );
     case "create":
       return (
         <>
-          <span class="switcher-kind create">new</span>
-          <span class="switcher-name">Create page: <strong><EmojiText text={it.name} /></strong></span>
+          <span class="switcher-kind create">{t("quick-switcher-new")}</span>
+          <span class="switcher-name"><Rich message={msg("quick-switcher-create-named-page", { name: it.name })} slots={{ strong: () => <strong><EmojiText text={it.name} /></strong> }} /></span>
         </>
       );
     case "command":
       return (
         <>
-          <span class="switcher-kind cmd">cmd</span>
+          <span class="switcher-kind cmd">{t("quick-switcher-cmd")}</span>
           <span class="switcher-name"><EmojiText text={it.label} /></span>
           <Show when={it.binding}>
             <span class="switcher-shortcut">{it.binding}</span>

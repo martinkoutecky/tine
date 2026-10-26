@@ -1,3 +1,4 @@
+import { renderEnglish } from "./i18n";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { setToasts, toasts, dismissToast } from "./toasts";
@@ -33,7 +34,7 @@ describe("Windows Defender hint (GH #623)", () => {
     const dismiss = vi.spyOn(backend(), "dismissDefenderHint").mockResolvedValue();
     await maybeShowDefenderHint();
     expect(toasts()).toHaveLength(1);
-    expect(toasts()[0].message).toBe(DEFENDER_HINT_TEXT);
+    expect(toasts()[0].message).toBe(renderEnglish(DEFENDER_HINT_TEXT));
     expect(toasts()[0].sticky).toBe(true);
     expect(toasts()[0].action?.label).toBe(DEFENDER_HINT_ACTION);
     // Showing it changed nothing.
@@ -59,7 +60,7 @@ describe("Windows Defender hint (GH #623)", () => {
     expect(exclusionResultMessage({ outcome: "declined" }).kind).toBe("info");
     const failed = exclusionResultMessage({ outcome: "failed", code: 1, message: "Managed by your organization." });
     expect(failed.kind).toBe("error");
-    expect(failed.text).toContain("Managed by your organization.");
+    expect(renderEnglish(failed.text)).toContain("Managed by your organization.");
     expect(exclusionResultMessage({ outcome: "added" }).kind).toBe("success");
   });
 });

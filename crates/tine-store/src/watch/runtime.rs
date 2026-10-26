@@ -17,33 +17,30 @@ pub(super) fn run(
     wake: Sender<()>,
     rx: Receiver<()>,
 ) {
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::mark_watcher_thread();
     let pending = Arc::new(Mutex::new(Pending::default()));
     let mut watcher: Option<notify::RecommendedWatcher> = None;
     let mut active = None;
-    let mut active_dirs: Option<[PathBuf; 1]> = None;
-    let mut active_dir_ids: Option<[Option<u128>; 1]> = None;
+    let mut active_root_id: Option<Option<u128>> = None;
     let mut assets_watched = false;
     let mut assets_failure: Option<String> = None;
     while !core.closed.load(Ordering::Acquire) {
         let selected = *mode.lock().unwrap();
-        let dirs = core.dirs.read().unwrap().clone();
-        let dir_ids = [directory_identity(&dirs[0])];
+        // The root's spelling is fixed; its identity changes when it is
+        // replaced or recreated.
+        let root_id = directory_identity(&core.graph.root);
         // A refused watch is retried every cycle: polling covers the gap (I-9:
         // the refusal was reported, so it is never silent staleness).
         let retry = selected == WatchMode::Notify && watcher.is_none();
-        if retry
-            || active != Some(selected)
-            || active_dirs.as_ref() != Some(&dirs)
-            || active_dir_ids.as_ref() != Some(&dir_ids)
-        {
+        if retry || active != Some(selected) || active_root_id != Some(root_id) {
             let retrying = retry && active == Some(selected);
             watcher = None;
             assets_watched = false;
             active = Some(selected);
-            active_dirs = Some(dirs.clone());
-            active_dir_ids = Some(dir_ids);
+            active_root_id = Some(root_id);
             if selected == WatchMode::Notify {
-                match install_watch(&core, &dirs, &pending, &wake) {
+                match install_watch(&core, &pending, &wake) {
                     Ok(created) => {
                         watcher = Some(created);
                         // The asset baseline predates registration. An edit in
@@ -62,12 +59,13 @@ pub(super) fn run(
                 // already contain files (or a config.edn) it never reported.
                 // Reconcile once, config included.
                 let _ = core.reconcile(None, true, false, DiffTrigger::WatchInstall);
+                core.observe_custom_css();
             }
         }
         let external_assets = core
             .assets
             .scope()
-            .external_root(&dirs[0])
+            .external_root(&core.graph.root)
             .map(Path::to_path_buf);
         let assets_polled = match (watcher.as_mut(), external_assets) {
             (Some(live), Some(root)) if !assets_watched => {
@@ -102,11 +100,23 @@ pub(super) fn run(
                 *pending.lock().unwrap() = Pending::default();
                 continue;
             }
-            let (paths, full, config, first_event_at, assets) = {
+            // Taken before the drain: every notification ahead of the
+            // sentinel is drained with it (N3).
+            #[cfg(feature = "test-faults")]
+            let barrier = pending.lock().unwrap().barrier.take();
+            let (paths, full, config, css, first_event_at, assets) = {
                 let mut pending = pending.lock().unwrap();
                 let config = std::mem::take(&mut pending.config);
+                let css = std::mem::take(&mut pending.custom_css);
                 let (paths, full, first_event_at) = pending.drain();
-                (paths, full, config, first_event_at, pending.assets.drain())
+                (
+                    paths,
+                    full,
+                    config,
+                    css,
+                    first_event_at,
+                    pending.assets.drain(),
+                )
             };
             // A rescan or unusable event may hide a config write: re-check it.
             #[cfg(test)]
@@ -127,14 +137,24 @@ pub(super) fn run(
                     batch,
                 );
             }
+            // A rescan may hide a custom.css write; an event named it.
+            if full || css {
+                core.observe_custom_css();
+            }
             // A rescan/unusable event hides asset changes too: scan them.
             if full || assets.1 || assets_polled || !assets.0.is_empty() {
                 core.observe_assets(&assets.0, full || assets.1 || assets_polled);
+            }
+            #[cfg(feature = "test-faults")]
+            if let Some(id) = barrier {
+                core.barrier.ack(id);
             }
         } else {
             // Poll mode has no event paths: every cycle re-checks the config
             // (one stat and one hash of a small file beside the full stat scan).
             let _ = rx.recv_timeout(core.follow_up_wait(CYCLE));
+            #[cfg(feature = "test-faults")]
+            let asked = core.barrier.asked();
             if core.ready() && !core.closed.load(Ordering::Acquire) {
                 // This cycle's full diff is the racy follow-up (§5.4).
                 core.follow_up.lock().unwrap().take();
@@ -146,7 +166,10 @@ pub(super) fn run(
                     event_paths: 0,
                 };
                 let _ = core.reconcile_batch(None, true, batch);
+                core.observe_custom_css();
                 core.observe_assets(&HashSet::new(), true);
+                #[cfg(feature = "test-faults")]
+                core.barrier.ack(asked);
             }
         }
     }

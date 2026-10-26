@@ -1,4 +1,4 @@
-// Real-app regressions for GH #154 and GH #166. Copy block ref assigns a fresh
+// Real-app regressions for GH #154, GH #166 and GH #708. Copy block ref assigns a fresh
 // target's durable identity, a pasted reference updates its badge/panel before
 // reload and survives reload, and loaded/unloaded source text follows landed
 // transactions.
@@ -55,6 +55,22 @@ async function nativeClipboard(command, text) {
   }, command, text ?? null);
   if (!result.ok) throw new Error(`native clipboard ${command} failed: ${result.error}`);
   return result.out;
+}
+/** Name of the page the active tab of the saved session shows ("" when none yet). */
+function activeSavedRoute() {
+  try {
+    const sessions = fs.readdirSync(`${TMP}/xdg/data`).map((app) => `${TMP}/xdg/data/${app}/sessions`).filter((dir) => fs.existsSync(dir));
+    for (const dir of sessions) {
+      for (const file of fs.readdirSync(dir)) {
+        if (!/^graph-[0-9a-f]+\.json$/.test(file)) continue;
+        const session = JSON.parse(fs.readFileSync(`${dir}/${file}`, "utf8"));
+        const tab = session.tabs?.[session.activeIndex ?? 0];
+        const route = tab?.history?.at(-1);
+        if (route?.kind === "page") return route.block ? `${route.name}#${route.block}` : route.name;
+      }
+    }
+  } catch { /* not written yet, or mid-rename */ }
+  return "";
 }
 async function openPage(label) {
   for (const selector of [`a.page-ref=${label}`, `span.page-ref=${label}`, `*=${label}`]) {
@@ -121,8 +137,10 @@ try {
   });
   if (!sourceMenuOpened) throw new Error("fresh source block did not open Tine's context menu");
   await browser.$(".ctx-menu").waitForExist({ timeout: 5000 });
-  const copyRef = await browser.$("//div[contains(concat(' ', normalize-space(@class), ' '), ' ctx-menu ')]//div[contains(concat(' ', normalize-space(@class), ' '), ' ctx-item ') and normalize-space(.) = 'Copy block ref']");
-  await copyRef.waitForExist({ timeout: 5000 });
+  const copyAs = await browser.$(".ctx-menu [role=menuitem][aria-haspopup=menu]");
+  await copyAs.moveTo();
+  const copyRef = await browser.$('//*[@role="menuitem" and normalize-space(.)="Copy block ref"]');
+  await copyRef.waitForDisplayed({ timeout: 5000 });
   // Durable receipt (og 10g): the reference the user receives must name an id
   // that is already on disk. Put a sentinel on the native clipboard, then read
   // the target file at the first moment the clipboard holds a reference.
@@ -197,6 +215,15 @@ try {
   mark("reload badge/panel");
   // A real reload reparses id:: as the normal DTO/store identity. The same
   // durable target must still expose both its badge and its referrer panel.
+  // The window's session (tabs and active route) is written 150 ms after the
+  // last navigation, and Tine has no path that reloads its own window, so a
+  // user never reloads inside that gap. Wait until the opened source page is the
+  // saved active route, as it is by the time anyone could reload; otherwise this
+  // step restores the route saved one navigation earlier ("Tester") when the
+  // whole journey up to here ran faster than the debounce.
+  await browser.waitUntil(() => activeSavedRoute() === "Source Target", {
+    timeout: 10_000, timeoutMsg: "the opened source page never became the saved active route",
+  });
   await browser.refresh();
   mark("reload: refreshed");
   await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === "Source Target", {
@@ -271,7 +298,36 @@ try {
   await browser.waitUntil(async () => (await browser.$(".page-blocks .block-ref").getText()).trim() === "Updated source target", {
     timeout: 10_000, timeoutMsg: "inline block reference kept stale source text",
   });
-  console.log("PASS: fresh Copy block ref identity, badge/panel, reload, and loaded/unloaded reference lifecycles");
+  // GH #708: with "Click a block reference to zoom in" on, a plain click on a
+  // reference to a block on another page (not loaded after the reload) zooms
+  // into that block.
+  mark("ref-click zoom: enable setting");
+  const setZoom = await browser.executeAsync((done) => {
+    globalThis.__TAURI_INTERNALS__.invoke("set_app_bool", { key: "ref_click_zoom", value: true }).then(() => done("ok"), (error) => done(`<${error}>`));
+  });
+  if (setZoom !== "ok") throw new Error(`set_app_bool ref_click_zoom failed: ${setZoom}`);
+  await browser.refresh();
+  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === "Tester", {
+    timeout: 20_000, timeoutMsg: "Tester did not reopen after enabling ref-click zoom",
+  });
+  mark("ref-click zoom: click a reference to another page");
+  let zoomRef;
+  await browser.waitUntil(async () => {
+    for (const ref of await browser.$$(".page-blocks .block-ref")) {
+      if ((await ref.getText()).trim() === "Updated source target") { zoomRef = ref; return true; }
+    }
+    return false;
+  }, { timeout: 10_000, timeoutMsg: "reference to Source Target did not render" });
+  await zoomRef.click();
+  // A zoomed route shows the block (with breadcrumbs) instead of the page title.
+  await browser.waitUntil(async () => !(await browser.$("h1.page-title=Tester").isExisting())
+    && (await browser.execute(() => document.querySelector(".page-blocks")?.textContent ?? "")).includes("Updated source target"), {
+    timeout: 10_000, timeoutMsg: "clicking the block reference did not zoom into it (GH #708)",
+  });
+  await browser.waitUntil(() => activeSavedRoute() === `Source Target#${targetUuid}`, {
+    timeout: 10_000, timeoutMsg: () => `clicking the block reference did not zoom into the block; saved route ${activeSavedRoute()}`,
+  });
+  console.log("PASS: fresh Copy block ref identity, badge/panel, reload, and loaded/unloaded reference lifecycles, ref-click zoom across pages");
 } catch (error) {
   // Failure capsule: step, screenshot and the block-ref surface state.
   console.error(`FAIL at step: ${step}`);

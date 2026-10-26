@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tine-store"
 version.workspace = true
 edition.workspace = true
@@ -10,10 +11,12 @@ test-faults = []
 [dependencies]
 tine-core = { path = "../tine-core" }
 serde = { workspace = true }
+tine-outline = { path = "../tine-outline" }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 sha2 = "0.10"
 regex = "1"
+pinyin = { version = "0.11", default-features = false, features = ["plain"] }
 libc = "0.2"
 cap-std = "4.0.2"
 same-file = "1.0.6"
@@ -29,7 +32,7 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Secur
 
 [dev-dependencies]
 tempfile = "3"
-tine-graph-features = { path = "../tine-graph-features" }
+tine-graph-features = { path = "../tine-graph-features", features = ["test-faults"] }
 syn = { version = "2", features = ["full", "visit"] }
 quote = "1"
 proc-macro2 = "1"
@@ -39,9 +42,18 @@ tine-store = { path = ".", features = ["test-faults"] }
 pretty_assertions = "1"
 
 [[example]]
+name = "pinyin_bench"
+required-features = ["test-faults"]
+
+[[example]]
 name = "checkpoint_launch_bench"
 required-features = ["test-faults"]
 
 [[example]]
 name = "qf2_native_bench"
 required-features = ["test-faults"]
+
+# Keep all integration cases in one linked executable.
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

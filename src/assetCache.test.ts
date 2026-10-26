@@ -4,7 +4,7 @@ import { setToasts, toasts } from "./toasts";
 const backendMock = vi.hoisted(() => ({ readAsset: vi.fn() } as { readAsset: ReturnType<typeof vi.fn>; graphBindingGeneration?: () => number }));
 vi.mock("./backend", () => ({ backend: () => backendMock }));
 
-import { __assetCacheStatsForTests, acquireAssetBlob, assetVersion, refreshAsset, clearAssetBlobCache, seedAssetBlob } from "./assetCache";
+import { __assetCacheStatsForTests, acquireAssetBlob, acquireCachedAssetBlob, assetVersion, refreshAsset, clearAssetBlobCache, seedAssetBlob } from "./assetCache";
 
 afterEach(() => {
   clearAssetBlobCache();
@@ -12,6 +12,31 @@ afterEach(() => {
 });
 
 describe("asset blob cache bounds", () => {
+  it("GH #745: synchronous leases share loaded bytes and respect refresh and graph invalidation", async () => {
+    let next = 0;
+    const revoke = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL: () => `blob:sync-${next++}`, revokeObjectURL: revoke });
+    backendMock.readAsset.mockResolvedValue(new Uint8Array([1]));
+    expect(acquireCachedAssetBlob("photo.png")).toBeUndefined();
+    const loaded = await acquireAssetBlob("photo.png");
+    const remount = acquireCachedAssetBlob("photo.png")!;
+    expect(remount.url).toBe(loaded.url);
+    loaded.release();
+    refreshAsset("photo.png");
+    expect(acquireCachedAssetBlob("photo.png")).toBeUndefined();
+    await Promise.resolve();
+    expect(revoke).not.toHaveBeenCalledWith(remount.url);
+    remount.release(); remount.release();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(revoke.mock.calls.filter(([url]) => url === loaded.url)).toHaveLength(1);
+    const nextGraph = await acquireAssetBlob("photo.png");
+    expect(nextGraph.url).not.toBe(loaded.url);
+    clearAssetBlobCache();
+    expect(acquireCachedAssetBlob("photo.png")).toBeUndefined();
+    nextGraph.release();
+  });
+
   it("evicts least-recently-used image blobs beyond the entry cap", () => {
     let next = 0;
     vi.stubGlobal("URL", {

@@ -7,15 +7,18 @@ icon:: 🧩
 - ## Browse and install
 	- Open **Settings → Plugins → Browse** for the signed community catalogue. Each entry shows its source, supported platforms, declared capabilities, publication review, and a digest-verified safety report.
 	- Choose **Install** on a compatible entry. Local developers can instead choose **Install a local package** and select its `manifest.json` and `.wasm` together.
+	- Tine supports plugin API 0.2 and 0.3. API 0.3 adds the `color` setting type for host-rendered color choices. The catalogue offers only versions your Tine can run, so an older Tine keeps the last compatible version of a plugin.
 	- Every version is installed disabled. Open **Installed**, review its identity and capabilities, then enable it explicitly.
 - ## Control a plugin
 	- Open a plugin's **Details** or **Settings** page to change its host-rendered options. Plugins receive only validated scalar values; they do not draw their own settings UI.
 	- Disable a plugin at any time without removing it. **Uninstall** removes only that app-local package version and never changes your graph or notes.
 	- Signed revocations are checked before saved plugins start. A revoked version stays disabled even when the live catalogue is temporarily unavailable.
+	- **Bullet threading** highlights the focused block's continuous ancestor path even with **All nested outlines** selected. Its **Settings** offer line thickness from 0–10 px (0 hides the lines), a custom color (empty uses the current theme accent), and optional **Color by hierarchy level**, off by default. Disabling the plugin restores normal guides without changing your notes.
+	- **Active ancestry only** emphasizes the edited block's connectors in the theme accent color by default, following the path through its ancestors.
 - ## Themes
-	- Declarative themes live under **Settings → Appearance → Themes**, separately from executable plugins. They contain validated colors and may select bounded Tine-owned presentation styles rather than running code: editorial reading type, a larger journal header, or a compact Today task count. **Style** (typography, journal headings and other presentation) and **Color scheme** (Default, Nord, Solarized, Gruvbox, or an installed package's colors) are chosen independently, so you can keep one package's style with another palette. They contain no scripts, selectors, imports, downloaded fonts, or remote assets, and no theme ever reads or writes your graph.
+	- Declarative themes live under **Settings → Appearance → Themes**, separately from executable plugins. They contain validated colors and may select bounded Tine-owned presentation styles rather than running code: editorial reading type, a larger journal header, or a compact Today task count. **Style** (typography, journal headings and other presentation) and **Color scheme** (Default, Nord, Solarized, Gruvbox, Soft, or an installed package's colors) are chosen independently, so you can keep one package's style with another palette. They contain no scripts, selectors, imports, downloaded fonts, or remote assets, and no theme ever reads or writes your graph.
 	- A Today summary, when selected, is rendered by Tine from the journal page already on screen: it counts open task markers there and calls the `DOING`, `NOW`, `STARTED`, and `IN-PROGRESS` subset “in progress.” The theme receives neither those tasks nor a query interface.
-	- A selected theme remains subordinate to your graph's `logseq/custom.css`, so your own CSS still wins.
+	- A selected theme remains subordinate to your graph's `logseq/custom.css`, so your own CSS still wins; [[Workflows/Customize Tine's look]] explains that file and the stable `--tine-*` tokens.
 - ## Create one yourself
 	- 1. Open **Settings → Plugins → Browse**.
 	- 2. Inspect a plugin's capabilities and safety report, then install it.

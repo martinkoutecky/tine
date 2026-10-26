@@ -1,3 +1,4 @@
+import { msg } from "../i18n";
 // Edit-mode "copy a link to this block" commands: builtin Mod+C with no text
 // selected copies `((uuid))` (OG parity), and Mod+Shift+C copies the embed
 // `{{embed ((uuid))}}` (GH #279). Both persist the block's id:: through the
@@ -13,9 +14,9 @@ import { blockLink, graphLink, pageLink } from "../deepLinks";
 
 export type BlockLinkKind = "ref" | "embed";
 
-const TEXT: Record<BlockLinkKind, { wrap: (uuid: string) => string; ok: string; noun: string }> = {
-  ref: { wrap: (uuid) => `((${uuid}))`, ok: "Copied block ref", noun: "reference" },
-  embed: { wrap: (uuid) => `{{embed ((${uuid}))}}`, ok: "Copied block embed", noun: "embed" },
+const TEXT: Record<BlockLinkKind, { wrap: (uuid: string) => string }> = {
+  ref: { wrap: (uuid) => `((${uuid}))` },
+  embed: { wrap: (uuid) => `{{embed ((${uuid}))}}` },
 };
 
 /** Copy references/embeds for one block or an ordered selection. Every ID is
@@ -38,15 +39,15 @@ export async function copyBlockLink(target: string | readonly string[], kind: Bl
       const uuid = await ensureBlockId(id);
       if (!bindingCurrent(binding)) return;
       if (!uuid) {
-        pushToast(`Couldn't save the block id — ${text.noun} not copied.`, "error");
+        pushToast(msg("block-link-copy-save-failed", { kind }), "error");
         return;
       }
       refs.push((ids.length > 1 && kind === "ref" ? "- " : "") + text.wrap(uuid));
     }
     await writeClipboardText(refs.join("\n"));
-    if (bindingCurrent(binding)) pushToast(ids.length > 1 ? `${text.ok}s` : text.ok, "success");
+    if (bindingCurrent(binding)) pushToast(msg("block-link-copy-copied", { kind, count: ids.length }), "success");
   } catch {
-    if (bindingCurrent(binding)) pushToast(`Couldn't copy block ${kind}: save or clipboard write failed.`, "error");
+    if (bindingCurrent(binding)) pushToast(msg("block-link-copy-couldn-t-copy-block-save-or-clipboard-write", { kind: String(kind) }), "error");
   }
 }
 
@@ -82,8 +83,8 @@ export async function copyTineLink(target: { page: string } | { blocks: readonly
       text = blockLink(target.blockUuid);
     } else text = graphLink(id);
     await writeOwned(owner, writeClipboardText(text));
-    if (bindingCurrent(binding)) pushToast("Copied Tine link", "success");
+    if (bindingCurrent(binding)) pushToast(msg("block-link-copy-copied-tine-link"), "success");
   } catch (error) {
-    if (bindingCurrent(binding)) pushToast(`Couldn't copy Tine link: ${String(error)}`, "error");
+    if (bindingCurrent(binding)) pushToast(msg("block-link-copy-couldn-t-copy-tine-link", { error: String(error) }), "error");
   }
 }

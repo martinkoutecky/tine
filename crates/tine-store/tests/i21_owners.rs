@@ -6,11 +6,27 @@ use std::path::Path;
 // revocation signal; join-or-cancel describes who reaps or bounds the work.
 const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
+        "crates/tine-store/src/bench_events.rs",
+        ".spawn(move ||",
+        // Bench only: started at most once per process, and only while
+        // TINE_BENCH_EVENTS names a file (tests also start their own).
+        1,
+        "the channel's sender: the process-wide writer's lives until exit; a test writer's drops with its `Writer`, ending the thread's receive loop",
+        "detached; the thread ends with its channel or with the process, and an unwritten line is lost (best effort, never synced, by the bench contract)",
+    ),
+    (
         "crates/tine-store/src/model.rs",
         ".spawn(move ||",
         1,
         "parse_pages_parallel scope (on-demand build and background warm)",
         "std::thread::scope joins its child before return",
+    ),
+    (
+        "crates/tine-store/src/page_host/driver.rs",
+        ".spawn(move ||",
+        1,
+        "Driver::join and Drop set `stopping` and wake the host condition",
+        "Driver::join and Drop join the driver thread",
     ),
     (
         "crates/tine-store/src/store.rs",
@@ -62,6 +78,14 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         "caller awaits blocking result",
     ),
     (
+        "src-tauri/src/host_retirement.rs",
+        ".spawn(move ||",
+        // Step 3b P1: one thread per retiring slot whose host runs.
+        1,
+        "the retiring host's stop completing, or `HostRetirement::adopt` by a reopen of its root (the thread then finds its slot unclaimed and returns)",
+        "detached; app exit waits on `HostRetirement::wait_idle` (30 s bound), and the thread removes its slot from the map before it ends",
+    ),
+    (
         "src-tauri/src/graph.rs",
         ".spawn(move ||",
         1,
@@ -93,7 +117,7 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         "src-tauri/src/watcher.rs",
         "spawn_blocking(",
         1,
-        "rescan_graph_now: one bounded scan_refresh on the slot's Store",
+        "rescan_graph_now: one bounded refresh on the slot's Store",
         "detached; the scan returns and its completion is registered on RescanCursor, never waited on",
     ),
     (
@@ -106,9 +130,31 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // its command future like get_page.
         // +2 GH #623: open_asset and edit_asset_external start the OS opener
         // (PATH search, exec) on the blocking pool, awaited by their futures.
+        // -1 step 3b P2b: the deleted `delete_page` command (page_delete).
+        // +1 All pages view: page_modified loads the whole-graph view off the
+        // main thread, awaited by its command future like get_page.
+        // +1 GH #457: open_graph_file resolves and opens a file link's target
+        // on the blocking pool, awaited by its future like open_asset.
+        // +1 GH #616: reveal_export awaits the shared OS reveal helper.
+        // -1 GH #481: moved to commands/journals_feed.rs, same awaited owner.
+        // -1 UI-CENSUS-18: the unused graph_source_files command was removed.
         37,
         "command future",
         "caller awaits blocking result",
+    ),
+    (
+        "src-tauri/src/commands/journals_feed.rs",
+        "spawn_blocking(",
+        1,
+        "journal feed command future",
+        "caller awaits blocking result",
+    ),
+    (
+        "src-tauri/src/css_files.rs",
+        "spawn_blocking(",
+        4,
+        "read_css_file / save_css_file command future; graph operations retain their slot and Store close revokes writes",
+        "caller awaits each bounded read or guarded durable save before replying; no detached worker",
     ),
     (
         "src-tauri/src/settings.rs",
@@ -134,6 +180,8 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         "spawn_blocking(",
         // +2 og-A: duplicate_journal_diff and resolve_duplicate_journal_day,
         // each awaited by its own command future like the six before them.
+        // +1 step 3b R6: merge_live_conflict, likewise.
+        // -1 step 3b P2b: the deleted `resolve_live_conflict` command.
         8,
         "command future",
         "caller awaits blocking result",
@@ -208,6 +256,7 @@ fn assert_owned(actual: &BTreeMap<(String, String), usize>) {
 
 #[test]
 fn production_acquisitions_have_owners() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut files = Vec::new();
     rust_sources(&root.join("crates/tine-store/src"), &root, &mut files);
@@ -221,11 +270,14 @@ fn production_acquisitions_have_owners() {
         "src-tauri/src/backup/restore.rs",
         "src-tauri/src/commands.rs",
         "src-tauri/src/commands/concord.rs",
+        "src-tauri/src/commands/journals_feed.rs",
         "src-tauri/src/graph.rs",
+        "src-tauri/src/host_retirement.rs",
         "src-tauri/src/settings.rs",
         "src-tauri/src/state.rs",
         "src-tauri/src/watcher.rs",
         "src-tauri/src/device_io.rs",
+        "src-tauri/src/css_files.rs",
     ] {
         files.push((
             file.to_owned(),
@@ -237,6 +289,7 @@ fn production_acquisitions_have_owners() {
 
 #[test]
 fn planted_unowned_worker_fails() {
+    let _integration_guard = crate::integration_lock();
     let source = vec![(
         "src-tauri/src/new_worker.rs".to_owned(),
         "std::thread::spawn(move || {});".to_owned(),

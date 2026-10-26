@@ -9,10 +9,12 @@ import { backend } from "./backend";
 import { renameOrMergePage, renameOutcomeMessage } from "./graph";
 import { doc, setDoc } from "./document/model";
 import { conflicts, isDirty, resetStore } from "./document";
-import { activatePageInstance } from "./document/save/engine";
+import { activatePageInstance } from "./document/instance";
+import { bindTestHost } from "./document/host/wiring.test.support";
+import { installDiskHost } from "./diskHost.test.support";
 import { setRaw } from "./document/edits/blocks";
 import { undo } from "./document/history";
-import type { PageRead } from "./types";
+import type { PageDto, PageRead } from "./types";
 
 beforeAll(() => initParser());
 
@@ -40,6 +42,25 @@ function graph(otherText: string) {
   for (const name of ["Old", "Other", "Referrer"]) activatePageInstance(name);
 }
 
+/** Bind the window over a disk where `stuck`'s file refuses every save
+ *  attempt: an I/O refusal (the write throws), or a conflict (the file's
+ *  revision moves under every read, so each submit is stale). Returns the
+ *  submit spy and the paths actually written. */
+async function stuckDisk(stuck: string, family: "io:PermissionDenied" | "conflict") {
+  let moved = 0;
+  const written: string[] = [];
+  const spies = installDiskHost(await bindTestHost(), {
+    read: (key, name) => ({ id: key, name, kind: "page", title: name, pre_block: null, blocks: [],
+      rev: key === `pages/${stuck}.md` && family === "conflict" ? `moved-${++moved}` : "r1" }) as PageDto,
+    write: (key) => {
+      if (key === `pages/${stuck}.md` && family === "io:PermissionDenied") throw new Error(family);
+      written.push(key);
+      return "r2";
+    },
+  });
+  return { save: spies.submit, written };
+}
+
 const cases = [
   ["unrelated page refused on every save", "io:PermissionDenied"],
   ["unrelated page conflicted on every save", "conflict"],
@@ -51,7 +72,7 @@ it.each(cases)("a stuck page blocks a rename only when the rename would touch it
   const mentions = label === "stuck page mentions the old name";
   const itself = label === "renamed page itself stuck";
   graph("Other");
-  const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ failed: { index: 0, family, diskRev: "disk", undoFailed: [] } });
+  const { save, written } = await stuckDisk(itself ? "Old" : "Other", family);
   vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/New.md" });
   const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({
     outcome: "renamed",
@@ -68,6 +89,7 @@ it.each(cases)("a stuck page blocks a rename only when the rename would touch it
   const outcome = await renameOrMergePage("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" });
 
   expect(save).toHaveBeenCalled();
+  expect(written).toEqual([]);
   if (itself || mentions) {
     expect(rename).not.toHaveBeenCalled();
     const blocker = itself ? "Old" : "Other";
@@ -136,7 +158,7 @@ const referenceCases: [label: string, from: string, draft: string, blocks: boole
 
 it.each(referenceCases)("a stuck page blocks a rename only when it references the renamed page: %s", async (_label, from, draft, blocks) => {
   graph("Other");
-  vi.spyOn(backend(), "savePages").mockResolvedValue({ failed: { index: 0, family: "io:PermissionDenied", diskRev: "disk", undoFailed: [] } });
+  await stuckDisk("Other", "io:PermissionDenied");
   vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/New.md" });
   const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [] });
   setRaw("other", draft, { timetracking: false });

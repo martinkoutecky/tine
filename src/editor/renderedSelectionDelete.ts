@@ -17,10 +17,11 @@
 
 import { node as docNode, setRaw, blockWritable, pageByName } from "../document";
 import { startEditing, editingId } from "../editorController";
-import { splitProps, joinProps, isBuiltinHidden } from "../editor/properties";
+import { splitProps, joinProps, BUILTIN_HIDE } from "../editor/properties";
 import { editorOffsetFromRenderedRange } from "../render/spans";
 import { isAnnotationBlock } from "./annotation";
 import { calcSource } from "./calc";
+import { queryAllWindows, selectionOf } from "../windowRealm";
 
 function blockRowOf(node: Node | null): Element | null {
   if (!node) return null;
@@ -39,8 +40,8 @@ function blockRowOf(node: Node | null): Element | null {
 export function deleteRenderedTextSelection(): boolean {
   if (typeof window === "undefined" || typeof document === "undefined") return false;
   // A modal owns keystrokes while open — never mutate background blocks behind it.
-  if (document.querySelector(".modal-overlay")) return false;
-  const sel = window.getSelection?.();
+  if (queryAllWindows(".modal-overlay")) return false;
+  const sel = selectionOf();
   if (!sel || sel.rangeCount === 0) return false;
   const range = sel.getRangeAt(0);
   if (range.collapsed) return false;
@@ -74,19 +75,19 @@ export function deleteRenderedTextSelection(): boolean {
     wrapper,
     { startContainer: range.startContainer, startOffset: range.startOffset },
     node.raw,
-    isBuiltinHidden,
+    BUILTIN_HIDE,
     fmt,
   );
   const end = editorOffsetFromRenderedRange(
     wrapper,
     { startContainer: range.endContainer, startOffset: range.endOffset },
     node.raw,
-    isBuiltinHidden,
+    BUILTIN_HIDE,
     fmt,
   );
   if (start === null || end === null || end < start) return false;
 
-  const split = splitProps(node.raw, isBuiltinHidden, fmt);
+  const split = splitProps(node.raw, BUILTIN_HIDE, fmt);
   const s = Math.min(start, split.visible.length);
   const e = Math.min(end, split.visible.length);
   if (s === e) return false;

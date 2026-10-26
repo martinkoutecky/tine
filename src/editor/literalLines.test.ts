@@ -12,7 +12,7 @@ import { setBlockProperty, rawWithHeading } from "../document/edits/properties";
 import { existingBlockId, rawWithBlockId } from "../document/edits/identity";
 import { writeField } from "../sheet/fields";
 import { setWorkflow } from "../ui";
-import { joinProps, splitProps, isBuiltinHidden } from "./properties";
+import { joinProps, splitProps, BUILTIN_HIDE } from "./properties";
 import { normalizePlanning } from "./planning";
 import { rollRepeat, toggleTaskDone } from "./repeat";
 import { literalBlockOfLine } from "./literalLines";
@@ -72,7 +72,7 @@ describe("property and id writers leave code bytes alone (C3 L13)", () => {
 
   it("the editor's Org hidden-drawer round trip keeps a src block intact (L14)", () => {
     const raw = `a\n:PROPERTIES:\n:id: u-1\n:END:\n#+BEGIN_SRC\n${SCHED}\n#+END_SRC`;
-    const { visible, hidden } = splitProps(raw, isBuiltinHidden, "org");
+    const { visible, hidden } = splitProps(raw, BUILTIN_HIDE, "org");
     expect(joinProps(visible, hidden, "org")).toBe(raw);
   });
 
@@ -80,7 +80,7 @@ describe("property and id writers leave code bytes alone (C3 L13)", () => {
     const raw = "a\n#+BEGIN_SRC\nid:: in-code\n#+END_SRC\nid:: real";
     expect(existingBlockId("a\n```\nid:: fake\n```", "md")).toBeNull();
     expect(existingBlockId(raw, "md")).toBe("real");
-    const { visible, hidden } = splitProps(raw, isBuiltinHidden, "md");
+    const { visible, hidden } = splitProps(raw, BUILTIN_HIDE, "md");
     expect(hidden).toBe("id:: real");
     expect(joinProps(visible, hidden, "md")).toBe(raw);
   });

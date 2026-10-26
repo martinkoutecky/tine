@@ -1,3 +1,4 @@
+import { msg, t } from "../i18n";
 import { For, Show, createSignal, type Accessor, type JSX } from "solid-js";
 import { ensurePagePropertyOnKeyPage } from "../document";
 import { pushToast } from "../toasts";
@@ -34,30 +35,30 @@ export function PropertyType(props: {
       props.onDeclarationWritten();
       setOpen(false);
     } catch (error) {
-      pushToast(`Could not save property type: ${error instanceof Error ? error.message : String(error)}`, "error");
+      pushToast(msg("property-type-could-not-save-property-type", { error: String(error instanceof Error ? error.message : String(error)) }), "error");
     } finally {
       setBusy(false);
     }
   };
   return <span class="qb-prop-type" onClick={(event) => event.stopPropagation()}>
-    <Show when={row()} fallback={<Show when={props.rows()}><span>no observed values</span></Show>}>
+    <Show when={row()} fallback={<Show when={props.rows()}><span>{t("property-type-no-observed-values")}</span></Show>}>
       {(current) => <>
         <span class="qb-prop-type-badge">
           {current().declared ? phrase(...current().declared!) : phrase(current().observed_type, current().cardinality)}
-          <small> ({current().declared ? "declared" : "observed"})</small>
+          <small> ({current().declared ? t("property-type-declared") : t("property-type-observed")})</small>
         </span>
         <Show when={current().declared && current().mismatch_count > 0}>
-          <span class="qb-prop-type-mismatch">{current().mismatch_count} blocks or pages do not match</span>
+          <span class="qb-prop-type-mismatch">{t("property-type-mismatches", { count: String(current().mismatch_count) })}</span>
         </Show>
         <Show when={!props.readOnly}>
-          <button type="button" disabled={busy()} onClick={() => setOpen(!open())}>declare type…</button>
+          <button class="settings-btn" type="button" disabled={busy()} onClick={() => setOpen(!open())}>{t("property-type-declare-type")}</button>
           <Show when={open()}><span class="qb-prop-type-menu">
-            <label><input type="checkbox" checked={many()} onChange={(event) => setMany(event.currentTarget.checked)} /> list of</label>
-            <For each={DECLARABLE_TYPES}>{(type) => <button type="button"
+            <label><input type="checkbox" checked={many()} onChange={(event) => setMany(event.currentTarget.checked)} />{t("property-type-list-of")}</label>
+            <For each={DECLARABLE_TYPES}>{(type) => <button class="settings-btn" type="button"
               onClick={() => void write(declarationValue(type, many() ? "many" : "one"))}>
               {declarationValue(type, many() ? "many" : "one")}
             </button>}</For>
-            <Show when={current().declared}><button type="button" onClick={() => void write(null)}>remove declaration</button></Show>
+            <Show when={current().declared}><button class="settings-btn" type="button" onClick={() => void write(null)}>{t("property-type-remove-declaration")}</button></Show>
           </span></Show>
         </Show>
       </>}

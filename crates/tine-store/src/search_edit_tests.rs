@@ -4,7 +4,7 @@ use crate::model::Graph;
 use crate::test_config_client::ConfigClient;
 use std::sync::Arc;
 use tine_core::PageKind;
-use tine_graph_features::{assets, journals, pages, pdf};
+use tine_graph_features::{assets, journals, pdf};
 use tine_store::Store;
 
 fn mk(tag: &str) -> std::path::PathBuf {
@@ -73,6 +73,7 @@ fn save_named(store: &Store, name: &str, edit: impl FnOnce(&mut tine_core::model
 fn search_matches(store: &Store, text: &str) -> bool {
     let view = store.whole_graph().unwrap();
     let req = tine_store::SearchRequest {
+        transliteration: false,
         text: text.into(),
         within: None,
         page_limit: 20,
@@ -433,7 +434,7 @@ fn own_write_is_suppressed_by_watcher() {
     let before = store.whole_graph().unwrap().rev();
 
     // Before any edit, an unchanged file is already suppressed.
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(
         store.whole_graph().unwrap().rev(),
         before,
@@ -456,7 +457,7 @@ fn own_write_is_suppressed_by_watcher() {
 
     // The watcher polling this file must see it as OUR write, not external.
     let after_save = store.whole_graph().unwrap().rev();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(
         store.whole_graph().unwrap().rev(),
         after_save,
@@ -465,7 +466,7 @@ fn own_write_is_suppressed_by_watcher() {
 
     // A genuine external change is still detected.
     std::fs::write(&path, "- DOING ship the thing\n- edited by hand\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(
         store.whole_graph().unwrap().rev() > after_save,
         "external edit → detected"
@@ -633,7 +634,15 @@ fn write_highlights_preserves_externally_added_ones() {
             .collect()
     };
     // Tine writes H1 (no baseline yet).
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[mk_hl("H1", "one")], &[]).unwrap();
+    pdf::write_highlights(
+        &store,
+        None,
+        "paper.pdf",
+        "Paper",
+        &[mk_hl("H1", "one")],
+        &[],
+    )
+    .unwrap();
     // An external editor (OG) adds H2 to the same EDN.
     let edn_path = root
         .join("assets")
@@ -645,6 +654,7 @@ fn write_highlights_preserves_externally_added_ones() {
     // Tine, baseline [H1], adds H3 and writes — H2 (external) must NOT be dropped.
     pdf::write_highlights(
         &store,
+        None,
         "paper.pdf",
         "Paper",
         &[mk_hl("H1", "one"), mk_hl("H3", "three")],
@@ -661,6 +671,7 @@ fn write_highlights_preserves_externally_added_ones() {
     let base = pdf::read_highlights(&store, "paper.pdf");
     pdf::write_highlights(
         &store,
+        None,
         "paper.pdf",
         "Paper",
         &[mk_hl("H1", "one"), mk_hl("H3", "three")],
@@ -710,9 +721,9 @@ fn highlight_write_is_not_seen_as_external_change() {
         text: Some("noted".into()),
         image: None,
     };
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[h], &[]).unwrap();
 
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let observed: Vec<_> = std::iter::from_fn(|| changes.try_recv().unwrap()).collect();
     let highlights = store
         .file_id(tine_store::Area::Pages, "hls__paper.md")
@@ -765,7 +776,7 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
         let mut v: Vec<String> = store
             .whole_graph()
             .unwrap()
-            .inventory()
+            .inventory(tine_store::InventoryScope::All)
             .0
             .iter()
             .filter(|entry| !entry.is_journal)
@@ -807,7 +818,11 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
         .read(&tine_store::PageId::from("pages/A.md").file(), None)
         .unwrap();
     let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-    tx.trash(&tine_store::PageId::from("pages/A.md").file(), rev);
+    tx.trash(
+        &tine_store::PageId::from("pages/A.md").file(),
+        rev,
+        tine_store::TrashIf::Any,
+    );
     assert!(matches!(
         tx.commit(),
         tine_store::TxOutcome::Committed { .. }
@@ -825,7 +840,7 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
 fn delete_page_moves_to_trash_recoverable() {
     let root = mk("deltrash");
     std::fs::write(root.join("pages").join("Doomed.md"), "- keep me\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let cancel = tine_store::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
     assert_eq!(
         store
@@ -836,7 +851,10 @@ fn delete_page_moves_to_trash_recoverable() {
             .len(),
         1
     );
-    pages::delete_page_expected(&store, "Doomed", PageKind::Page, None, None).expect("delete");
+    assert_eq!(
+        crate::test_fixture_io::delete(&store, "Doomed", PageKind::Page, None).expect("delete"),
+        (tine_store::PageOperation::Applied, Some(true))
+    );
 
     // Gone from pages/, no longer resolvable...
     assert!(!root.join("pages").join("Doomed.md").exists());
@@ -865,7 +883,7 @@ fn delete_page_errors_when_trash_path_is_file_and_keeps_page_cached() {
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::write(root.join("logseq").join(".tine-trash"), "not a dir").unwrap();
     std::fs::write(root.join("pages").join("Doomed.md"), "- keep me\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let cancel = tine_store::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
     assert_eq!(
         store
@@ -877,12 +895,12 @@ fn delete_page_errors_when_trash_path_is_file_and_keeps_page_cached() {
         1
     );
 
-    let err = pages::delete_page_expected(&store, "Doomed", PageKind::Page, None, None)
-        .expect_err("trash path is blocked");
-    assert!(
-        err.to_string().contains(".tine-trash"),
-        "error should name the trash path: {err}"
-    );
+    // The host owes the deletion until its trash move lands; a blocked
+    // trash never publishes it (STEP3 §4.4), and the page stays.
+    let (deleted, published) =
+        crate::test_fixture_io::delete(&store, "Doomed", PageKind::Page, None).unwrap();
+    assert_eq!(deleted, tine_store::PageOperation::Pending);
+    assert_ne!(published, Some(true), "a blocked trash must not publish");
     assert!(
         root.join("pages").join("Doomed.md").is_file(),
         "source page survives"
@@ -905,8 +923,8 @@ fn trash_journal_file_errors_when_trash_path_is_file_and_keeps_source() {
     let journal = root.join("journals").join("2026_06_20.md");
     std::fs::write(&journal, "- journal body\n").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
-    let err =
-        journals::trash_journal_file(&store, "2026_06_20.md").expect_err("trash path is blocked");
+    let err = journals::trash_journal_file(&store, None, "2026_06_20.md")
+        .expect_err("trash path is blocked");
     assert!(
         err.to_string().contains(".tine-trash"),
         "error should name the trash path: {err}"
@@ -1059,7 +1077,7 @@ fn resolve_block_index_refreshes_after_cache_change() {
         "- beta\n  id:: bbbb-2222\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(crate::Depth::Stamps).unwrap();
     let current = store.whole_graph().unwrap();
     assert_eq!(
         current.blocks(&["bbbb-2222".into()]).unwrap()[0]
@@ -1217,6 +1235,7 @@ fn migrate_renames_title_named_journal_files() {
     let store = Store::open(&root, Default::default()).unwrap().0;
     let n = journals::migrate_journal_filenames(
         &store,
+        None,
         &journals::journal_filename_migrations(&store).unwrap(),
     )
     .unwrap();
@@ -1302,6 +1321,46 @@ fn crlf_files_round_trip_without_churn() {
         "no lone LF mixed in: {after:?}"
     );
     store.close();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn page_modified_lists_each_page_file_with_the_mtime_the_view_observed() {
+    // GH #335: the All pages view's "Updated" column. One answer for every page file,
+    // from the times captured with the page table; a later mtime-only change does not
+    // move a held view's answer, and a newly saved page carries its new time.
+    let root = mk("pagemodified");
+    let a = root.join("pages").join("A.md");
+    let j = root.join("journals").join("2026_03_01.md");
+    std::fs::write(&a, "- a\n").unwrap();
+    std::fs::write(&j, "- j\n").unwrap();
+    let t0 = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+    let set = |p: &std::path::Path, t: std::time::SystemTime| {
+        std::fs::File::options()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(t)
+            .unwrap()
+    };
+    set(&a, t0);
+    set(&j, t0 + std::time::Duration::from_secs(7));
+    let store = store_at(&root);
+    let held = store.whole_graph().unwrap();
+    assert_eq!(
+        held.page_modified(),
+        vec![
+            ("journals/2026_03_01.md".to_string(), 1_600_000_007),
+            ("pages/A.md".to_string(), 1_600_000_000),
+        ],
+        "one row per page file, graph-relative path, Unix seconds"
+    );
+    set(&a, t0 + std::time::Duration::from_secs(500));
+    assert_eq!(
+        held.page_modified()[1].1,
+        1_600_000_000,
+        "a held view keeps the mtimes it observed, it does not re-stat"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

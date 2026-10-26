@@ -9,7 +9,7 @@
 use std::fs;
 use tine_core::model::PageKind;
 use tine_graph_features::pages;
-use tine_store::Store;
+use tine_store::{InventoryScope, Store};
 
 fn graph(files: &[(&str, &str)]) -> (tempfile::TempDir, Store) {
     let dir = tempfile::tempdir().unwrap();
@@ -27,7 +27,7 @@ fn assert_graph_serves_links(store: &Store, titled: &str) {
     let view = store
         .whole_graph()
         .expect("the initial load stopped, so `[[` completion has no names");
-    let inventory = view.inventory();
+    let inventory = view.inventory(InventoryScope::All);
     for name in ["Links", titled] {
         assert!(
             inventory.0.iter().any(|entry| entry.name == name),
@@ -56,6 +56,7 @@ fn assert_graph_serves_links(store: &Store, titled: &str) {
 
 #[test]
 fn a_property_node_with_a_folded_blank_line_leaves_every_page_openable() {
+    let _integration_guard = crate::integration_lock();
     for (rel, body, titled) in [
         (
             "pages/Other.md",

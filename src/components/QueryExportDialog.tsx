@@ -1,3 +1,5 @@
+import { Rich } from "../i18n/Rich";
+import { t, msg, rawText } from "../i18n";
 import { For, Show, createResource, createSignal, onCleanup, onMount, type Accessor, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { exportSheets } from "../sheet/exportSheets";
@@ -7,6 +9,8 @@ import { bindingOwner, writeOwned } from "../owned";
 import type { QueryPublicationRequest } from "../types";
 import { readOr } from "../resourceRead";
 import { initQueryExportBudget, queryExportBudgetBytes } from "../queryExportBudget";
+import { activeWindow, listen } from "../windowRealm";
+import { registerTransientLayer } from "../transientLayers";
 
 /** Review complete owner pages, then publish a graph query leaf as a static
  * site and read-only browser app, preserving/reporting replaced output. The backend rechecks the fingerprint
@@ -48,9 +52,8 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
       const receipt = await writeOwned(owner, backend().publishQuery(request, selection.fingerprint, sheets));
       if (receipt.kind === "current") {
         closeQueryExport();
-        pushToast(`Exported ${receipt.value.pages} pages to ${receipt.value.path}` +
-          (receipt.value.retired ? ` (previous export kept at ${receipt.value.retired})` : ""), "success", { sticky: true });
-        if (receipt.value.warnings.length) pushToast(receipt.value.warnings.join(" "), "warn", { sticky: true });
+        pushToast(msg("query-export-dialog-exported", { pages: String(receipt.value.pages), path: receipt.value.path, retired: receipt.value.retired ?? "", previous: receipt.value.retired ? 1 : 0 }), "success", { sticky: true });
+        if (receipt.value.warnings.length) pushToast(rawText(receipt.value.warnings.join(" ")), "warn", { sticky: true });
       }
     } catch (cause) {
       if (owner()) {
@@ -65,52 +68,55 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     const key = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); closeQueryExport(); }
     };
-    window.addEventListener("keydown", key, true);
-    onCleanup(() => window.removeEventListener("keydown", key, true));
+    onCleanup(listen(activeWindow(), "keydown", key, true));
+    // An open app-level layer pins the overlay window (overlayWindowId), so
+    // focusing another Tine window does not remount the dialog there and
+    // discard its form (review F10).
+    onCleanup(registerTransientLayer({
+      id: "query-export",
+      root: () => overlay ?? null,
+      dismiss: () => { closeQueryExport(); return true; },
+    }));
   });
+  let overlay: HTMLDivElement | undefined;
   return (
-    <div class="modal-overlay" onClick={closeQueryExport}>
-      <div class="export-modal query-export-modal" role="dialog" aria-label="Export query results" onClick={(event) => event.stopPropagation()}>
-        <div class="export-head">Export query results</div>
+    <div class="modal-overlay" ref={overlay} onClick={closeQueryExport}>
+      <div class="export-modal query-export-modal" role="dialog" aria-label={t("query-export-dialog-export-query-results")} onClick={(event) => event.stopPropagation()}>
+        <div class="export-head">{t("query-export-dialog-export-query-results")}</div>
         <div class="export-opts">
-          <label class="export-opt-row"><span class="export-opt-label">Name</span>
+          <label class="export-opt-row"><span class="export-opt-label">{t("query-export-dialog-name")}</span>
             <input value={name()} onInput={(event) => setName(event.currentTarget.value)}
               onBlur={changeName}
               onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") changeName(); }} />
           </label>
-          <Show when={plan.loading}><div class="query-export-note">Resolving pages…</div></Show>
+          <Show when={plan.loading}><div class="query-export-note">{t("query-export-dialog-resolving-pages")}</div></Show>
           <Show when={plan.error}><div role="alert" class="query-export-refused">{String(plan.error)}</div></Show>
           <Show when={reviewed()}>{(selection) => <>
-            <div class="query-export-summary">{selection().rowCount} results on {selection().pages.length} complete pages</div>
+            <div class="query-export-summary">{t("query-export-dialog-summary", { results: String(selection().rowCount), pages: String(selection().pages.length) })}</div>
             <ul class="query-export-pages"><For each={selection().pages}>{(page) =>
-              <li>{page.name} <small>{page.path}</small>{page.journal ? " · journal" : ""}</li>
+              <li>{page.name} <small>{page.path}</small>{page.journal ? t("query-export-dialog-journal") : ""}</li>
             }</For></ul>
             <Show when={selection().anchor === "block" && selection().pages.length > 0}>
               <label class="query-export-ack"><input type="checkbox" checked={acknowledged()}
-                onChange={(event) => setAcknowledged(event.currentTarget.checked)} />
-                All blocks on these pages will be exported, including blocks that did not match.
-              </label>
+                onChange={(event) => setAcknowledged(event.currentTarget.checked)} />{t("query-export-dialog-all-blocks-on-these-pages-will-be-exported")}</label>
             </Show>
             <Show when={selection().exists}>
-              <div role="group" aria-label="Destination">An export named <code>{selection().folder}</code> already exists.
-                <label><input type="radio" name="query-export-destination" checked={destination() === "replace"}
-                  onChange={() => setDestination("replace")} /> Replace it (the previous export is kept in recovery)</label>
+              <div role="group" aria-label={t("query-export-dialog-destination")}><Rich message={msg("query-export-dialog-existing", { folder: selection().folder })} /><label><input type="radio" name="query-export-destination" checked={destination() === "replace"}
+                  onChange={() => setDestination("replace")} />{t("query-export-dialog-replace-it-the-previous-export-is-kept-in")}</label>
                 <label><input type="radio" name="query-export-destination" checked={destination() === "separate"}
-                  onChange={() => setDestination("separate")} /> Create a separate export as <code>{selection().suggestedFolder}</code></label>
+                  onChange={() => setDestination("separate")} /><Rich message={msg("query-export-dialog-separate", { folder: selection().suggestedFolder ?? "" })} /></label>
               </div>
             </Show>
-            <div class="query-export-note">Destination: <code>{selection().path.slice(0, -selection().folder.length)}{folder() ?? selection().folder}</code>.
-              This exports these pages regardless of their public setting as a static site and read-only app.
-              It is not uploaded. Unsaved edits are not included.</div>
+            <div class="query-export-note"><Rich message={msg("query-export-dialog-path", { path: selection().path.slice(0, -selection().folder.length) + (folder() ?? selection().folder) })} /></div>
           </>}</Show>
           <Show when={error()}><div role="alert" class="query-export-refused">{error()}
-            <Show when={overBudget()}><button class="export-btn-secondary" onClick={() => { closeQueryExport(); openSettings("graph"); }}>Adjust limit in Settings…</button></Show>
+            <Show when={overBudget()}><button class="export-btn-secondary" onClick={() => { closeQueryExport(); openSettings("graph"); }}>{t("query-export-dialog-adjust-limit-in-settings")}</button></Show>
           </div></Show>
         </div>
         <div class="export-foot">
-          <button class="export-btn-secondary" onClick={closeQueryExport}>Cancel</button>
+          <button class="export-btn-secondary" onClick={closeQueryExport}>{t("query-export-dialog-cancel")}</button>
           <button class="export-btn-primary" disabled={!canExport()}
-            onClick={() => void publish()}>{busy() ? "Exporting…" : "Export"}</button>
+            onClick={() => void publish()}>{busy() ? t("query-export-dialog-exporting") : t("query-export-dialog-export")}</button>
         </div>
       </div>
     </div>

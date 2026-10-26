@@ -1,4 +1,4 @@
-import { rawOffsetToVisibleOffset, type PropFormat } from "../editor/properties";
+import { rawOffsetToVisibleOffset, type HidePolicy, type PropFormat } from "../editor/properties";
 import { typographicSegments } from "./typography";
 import type { Span, SpanMap } from "./ast";
 
@@ -274,7 +274,7 @@ export function editorOffsetFromRenderedRange(
   root: Element,
   range: Pick<Range, "startContainer" | "startOffset">,
   raw: string,
-  isHidden: (key: string) => boolean,
+  isHidden: HidePolicy,
   format: PropFormat = "md",
 ): number | null {
   const el = closestSpanElement(root, range.startContainer);

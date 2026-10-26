@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Tine",
-  "version": "0.7.4",
+  "version": "0.8.0",
   "identifier": "page.tine.Tine",
   "build": {
     "frontendDist": "../dist",
@@ -41,7 +41,7 @@
         "default-src": "'self'",
         "script-src": "'self' 'wasm-unsafe-eval' https://www.youtube.com",
         "style-src": "'self' 'unsafe-inline' https:",
-        "connect-src": "'self' ipc: http://ipc.localhost https:",
+        "connect-src": "'self' ipc: http://ipc.localhost https: blob: data:",
         "img-src": "'self' data: blob: tine-media: http://tine-media.localhost https://tine-media.localhost https: http:",
         "media-src": "'self' data: blob: tine-media: http://tine-media.localhost https://tine-media.localhost https: http:",
         "font-src": "'self' data: https:",
@@ -54,16 +54,17 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["appimage", "deb", "rpm", "nsis", "dmg"],
+    "targets": ["appimage", "deb", "rpm", "nsis", "app", "dmg"],
     "createUpdaterArtifacts": true,
     "macOS": { "infoPlist": "Info.plist" },
     "iOS": { "infoPlist": "Info.plist", "minimumSystemVersion": "15.4" },
     "windows": { "nsis": { "installerHooks": "tine-url-hooks.nsh" } },
     "android": {
-      "versionCode": 7004
+      "versionCode": 8000
     },
     "linux": {
       "deb": {
+        "recommends": ["libayatana-appindicator3-1"],
         "desktopTemplate": "tine.desktop",
         "files": {
           "usr/share/man/man1/tine.1": "../docs/tine.1",
@@ -73,10 +74,22 @@
           "usr/share/man/man1/tine-export-static.1": "../docs/tine-export-static.1",
           "usr/share/man/man1/tine-export-live.1": "../docs/tine-export-live.1",
           "usr/share/man/man1/tine-doctor.1": "../docs/tine-doctor.1",
-          "usr/share/man/man1/tine-version.1": "../docs/tine-version.1"
+          "usr/share/man/man1/tine-version.1": "../docs/tine-version.1",
+          "usr/share/man/man1/tine-serve.1": "../docs/tine-serve.1",
+          "usr/share/man/man1/tine-status.1": "../docs/tine-status.1",
+          "usr/share/man/man1/tine-page.1": "../docs/tine-page.1",
+          "usr/share/man/man1/tine-page-show.1": "../docs/tine-page-show.1",
+          "usr/share/man/man1/tine-pages.1": "../docs/tine-pages.1",
+          "usr/share/man/man1/tine-journal.1": "../docs/tine-journal.1",
+          "usr/share/man/man1/tine-block.1": "../docs/tine-block.1",
+          "usr/share/man/man1/tine-block-show.1": "../docs/tine-block-show.1",
+          "usr/share/man/man1/tine-refs.1": "../docs/tine-refs.1",
+          "usr/share/man/man1/tine-search.1": "../docs/tine-search.1",
+          "usr/share/man/man1/tine-query.1": "../docs/tine-query.1"
         }
       },
       "rpm": {
+        "recommends": ["libayatana-appindicator-gtk3"],
         "desktopTemplate": "tine.desktop",
         "files": {
           "/usr/share/man/man1/tine.1": "../docs/tine.1",
@@ -86,7 +99,18 @@
           "/usr/share/man/man1/tine-export-static.1": "../docs/tine-export-static.1",
           "/usr/share/man/man1/tine-export-live.1": "../docs/tine-export-live.1",
           "/usr/share/man/man1/tine-doctor.1": "../docs/tine-doctor.1",
-          "/usr/share/man/man1/tine-version.1": "../docs/tine-version.1"
+          "/usr/share/man/man1/tine-version.1": "../docs/tine-version.1",
+          "/usr/share/man/man1/tine-serve.1": "../docs/tine-serve.1",
+          "/usr/share/man/man1/tine-status.1": "../docs/tine-status.1",
+          "/usr/share/man/man1/tine-page.1": "../docs/tine-page.1",
+          "/usr/share/man/man1/tine-page-show.1": "../docs/tine-page-show.1",
+          "/usr/share/man/man1/tine-pages.1": "../docs/tine-pages.1",
+          "/usr/share/man/man1/tine-journal.1": "../docs/tine-journal.1",
+          "/usr/share/man/man1/tine-block.1": "../docs/tine-block.1",
+          "/usr/share/man/man1/tine-block-show.1": "../docs/tine-block-show.1",
+          "/usr/share/man/man1/tine-refs.1": "../docs/tine-refs.1",
+          "/usr/share/man/man1/tine-search.1": "../docs/tine-search.1",
+          "/usr/share/man/man1/tine-query.1": "../docs/tine-query.1"
         }
       }
     },

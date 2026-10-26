@@ -5,6 +5,9 @@ import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { installKeybindings } from "../keybindings";
 import { clearTransientLayersForTest, dismissTopTransient, registerTransientLayer } from "../transientLayers";
+import { ContextMenu } from "../components/ContextMenu";
+import { closeContextMenu, contextMenu } from "../ui";
+import { focusedRouter } from "../panes";
 
 const PEEK_OPEN_MS = 350;
 const PEEK_CLOSE_MS = 150;
@@ -21,6 +24,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  closeContextMenu();
   clearTransientLayersForTest();
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -64,6 +68,73 @@ function popup(): HTMLElement | null {
 }
 
 describe("page hover-peek (GH #40)", () => {
+  it("GH #655: preview actions and desktop right-click use identical shared page-menu items", async () => {
+    const { root, dispose } = mountAttached("[[Tine]]");
+    const menuHost = document.createElement("div"); document.body.append(menuHost);
+    const disposeMenu = render(() => <ContextMenu />, menuHost);
+    const ids = () => [...document.querySelectorAll("[data-page-action-id]")].map(el => el.getAttribute("data-page-action-id"));
+    try {
+      const link = root.querySelector("a.page-ref")!;
+      link.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+      const expected = ids();
+      expect(expected).toContain("open-sidebar");
+      expect(contextMenu()).toMatchObject({ name: "Tine", fileActions: false });
+      closeContextMenu();
+      fireEnter(link);
+      await advance(PEEK_OPEN_MS);
+      expect(await waitFor(() => !!popup())).toBe(true);
+      popup()!.querySelector<HTMLButtonElement>('[aria-label="Page actions"]')!.click();
+      expect(ids()).toEqual(expected);
+      expect(contextMenu()).toMatchObject({ name: "Tine", fileActions: false });
+      expect(popup()).not.toBeNull();
+      fireLeave(popup()!);
+      await advance(PEEK_CLOSE_MS + 1);
+      expect(popup()).not.toBeNull();
+      document.querySelector('.ctx-menu')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      expect(popup()).not.toBeNull();
+      dismissTopTransient("escape");
+      expect(contextMenu()).toBeNull();
+      await advance(PEEK_CLOSE_MS + 1);
+      expect(popup()).toBeNull();
+    } finally { disposeMenu(); dispose(); }
+  });
+  it.each(["[[Tine]]", "#Tine", "((58900000-0000-4000-8000-0000000000b1))"].flatMap(raw =>
+    [".peek-source-title", ".peek-open-source", ".bullet-container"].map(selector => ({ raw, selector }))))("GH #363: $raw $selector activates the preview source tab", async ({ raw, selector }) => {
+    const router = focusedRouter();
+    router.resetTabsToJournals();
+    const before = router.activeTab();
+    const { root, dispose } = mountAttached(raw);
+    try {
+      fireEnter(root.querySelector("a.page-ref, a.tag, .block-ref")!);
+      await advance(PEEK_OPEN_MS);
+      expect(await waitFor(() => !!popup()?.querySelector(selector))).toBe(true);
+      popup()!.querySelector<HTMLElement>(selector)!.click();
+      expect(router.activeTab()).not.toBe(before);
+      expect(router.route()).toMatchObject({ kind: "page", name: "Tine" });
+      if (selector === ".bullet-container") expect((router.route() as { block?: string }).block).toBeTruthy();
+      if (raw.startsWith("((") && selector === ".peek-open-source") expect((router.route() as { block?: string }).block).toBe("58900000-0000-4000-8000-0000000000b1");
+      expect(popup()).toBeNull();
+    } finally { dispose(); router.resetTabsToJournals(); }
+  });
+  it("GH #674/#363: alias preview shows source title, properties and read-only source navigation", async () => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue({
+      id: "pages/Canonical.md", name: "Canonical", title: "Canonical", kind: "page", format: "md",
+      pre_block: "alias:: Nickname\nstatus:: active", blocks: [
+        { id: "source-row", raw: "TODO source body", marker: "TODO", collapsed: false, children: [] },
+      ],
+    } as never);
+    const { root, dispose } = mountAttached("[[Nickname]]");
+    try {
+      fireEnter(root.querySelector("a.page-ref")!);
+      await advance(PEEK_OPEN_MS);
+      expect(await waitFor(() => !!popup())).toBe(true);
+      expect(popup()!.querySelector(".peek-popup-title-name")?.textContent).toBe("Canonical");
+      expect(popup()!.textContent).toContain("status");
+      expect(popup()!.textContent).toContain("active");
+      expect(popup()!.querySelector('[aria-label="Open source"]')).not.toBeNull();
+      expect(popup()!.querySelector("textarea, input[type=checkbox], [role=checkbox], [contenteditable=true]")).toBeNull();
+    } finally { dispose(); }
+  });
   // Master cab80f016: a touch hold synthesizes hover in Android/iOS
   // WebViews; only a real mouse may arm the preview.
   it.each(["touch", "pen"])("ignores %s compatibility hover but still accepts a later real mouse on the same link", async (pointerType) => {

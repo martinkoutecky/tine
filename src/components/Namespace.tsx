@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { pageIdentityKey } from "../pageIdentity";
 import { backend } from "../backend";
@@ -223,7 +224,7 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
         {(root) => (
           <div class="ns-macro">
             <div class="ns-macro-head">
-              <span class="ns-macro-label">Namespace</span>
+              <span class="ns-macro-label">{t("namespace-macro-label")}</span>
               <Show when={iconOf(root.full)}>
                 <span class="page-icon">
                   <EmojiText text={iconOf(root.full)!} />
@@ -288,7 +289,7 @@ export function NamespaceHierarchy(props: { name: string }): JSX.Element {
   return (
     <Show when={rows().length > 0}>
       <div class="page-hierarchy">
-        <div class="references-header">Hierarchy</div>
+        <div class="references-header">{t("namespace-hierarchy")}</div>
         <ul class="ns-hierarchy">
           <For each={rows()}>
             {(segs) => (

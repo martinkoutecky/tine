@@ -1,6 +1,6 @@
 {
   "name": "tine",
-  "version": "0.7.4",
+  "version": "0.8.0",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -13,7 +13,7 @@
     "ios:prepare-project": "node scripts/prepare-ios-project.mjs",
     "test": "vitest run && vitest run --config vitest.render.config.ts && npm run test:e2e-harness && npm run test:github",
     "test:e2e-harness": "node --test scripts/e2e-main-window.test.mjs",
-    "test:github": "node --test scripts/github/issue-intake.test.mjs scripts/pages-beta-manifest.test.mjs",
+    "test:github": "node --test scripts/github/issue-intake.test.mjs scripts/pages-beta-manifest.test.mjs scripts/retire-beta-tag.test.mjs",
     "test:render": "vitest run --config vitest.render.config.ts",
     "build:wasm": "node scripts/build-wasm.mjs",
     "check:lsdoc-oracle": "node scripts/check-lsdoc-oracle-sync.mjs && node scripts/check-lsdoc-oracle-behavior.mjs",
@@ -39,6 +39,7 @@
     "e2e:multigraph": "node scripts/e2e-multigraph.mjs",
     "e2e:plugins": "node scripts/e2e-plugins.mjs",
     "e2e:external-assets": "node scripts/e2e-external-assets.mjs",
+    "e2e:custom-css": "node scripts/e2e-custom-css.mjs",
     "e2e:outline-guide": "node scripts/e2e-outline-guide.mjs",
     "e2e:linux:smoke": "node scripts/run-e2e.mjs linux-smoke",
     "e2e:linux:release": "node scripts/run-e2e.mjs linux-release",
@@ -60,12 +61,13 @@
     "theme:docs-screenshots": "node scripts/shot-theme-docs.mjs"
   },
   "dependencies": {
+    "@fluent/bundle": "^0.19.1",
     "@fontsource-variable/noto-emoji": "^5.2.12",
-    "@tauri-apps/api": "^2.1.1",
+    "@tauri-apps/api": "^2.12.3",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-process": "^2.3.1",
-    "@tauri-apps/plugin-updater": "^2.10.1",
+    "@tauri-apps/plugin-updater": "^2.13.3",
     "@twemoji/svg": "^15.0.0",
     "chrono-node": "2.2.4",
     "dompurify": "^3.4.16",
@@ -80,7 +82,8 @@
     "turndown-plugin-gfm": "^1.0.2"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.1.0",
+    "@fluent/syntax": "^0.19.0",
+    "@tauri-apps/cli": "^2.12.2",
     "@types/katex": "^0.16.8",
     "@types/turndown": "^5.0.6",
     "jsdom": "^29.1.1",

@@ -1,6 +1,7 @@
 // Linux real-WebKit journey for the og query block (batch 14q4a, ported in
-// meaning from master's scripts/e2e-query-sheet.mjs): a query block rests as a
-// sentence and answers with blocks or pages, a query the engine cannot read
+// meaning from master's scripts/e2e-query-sheet.mjs): a query block rests as
+// calm content (title, count, results; controls in one ⋯ menu) and answers
+// with blocks or pages, a query the engine cannot read
 // shows its diagnostics instead of "no results" (I-9), an empty answer explains
 // itself, and a query created with /query and saved from the sheet's text pane
 // lands on disk as an ordinary query block that reopens after a restart.
@@ -35,6 +36,7 @@ const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- Open [[Queries]]\n");
 fs.writeFileSync(`${GRAPH}/pages/Tasks.md`, "- TODO alpha task\n- TODO beta task\n- DONE finished task\n");
+fs.writeFileSync(`${GRAPH}/pages/Window.md`, `- {{query (and (task TODO) (between scheduled today +7d))}}\n- TODO scheduled window hit\n  SCHEDULED: <${journal.replaceAll("_", "-")}>\n- TODO unscheduled window miss\n`);
 fs.writeFileSync(`${GRAPH}/pages/Book A.md`, "type:: book\nowner:: Ada\n\n- A book page\n");
 fs.writeFileSync(`${GRAPH}/pages/Notes.md`, "type:: note\n\n- Not a book\n");
 // GH #619 item 9: a page and a block that both carry `type:: book`, so ONE `(property type book)`
@@ -64,6 +66,8 @@ const INITIAL = [
   "",
 ].join("\n");
 fs.writeFileSync(QUERIES_FILE, INITIAL);
+// Kalem parity K4: an advanced pull returns the page entity, not its blocks.
+fs.writeFileSync(`${GRAPH}/pages/Advanced Pages.md`, '- #+BEGIN_QUERY\n  {:query [:find (pull ?p [*]) :where (page-property ?p :type "book")]}\n  #+END_QUERY\n');
 
 const env = {
   ...process.env,
@@ -78,6 +82,10 @@ const env = {
 };
 
 async function withApp(index, fn) {
+  if (process.env.E2E_D18_BETWEEN_ONLY === "1" && index < 8) return;
+  if (process.env.E2E_KALEM_K4_ONLY === "1" && index >= 8) return;
+  // Allow the bounded Kalem regression to run without the unrelated builder journeys.
+  if (process.env.E2E_KALEM_K4_ONLY === "1" && index < 6) return;
   const driverPort = DRIVER_BASE + index * 2;
   const nativePort = NATIVE_BASE + index * 2;
   const log = fs.openSync(`${TMP}/tauri-driver-${index}.log`, "w");
@@ -92,8 +100,8 @@ async function withApp(index, fn) {
       connectionRetryCount: 1, connectionRetryTimeout: 60_000,
       capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
     });
-    await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
     try {
+      await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
       await fn(browser);
     } catch (error) {
       const state = await browser.execute(() => ({
@@ -156,17 +164,47 @@ async function waitForQuery(browser, index, predicate, what) {
 
 const disk = () => fs.readFileSync(QUERIES_FILE, "utf8");
 
+/** The calm query block keeps its controls in one ⋯ disclosure: open the Nth
+ * query's menu the way a user does and choose a named action. */
+async function queryAction(browser, index, label) {
+  const marked = await browser.execute((i) => {
+    document.querySelector('[data-e2e-query-menu]')?.removeAttribute("data-e2e-query-menu");
+    const summary = document.querySelectorAll(".page-blocks .query-block")[i]?.querySelector(".qc-actions > summary");
+    if (!summary) return false;
+    summary.setAttribute("data-e2e-query-menu", "1");
+    summary.scrollIntoView({ block: "center" });
+    return true;
+  }, index);
+  if (!marked) throw new Error(`query block ${index} has no actions menu`);
+  await browser.$('[data-e2e-query-menu="1"]').click();
+  await browser.waitUntil(() => browser.execute((wanted) => {
+    const id = document.querySelector('[data-e2e-query-menu="1"]')?.getAttribute("aria-controls");
+    const button = [...(id ? document.getElementById(id)?.querySelectorAll("button") ?? [] : [])].find((b) => b.textContent === wanted);
+    if (!button || button.disabled) return false;
+    button.setAttribute("data-e2e-query-action", "1");
+    return true;
+  }, label), { timeout: 10_000, interval: 100, timeoutMsg: `query block ${index} offered no ${label} action` });
+  await browser.$('[data-e2e-query-action="1"]').click();
+}
+
 let createdLine = null;
 
 await withApp(0, async (browser) => {
   await openPageByName(browser, "Queries");
 
-  // 1. A block query rests as a sentence and answers with blocks.
+  // 1. A block query rests as content (calm query design, roadmap R2): its
+  // title/count and answers, with no sentence or builder until the user reaches
+  // for the ⋯ menu; it answers with blocks.
   await waitForQuery(browser, 0, (t) => t.includes("alpha task") && t.includes("beta task"), "block answers never landed");
   const first = await queryText(browser, 0);
   if (first.includes("finished task")) throw new Error("a DONE block answered a (task TODO) query");
-  if (!(await browser.execute(() => !!document.querySelectorAll(".page-blocks .query-block")[0]?.querySelector(".qs-sentence")))) {
-    throw new Error("the block query did not rest as a sentence");
+  const rest = await browser.execute(() => {
+    const block = document.querySelectorAll(".page-blocks .query-block")[0];
+    return { count: block?.querySelector(".query-count")?.textContent?.trim(), sentence: !!block?.querySelector(".qs-sentence"),
+      sheet: !!block?.querySelector(".qs-sheet, .qc-panel"), menu: !!block?.querySelector(".qc-actions > summary") };
+  });
+  if (!/^[1-9][0-9]*$/.test(rest.count ?? "") || rest.sentence || rest.sheet || !rest.menu) {
+    throw new Error(`the block query did not rest as content with its count and one actions menu: ${JSON.stringify(rest)}`);
   }
 
   // 2. A page-level filter answers with pages.
@@ -218,15 +256,14 @@ await withApp(0, async (browser) => {
     timeout: 10_000, interval: 100, timeoutMsg: "the /query command was not offered",
   });
   await browser.keys(["Enter"]);
-  // GH #619 item 4: the query text is behind an "Edit as text" toggle, closed on a fresh profile.
-  const toggle = await browser.$(".qs-sheet .qs-text-toggle");
-  await toggle.waitForExist({ timeout: 15_000 });
-  if (await browser.execute(() => !!document.querySelector(".qs-sheet .query-text-pane-input"))) {
+  // The calm query block edits inline: /query opens the new block's editor
+  // panel on the empty condition list.
+  await browser.$(".page-blocks .qc-panel .qs-sheet").waitForExist({ timeout: 15_000 });
+  // GH #619 item 4: the query text is behind "Edit as text" (one ⋯ action in
+  // the calm design), closed when the editor opens.
+  if (await browser.execute(() => !!document.querySelector(".page-blocks .query-text-pane-input"))) {
     throw new Error("the query text was open by default; it should sit behind Edit as text");
   }
-  await toggle.click();
-  const pane = await browser.$(".qs-sheet .query-text-pane-input");
-  await pane.waitForExist({ timeout: 15_000 });
   // `/query` opens the sheet on the empty condition list. The field chooser is an explicit user action
   // (Martin 2026-10-03, GH #619 comment 2), so it must stay closed and no condition rows exist yet. Give a
   // late auto-open time to happen before asserting it did not.
@@ -235,40 +272,34 @@ await withApp(0, async (browser) => {
   if (await chooserOpen()) throw new Error("/query opened the field chooser by itself");
   const rows = await browser.execute(() => document.querySelectorAll(".qs-sheet .qs-row").length);
   if (rows !== 0) throw new Error(`/query produced ${rows} condition rows; expected an empty list`);
+  await queryAction(browser, 4, "Edit as text");
+  const pane = await browser.$(".page-blocks .qc-panel .query-text-pane-input");
+  await pane.waitForExist({ timeout: 15_000 });
   await pane.scrollIntoView({ block: "center", inline: "nearest" });
   await pane.waitForClickable({ timeout: 10_000 });
   await browser.execute(() => {
-    const input = document.querySelector(".qs-sheet .query-text-pane-input");
+    const input = document.querySelector(".page-blocks .qc-panel .query-text-pane-input");
     if (input instanceof HTMLElement) input.focus();
   });
-  // GH #619 item 7: while the sheet is open the results show IN it and follow the conditions, before
-  // anything is saved. Type one draft, see its answer, type another, see the answer change.
-  const liveText = () => browser.execute(() => {
-    const region = document.querySelector('.qs-sheet [aria-label="Live results"]');
-    return region ? (region.textContent ?? "").replace(/\s+/g, " ") : null;
-  });
-  const waitLive = async (predicate, what) => {
-    let last = null;
-    await browser.waitUntil(async () => { last = await liveText(); return last !== null && predicate(last); },
-      { timeout: 20_000, interval: 150 }).catch(() => {
-      throw new Error(`live results: ${what}; the region said ${JSON.stringify(last)}`);
-    });
-  };
+  // GH #619 item 7 in the calm design: the block's own results below the
+  // editor are its live answer. A typed text draft writes nothing until it is
+  // saved. Whether the results should also follow an UNSAVED text draft is an
+  // open product question (RECEIPT-queries-journeys.md, Q2); this journey
+  // asserts only the settled part until it is answered.
   await pane.setValue("@block and content like '%beta%'");
-  await waitLive((t) => t.includes("beta task") && !t.includes("alpha task"), "the first draft's answer never showed in the sheet");
   await pane.setValue("@block and content like '%alpha%'");
-  await waitLive((t) => t.includes("alpha task") && !t.includes("beta task"), "the live results did not follow the edit");
-  if (disk().includes("alpha") || disk().includes("beta")) throw new Error(`previewing a draft wrote the page:\n${disk()}`);
-  try { await browser.saveScreenshot(`${ARTIFACTS}/item7-live-results.png`); } catch {}
-  const save = await browser.$(".qs-sheet .query-text-pane-save");
+  if (disk().includes("alpha") || disk().includes("beta")) throw new Error(`a query text draft wrote the page before Save:\n${disk()}`);
+  const save = await browser.$(".page-blocks .qc-panel .query-text-pane-save");
   await browser.waitUntil(async () => save.isEnabled(), { timeout: 15_000, interval: 150, timeoutMsg: "Save query text never enabled" });
   await save.click();
   await browser.waitUntil(() => /\{\{(tine-)?query [^\n]*alpha[^\n]*\}\}/i.test(disk()), {
     timeout: 15_000, interval: 150, timeoutMsg: "the saved query never reached the file",
   });
-  await browser.keys(["Escape"]);
-  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".qs-sheet")), {
-    timeout: 10_000, interval: 100, timeoutMsg: "Escape did not close the sheet",
+  try { await browser.saveScreenshot(`${ARTIFACTS}/item7-saved-results.png`); } catch {}
+  // Done is the inline editor's close control.
+  await browser.execute(() => document.querySelectorAll(".page-blocks .query-block")[4]?.querySelector(".qc-done")?.click());
+  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".page-blocks .qc-panel")), {
+    timeout: 10_000, interval: 100, timeoutMsg: "Done did not close the query editor",
   });
   const created = await waitForQuery(browser, 4, (t) => t.includes("alpha task"), "the created query never answered");
   if (created.includes("beta task")) throw new Error(`the created query did not filter: ${created}`);
@@ -307,8 +338,8 @@ await withApp(2, async (browser) => {
       if (close instanceof HTMLElement) close.click();
     }
   });
-  await browser.execute(() => document.querySelector(".page-blocks .query-block .qs-sentence")?.click());
-  const anchor = await browser.$(".qs-sheet .qs-anchor-button");
+  await queryAction(browser, 0, "Edit");
+  const anchor = await browser.$(".page-blocks .qc-panel .qs-sheet .qs-anchor-button");
   await anchor.waitForExist({ timeout: 15_000 });
   await anchor.click();
   const picked = await browser.execute(() => {
@@ -330,9 +361,11 @@ await withApp(2, async (browser) => {
   await browser.waitUntil(() => /tine\.result-kinds:: pages-and-blocks/.test(fs.readFileSync(LIBRARY_FILE, "utf8")), {
     timeout: 15_000, interval: 150, timeoutMsg: "the choice never reached the file",
   });
-  await browser.keys(["Escape"]);
-  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".qs-sheet")), {
-    timeout: 10_000, interval: 100, timeoutMsg: "Escape did not close the sheet",
+  // Done is the inline editor's close control (the stored choice may already
+  // have remounted the block with its editor closed).
+  await browser.execute(() => document.querySelector(".page-blocks .query-block .qc-done")?.click());
+  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".page-blocks .qc-panel")), {
+    timeout: 10_000, interval: 100, timeoutMsg: "Done did not close the query editor",
   });
   // The closed-sheet view is recorded as text: a WebKit screenshot of it times out under this driver.
   fs.writeFileSync(`${ARTIFACTS}/item9-sections.json`, `${JSON.stringify(await bothSections(browser), null, 2)}\n`);
@@ -370,18 +403,22 @@ await withApp(4, async (browser) => {
     }
   });
   await waitForQuery(browser, 1, (t) => t.length > 0, "the planning query never mounted");
-  await browser.execute(() => document.querySelectorAll(".page-blocks .query-block")[1]?.querySelector(".qs-sentence")?.click());
-  await (await browser.$(".qs-sheet .qs-text-toggle")).waitForExist({ timeout: 15_000 });
+  await queryAction(browser, 1, "Edit");
+  await browser.$(".page-blocks .qc-panel .qs-sheet").waitForExist({ timeout: 15_000 });
   const sheet = await browser.execute(() => ({
-    text: (document.querySelector(".qs-sheet")?.textContent ?? "").replace(/\s+/g, " "),
-    textOpen: !!document.querySelector(".qs-sheet .query-text-pane-input"),
+    text: (document.querySelector(".page-blocks .qc-panel .qs-sheet")?.textContent ?? "").replace(/\s+/g, " "),
+    textOpen: !!document.querySelector(".page-blocks .qc-panel .query-text-pane-input"),
   }));
   if (/advanced/i.test(sheet.text)) throw new Error(`a builder-made planning condition read as advanced: ${sheet.text}`);
-  // Step 5 left "Edit as text" open, and the toggle remembers its state across a restart (item 4).
-  if (!sheet.textOpen) throw new Error("the Edit as text toggle did not remember being open across a restart");
-  await browser.execute(() => document.querySelector(".qs-sheet .qs-text-toggle")?.click());
-  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".qs-sheet .query-text-pane-input")), {
-    timeout: 10_000, interval: 100, timeoutMsg: "the Edit as text toggle did not close the query text",
+  // Item 4 in the calm design: Edit opens the condition rows with the query
+  // text closed; the text is the separate "Edit as text" action, not a
+  // remembered toggle (the approved calm mockup made it a panel tab).
+  if (sheet.textOpen) throw new Error("Edit opened the query text instead of the condition rows");
+  await queryAction(browser, 1, "Edit as text");
+  await browser.$(".page-blocks .qc-panel .query-text-pane-input").waitForExist({ timeout: 10_000 });
+  await browser.execute(() => document.querySelectorAll(".page-blocks .query-block")[1]?.querySelector(".qc-done")?.click());
+  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".page-blocks .qc-panel")), {
+    timeout: 10_000, interval: 100, timeoutMsg: "Done did not close the query editor",
   });
   if (!/scheduled/i.test(sheet.text)) throw new Error(`the scheduled condition did not show in plain words: ${sheet.text}`);
   try { await browser.saveScreenshot(`${ARTIFACTS}/item45-plain-chips-text-closed.png`); } catch {}
@@ -440,5 +477,63 @@ await withApp(5, async (browser) => {
   try { await browser.saveScreenshot(`${ARTIFACTS}/item8-edit-from-row.png`); } catch {}
 });
 
-console.log(`PASS query sheet journey (${createdLine})`);
-fs.rmSync(TMP, { recursive: true, force: true });
+// The same authored advanced query returns page links before and after restart.
+for (const index of [6, 7]) {
+  await withApp(index, async (browser) => {
+    await openPageByName(browser, "Advanced Pages");
+    await browser.waitUntil(() => browser.execute(() => {
+      const links = [...document.querySelectorAll(".page-blocks .query-page-link")].map((link) => link.textContent.trim()).sort();
+      return JSON.stringify(links) === JSON.stringify(["Book A", "Library"]);
+    }), { timeout: 15_000, interval: 150, timeoutMsg: "advanced page-property pull did not return the two page links" });
+    const blockRows = await browser.$$(".page-blocks .query-group");
+    if (blockRows.length) throw new Error("advanced page-property pull rendered block rows");
+    const state = await browser.execute(() => ({
+      pages: [...document.querySelectorAll(".page-blocks .query-page-link")].map((link) => ({
+        name: link.textContent.trim(), path: link.getAttribute("data-page-path"),
+      })),
+      count: document.querySelector(".page-blocks .query-count")?.textContent,
+      blockGroups: document.querySelectorAll(".page-blocks .query-group").length,
+    }));
+    fs.writeFileSync(`${ARTIFACTS}/kalem-k4-pages-${index}.json`, JSON.stringify(state, null, 2));
+  });
+}
+// D-18 has its own durable journey so unrelated query-sheet tests cannot
+// prevent the window save/restart capability from being verified.
+for (const index of [8, 9]) {
+  await withApp(index, async (browser) => {
+    await openPageByName(browser, "Window");
+    const windowFile = `${GRAPH}/pages/Window.md`;
+    const legacyWindow = "{{query (and (task TODO) (between scheduled today +7d))}}";
+    if (index === 8) {
+      const before = fs.readFileSync(windowFile, "utf8");
+      await browser.waitUntil(() => browser.execute(() => document.querySelector(".page-blocks .query-og-hint")?.textContent.includes("Logseq ignores scheduled/deadline date windows")), { timeout: 15_000 });
+      if (await browser.$(".page-blocks .query-group").isExisting()) throw new Error("refused query returned rows");
+      if (fs.readFileSync(windowFile, "utf8") !== before) throw new Error("refusal silently rewrote the block");
+      await browser.$('.page-blocks [data-rewrite="convert"]').click();
+    }
+    await browser.waitUntil(() => !fs.readFileSync(windowFile, "utf8").includes(legacyWindow) && fs.readFileSync(windowFile, "utf8").includes("{{tine-query "), { timeout: 15_000 });
+    await browser.waitUntil(() => browser.execute(() => document.querySelector(".page-blocks .query-group")?.textContent.includes("scheduled window hit")), { timeout: 15_000 });
+    fs.writeFileSync(`${ARTIFACTS}/d18-convert-${index}.md`, fs.readFileSync(windowFile));
+    await openPageByName(browser, "Shots");
+    // Before Convert the Logseq-window notice names both dates; afterwards the
+    // calm block rests on its answer (no sentence), which includes the hit.
+    await waitForQuery(browser, 1, (t) => index === 8 ? /scheduled/i.test(t) && /deadline/i.test(t) : t.includes("scheduled window hit"), "the planning window did not mount");
+    const shotsFile = `${GRAPH}/pages/Shots.md`;
+    const legacy = "{{query (and (task TODO) (or (between scheduled today +7d) (between deadline today +7d)))}}";
+    if (index === 8) {
+      if (!fs.readFileSync(shotsFile, "utf8").includes(legacy)) throw new Error("opening the legacy window silently rewrote it");
+      await browser.$('.page-blocks [data-rewrite="convert"]').click();
+    }
+    await browser.waitUntil(() => {
+      const authored = fs.readFileSync(shotsFile, "utf8");
+      return authored.includes("{{tine-query ") && authored.includes("scheduled between") && authored.includes("deadline between") && !authored.includes(legacy);
+    }, { timeout: 15_000, timeoutMsg: "the scheduled/deadline window did not persist as tine-query" });
+    fs.writeFileSync(`${ARTIFACTS}/d18-window-${index}.md`, fs.readFileSync(shotsFile));
+  });
+}
+console.log(process.env.E2E_D18_BETWEEN_ONLY === "1"
+  ? "PASS D-18 scheduled/deadline window save and restart"
+  : process.env.E2E_KALEM_K4_ONLY === "1"
+  ? "PASS Kalem K4 page pulls before and after restart"
+  : `PASS query sheet journey (${createdLine}; Kalem K4 page pulls)`);
+if (process.env.E2E_D18_BETWEEN_ONLY !== "1") fs.rmSync(TMP, { recursive: true, force: true });

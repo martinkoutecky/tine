@@ -1,18 +1,38 @@
-import { doc, setDoc, formatForBlock, formatForPage, pageByName, DocState } from "../model";
-import { blockWritable, pageWritable, orderListTypeFromRaw, rawWithInheritedOrderListType } from "./properties";
-import { produce } from "solid-js/store";
-import { markDirty, persistTogether, refuseConflictedMove } from "../save/engine";
+import { msg } from "../../i18n";
+import { doc, pageByName, DocState } from "../model";
+import { refuseConflictedMove } from "../host/wiring";
 import { captureBinding, bindingCurrent } from "../../binding";
 import { pushMoveSelectionUndo, pushUndo } from "../history";
 import { createSignal } from "solid-js";
-import { rootsOf, nextVisible, existingSubtreeFits } from "../tree";
+import { nextVisible } from "../tree";
 import { topSelected } from "./selection";
 import { pushToast } from "../../toasts";
+import { applyOutlineChange, markOutlineDirty, outlineChange, outlineChangePages, type OutlineChange, type OutlineRefusal, type OutlinePlace } from "../kernel";
+
+/** Run a computed move: a refusal stops before the undo entry (only the depth
+ *  cap is the user's to learn about, as a toast); a move between pages first
+ *  checks that neither page holds an unresolved conflict (STEP3 §8). Resolves
+ *  true when applied, false on the depth cap or a conflict, undefined on a
+ *  silent refusal (a no-op gesture or stale ids). */
+function commitMove(change: OutlineChange | { refused: OutlineRefusal }, undoKind: string): boolean | undefined {
+  if ("refused" in change) {
+    if (change.refused !== "depth_cap") return undefined;
+    pushToast(msg("moves-outline-is-too-deep-to-move"), "error");
+    return false;
+  }
+  const pages = outlineChangePages(change);
+  if (change.transfers.length && refuseConflictedMove(pages)) return false;
+  pushUndo(undoKind, pages);
+  applyOutlineChange(change);
+  markOutlineDirty(change);
+  return true;
+}
 
 /** Move a block under `newParent` (or, when `newParent` is null, to the roots of
  *  `targetPage` — pass the drop target's page so a root-to-root drop across pages
- *  lands on the RIGHT page instead of defaulting back to the source). A depth
- *  refusal returns false and shows a toast. */
+ *  lands on the RIGHT page instead of defaulting back to the source) at `index`
+ *  of that list as it stands before the move. A depth refusal returns false and
+ *  shows a toast. */
 export async function moveBlock(
   id: string,
   newParent: string | null,
@@ -20,210 +40,38 @@ export async function moveBlock(
   targetPage?: string,
   dropTargetId?: string,
 ) {
-  const binding = captureBinding();
   const node = doc.byId[id];
   if (!node) return;
-  // Don't drop a block into its own descendant.
-  let p = newParent;
-  while (p !== null) {
-    if (p === id) return;
-    p = doc.byId[p].parent;
-  }
-  if (!existingSubtreeFits(id, newParent)) {
-    pushToast("Outline is too deep to move", "error");
-    return false;
-  }
-  const oldPage = node.page;
   // A root drop has no parent to read the page from — use the explicit target
   // page (the day/page the drop landed on); fall back to the source page only if
   // the caller didn't supply one (a same-page reorder).
-  const newPage = newParent ? doc.byId[newParent].page : (targetPage ?? oldPage);
-  if (!pageWritable(oldPage) || !pageWritable(newPage)) return;
-  if (newPage !== oldPage && refuseConflictedMove([oldPage, newPage])) return;
-  if (!bindingCurrent(binding)) return;
-  if (!doc.byId[id]) return; // block vanished during the async flush
-  if (!pageWritable(oldPage) || !pageWritable(newPage)) return;
-  const sourceFormat = formatForBlock(id);
-  const destinationFormat = formatForPage(newPage);
-  const inheritanceTarget = dropTargetId ?? newParent;
-  // A cross-format move already preserves the source raw verbatim; only a newly
-  // inherited property is emitted in the destination page's syntax.
-  const movedRaw = orderListTypeFromRaw(doc.byId[id].raw, sourceFormat) !== null
-    ? doc.byId[id].raw
-    : rawWithInheritedOrderListType(doc.byId[id].raw, destinationFormat, inheritanceTarget);
-  // Drag-move can cross pages → snapshot both source and destination.
-  pushUndo("move", [...new Set([oldPage, newPage])]);
-  setDoc(
-    produce((s) => {
-      const oldArr =
-        node.parent === null
-          ? s.pages[s.pages.findIndex((x) => x.name === oldPage)].roots
-          : s.byId[node.parent!].children;
-      const from = oldArr.indexOf(id);
-      oldArr.splice(from, 1);
-      s.byId[id].parent = newParent;
-      s.byId[id].raw = movedRaw;
-      const newArr =
-        newParent === null
-          ? s.pages[s.pages.findIndex((x) => x.name === newPage)].roots
-          : s.byId[newParent].children;
-      let idx = index;
-      if (oldArr === newArr && from < idx) idx -= 1;
-      newArr.splice(Math.max(0, Math.min(idx, newArr.length)), 0, id);
-      // Reassign the moved subtree to the target page.
-      if (newPage !== oldPage) {
-        reassignPage(s, id, newPage);
-      }
-    })
-  );
-  if (newPage !== oldPage) {
-    void persistTogether([oldPage, newPage], ["move-blocks", "save-block"], [[oldPage, newPage]]);
-  } else {
-    markDirty(oldPage, ["move-blocks", "save-block"]);
-  }
-  return true;
+  const newPage = newParent ? doc.byId[newParent]?.page : (targetPage ?? node.page);
+  if (!newPage) return;
+  const to: OutlinePlace = { at: "slot", parent: newParent, page: newPage, index };
+  const change = outlineChange({ verb: "move_to", keys: [id], to, inherit_from: dropTargetId ?? newParent }, [node.page, newPage]);
+  return commitMove(change, "move");
 }
 
-interface RelativeMovePlan {
-  roots: string[];
-  sourcePages: string[];
-  destinationPage: string;
-}
-
-/** Build the complete target-relative move plan without mutating (master
- * 6eea5b70c, GH #240). Captured IDs are stable-deduped, then descendants of
- * another captured ID are subsumed. Any malformed tree, read-only page, a
- * target inside a moved subtree, or an outline-depth overflow refuses the whole
- * move before anything changes. Only the depth refusal is the user's to learn
- * about ("too-deep", checked last so a no-op drop into its own subtree stays
- * silent); the rest are no-op gestures or stale ids, silent as in `moveBlock`. */
-function relativeMovePlan(
-  capturedIds: readonly string[],
-  targetId: string,
-  position: "before" | "after" | "child",
-): RelativeMovePlan | "too-deep" | null {
-  const unique = [...new Set(capturedIds)];
-  if (!unique.length || unique.some((id) => !doc.byId[id])) return null;
-  const captured = new Set(unique);
-  const roots: string[] = [];
-  for (const id of unique) {
-    const seen = new Set([id]);
-    let parent = doc.byId[id].parent;
-    let subsumed = false;
-    while (parent !== null) {
-      if (seen.has(parent)) return null;
-      seen.add(parent);
-      if (captured.has(parent)) { subsumed = true; break; }
-      const ancestor = doc.byId[parent];
-      if (!ancestor) return null;
-      parent = ancestor.parent;
-    }
-    if (!subsumed) roots.push(id);
-  }
-  if (!roots.length) return null;
-
-  const target = doc.byId[targetId];
-  if (!target || !pageWritable(target.page)) return null;
-  const destinationParent = target.parent;
-  if (destinationParent !== null) {
-    const parent = doc.byId[destinationParent];
-    if (!parent || parent.page !== target.page || !blockWritable(destinationParent)) return null;
-  }
-  const siblingsOf = (parent: string | null, page: string) => parent === null ? pageByName(page)?.roots : doc.byId[parent]?.children;
-  const targetSiblings = siblingsOf(destinationParent, target.page);
-  if (!targetSiblings || targetSiblings.filter((id) => id === targetId).length !== 1) return null;
-
-  const moved = new Set<string>();
-  const visit = (id: string, page: string, ancestry: Set<string>): boolean => {
-    const node = doc.byId[id];
-    if (!node || node.page !== page || moved.has(id) || ancestry.has(id)) return false;
-    moved.add(id);
-    if (new Set(node.children).size !== node.children.length) return false;
-    const nextAncestry = new Set(ancestry).add(id);
-    return node.children.every((childId) => doc.byId[childId]?.parent === id && visit(childId, page, nextAncestry));
-  };
-  const sourcePages: string[] = [];
-  let tooDeep = false;
-  for (const id of roots) {
-    const node = doc.byId[id];
-    if (!blockWritable(id)) return null;
-    const siblings = siblingsOf(node.parent, node.page);
-    if (!siblings || siblings.filter((sibling) => sibling === id).length !== 1) return null;
-    if (node.parent !== null && doc.byId[node.parent]?.page !== node.page) return null;
-    if (!visit(id, node.page, new Set())) return null;
-    // A nested drop lands UNDER the target, one level deeper than its siblings.
-    if (!existingSubtreeFits(id, position === "child" ? targetId : destinationParent)) tooDeep = true;
-    sourcePages.push(node.page);
-  }
-  if (moved.has(targetId)) return null;
-  const uniqueSources = [...new Set(sourcePages)];
-  if (uniqueSources.some((page) => !pageWritable(page))) return null;
-  if (tooDeep) return "too-deep";
-  return { roots, sourcePages: uniqueSources, destinationPage: target.page };
-}
-
-/** Move captured selection roots together before/after a live target ID, as
- * one transaction (one undo unit, one publication). Cross-page moves persist
- * every touched page through the same `persistTogether` group as `moveBlock`,
- * so the destination and emptied sources are saved as one unit (an honest
- * concurrent instance or external editor sees either the whole move or none);
- * a page with an unresolved conflict refuses the move (`refuseConflictedMove`,
- * same scenario as a single-block drag). */
+/** Move captured selection roots together before/after a live target ID, or
+ * after its last child, as one transaction (one undo unit, one publication;
+ * master 6eea5b70c, GH #240). The kernel's `move_to` dedupes the captured IDs,
+ * lets a captured descendant go with its ancestor, and refuses the whole move
+ * before anything changes. Cross-page moves persist every touched page through
+ * one transfer (`markOutlineDirty` → `persistTransfer`): one host move per
+ * source, so a crash between steps can leave a block in both pages, never in
+ * neither (STEP3 §8). */
 export async function moveBlocksRelative(
   capturedIds: readonly string[],
   targetId: string,
   position: "before" | "after" | "child",
 ): Promise<boolean> {
-  const plan = relativeMovePlan(capturedIds, targetId, position);
-  if (plan === "too-deep") {
-    // Same notice as `moveBlock` (C3Y Y5: a refused drop used to vanish).
-    pushToast("Outline is too deep to move", "error");
-    return false;
-  }
-  if (!plan) return false;
-  const pages = [...new Set([plan.destinationPage, ...plan.sourcePages])];
-  const crossSources = plan.sourcePages.filter((page) => page !== plan.destinationPage);
-  if (crossSources.length && refuseConflictedMove(pages)) return false;
-  const destinationFormat = formatForPage(plan.destinationPage);
-  const movedRaw = new Map(plan.roots.map((id) => {
-    const sourceRaw = doc.byId[id].raw;
-    const raw = orderListTypeFromRaw(sourceRaw, formatForBlock(id)) !== null
-      ? sourceRaw
-      : rawWithInheritedOrderListType(sourceRaw, destinationFormat, targetId);
-    return [id, raw] as const;
-  }));
-  pushUndo("move-selection-relative", pages);
-  setDoc(produce((state) => {
-    const siblingsFor = (id: string): string[] => {
-      const node = state.byId[id];
-      return node.parent === null
-        ? state.pages.find((page) => page.name === node.page)!.roots
-        : state.byId[node.parent].children;
-    };
-    for (const id of plan.roots) {
-      const siblings = siblingsFor(id);
-      siblings.splice(siblings.indexOf(id), 1);
-    }
-    const target = state.byId[targetId];
-    // "child": append under the target (OG's nested drop, GH #326).
-    const destinationParent = position === "child" ? targetId : target.parent;
-    const destination = destinationParent === null
-      ? state.pages.find((page) => page.name === target.page)!.roots
-      : state.byId[destinationParent].children;
-    const targetIndex = position === "child" ? destination.length : destination.indexOf(targetId);
-    for (const id of plan.roots) {
-      state.byId[id].parent = destinationParent;
-      state.byId[id].raw = movedRaw.get(id)!;
-    }
-    destination.splice(targetIndex + (position === "after" ? 1 : 0), 0, ...plan.roots);
-    for (const id of plan.roots) reassignPage(state, id, plan.destinationPage);
-  }));
-  if (crossSources.length) {
-    void persistTogether(pages, ["move-blocks", "save-block"], crossSources.map((source) => [source, plan.destinationPage] as [string, string]));
-  } else {
-    markDirty(plan.destinationPage, ["move-blocks", "save-block"]);
-  }
-  return true;
+  const target = doc.byId[targetId];
+  if (!target) return false;
+  const pages = [target.page, ...capturedIds.map((id) => doc.byId[id]?.page ?? target.page)];
+  // "child": append under the target (OG's nested drop, GH #326).
+  const to: OutlinePlace = { at: position === "child" ? "last_child" : position, key: targetId };
+  const change = outlineChange({ verb: "move_to", keys: capturedIds, to, inherit_from: targetId }, pages);
+  return (await commitMove(change, "move-selection-relative")) === true;
 }
 
 /** Move a block up/down among its siblings (mod+Up/Down). Keyed <For> keeps the
@@ -259,84 +107,24 @@ export async function withBlockMoving<T>(page: string, move: () => T | Promise<T
   }
 }
 
-interface OutlineStepPlan {
-  parent: string | null;
-  index: number;
-}
-
-/** OG's move-up/down is an outline-order operation, not merely a sibling swap.
- * At a child-list edge it crosses into the adjacent parent sibling: moving down
- * enters the next sibling as its first child; the inverse up move enters the
- * previous sibling as its last child. Root edges remain available to the
- * journal-feed cross-page route below (GH #312). */
-function outlineStepPlan(id: string, dir: 1 | -1): OutlineStepPlan | null {
-  const node = doc.byId[id];
-  if (!node) return null;
-  const sibs = rootsOf(id);
-  const i = sibs.indexOf(id);
-  if (i < 0) return null;
-  const siblingIndex = i + dir;
-  if (siblingIndex >= 0 && siblingIndex < sibs.length) {
-    return { parent: node.parent, index: siblingIndex };
-  }
-  if (node.parent === null) return null;
-  const parent = doc.byId[node.parent];
-  if (!parent) return null;
-  const parentSiblings = rootsOf(node.parent);
-  const parentIndex = parentSiblings.indexOf(node.parent);
-  const adjacentParent = parentSiblings[parentIndex + dir];
-  if (!adjacentParent || !doc.byId[adjacentParent]) return null;
-  return {
-    parent: adjacentParent,
-    index: dir === -1 ? doc.byId[adjacentParent].children.length : 0,
-  };
-}
-
 /** Move a block one OG outline step (sibling swap, or across a child-list edge
- *  into the adjacent parent sibling). One undo entry; returns false (no change)
- *  when read-only or no step exists in `dir`. A reparented block inherits the
- *  new parent's list numbering. */
+ *  into the adjacent parent sibling): the kernel's `move_up_down`. One undo
+ *  entry; returns false (no change) when read-only or no step exists in `dir`.
+ *  A reparented block inherits the new parent's list numbering. */
 export function moveItem(id: string, dir: 1 | -1): boolean {
+  return applyStep(id, dir) === true;
+}
+
+/** The step change for `id`, applied; the refusal otherwise. */
+function applyStep(id: string, dir: 1 | -1): true | OutlineRefusal {
   const node = doc.byId[id];
-  if (!node || !blockWritable(id)) return false;
-  const plan = outlineStepPlan(id, dir);
-  if (!plan) return false;
-  const movedRaw = plan.parent !== node.parent
-    ? rawWithInheritedOrderListType(node.raw, formatForPage(node.page), plan.parent)
-    : node.raw;
+  if (!node) return "incomplete";
+  const change = outlineChange({ verb: "move_up_down", keys: [id], up: dir === -1 }, [node.page]);
+  if ("refused" in change) return change.refused;
   pushUndo("move-item", [node.page]);
-  setDoc(
-    produce((s) => {
-      const source =
-        node.parent === null
-          ? s.pages[s.pages.findIndex((p) => p.name === node.page)].roots
-          : s.byId[node.parent!].children;
-      const from = source.indexOf(id);
-      if (from < 0) return;
-      source.splice(from, 1);
-      const destination = plan.parent === null
-        ? s.pages[s.pages.findIndex((p) => p.name === node.page)].roots
-        : s.byId[plan.parent].children;
-      s.byId[id].parent = plan.parent;
-      s.byId[id].raw = movedRaw;
-      destination.splice(Math.max(0, Math.min(plan.index, destination.length)), 0, id);
-    })
-  );
-  markDirty(node.page, plan.parent !== node.parent ? ["move-blocks", "save-block"] : "move-blocks");
+  applyOutlineChange(change);
+  markOutlineDirty(change);
   return true;
-}
-
-/** Can a block move one OG outline step in `dir`? */
-function canMoveItem(id: string, dir: 1 | -1): boolean {
-  return outlineStepPlan(id, dir) !== null;
-}
-
-/** Selection movement is still batched as sibling-array swaps. Structural edge
- * crossing is handled separately from its root/day boundary below. */
-function canMoveSelectionWithinSiblings(id: string, dir: 1 | -1): boolean {
-  const sibs = rootsOf(id);
-  const ni = sibs.indexOf(id) + dir;
-  return ni >= 0 && ni < sibs.length;
 }
 
 // The journal feed treats its days as one continuous list: a root block at the
@@ -366,28 +154,6 @@ function stillRootsOf(ids: readonly string[], fromPage: string): boolean {
   return ids.every((id) => roots.has(id) && doc.byId[id]?.page === fromPage && doc.byId[id]?.parent === null);
 }
 
-/** Move root blocks `ids` (document order) to the start (down) / end (up) of
- *  `toPage`, removing them from `fromPage`. Both pages must be loaded. */
-function crossMoveBlocks(ids: string[], fromPage: string, toPage: string, dir: 1 | -1) {
-  setDoc(
-    produce((s) => {
-      const from = s.pages.find((p) => p.name === fromPage);
-      const to = s.pages.find((p) => p.name === toPage);
-      if (!from || !to) return;
-      const idset = new Set(ids);
-      from.roots = from.roots.filter((x) => !idset.has(x));
-      // up → bottom of the day above; down → top of the day below (keep order).
-      if (dir === -1) to.roots.push(...ids);
-      else to.roots.unshift(...ids);
-      for (const id of ids) {
-        s.byId[id].parent = null;
-        reassignPage(s, id, toPage);
-      }
-    })
-  );
-  void persistTogether([fromPage, toPage], "move-blocks", [[fromPage, toPage]]);
-}
-
 /** Resolve the adjacent feed day for a root block at the page boundary, loading
  *  older days if a down-move runs off the last loaded one. Returns the target
  *  page name, or null if there's nowhere to go. */
@@ -409,10 +175,11 @@ async function feedNeighbor(page: string, dir: 1 | -1): Promise<string | null> {
  *  (`moveBlockFeed` and `moveSelectionItems` both end here). It resolves the
  *  neighbour day, which may await the feed extender, and then RE-CHECKS every
  *  fact its plan rested on before writing: the graph binding (twice, around the
- *  conflict check), both pages writable, neither page conflicted, and that `ids`
- *  are still roots of `from`. The write itself is one `persistTogether` group.
+ *  conflict check), that `ids` are still roots of `from`, both pages writable
+ *  (the kernel's refusal), and neither page conflicted. The write itself is one
+ *  transfer (`markOutlineDirty` → `persistTransfer`).
  *  A caller may not repeat this list: a caller that did once drifted from its
- *  twin (master eba7c56b2 H1-H5; og answers them through SaveGroups, not a
+ *  twin (master eba7c56b2 H1-H5; og answers them through one host transfer, not a
  *  ported coordinator). Resolves to whether the blocks crossed. */
 async function crossDayMove(
   ids: string[],
@@ -423,13 +190,18 @@ async function crossDayMove(
 ): Promise<boolean> {
   const target = await feedNeighbor(from, dir);
   if (!bindingCurrent(binding)) return false;
-  if (!target || target === from || !pageWritable(target)) return false;
+  if (!target || target === from) return false;
+  if (!stillRootsOf(ids, from)) return false; // moved or vanished during the await (H3)
+  // up → bottom of the day above; down → top of the day below (keep order).
+  // The kernel refuses a read-only or frozen page.
+  const to: OutlinePlace = { at: "slot", parent: null, page: target, index: dir === -1 ? (pageByName(target)?.roots.length ?? 0) : 0 };
+  const change = outlineChange({ verb: "move_to", keys: ids, to }, [from, target]);
+  if ("refused" in change) return false;
   if (refuseConflictedMove([from, target])) return false;
   if (!bindingCurrent(binding)) return false;
-  if (!stillRootsOf(ids, from)) return false; // moved or vanished during the await (H3)
-  if (!pageWritable(from) || !pageWritable(target)) return false;
   pushUndo(undoKind, [from, target]);
-  crossMoveBlocks(ids, from, target, dir);
+  applyOutlineChange(change);
+  markOutlineDirty(change);
   return true;
 }
 
@@ -461,12 +233,11 @@ export async function extendFeedForScroll(): Promise<boolean> {
 export async function moveBlockFeed(id: string, dir: 1 | -1): Promise<"within" | "crossed" | "none"> {
   const binding = captureBinding();
   const node = doc.byId[id];
-  if (!node || !blockWritable(id)) return "none";
-  if (canMoveItem(id, dir)) {
-    moveItem(id, dir);
-    return "within";
-  }
-  if (node.parent !== null) return "none"; // nested block at a child-list edge: stop
+  if (!node) return "none";
+  const step = applyStep(id, dir);
+  if (step === true) return "within";
+  // Only a root block at its day's edge crosses; a nested block stops.
+  if (step !== "no_outline_step" || node.parent !== null) return "none";
   return (await crossDayMove([id], node.page, dir, "move-cross", binding)) ? "crossed" : "none";
 }
 
@@ -475,42 +246,24 @@ export async function moveBlockFeed(id: string, dir: 1 | -1): Promise<"within" |
 export async function moveSelectionItems(dir: 1 | -1) {
   const binding = captureBinding();
   const ids = topSelected(); // document order: ids[0] topmost, last bottommost
-  if (!ids.length || ids.some((id) => !blockWritable(id))) return;
-  const lead = dir === 1 ? ids[ids.length - 1] : ids[0];
-  if (canMoveSelectionWithinSiblings(lead, dir)) {
-    // Batch the whole selection into ONE undo entry + ONE produce. Doing it
-    // per-block (a moveItem call each) snapshots the entire working set K times —
-    // a 15-block nudge became 15 full clones, the visible jank. Going down, move
-    // the bottom-most first so they don't collide; up, the top.
-    const ordered = dir === 1 ? [...ids].reverse() : ids;
-    const pages = [...new Set(ordered.map((id) => doc.byId[id]?.page).filter(Boolean) as string[])];
+  if (!ids.length) return;
+  const pages = [...new Set(ids.map((id) => doc.byId[id]?.page).filter(Boolean) as string[])];
+  // One kernel change for the whole selection: ONE undo entry, ONE store
+  // mutation. Per-block moves snapshot the entire working set K times — a
+  // 15-block nudge became 15 full clones, the visible jank.
+  const change = outlineChange({ verb: "move_up_down", keys: ids, up: dir === -1, within_siblings: true }, pages);
+  if (!("refused" in change)) {
     if (pages.length > 1 && refuseConflictedMove(pages)) return;
     pushMoveSelectionUndo(ids, pages); // one step per held-key burst, scoped to the touched pages
-    setDoc(
-      produce((s) => {
-        for (const id of ordered) {
-          const node = s.byId[id];
-          if (!node) continue;
-          const arr =
-            node.parent === null
-              ? s.pages[s.pages.findIndex((p) => p.name === node.page)].roots
-              : s.byId[node.parent].children;
-          const i = arr.indexOf(id);
-          const ni = i + dir;
-          if (i < 0 || ni < 0 || ni >= arr.length) continue;
-          arr.splice(i, 1);
-          arr.splice(ni, 0, id);
-        }
-      })
-    );
-    if (pages.length > 1) void persistTogether(pages, "move-blocks");
-    else for (const p of pages) markDirty(p, "move-blocks");
+    applyOutlineChange(change);
+    // Reordering within each page moves no block between pages: one edit per page.
+    markOutlineDirty(change);
     return;
   }
+  if (change.refused !== "no_outline_step") return;
   // Boundary: cross the whole group into the adjacent day (only if every
   // selected block is a root block on the same feed day).
-  const page = doc.byId[ids[0]]?.page;
-  if (!page) return;
-  if (ids.some((id) => doc.byId[id].parent !== null || doc.byId[id].page !== page)) return;
+  const page = pages[0];
+  if (pages.length > 1 || ids.some((id) => doc.byId[id].parent !== null)) return;
   await crossDayMove(ids, page, dir, "move-sel-cross", binding);
 }

@@ -1,0 +1,367 @@
+{
+  "schemaVersion": 1,
+  "version": "0.8.0-beta.6",
+  "baseTag": "v0.8.0-beta.5",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Changed",
+      "text": "Settings search: the setting a result jumps to is highlighted for about two seconds, so it is easy to spot on a long tab (GH #706).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH706-SETTINGS-JUMP-FLASH"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH706-SETTINGS-JUMP-FLASH (fail-before proven: the closest(.settings-jump-flash) assertion fails on og 00695978f). jsdom only; no native journey asserts the highlight, and no platform was exercised natively for it.",
+        "refs": [
+          "src/components/Settings.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Guide gap filled in the release prep: the Where things are page now says the setting a result lands on is highlighted for about two seconds (asserted in src/guideBeta6.test.ts, REG-BETA6-GUIDE).",
+        "refs": [
+          "crates/tine-core/src/templates/where-things-are.md",
+          "src/guideBeta6.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "The \"Some page files couldn't be read\" notice now names the files (the first five, then \"and N more\") instead of pointing to a debug log that is off by default, so you can find the broken file; Copy on the notice copies the full list (GitHub discussion #727).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH727-UNREADABLE-FILES-NAMED"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH727-UNREADABLE-FILES-NAMED (fail-before proven: the page-index, conflict-inventory and journal-feed call-site tests fail on release/0.8 4c2476861). Linux native journey e2e-unreadable-files-toast.mjs passed on the staged 71d236f7f binary (pages/Bad.md with an invalid UTF-8 byte); its fail-before is by reasoning only (the old text named no file). Windows/macOS/Android/iOS unverified.",
+        "refs": [
+          "src/unreadableFilesToast.test.tsx",
+          "src/pageIndex.test.ts",
+          "src/conflictQueue.test.ts",
+          "src/components/Page.feedFailure.test.tsx",
+          "scripts/e2e-unreadable-files-toast.mjs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Guide gap filled in the release prep: the Troubleshooting page's 'A graph file could not be read' section now says the notice names the files (the first five, then how many more) and that Copy copies the full list (asserted in src/guideBeta6.test.ts, REG-BETA6-GUIDE). No sentence described the debug-log pointer, so none became wrong.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md",
+          "src/guideBeta6.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Right-clicking a block in a query's results and choosing Cut or Delete now removes that block from its own page, as in Logseq, instead of removing the query block itself. The same holds for blocks inside a block embed (the embed's first row still acts on the embed). A right click in a query table no longer offers the query block's Cut or Delete (GH #726).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH726-QUERY-RESULT-MENU-OWNER"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH726-QUERY-RESULT-MENU-OWNER (fail-before proven: 9 of 17 jsdom cases fail on pre-fix code, and the native journey on the deployed pre-fix Beta binary removed the query line from Queries___TasksUnscheduled.md). Pass-after native Linux WebKitGTK (burn-in 4/5, the miss a tauri-driver session-start timeout); Windows/macOS/Android/iOS unverified.",
+        "refs": [
+          "src/components/QueryResultContextMenu.test.tsx",
+          "scripts/e2e-query-result-cut.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores Logseq's behaviour for a query result's context menu; no Guide page describes which block a right click in query results or an embed acts on, and no sentence becomes wrong.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Pressing Enter at the very start of a page's properties (click the page properties, move the caret to the start, press Enter) no longer stops the page saving with \"Couldn't save … Tine keeps trying\" and leaves every later edit on that page unsaved. As in Logseq, Enter there adds a line inside the properties, which is dropped when you leave them; the properties stay the page header. Moving a block above the page properties (Alt+Shift+Up on the first block, or dropping a block above them) is now refused for the same reason. A page left in that state by an earlier build saves again once you delete the empty block above its properties (GH #210 F1).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH210-HEAD-ENTER"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH210-HEAD-ENTER (fail-before proven: 8/12 unit, 4/4 render, kernel tests and the native journey against the og binary). The release/0.8 port drops og's InsertOutline header assertions (that verb is og-only). Linux real-app journey e2e-page-properties.mjs; Windows/macOS/Android/iOS unverified.",
+        "refs": [
+          "src/document/edits/pageHeaderHeadEnter.test.ts",
+          "src/components/pageHeadEnter.test.tsx",
+          "src/document/edits/pageHeaderToast.test.ts",
+          "crates/tine-outline/src/outline.rs",
+          "scripts/e2e-page-properties.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores saving after Enter in the page properties; no Guide page describes Enter inside the page header or moving a block above it, and no sentence becomes wrong.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Typing in the Search tab (and the `((` block picker) can no longer end on \"Search superseded by a newer request\" with no results**: when the search for an earlier keystroke reached the search engine after the search for the latest one, it cancelled the latest. Each search now carries the order it was issued in, and the engine ignores one that was overtaken (REG-OG-SEARCH-LANE-ORDER).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-SEARCH-LANE-ORDER"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-OG-SEARCH-LANE-ORDER (fail-before proven: both lane-order Rust tests and the backend laneSeq test fail before the fix; a 40-retype native loop stuck once on the unfixed binary). The native scenario e2e-search-tab-keyboard.mjs is the control; the race is timing-dependent, so a green native run is not proof of absence. Linux only; other platforms unverified.",
+        "refs": [
+          "crates/tine-graph-features/src/search.rs",
+          "src/backend.searchDisplay.test.ts",
+          "scripts/e2e-search-tab-keyboard.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores search results under fast typing; the Guide never described the superseded-search message.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Sticky parent bullets stay inside their own subtree: a pinned `1a` no longer covers the next row at its own level or above (its sibling `1b`, or `2`). That row now pushes the pin up and out, as a section header in a list, and a pin covers only its own descendants (GH #717).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH717-STICKY-OVERLAP"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH717-STICKY-OVERLAP (reopened and fail-before proven on the reporter's outlines). The geometry check shot-sticky-overlap.mjs runs the real Block/StickyAncestor layout in headless Chromium without a native backend (depths 2-5, desktop and phone widths, pane and sidebar, zoom 1.25); WebKitGTK native, Windows and Android devices not exercised.",
+        "refs": [
+          "src/components/StickyAncestor.test.tsx",
+          "scripts/shot-sticky-overlap.mjs"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The pinned-ancestors section says ancestors that leave the screen stay pinned at the top; a pin no longer covering rows outside its subtree restores that description.",
+        "refs": [
+          "crates/tine-core/src/templates/keep-context-visible.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Settings search: a one-character query such as \"发\" matches setting descriptions again, as it did before 0.8.0-beta.5. A result found only through its description now shows that description, with the match highlighted, so it no longer looks unrelated. In a non-English interface a single letter such as \"S\" matches only text shown in that language, not the hidden English names; words of two or more characters still match the English names too (GH #706).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH706-SETTINGS-RELEVANCE-SCROLL"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH706-SETTINGS-RELEVANCE-SCROLL (fail-before proven on release/0.8 816e539db: both new settingsSearch tests fail). Unit and jsdom only for the one-character and matched-description behaviour (zh-CN and English interfaces in settingsSearch.test.ts); no native journey types a one-character query.",
+        "refs": [
+          "src/components/settingsSearch.test.ts",
+          "src/components/Settings.test.tsx",
+          "src/components/Settings.devtoolsSearch.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Guide gap filled in the release prep: the Where things are page said (since Beta 5) that a single character matches only a setting's name and aliases, not its description, which this change made wrong. It now says a single character matches only text shown in the interface language and that a description-only result shows its description with the match highlighted (asserted in src/guideBeta6.test.ts; src/guideBeta5.test.ts no longer pins the old sentence).",
+        "refs": [
+          "crates/tine-core/src/templates/where-things-are.md",
+          "src/guideBeta6.test.ts",
+          "src/guideBeta5.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Windows portable: the portable ZIP now keeps Tine's settings, sessions, backups, plugins, diagnostics and WebView2 data in a `tine-data` folder next to `Tine.exe` instead of in `%APPDATA%` and `%LOCALAPPDATA%`, so Tine runs from a USB drive without leaving app data on the computer (GH #719). It is the `tine-data` folder in the ZIP that makes Tine portable; the installer and the Microsoft Store app are unchanged. A portable Tine offers new versions as a download instead of running the installer, which would have added an installed copy. Earlier portable runs left their settings in AppData; Tine does not move or delete them, and `tine-data\\README.txt` says how to copy them over. If the `tine-data` folder cannot be written, Tine does not start and says which folder to move; it never falls back to AppData. A `tine-data` folder inside an installed Tine's folder, or a link named `tine-data`, does not make it portable.",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH719-PORTABLE-HOST-WRITES"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH719-PORTABLE-HOST-WRITES (fail-before proven at the unit layer on release/0.8 4e389bcfe, plus review r1's single-probe install test). The Windows journey e2e-windows-portable.mjs (real exe, real AppData) is pending a hosted run per the catalog row; nothing in this prep ran on Windows.",
+        "refs": [
+          "src-tauri/src/portable.rs",
+          "src/update.test.ts",
+          "scripts/e2e-windows-portable.mjs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The Platforms and mobile page says portable Windows Tine keeps its state in tine-data beside Tine.exe, never in AppData, and that a first portable launch starts fresh (6341a0576, D-20261018-P719; asserted in src/guideGh719.test.ts). Troubleshooting already names the portable log folder.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md",
+          "src/guideGh719.test.ts",
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A block whose `collapsed:: true` line follows a quote (as Logseq on Android writes it) now keeps its first collapse after a restart: Tine moves that line above the quote, where it is read as the block's collapse state (Logseq itself opens such a block expanded). Publish, print and search no longer show the line as quote text, and the command line's property and text edits put metadata above a final quote instead of inside it (GH #721).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH721-QUOTE-TRAILER-COLLAPSE-PERSISTS",
+        "REG-GH721-QUOTE-TRAILER-NATIVE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH721-QUOTE-TRAILER-COLLAPSE-PERSISTS (fail-before proven: the jsdom test and block_regions fail before the fix; Linux native journey e2e-editor-bugs.mjs asserts the file bytes) and REG-GH721-QUOTE-TRAILER-NATIVE (render, search-text and Rust writer unit tests fail before). Windows/macOS/Android/iOS unverified; Logseq on Android, which writes this layout, was not run.",
+        "refs": [
+          "src/components/Block.collapsedTrailer.test.tsx",
+          "crates/tine-core/tests/block_regions.rs",
+          "crates/tine-graph-features/src/render.rs",
+          "crates/tine-outline/src/editor_text.rs",
+          "scripts/e2e-editor-bugs.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the expected collapse of a block; no Guide page describes where collapsed:: or other metadata rows are written relative to a quote.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A quote now ends at an `ID::` or `Id::` line as it does at `id::`, as in Logseq; before, the uppercase line was shown as part of the quote (lsdoc v0.5.9, GH #721).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "No Tine catalog row: a parser pin bump (lsdoc v0.5.9). Evidence is in lsdoc: 73d76bb adds mldoc-oracle corpus cases for ID::/Id:: after a quote (harness/corpus.blocks.json, corpus.org.json). In Tine, block_regions.rs a_swallowed_row_never_becomes_a_frontend_only_block_id checks that the kernel and the parser agree on the id for ID::, Id:: and id:: after a quote; it does not prove the rendering change on its own.",
+        "refs": [
+          "crates/tine-core/Cargo.toml",
+          "crates/tine-core/tests/block_regions.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Parser parity with Logseq for an uppercase ID:: after a quote; no Guide page describes quote termination.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}

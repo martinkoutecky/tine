@@ -6,6 +6,7 @@ import { installPageIndex } from "./pageIndex";
 import { applyGraphChange, applyGraphChangesBulk, resetStore, loadFeed, setRaw, flushPage, pageByName } from "./document";
 import { bumpGraphEpoch } from "./graphSession";
 import { applyGraphAnswers } from "./graphAnswers";
+import { bindTestHost } from "./document/host/wiring.test.support";
 const one = "00000000-0000-4000-8000-000000000001";
 const two = "00000000-0000-4000-8000-000000000002";
 const answer = (rev: number, inventoryChanged: boolean, blockRefCounts: Record<string, number>): GraphAnswersChange => ({ rev: String(rev), inventoryChanged, blockRefCounts });
@@ -20,12 +21,17 @@ beforeEach(async () => {
   vi.mocked(backend().pageInventory).mockClear();
   vi.mocked(backend().getBlockRefCounts).mockClear();
 });
-it("save acknowledgements refresh changed names and only their count targets", async () => {
+it("an own save's publication refreshes changed names and only its count targets", async () => {
   loadFeed([{ id: "pages/A.md", rev: "old", name: "A", kind: "page", title: "A", pre_block: null,
     blocks: [{ id: "body", raw: "before", collapsed: false, children: [] }] }]);
-  vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["new"], changes: answer(2, true, { [one]: 0, [two]: 3 }) });
+  await bindTestHost();
+  const submit = vi.spyOn(backend(), "pageSubmit");
   setRaw(pageByName("A")!.roots[0], "after");
   expect(await flushPage("A")).toBe(true);
+  expect(submit).toHaveBeenCalledOnce();
+  // The host publishes the save as an own graph change carrying the answers delta.
+  await applyGraphChange({ name: "A", kind: "page", path: "pages/A.md", created: false, removed: false,
+    answers: answer(2, true, { [one]: 0, [two]: 3 }) });
   expect(blockRefCount(one)).toBe(0); expect(blockRefCount(two)).toBe(3);
   await vi.waitFor(() => expect(backend().pageInventory).toHaveBeenCalledTimes(1));
   expect(backend().getBlockRefCounts).not.toHaveBeenCalled();

@@ -1,4 +1,5 @@
 import { createMemo, type JSX } from "solid-js";
+import { t } from "../i18n";
 import { childIds, node, type FeedPage } from "../document";
 import { facetsOf } from "../render/facets";
 import { OPEN_MARKERS } from "../markers";
@@ -40,11 +41,11 @@ export function summarizePageTasks(page: FeedPage): PageTaskSummary {
  * while the style theme selects `todayTaskSummary: "compact"`. */
 export function TodayTaskSummary(props: { page: FeedPage }): JSX.Element {
   const summary = createMemo(() => summarizePageTasks(props.page));
-  const tasks = () => `${summary().open} ${summary().open === 1 ? "task" : "tasks"} today`;
-  const progress = () => `${summary().inProgress} in progress`;
+  const tasks = () => t("journals-prose-tasks-today", { count: summary().open });
+  const progress = () => t("journals-prose-in-progress", { count: summary().inProgress });
 
   return (
-    <div class="today-task-summary" aria-label={`${tasks()}, ${progress()}`}>
+    <div class="today-task-summary" aria-label={t("journals-prose-task-summary", { tasks: tasks(), progress: progress() })}>
       <span>{tasks()}</span>
       <span aria-hidden="true">, </span>
       <span>{progress()}</span>

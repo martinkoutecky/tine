@@ -1,0 +1,23 @@
+# The outline kernel (outline-kernel DESIGN §2): Tine's outline editing rules and
+# the leaf text rules they need, in one source compiled natively (tine-core,
+# tine-store, the page host, the CLI) and to wasm32 (lsdoc-wasm, in the window).
+# Dependencies stay `lsdoc` + `serde`/`serde_json`: anything heavier breaks the wasm size gate.
+[package]
+autotests = false
+name = "tine-outline"
+version.workspace = true
+edition.workspace = true
+license = "AGPL-3.0-only"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Keep this tag IN SYNC with crates/tine-core/Cargo.toml and crates/lsdoc-wasm/Cargo.toml
+# (scripts/build-wasm.mjs checks all three).
+lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.10" }
+
+# Keep all integration cases in one linked executable.
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

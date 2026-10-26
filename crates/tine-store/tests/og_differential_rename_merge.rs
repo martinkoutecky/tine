@@ -8,6 +8,17 @@ use std::{fs, path::Path};
 use tine_graph_features::pages;
 use tine_store::Store;
 
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
 #[derive(Deserialize)]
 struct Input {
     old: String,
@@ -43,6 +54,7 @@ fn collect(root: &Path, rel: &str, out: &mut Vec<(String, String)>) {
 
 #[test]
 fn rename_merge_paths_and_bytes_match_master_7160c501() {
+    let _integration_guard = crate::integration_lock();
     let input: Input = serde_json::from_str(include_str!(
         "../../../scripts/fixtures/og-rename-merge-input.json"
     ))
@@ -63,15 +75,18 @@ fn rename_merge_paths_and_bytes_match_master_7160c501() {
         fs::create_dir_all(dest.parent().unwrap()).unwrap();
         fs::write(dest, file.bytes.as_bytes()).unwrap();
     }
-    let store = Store::open(&root, Default::default()).unwrap().0;
-    pages::rename_or_merge_page(
-        &store,
-        &input.old,
-        &input.new,
-        Some(&input.src),
-        Some(&input.dst),
-        &[],
-    )
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    hosted(&store, |host| {
+        pages::rename_or_merge_page(
+            &store,
+            host,
+            &input.old,
+            &input.new,
+            Some(&input.src),
+            Some(&input.dst),
+            &[],
+        )
+    })
     .unwrap();
 
     let mut removed: Vec<String> = input

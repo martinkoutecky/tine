@@ -29,6 +29,7 @@ fn fixture() -> (PathBuf, Store) {
 
 #[test]
 fn scan_is_sorted_skips_hidden_reports_unreadable_and_limits_meta() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture();
     fs::create_dir_all(root.join("assets/nested")).unwrap();
     for name in ["z.png", "a.png", ".hidden", "nested/b.png"] {
@@ -90,14 +91,15 @@ fn scan_is_sorted_skips_hidden_reports_unreadable_and_limits_meta() {
 
 #[test]
 fn referenced_assets_keeps_raw_decoded_and_nested_first_segment() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture();
     put(
         &root,
         "pages/Refs.md",
         b"- ![](../assets/my%20file.png)\n- ![](../assets/pdfkey/crop.png)\n",
     );
-    store.scan_refresh().unwrap();
-    let names = store.whole_graph().unwrap().referenced_assets();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    let names = store.referenced_assets().unwrap();
     for name in ["my%20file.png", "my file.png", "pdfkey", "pdfkey/crop.png"] {
         assert!(names.contains(name), "{name}");
     }
@@ -105,6 +107,7 @@ fn referenced_assets_keeps_raw_decoded_and_nested_first_segment() {
 
 #[test]
 fn journal_scan_and_canonical_id_follow_configured_format() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture();
     for name in ["2026_06_18.md", "Jun 18th, 2026.org", "notes.txt"] {
         put(&root, &format!("journals/{name}"), b"- body\n");
@@ -157,6 +160,7 @@ fn journal_scan_and_canonical_id_follow_configured_format() {
 
 #[test]
 fn journal_equal_rank_uses_extension_then_byte_order() {
+    let _integration_guard = crate::integration_lock();
     let (root, early) = fixture();
     drop(early);
     for name in ["Jun 18th, 2026.org", "Jun 18th, 2026.md", "2026-06-18.md"] {
@@ -178,6 +182,7 @@ fn journal_equal_rank_uses_extension_then_byte_order() {
 #[cfg(unix)]
 #[test]
 fn source_area_scan_does_not_follow_linked_directories() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture();
     let outside = root.with_extension("outside");
     fs::create_dir_all(&outside).unwrap();

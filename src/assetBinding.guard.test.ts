@@ -6,6 +6,7 @@ const source = (path: string) => readFileSync(
 );
 
 const commands = [
+  "copy_asset_file_to_clipboard",
   "edit_asset_external", "empty_asset_trash", "import_asset", "import_native_capture",
   "open_asset", "open_pdf", "rollback_pdf_area_image", "save_asset", "save_pdf_area_image", "trash_asset",
   "write_highlights",

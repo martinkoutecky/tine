@@ -13,6 +13,7 @@ fn store(root: &Path) -> Store {
 
 #[test]
 fn k1_merge_race_worker() {
+    let _integration_guard = crate::integration_lock();
     let Ok(root) = std::env::var("TINE_K1_MERGE_ROOT") else {
         return;
     };
@@ -20,7 +21,7 @@ fn k1_merge_race_worker() {
     if let Ok(boundary) = std::env::var("TINE_K1_KILL_BOUNDARY") {
         graph.inject_fault(FaultPoint::AbortAfterStep(boundary.parse().unwrap()));
     }
-    let result = tine_graph_features::pages::merge_pages(&graph, "pages/A.md", "pages/B.md");
+    let result = tine_graph_features::pages::merge_pages(&graph, None, "pages/A.md", "pages/B.md");
     eprintln!("merge worker result: {result:?}");
 }
 
@@ -44,7 +45,11 @@ fn run_race(kill: Option<usize>, alternate_target: bool) {
     let stderr = root.join("worker.stderr");
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args(["--exact", "k1_merge_race_worker", "--nocapture"])
+        .args([
+            "--exact",
+            "og_k1_transaction::k1_merge_race_worker",
+            "--nocapture",
+        ])
         .env("TINE_K1_MERGE_ROOT", root)
         .env("TINE_K1_RACE_TARGET", target)
         .env("TINE_K1_RACE_BARRIER", &barrier)
@@ -105,11 +110,13 @@ fn run_race(kill: Option<usize>, alternate_target: bool) {
 
 #[test]
 fn k1_merge_external_editor_race_never_silently_retires_payload() {
+    let _integration_guard = crate::integration_lock();
     run_race(None, false);
 }
 
 #[test]
 fn k1_merge_external_editor_race_kill_and_reopen_keeps_payload_live() {
+    let _integration_guard = crate::integration_lock();
     for boundary in 0..2 {
         run_race(Some(boundary), false);
     }
@@ -117,5 +124,6 @@ fn k1_merge_external_editor_race_kill_and_reopen_keeps_payload_live() {
 
 #[test]
 fn k1_merge_race_barrier_matches_the_file_under_an_alternate_path() {
+    let _integration_guard = crate::integration_lock();
     run_race(None, true);
 }

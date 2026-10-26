@@ -111,25 +111,6 @@ export interface PageDto {
   guide?: boolean;
 }
 
-/** One crash-surviving draft (og ADR 0061): the page as the editor held it when
- *  it could not be saved. `id` is `<session>:<page name>`; `kind` "live-conflict"
- *  is the Concord live-draft capsule (og 21a): a draft whose save was refused
- *  because its file changed on disk, restorable into the in-page resolver. */
-export interface DraftRecord {
-  id: string;
-  kind: "unsaved" | "live-conflict";
-  session: string;
-  page_name: string;
-  path: string | null;
-  reason: "conflict" | "save-failed";
-  saved_at: number;
-  page: PageDto;
-  /** Revision the draft was edited from (its Concord-ledger base); live-conflict only. */
-  base_rev?: string | null;
-  /** Disk revision observed when the save was refused; live-conflict only. */
-  observed_rev?: string | null;
-}
-
 /** A page loaded from one concrete file. Its identity is returned unchanged on save. */
 export interface PageRead extends PageDto {
   id: string;
@@ -183,10 +164,19 @@ export interface PageInventory {
   unreadable?: string[];
 }
 
+/** `page_modified` result: `[graph-relative path, Unix seconds]` for each page
+ *  file whose last-modified time the store holds. A file with no time is absent. */
+export interface PageModified {
+  rev: string;
+  modified: [string, number][];
+}
+
 /** One authoritative Journals-feed transaction.  Cursor fields are ordinal
  * journal days, never counts of returned DTOs (a selected file may vanish). */
 export interface JournalFeedPage {
   pages: PageRead[];
+  /** Referenced future days, nearest first; returned on the first page only. */
+  upcoming?: PageRead[];
   next_before_day: number | null;
   done: boolean;
   as_of_day: number;
@@ -217,6 +207,8 @@ export interface TemplateDto {
 }
 
 export interface PageEntry {
+  /** Request-local completion evidence; absent on ordinary page inventories. */
+  match_class?: ObjectiveMatchClass;
   name: string;
   kind: PageKind;
   date_key: number | null;
@@ -345,16 +337,8 @@ export type ConflictSource = "sync-copy" | "vcs-markers" | "live-save" | "duplic
 
 /** The editor draft of a `live-save` conflict object. */
 export interface LiveConflictDraft {
-  /** The retained draft of a restored capsule; absent for an open editor's
-   *  draft, which the resolver reads from the editor at each review. */
-  page?: PageDto;
-  /** Revision a restored draft was edited from; selects the ledger base. */
+  /** Revision the open draft was installed from; selects the ledger base. */
   base_rev: string | null;
-  /** True for a draft restored from an earlier session's capsule record: the
-   *  editor holds the disk version and the record is the only copy of the draft. */
-  restored: boolean;
-  /** The capsule record, for a restored draft. */
-  record_id?: string;
 }
 
 /** One version of a page participating in a conflict. */
@@ -468,7 +452,7 @@ export interface MatchEvidence {
   score?: number;
 }
 
-export type ObjectiveMatchClass = "exact" | "prefix" | "substring" | "fuzzy" | "body_evidence";
+export type ObjectiveMatchClass = "exact" | "prefix" | "substring" | "fuzzy" | "transliteration" | "body_evidence";
 
 export interface QueryDiagnostic {
   code: string;
@@ -534,6 +518,10 @@ export interface AdvancedQueryResult {
 }
 
 export interface GraphMeta {
+  default_journal_queries?: { title: string | null; body: string; error: string | null; seed?: string | null }[];
+  disable_scheduled_and_deadline_query?: boolean;
+  scheduled_future_days?: number | null;
+  journal_config_diagnostics?: string[];
   root: string;
   /** Presentation only; root remains the canonical graph identity. */
   display_root?: string;

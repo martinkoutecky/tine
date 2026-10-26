@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
-import { isBuiltinHidden } from "../editor/properties";
+import { BUILTIN_HIDE } from "../editor/properties";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "./spans";
@@ -48,17 +48,17 @@ describe("click-to-caret span mapping", () => {
     const raw = "**bold** and [[link]] text";
     const { root, dispose } = mountedBody(raw);
     try {
-      expect(editorOffsetFromRenderedRange(root, textRange(root, "bold", 2), raw, isBuiltinHidden))
+      expect(editorOffsetFromRenderedRange(root, textRange(root, "bold", 2), raw, BUILTIN_HIDE))
         .toBe(raw.indexOf("bold") + 2);
-      expect(editorOffsetFromRenderedRange(root, textRange(root, " and ", 3), raw, isBuiltinHidden))
+      expect(editorOffsetFromRenderedRange(root, textRange(root, " and ", 3), raw, BUILTIN_HIDE))
         .toBe(raw.indexOf(" and ") + 3);
 
       const link = root.querySelector("a.page-ref");
       expect(link).toBeTruthy();
-      expect(editorOffsetFromRenderedRange(root, elementRange(link!, 0), raw, isBuiltinHidden))
+      expect(editorOffsetFromRenderedRange(root, elementRange(link!, 0), raw, BUILTIN_HIDE))
         .toBe(raw.indexOf("[[link]]"));
 
-      expect(editorOffsetFromRenderedRange(root, textRange(root, " text", 2), raw, isBuiltinHidden))
+      expect(editorOffsetFromRenderedRange(root, textRange(root, " text", 2), raw, BUILTIN_HIDE))
         .toBe(raw.indexOf(" text") + 2);
     } finally {
       dispose();
@@ -76,7 +76,7 @@ describe("click-to-caret span mapping", () => {
             root,
             textRange(root, "a literal block", offset),
             raw,
-            isBuiltinHidden,
+            BUILTIN_HIDE,
           ),
         ).toBe(codeStart + offset);
       }
@@ -94,10 +94,10 @@ describe("click-to-caret span mapping", () => {
       const link = root.querySelector("a.page-ref");
       expect(link).toBeTruthy();
       // A click on the right edge resolves into the link's text at its end.
-      expect(editorOffsetFromRenderedRange(root, elementRange(link!, link!.childNodes.length), raw, isBuiltinHidden))
+      expect(editorOffsetFromRenderedRange(root, elementRange(link!, link!.childNodes.length), raw, BUILTIN_HIDE))
         .toBe(raw.length);
       // ...while a click on the left edge still lands before it.
-      expect(editorOffsetFromRenderedRange(root, elementRange(link!, 0), raw, isBuiltinHidden))
+      expect(editorOffsetFromRenderedRange(root, elementRange(link!, 0), raw, BUILTIN_HIDE))
         .toBe(raw.indexOf("[[xyz]]"));
     } finally {
       dispose();
@@ -118,14 +118,14 @@ describe("click-to-caret span mapping", () => {
         root,
         textRange(root, "some text in italics.", "some text in italics.".length),
         raw,
-        isBuiltinHidden,
+        BUILTIN_HIDE,
       );
       expect(end).toBe(raw.length - 1);
       // ...which is why a click past the final glyph must be recognised by where
       // it landed rather than by what the span map says. Interior precision has
       // to survive that: a deliberate click inside the italic text still maps
       // exactly, and must not be swept to the end.
-      expect(editorOffsetFromRenderedRange(root, textRange(root, "some", 2), raw, isBuiltinHidden))
+      expect(editorOffsetFromRenderedRange(root, textRange(root, "some", 2), raw, BUILTIN_HIDE))
         .toBe(raw.indexOf("some") + 2);
     } finally {
       dispose();
@@ -194,7 +194,7 @@ describe("click-to-caret span mapping", () => {
     const raw = "**bold**\nid:: abc\nplain";
     const { root, dispose } = mountedBody(raw);
     try {
-      expect(editorOffsetFromRenderedRange(root, textRange(root, "plain", 2), raw, isBuiltinHidden))
+      expect(editorOffsetFromRenderedRange(root, textRange(root, "plain", 2), raw, BUILTIN_HIDE))
         .toBe("**bold**\npl".length);
     } finally {
       dispose();

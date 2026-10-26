@@ -12,7 +12,7 @@
 //! read or revision check returns the affected file locations and makes the
 //! publication incomplete; callers inspect disk and refresh before retrying.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use faults::fault;
 #[cfg(any(test, feature = "test-faults"))]
@@ -28,12 +28,13 @@ mod move_file;
 #[cfg(feature = "test-faults")]
 #[path = "../tests/support/og_k1_pause.rs"]
 mod og_k1_pause;
+mod plan;
 mod preflight;
 mod prepared;
 use prepared::PreparedRewrite;
 mod publication;
 mod read_checks;
-mod validation;
+pub(crate) mod validation;
 use io_helpers::{
     collision, content_refusal, directory_read_error, disk_rev, failed, failed_trash_dir,
     publication_path_error, sync_move_dirs,
@@ -72,6 +73,40 @@ pub enum Content {
     },
 }
 
+/// Whether a [`Transaction::rewrite_refs`] step also rebinds the file's own
+/// explicit title.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TitleRebind {
+    /// Rewrite references only; the file's own `title::` is a reference-free
+    /// property and stays.
+    Keep,
+    /// Also rebind an own Markdown `title::` that names a mapped old identity,
+    /// as a move with a rename map does. This completes an interrupted rename
+    /// whose physical move already happened: the file sits at its new name but
+    /// still carries the old title.
+    Own,
+}
+
+/// What a [`Transaction::rewrite_refs`] call learned from the caller's read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RewriteEffect {
+    /// The rename map changes nothing in the text the caller read.
+    Unchanged,
+    /// The rename map changes the text the caller read, or the caller passed
+    /// no read, so the step was queued to find out at commit.
+    Changes,
+}
+
+/// The condition a [`Transaction::trash`] step requires at commit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrashIf {
+    /// Trash the file whatever references it.
+    Any,
+    /// Trash only an `assets/` file no published page references; a
+    /// referenced asset refuses with [`Refusal::AssetReferenced`].
+    UnreferencedAsset,
+}
+
 /// Old page or tag name to new name, compared using normalized references.
 /// Matching trims surrounding space, removes one boundary slash, then uses
 /// Unicode lowercase plus NFC: a `Foo` entry
@@ -93,20 +128,13 @@ pub struct IoError {
     pub kind: io::ErrorKind,
     /// Human-readable cause.
     pub message: String,
-    /// Fixed name of the platform step that failed, when known (GH #538).
-    pub operation: Option<&'static str>,
-    /// OS error code of that step, when known.
-    pub os_error: Option<i32>,
 }
 
 impl From<io::Error> for IoError {
     fn from(error: io::Error) -> Self {
-        let step = crate::directory_durability::failure_step(&error);
         Self {
             kind: error.kind(),
             message: error.to_string(),
-            operation: step.map(|(operation, _)| operation),
-            os_error: step.map_or(error.raw_os_error(), |(_, os_error)| os_error),
         }
     }
 }
@@ -240,7 +268,7 @@ pub struct Rollback {
 pub enum TxOutcome {
     /// All steps completed. A changed transaction normally publishes a view
     /// of its final state. After a failed initial load, its writes stand but
-    /// publication waits for successful `scan_refresh()` recovery.
+    /// publication waits for successful `refresh()` recovery.
     Committed {
         /// Results in input order.
         steps: Vec<StepResult>,
@@ -269,7 +297,7 @@ pub enum TxOutcome {
     /// a successful initial load. Store-written bytes use `Origin::Own`;
     /// concurrent external bytes surviving undo use `Origin::External`.
     /// A watcher echo is not guaranteed. After a failed initial load, publication waits
-    /// for successful `scan_refresh()` recovery.
+    /// for successful `refresh()` recovery.
     NotCommitted {
         /// Zero-based index of the failed step.
         step: usize,
@@ -394,8 +422,24 @@ pub struct Transaction<'a> {
     // Exact names sampled once per directory per commit phase.
     spelling_entries:
         std::cell::RefCell<BTreeMap<PathBuf, BTreeMap<std::ffi::OsString, std::ffi::OsString>>>,
-    // Reference rewrites prepared from the caller's planning read (GH #623).
-    prepared: HashMap<FileId, PreparedRewrite>,
+    /// The planning context [`Self::expect_view`] requires at commit.
+    view: Option<(crate::GraphRev, std::sync::Arc<tine_core::config::Config>)>,
+}
+
+/// A page file's alternate-extension twin (`.md` ↔ `.org`) on disk, from one
+/// metadata call: another file claiming the same page name. Shared by the
+/// transaction's create checks and the page host's save (STEP3 §3.2).
+pub(crate) fn alternate_extension_twin(path: &Path) -> io::Result<Option<PathBuf>> {
+    let alt = match path.extension().and_then(|value| value.to_str()) {
+        Some("md") => path.with_extension("org"),
+        Some("org") => path.with_extension("md"),
+        _ => return Ok(None),
+    };
+    match fs::symlink_metadata(&alt) {
+        Ok(_) => Ok(Some(alt)),
+        Err(error) if crate::atomic_file::names_nothing(&error) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 impl Store {
@@ -409,7 +453,7 @@ impl Store {
             steps: Vec::new(),
             kinds: kind.into_iter().collect(),
             spelling_entries: Default::default(),
-            prepared: HashMap::new(),
+            view: None,
         }
     }
 }
@@ -433,6 +477,11 @@ impl<'a> Transaction<'a> {
         doc: &PageDto,
     ) -> &mut Self {
         assert!(!kinds.is_empty(), "OG-RULES Rule 8: page save needs a kind; exemplar crates/tine-graph-features/src/pages.rs");
+        for kind in kinds {
+            if !self.kinds.contains(kind) {
+                self.kinds.push(*kind);
+            }
+        }
         let (base, markers) = match base {
             SaveBase::ResolvingMarkers(rev) => (SaveBase::Existing(rev), Markers::Resolve),
             other => (other, Markers::Refuse),
@@ -527,42 +576,99 @@ impl<'a> Transaction<'a> {
         self
     }
 
-    /// Queue a guarded page-reference rewrite. Obtain each referrer's
-    /// `FileRev` with `Store::page` or `Store::read` after locating it in a
-    /// graph view. Recheck revisions if the view may be stale; each referrer
-    /// needs its own file read. Unchanged output reports [`StepResult::Unchanged`];
-    /// unsafe Org edits are refused as read-only. There is no partial rename
-    /// mode: omit that referrer from the queued steps if leaving its old link
-    /// is acceptable. This rewrites file content,
-    /// not an unsaved editor buffer. Commit reads, parses, rewrites and writes
-    /// each named referrer, O(its text bytes), plus publication metadata; a
-    /// rewrite kept by [`Self::prepare_ref_rewrite`] is reused, not recomputed.
+    /// Commit only in the context `view` was planned in (STEP3 A-W1, B2): under
+    /// the writer, before any step is prepared, the published graph revision
+    /// and the config must still be `view`'s, or commit returns `Why::Conflict`
+    /// naming `logseq/config.edn` and writes nothing. It covers every step,
+    /// including moves and trashes whose output depends on the filename format,
+    /// so a plan that read the graph or encoded names under an older context
+    /// is replanned rather than applied. Any later publication counts, so a
+    /// caller retries a bounded number of times. Cost O(1) when it holds.
+    pub fn expect_view(&mut self, view: &crate::WholeGraph) -> &mut Self {
+        self.view = Some((view.rev(), std::sync::Arc::clone(&view.config.config)));
+        self
+    }
+
+    /// Queue a guarded page-reference rewrite of `id` against revision
+    /// `expected`. Obtain each referrer's `FileRev` with `Store::page` or
+    /// `Store::read` after locating it in a graph view. Recheck revisions if
+    /// the view may be stale; each referrer needs its own file read.
+    ///
+    /// `read` is the text the caller read at `expected`, if any. With it the
+    /// rewrite is computed once here (`tine_core::refs::rename_rewrite`) and
+    /// reported: [`RewriteEffect::Unchanged`] queues nothing unless `title` is
+    /// [`TitleRebind::Own`]; a changing rewrite is kept for preflight, which
+    /// still stages the file against `expected` and reuses the kept bytes only
+    /// when the staged bytes are byte-identical to `read` and the filename
+    /// format is unchanged, otherwise it recomputes (GH #623). Without `read`
+    /// the step is always queued and [`RewriteEffect::Changes`] is reported;
+    /// commit reports [`StepResult::Unchanged`] for a no-op.
+    ///
+    /// `title` [`TitleRebind::Own`] also rebinds the file's own explicit title
+    /// (completing an interrupted rename in place, under the same revision
+    /// guard); it is always queued and never reuses a kept rewrite.
+    ///
+    /// Unsafe Org edits are refused as read-only, and a rewrite that would
+    /// change a file carrying VCS conflict markers is refused
+    /// (R-VCS-MARKERS). There is no partial rename mode: omit that referrer if
+    /// leaving its old link is acceptable. This rewrites file content, not an
+    /// unsaved editor buffer. Cost: O(read) here when `read` is given; commit
+    /// reads, parses, rewrites (unless reused) and writes each queued
+    /// referrer, O(its text bytes), plus publication metadata.
     pub fn rewrite_refs(
         &mut self,
         id: &PageId,
         expected: FileRev,
+        read: Option<&str>,
         renames: &RenameMap,
-    ) -> &mut Self {
-        let prepared = self.take_prepared(&id.file(), renames);
-        self.steps.push(Step::Rewrite {
-            id: id.clone(),
-            expected,
-            renames: renames.clone(),
-            rebind_title: false,
-            prepared,
-        });
-        self
+        title: TitleRebind,
+    ) -> RewriteEffect {
+        let file = id.file();
+        let mut prepared = None;
+        let effect = match read {
+            None => RewriteEffect::Changes,
+            Some(text) => {
+                let name_format = self.store.config().file_name_format;
+                let is_org = Path::new(file.as_str())
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    == Some("org");
+                let new = tine_core::refs::rename_rewrite(text, is_org, &renames.0, name_format);
+                if new == text {
+                    RewriteEffect::Unchanged
+                } else {
+                    if title == TitleRebind::Keep {
+                        prepared = Some(Box::new(PreparedRewrite::new(
+                            file.clone(),
+                            text.to_owned(),
+                            new,
+                            name_format,
+                        )));
+                    }
+                    RewriteEffect::Changes
+                }
+            }
+        };
+        if effect == RewriteEffect::Changes || title == TitleRebind::Own {
+            self.steps.push(Step::Rewrite {
+                id: id.clone(),
+                expected,
+                renames: renames.clone(),
+                rebind_title: title == TitleRebind::Own,
+                prepared,
+            });
+        }
+        effect
     }
 
-    /// Queue a guarded no-replace move. With a rename map and identical source
-    /// and destination IDs, complete an interrupted move by rewriting the
-    /// file's explicit title and references in place under the same revision
-    /// guard; stale revisions or non-round-tripping Org content refuse it.
-    /// On a normal move, optional ref rewrites rebind an own Markdown `title::`
+    /// Queue a guarded no-replace move to a different file ID. A destination
+    /// equal to the source names one file twice and the commit refuses it
+    /// before any write (`Refusal::RepeatedFile`); an interrupted rename is
+    /// completed in place with [`Self::rewrite_refs`] and [`TitleRebind::Own`].
+    /// Optional ref rewrites rebind an own Markdown `title::`
     /// matching the mapped old identity and destination; other titles, aliases
     /// and namespace children stay untouched. Changed bytes leave an old-byte
-    /// copy in trash; unchanged bytes rename directly. An in-place completion
-    /// rewrites the existing file and makes no new trash copy.
+    /// copy in trash; unchanged bytes rename directly.
     /// `resolve` follows the destination; later referrers need a later query.
     /// Twin claims are refused. A read-only Org source may move without a
     /// rewrite; asking to rewrite its bytes invokes the round-trip check.
@@ -585,18 +691,6 @@ impl<'a> Transaction<'a> {
         to: &FileId,
         renames: Option<&RenameMap>,
     ) -> &mut Self {
-        if file == to {
-            if let Some(renames) = renames {
-                self.steps.push(Step::Rewrite {
-                    id: PageId::from(file.as_str()),
-                    expected,
-                    renames: renames.clone(),
-                    rebind_title: true,
-                    prepared: None,
-                });
-                return self;
-            }
-        }
         self.steps.push(Step::Move {
             file: file.clone(),
             expected,
@@ -608,11 +702,17 @@ impl<'a> Transaction<'a> {
 
     /// Guarded one-file trash; caller chooses twin claimants. Refusals preserve bytes.
     /// Returns a Journal/Conflict trash id; Org read-only can move. Cost O(bytes + P metadata).
-    pub fn trash(&mut self, file: &FileId, expected: FileRev) -> &mut Self {
+    /// [`TrashIf::UnreferencedAsset`] queues recoverable trash of an
+    /// unreferenced asset: commit checks the latest published graph under the
+    /// writer, refusing partial inventories and referenced assets. That costs
+    /// O(B + source bytes); unobserved external arrivals can still race after
+    /// the check. [`TrashIf::Any`] has no such orphan requirement (for example
+    /// intentional PDF annotation removal).
+    pub fn trash(&mut self, file: &FileId, expected: FileRev, when: TrashIf) -> &mut Self {
         self.steps.push(Step::Trash {
             file: file.clone(),
             expected,
-            orphan_only: false,
+            orphan_only: when == TrashIf::UnreferencedAsset,
         });
         self
     }
@@ -638,7 +738,11 @@ impl<'a> Transaction<'a> {
         } else {
             self.store.graph.ensure_write_target(&path)
         };
-        checked.map_err(|error| Why::Refused(Refusal::InvalidTarget(error.to_string())))?;
+        checked.map_err(|error| match error.kind() {
+            io::ErrorKind::InvalidInput => Why::Refused(Refusal::InvalidTarget(error.to_string())),
+            // Uninspectable now (REG-WIN-WRITE-TARGET-TRANSIENT): a failure, not outside.
+            _ => Why::Failed(error.into()),
+        })?;
         Ok(path)
     }
 
@@ -653,6 +757,13 @@ impl<'a> Transaction<'a> {
             return Ok(());
         };
         let path = self.path(file)?;
+        if let Some(existing) = self.disk_twin(file)? {
+            if moving_from != Some(&existing) {
+                return Err(Why::Refused(Refusal::Twin {
+                    existing: PageId::from(existing.as_str()),
+                }));
+            }
+        }
         let Some(entry) = self.store.graph.entry_for_path(&path) else {
             return Ok(());
         };
@@ -728,14 +839,8 @@ impl<'a> Transaction<'a> {
             return Ok(None);
         }
         let path = self.path(file)?;
-        let alt = match path.extension().and_then(|value| value.to_str()) {
-            Some("md") => path.with_extension("org"),
-            Some("org") => path.with_extension("md"),
-            _ => return Ok(None),
-        };
-        match fs::symlink_metadata(&alt) {
-            Ok(_) => Ok(Some(FileId::from(self.store.graph.rel_path(&alt)))),
-            Err(error) if crate::atomic_file::names_nothing(&error) => Ok(None),
+        match alternate_extension_twin(&path) {
+            Ok(alt) => Ok(alt.map(|alt| FileId::from(self.store.graph.rel_path(&alt)))),
             Err(error) if self.page(file) && error.kind() == io::ErrorKind::InvalidData => {
                 Err(content_refusal(error))
             }
@@ -895,7 +1000,7 @@ impl<'a> Transaction<'a> {
     /// trash (no-replace, fsync'd) before a `SaveBase::ResolvingMarkers`
     /// replaces them. A crash after this point leaves the old file plus its
     /// copy, or the resolved file plus the copy: never a lost side.
-    fn stage_marker_file(&self, file: &FileId, old: &[u8]) -> Result<FileId, Why> {
+    pub(crate) fn stage_marker_file(&self, file: &FileId, old: &[u8]) -> Result<FileId, Why> {
         let name = Path::new(file.as_str())
             .file_name()
             .and_then(|s| s.to_str())
@@ -998,6 +1103,9 @@ impl<'a> Transaction<'a> {
                     self.verify(&plan.src, old, index)?;
                 }
                 if old == Some(new.as_slice()) {
+                    // Equal bytes are reported as a success, so make them durable
+                    // first: they may be another program's unsynced write.
+                    crate::atomic_file::sync_existing(&src).map_err(failed)?;
                     return Ok(StepResult::Unchanged {
                         file: plan.src.clone(),
                         rev: FileRev::from_bytes(new),
@@ -1489,83 +1597,40 @@ impl<'a> Transaction<'a> {
         let _writer = self.store.writer.lock().unwrap();
         timing.writer_acquired();
         let rev = || self.store.changes.rev();
-        if self.store.is_closed() {
-            return TxOutcome::NotCommitted {
-                step: 0,
-                why: Why::Refused(Refusal::Closed),
-                rollback: Rollback::default(),
-                publication_errors: Vec::new(),
-                graph_rev: rev(),
-            };
-        }
-        if let Some(failure) = self.config_write_failure() {
-            return failure;
-        }
+        let names = match self.preflight_names() {
+            Ok(names) => names,
+            Err((step, why)) => {
+                return TxOutcome::NotCommitted {
+                    step,
+                    why,
+                    rollback: Rollback::default(),
+                    publication_errors: Vec::new(),
+                    graph_rev: rev(),
+                }
+            }
+        };
         let starting_rev = self.store.graph.cache_generation();
-        let mut names = Vec::new();
-        for step in &self.steps {
-            match step {
-                Step::Save { id, .. } | Step::Rewrite { id, .. } => names.push(id.file()),
-                Step::Create { file, .. }
-                | Step::Replace { file, .. }
-                | Step::Expect { file, .. }
-                | Step::Trash { file, .. } => names.push(file.clone()),
-                Step::Move { file, to, .. } => {
-                    names.push(file.clone());
-                    names.push(to.clone());
-                }
-                Step::Unique { .. } => {}
-            }
-        }
-        let mut seen = HashSet::new();
-        for (index, step) in self.steps.iter().enumerate() {
-            let ids: Vec<FileId> = match step {
-                Step::Save { id, .. } | Step::Rewrite { id, .. } => vec![id.file()],
-                Step::Create { file, .. }
-                | Step::Replace { file, .. }
-                | Step::Expect { file, .. }
-                | Step::Trash { file, .. } => vec![file.clone()],
-                Step::Move { file, to, .. } => vec![file.clone(), to.clone()],
-                Step::Unique { .. } => Vec::new(),
-            };
-            for id in ids {
-                if !seen.insert(id.clone()) {
-                    return TxOutcome::NotCommitted {
-                        step: index,
-                        why: Why::Refused(Refusal::RepeatedFile(id)),
-                        rollback: Rollback::default(),
-                        publication_errors: Vec::new(),
-                        graph_rev: rev(),
-                    };
-                }
-            }
-        }
-        names.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-        names.dedup();
-        let paths: Vec<PathBuf> = names
+        let locks: Vec<_> = names
             .iter()
-            .map(|id| self.store.graph.root.join(id.as_str()))
-            .collect();
-        let locks: Vec<_> = paths
-            .iter()
-            .map(|path| self.store.graph.page_lock(path))
+            .map(|id| {
+                self.store
+                    .graph
+                    .page_lock(&self.store.graph.root.join(id.as_str()))
+            })
             .collect();
         let _guards: Vec<_> = locks.iter().map(|lock| lock.lock().unwrap()).collect();
-        let mut plans = Vec::new();
-        for (index, step) in self.steps.iter().enumerate() {
-            match self.preflight(step) {
-                Ok(plan) => plans.push(plan),
-                Err(why) => {
-                    return TxOutcome::NotCommitted {
-                        step: index,
-                        why,
-                        rollback: Rollback::default(),
-                        publication_errors: Vec::new(),
-                        graph_rev: rev(),
-                    }
+        let plans = match self.prepare_steps() {
+            Ok(plans) => plans,
+            Err((step, why)) => {
+                return TxOutcome::NotCommitted {
+                    step,
+                    why,
+                    rollback: Rollback::default(),
+                    publication_errors: Vec::new(),
+                    graph_rev: rev(),
                 }
             }
-        }
+        };
         self.spelling_entries.borrow_mut().clear();
         let mut before = BTreeMap::new();
         for (plan, step) in plans.iter().zip(&self.steps) {

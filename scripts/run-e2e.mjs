@@ -102,6 +102,8 @@ const suites = {
     // Needs libfaketime; fails (never skips) naming the remedy when it is absent.
     ["journal-rollover", "scripts/e2e-journal-rollover.mjs", {}],
     ["multigraph", "scripts/e2e-multigraph.mjs", {}],
+    ["multiwindow", "scripts/e2e-multiwindow.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
+    ["tray", "scripts/e2e-tray.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["sheets", "scripts/e2e-sheets.mjs", {}],
     ["formula-builder", "scripts/probe-formula-builder.mjs", {}],
     ["selection-wrap", "scripts/e2e-selectwrap.mjs", {}],
@@ -113,6 +115,8 @@ const suites = {
     ["plugin-revocation", "scripts/e2e-plugin-revocation.mjs", {}],
     ["plugin-graph-ownership", "scripts/e2e-plugin-graph-ownership.mjs", {}],
     ["external-assets", "scripts/e2e-external-assets.mjs", {}],
+    ["custom-css", "scripts/e2e-custom-css.mjs", {}],
+    ["find-replace", "scripts/e2e-find-replace.mjs", {}],
     ["capture", "scripts/e2e-capture.mjs", { E2E_WINDOW_MANAGER: process.env.E2E_WINDOW_MANAGER || "openbox" }],
     ["native-titlebar", "scripts/e2e-native-titlebar.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["page-file-actions", "scripts/e2e-page-file-actions.mjs", {}],
@@ -128,10 +132,15 @@ const suites = {
     ["empty-query-workspace", "scripts/e2e-empty-query-workspace.mjs", {}],
     ["query-sheet", "scripts/e2e-query-sheet.mjs", {}],
     ["query-sheet-input", "scripts/e2e-query-sheet-input.mjs", {}],
+    ["query-nested-rows", "scripts/e2e-query-nested-rows.mjs", {}],
+    ["query-bare-hint", "scripts/e2e-query-bare-hint.mjs", {}],
     ["scrollbars", "scripts/e2e-scrollbars.mjs", {}],
     ["page-trailing-block", "scripts/e2e-page-trailing-block.mjs", {}],
+    ["host-saves", "scripts/e2e-host-saves.mjs", {}],
   ],
   "windows-smoke": [
+    // GH #745 reopened: opt-in hosted WebView2 proof, outside the default fan-out.
+    ["gh745-outdent", "scripts/e2e-gh745-windows-probe.mjs", { GH745_STRICT: "1" }],
     // og-parity-references is a HARD gate on Linux (linux-release + og-parity-pilot
     // suites), where adaptive page completion is byte-exact with OG. It is dropped
     // from the advisory Windows suite only: on WebView2 the completion yields a
@@ -146,6 +155,8 @@ const suites = {
     ["pdf-logseq", "scripts/e2e-pdf-logseq.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["print-security", "scripts/e2e-print-security.mjs", {}],
     ["windows-core", "scripts/e2e-windows-smoke.mjs", {}],
+    // GH #719: not in the default fan-out lists yet (burn-in); dispatch it by name.
+    ["windows-portable", "scripts/e2e-windows-portable.mjs", {}],
     ["page-trailing-block", "scripts/e2e-page-trailing-block.mjs", {}],
     ["tab-overflow", "scripts/e2e-tab-overflow.mjs", {}],
   ],
@@ -447,7 +458,7 @@ async function runScenario([id, script, extraEnv], contractEntry) {
         if (process.platform === "win32") child.kill("SIGKILL");
         else process.kill(-child.pid, "SIGKILL");
       } catch {}
-    }, timeoutMs);
+    }, id === "gh745-outdent" ? Math.max(timeoutMs, 900_000) : timeoutMs);
     const result = await new Promise((resolve) => {
       child.once("error", (error) => resolve({ code: 1, error: String(error) }));
       child.once("exit", (code, signal) => resolve({ code: code ?? 1, signal }));

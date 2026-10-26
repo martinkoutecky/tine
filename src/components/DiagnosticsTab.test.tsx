@@ -26,7 +26,7 @@ describe("Help & diagnostics (GH #343)", () => {
     document.body.appendChild(host);
     const dispose = render(() => <DiagnosticsTab />, host);
     expect(host.querySelector("h2")?.textContent).toBe("Help & diagnostics");
-    expect(host.textContent).toContain("Help improve Tine's parser");
+    expect(host.textContent).not.toContain("Help improve Tine's parser");
 
     button(host, "Create diagnostic report").click();
     await flush();
@@ -81,7 +81,10 @@ describe("Help & diagnostics (GH #343)", () => {
     button(host, "Save report…").click();
     await flush();
     expect(save).toHaveBeenCalledOnce();
-    expect(toast).toHaveBeenCalledWith("Diagnostic report saved", "success");
+    const { renderEnglish } = await import("../i18n");
+    const [text, kind] = toast.mock.calls.at(-1)!;
+    expect(renderEnglish(toasts.toUiText(text))).toBe("Diagnostic report saved");
+    expect(kind).toBe("success");
     toast.mockClear();
     button(host, "Save report…").click();
     await flush();

@@ -4,7 +4,7 @@ import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
 import { pageByName, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
-import { doc } from "../document/model";
+import { doc, setDoc } from "../document/model";
 import { editingId, startEditing } from "../editorController";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
@@ -34,8 +34,9 @@ const replaceValue = (textarea: HTMLTextAreaElement, value: string) => {
 };
 
 describe("first-block page-property entry (GH #138)", () => {
-  it("keeps plain Enter in the property block and exits on the following empty line", () => {
+  it.each([false, true])("keeps plain Enter in the property block and exits on the following empty line (marked header: %s)", (marked) => {
     loadSingle(page([block("props", "alias:: book"), block("body", "Reading list")]));
+    if (marked) setDoc("byId", "props", "originatedFromPageHeader", true);
     startEditing("props", "alias:: book".length);
     const { root, dispose } = mount(() => (
       <For each={pageByName("Properties")?.roots ?? []}>{(id) => <Block id={id} />}</For>
@@ -56,6 +57,8 @@ describe("first-block page-property entry (GH #138)", () => {
       expect(roots).toHaveLength(3);
       expect(doc.byId.props.raw).toBe("alias:: book\ntags:: blah");
       expect(doc.byId[roots[1]].raw).toBe("");
+      expect(doc.byId[roots[1]].parent).toBeNull();
+      expect(doc.byId.props.children).toEqual([]);
       expect(editingId()).toBe(roots[1]);
     } finally {
       dispose();

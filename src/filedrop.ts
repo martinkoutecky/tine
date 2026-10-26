@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // OS file drag-and-drop → insert as graph assets. Tauri captures the native file
 // drop (so HTML drag events never reach the webview) and hands us the absolute
 // paths + a physical-pixel drop position; we map that to the block under the
@@ -16,6 +17,7 @@ import { captureBinding } from "./binding";
 import { bindingOwner, readOwned, writeOwned } from "./owned";
 import { graphMeta } from "./graphSession";
 import type { OutlineNode } from "./editor/outline";
+import { MAIN_WINDOW_ID, mainWindow, windowById } from "./windowRealm";
 
 const MAX_DROPPED_CELLS = 5000;
 
@@ -48,7 +50,11 @@ export async function installFileDrop(): Promise<() => void> {
   } catch {
     return () => {};
   }
-  const setActive = (on: boolean) => document.body.classList.toggle("file-drop-active", on);
+  // `getCurrentWebview()` is MAIN's webview: these OS drop events and their
+  // physical coordinates belong to the main window only. A workspace window's
+  // drops are not wired (RECEIPT-OG-MW: product gap).
+  const main = windowById(MAIN_WINDOW_ID) ?? mainWindow;
+  const setActive = (on: boolean) => main.document.body.classList.toggle("file-drop-active", on);
 
   const unlisten = await webview.onDragDropEvent(async (event) => {
     const p = event.payload;
@@ -62,13 +68,13 @@ export async function installFileDrop(): Promise<() => void> {
     // Resolve the drop target: the block under the drop point, else the last
     // visible block (drops in the page whitespace land at the end). Tauri gives a
     // physical-pixel position; elementFromPoint wants CSS pixels.
-    const dpr = window.devicePixelRatio || 1;
-    const el = document.elementFromPoint(p.position.x / dpr, p.position.y / dpr);
+    const dpr = main.devicePixelRatio || 1;
+    const el = main.document.elementFromPoint(p.position.x / dpr, p.position.y / dpr);
     const onBlock = el?.closest("[data-block-id]")?.getAttribute("data-block-id") ?? null;
     const order = visibleOrder();
     const afterId = onBlock ?? order[order.length - 1] ?? null;
     if (!afterId || !docNode(afterId)) {
-      pushToast("Drop a file onto a block to insert it.", "error");
+      pushToast(msg("filedrop-drop-a-file-onto-a-block-to-insert"), "error");
       return;
     }
     const binding = captureBinding();
@@ -89,7 +95,7 @@ export async function installFileDrop(): Promise<() => void> {
           const matrix = parseDelimitedText(result.value, kind);
           const cells = delimitedCellCount(matrix);
           if (cells > MAX_DROPPED_CELLS) {
-            pushToast(`"${basename(path)}" has ${cells} cells; CSV/TSV drops are limited to ${MAX_DROPPED_CELLS}.`, "error");
+            pushToast(msg("filedrop-has-cells-csv-tsv-drops-are-limited-to", { fileName: String(basename(path)), cells: String(cells), cellLimit: String(MAX_DROPPED_CELLS) }), "error");
             continue;
           }
           nodes.push(matrixGridNode(titleWithoutExtension(path, kind), matrix));
@@ -115,10 +121,10 @@ export async function installFileDrop(): Promise<() => void> {
         return;
       }
       const inserted = withUndoUnit("file-drop", [dropPage], () => insertOutlineAfter(afterId, nodes));
-      if (!inserted) { pushToast("Dropped files could not be inserted at this outline depth.", "error"); return; }
-      pushToast(`Inserted ${nodes.length} file${nodes.length === 1 ? "" : "s"}`, "success");
+      if (!inserted) { pushToast(msg("filedrop-dropped-files-could-not-be-inserted-at-this"), "error"); return; }
+      pushToast(msg("filedrop-inserted", { count: nodes.length }), "success");
     } catch (e) {
-      pushToast(`Couldn't insert dropped file: ${String(e)}`, "error");
+      pushToast(msg("filedrop-couldn-t-insert-dropped-file", { error: String(e) }), "error");
     }
   });
 

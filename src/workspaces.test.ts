@@ -3,7 +3,9 @@ import { backend } from "./backend";
 import { layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
 import type { PaneSnapshot } from "./router";
 import { buildPersistedSession, restoreSession } from "./session";
-import { resetStore } from "./document";
+import { flushAll, resetStore } from "./document";
+import { bindTestHost } from "./document/host/wiring.test.support";
+import { expectNoPageWrites, spyPageWrites } from "./pageWrites.test.support";
 import { applySidebarSession, rightSidebar } from "./ui";
 import { setToasts, toasts } from "./toasts";
 import {
@@ -259,7 +261,8 @@ describe("named workspace switching", () => {
     vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
     vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
     vi.spyOn(backend(), "saveSession").mockResolvedValue();
-    const savePages = vi.spyOn(backend(), "savePages");
+    await bindTestHost();
+    const writes = spyPageWrites();
 
     await initializeWorkspaces();
     await saveActiveWorkspace();
@@ -269,7 +272,9 @@ describe("named workspace switching", () => {
     await switchWorkspace(secondId);
     await deleteWorkspace(secondId);
 
-    expect(savePages).not.toHaveBeenCalled();
+    // A barrier sends any input the transitions produced; there must be none.
+    expect(await flushAll()).toBe(true);
+    expectNoPageWrites(writes);
     expect(workspaces()).toHaveLength(1);
     expect(activeWorkspaceId()).toBe("default");
 
@@ -301,13 +306,15 @@ describe("named workspace switching", () => {
     }));
     vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
     vi.spyOn(backend(), "saveSession").mockResolvedValue();
-    const savePages = vi.spyOn(backend(), "savePages");
+    await bindTestHost();
+    const writes = spyPageWrites();
 
     await initializeWorkspaces();
     await switchWorkspace("parked");
 
     expect(rightSidebar()).toEqual(parked.rightSidebarItems);
-    expect(savePages).not.toHaveBeenCalled();
+    expect(await flushAll()).toBe(true);
+    expectNoPageWrites(writes);
   });
 
   it("carries a registry entry this build cannot parse through every write instead of dropping it", async () => {

@@ -4,11 +4,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use syn::visit::{self, Visit};
 
-fn cfg_test(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|attr| {
-        attr.path().is_ident("cfg") && attr.meta.to_token_stream().to_string().contains("test")
-    })
-}
+use crate::test_cfg::cfg_test;
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).unwrap() {
@@ -44,6 +40,7 @@ impl RootCalls {
                 .is_some_and(|name| name == "root_key" || self.tainted.contains(&name.to_string())),
             syn::Expr::Field(field) => {
                 field.member.to_token_stream().to_string() == "root_key"
+                    || field.member.to_token_stream().to_string() == "asset_trash_location"
                     || (field.member.to_token_stream().to_string() == "root"
                         && field.base.to_token_stream().to_string() == "source")
             }
@@ -53,7 +50,7 @@ impl RootCalls {
             syn::Expr::Try(value) => self.graph_value(&value.expr),
             syn::Expr::MethodCall(call) => {
                 let method = call.method.to_string();
-                ["path_for_os_handoff", "asset_trash_location_for_user"].contains(&method.as_str())
+                method == "path_for_os_handoff"
                     || ([
                         "join",
                         "clone",
@@ -173,6 +170,7 @@ fn scan(source: &str) -> Vec<String> {
 
 #[test]
 fn clients_never_operate_on_graph_root_paths() {
+    let _integration_guard = crate::integration_lock();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut files = Vec::new();
     for dir in ["src-tauri/src", "crates/tine-graph-features/src"] {
@@ -190,6 +188,7 @@ fn clients_never_operate_on_graph_root_paths() {
 
 #[test]
 fn planted_graph_root_violation_is_detected() {
+    let _integration_guard = crate::integration_lock();
     let planted = r#"fn bad(slot: &GraphSlot) {
         let graph_file = slot.root_key.join("pages/Secret.md");
         let _ = std::fs::read(graph_file);
@@ -199,6 +198,7 @@ fn planted_graph_root_violation_is_detected() {
 
 #[test]
 fn planted_handoff_path_write_is_detected() {
+    let _integration_guard = crate::integration_lock();
     let planted = r#"fn bad(store: &Store, file: &FileId) {
         let path = store.path_for_os_handoff(file, false).unwrap();
         std::fs::write(&path, b"bad").unwrap();
@@ -216,11 +216,23 @@ fn planted_handoff_path_write_is_detected() {
         "File::create must reject a hand-off path"
     );
     let trash = r#"fn bad(store: &Store) {
-        let path = store.asset_trash_location_for_user();
+        let path = store.config().asset_trash_location;
         std::fs::write(&path, b"bad").unwrap();
     }"#;
     assert!(
         !scan(trash).is_empty(),
         "display paths must never become graph write paths"
     );
+}
+
+/// N2 family (REVIEW-3b-P2b-2): a `cfg(not(test))` function is production
+/// and is scanned.
+#[test]
+fn a_not_test_graph_root_read_is_detected() {
+    let _integration_guard = crate::integration_lock();
+    let planted = r#"#[cfg(not(test))] fn bad(slot: &GraphSlot) {
+        let graph_file = slot.root_key.join("pages/Secret.md");
+        let _ = std::fs::read(graph_file);
+    }"#;
+    assert!(!scan(planted).is_empty(), "cfg(not(test)) is production");
 }

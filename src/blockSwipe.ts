@@ -1,3 +1,4 @@
+import { isElementNode, isHTMLElementNode } from "./windowRealm";
 /** Horizontal swipes on a block row (GH #501): swipe right indents, a short
  * swipe left outdents, a long swipe left reveals the block's action menu.
  *
@@ -209,7 +210,7 @@ export const BLOCK_SWIPE_DISABLED_SELECTOR = [
 ].join(",");
 
 function scrollsSideways(el: Element): boolean {
-  if (!(el instanceof HTMLElement)) return false;
+  if (!isHTMLElementNode(el)) return false;
   if (el.scrollWidth <= el.clientWidth + 1) return false;
   const overflowX = el.ownerDocument.defaultView?.getComputedStyle(el).overflowX;
   return overflowX === "auto" || overflowX === "scroll";
@@ -217,7 +218,7 @@ function scrollsSideways(el: Element): boolean {
 
 /** Is `target` (a touchstart target inside `row`) in a disabled zone? */
 export function blockSwipeDisabledTarget(target: EventTarget | null, row: Element): boolean {
-  const element = target instanceof Element ? target : null;
+  const element = isElementNode(target) ? target : null;
   if (!element) return true;
   // A nested row (embedded / referenced block) owns its own touches.
   if (element.closest(".block-main") !== row) return true;

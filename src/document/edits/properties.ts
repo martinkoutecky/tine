@@ -1,18 +1,20 @@
+import { msg, rawText } from "../../i18n";
 import type { PageDto } from "../../types";
 import { ordered_list_glyph } from "../../render/wasm/lsdoc_wasm.js";
 import { scheduleParts, planningTimestamp } from "../../editor/repeat";
 import { blockRegions, editBlock, parserReady } from "../../render/parse";
-import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, type ReadonlyFeedPage } from "../model";
+import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, type Node, type ReadonlyFeedPage } from "../model";
 import { facetsOf } from "../../render/facets";
 import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
-import { markDirty, noteTitleIdentityIntent } from "../save/engine";
-import { isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, isBuiltinHidden, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
+import { markDirty, noteTitleIdentityIntent, pageFrozen } from "../host/wiring";
+import { canonicalPageHeaderDraft, withoutLeadingBlankLines, isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, pageHeaderBadLine, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
-import { pushToast } from "../../toasts";
+import { dismissToast, pushToast, toasts } from "../../toasts";
+import { clearOnBindingInvalidated } from "../../binding";
 
 /** Pure Markdown property rewrite for one compound store mutation. It scans only
  * the canonical head (title — or, when the first line is itself a property, no
@@ -44,11 +46,10 @@ export function blockProperty(id: string, key: string): string | null {
   return null;
 }
 
-/** Whether a block lives on a read-only page (the org round-trip gate) — sheet
- *  write paths outside the block editor must consult this before mutating. */
+/** Read-only affordance for blocks and sheets, using the store's write gate. */
 export function blockPageReadOnly(id: string): boolean {
   const n = doc.byId[id];
-  return graphRewriteFrozen() || (n ? (pageByName(n.page)?.readOnly ?? false) : false);
+  return n ? !pageWritable(n.page) : graphRewriteFrozen();
 }
 
 /** Store mutation boundary. UI affordances also hide on read-only pages, but
@@ -57,7 +58,9 @@ export function blockPageReadOnly(id: string): boolean {
  * equally non-writable. */
 export function pageWritable(name: string): boolean {
   const page = pageByName(name);
-  return !graphRewriteFrozen() && !!page && !page.readOnly && !page.guide;
+  // A pending delete, transfer endpoint or frozen page takes no input: no
+  // mutation may precede markDirty's tombstone guard (audit L9-06).
+  return !graphRewriteFrozen() && !!page && !page.readOnly && !page.guide && !pageFrozen(name);
 }
 
 export function blockWritable(id: string): boolean {
@@ -74,7 +77,7 @@ export function setBlockProperty(id: string, key: string, value: string | null) 
   let raw: string;
   try {
     raw = editBlock(node.raw,formatForBlock(id),{kind:"property",key,value});
-  } catch (e) { pushToast(String(e),"error"); return; }
+  } catch (e) { pushToast(rawText(String(e)),"error"); return; }
   if (raw === node.raw) return;
   pushUndo(`prop:${id}:${key}`, [node.page]);
   setDoc("byId",id,"raw",raw);
@@ -91,7 +94,10 @@ type PropertyPart = { kind: "preBlock"; text: string } | { kind: "root"; id: str
 function pagePropertyParts(page: ReadonlyFeedPage, exclude: string | null): PropertyPart[] {
   const first = page.format === "md" ? doc.byId[page.roots[0]] : undefined;
   const root = first && first.id !== exclude && (first.originatedFromPageHeader || isPropertiesOnly(first.raw)) ? first : null;
-  const rootPart: PropertyPart[] = root ? [{ kind: "root", id: root.id, text: root.raw }] : [];
+  // A header draft's leading blank lines (Enter at its start) are not part of
+  // it, as the save drops them (`canonicalPageHeaderDraft`, GH #210 F1).
+  const text = root?.originatedFromPageHeader ? withoutLeadingBlankLines(root.raw) : root?.raw ?? "";
+  const rootPart: PropertyPart[] = root ? [{ kind: "root", id: root.id, text }] : [];
   if (root?.originatedFromPageHeader) return rootPart;
   return page.preBlock || !root ? [{ kind: "preBlock", text: page.preBlock ?? "" }, ...rootPart] : rootPart;
 }
@@ -205,8 +211,12 @@ export function beginPageHeaderEdit(pageName: string): string | null {
  * reaching native persistence. */
 export function finishPageHeaderEdit(id: string): void {
   reportInvalidPageHeaderOnExit(id);
+  dropHeaderLeadingBlankLines(id);
   const node = doc.byId[id];
   if (!node?.originatedFromPageHeader || node.raw !== "" || node.children.length > 0 || graphRewriteFrozen()) return;
+  // Only the page's first root is its header; a marked node pushed below another
+  // block is an ordinary block and stays where it is.
+  if (pageByName(node.page)?.roots[0] !== id) return;
   setDoc(
     produce((s) => {
       const page = s.pages.find((p) => p.name === node.page);
@@ -216,13 +226,77 @@ export function finishPageHeaderEdit(id: string): void {
   );
 }
 
-/** Report a still-invalid header when its editor closes, once per edit exit. */
+/** On leaving the header editor, drop the blank lines Enter left at its start
+ * (GH #210 F1), as OG's save does (`string/triml`). The file text does not
+ * change (the save already drops them), so this is neither an undo step nor
+ * an edit to save. Only the page's first root is its header. */
+function dropHeaderLeadingBlankLines(id: string): void {
+  const node = doc.byId[id];
+  if (!node?.originatedFromPageHeader || pageByName(node.page)?.roots[0] !== id) return;
+  const raw = withoutLeadingBlankLines(node.raw);
+  if (raw !== node.raw) setDoc("byId", id, "raw", raw);
+}
+
+/** Why a marked header root cannot be written as the page's preamble, or null
+ * when it can: the one rule `pageToDto` refuses a draft by and the exit toast
+ * explains, so the toast never says less than the refusal (GH #210). Enter's
+ * terminal newlines are an authoring artifact the disk firewall tolerates. */
+export type PageHeaderDraftProblem =
+  | { kind: "children" }
+  | { kind: "line"; line: number; text: string }
+  | { kind: "invalid" };
+export function pageHeaderDraftProblem(node: Node): PageHeaderDraftProblem | null {
+  if (node.children.length > 0) return { kind: "children" };
+  if (node.raw === "") return null;
+  const canonicalRaw = canonicalPageHeaderDraft(node.raw);
+  if (isPageHeaderPropertiesOnly(canonicalRaw)) return null;
+  const bad = pageHeaderBadLine(canonicalRaw);
+  return bad ? { kind: "line", ...bad } : { kind: "invalid" };
+}
+
+const BAD_LINE_SHOWN = 60;
+
+/** The header toast each page currently shows: its text (as a key) and toast id. */
+const headerToasts = new Map<string, { said: string; id: number }>();
+clearOnBindingInvalidated(() => headerToasts.clear());
+
+/** Report a still-invalid header when its editor closes: ONE toast per page
+ * (cf. `wiring.ts` `reportProblems`). Leaving the same invalid header again
+ * leaves the toast on screen untouched (no x2 badge); a header whose problem
+ * changed replaces the old toast instead of stacking a second sticky red one;
+ * a header that is valid again, or no longer the page's first root, dismisses
+ * it. A marked node moved below another block is not the header any more: the
+ * store refuses to write its property lines into the outline (GH #163 firewall,
+ * "refusing to move page-header property into outline content"), so "before
+ * they can be saved" would name the wrong cause (GH #210; the refusal itself is
+ * the F1 follow-up). */
 export function reportInvalidPageHeaderOnExit(id: string): void {
   const node = doc.byId[id];
   if (!node?.originatedFromPageHeader) return;
-  const raw = node.raw.replace(/\n+$/, "");
-  if (node.children.length > 0 || (raw !== "" && !isPageHeaderPropertiesOnly(raw)))
-    pushToast("Page-header properties must contain only valid key:: value lines before they can be saved.", "error");
+  const problem = pageByName(node.page)?.roots[0] === id ? pageHeaderDraftProblem(node) : null;
+  const shown = headerToasts.get(node.page);
+  if (!problem) {
+    if (shown) dismissToast(shown.id);
+    headerToasts.delete(node.page);
+    return;
+  }
+  // The toast calls stay literal `pushToast(msg(...))` sites (the i18n ratchet).
+  let said: string;
+  let show: () => number;
+  if (problem.kind === "children") {
+    said = "children";
+    show = () => pushToast(msg("properties-page-header-has-child-blocks"), "error");
+  } else if (problem.kind === "line") {
+    const line = problem.text.length > BAD_LINE_SHOWN ? `${problem.text.slice(0, BAD_LINE_SHOWN)}…` : problem.text;
+    said = `line ${problem.line} ${line}`;
+    show = () => pushToast(msg("properties-page-header-bad-line", { line: problem.line, text: line }), "error");
+  } else {
+    said = "invalid";
+    show = () => pushToast(msg("properties-page-header-properties-must-contain-only-valid-key"), "error");
+  }
+  if (shown?.said === said && toasts().some((t) => t.id === shown.id)) return;
+  if (shown) dismissToast(shown.id);
+  headerToasts.set(node.page, { said, id: show() });
 }
 
 /** A successful save folded the first root into the file's preamble. Keep the
@@ -265,6 +339,7 @@ export function toggleBlockProperty(id: string, key: string, value: string) {
 }
 
 const ORDER_KEY = "logseq.order-list-type";
+const ORDER_KEY_HIDE = hideKeys([ORDER_KEY], true);
 export function isOrdered(id: string | null | undefined): boolean {
   const node = id ? doc.byId[id] : undefined;
   return !!node && orderedFromProperties(facetsOf(node.raw, formatForBlock(id!)).properties);
@@ -288,7 +363,7 @@ export function orderListTypeFromRaw(raw: string, format: Format): string | null
  * OG writes both the in-memory property and serialized content at
  * `src/main/frontend/modules/outliner/core.cljs:420-433` (6e7afa8eb). */
 export function rawWithOrderListType(raw: string, value: string | null, format: Format): string {
-  const { visible } = splitProps(raw, (key) => propertyKeyNorm(key) === ORDER_KEY, format);
+  const { visible } = splitProps(raw, ORDER_KEY_HIDE, format);
   if (value === null) return visible;
   const property = format === "org" ? `:${ORDER_KEY}: ${value}` : `${ORDER_KEY}:: ${value}`;
   return joinProps(visible, property, format);
@@ -309,7 +384,7 @@ function setOwnNumberedList(id: string, enabled: boolean, visibleText?: string):
   const format = formatForBlock(id);
   const base = visibleText === undefined
     ? node.raw
-    : joinProps(visibleText, splitProps(node.raw, isBuiltinHidden, format).hidden, format);
+    : joinProps(visibleText, splitProps(node.raw, BUILTIN_HIDE, format).hidden, format);
   const next = rawWithOrderListType(base, enabled ? "number" : null, format);
   if (next === node.raw) return false;
   pushUndo(`own-numbered:${id}`, [node.page]);
@@ -374,7 +449,7 @@ export function toggleListItemAtIndex(id: string, lineIndex: number, column: num
   const lines = node.raw.split("\n");
   const ln = lines[lineIndex];
   const token = ln?.slice(column, column + 3);
-  if (ln === undefined || token === undefined || !/^\[[ xX]\]$/.test(token)) return;
+  if (ln === undefined || (token !== "[ ]" && token !== "[x]" && token !== "[X]")) return;
   const next = ln.slice(0, column) + (token === "[ ]" ? "[x]" : "[ ]") + ln.slice(column + 3);
   pushUndo(`listcheck:${id}`, [node.page]);
   lines[lineIndex] = next;
@@ -476,7 +551,7 @@ export function setSchedule(
   }
   let raw: string;
   try { raw = editBlock(node.raw, formatForBlock(id), {kind:"planning",which:whichKind,value}); }
-  catch (e) { pushToast(String(e), "error"); return; }
+  catch (e) { pushToast(rawText(String(e)), "error"); return; }
   if (raw === node.raw) return;
   pushUndo(`sched:${id}:${which}`, [node.page]);
   setDoc("byId", id, "raw", raw);
@@ -486,20 +561,25 @@ export function setSchedule(
 /** A block's raw with `collapsed:: true` added or removed so the persisted
  *  property matches the collapsed state. OG stores collapse in the file as a
  *  block property, so mirroring it here makes a collapse survive a relaunch and
- *  show up collapsed in OG / the mobile app. Fence-aware via splitProps. */
+ *  show up collapsed in OG / the mobile app. Uses parser-owned property edits. */
 export function rawWithCollapsed(raw: string, collapsed: boolean, format: Format): string {
   if (format === "org") return orgRawWithProperty(raw, "collapsed", collapsed ? "true" : null);
-  const { visible, hidden } = splitProps(raw, isBuiltinHidden, format);
-  const nextHidden = upsertPropertyLine(hidden, "collapsed", collapsed ? "true" : null) ?? "";
-  return joinProps(visible, nextHidden, format);
+  if (!collapsed && !raw.toLowerCase().includes("collapsed")) return raw;
+  const existing = blockRegions(raw, format).properties.some(p => p.primary && p.key.toLowerCase() === "collapsed");
+  // Change only the owned collapse row; splitting and regrouping all hidden
+  // rows moved unrelated id:: lines when collapsing a quote (GH #684).
+  if (existing) return editBlock(raw, format, { kind: "property", key: "collapsed", value: collapsed ? "true" : null });
+  return collapsed ? joinProps(raw, "collapsed:: true", format) : raw;
 }
 
 /** Set a block's collapsed state AND mirror it into its raw `collapsed::` so it
  *  persists — the on-disk markdown is the source of truth on the next load. */
-export function writeCollapsed(id: string, collapsed: boolean) {
+export function writeCollapsed(id: string, collapsed: boolean, explicit = false) {
   const n = doc.byId[id];
   if (!n || !blockWritable(id)) return;
-  const nextRaw = rawWithCollapsed(n.raw, collapsed, formatForBlock(id));
+  const nextRaw = explicit
+    ? editBlock(n.raw, formatForBlock(id), { kind: "property", key: "collapsed", value: String(collapsed) })
+    : rawWithCollapsed(n.raw, collapsed, formatForBlock(id));
   setDoc("byId", id, "collapsed", collapsed);
   if (nextRaw !== n.raw) setDoc("byId", id, "raw", nextRaw);
   bumpCollapseEpochs([id]);

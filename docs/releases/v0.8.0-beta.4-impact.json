@@ -1,0 +1,318 @@
+{
+  "schemaVersion": 1,
+  "version": "0.8.0-beta.4",
+  "baseTag": "v0.8.0-beta.3",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Changed",
+      "text": "**Collapse (one level)** and **Expand (one level)** (formerly \"… children (one level)\") now include the block itself: collapsing folds the block once its children are all folded, and expanding a folded block first opens only the block (GH #696).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH696-ONE-LEVEL-INCLUDES-BLOCK"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH696-ONE-LEVEL-INCLUDES-BLOCK. Tests cited below exercise the described boundary.",
+        "refs": [
+          "src/blockKeyboardCommands.test.tsx",
+          "scripts/e2e-one-level-fold.mjs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The Tips page now says Collapse (one level) also folds the block once its children are folded, and Expand (one level) opens a folded block by itself first (changed in 1b201cd14).",
+        "refs": [
+          "crates/tine-core/src/templates/tips.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Typing and deleting in a zoomed block no longer scans every block on its page, including journal and sidebar views (GH #248).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH248-ZOOM-TYPING"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH248-ZOOM-TYPING. Tests cited below exercise the described boundary.",
+        "refs": [
+          "src/components/Page.windowing.test.tsx",
+          "src/document/authoredIdentityIndex.test.ts",
+          "scripts/bench-zoom-typing.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Performance fix with no change to any workflow or setting; no Guide page describes per-keystroke cost.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Sticky parent bullets show the parent's rendered text (bold, links, block references) instead of raw markup, and each pinned bullet lines up with its block's own bullet instead of sitting one level to the left. They no longer cover Settings, menus or toolbars (GH #643).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH643-STICKY-RENDERED-ALIGNED"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH643-STICKY-RENDERED-ALIGNED. Tests cited below exercise the described boundary.",
+        "refs": [
+          "src/components/StickyAncestor.test.tsx",
+          "scripts/e2e-editor-context.mjs"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The pinned-ancestors section already describes ancestors pinned at the top and the Sticky parent bullets setting; rendering their text, alignment and layering restores the described behaviour.",
+        "refs": [
+          "crates/tine-core/src/templates/keep-context-visible.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A block opened in the right sidebar is titled with its page and its parent blocks (the nearest three, after \"⋯\"), as in Logseq; clicking a parent shows that block in the card instead (GH #640).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH640-SIDEBAR-BREADCRUMB"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-OG-GH640-SIDEBAR-BREADCRUMB. Tests cited below exercise the described boundary.",
+        "refs": [
+          "src/components/RightSidebar.test.tsx",
+          "scripts/e2e-sidebar-crumbs.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The Guide describes parking a bullet in the right sidebar but not the card's title; the commit changed no template. The card title now matches Logseq's, so no existing sentence becomes wrong.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "The optional block embed breadcrumb shows the embedded block's parent blocks after its page, not just the page, in the same smaller, muted style as Linked References, starting at the embedded bullet (GH #440).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH440-EMBED-TRAIL-ANCESTORS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH440-EMBED-TRAIL-ANCESTORS. Tests cited below exercise the described boundary.",
+        "refs": [
+          "src/components/PageEmbed.test.tsx",
+          "scripts/e2e-sidebar-crumbs.mjs"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The Guide describes the optional Block embed breadcrumbs setting as showing the source page and parent trail above block embeds; this makes the parent trail actually appear.",
+        "refs": [
+          "crates/tine-core/src/templates/customize-look.md",
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "The parent-block trail above query results and Linked References shows bold, links and other formatting rendered, instead of raw text such as `**Queue**` (GH #643).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH643-QUERY-TRAIL-RENDERED"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH643-QUERY-TRAIL-RENDERED. Tests cited below exercise the described boundary.",
+        "refs": [
+          "src/components/QueryGroup.parent.test.tsx",
+          "scripts/e2e-sidebar-crumbs.mjs"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The Linked References breadcrumb instructions already describe the ancestor trail; rendering its markup changes no documented step.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Windows: a save made while the previous save of the same page was still replacing the file could be refused with \"write target escapes graph root\"; Tine now checks the page again, and only if it still cannot inspect it reports a save error, keeping the text unsaved in the window rather than calling it outside the graph (REG-WIN-WRITE-TARGET-TRANSIENT).",
+      "userVisible": true,
+      "regressions": [
+        "REG-WIN-WRITE-TARGET-TRANSIENT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-WIN-WRITE-TARGET-TRANSIENT. Tests cited below exercise the described boundary.",
+        "refs": [
+          "crates/tine-store/src/model.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Storage robustness fix with no user workflow or setting change; the behaviour change is recorded in docs/storage-contract.md (updated in the same commits), not in the Guide.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Search tab: ArrowUp on the first result now returns to the search box instead of jumping to the last result, and the results no longer wrap around at either end (GH #697).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH697-SEARCH-ARROW-UP-RETURNS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH697-SEARCH-ARROW-UP-RETURNS. Tests cited below exercise the described boundary.",
+        "refs": [
+          "src/components/QueryWorkspace.test.tsx",
+          "scripts/e2e-search-tab-keyboard.mjs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The Search page's keyboard instructions now say ArrowUp on the first result returns to the search box and the list does not wrap (changed in 1e2f06ad7).",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A block link that starts Tine now opens its block the first time, even when the block was linked after Tine last closed; before, the first click reported the target missing and only a second click worked (GH #181).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH181-COLD-START-CHECKPOINT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH181-COLD-START-CHECKPOINT. Tests cited below exercise the described boundary.",
+        "refs": [
+          "src-tauri/src/deep_links.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No user workflow change: the Guide already describes copying and opening tine:// links (find-and-revisit.md, Copy link) without any wording about a cold-start miss.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}

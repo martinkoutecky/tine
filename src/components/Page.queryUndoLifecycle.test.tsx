@@ -1,3 +1,4 @@
+import { openCalmQuery } from "../tests/calmQueryActions";
 // Ported from master src/components/Page.queryUndoLifecycle.test.tsx (7fcd4c98d,
 // 93ff682a3). og adaptations: the routed DTO is a `PageRead` (carries `id`), and
 // og re-reads a loaded page by path, so `getPageByPath` is mocked beside `getPage`.
@@ -180,12 +181,12 @@ async function mountOpenSheet(): Promise<{
   const host = document.createElement("div");
   document.body.append(host);
   const dispose = render(() => <PageView />, host);
-  const gear = await vi.waitFor(() => {
-    const found = host.querySelector<HTMLButtonElement>(".qs-gear");
+  await vi.waitFor(() => {
+    const found = host.querySelector<HTMLButtonElement>(".qc-actions summary");
     if (!found) throw new Error("the routed query block did not render its builder");
     return found;
   });
-  gear.click();
+  await openCalmQuery(host);
   const sheet = await vi.waitFor(() => {
     const found = document.querySelector<HTMLElement>('.qs-sheet[aria-label="Query filter"]');
     if (!found) throw new Error("the query sheet did not open");
@@ -240,41 +241,41 @@ describe("PageView query undo lifecycle", () => {
 
     try {
       const gear = await vi.waitFor(() => {
-        const found = host.querySelector<HTMLButtonElement>(".qs-gear");
+        const found = host.querySelector<HTMLButtonElement>(".qc-actions summary");
         if (!found) throw new Error("the routed query block did not render its builder");
         return found;
       });
-      gear.click();
+      await openCalmQuery(host);
       const sheet = await vi.waitFor(() => {
         const found = document.querySelector<HTMLElement>('.qs-sheet[aria-label="Query filter"]');
         if (!found) throw new Error("the query sheet did not open");
         return found;
       });
-      expect(gear.getAttribute("aria-expanded")).toBe("true");
+      expect(sheet.isConnected).toBe(true);
       await expectRowState(true);
 
       firstEnabled().click();
       await vi.waitFor(() => expect(doc.byId.query.raw).toBe(DISABLED_RAW));
       await expectRowState(false);
-      expect(host.querySelector(".qs-gear")).toBe(gear);
+      expect(host.querySelector(".qc-actions summary")).toBe(gear);
       expect(document.querySelector('.qs-sheet[aria-label="Query filter"]')).toBe(sheet);
       expect(doc.byId.unrelated.raw).toBe("Unrelated bytes stay exact");
 
       undo();
       await vi.waitFor(() => expect(doc.byId.query.raw).toBe(INITIAL_RAW));
       await expectRowState(true);
-      expect(host.querySelector(".qs-gear")).toBe(gear);
+      expect(host.querySelector(".qc-actions summary")).toBe(gear);
       expect(document.querySelector('.qs-sheet[aria-label="Query filter"]')).toBe(sheet);
-      expect(gear.getAttribute("aria-expanded")).toBe("true");
+      expect(sheet.isConnected).toBe(true);
       expect(sheet.isConnected).toBe(true);
       expect(doc.byId.unrelated.raw).toBe("Unrelated bytes stay exact");
 
       redo();
       await vi.waitFor(() => expect(doc.byId.query.raw).toBe(DISABLED_RAW));
       await expectRowState(false);
-      expect(host.querySelector(".qs-gear")).toBe(gear);
+      expect(host.querySelector(".qc-actions summary")).toBe(gear);
       expect(document.querySelector('.qs-sheet[aria-label="Query filter"]')).toBe(sheet);
-      expect(gear.getAttribute("aria-expanded")).toBe("true");
+      expect(sheet.isConnected).toBe(true);
       expect(sheet.isConnected).toBe(true);
       expect(doc.byId.unrelated.raw).toBe("Unrelated bytes stay exact");
     } finally {
@@ -319,7 +320,7 @@ describe("PageView query undo lifecycle", () => {
         expect(focusedRowValue()).toBe("alpha");
       });
       expect(document.querySelector('.qs-sheet[aria-label="Query filter"]')).toBe(sheet);
-      expect(host.querySelector(".qs-gear")?.getAttribute("aria-expanded")).toBe("true");
+      expect(host.querySelector(".qc-panel")).not.toBeNull();
       expect(doc.byId.unrelated.raw).toBe("Unrelated bytes stay exact");
     } finally {
       dispose();

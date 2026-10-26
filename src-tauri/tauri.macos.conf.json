@@ -9,6 +9,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "Tine",
         "width": 1200,
         "height": 820,
