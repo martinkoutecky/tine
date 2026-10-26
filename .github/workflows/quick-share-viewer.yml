@@ -5,7 +5,7 @@ on:
       ref:
         description: Commit or ref to build for the first viewer trial (no tag or release created)
         required: true
-        default: og
+        default: develop
         type: string
 permissions:
   contents: read

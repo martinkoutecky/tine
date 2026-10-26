@@ -1,4 +1,4 @@
-# og plain-file storage contract
+# Development plain-file storage contract
 
 The graph files are the durable record. A save compares the caller's revision with
 the current file, then publishes whole bytes through a synced temporary file.
