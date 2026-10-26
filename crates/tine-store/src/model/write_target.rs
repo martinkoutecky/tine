@@ -110,6 +110,16 @@ fn write_target_contained(root: &Path, target: &Path) -> io::Result<bool> {
         let (r, l, c) = counts.get();
         counts.set((r + 1, l, c));
     });
+    // A graph write target never needs `.` or `..`. On Windows, joining `..`
+    // onto a verbatim (`\\?\`) canonical root collapses it lexically, so
+    // `root\..\x` would compare equal to its own resolution outside the root.
+    let lexically_inside = target.strip_prefix(root).is_ok_and(|rest| {
+        rest.components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)))
+    });
+    if !lexically_inside {
+        return Ok(false);
+    }
     let canonical_root = canonical_existing_path(root).unwrap_or_else(|_| root.to_path_buf());
     let (existing, resolved) = match reprobed_existing_ancestor(target) {
         Ok(found) => found,
