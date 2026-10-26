@@ -21,10 +21,11 @@ icon:: 🧭
   - [[Features/Formulas]] — build read-only computed columns with the visual formula editor.
   - [[Features/Quick capture]] — set up a global capture box that files notes into your graph.
   - [[Features/PDF annotation]] — highlight PDFs and turn those highlights into linked note blocks.
+  - [[Features/Share pages]] — share a page, or the pages a query selects, as a folder export or an encrypted link, then update or delete it.
 - ## Feature reference
   - [[Features/Plugins]] — install capability-limited extensions and token themes, review what they request, and keep them under your control.
-  - [[Features/Tips & shortcuts]] — learn Ctrl+K, slash commands, tabs, sidebars, focus mode, and daily shortcuts.
-  - [[Reference/Files, external edits, and backups]] — learn what Tine writes where, and where snapshots, conflict copies, and the trash live.
+  - [[Features/Tips & shortcuts]] — learn Ctrl+K, slash commands, tabs, sidebars, focus mode, commenting on a passage, and daily shortcuts.
+  - [[Reference/Files, external edits, and backups]] — learn what Tine writes where, and where snapshots, git history, conflict copies, and the trash live.
   - [[Reference/Troubleshooting and recovery]] — follow numbered recovery steps for the changed-on-disk banner, deleted pages, snapshots, conflict copies, duplicate days, a graph that will not open, and a region that fails to display.
   - [[Reference/Journals, tasks, and scheduling]] — map journal setup, task markers and priorities, scheduling dates, the agenda, time tracking, and repeating tasks.
   - [[Reference/Pages, links, references, and search]] — the exact rules for pages, links, tags, aliases, block references, reference panels, and every search surface.

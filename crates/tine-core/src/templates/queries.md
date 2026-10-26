@@ -78,6 +78,6 @@ icon:: 🔎
 	- An empty result offers **why empty?**: a table of the query's top-level conditions with how many rows each matches alone and how many the query would match without it, so the condition that emptied it stands out.
 	- A query that would return more than 20,000 rows (or 32 MiB) is refused with a message instead of being cut short. Narrow it, or add `(sample N)`.
 - ## Publish a query
-	- **Share…** in a query's **⋯** menu (or its share icon) opens the share dialog with this query, reviews the pages it selects and exports them; the export is saved as a definition so it can be repeated. See **Share pages** in the files guide.
+	- **Share…** in a query's **⋯** menu (or its share icon) opens the share dialog with this query, reviews the pages it selects and exports them; the export is saved as a definition so it can be repeated. See [[Features/Share pages]].
 	- Use **⋯ → Export…** on a query. Review the complete pages selected by the result, then choose an external folder. Tine creates a new named site there, with a read-only browser view and static HTML fallback. A block result publishes its whole owner page, so review those pages before continuing. The built-in Scheduled & Deadline section has no Export button.
 	- In **Settings → Graph → Publish live site**, choose an external folder to publish pages marked `public:: true`. **Include all pages** is an explicit choice for a graph meant to be public; it still leaves out pages marked `public:: false`. The exported site can be served as ordinary static files.
