@@ -596,7 +596,7 @@ jobs:
     needs: preflight
     uses: ./.github/workflows/flatpak.yml
     with:
-      identity: experiment
+      identity: release
 
   # Name the bundle by the release layout and stage it as an immutable lane,
   # exactly like the other platforms.
