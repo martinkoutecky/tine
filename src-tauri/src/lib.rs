@@ -691,7 +691,6 @@ pub fn run() {
         diag("TINE_GPU=0 → set WEBKIT_DISABLE_DMABUF_RENDERER=1 (software compositing)");
     }
 
-
     // Wayland resolves the shell/titlebar icon by matching a window app ID to a
     // desktop-entry basename. Packages ship that identity themselves; the raw
     // binary Martin runs is self-contained, so publish its marker-owned entry
