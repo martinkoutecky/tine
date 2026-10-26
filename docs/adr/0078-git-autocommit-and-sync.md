@@ -1,7 +1,7 @@
 # 0078 — Git graphs: Tine autocommits, and syncs fast-forward only through the page host
 
-- **Status:** Proposed, rev 1 (data-safety review folded in: `tine-agents/subagent-tasks/notes/review-adr-0078-git.md`; design accepted by Martin 2026-10-18/19: D-20261018-G1…G7, D-20261019-G8/G9; the unit-cost
-  line below awaits his acceptance)
+- **Status:** Accepted for autocommit (slice 1), rev 1 (data-safety review folded in: `tine-agents/subagent-tasks/notes/review-adr-0078-git.md`; design accepted by Martin 2026-10-18/19: D-20261018-G1…G7, D-20261019-G8/G9; the autocommit unit cost accepted by Martin 2026-10-26, D-20261026-GC).
+  Git sync (slice 2) stays proposed: its push cost and credentials (open questions 1 and 2) are undecided.
 - **Date:** 2026-10-21
 
 ## Prior decisions
@@ -223,7 +223,7 @@ Measured in the spike (`specs/campaigns/2026-10-git-sync/spike/measure/*.txt`, c
 
 ## Open questions for Martin
 
-1. **Unit cost:** accept 247 KB loose per autocommit (≈ 5.3 KB once repacked) and ≈ 240 KB upload per push at
+1. **Unit cost** (autocommit part answered 2026-10-26, D-20261026-GC: accepted; the push part stays open): accept 247 KB loose per autocommit (≈ 5.3 KB once repacked) and ≈ 240 KB upload per push at
    10 000 flat pages, with the interval as the user's lever?
 2. **Credentials (slice 2):** vision 9(b) says OS keychain; quick share (ADR 0076, your S1) chose a private
    app-data file instead (keychains are uneven on Android/iOS; the trust model does not require one). Follow 0076
