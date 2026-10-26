@@ -1,0 +1,14 @@
+.cm6-block-editor { min-width: 0; width: 100%; }
+.cm6-block-editor .cm-editor { font: inherit; background: transparent; }
+.cm6-block-editor .cm-editor.cm-focused { outline: none; }
+.cm6-block-editor .cm-content { padding: 0; font: inherit; line-height: inherit; }
+/* CM6's base theme pins caret-color to black (light) unless told the theme is dark; follow the text colour. */
+.cm6-block-editor .cm-editor .cm-content { caret-color: currentColor; }
+.cm6-block-editor .cm-line { padding: 0; }
+.cm6-block-editor .cm-scroller { font: inherit; overflow: visible; }
+.cm6-bold { font-weight: bold; }
+.cm6-italic { font-style: italic; }
+.cm6-code { font-family: monospace; background: #8882; }
+.cm6-page { color: var(--link-color, #589bdd); }
+.cm6-task, .cm6-chip { color: var(--link-color, #589bdd); border-radius: 4px; background: #8882; }
+.cm6-chip { padding: 0 3px; cursor: text; }

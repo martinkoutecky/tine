@@ -15,6 +15,7 @@ import { For, Show, createSignal, createEffect, onCleanup, onMount } from "solid
 import { initParser } from "./render/parse";
 import { initLinkDefault } from "./editor/linkDefault";
 import { Block, CaptureCtx, type CaptureApi } from "./components/Block";
+import { initCm6EditorSetting } from "./editor/cm6Setting";
 import { DatePicker } from "./components/DatePicker";
 import { datePicker } from "./ui";
 import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw, node as docNode } from "./document";
@@ -252,6 +253,7 @@ function Capture() {
   // re-shown, so stale reads cannot activate an older lifecycle.
   const refreshPolicyThenResettleAndActivate = async () => {
     const owner = latestOwner(captureScope, "policy", () => captureAlive);
+    initCm6EditorSetting();
     const result = await readOwned(owner, Promise.all([initLinkDefault(), backend().bindCaptureGraph()]));
     if (result.kind === "stale") return;
     resettleAndActivate();

@@ -35,6 +35,7 @@ import { mobileNavigationAtBottom, navReuseTabs, setMobileNavigationAtBottom, se
 import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "../localFileSettings";
 import { linkAutocompletePolicy, setLinkAutocompletePolicy, type LinkAutocompletePolicy } from "../editor/linkDefault";
+import { cm6EditorAvailable, cm6EditorEnabled, setCm6EditorEnabled } from "../editor/cm6Setting";
 import {
   spellcheckEnabled,
   setSpellcheckEnabled,
@@ -795,6 +796,11 @@ function EditorTab(props: { search: string }): JSX.Element {
       </Show>
 
       <AdvancedSection tab="editor" forceOpen={advancedMatch("editor", props.search)}>
+        <Show when={cm6EditorAvailable}>
+          <Field label={t("settings-cm6-label")}>
+            <Toggle on={cm6EditorEnabled()} onClick={() => setCm6EditorEnabled(!cm6EditorEnabled())} />
+          </Field>
+        </Show>
         <Field
           label={t("settings-ui-link-autocomplete-default")}
           hint={t("settings-ui-controls-enter-for-non-exact-name-and-name-completion")}

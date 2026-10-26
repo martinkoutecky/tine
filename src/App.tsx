@@ -79,6 +79,7 @@ import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initLinkDefault } from "./editor/linkDefault";
+import { initCm6EditorSetting } from "./editor/cm6Setting";
 import { initDebug, dbg, recordDiagnostic, recordSessionActive } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
 import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls, touchGesturePlatform } from "./nativeChrome";
@@ -852,6 +853,7 @@ export function App(): JSX.Element {
   onMount(() => void initSpellcheckSettings());
   // Load the `[[`/`#` autocomplete default-action preference (link-first vs create).
   onMount(() => void initLinkDefault());
+  onMount(initCm6EditorSetting);
 
   // Android/iOS WebViews otherwise navigate raw target=_blank links in-app.
   onMount(() => {

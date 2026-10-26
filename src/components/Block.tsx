@@ -43,7 +43,7 @@ import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
@@ -170,25 +170,10 @@ import { AuthorChip, CommentActions, CommentComposer, CommentQuoteHeader, Margin
 import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, onEachWindow, requestFrame, viewportOf, windowOf } from "../windowRealm";
-type SheetSlashView = "grid" | "table" | "board";
-
-export function applySheetViewSlashAction(id: string, view: SheetSlashView): string | null {
-  const node = docNode(id);
-  if (!node) return null;
-  let seededCellId: string | null = null;
-  withUndoUnit(`sheet:view:${view}`, [node.page], () => {
-    const shouldSeedGrid = view === "grid" && (docNode(id)?.children.length ?? 0) === 0;
-    setBlockProperty(id, "tine.view", view);
-    if (view === "board") setBlockProperty(id, "tine.group-by", "state");
-    if (shouldSeedGrid) {
-      const rowId = insertEmptyChildBlock(id, 0);
-      if (rowId) seededCellId = insertEmptyChildBlock(rowId, 0);
-    }
-  });
-  endEdit("select-block");
-  if (seededCellId) startEditing(seededCellId, 0);
-  return seededCellId;
-}
+import { Cm6BlockEditor } from "./Cm6BlockEditor";
+import { cm6EditorEnabled } from "../editor/cm6Setting";
+import { applySheetViewSlashAction } from "./block/sheetViewSlash";
+export { applySheetViewSlashAction } from "./block/sheetViewSlash";
 
 // (The rendered-property hidden predicate is render/block.ts isRenderHiddenProp,
 // shared with body.tsx's renderProps; its list is Rust's render_facets.rs.)
@@ -597,6 +582,7 @@ function isBlockEmbedMacro(m: ReturnType<typeof detectMacro>): boolean {
 }
 
 export function Editor(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
+  if (cm6EditorEnabled()) return <Cm6BlockEditor id={props.id} surface={useContext(SurfaceContext)} scope={useContext(OutlineScopeContext)} />;
   const propertySession = props.propertySession ?? propertyEditorSession();
   propertySession.begin();
   // Non-null only inside the quick-capture window (see CaptureCtx).

@@ -57,6 +57,10 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-10-26, CM6 stage-2 Land brief (slice s1): `settings.editor.advanced`
+  10→11 only for the Beta/development identity, for the explicitly requested
+  default-off **Experimental: CodeMirror editor** switch. Stable remains at 10
+  and hides the switch and its search entry.
 - 2026-10-24, D-20261024-QA (GH #758 and GH #757 part 3): `commands.registry` 120→122,
   `commands.registry.editor` 25→26, `commands.palette` 68→69 for the explicitly approved
   **All graphs** navigation command (`g shift+g`, also required in the palette) and

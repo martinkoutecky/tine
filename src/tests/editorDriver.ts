@@ -16,7 +16,10 @@
  * on `kind === "textarea"`.
  */
 
-export type EditorKind = "textarea";
+import { EditorSelection, EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+
+export type EditorKind = "textarea" | "cm6";
 export type SelectionDirection = "forward" | "backward" | "none";
 
 export interface EditorInput {
@@ -81,7 +84,7 @@ export interface EditorDriver {
   compositionEnd(data?: string | CompositionEvent): void;
 }
 
-const EDITOR_SELECTOR = "textarea.block-editor";
+const EDITOR_SELECTOR = 'textarea.block-editor, [data-block-editor="cm6"]';
 
 function blockIdOf(el: Element): string | null {
   return el.closest<HTMLElement>("[data-block-id]")?.dataset.blockId ?? null;
@@ -177,9 +180,103 @@ function textareaDriver(ta: HTMLTextAreaElement): EditorDriver {
   };
 }
 
+/** Map browser input intents to CM's public transaction user-event vocabulary. */
+function cm6UserEvent(init: EditorInput): string {
+  if (init.isComposing || /Composition/.test(init.inputType ?? "")) return "input.type.compose";
+  const type = init.inputType ?? "insertText";
+  if (/Paste/.test(type)) return "input.paste";
+  if (/Drop/.test(type)) return type.startsWith("delete") ? "delete.cut" : "input.drop";
+  if (type === "deleteByCut") return "delete.cut";
+  if (type.startsWith("delete")) return /Forward$/.test(type) ? "delete.forward" : "delete.backward";
+  if (type === "historyUndo") return "undo";
+  if (type === "historyRedo") return "redo";
+  return type.startsWith("insert") ? "input.type" : "input";
+}
+
+function cm6Driver(root: Element): EditorDriver {
+  const view = EditorView.findFromDOM(root as HTMLElement);
+  if (!view) throw new Error("editorDriver: CM6 marker has no mounted EditorView");
+  const element = view.contentDOM;
+  const select = (start: number, end = start, direction?: SelectionDirection, userEvent?: string) => {
+    const limit = (n: number) => Math.max(0, Math.min(n, view.state.doc.length));
+    end = limit(end);
+    start = Math.min(limit(start), end);
+    view.dispatch({ selection: direction === "backward"
+      ? EditorSelection.single(end, start) : EditorSelection.single(start, end), userEvent });
+  };
+  const input = (value: string, caret = value.length, init: EditorInput = {}) => {
+    const old = view.state.doc.toString();
+    let from = 0, oldEnd = old.length, newEnd = value.length;
+    while (from < oldEnd && from < newEnd && old[from] === value[from]) from++;
+    while (oldEnd > from && newEnd > from && old[oldEnd - 1] === value[newEnd - 1]) { oldEnd--; newEnd--; }
+    // One minimal replacement preserves mapped ranges/history, including IME edits.
+    view.dispatch({ changes: { from, to: oldEnd, insert: value.slice(from, newEnd) },
+      selection: { anchor: Math.max(0, Math.min(caret, value.length)) }, userEvent: cm6UserEvent(init) });
+  };
+  return {
+    kind: "cm6", element,
+    get blockId() { return blockIdOf(element); },
+    value: () => view.state.doc.toString(),
+    // CM exposes semantic read-only state separately from DOM editability.
+    isReadOnly: () => view.state.facet(EditorState.readOnly) || !view.state.facet(EditorView.editable),
+    selection: () => [view.state.selection.main.from, view.state.selection.main.to],
+    // CM stores anchor/head, with no independent textarea "none" direction.
+    direction: () => { const s = view.state.selection.main; return s.empty ? "none" : s.anchor > s.head ? "backward" : "forward"; },
+    select,
+    selectByUser: (start, end, direction) => select(start, end, direction, "select"),
+    focus: () => view.focus(),
+    blur: () => element.ownerDocument.activeElement === element ? element.blur() : void element.dispatchEvent(new FocusEvent("blur")),
+    // Preserve even detached platform notifications; application blur guards decide ownership.
+    reportBlur: () => { element.dispatchEvent(new FocusEvent("blur")); },
+    // CM has no separate browser-value buffer. A transaction would notify the
+    // application immediately, changing the ordering these fixtures exercise.
+    replaceText: () => { throw new Error("not representable in CM6: an unreported textarea draft separate from editor state"); },
+    // A platform input notification alone does not edit CM state. Real DOM
+    // mutations are reconciled by CM's observer; input(value) models the edit.
+    reportInput: (init = {}, eventKind = "input") => {
+      element.dispatchEvent(init instanceof Event ? init : eventKind === "plain" ? new Event("input", init) : new InputEvent("input", init));
+    },
+    // Pointer release retains flags; CM reconciles native DOM selections itself.
+    mouseup: (init = {}) => { element.dispatchEvent(new MouseEvent("mouseup", init)); },
+    input,
+    type: (text) => {
+      const { from, to } = view.state.selection.main;
+      const insert = () => view.state.update({ changes: { from, to, insert: text },
+        selection: { anchor: from + text.length }, userEvent: cm6UserEvent({ isComposing: view.compositionStarted }), scrollIntoView: true });
+      if (!view.state.facet(EditorView.inputHandler).some(handler => handler(view, from, to, text, insert))) view.dispatch(insert());
+    },
+    keydown: (init, extra = {}) => {
+      const event = init instanceof KeyboardEvent ? init : withProps(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }), extra);
+      element.dispatchEvent(event);
+      return event;
+    },
+    keyup: (init) => {
+      const event = init instanceof KeyboardEvent ? init : new KeyboardEvent("keyup", { bubbles: true, cancelable: true, ...init });
+      element.dispatchEvent(event);
+      return event;
+    },
+    // Dispatch through CM's DOM paste pipeline, including app clipboard handlers.
+    paste: (clip) => {
+      const event = clip instanceof Event ? clip : withProps(new Event("paste", { bubbles: true, cancelable: true }), { clipboardData: clipboardData(clip) });
+      element.dispatchEvent(event);
+      return event;
+    },
+    contextmenu: (event) => { element.dispatchEvent(event); return event; },
+    // CM selection is state-owned. Signal the existing range as a user
+    // selection transaction as well as preserving the original platform event.
+    reportSelection: (event) => {
+      view.dispatch({ selection: view.state.selection, userEvent: "select" });
+      element.dispatchEvent(event);
+    },
+    compositionStart: (data = "") => { element.dispatchEvent(data instanceof CompositionEvent ? data : new CompositionEvent("compositionstart", { bubbles: true, data })); },
+    compositionEnd: (data = "") => { element.dispatchEvent(data instanceof CompositionEvent ? data : new CompositionEvent("compositionend", { bubbles: true, data })); },
+  };
+}
+
 function driverFor(el: Element): EditorDriver {
   // Workspace-window fixtures live in another document/realm.
   if (el.tagName.toLowerCase() === "textarea") return textareaDriver(el as HTMLTextAreaElement);
+  if (el.matches('[data-block-editor="cm6"]')) return cm6Driver(el);
   throw new Error(`editorDriver: no backend for ${el.tagName.toLowerCase()}.${[...el.classList].join(".")}`);
 }
 
@@ -203,5 +300,6 @@ export function editorIn(root: ParentNode = document, blockId?: string): EditorD
 /** The driver for the focused block editor, or null when focus is elsewhere. */
 export function focusedEditor(): EditorDriver | null {
   const active = document.activeElement;
-  return active?.matches(EDITOR_SELECTOR) ? driverFor(active) : null;
+  const root = active?.closest(EDITOR_SELECTOR);
+  return root ? driverFor(root) : null;
 }

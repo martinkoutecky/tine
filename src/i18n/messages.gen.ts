@@ -2283,6 +2283,7 @@ export interface MessageArgs {
   "settings-autodetect": {};
   "settings-available-snapshots": {};
   "settings-backup-load-failed": { "error": string | number };
+  "settings-cm6-label": {};
   "settings-conflicts-summary": { "count": number };
   "settings-could-not-apply-spellcheck-settings": {};
   "settings-could-not-load-asset-filename-format": {};

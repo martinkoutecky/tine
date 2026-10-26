@@ -6,6 +6,7 @@ import { MEDIA_EDITORS } from "../mediaEditors";
 import { msg, render, renderEnglish, type Msg } from "../i18n";
 import { richPlain } from "../i18n/Rich";
 import type { SettingsTabId } from "../ui";
+import { cm6EditorAvailable } from "../editor/cm6Setting";
 type Tab = SettingsTabId;
 
 /** Mark visible query terms without changing matching or interpreting label HTML.
@@ -82,6 +83,7 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: msg("settings-search-minimize-to-tray"), description: msg("settings-search-hide-taskbar-dock-minimize-system-tray") },
   { tab: "appearance", label: msg("settings-search-start-minimized-to-tray"), description: msg("settings-search-launch-hidden-startup-autostart-system-tray") },
   { tab: "editor", label: msg("settings-search-your-name"), description: msg("settings-search-comment-author-name-margin-reply"), aliases: ["author", "identity"] },
+  ...(cm6EditorAvailable ? [{ tab: "editor", label: msg("settings-cm6-label"), description: msg("settings-cm6-label"), level: "advanced" } satisfies SettingSearchEntry] : []),
   { tab: "editor", label: msg("settings-search-file-format"), description: msg("settings-search-new-pages-markdown-org") },
   { tab: "editor", label: msg("settings-search-logical-outdenting"), description: msg("settings-search-shift-tab-following-siblings-roam-config") },
   { tab: "editor", label: msg("settings-search-link-autocomplete-default"), description: msg("settings-search-og-adaptive-existing-typed-page-tag-completion"), level: "advanced" },

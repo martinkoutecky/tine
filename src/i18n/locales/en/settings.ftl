@@ -1,4 +1,5 @@
 ## Settings › Editor › Advanced
+settings-cm6-label = Experimental: CodeMirror editor
 settings-pinyin-label = Match Chinese page names by Pinyin
 settings-pinyin-description = Find Han titles and aliases with Mandarin Pinyin or syllable initials. Native name matches come first. This preference stays on this device.
 settings-pinyin-reset = Reset Pinyin matching to language default

@@ -23,6 +23,8 @@
  * comes from.
  */
 
+import { SHIP } from "./app-identity.mjs";
+
 const SETTINGS_SOURCE = "Settings mounted in jsdom: inputs, selects, buttons and summaries in the tab body, minus search results, shortcut rows and spellcheck dictionary rows; the home-page picker is emptied";
 const settingsOpen = (tab, budget, note = "") => ({ env: "desktop", budget, what: `controls visible at open on the ${tab} tab${note}`, source: SETTINGS_SOURCE });
 const settingsAdvanced = (tab, budget) => ({ env: "desktop", budget, what: `extra controls behind the ${tab} tab's Advanced disclosure`, source: "the same count after opening the tab's Advanced toggle, minus the count at open" });
@@ -43,7 +45,8 @@ export const SURFACES = Object.freeze({
   "settings.appearance.open": settingsOpen("appearance", 28),
   "settings.appearance.advanced": settingsAdvanced("appearance", 12),
   "settings.editor.open": settingsOpen("editor", 9),
-  "settings.editor.advanced": settingsAdvanced("editor", 10),
+  // CM6 stage-2 s1 explicitly requires one Beta-only, default-off setting.
+  "settings.editor.advanced": settingsAdvanced("editor", SHIP === "experiment" ? 11 : 10),
   "settings.journals.open": settingsOpen("journals", 13),
   "settings.journals.advanced": settingsAdvanced("journals", 1),
   "settings.files.open": settingsOpen("files", 7),
