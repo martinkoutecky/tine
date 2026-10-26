@@ -1,0 +1,40 @@
+# PROBE ONLY (branch probe/gh771-macos, never merged): GH #771 owner endpoint
+# tests on macOS, where accepted sockets inherit the listener's O_NONBLOCK.
+name: probe-gh771-macos
+
+on:
+  push:
+    branches: ["probe/gh771-**"]
+
+permissions:
+  contents: read
+
+jobs:
+  owner:
+    name: owner tests / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - run: npm run build
+      - name: Owner endpoint tests
+        run: cargo test --no-fail-fast -p tine --lib owner:: 2>&1 | tee owner-tests.txt
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owner-tests-${{ matrix.os }}
+          path: owner-tests.txt

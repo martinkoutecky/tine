@@ -308,6 +308,8 @@ pub(crate) fn busy() -> ErrorBody {
 
 #[cfg(unix)]
 pub(crate) use unix::Endpoint;
+#[cfg(unix)]
+pub(crate) use unix::blocking_connection;
 
 #[cfg(unix)]
 mod unix {
@@ -589,6 +591,11 @@ mod unix {
             ok: None,
             error: Some(body),
         }
+    }
+
+    /// PROBE: pre-fix seam (does nothing).
+    pub(crate) fn blocking_connection(_stream: &UnixStream) -> std::io::Result<()> {
+        Ok(())
     }
 
     fn connection(id: u64, stream: UnixStream, shared: &Shared) {
