@@ -5178,6 +5178,30 @@ pub(crate) fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
     crate::no_replace::move_file_noreplace(src, dest)
 }
 
+pub(crate) fn remove_graph_file(path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(path);
+    fs::remove_file(path)
+}
+
+pub(crate) fn remove_graph_dir(path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(path);
+    fs::remove_dir(path)
+}
+
+pub(crate) fn create_graph_dir(path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(path);
+    fs::create_dir(path)
+}
+
+pub(crate) fn create_graph_dir_all(path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(path);
+    fs::create_dir_all(path)
+}
+
 /// Atomically publish a newly-created file without clobbering a destination that
 /// appeared after the caller's collision check. The payload is fsynced in a
 /// same-directory temp, then atomically renamed into the final name only if absent.

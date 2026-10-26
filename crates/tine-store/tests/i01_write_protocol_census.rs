@@ -221,6 +221,14 @@ impl<'ast> Visit<'ast> for Mutations {
                     | "temp"
                     | "remove_present"
                     | "sync_move_dirs"
+                    | "create_graph_dir"
+                    | "create_graph_dir_all"
+                    | "remove_graph_file"
+                    | "remove_graph_dir"
+                    | "remove_publish_stage"
+                    | "rename_publish_entry"
+                    | "remove_restore_temp"
+                    | "rename_spelling_replace"
             ) || (parent == "PreparedWrite"
                 && matches!(method, "with_hooks" | "publish"))
                 || (parent == "DirectoryCreation" && method == "new");
@@ -746,6 +754,8 @@ fn census_detects_raw_handle_and_crate_primitives_and_respects_cfg() {
             rename_noreplace_dir(); rename_replace(); create_dir_all_durable();
             create_dir_all_with_sync(); atomic_copy_new(); atomic_copy_file_new();
             graph.withdraw_file_to_conflict_if(); prepared.publish();
+            create_graph_dir(); create_graph_dir_all(); remove_graph_file(); remove_graph_dir();
+            remove_publish_stage(); rename_publish_entry(); remove_restore_temp(); rename_spelling_replace();
         }
         #[cfg(test)] mod tests { fn hidden() { std::fs::write("a", b"b"); } }
         #[cfg(feature = "test-faults")] impl Hidden { fn hidden() { std::fs::write("a", b"b"); } }
@@ -757,7 +767,7 @@ fn census_detects_raw_handle_and_crate_primitives_and_respects_cfg() {
     let mut scan = Mutations::default();
     scan.visit_file(&planted);
     assert_eq!(scan.owners["rogue"].operations["fs::write"], 1);
-    assert_eq!(scan.owners["wrappers"].operations.len(), 14);
+    assert_eq!(scan.owners["wrappers"].operations.len(), 22);
     assert_eq!(scan.owners["shipped"].operations["fs::create_dir_all"], 1);
     assert!(!scan.owners.keys().any(|name| name.contains("hidden")));
 }

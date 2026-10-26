@@ -3,6 +3,39 @@
 use super::super::apply::{ApplyRefusal, Effect, Expected, HostOp};
 use super::*;
 
+/// Replacement for a_request_queued_before_a_spelling_move_applies_to_the_same_page_after_it:
+/// the driver refuses unsaved input rather than handing it to an external writer.
+#[test]
+fn a_spelling_move_with_pending_input_is_refused_and_preserves_input_and_spelling() {
+    let live = Live::new(&[("pages/old.md", "- old\n")]);
+    let src = PageId::from("pages/old.md");
+    let dst = PageId::from("pages/Old.md");
+    let (key, page) = live.open(src.as_str());
+    let pause = live.host.pause_for_tests(&[src.clone()]);
+    let id = live
+        .submit(&key, "- pending\n", page.version, None)
+        .unwrap();
+    assert_eq!(
+        live.host
+            .move_spelling(src.clone(), dst, key.clone(), bytes("- old\n"), None),
+        Err(ApplyRefusal::Unsaved(src.clone()))
+    );
+    assert_eq!(live.host.spelling(&key), src);
+    assert_eq!(live.disk(&key), "- old\n");
+    assert_eq!(
+        fs::read_dir(live.root.join("pages"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect::<Vec<_>>(),
+        [std::ffi::OsString::from("old.md")]
+    );
+    drop(pause);
+    live.answer(&key, id);
+    live.until_disk("pages/old.md", "- pending\n");
+    assert_eq!(live.host.spelling(&key).as_str(), "pages/old.md");
+    live.host.stop();
+}
+
 #[path = "binding_delete_tests.rs"]
 mod delete_tests;
 #[path = "binding_l8_tests.rs"]

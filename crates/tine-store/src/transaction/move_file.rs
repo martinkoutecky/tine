@@ -222,7 +222,26 @@ impl PagePlan<'_> {
         // resolution while still executing the real plain rename and listing.
         let alias_refusal =
             case_only(src, dst) && fault(self.store, FaultPoint::CaseMoveAliasRefusal);
-        self.check_write_target(dst)?;
+        if case_only(src, dst) {
+            // A folding resolver returns the source's existing spelling for
+            // dst. Check the bound parent and source identity, then retain
+            // the requested leaf. Only the source's unlisted alias may differ
+            // from that leaf; ordinary target containment remains strict.
+            self.check_write_target(src)?;
+            self.check_write_target(dst.parent().unwrap())?;
+            let (existing, resolved) = crate::model::canonical_existing_ancestor(dst)?;
+            if existing == dst
+                && resolved != dst
+                && !self.source_spelling_alias(src, dst, &resolved)?
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "spelling destination is not the source alias",
+                ));
+            }
+        } else {
+            self.check_write_target(dst)?;
+        }
         let result = if alias_refusal {
             Err(io::Error::from(io::ErrorKind::AlreadyExists))
         } else {
@@ -240,7 +259,7 @@ impl PagePlan<'_> {
                 return Err(error);
             }
             if !fault(self.store, FaultPoint::CaseMoveAliasNoop) {
-                crate::atomic_file::rename_replace(src, dst).map_err(crate::platform_step::at(
+                rename_spelling_replace(src, dst).map_err(crate::platform_step::at(
                     "rename source over its folded alias",
                 ))?;
             }
@@ -449,6 +468,12 @@ impl PagePlan<'_> {
     }
 }
 
+fn rename_spelling_replace(src: &Path, dst: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    crate::model::assert_checked_target(dst);
+    crate::atomic_file::rename_replace(src, dst)
+}
+
 pub(super) fn case_only(src: &Path, dst: &Path) -> bool {
     src != dst
         && src.parent() == dst.parent()
@@ -468,6 +493,63 @@ fn spelling_key(name: &std::ffi::OsStr) -> std::ffi::OsString {
 #[cfg(test)]
 mod spelling_tests {
     use super::*;
+
+    #[test]
+    fn rg7_unchecked_folded_spelling_replace_panics_before_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("old.md");
+        let dst = dir.path().join("Old.md");
+        fs::write(&src, b"kept").unwrap();
+        crate::model::write_target::clear_checked_target();
+        assert!(std::panic::catch_unwind(|| rename_spelling_replace(&src, &dst)).is_err());
+        assert_eq!(fs::read(src).unwrap(), b"kept");
+        assert_eq!(
+            fs::read_dir(dir.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect::<Vec<_>>(),
+            [std::ffi::OsString::from("old.md")]
+        );
+    }
+
+    #[test]
+    fn a_case_move_keeps_the_requested_leaf_when_its_alias_resolves_to_the_source() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        let src = dir.path().join("pages/old.md");
+        fs::write(&src, b"- body\n").unwrap();
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let src = store.graph.root.join("pages/old.md");
+        let dst = store.graph.root.join("pages/Old.md");
+        let tx = store.page_plan(None);
+        let mut undo = Undo {
+            kind: UndoKind::Rename,
+            src: FileId::from("pages/old.md".to_owned()),
+            dst: Some(FileId::from("pages/Old.md".to_owned())),
+            trash: None,
+            old: None,
+            new: None,
+            new_rev: None,
+            opaque_rev: None,
+            created: false,
+            moved: false,
+        };
+        crate::model::write_target::with_folding_alias(&dst, &src, || {
+            assert_eq!(
+                crate::model::canonical_existing_ancestor(&dst).unwrap().1,
+                src
+            );
+            assert!(
+                store.graph.ensure_write_target(&dst).is_err(),
+                "ordinary containment must stay strict"
+            );
+            store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
+            tx.publish_move(&mut undo, &src, &dst).unwrap();
+        });
+        assert_eq!(fs::read(&dst).unwrap(), b"- body\n");
+        assert!(tx.listed_path(&src).unwrap().is_none());
+        assert_eq!(tx.listed_path(&dst).unwrap(), Some(dst));
+    }
 
     #[test]
     fn a_provider_accepting_rename_without_changing_case_does_not_move_the_host() {

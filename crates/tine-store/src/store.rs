@@ -891,12 +891,14 @@ fn remove_trash_entry_counted(
     removed_bytes: &mut u64,
     remove_file: &mut impl FnMut(&Path) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
+    #[cfg(test)]
+    crate::model::assert_checked_target(path);
     // Post-order with an explicit stack: a directory is removed after its
     // children, and depth costs heap, not stack (I-22).
     let mut pending = vec![(path.to_path_buf(), false)];
     while let Some((path, emptied)) = pending.pop() {
         if emptied {
-            fs::remove_dir(&path)?;
+            crate::model::remove_graph_dir(&path)?;
             continue;
         }
         let metadata = fs::symlink_metadata(&path)?;
@@ -1013,7 +1015,10 @@ impl Store {
                 "Choose a non-empty graph name without path separators, control characters or <>:\"/\\|?*. Names cannot be . or .., end with a dot or space, or use a Windows device name (CON, NUL, COM1, etc.).")));
         }
         let root = crate::path_identity::new_graph_root(parent, name.trim())?;
-        match fs::create_dir(&root) {
+        #[cfg(test)]
+        crate::model::checked_write_target(parent, &root, "new graph parent", None)
+            .map_err(|error| failed(&root, error))?;
+        match crate::model::create_graph_dir(&root) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 let metadata = fs::symlink_metadata(&root).map_err(|error| failed(&root, error))?;
@@ -1033,7 +1038,7 @@ impl Store {
         }
         for area in ["logseq", "pages", "journals", "assets"] {
             let dir = root.join(area);
-            fs::create_dir(&dir).map_err(|error| failed(&dir, error))?;
+            crate::model::create_graph_dir(&dir).map_err(|error| failed(&dir, error))?;
         }
         let config = root.join("logseq/config.edn");
         let supplied_config = seed
@@ -1078,7 +1083,11 @@ impl Store {
             crate::model::checked_write_target(&root, &path, "new graph root", None)
                 .map_err(|error| failed(&path, error))?;
             if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).map_err(|error| failed(parent, error))?;
+                #[cfg(test)]
+                crate::model::checked_write_target(&root, parent, "new graph root", None)
+                    .map_err(|error| failed(parent, error))?;
+                crate::model::create_graph_dir_all(parent)
+                    .map_err(|error| failed(parent, error))?;
             }
             crate::model::atomic_write_new(&path, bytes).map_err(|error| failed(&path, error))?;
         }
@@ -1595,7 +1604,7 @@ impl Store {
                     let asset = asset
                         .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
                     remove_trash_entry_counted(&asset.path(), &mut removed.1, &mut |path| {
-                        fs::remove_file(path)
+                        crate::model::remove_graph_file(path)
                     })
                     .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
                     removed.0 += 1;
@@ -1606,7 +1615,7 @@ impl Store {
                     .metadata()
                     .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?
                     .len();
-                fs::remove_file(entry.path())
+                crate::model::remove_graph_file(&entry.path())
                     .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
                 removed.0 += 1;
                 removed.1 += bytes;
@@ -4969,6 +4978,7 @@ mod rev5_tests {
         fs::write(dir.join("two"), b"def").unwrap();
         let mut bytes = 0;
         let mut calls = 0;
+        crate::model::checked_write_target(&dir, &dir, "purge fixture", None).unwrap();
         let failure = remove_trash_entry_counted(&dir, &mut bytes, &mut |path| {
             calls += 1;
             if calls == 2 {

@@ -1881,7 +1881,9 @@ impl<'a> PagePlan<'a> {
                             "move bytes changed during undo",
                         ));
                     }
-                    fs::remove_file(&trash)?;
+                    #[cfg(test)]
+                    self.check_write_target(&trash)?;
+                    crate::model::remove_graph_file(&trash)?;
                     crate::directory_durability::sync_directory_entry(
                         trash.parent().expect("trash parent"),
                     )

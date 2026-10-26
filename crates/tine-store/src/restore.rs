@@ -78,6 +78,8 @@ struct Recovery {
     root: Dir,
     dir: Dir,
     path: PathBuf,
+    #[cfg(test)]
+    scope: crate::model::write_target::CheckedScope,
 }
 
 fn fail(phase: &str, cause: io::Error, done: RestoreReport) -> RestoreFailed {
@@ -302,6 +304,10 @@ impl Store {
             std::process::id(),
             RECOVERY_SEQ.fetch_add(1, Ordering::Relaxed)
         );
+        #[cfg(test)]
+        self.graph
+            .ensure_write_target(&root_path)
+            .expect("bound restore root");
         let graph = match reserve(
             &root_path,
             Path::new("logseq/.tine-trash"),
@@ -312,6 +318,10 @@ impl Store {
             Err(error) => return Err(fail("couldn't create restore recovery area", error, done)),
         };
         done.recovery.push(graph.path.clone());
+        #[cfg(test)]
+        self.graph
+            .ensure_asset_write_target(&assets_path)
+            .expect("bound restore assets root");
         let assets = match reserve(
             &assets_path,
             Path::new(ASSET_RECOVERY),
@@ -363,6 +373,8 @@ impl Store {
             } else {
                 &graph
             };
+            #[cfg(test)]
+            let _checked = bound.scope.enter();
             let mut restored = HashSet::new();
             for file in files.iter_mut().filter(|file| file.area == area) {
                 let live_rel = if live_prefix.is_empty() {
@@ -427,6 +439,8 @@ impl Store {
             }
         }
         if let Some(file) = files.iter_mut().find(|file| file.area == Area::Meta) {
+            #[cfg(test)]
+            let _checked = graph.scope.enter();
             let live = Path::new("logseq/config.edn");
             if let Err(error) = real_parent(&graph.root, Path::new("logseq"), Some(&root_path)) {
                 if changed {
@@ -903,8 +917,12 @@ fn reserve(
     binding: std::sync::Arc<crate::root_binding::RootBinding>,
 ) -> io::Result<Recovery> {
     binding.check()?;
+    #[cfg(test)]
+    let scope = crate::model::write_target::CheckedScope::capture(root_path);
     let root = Dir::open_ambient_dir(root_path, ambient_authority())?;
     let parent = real_parent(&root, parent_rel, Some(root_path))?;
+    #[cfg(test)]
+    crate::model::assert_checked_target(&root_path.join(parent_rel).join(id));
     parent.create_dir(id)?;
     let mut synced = root_path.join(parent_rel);
     loop {
@@ -920,6 +938,8 @@ fn reserve(
         root,
         dir,
         path: root_path.join(parent_rel).join(id),
+        #[cfg(test)]
+        scope,
     })
 }
 
@@ -943,6 +963,8 @@ fn real_parent(root: &Dir, rel: &Path, create: Option<&Path>) -> io::Result<Dir>
             ));
         };
         if let Some(parent_path) = current_path.as_mut() {
+            #[cfg(test)]
+            crate::model::assert_checked_target(&parent_path.join(name));
             match current.create_dir(name) {
                 Ok(()) => crate::directory_durability::sync_directory_entry(parent_path)?,
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
@@ -963,6 +985,11 @@ fn real_parent(root: &Dir, rel: &Path, create: Option<&Path>) -> io::Result<Dir>
 }
 
 fn move_if_present(recovery: &Recovery, live: &Path, recover: &Path) -> io::Result<bool> {
+    #[cfg(test)]
+    {
+        crate::model::assert_checked_target(&recovery.root_path.join(live));
+        crate::model::assert_checked_target(&recovery.path.join(recover));
+    }
     recovery.binding.check()?;
     let name = live
         .file_name()
@@ -1027,6 +1054,8 @@ fn move_if_present(recovery: &Recovery, live: &Path, recover: &Path) -> io::Resu
             let mut source = live_parent.open(name)?.into_std();
             let mut options = OpenOptions::new();
             options.write(true).create_new(true);
+            #[cfg(test)]
+            crate::model::assert_checked_target(&recovery.path.join(recover));
             let mut copy = recovery_parent
                 .open_with(recovery_name, &options)?
                 .into_std();
@@ -1040,6 +1069,8 @@ fn move_if_present(recovery: &Recovery, live: &Path, recover: &Path) -> io::Resu
 }
 
 fn copy_new(recovery: &Recovery, live: &Path, bytes: &[u8]) -> io::Result<()> {
+    #[cfg(test)]
+    crate::model::assert_checked_target(&recovery.root_path.join(live));
     recovery.binding.check()?;
     let name = live
         .file_name()
@@ -1057,11 +1088,24 @@ fn copy_new(recovery: &Recovery, live: &Path, bytes: &[u8]) -> io::Result<()> {
     let result = (|| {
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
+        #[cfg(test)]
+        crate::model::assert_checked_target(
+            &recovery
+                .root_path
+                .join(live.parent().unwrap_or(Path::new("")))
+                .join(&temp),
+        );
         let mut output = parent.open_with(&temp, &options)?.into_std();
         io::Write::write_all(&mut output, bytes)?;
         output.sync_all()?;
         drop(output);
-        publish_temp(&parent, Path::new(&temp), name)?;
+        publish_temp(
+            &parent,
+            Path::new(&temp),
+            name,
+            #[cfg(test)]
+            &recovery.root_path.join(live),
+        )?;
         #[cfg(feature = "test-faults")]
         restore_abort_boundary();
         crate::directory_durability::sync_directory_entry(
@@ -1072,9 +1116,23 @@ fn copy_new(recovery: &Recovery, live: &Path, bytes: &[u8]) -> io::Result<()> {
         Ok(())
     })();
     if result.is_err() {
-        let _ = parent.remove_file(&temp);
+        let _ = remove_restore_temp(
+            &parent,
+            &temp,
+            #[cfg(test)]
+            &recovery
+                .root_path
+                .join(live.parent().unwrap_or(Path::new("")))
+                .join(&temp),
+        );
     }
     result
+}
+
+fn remove_restore_temp(parent: &Dir, name: &str, #[cfg(test)] target: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    crate::model::assert_checked_target(target);
+    parent.remove_file(name)
 }
 
 /// Retire every live text file (or asset sidecar) under `live_dir` that the
@@ -1159,7 +1217,14 @@ fn retire_extras(
     Ok(())
 }
 
-fn publish_temp(parent: &Dir, temp: &Path, name: &std::ffi::OsStr) -> io::Result<()> {
+fn publish_temp(
+    parent: &Dir,
+    temp: &Path,
+    name: &std::ffi::OsStr,
+    #[cfg(test)] target: &Path,
+) -> io::Result<()> {
+    #[cfg(test)]
+    crate::model::assert_checked_target(target);
     #[cfg(any(
         target_os = "linux",
         target_os = "android",
@@ -1180,6 +1245,86 @@ fn publish_temp(parent: &Dir, temp: &Path, name: &std::ffi::OsStr) -> io::Result
     {
         parent.hard_link(temp, parent, Path::new(name))?;
         parent.remove_file(temp)
+    }
+}
+
+#[cfg(test)]
+mod rg7_tests {
+    use super::*;
+    use crate::model::{checked_write_target, write_target::clear_checked_target};
+    use std::fs;
+
+    #[test]
+    fn rg7_unchecked_restore_capability_mutations_panic_before_io() {
+        let dir = tempfile::tempdir().unwrap();
+        let binding = std::sync::Arc::new(crate::root_binding::RootBinding::new(dir.path()));
+        clear_checked_target();
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| reserve(
+                dir.path(),
+                Path::new("recovery"),
+                "run",
+                binding.clone()
+            )))
+            .is_err()
+        );
+        assert!(!dir.path().join("recovery").exists());
+
+        checked_write_target(dir.path(), dir.path(), "restore fixture", None).unwrap();
+        let recovery = reserve(dir.path(), Path::new("recovery"), "run", binding).unwrap();
+        fs::write(dir.path().join("old.md"), b"kept").unwrap();
+        clear_checked_target();
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| copy_new(
+                &recovery,
+                Path::new("new.md"),
+                b"new"
+            )))
+            .is_err()
+        );
+        assert!(!dir.path().join("new.md").exists());
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| move_if_present(
+                &recovery,
+                Path::new("old.md"),
+                Path::new("old.md")
+            )))
+            .is_err()
+        );
+        assert_eq!(fs::read(dir.path().join("old.md")).unwrap(), b"kept");
+        assert!(!recovery.path.join("old.md").exists());
+
+        let parent = Dir::open_ambient_dir(dir.path(), ambient_authority()).unwrap();
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| real_parent(
+                &parent,
+                Path::new("unchecked"),
+                Some(dir.path())
+            )))
+            .is_err()
+        );
+        assert!(!dir.path().join("unchecked").exists());
+        fs::write(dir.path().join("temp"), b"staged").unwrap();
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| publish_temp(
+                &parent,
+                Path::new("temp"),
+                std::ffi::OsStr::new("published.md"),
+                &dir.path().join("published.md")
+            )))
+            .is_err()
+        );
+        assert_eq!(fs::read(dir.path().join("temp")).unwrap(), b"staged");
+        assert!(!dir.path().join("published.md").exists());
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| remove_restore_temp(
+                &parent,
+                "temp",
+                &dir.path().join("temp")
+            )))
+            .is_err()
+        );
+        assert_eq!(fs::read(dir.path().join("temp")).unwrap(), b"staged");
     }
 }
 

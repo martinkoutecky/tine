@@ -2,6 +2,45 @@
 //! Q4), against a real Store.
 use super::super::retained::RenameRefusal;
 use super::*;
+
+#[test]
+fn rename_cost_is_independent_of_registered_keys() {
+    let cost = |registered: usize| {
+        let live = Live::new(&[
+            ("pages/Old.md", "title:: Old\n\n- body\n"),
+            ("pages/r.md", "- see [[Old]]\n"),
+        ]);
+        for n in 0..registered {
+            let page = PageId::from(format!("pages/k{n}.md").as_str());
+            live.host.try_register(page.as_str(), &page).unwrap();
+        }
+        let shared = &live.host.driver.shared;
+        uncount();
+        shared.call(|_| uncount()).unwrap();
+        let view = live.store.whole_graph().unwrap();
+        live.host
+            .rename(
+                &PageId::from("pages/Old.md"),
+                &PageId::from("pages/New.md"),
+                &[PageId::from("pages/r.md")],
+                &map("Old", "New"),
+                &view,
+                Arc::new(|_: &PageId, _: &[u8], _| None),
+            )
+            .unwrap();
+        let (caller, driver) = (counted(), shared.read(|_| counted()).unwrap());
+        live.host.stop();
+        (caller.0 + driver.0, caller.1 + driver.1)
+    };
+    let (few, many) = (cost(10), cost(400));
+    let extra = 400 - 10;
+    assert!(
+        many.0 < few.0 + extra && many.1 < few.1 + extra,
+        "A-R5/D-10: a one-page rename cost (spelling lookups, registered-key \
+         visits) {few:?} with 10 registered keys and {many:?} with 400; exemplars binding.rs \
+         key_spelled and operations.rs rename_with's version allocation"
+    );
+}
 use crate::RenameMap;
 
 fn map(from: &str, to: &str) -> RenameMap {

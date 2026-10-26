@@ -9,9 +9,132 @@ use super::*;
 use crate::page_host::io::Phase;
 use crate::RenameMap;
 
+#[test]
+fn a_flush_handed_to_a_rename_is_told_busy_after_the_bound() {
+    let live = graph();
+    live.submits_wait();
+    let (key, page) = live.open(OLD);
+    live.faults(Phase::PageTemp, 10_000);
+    let id = live.submit(&key, "- edited\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    let pause: crate::store::TestPause = Default::default();
+    *live.host.driver.shared.flush_pause.lock().unwrap() = Some(Arc::clone(&pause));
+    let worker = || {
+        live.host
+            .driver
+            .shared
+            .with_state_for_tests(|state| state.progress.host.worker.is_some())
+    };
+    std::thread::scope(|scope| {
+        let _unpark = Unpark {
+            live: &live,
+            pause: Arc::clone(&pause),
+            _held: (),
+        };
+        let (sender, refused) = mpsc::channel();
+        let started = Instant::now();
+        let host = &live.host;
+        scope.spawn(move || {
+            let reserved = host.flush_input(&[PageId::from(OLD)]);
+            let _ = sender.send(reserved.err());
+        });
+        until("the writer waits in its flush", || {
+            pause.0.lock().unwrap().0
+        });
+        clear_faults(&live);
+        live.until_disk(OLD, "- edited\n");
+        until("the edit is saved", || {
+            live.host.driver.shared.with_state_for_tests(|state| {
+                matches!(state.progress.host.logical(&key), Logical::Settled(page) if page.clean())
+            })
+        });
+        live.faults(Phase::DraftSync, 10_000);
+        let renamed = scope.spawn(|| rename(&live.host, &live.store));
+        until("the rename is admitted", worker);
+        pause.0.lock().unwrap().1 = true;
+        pause.1.notify_all();
+        let outcome = refused.recv_timeout(OPERATION_WAIT + Duration::from_secs(3));
+        if outcome.is_err() {
+            // Unblock a flush that still waits (before N1).
+            clear_faults(&live);
+        }
+        assert_eq!(
+            outcome,
+            Ok(Some(ApplyRefusal::Busy)),
+            "N1: a flush over an admitted rename's page is refused Busy within the bound"
+        );
+        assert!(started.elapsed() >= OPERATION_WAIT);
+        clear_faults(&live);
+        let _ = renamed.join().unwrap();
+    });
+    until("the operation ends", || !worker());
+    live.host.stop();
+}
+
+#[test]
+fn a_flush_over_a_mixed_set_is_told_busy_when_a_rename_holds_its_clean_page() {
+    let live = Live::new(&[
+        (OLD, "- old\n"),
+        (REF, "- see [[Old]]\n"),
+        (OTHER, "- other\n"),
+    ]);
+    live.submits_wait();
+    let (other, page) = live.open(OTHER);
+    let id = live
+        .submit(&other, "- edited\n", page.version, None)
+        .unwrap();
+    live.answer(&other, id);
+    // Inside the edit debounce: the save finds the path lock held.
+    let lock = live.store.graph.page_lock(&live.root.join(&other));
+    let held = lock.lock().unwrap();
+    assert_eq!(live.disk(&other), "- other\n", "held before Other's save");
+    let pause: crate::store::TestPause = Default::default();
+    *live.host.driver.shared.flush_pause.lock().unwrap() = Some(Arc::clone(&pause));
+    let worker = || {
+        live.host
+            .driver
+            .shared
+            .with_state_for_tests(|state| state.progress.host.worker.is_some())
+    };
+    std::thread::scope(|scope| {
+        let unpark = Unpark {
+            live: &live,
+            pause: Arc::clone(&pause),
+            _held: held,
+        };
+        let (sender, refused) = mpsc::channel();
+        let started = Instant::now();
+        let host = &live.host;
+        scope.spawn(move || {
+            let pages = [PageId::from(OLD), PageId::from(OTHER)];
+            let _ = sender.send(host.flush_input(&pages).err());
+        });
+        until("the writer waits in its flush", || {
+            pause.0.lock().unwrap().0
+        });
+        live.faults(Phase::DraftSync, 10_000);
+        let renamed = scope.spawn(|| rename(&live.host, &live.store));
+        until("the rename is admitted", worker);
+        pause.0.lock().unwrap().1 = true;
+        pause.1.notify_all();
+        let outcome = refused.recv_timeout(OPERATION_WAIT + Duration::from_secs(3));
+        drop(unpark);
+        assert_eq!(
+            outcome,
+            Ok(Some(ApplyRefusal::Busy)),
+            "a flush waiting on an unrelated page is refused Busy by its deadline \
+             while a rename holds a page of its set"
+        );
+        assert!(started.elapsed() >= OPERATION_WAIT);
+        let _ = renamed.join().unwrap();
+    });
+    until("the operation ends", || !worker());
+    live.host.stop();
+}
 const OLD: &str = "pages/Old.md";
 const NEW: &str = "pages/New.md";
 const REF: &str = "pages/r.md";
+const OTHER: &str = "pages/Other.md";
 
 fn graph() -> Live {
     Live::new(&[(OLD, "- old\n"), (REF, "- see [[Old]]\n")])

@@ -1,6 +1,16 @@
 //! The graph binding (STEP3 §3): its bookkeeping beside a model host, and
 //! its command path against a real Store with the driver thread running.
 use super::*;
+
+#[test]
+fn m4_b2_a_blocked_orphan_is_evicted_when_its_obligation_ends() {
+    let mut u = Unit::new();
+    u.book.own(["b.md".to_string()], &u.progress.host);
+    u.progress.host.vehicle_debt.insert("b.md".into());
+    assert!(evicted(&u.collect()).is_empty());
+    u.progress.host.vehicle_debt.clear();
+    assert_eq!(evicted(&u.collect()), ["b.md"]);
+}
 use crate::page_host::io::Phase;
 use crate::page_host::model_fs::{Fault, ModelFs};
 use crate::page_host::tests::{edit, open as open_page, risk, saved, send, text};

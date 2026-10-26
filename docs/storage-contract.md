@@ -1147,11 +1147,35 @@ checked; the former writer call-graph census is retired. The operation-kind
 check remains.
 
 RG7 records the last successful containment-checked path per thread under
-`#[cfg(test)]` only. Graph write, create, copy and move primitives assert their
-target equals or descends from it, including the host's direct publication
-primitives. A failed check clears the witness. Unchecked primitive tests panic
-before writing, while checked targets and descendants succeed. All witness
-state, calls and branches are absent from non-test builds.
+`#[cfg(test)]` only. A failed check clears the witness. A mutation target must
+equal or descend from the checked scope. Coverage is explicit:
+
+- Atomic graph writes, copies and no-replace moves, and direct host publication.
+- Graph-local static-publication stage directory creation, nested directories
+  and file writes; retirement and invalid-stage capability renames; final
+  no-replace installation; and stage cleanup removal.
+- Restore recovery and live directory creation, retirement (including its
+  fallback recovery copy), temporary file creation/write, no-replace publication
+  and temporary cleanup. Restore retains its stopped-host exception.
+- Folded spelling `rename_replace`, transaction undo cleanup, asset-trash file
+  and directory removals, and new-graph root/scaffold/seed directory creation.
+
+Test-only scope witnesses captured from a checked directory follow its bound
+capability through publication callbacks, restore's graph/approved-assets
+switches and delayed cleanup. Entering such a scope temporarily reinstates that
+captured witness; it cannot create a witness without a successful check. The
+test build checks capability parent scopes separately where an ordinary checked
+leaf cannot authorize a sibling stage or temporary file. These probes, scope
+fields, state, calls and branches are absent from non-test builds. No production
+I/O, fsync count or durability recipe is added by RG7.
+
+Unchecked-call tests cover atomic mutations, directory creation and removal,
+publication stage create/write/retire/cleanup, restore create/copy/retire/publish
+and folded replacement; assertions panic before the mutation. Checked targets,
+descendants and delayed capability cleanup have positive coverage. Explicit
+external exports are outside RG7's graph scope: their selected outside-graph
+parent capability, create-only installation and stage identity remain their
+guards, including their stage writes and cleanup.
 
 Watcher reconciliation distinguishes a successful page read, an intentionally
 excluded nonregular or escaped path, and a failed read. A successful read can

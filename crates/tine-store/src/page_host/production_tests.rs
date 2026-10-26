@@ -1761,8 +1761,10 @@ fn an_old_spelling_draft_and_custody_marker_recover_through_the_entry_spelling()
 /// old-spelling draft does not recover a separate `Foo.md` after a crash.
 /// On a folding volume no distinct `foo.md` can exist: the target reads as
 /// the source's own entry, so the two-key rename refuses and writes nothing
-/// (a case-only move there is the single-key alias respell, tested by
-/// `a_request_queued_before_a_spelling_move_applies_to_the_same_page_after_it`).
+/// (a case-only move there is the driver's single-key spelling command;
+/// binding tests `a_folded_move_operation_keeps_its_key_and_rewrites_referrers`
+/// and `a_spelling_move_with_pending_input_is_refused_and_preserves_input_and_spelling`
+/// cover its success and pending-input refusal).
 #[test]
 fn a_case_only_rename_to_a_distinct_entry_is_a_two_key_host_rename() {
     let mut f = Fixture::new();
