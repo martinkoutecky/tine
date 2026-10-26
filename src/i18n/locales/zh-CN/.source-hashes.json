@@ -940,6 +940,7 @@
   "git-settings-not-available": "cb2a48d1625ee4aa",
   "git-settings-policy-commit": "b52c84fe7100f4a0",
   "git-settings-policy-off": "e29c696f20de20a5",
+  "git-settings-repack-deferred": "1a3f902c18cbb3fb",
   "git-settings-save-failed": "4d7f522dccb492cd",
   "git-settings-stale-lock": "e7cbd2b0f6bbf0f8",
   "git-settings-syncthing-ignore-added": "ba253b7af5a46c35",
