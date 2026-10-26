@@ -1,6 +1,7 @@
 // Visual check for margin dialogue slice 1 (vision §3.7): an agent-written block
 // with a comment card (three-level thread), a repeated-phrase quote, a stale quote
-// and an untouched block, in light and dark at desktop and phone width.
+// and an untouched block, in light and dark at wide, desktop and phone width.
+// Zooming into the passage must keep the same threads and replies inline.
 // Usage: npm run build && node scripts/shot-margin-comments.mjs [outDir]
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
@@ -11,6 +12,8 @@ import { bulletlessFacts, checkBulletless } from "./lib/margin-bulletless.mjs";
 const PORT = 5217;
 const OUT = process.argv[2] ?? "scratch/margin-s1";
 const CASES = [
+  { name: "wide-light", mode: "light", width: 1440, height: 900 },
+  { name: "wide-dark", mode: "dark", width: 1440, height: 900 },
   { name: "desktop-light", mode: "light", width: 900, height: 640 },
   { name: "desktop-dark", mode: "dark", width: 900, height: 640 },
   { name: "phone-light", mode: "light", width: 390, height: 844 },
@@ -72,6 +75,22 @@ try {
     if (facts.overflow) throw new Error(`${testCase.name}: horizontal page overflow`);
     if (errors.length) throw new Error(`${testCase.name}: browser errors:\n${errors.join("\n")}`);
     await page.screenshot({ path: `${OUT}/${testCase.name}.png`, fullPage: false });
+    if (testCase.width === 390) {
+      if (await page.locator(".margin-column").count()) throw new Error(`${testCase.name}: phone drew a margin`);
+      if (await page.locator(".page-blocks .comment-card").count() !== 3) throw new Error(`${testCase.name}: phone lost inline threads`);
+    }
+    // Zoom the passage, using the same bullet action as a reader. Its thread
+    // and replies must stay inline at phone and desktop widths alike.
+    const passage = page.locator(".page-blocks .ls-block").filter({ has: page.locator(".comment-quote-anchor") }).first();
+    const replies = await page.locator(".comment-card").first().locator(".ls-block").count();
+    if (!replies) throw new Error(`${testCase.name}: fixture lost its replies`);
+    await passage.locator(":scope > .block-main .bullet-container").click();
+    await page.locator(".zoomed-page").waitFor();
+    if (await page.locator(".margin-column").count()) throw new Error(`${testCase.name}: zoom drew a margin`);
+    if (await page.locator(".zoomed-block .comment-card").count() !== facts.cards) throw new Error(`${testCase.name}: zoom lost its threads`);
+    if (await page.locator(".zoomed-block .comment-card .ls-block").count() !== replies) throw new Error(`${testCase.name}: zoom lost replies`);
+    await page.screenshot({ path: `${OUT}/${testCase.name}-zoom.png`, fullPage: false });
+    console.log(JSON.stringify({ case: `${testCase.name}-zoom`, inlineThread: true, replies }));
     await page.close();
   }
   console.log(`screenshots in ${OUT}`);

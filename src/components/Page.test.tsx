@@ -1034,6 +1034,34 @@ describe("zoomed block view", () => {
     }
   });
 
+  it("zooming into a commented block keeps its thread and replies inline", async () => {
+    const dto = {
+      name: "Comment zoom", kind: "page" as const, title: "Comment zoom", pre_block: null,
+      blocks: [{
+        id: "passage", raw: "A passage to discuss.", collapsed: false,
+        children: [{
+          id: "comment", raw: "A comment.\nquote:: passage", collapsed: false,
+          properties: [["quote", "passage"]] as [string, string][],
+          children: [{ id: "reply", raw: "A reply.", collapsed: false, children: [] }],
+        }],
+      }],
+    };
+    loadSingle(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    focusBlock("passage");
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".zoomed-page")).not.toBeNull());
+      const zoom = root.querySelector(".zoomed-block")!;
+      expect(zoom.querySelector('[data-block-id="comment"].comment-card')).not.toBeNull();
+      expect(zoom.querySelector('[data-block-id="reply"]')?.textContent).toContain("A reply.");
+      expect(root.querySelector(".margin-column")).toBeNull();
+      expect(root.querySelector(".margin-marker")).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
   it("Enter at a collapsed zoom root creates and focuses a rendered child, not an outside sibling", async () => {
     const parent = "11111111-1111-4111-8111-111111111111";
     const oldChild = "22222222-2222-4222-8222-222222222222";
