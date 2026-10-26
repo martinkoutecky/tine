@@ -858,7 +858,8 @@ class TauriBackend implements Backend {
     return (await import("@tauri-apps/api/event")).listen<T>(event, (e) => cb(e.payload));
   }
   onGraphChanged(cb: (c: GraphChange) => void) { return this.on("graph-changed", cb); }
-  onOwnerFlushRequest(cb: (request: { id: number; page: string; binding_generation: number }) => void) { return this.on("owner-flush-request", cb); }
+  onOwnerFlushRequest(cb: (request: { id: number; page: string; all?: boolean; binding_generation: number }) => void) { return this.on("owner-flush-request", cb); }
+  onOwnerPageRenamed(cb: (rename: import("./types").OwnerPageRename) => void) { return this.on("owner-page-renamed", cb); }
   ownerFlushAnswer(id: number, saved: boolean, bindingGeneration: number) { return this.call<void>("owner_flush_answer", { id, saved, bindingGeneration }); }
   onGraphChangedBulk(cb: (bulk: { changes: GraphChange[]; binding_generation?: number; answers?: GraphAnswersChange | null }) => void) { return this.on("graph-changed-bulk", cb); }
   async onGraphWatchStatus(cb: (status: { refused: boolean; message: string; binding_generation?: number }) => void) {

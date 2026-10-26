@@ -11,11 +11,34 @@ import { resetStore } from "../document";
 import { mainPaneRouter, resetTabsToJournals, route } from "../router";
 import { bumpDataRev } from "../graphSession";
 import type { QueryResult } from "../editor/queryIr";
+import { resetReferenceSectionState } from "../referenceSectionState";
+import { createSignal } from "solid-js";
 vi.mock("./LinkedReferences", () => ({ LinkedReferences: () => <div class="linked-references">Linked References</div> }));
 vi.mock("./UnlinkedReferences", () => ({ UnlinkedReferences: () => <div>Unlinked References</div> }));
 beforeAll(initParser);
-afterEach(() => { applySidebarSession({ right: false, items: [] }); resetStore(); resetTabsToJournals(); vi.restoreAllMocks(); document.body.replaceChildren(); });
+afterEach(() => { resetReferenceSectionState(); applySidebarSession({ right: false, items: [] }); resetStore(); resetTabsToJournals(); vi.restoreAllMocks(); document.body.replaceChildren(); });
 const result = (names: string[]): QueryResult => ({ anchor: "page", pages: names.map(name => ({ name, kind: "page", path: `pages/${name}.md`, properties: [] })), total: names.length, exceeded: false, diagnostics: [], report: { supported: true, ran: [], ignored: [] } });
+it("GH #739: a tagged-page fold survives remount and page changes, and resets with the graph", async () => {
+  vi.spyOn(backend(), "taggedPages").mockResolvedValue(result(["Tagged page"]));
+  const host = document.createElement("div"); document.body.append(host);
+  const [name, setName] = createSignal("Research");
+  let dispose = render(() => <TaggedPages name={name()} />, host);
+  try {
+    await vi.waitFor(() => expect(host.querySelector(".tagged-pages li")).not.toBeNull());
+    host.querySelector<HTMLButtonElement>(".tagged-pages button")!.click();
+    dispose();
+    dispose = render(() => <TaggedPages name={name()} />, host);
+    await vi.waitFor(() => expect(host.querySelector(".tagged-pages button")?.getAttribute("aria-expanded")).toBe("false"));
+    expect(host.querySelector(".references-count")?.textContent?.trim()).toBe("1");
+    setName("Other");
+    await vi.waitFor(() => expect(host.querySelector(".tagged-pages button")?.getAttribute("aria-expanded")).toBe("true"));
+    setName("Research");
+    await vi.waitFor(() => expect(host.querySelector(".tagged-pages button")?.getAttribute("aria-expanded")).toBe("false"));
+    dispose(); resetReferenceSectionState();
+    dispose = render(() => <TaggedPages name="Research" />, host);
+    await vi.waitFor(() => expect(host.querySelector(".tagged-pages button")?.getAttribute("aria-expanded")).toBe("true"));
+  } finally { dispose(); }
+});
 it("routed tag page lists tagged pages before references, navigates, and refreshes membership", async () => {
   const dto = { id: "pages/Research.md", name: "Research", title: "Research", kind: "page" as const, pre_block: null, blocks: [] };
   vi.spyOn(backend(), "getPage").mockImplementation(async name => ({ ...dto, name, title: name, id: `pages/${name}.md` }));

@@ -99,6 +99,7 @@ export interface MessageArgs {
   "block-parts-type": {};
   "block-ref-actions-select-blocks-or-edit-one-to-copy-their": {};
   "block-ref-actions-too-much-selected-to-duplicate": {};
+  "blocks-merge-would-break-a-reference": {};
   "blocks-outline-is-too-deep-to-insert-a-child": {};
   "blocks-outline-is-too-deep-to-merge": {};
   "blocks-outline-is-too-deep-to-move": {};
@@ -940,6 +941,8 @@ export interface MessageArgs {
   "git-settings-policy-off": {};
   "git-settings-save-failed": { "error": string | number };
   "git-settings-stale-lock": { "path": string | number };
+  "git-settings-syncthing-ignore-added": { "path": string | number };
+  "git-settings-syncthing-ignore-failed": {};
   "git-settings-unusable": { "message": string | number };
   "gpu-software-rendering-is-on-tine-gpu-0-webkit": {};
   "gpu-this-app-image-is-rendering-on-the-cpu": {};

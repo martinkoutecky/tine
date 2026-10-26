@@ -19,7 +19,7 @@ import { editorHidePolicy } from "../editor/properties";
 /** Why a verb did nothing (`outline::Reason`). */
 export type OutlineRefusal =
   | "depth_cap" | "cycle" | "read_only" | "frozen" | "cross_page_merge"
-  | "header_root" | "no_outline_step" | "incomplete" | "unparseable";
+  | "header_root" | "no_outline_step" | "incomplete" | "unparseable" | "referenced_identity";
 
 /** One kernel verb (`outline::Verb`). Offsets are raw UTF-8 bytes. */
 export type OutlineVerb =

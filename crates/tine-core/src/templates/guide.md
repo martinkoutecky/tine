@@ -9,7 +9,7 @@ icon:: 🧭
   - [[Start/Bring an existing graph]] — point Tine at your existing Logseq graph and learn what it reads and writes.
   - [[Project/Roadmap]] — try a few example tasks for your first steps.
 - ## Workflows
-  - [[Workflows/Keep context visible]] — park a source in the right sidebar, keep places in tabs and panes, and save the layout as a workspace.
+  - [[Workflows/Keep context visible]] — park a source in the right sidebar, organize **Open tabs** in the left sidebar, keep places in panes, and save the layout as a workspace.
   - [[Workflows/Structure repeated information]] — turn a small repeated outline into a table or board, then find and reuse its blocks before reaching for query syntax.
   - [[Workflows/Capture and plan your day]] — journal-first daily flow: tasks, priorities, dates, the agenda, and carrying leftovers forward.
   - [[Workflows/Find and revisit]] — jump back to anything with Ctrl+K and follow links and reference panels.

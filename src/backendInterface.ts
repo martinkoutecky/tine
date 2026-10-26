@@ -593,7 +593,8 @@ export interface Backend {
   onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;
   /** Native only: the graph owner asks the window to save the text typed on
    *  `page` before a command-line write (`src/document/host/ownerFlush.ts`). */
-  onOwnerFlushRequest?(cb: (request: { id: number; page: string; binding_generation: number }) => void): Promise<() => void>;
+  onOwnerFlushRequest?(cb: (request: { id: number; page: string; all?: boolean; binding_generation: number }) => void): Promise<() => void>;
+  onOwnerPageRenamed?(cb: (rename: import("./types").OwnerPageRename) => void): Promise<() => void>;
   /** The answer to `onOwnerFlushRequest`: whether that text is saved. */
   ownerFlushAnswer?(id: number, saved: boolean, bindingGeneration: number): Promise<void>;
   /** Watcher freshness (family 10), native only: a checkout-sized batch as one

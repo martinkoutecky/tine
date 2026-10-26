@@ -60,6 +60,8 @@ export function GitAutocommitSetting(): JSX.Element {
       </Show>
       <Show when={!s().unusable && s().last?.refused}>{(why) => <div>{t("git-settings-last-refused", { message: why()[1] })}</div>}</Show>
       <Show when={s().last?.stale_lock}>{(path) => <div>{t("git-settings-stale-lock", { path: path() })}</div>}</Show>
+      <Show when={s().last?.syncthing_ignore_added}>{(path) => <div role="status">{t("git-settings-syncthing-ignore-added", { path: path() })}</div>}</Show>
+      <Show when={s().last?.syncthing_ignore_failed}><div role="status">{t("git-settings-syncthing-ignore-failed")}</div></Show>
     </>}</Show>
     <Show when={error()}>{(e) => <div role="alert">{e()}</div>}</Show>
   </>}>

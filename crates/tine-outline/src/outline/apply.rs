@@ -1,30 +1,5 @@
 use super::*;
 
-// Merging visible text must not discard properties newly removed from that
-// text. Identity/fold/list/comment metadata retain their existing merge rules.
-pub(super) fn retained_hidden_properties(raw: &str, org: bool, hide: &HidePolicy) -> String {
-    let regions = block_regions::parse(raw, org);
-    let comment = editor_text::comment_quote(
-        regions
-            .properties
-            .iter()
-            .filter(|p| p.primary)
-            .map(|p| (p.key.as_str(), p.value.as_str())),
-    )
-    .is_some();
-    regions
-        .properties
-        .iter()
-        .filter(|p| {
-            p.primary
-                && hide.hides_for_comment(&p.key, comment)
-                && !HidePolicy::Structural.hides_for_comment(&p.key, comment)
-        })
-        .map(|p| p.line.slice(raw).trim_end_matches('\n'))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// Run a verb with the host's graph-configured editor projection. No graph
 /// reads or mutable global policy: every offset and mutation sees one snapshot.
 pub fn apply_with_policy(
@@ -65,8 +40,10 @@ pub fn apply_with_policy(
             *keep_start_in_scope,
         )?,
         Verb::Merge {
-            survivor, absorbed, ..
-        } => merge(&mut cx, survivor, absorbed)?,
+            survivor,
+            absorbed,
+            absorbed_referenced,
+        } => merge(&mut cx, survivor, absorbed, *absorbed_referenced)?,
         Verb::Indent { keys } => indent(&mut cx, keys)?,
         Verb::Outdent { keys, logical } => outdent(&mut cx, keys, *logical)?,
         Verb::Delete { keys } => delete(&mut cx, keys)?,

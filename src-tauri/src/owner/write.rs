@@ -382,7 +382,7 @@ pub(super) fn outline_refused(
     )
 }
 
-fn host_failed(message: String) -> ErrorBody {
+pub(super) fn host_failed(message: String) -> ErrorBody {
     if message == crate::state::STALE_BINDING {
         busy()
     } else {
@@ -456,17 +456,17 @@ pub(super) fn in_run<T>(
 /// Commit a successful write when it belongs to a run. A commit that fails
 /// does not undo the saved write: the reply says so under `git`.
 #[cfg(desktop)]
-fn commit_if_in_run(
+pub(super) fn commit_if_in_run(
     slot: &GraphSlot,
     page: &PageId,
     old: Option<&[u8]>,
-    new: &[u8],
+    new: Option<&[u8]>,
     reply: &mut Value,
 ) {
     let Some((run, subject)) = RUN.with(|r| r.borrow().clone()) else {
         return;
     };
-    let git = match super::git_run::commit_write(slot, &run, page, &subject, old, Some(new)) {
+    let git = match super::git_run::commit_write(slot, &run, page, &subject, old, new) {
         Ok(done) => done.to_json(),
         Err(error) => json!({
             "committed": false,
@@ -519,6 +519,13 @@ pub(super) fn write_page_from_bytes(
             ));
         }
         let absent = read.bytes.is_none();
+        if !absent && kind == EditKind::CreatePage {
+            return Err(refused(
+                "page-exists",
+                Some(page),
+                "a file already owns this page; nothing changed",
+            ));
+        }
         let bytes = read.bytes.unwrap_or_else(|| std::sync::Arc::from(&b""[..]));
         let current = slot
             .store
@@ -640,7 +647,7 @@ pub(super) fn write_page_from_bytes(
                     slot,
                     &read.page,
                     (!absent).then_some(&bytes[..]),
-                    &new_bytes,
+                    Some(&new_bytes),
                     &mut reply,
                 );
                 return Ok(reply);

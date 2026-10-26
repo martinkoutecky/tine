@@ -19,6 +19,16 @@ may tag, publish, comment, and close issues.
 4. Regenerate the canonical Guide/demo site and prove the checked-in
    `website/demo/` output, bundled Guide pages, links, block references, and
    assets are current.
+   At each **stable cut on master**, after the version bump and Guide/site
+   regeneration, review `website/compare/rows.json` against its Guide/test
+   evidence and refresh each competitor source and `checked` date. Drop
+   unverifiable rows or leave competitor cells unknown. Run
+   `npm run compare:build`, `node scripts/build-compare-page.mjs --update-fixture`,
+   `npm run test:compare`, and `npm run compare:check`; include the generated
+   `website/compare.html` and test fixture in the stable-cut diff. The strict
+   published-page check must pass before publishing. Development's
+   `npm run docs:build` generates only a comparison preview under
+   `artifacts/compare-page/`; it does not update the published comparison.
 5. Run the complete Linux release E2E catalog (`npm run e2e:linux:release`)
    against the production-protocol candidate binary. Retain screenshots, DOM,
    console/backend logs, graph diff, JUnit, and JSON on failure. See

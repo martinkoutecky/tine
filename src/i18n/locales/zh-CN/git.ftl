@@ -14,3 +14,5 @@ git-settings-last-refused = 上次尝试失败：{ $message }
 git-settings-stale-lock = { $path } 已被占用超过 30 分钟，可能有 git 程序崩溃了。确认没有 git 命令在运行后请删除它。Tine 不会删除它。
 git-settings-load-failed = 无法加载 git 设置：{ $error }
 git-settings-save-failed = 无法更改 git 设置：{ $error }
+git-settings-syncthing-ignore-added = Tine 已将 .syncthing.* 添加到 { $path }，以免将 Syncthing 的临时文件提交到 git。你可以删除这一行；Tine 不会在本设备上再次添加它。除非你自己的规则将其忽略，否则冲突副本仍会被提交。
+git-settings-syncthing-ignore-failed = Tine 无法确认是否已将 .syncthing.* 添加到图谱的 .gitignore。Tine 的提交仍会排除临时文件。如果希望其他 git 工具也忽略它们，请检查该文件并手动添加这一行。

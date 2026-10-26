@@ -7,7 +7,7 @@ import { editingId, endEdit, startEditing } from "../editorController";
 import { clearSeededFacets } from "../render/facets";
 import { installKeybindings } from "../keybindings";
 import { initParser } from "../render/parse";
-import { resetStore, undo } from "../document";
+import { resetStore, setCollapsed, undo } from "../document";
 import { pageToDto } from "../document/convert";
 import { loadSingle, loadFeed } from "../document/workingSet";
 import { doc, pageByName } from "../document/model";
@@ -241,6 +241,28 @@ async function withHostPage(body: (root: HTMLElement) => Promise<void>) {
 }
 
 describe("a structural edit inside a block embed keeps the caret there (GH #477)", () => {
+  it.each([false, true])("GH #766: Backspace deletes an emptied embedded child; source folded=%s", async folded => {
+    await withHostPage(async root => {
+      if (folded) {
+        setCollapsed("target", true);
+        const toggle = await vi.waitFor(() => {
+          const button = root.querySelector<HTMLButtonElement>('.embed-block [data-block-id="target"] > .block-main .collapse-toggle');
+          expect(button).not.toBeNull(); return button!;
+        });
+        toggle.click();
+      }
+      const editor = await editInsideEmbed(root);
+      const hostRaw = doc.byId.host.raw;
+      editor.input("", 0);
+      editor.keydown(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
+      await vi.waitFor(() => expect(doc.byId["target"].children).toEqual(["kid-one"]));
+      expect(editingId()).toBe("kid-one");
+      expect(doc.byId.host.raw).toBe(hostRaw);
+      expect(doc.byId.target.collapsed).toBe(folded);
+      undo();
+      expect(doc.byId.target.children).toEqual(["kid-one", "kid-two"]);
+    });
+  });
   it("keeps Tab (indent) in the embed", async () => {
     await withHostPage(async (root) => {
       const editor = await editInsideEmbed(root);

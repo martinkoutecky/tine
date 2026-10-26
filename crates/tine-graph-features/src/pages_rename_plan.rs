@@ -141,12 +141,7 @@ pub(super) fn plan_rename(
         } else {
             format!("{new}{}", namespace_suffix(&entry.name, &old_key))
         };
-        if ids.len() > 1 {
-            return Err(error(
-                io::ErrorKind::AlreadyExists,
-                "multiple files share this page identity; mutation is ambiguous",
-            ));
-        }
+        validate_target(&ids, None)?;
         let id = ids[0].clone();
         // An alias names its owner's page, so it is taken like a file name.
         let mut taken = claimants(graph.resolve(&new_name, false));

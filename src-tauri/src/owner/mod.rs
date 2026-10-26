@@ -25,6 +25,7 @@ pub(crate) mod git_run;
 pub(crate) mod lease;
 pub(crate) mod lock;
 pub(crate) mod namespace;
+mod pages;
 #[cfg(desktop)]
 pub(crate) mod serve;
 #[cfg(desktop)]

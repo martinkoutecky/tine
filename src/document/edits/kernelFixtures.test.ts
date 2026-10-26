@@ -50,6 +50,7 @@ import { nextVisible } from "../tree";
 import { loadFeed, resetStore } from "../workingSet";
 import { deleteBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, replaceEmptyBlockWithOutline, mergeWithNext, outdentBlock, splitBlock } from "./blocks";
 import { outlineChange, applyOutlineChange, markOutlineDirty, type OutlineVerb } from "../kernel";
+import { installReferenceChangeCounter } from "../../toasts";
 import { moveBlock, moveBlocksRelative, moveItem, moveSelectionItems } from "./moves";
 import { clearSelection, deleteSelection, extendSelectionTo, indentSelection, outdentSelection, selectBlock, topSelected } from "./selection";
 
@@ -130,6 +131,7 @@ async function run(c: Case): Promise<Expect> {
       break;
     }
     case "merge":
+      installReferenceChangeCounter(() => v.absorbed_referenced ? 1 : 0);
       if (nextVisible(v.survivor) !== v.absorbed) throw new Error(`${c.name}: the absorbed block must follow the survivor in visible order`);
       mergeWithNext(v.survivor, null, null);
       break;

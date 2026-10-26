@@ -150,7 +150,10 @@ fn bhkru_today_is_the_evaluation_day_not_a_day_pinned_in_the_query() {
 /// change to either is a reviewed decision (notes: og-tql-upcoming.md).
 /// 1. A date-named ORDINARY page (`pages/Oct 30th, 2026.md`) keeps ordinary
 ///    identity in Upcoming (`referenced_journal_days`); the condition reads
-///    the reference name alone, as Logseq's `:block/journal-day` join does.
+///    the reference name alone. This ordinary identity is a Tine divergence:
+///    OG 0.10.9 `convert-page-if-journal-impl` treats a parseable page name as
+///    a journal regardless of its directory, so its `:block/journal-day` join
+///    also includes that page.
 /// 2. A spelling only in the configured FILENAME format counts in Upcoming
 ///    (the graph's journal format); the condition reads titles first and the
 ///    safe defaults (gh690: a custom filename format must not turn an

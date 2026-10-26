@@ -6,7 +6,7 @@ import { backend } from "../backend";
 import { PUBLISHED_META_NAME } from "../publishedBackend";
 import { invalidateBinding } from "../binding";
 import { initParser } from "../render/parse";
-import { installExternalChangeUiHandler, pageByName, readPageProperty, resetStore, setRaw, extendFeedForScroll, flushPage, isDirty, undo, redo, moveBlockFeed, moveBlock, selectedIds, deleteSelection, finishPageHeaderEdit, indentBlock, indentSelection, selectBlock } from "../document";
+import { installExternalChangeUiHandler, pageByName, readPageProperty, resetStore, resolveBlockRef, setRaw, extendFeedForScroll, flushPage, isDirty, undo, redo, moveBlockFeed, moveBlock, selectedIds, deleteSelection, finishPageHeaderEdit, indentBlock, indentSelection, selectBlock } from "../document";
 import { installKeybindings } from "../keybindings";
 import { setBlockMoving } from "../document/edits/moves";
 import { pageToDto } from "../document/convert";
@@ -26,7 +26,8 @@ import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, 
 import { closeShareDialog, shareTarget } from "../shareState";
 import { bumpGraphEpoch, bumpDataRev, graphEpoch, setGraphMeta } from "../graphSession";
 import { applyChangeSummary } from "../changeSummary";
-import { setToasts, toasts } from "../toasts";
+import { installReferenceChangeCounter, setToasts, toasts } from "../toasts";
+import { captureBlockReferenceCount } from "../blockRefCounts";
 import { favorites, isFavorite, seedFavorites } from "../favorites";
 import type { GraphMeta } from "../types";
 
@@ -100,6 +101,56 @@ function unpinned(dto: PageDto): PageRead {
 function feedResponse(pages: PageDto[], patch: Partial<JournalFeedPage> = {}): JournalFeedPage {
   return { pages: pages.map(unpinned), next_before_day: null, done: true, as_of_day: localDay(), ...patch };
 }
+
+describe("F2 merge hidden rows on routed pages and journals", () => {
+  for (const kind of ["page", "journal"] as const) {
+    for (const format of ["md", "org"] as const) {
+      it.each(["Backspace", "Delete"])("%s drops absorbed state and preserves a referenced ID: " + kind + "/" + format, async (key) => {
+        const name = kind === "journal" ? journalTitle(new Date()) : "Merge hidden rows";
+        const uuid = "aaaaaaaa-0000-4000-8000-000000000001";
+        const properties = format === "md"
+          ? `heading:: true\ncard-repeats:: 5\nid:: ${uuid}`
+          : `:PROPERTIES:\n:heading: true\n:card-repeats: 5\n:id: ${uuid}\n:END:`;
+        const gone = `two\n${properties}\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 09:00:00]\n:END:`;
+        const dto: PageDto = { name, title: name, kind, pre_block: null, format, blocks: [
+          { id: "f2-keep", raw: "one", children: [], collapsed: false },
+          { id: "f2-gone", raw: gone, children: [], collapsed: false },
+        ] };
+        installReferenceChangeCounter(() => 2); // ref and embed on other graph pages
+        if (kind === "journal") vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([dto]));
+        else {
+          vi.spyOn(backend(), "getPage").mockResolvedValue(dto as PageRead);
+          mainPaneRouter.replaceActiveRoute({ kind: "page", name, pageKind: kind });
+        }
+        const mounted = mount(() => <PageView />);
+        try {
+          await vi.waitFor(() => expect(doc.byId["f2-gone"]?.raw).toBe(gone));
+          const ref = { uuid, page: name, pageKind: kind };
+          expect(resolveBlockRef(ref)).toBe("f2-gone");
+          startEditing(key === "Backspace" ? "f2-gone" : "f2-keep", key === "Backspace" ? 0 : 3);
+          await vi.waitFor(() => expect(maybeEditorIn(mounted.root)).not.toBeNull());
+          const editor = maybeEditorIn(mounted.root)!;
+          editor.focus();
+          editor.select(key === "Backspace" ? 0 : 3, key === "Backspace" ? 0 : 3);
+          editor.keydown({ key, bubbles: true, cancelable: true });
+          expect(doc.byId["f2-gone"]).toBeUndefined();
+          expect(doc.byId["f2-keep"].raw).toBe(format === "md"
+            ? `onetwo\nid:: ${uuid}`
+            : `onetwo\n:PROPERTIES:\n:id: ${uuid}\n:END:`);
+          expect(resolveBlockRef(ref)).toBe("f2-keep");
+          undo();
+          expect(doc.byId["f2-gone"].raw).toBe(gone);
+          expect(doc.byId["f2-keep"].raw).toBe("one");
+          expect(resolveBlockRef(ref)).toBe("f2-gone");
+        } finally {
+          mounted.dispose();
+          installReferenceChangeCounter(captureBlockReferenceCount);
+          setToasts([]);
+        }
+      });
+    }
+  }
+});
 
 it.each([
   ["page", "md"], ["journal", "md"], ["page", "org"], ["journal", "org"],
@@ -1034,6 +1085,34 @@ describe("zoomed block view", () => {
     }
   });
 
+  it("zooming into a commented block keeps its thread and replies inline", async () => {
+    const dto = {
+      name: "Comment zoom", kind: "page" as const, title: "Comment zoom", pre_block: null,
+      blocks: [{
+        id: "passage", raw: "A passage to discuss.", collapsed: false,
+        children: [{
+          id: "comment", raw: "A comment.\nquote:: passage", collapsed: false,
+          properties: [["quote", "passage"]] as [string, string][],
+          children: [{ id: "reply", raw: "A reply.", collapsed: false, children: [] }],
+        }],
+      }],
+    };
+    loadSingle(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    focusBlock("passage");
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".zoomed-page")).not.toBeNull());
+      const zoom = root.querySelector(".zoomed-block")!;
+      expect(zoom.querySelector('[data-block-id="comment"].comment-card')).not.toBeNull();
+      expect(zoom.querySelector('[data-block-id="reply"]')?.textContent).toContain("A reply.");
+      expect(root.querySelector(".margin-column")).toBeNull();
+      expect(root.querySelector(".margin-marker")).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
   it("Enter at a collapsed zoom root creates and focuses a rendered child, not an outside sibling", async () => {
     const parent = "11111111-1111-4111-8111-111111111111";
     const oldChild = "22222222-2222-4222-8222-222222222222";
@@ -1358,6 +1437,33 @@ describe("page actions entry point", () => {
       expect(rename).not.toHaveBeenCalled();
       expect(toasts()).toEqual([]);
       expect(root.querySelector(".page-title-input")).toBeNull();
+    } finally { dispose(); }
+  });
+
+  it("shows the conflicting files and recovery instruction when a routed page rename is refused (GH #774)", async () => {
+    const dto: PageRead = { name: "Marketing Box", kind: "page", title: "Marketing Box", pre_block: null,
+      id: "pages/Marketing Box.md", blocks: [{ id: "duplicate-root", raw: "Body", collapsed: false, children: [] }] };
+    setDoc({ byId: { "duplicate-root": node("duplicate-root", "Body", dto.name) },
+      pages: [{ ...page(dto.name, "page", ["duplicate-root"]), id: dto.id }], feed: [], loaded: true });
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
+    const message = "Multiple files share this page identity:\n\n“pages/Marketing Box.md”\n“pages/copy/Marketing Box.md”\n\nTo resolve this, merge one file into the other or remove one, then try again.";
+    vi.spyOn(backend(), "renamePage").mockRejectedValue(message);
+    const alert = vi.spyOn(window, "alert").mockImplementation(() => {});
+    mainPaneRouter.openFile(dto.id, dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".page-title")).not.toBeNull());
+      root.querySelector<HTMLElement>(".page-title")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      await tick();
+      const input = root.querySelector<HTMLInputElement>(".page-title-input")!;
+      input.value = "Internal Tools";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await vi.waitFor(() => expect(alert).toHaveBeenCalledWith(`Rename failed: ${message}`));
+      expect(mainPaneRouter.route()).toMatchObject({ name: "Marketing Box" });
+      expect(doc.byId["duplicate-root"].raw).toBe("Body");
     } finally { dispose(); }
   });
 

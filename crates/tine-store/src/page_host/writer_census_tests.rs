@@ -27,6 +27,10 @@ const ROUTES: &[&str] = &["reserved", "operation", "restore_hosted"];
 /// Writers of no page file, by `file::fn`, each with its reason.
 const EXEMPT: &[(&str, &str)] = &[
     (
+        "src-tauri/src/owner/git_autocommit.rs::append_syncthing_ignore",
+        "writes only the fixed root .gitignore through a revision-guarded non-page transaction (D-20261026-GI); no page",
+    ),
+    (
         "crates/tine-graph-features/src/assets.rs::create_unique",
         "creates a new asset file; no page",
     ),

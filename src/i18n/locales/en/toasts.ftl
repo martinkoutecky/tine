@@ -209,6 +209,7 @@ blocks-outline-is-too-deep-to-insert-a-child = Outline is too deep to insert a c
 blocks-outline-is-too-deep-to-move = Outline is too deep to move
 
 blocks-outline-is-too-deep-to-merge = Outline is too deep to merge
+blocks-merge-would-break-a-reference = Can’t merge these blocks: both have a block ID, and merging could break a reference to one of them
 
 moves-outline-is-too-deep-to-move = Outline is too deep to move
 
