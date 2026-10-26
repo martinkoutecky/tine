@@ -13,7 +13,7 @@
 // One node type. Every bullet round-trips verbatim; a blank bullet is dropped
 // but its children are kept.
 import type { BlockDto, Format, PageKind } from "./types";
-import { isJournalTitle } from "./journal";
+import { linkPageKind } from "./pageIndex";
 import { pageIdentityKey } from "./pageIdentity";
 import { parseBlock } from "./render/parse";
 import { reference_target_name } from "./render/wasm/lsdoc_wasm.js";
@@ -58,7 +58,7 @@ export function linkOnlyTarget(raw: string, format: Format = "md"): string | nul
   return reference_target_name(url.type, "v" in url ? url.v : "", "", format === "org", false)?.trim() || null;
 }
 export const blockFavoriteNode = (id: string): FavNode => ({ target: null, blockId: id, raw: `((${id}))`, children: [] });
-export const itemKind = (name: string): PageKind => (isJournalTitle(name) ? "journal" : "page");
+export const itemKind = linkPageKind;
 export const favoriteNode = (name: string, kind?: PageKind): FavNode =>
   ({ target: name, raw: `[[${name}]]`, ...(kind && kind !== itemKind(name) ? { kind } : {}), children: [] });
 export const labelNode = (name: string): FavNode => ({ target: null, raw: name, children: [] });

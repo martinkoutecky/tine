@@ -1584,7 +1584,7 @@
    }
   },
   {
-   "name": "merge: survivor without id takes the absorbed id",
+   "name": "merge: survivor without id drops the unreferenced absorbed id (F2)",
    "page": {
     "name": "P",
     "format": "md",
@@ -1611,7 +1611,7 @@
      "roots": [
       {
        "key": "a",
-       "raw": "onetwo\nid:: 650e8400-e29b-41d4-a716-446655440002"
+       "raw": "onetwo"
       }
      ]
     },
@@ -1725,7 +1725,7 @@
    }
   },
   {
-   "name": "merge: org ids move into the survivor drawer",
+   "name": "merge: unreferenced org id is dropped (F2)",
    "page": {
     "name": "P",
     "format": "org",
@@ -1752,7 +1752,7 @@
      "roots": [
       {
        "key": "a",
-       "raw": "onetwo\n:PROPERTIES:\n:id: 650e8400-e29b-41d4-a716-446655440002\n:END:"
+       "raw": "onetwo"
       }
      ]
     },

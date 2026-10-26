@@ -300,16 +300,23 @@ export function mergeWithNext(
 /** The one merge answer for Backspace-at-start and Delete-at-end: the
  *  kernel's `merge` (outline::merge) appends `absorbed`'s visible text and its
  *  children to `survivor` and removes it; the survivor keeps its identity and
- *  hidden props, and takes the absorbed `id::` only when it has none. Refuses
+ *  hidden props. Absorbed hidden rows and clocks are dropped; a referenced ID
+ *  transfers only when the survivor has none. Two IDs refuse rather than break
+ *  references (OG rewrites graph-wide referrers, outside this page-local verb).
+ *  Cold/unavailable counts conservatively preserve the absorbed identity. Refuses
  *  (false) across pages and past the outline cap. */
 function absorbInto(survivor: string, absorbed: string, editingSurface: string | null): boolean {
   const pageName = doc.byId[absorbed].page;
+  const id = existingBlockId(doc.byId[absorbed].raw, formatForBlock(absorbed));
+  const count = id ? captureReferenceChangeCount([id]) : 0;
+  const referenced = typeof count !== "number" || count > 0;
   const change = outlineChange(
-    { verb: "merge", survivor, absorbed, absorbed_referenced: false },
+    { verb: "merge", survivor, absorbed, absorbed_referenced: referenced },
     [doc.byId[survivor].page, pageName],
   );
   if ("refused" in change) {
     if (change.refused === "depth_cap") pushToast(msg("blocks-outline-is-too-deep-to-merge"), "error");
+    if (change.refused === "referenced_identity") pushToast(msg("blocks-merge-would-break-a-reference"), "error");
     return false;
   }
   const transferred = change.notices.some((n) => n.kind === "id_transferred");

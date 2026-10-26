@@ -2016,8 +2016,8 @@ impl Store {
     pub fn page_named(&self, name: &str, kind: PageKind) -> Result<Option<PageRead>, StoreError> {
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
             let read = self.page_named_from_files(name, kind)?;
-            // Journal claimants are files only (BqbeQ); a served checkpoint
-            // answers an unclaimed day itself.
+            // Journal/date-page fallback claimants are files only (BqbeQ);
+            // a served checkpoint answers an unclaimed day itself.
             if read.is_some() || (kind == PageKind::Journal && self.first_view_pending()) {
                 return Ok(read);
             }
@@ -2036,45 +2036,6 @@ impl Store {
             },
             Resolved::Absent { .. } => return Ok(None),
         };
-        match self.page(&id) {
-            Ok(read) => Ok(Some(read)),
-            Err(StoreError::NotFound) => Ok(None),
-            Err(error) => Err(error),
-        }
-    }
-
-    /// The file-name listing answer: read an ordinary page by effective name, or a journal by its file
-    /// stem or parseable display title, without waiting for the initial
-    /// parse. A page some file is named for is found from a listing of file
-    /// names and the matching files; otherwise the first lookup or
-    /// invalidation builds a live O(P) file/preamble index, seeing files
-    /// created after `open`, and warm lookups reuse it. This remains available after a
-    /// failed initial parse; aliases require a successful graph view and are
-    /// not resolved here. When files claim the same name or journal day, it
-    /// uses the same claimant ranking as `WholeGraph::resolve` (canonical
-    /// date-stem journal first, then Markdown before Org). A missing name
-    /// returns `None`, also while a file's name is undecodable: that file is
-    /// listed in `unreadable_files()` and one bad file never blocks the graph.
-    /// The selected file is read through `page()`, with the same safety, revision, and publication
-    /// rules, including lock wait and read errors. It writes no page bytes.
-    fn page_named_from_files(
-        &self,
-        name: &str,
-        kind: PageKind,
-    ) -> Result<Option<PageRead>, StoreError> {
-        let lookup = if kind == PageKind::Journal {
-            self.graph
-                .current_journal_format()
-                .parse(name)
-                .map(|date| self.graph.current_journal_format().title(date))
-                .unwrap_or_else(|| name.to_owned())
-        } else {
-            name.to_owned()
-        };
-        let Some(entry) = self.graph.find_entry_named_file_first(&lookup, kind) else {
-            return Ok(None);
-        };
-        let id = PageId::from(self.graph.rel_path(&entry.path));
         match self.page(&id) {
             Ok(read) => Ok(Some(read)),
             Err(StoreError::NotFound) => Ok(None),
@@ -2957,8 +2918,11 @@ impl WholeGraph {
     }
 
     /// Resolve a name in this captured view. The caller supplies whether the
-    /// name is a journal title; using the wrong kind searches that other
-    /// namespace and may propose a new file. Real files win over aliases.
+    /// name is a journal title. For a parseable date with no journal file,
+    /// an ordinary file of the requested name is a navigation fallback;
+    /// its storage identity stays ordinary. This intentionally differs from
+    /// OG 0.10.9 `convert-page-if-journal-impl`, which classifies by name.
+    /// Other wrong-kind lookups may propose a new file. Real files win over aliases.
     /// Journal files with a configured date stem rank first, then Markdown
     /// before Org, then filename and full path lexicographically. Ordinary
     /// page claimants prefer the file named for the page, then use the latter
@@ -2987,7 +2951,10 @@ impl WholeGraph {
         } else {
             name.to_owned()
         };
-        let entries = self.name_claimants(&lookup, kind);
+        let mut entries = self.name_claimants(&lookup, kind);
+        if entries.is_empty() && is_journal && self.journal_format.parse(name).is_some() {
+            entries = self.name_claimants(name, PageKind::Page);
+        }
         if !entries.is_empty() {
             let mut ids = entries
                 .iter()

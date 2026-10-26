@@ -6,7 +6,7 @@ import { backend } from "../backend";
 import { PUBLISHED_META_NAME } from "../publishedBackend";
 import { invalidateBinding } from "../binding";
 import { initParser } from "../render/parse";
-import { installExternalChangeUiHandler, pageByName, readPageProperty, resetStore, setRaw, extendFeedForScroll, flushPage, isDirty, undo, redo, moveBlockFeed, moveBlock, selectedIds, deleteSelection, finishPageHeaderEdit, indentBlock, indentSelection, selectBlock } from "../document";
+import { installExternalChangeUiHandler, pageByName, readPageProperty, resetStore, resolveBlockRef, setRaw, extendFeedForScroll, flushPage, isDirty, undo, redo, moveBlockFeed, moveBlock, selectedIds, deleteSelection, finishPageHeaderEdit, indentBlock, indentSelection, selectBlock } from "../document";
 import { installKeybindings } from "../keybindings";
 import { setBlockMoving } from "../document/edits/moves";
 import { pageToDto } from "../document/convert";
@@ -26,7 +26,8 @@ import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, 
 import { closeShareDialog, shareTarget } from "../shareState";
 import { bumpGraphEpoch, bumpDataRev, graphEpoch, setGraphMeta } from "../graphSession";
 import { applyChangeSummary } from "../changeSummary";
-import { setToasts, toasts } from "../toasts";
+import { installReferenceChangeCounter, setToasts, toasts } from "../toasts";
+import { captureBlockReferenceCount } from "../blockRefCounts";
 import { favorites, isFavorite, seedFavorites } from "../favorites";
 import type { GraphMeta } from "../types";
 
@@ -100,6 +101,56 @@ function unpinned(dto: PageDto): PageRead {
 function feedResponse(pages: PageDto[], patch: Partial<JournalFeedPage> = {}): JournalFeedPage {
   return { pages: pages.map(unpinned), next_before_day: null, done: true, as_of_day: localDay(), ...patch };
 }
+
+describe("F2 merge hidden rows on routed pages and journals", () => {
+  for (const kind of ["page", "journal"] as const) {
+    for (const format of ["md", "org"] as const) {
+      it.each(["Backspace", "Delete"])("%s drops absorbed state and preserves a referenced ID: " + kind + "/" + format, async (key) => {
+        const name = kind === "journal" ? journalTitle(new Date()) : "Merge hidden rows";
+        const uuid = "aaaaaaaa-0000-4000-8000-000000000001";
+        const properties = format === "md"
+          ? `heading:: true\ncard-repeats:: 5\nid:: ${uuid}`
+          : `:PROPERTIES:\n:heading: true\n:card-repeats: 5\n:id: ${uuid}\n:END:`;
+        const gone = `two\n${properties}\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 09:00:00]\n:END:`;
+        const dto: PageDto = { name, title: name, kind, pre_block: null, format, blocks: [
+          { id: "f2-keep", raw: "one", children: [], collapsed: false },
+          { id: "f2-gone", raw: gone, children: [], collapsed: false },
+        ] };
+        installReferenceChangeCounter(() => 2); // ref and embed on other graph pages
+        if (kind === "journal") vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([dto]));
+        else {
+          vi.spyOn(backend(), "getPage").mockResolvedValue(dto as PageRead);
+          mainPaneRouter.replaceActiveRoute({ kind: "page", name, pageKind: kind });
+        }
+        const mounted = mount(() => <PageView />);
+        try {
+          await vi.waitFor(() => expect(doc.byId["f2-gone"]?.raw).toBe(gone));
+          const ref = { uuid, page: name, pageKind: kind };
+          expect(resolveBlockRef(ref)).toBe("f2-gone");
+          startEditing(key === "Backspace" ? "f2-gone" : "f2-keep", key === "Backspace" ? 0 : 3);
+          await vi.waitFor(() => expect(maybeEditorIn(mounted.root)).not.toBeNull());
+          const editor = maybeEditorIn(mounted.root)!;
+          editor.focus();
+          editor.select(key === "Backspace" ? 0 : 3, key === "Backspace" ? 0 : 3);
+          editor.keydown({ key, bubbles: true, cancelable: true });
+          expect(doc.byId["f2-gone"]).toBeUndefined();
+          expect(doc.byId["f2-keep"].raw).toBe(format === "md"
+            ? `onetwo\nid:: ${uuid}`
+            : `onetwo\n:PROPERTIES:\n:id: ${uuid}\n:END:`);
+          expect(resolveBlockRef(ref)).toBe("f2-keep");
+          undo();
+          expect(doc.byId["f2-gone"].raw).toBe(gone);
+          expect(doc.byId["f2-keep"].raw).toBe("one");
+          expect(resolveBlockRef(ref)).toBe("f2-gone");
+        } finally {
+          mounted.dispose();
+          installReferenceChangeCounter(captureBlockReferenceCount);
+          setToasts([]);
+        }
+      });
+    }
+  }
+});
 
 it.each([
   ["page", "md"], ["journal", "md"], ["page", "org"], ["journal", "org"],

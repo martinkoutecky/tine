@@ -49,11 +49,13 @@ describe("reference-change notices (GH #635 / #652)", () => {
     expect(toasts().at(-1)?.message).toBe("2 references now point to this block");
     toasts().at(-1)!.action!.run(); expect(state()).toEqual(before);
   });
-  it("keeps an existing survivor id and reports broken references to the absorbed id", () => {
+  it("refuses two IDs when the absorbed ID is referenced, preserving both targets", () => {
     load([block("keep", b), block("gone", a)]); counts.set(a, 1);
-    mergeWithPrev("gone");
-    expect(doc.byId.keep.raw).toContain(b); expect(doc.byId.keep.raw).not.toContain(a);
-    expect(toasts().at(-1)?.message).toContain("1 reference is now broken");
+    const before = state();
+    expect(mergeWithPrev("gone")).toBe(false);
+    expect(state()).toEqual(before);
+    // The refusal is never silent: Backspace doing nothing reads as a broken key.
+    expect(toasts().at(-1)?.message).toContain("could break a reference");
   });
   it("transfers even an empty block's id", () => {
     load([block("keep"), { ...block("gone", a), raw: `id:: ${a}` }]); counts.set(a, 1);
@@ -73,6 +75,13 @@ describe("reference-change notices (GH #635 / #652)", () => {
   it("does not notify unreferenced deletion or merge", () => {
     load([block("keep"), block("gone", a), block("tail", b)]);
     mergeWithPrev("gone"); deleteBlock("tail"); expect(toasts()).toEqual([]);
+    expect(doc.byId.keep.raw).not.toContain(a);
+  });
+  it.each([undefined, null, Promise.resolve(0)])("preserves the absorbed ID when the index answer is unavailable or cold: %s", (answer) => {
+    installReferenceChangeCounter(() => answer);
+    load([block("keep"), block("gone", a)]);
+    expect(mergeWithPrev("gone")).toBe(true);
+    expect(doc.byId.keep.raw).toContain(a);
   });
   it("a stale notice action cannot undo a later edit", () => {
     load([block("keep"), block("gone", a)]); counts.set(a, 1);

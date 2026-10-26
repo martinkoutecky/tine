@@ -41,6 +41,21 @@ reference-count reads until ready. Synchronous structural calls require init.
 The bounded AST cache retains regions from the same parse bundle. Parser
 traps quarantine the block as literal; structural edits refuse quarantine.
 
+Backspace-at-start and Delete-at-end share `outline::merge` in Markdown and Org,
+on routed pages and journals (F2, D-20261026-F2). The survivor keeps its hidden
+properties and clocks; absorbed hidden properties and clocks are dropped.
+An absorbed durable ID transfers with `IdTransferred` only when referenced and
+the survivor has no ID. An unreferenced absorbed ID is dropped. The frontend
+uses the existing graph reference-count index, including block refs and embeds;
+an unavailable or cold count conservatively treats an absorbed ID as referenced.
+When both blocks have IDs and the absorbed one is referenced, merge refuses
+`referenced_identity` without mutation, keeping both targets resolvable. OG
+`delete-block!` / `delete-concat` at `6e7afa8eb` instead replace the survivor UUID
+and `update-block-refs` rewrites its graph-wide referrers; Tine's page-local merge
+cannot perform that rewrite. Clock dropping follows OG's `move-to-prev-block`;
+OG's unreferenced forward Delete can retain absorbed raw metadata and clocks,
+an intentional difference to keep Tine's two entry methods consistent.
+
 Editor literal decisions are the parser's, asked through this door and never recomputed from
 content (I-12). Typography adds no parse to ordinary input handling: a parse (`inlineLiteral.ts`,
 cached per text) runs only once a replacement trigger such as `->` has completed, to ask whether the
