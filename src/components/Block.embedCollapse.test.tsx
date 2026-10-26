@@ -9,6 +9,7 @@ import { doc } from "../document/model";
 import type { BlockDto, PageDto, RefGroup } from "../types";
 import { Block, SurfaceContext } from "./Block";
 import { endEdit } from "../editorController";
+import { editorIn, maybeEditorIn } from "../tests/editorDriver";
 import { installKeybindings, runGlobalCommand } from "../keybindings";
 import { For } from "solid-js";
 import { bumpDataRev } from "../graphSession";
@@ -138,7 +139,7 @@ describe("embed collapse contract (GH #360)", () => {
       const content = embed.querySelector<HTMLElement>('[data-block-id="target"] .block-content')!;
       content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 })); await tick();
-      expect(embed.querySelector("textarea")).not.toBeNull();
+      expect(maybeEditorIn(embed)).not.toBeNull();
       run("editor/expand-children"); await tick();
       expect(occurrenceChildrenVisible(embed)).toContain("Child");
       expect(blockProperty("host-1", "collapsed")).toBe("false");
@@ -148,7 +149,7 @@ describe("embed collapse contract (GH #360)", () => {
       run("editor/collapse-children"); await tick();
       expect(embed.textContent).not.toContain("Grand");
       // Selection mode must retain the occurrence after Escape as well.
-      embed.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      editorIn(embed).keydown({ key: "Escape" });
       expect(hasSelection()).toBe(true);
       run("editor/expand-children"); await tick();
       expect(embed.textContent).toContain("Grand");

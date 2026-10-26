@@ -1,6 +1,5 @@
 import { shortcutKey } from "../shortcutKey";
-import { registerCollapseCommandSurface } from "../collapseCommandSurface";
-import { hasSelection, selectionScope } from "../document";
+import { bindCollapseCommandSurface } from "../collapseCommandSurface";
 import { msg, t as translate } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
 import { stickyParents } from "../stickyParents";
@@ -121,7 +120,7 @@ import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keyb
 import { cycleMarkerSmart } from "../editor/repeat";
 import { setMarker } from "../editor/marker";
 import { registerTransientLayer } from "../transientLayers";
-import { applyTemplateVars, prepareTemplateVars } from "../editor/templateVars";
+import { templateToOutline, prepareTemplateVars } from "../editor/templateVars";
 import {
   caretAtFirstRow,
   caretAtLastRow,
@@ -273,13 +272,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     return !surfaceKey.startsWith("ref:") && !surfaceKey.startsWith("embed:");
   };
   const storedFolded = () => storedFold(props.id); // `collapsed::`, else a query's authored `:collapsed? true` (GH #619 Q8)
-  if (collapseSurface) onCleanup(registerCollapseCommandSurface({
-    id: props.id,
-    active: () => hasSelection()
-      ? !!outlineScope && selectionScope() === outlineScope
-      : editing(),
-    surface: collapseSurface,
-  }));
+  bindCollapseCommandSurface(props.id, collapseSurface, outlineScope, editing);
   const collapsed = () => collapseSurface?.collapsed(props.id, storedFolded()) ?? storedFolded();
   const fmt = createMemo(() => pageByName(node().page)?.format ?? "md");
   const blockFacets = createMemo<Facets>(() => {
@@ -587,15 +580,6 @@ async function getTemplates(): Promise<import("../types").TemplateDto[]> {
     if (owner()) pushToast(msg("editor-block-couldn-t-load-templates", { detail: String(error) }), "error");
   }
   return templateCache ?? [];
-}
-function templateToOutline(
-  b: import("../types").BlockDto,
-  currentPage?: string
-): { raw: string; children: any[] } {
-  return {
-    raw: applyTemplateVars(b.raw, currentPage),
-    children: b.children.map((c) => templateToOutline(c, currentPage)),
-  };
 }
 // Block editor for `props.id`. Inside quick capture, CaptureCtx repurposes
 // Enter/Escape when autocomplete is closed to commit or dismiss the capture.
