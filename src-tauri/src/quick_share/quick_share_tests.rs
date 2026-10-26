@@ -962,6 +962,84 @@ fn an_expired_or_discarded_preview_does_not_upload() {
 }
 
 #[test]
+fn preparation_capacity_preserves_reviewed_previews() {
+    let root = tempfile::tempdir().unwrap();
+    let graph = root.path().join("graph");
+    std::fs::create_dir_all(graph.join("pages")).unwrap();
+    std::fs::write(graph.join("pages/Project.md"), "- Reviewed text\n").unwrap();
+    let store = tine_store::Store::open(&graph, Default::default())
+        .unwrap()
+        .0;
+    store.whole_graph().unwrap();
+    let scratch = root.path().join("scratch");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let mock = gist_mock(gist_store(), |_| resp(201, ""));
+    let f = fixture(mock.endpoints());
+    let request = QueryExportRequest {
+        argument: "@page and name = 'Project'".into(),
+        dialect: tine_core::query::wire_parse::QueryTextDialect::MacroTql,
+        properties: vec![],
+        current_page: Some("Project".into()),
+        name: "Project".into(),
+        host_block_id: None,
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
+        include_query_text: false,
+    };
+    let ids: Vec<_> = (0..MAX_PREPARED)
+        .map(|_| {
+            f.service
+                .prepare_share(&store, &request, &scratch)
+                .unwrap()
+                .prepare_id
+        })
+        .collect();
+    assert!(matches!(
+        f.service.prepare_share(&store, &request, &scratch),
+        Err(QsError::PreviewCapacity)
+    ));
+    assert_eq!(
+        f.service
+            .prepared
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|p| p.id.clone())
+            .collect::<Vec<_>>(),
+        ids
+    );
+    f.service.discard_prepared(&ids[0]);
+    assert!(f.service.prepare_share(&store, &request, &scratch).is_ok());
+    f.service.prepared.lock().unwrap()[0].expires = Instant::now() - Duration::from_secs(1);
+    assert!(f.service.prepare_share(&store, &request, &scratch).is_ok());
+    // The binding bound is total bytes: more than four small previews fit (Re-share
+    // all), but held payloads may never exceed four writer-limit payloads.
+    let held: Vec<_> = f
+        .service
+        .prepared
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|p| p.id.clone())
+        .collect();
+    for id in &held {
+        f.service.discard_prepared(id);
+    }
+    for _ in 0..5 {
+        assert!(f.service.prepare_share(&store, &request, &scratch).is_ok());
+    }
+    let big = vec![0u8; MAX_PREPARED_BYTES - 1];
+    f.service.prepared.lock().unwrap()[0].payload = big;
+    assert!(matches!(
+        f.service.prepare_share(&store, &request, &scratch),
+        Err(QsError::PreviewCapacity)
+    ));
+    assert_eq!(f.service.prepared.lock().unwrap().len(), 5);
+    assert_eq!(mock.count("POST", "/gists"), 0);
+}
+
+#[test]
 fn prepare_then_create_uploads_the_previewed_text_not_a_later_edit() {
     let root = tempfile::tempdir().unwrap();
     let graph = root.path().join("graph");

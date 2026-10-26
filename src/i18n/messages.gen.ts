@@ -1963,6 +1963,16 @@ export interface MessageArgs {
   "query-workspace-view-list": {};
   "query-workspace-view-search": {};
   "query-workspace-view-table": {};
+  "quick-share-all": {};
+  "quick-share-all-confirm": {};
+  "quick-share-all-duplicate": {};
+  "quick-share-all-empty": {};
+  "quick-share-all-incomplete": {};
+  "quick-share-all-no-key": {};
+  "quick-share-all-pending": {};
+  "quick-share-all-query": {};
+  "quick-share-all-review": {};
+  "quick-share-all-skipped": { "reason": string | number };
   "quick-share-as-shown": {};
   "quick-share-cancel": {};
   "quick-share-check": {};
@@ -2011,6 +2021,7 @@ export interface MessageArgs {
   "quick-share-error-not-connected": {};
   "quick-share-error-not-found": {};
   "quick-share-error-other": { "error": string | number };
+  "quick-share-error-preview-capacity": {};
   "quick-share-error-preview-expired": {};
   "quick-share-error-rate-limited": { "minutes": number };
   "quick-share-error-reconnect": {};

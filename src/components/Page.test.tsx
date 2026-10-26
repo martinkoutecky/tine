@@ -1485,11 +1485,12 @@ describe("page actions entry point", () => {
     }
   });
 
-  it("opens the share dialog for the page from the title-row share button, and hides the exports marker", async () => {
+  it.each(["Exports", "Renamed exports"])("opens sharing and Re-share all on the marked page %s, and hides the exports marker", async name => {
+    vi.spyOn(backend(), "quickShareList").mockResolvedValue({ enabled: true, error: null, account: null, shares: [] });
     const dto: PageDto = {
-      name: "Exports",
+      name,
       kind: "page",
-      title: "Exports",
+      title: name,
       pre_block: "tine/exports:: true\npublic:: false",
       blocks: [{ id: "exports-root", raw: "Body", collapsed: false, children: [] }],
     };
@@ -1509,8 +1510,9 @@ describe("page actions entry point", () => {
       const button = root.querySelector<HTMLButtonElement>(".page-title-actions .page-share-btn")!;
       expect(button).not.toBeNull();
       expect(button.getAttribute("aria-label")).toBe("Share this page");
+      expect(root.querySelector(".quick-share-all")?.textContent).toBe("Re-share all");
       button.click();
-      expect(shareTarget()).toEqual({ page: "Exports" });
+      expect(shareTarget()).toEqual({ page: name });
       // The marker is machinery, not a property to edit; an ordinary property still shows.
       expect(root.textContent).not.toContain("tine/exports");
     } finally {

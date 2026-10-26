@@ -22,10 +22,11 @@ fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:tine/guide-announced?
 // An author selects both pages through a query. The page-to-page link must
 // work in the viewer with the original secret prefix intact.
 fs.writeFileSync(path.join(graph, "pages/Project.md"), "- Native share sentinel\n- [[Notes ü]]\n- {{tine-query @page and (name = 'Project' or name = 'Notes ü')}}\n");
-fs.writeFileSync(path.join(graph, "pages/Notes ü.md"), "- Native linked page sentinel\n");
+fs.writeFileSync(path.join(graph, "pages/Notes ü.md"), "- Native linked page sentinel\n- {{tine-query @page and (name = 'Project' or name = 'Notes ü')}}\n");
 fs.writeFileSync(path.join(graph, "pages/Exports.md"), "tine/exports:: true\npublic:: false\n\n- {{query (or (property export) (property tine.share))}}\n");
 const gist = "1234567890abcdef1234567890abcdef";
 let envelope, creates = 0, deletes = 0, updates = 0;
+const hosted = new Map();
 const mock = http.createServer(async (req, res) => {
   const chunks = []; for await (const chunk of req) chunks.push(chunk);
   const body = Buffer.concat(chunks).toString("utf8");
@@ -34,21 +35,28 @@ const mock = http.createServer(async (req, res) => {
   if (req.url === "/login/oauth/access_token") return res.end(JSON.stringify({ access_token: "gho_disposableMockToken", token_type: "bearer", scope: "gist" }));
   if (req.url === "/user") { res.setHeader("x-oauth-scopes", "gist"); return res.end(JSON.stringify({ login: "octo-cat", id: 4242 })); }
   if (req.method === "POST" && req.url === "/gists") {
-    creates++; envelope = JSON.parse(body).files["tine-share.bin"].content;
-    res.statusCode = 201; return res.end(JSON.stringify({ id: gist, owner: { login: "octo-cat", id: 4242 } }));
+    creates++;
+    const id = creates === 1 ? gist : String(creates).repeat(32);
+    const content = JSON.parse(body).files["tine-share.bin"].content;
+    hosted.set(id, { envelope: content, updates: 0 });
+    if (id === gist) envelope = content;
+    res.statusCode = 201; return res.end(JSON.stringify({ id, owner: { login: "octo-cat", id: 4242 } }));
   }
-  if ((req.method === "GET" || req.method === "PATCH") && req.url === `/gists/${gist}`) {
+  const id = req.url.split("/")[2];
+  const item = hosted.get(id);
+  if ((req.method === "GET" || req.method === "PATCH") && item && req.url === `/gists/${id}`) {
     if (req.method === "PATCH") {
       if (req.headers["if-match"]) throw new Error("undocumented conditional PATCH");
-      updates++; envelope = JSON.parse(body).files["tine-share.bin"].content;
+      updates++; item.updates++; item.envelope = JSON.parse(body).files["tine-share.bin"].content;
+      if (id === gist) envelope = item.envelope;
     }
-    const revision = (updates ? "b" : "a").repeat(40);
-    return res.end(JSON.stringify({ id: gist, description: "Tine share (encrypted)", owner: { id: 4242 },
+    const revision = (item.updates ? "b" : "a").repeat(40);
+    return res.end(JSON.stringify({ id, description: "Tine share (encrypted)", owner: { id: 4242 },
       history: [{ version: revision }], files: { "README.md": {}, "tine-share.bin": {
-        raw_url: `http://127.0.0.1:${mock.address().port}/octo-cat/${gist}/raw/${revision}/tine-share.bin`,
+        raw_url: `http://127.0.0.1:${mock.address().port}/octo-cat/${id}/raw/${revision}/tine-share.bin`,
       } } }));
   }
-  if (req.method === "GET" && req.url.includes("/raw/")) { res.setHeader("content-type", "text/plain"); return res.end(envelope); }
+  if (req.method === "GET" && req.url.includes("/raw/") && item) { res.setHeader("content-type", "text/plain"); return res.end(item.envelope); }
   if (req.method === "DELETE" && req.url === `/gists/${gist}`) {
     deletes++; res.statusCode = 204; return res.end();
   }
@@ -142,10 +150,53 @@ print(ctypes.string_at(p).decode())`], { encoding: "utf8" }).trim();
   await answerNativeDialog("yes", { env });
   await waitForFileText(path.join(graph, "pages/Project.md"), (text) => !text.includes("tine.share::"), { timeoutMs: 15_000 });
   if (deletes !== 1) throw new Error("expected exactly one gist deletion");
+  mark("creates two definitions for the combined Re-share all journey");
+  for (const page of ["Project", "Notes ü"]) {
+    await openPageByName(browser, page);
+    await browser.$(".query-block .qc-share").waitForExist({ timeout: 20_000 });
+    await browser.execute(() => document.querySelector(".query-block .qc-share").click());
+    await browser.$(".share-dialog").waitForExist({ timeout: 15_000 });
+    await browser.waitUntil(() => browser.execute(() => !document.querySelector('.share-dialog .share-export')?.disabled), { timeout: 20_000 });
+    await browser.execute(() => document.querySelector('.share-dialog input[name="share-where"][value="link"]').click());
+    await browser.execute(() => document.querySelector('.share-dialog .share-export').click());
+    await browser.$(".quick-share-create").waitForExist({ timeout: 20_000 });
+    await browser.waitUntil(() => browser.execute(() => !document.querySelector('.quick-share-create').disabled), { timeout: 20_000 });
+    await browser.$(".quick-share-create").click();
+    await browser.$(".quick-share-created").waitForExist({ timeout: 20_000 });
+    await browser.execute(() => document.querySelector('.quick-share-dialog .settings-pane-head button').click());
+  }
+  if (creates !== 3) throw new Error("expected two new hosted shares");
+  const batchRecords = JSON.parse(fs.readFileSync(path.join(out, "data", identity.identities[identity.ship].identifier, "quick-shares.json"), "utf8")).shares;
+  const batchBefore = batchRecords.map(row => ({ ...row }));
+  fs.appendFileSync(path.join(graph, "pages/Project.md"), "- Native batch re-share sentinel\n");
+  await openPageByName(browser, "Project");
+  await browser.waitUntil(() => browser.execute(() => document.body.textContent.includes("Native batch re-share sentinel")), { timeout: 20_000 });
+  await openPageByName(browser, "Exports");
+  mark("Re-share all prepares both shares without uploading until confirmation");
+  await browser.$(".quick-share-all").waitForExist({ timeout: 20_000 });
+  await browser.$(".quick-share-all").click();
+  await browser.$(".quick-share-all-confirm").waitForExist({ timeout: 20_000 });
+  await browser.waitUntil(() => browser.execute(() => !document.querySelector('.quick-share-all-confirm')?.disabled), { timeout: 20_000 });
+  if ((await browser.$$(".quick-share-all-entry .quick-share-membership")).length !== 2) throw new Error("combined preview did not include both shares");
+  if (updates !== 1) throw new Error("batch uploaded before confirmation");
+  await browser.$(".quick-share-all-confirm").click();
+  await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll('.quick-share-all-entry [role="status"]')].filter(el => el.textContent.includes("Re-shared.")).length === 2), { timeout: 20_000 });
+  if (updates !== 3) throw new Error("batch did not PATCH each share exactly once");
+  mark("both original links in the built viewer show the batch edit");
+  for (const shared of batchBefore) {
+    await checkViewer(process.env.QUICK_SHARE_VIEWER_DIR || path.join(root, "artifacts/quick-share-viewer/build"), {
+      envelope: hosted.get(shared.gist_id).envelope,
+      link: `https://tine.page/s/1/#${shared.login}/${shared.gist_id}/${shared.key}`,
+      expectedText: "Native batch re-share sentinel",
+    });
+  }
+  const batchAfter = JSON.parse(fs.readFileSync(path.join(out, "data", identity.identities[identity.ship].identifier, "quick-shares.json"), "utf8")).shares;
+  if (batchAfter.length !== 2 || batchBefore.some(row => !batchAfter.some(next => next.share_id === row.share_id && next.gist_id === row.gist_id && next.key === row.key))) throw new Error("batch changed share identities");
+  proof.batch = { shares: 2, uploadsBeforeConfirm: 0, updates: 2, sameLinks: true, bothViewersShowEdit: true };
   proof.creates = creates; proof.updates = updates; proof.deletes = deletes; proof.sameLink = true;
   proof.result = "passed";
 } catch (error) {
-  proof.failure = { journey, expected: "native share then Re-share shows the edit at the same link, followed by confirmed Delete", observed: String(error).split("\n")[0], classification: browser ? "ambiguous; inspect DOM and log" : "infrastructure" };
+  proof.failure = { journey, expected: "native Re-share and confirmed Delete, then Re-share all updates two original links only after confirmation", observed: String(error).split("\n")[0], classification: browser ? "ambiguous; inspect DOM and log" : "infrastructure" };
   if (browser) {
     await browser.saveScreenshot(path.join(out, "failure.png")).catch(() => {});
     fs.writeFileSync(path.join(out, "failure-dom.html"), await browser.execute(() => document.body.innerHTML).catch(() => ""));

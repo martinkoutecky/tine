@@ -34,8 +34,13 @@ pub(crate) const README_TEXT: &str =
     "This is an encrypted Tine share. Open the link you were given to read it. https://tine.page\n";
 /// A prepared payload is uploadable this long (DESIGN §3.2).
 const PREPARED_TTL: Duration = Duration::from_secs(10 * 60);
-/// Prepared payloads kept at once (each up to 6 MiB); the oldest goes first.
-const MAX_PREPARED: usize = 4;
+/// Prepared payloads are held in memory until uploaded, discarded or expired.
+/// The bound is their total size: four writer-limit payloads (6 MiB each), so
+/// the worst case is unchanged while small shares can be prepared together
+/// (Re-share all). The count bound only limits bookkeeping. Overflow refuses
+/// the new preparation; it never evicts a reviewed payload.
+const MAX_PREPARED_BYTES: usize = 4 * 6 * 1024 * 1024;
+const MAX_PREPARED: usize = 64;
 /// Listing pages read by Check and Find (100 gists each, DESIGN §3.6).
 const MAX_LIST_PAGES: usize = 30;
 
@@ -159,6 +164,8 @@ pub(crate) enum QsError {
     ShareChanged,
     /// The prepared payload expired, was discarded, or was already used.
     PreviewExpired,
+    /// The bounded in-memory pool is full; existing previews remain valid.
+    PreviewCapacity,
     /// The share belongs to another account (DESIGN §3.6).
     WrongAccount {
         login: String,
@@ -695,8 +702,9 @@ impl Service {
         let mut all = self.prepared.lock().unwrap_or_else(|p| p.into_inner());
         let now = Instant::now();
         all.retain(|p| p.expires > now);
-        while all.len() >= MAX_PREPARED {
-            all.remove(0);
+        let held: usize = all.iter().map(|p| p.payload.len()).sum();
+        if all.len() >= MAX_PREPARED || held + prepared.payload.len() > MAX_PREPARED_BYTES {
+            return Err(QsError::PreviewCapacity);
         }
         all.push(Prepared {
             id: id.clone(),

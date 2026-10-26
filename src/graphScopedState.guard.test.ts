@@ -337,6 +337,7 @@ describe("graph-scoped UI state (I-20)", () => {
       "src/components/DatePicker.tsx#datePicker",
       "src/components/FormulaEditor.tsx#formulaEditor",
       "src/components/GraphNamePrompt.tsx#graphNameRequest",
+      "src/components/QuickShareAll.tsx#batchOwner",
       "src/components/RootRecoveryNotice.tsx#rootRecoveryOffers",
       "src/components/Settings.tsx#orphanScan",
     ]);

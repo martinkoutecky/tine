@@ -17,6 +17,7 @@ export type QuickShareError =
   | { kind: "maybeUpdated" }
   | { kind: "shareChanged" }
   | { kind: "previewExpired" }
+  | { kind: "previewCapacity" }
   | { kind: "wrongAccount"; login: string }
   | { kind: "notFound" }
   | { kind: "refused"; message: string }
@@ -92,6 +93,7 @@ export function quickShareErrorText(error: unknown): string {
     case "maybeUpdated": return t("quick-share-error-maybe-updated");
     case "shareChanged": return t("quick-share-error-share-changed");
     case "previewExpired": return t("quick-share-error-preview-expired");
+    case "previewCapacity": return t("quick-share-error-preview-capacity");
     case "wrongAccount": return t("quick-share-error-wrong-account", { login: error.login });
     case "notFound": return t("quick-share-error-not-found");
     case "refused": return t("quick-share-error-refused", { message: error.message });

@@ -12,6 +12,7 @@ import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from ".
 import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, contextMenu, renamePageInNavigation, adoptResolvedPageName } from "../ui";
 import { openShareDialog } from "../shareState";
 import { ShareIcon } from "./ShareIcon";
+import { QuickShareAll } from "./QuickShareAll";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { changed } from "../changeKeys";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "../binding";
@@ -1163,6 +1164,9 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         <Show when={!props.page.guide}>
           <CarryActions page={props.page} />
           <TagTableToggle page={props.page} />
+          <Show when={!isPublishedExport() && readPageProperty(props.page.name, "tine/exports")?.toLowerCase() === "true"}>
+            <QuickShareAll />
+          </Show>
         </Show>
         <Show when={props.page.guide}>
           <button class="guide-copy-btn" onClick={() => void copyGuideIntoGraph(props.page.name)}>{t("page-ui-copy-the-guide-into-your-graph")}</button>

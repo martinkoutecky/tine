@@ -268,6 +268,32 @@ none (shares are made on request).
 
 ### Re-share in place
 
+The page marked `tine/exports:: true` offers **Re-share all** beside its title,
+including after renaming and in other panes. It finds definitions with the
+ordinary `(property tine.share)` query and parses their query macros with lsdoc.
+Each distinct hosted share with a device-local key uses `quickSharePrepare`
+with its existing record id. Pending definitions, missing keys, duplicate
+destinations, ambiguous queries and preparation failures are listed as skipped
+with a reason. An incomplete definitions query refuses the batch, rather than
+silently presenting a partial list as complete. Folder destinations are excluded.
+
+All preparations finish before confirmation is available. One combined preview
+shows every title, membership counts and collapsible changed page names. Confirm
+consumes each successful preview once through `quickShareCreate`, sequentially,
+with the same native locking, revision re-read, PATCH and unknown-outcome rules
+as single Re-share. A failure does not stop later shares, and every outcome is
+shown; there is no automatic retry. Closing or switching graphs discards unused
+previews and prevents further uploads; an upload already started may finish.
+No unchanged-content optimization is used: unchanged membership can still carry
+edited content, so every successfully prepared share is updated on confirmation.
+
+The shared preview pool is bounded by total payload bytes: four writer-limit
+payloads (24 MiB), plus a bookkeeping cap of 64 entries; entries expire after
+ten minutes. Overflow refuses the new preparation without evicting any
+reviewed payload. The batch shows that refusal for affected shares; closing
+discards the retained payloads, and individual Re-share can handle skipped
+definitions. This changes neither `quick-shares.json` nor in-graph properties.
+
 Share again from a query carrying a live `tine.share::` value, or choose
 Re-share beside Delete in the Exports overview. The local record is matched
 by gist id, regardless of login spelling. Without its device-local key the
@@ -413,5 +439,5 @@ holds). Delete/Forget: the same line removed from each page that carries it.
 `quick_share_copy_link(shareId)`, `quick_share_connect_start()`,
 `quick_share_connect_status(attemptId)`, `quick_share_connect_cancel(attemptId)`,
 `quick_share_disconnect()`. Host commands, not plugin capabilities (ADR 0052).
-A prepared payload lives 10 minutes, at most 4 at a time, and goes when the
+A prepared payload lives 10 minutes, within a 24 MiB total (64 at most), and goes when the
 dialog closes.
