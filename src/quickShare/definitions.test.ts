@@ -335,7 +335,7 @@ describe("removeShareProperty", () => {
 
 it("the onboarding Guide says Delete takes the share's Exports definition and when the link stops working", async () => {
   const { readFileSync } = await import("node:fs");
-  const guide = readFileSync("crates/tine-core/src/templates/files-external-edits-backups.md", "utf8");
+  const guide = readFileSync("crates/tine-core/src/templates/share-pages.md", "utf8");
   for (const detail of ["within about 5 minutes", "a definition the share added to the **Exports page** goes with it",
     "only loses its `tine.share::` line"]) expect(guide).toContain(detail);
 });
