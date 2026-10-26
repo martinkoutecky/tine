@@ -284,6 +284,18 @@ function __tine_raw_install_panic_hook() {
 }
 
 /**
+ * OG built-ins excluded from default query-table property columns.
+ * @param {string} key
+ * @returns {boolean}
+ */
+function __tine_raw_is_og_built_in_property(key) {
+    const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.is_og_built_in_property(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
  * Whether a parser-tokenized macro name is a query; O(name bytes), no I/O.
  * @param {string} name
  * @returns {boolean}
@@ -1487,6 +1499,7 @@ export const format_journal_date = __tineGuard("format_journal_date", __tine_raw
 export const header_tokens_json = __tineGuard("header_tokens_json", __tine_raw_header_tokens_json);
 export const hide_policy_hides = __tineGuard("hide_policy_hides", __tine_raw_hide_policy_hides);
 export const install_panic_hook = __tineGuard("install_panic_hook", __tine_raw_install_panic_hook);
+export const is_og_built_in_property = __tineGuard("is_og_built_in_property", __tine_raw_is_og_built_in_property);
 export const is_query_macro_name = __tineGuard("is_query_macro_name", __tine_raw_is_query_macro_name);
 export const is_render_hidden_prop = __tineGuard("is_render_hidden_prop", __tine_raw_is_render_hidden_prop);
 export const last_panic = __tineGuard("last_panic", __tine_raw_last_panic);

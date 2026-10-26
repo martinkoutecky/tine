@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Logseq-style query tables now let you toggle columns through View and save the choice as Logseq-compatible `query-properties::` (GH #749).
 - Date-shaped links open an existing ordinary page when no journal file exists for the day, avoiding an empty duplicate journal (UI-DATE-PAGE-LINK).
 - Backspace and Delete merges drop the absorbed block's hidden heading, flashcard state and clocks; referenced IDs transfer when possible, and merges that would lose a referenced ID leave both blocks in place (REG-F2-MERGE-HIDDEN-ROWS, hDI40A).
 - Links inside query-result ancestor breadcrumbs are clickable again (GH #743).
