@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { IDENTITIES, IDENTITY } from "./lib/app-identity.mjs";
+import { IDENTITIES, IDENTITY, SHIP } from "./lib/app-identity.mjs";
 import { BETA_TAG } from "./release-policy.mjs";
 import { assembleCandidate } from "./assemble-release-candidate.mjs";
 import {
@@ -125,9 +125,11 @@ assert.doesNotMatch(releaseWorkflow, /check-flatpak-/,
   "release.yml still does not run the manifest-source drift checks (they stay in ci)");
 assert.ok(!Object.keys(layout.updaterPlatforms).some((platform) => /flatpak/i.test(platform)),
   "the updater must not reference the Flatpak");
-assert.match(releaseWorkflow,
-  /\n  flatpak:\n    needs: preflight\n    uses: \.\/\.github\/workflows\/flatpak\.yml\n    with:\n      identity: experiment\n/,
-  "release.yml must call flatpak.yml as a parallel build job with the Beta identity");
+// The Flatpak lane builds the identity this tree ships (Beta on og and release/X.Y
+// before the stable flip, the released identity after it).
+assert.ok(releaseWorkflow.includes(
+  `\n  flatpak:\n    needs: preflight\n    uses: ./.github/workflows/flatpak.yml\n    with:\n      identity: ${SHIP}\n`),
+  "release.yml must call flatpak.yml as a parallel build job with the shipped identity");
 assert.match(releaseWorkflow,
   /\n  stage-flatpak:\n    needs: \[preflight, flatpak\][\s\S]*?release-workflow-inputs\.mjs flatpak-x64[\s\S]*?stage-release-lane\.mjs flatpak-x64[\s\S]*?name: release-flatpak-x64/,
   "the Flatpak bundle must be named by the layout and staged like every other lane");
