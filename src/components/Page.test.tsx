@@ -1412,6 +1412,34 @@ describe("page actions entry point", () => {
     }
   });
 
+  it.each(["blur", "Enter"])("leaves an unchanged title silent on %s (REG-HOST-RESPELL-NOOP)", async (submit) => {
+    const dto: PageRead = {
+      name: "My Note", kind: "page", title: "My Note", pre_block: null,
+      id: "pages/my note.md", blocks: [],
+    };
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
+    const resolve = vi.spyOn(backend(), "resolvePage");
+    const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "unchanged", touched: [] });
+    mainPaneRouter.openFile(dto.id, dto.name, "page", { inPlace: true });
+    setToasts([]);
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".page-title")).not.toBeNull());
+      root.querySelector<HTMLElement>(".page-title")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      await tick();
+      const input = root.querySelector<HTMLInputElement>(".page-title-input")!;
+      expect(input.value).toBe(dto.name);
+      resolve.mockClear();
+      if (submit === "Enter") input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      input.dispatchEvent(new FocusEvent("blur", { bubbles: false }));
+      await flushMicrotasks();
+      expect(resolve).not.toHaveBeenCalled();
+      expect(rename).not.toHaveBeenCalled();
+      expect(toasts()).toEqual([]);
+      expect(root.querySelector(".page-title-input")).toBeNull();
+    } finally { dispose(); }
+  });
+
   it("shows the conflicting files and recovery instruction when a routed page rename is refused (GH #774)", async () => {
     const dto: PageRead = { name: "Marketing Box", kind: "page", title: "Marketing Box", pre_block: null,
       id: "pages/Marketing Box.md", blocks: [{ id: "duplicate-root", raw: "Body", collapsed: false, children: [] }] };

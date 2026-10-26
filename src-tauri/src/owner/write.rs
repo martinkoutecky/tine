@@ -349,6 +349,11 @@ pub(super) fn apply_refused(refusal: ApplyRefusal, page: &PageId) -> ErrorBody {
             "the write applied, then a later edit replaced it before it was saved",
             json!(true),
         ),
+        ApplyRefusal::SpellingIncomplete => with_page(
+            "uncertain",
+            "the file name may already be changed; the text change is not confirmed. Save or discard pending edits, then rename again to the intended name. If the page already shows that name, check its text before retrying",
+            Value::Null,
+        ),
         ApplyRefusal::Uncertain => {
             let mut body = ErrorBody::new(
                 "uncertain",

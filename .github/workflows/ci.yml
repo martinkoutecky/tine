@@ -279,7 +279,7 @@ jobs:
       # test exe fails to load (0xc0000139, TaskDialogIndirect). A side-by-side
       # `<exe>.manifest` supplies it to the test exe alone; the shipped binary
       # is untouched.
-      - name: Windows backup and file-lock tests (Expand-Archive opens a backup)
+      - name: Windows backup, file-lock and owner tests (Expand-Archive opens a backup)
         if: ${{ !cancelled() }}
         run: |
           $exe = cargo test -p tine --lib --no-run --message-format=json |
@@ -299,6 +299,31 @@ jobs:
           '@
           Push-Location src-tauri
           & $exe backup:: file_lock:: owner::git_autocommit
+          $code = $LASTEXITCODE
+          Pop-Location
+          exit $code
+
+      - name: Windows CLI integration test (named-pipe round trip)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        run: |
+          $exe = cargo test -p tine --test integration --no-run --message-format=json |
+            ForEach-Object { $_ | ConvertFrom-Json } |
+            Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'integration' -and $_.profile.test -and $_.executable } |
+            Select-Object -Last 1 -ExpandProperty executable
+          if (-not $exe) { throw 'no tine integration test executable' }
+          Set-Content -Encoding utf8 -Path "$exe.manifest" -Value @'
+          <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+            <dependency>
+              <dependentAssembly>
+                <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />
+              </dependentAssembly>
+            </dependency>
+          </assembly>
+          '@
+          Push-Location src-tauri
+          & $exe windows_cli
           $code = $LASTEXITCODE
           Pop-Location
           exit $code

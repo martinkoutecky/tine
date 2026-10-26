@@ -619,6 +619,7 @@ export interface Backend {
    *  through the store's audited create when missing, never rewriting an
    *  existing one, then open it in the system editor. */
   editCustomCss(): Promise<void>;
+  editGlobalCss(): Promise<void>;
   /** Settings → Graph → Git (ADR 0078): the bound graph's autocommit status. */
   gitAutocommitStatus(): Promise<GitAutocommitStatus>;
   /** Set this device's autocommit policy for the bound graph; answers the new status. */

@@ -481,7 +481,12 @@ impl<F: ConformanceIo> Driver<F> {
             .host
             .order
             .view()
-            .map(|(dst, src, versions, open)| {
+            .map(|(moves, versions, open)| {
+                // The model's gate is one move (storage-s35 `Gate`); the
+                // scheduler drives no operation with more (S2-DESIGN Q1).
+                let [(dst, src)] = moves else {
+                    panic!("a conformance gate with {} moves", moves.len())
+                };
                 let vers: Vec<_> = (0..self.windows.len())
                     .map(|p| versions.get(&key(p)).map_or(NONE, |v| self.version(*v)))
                     .collect();
@@ -909,9 +914,11 @@ impl<F: ConformanceIo> Driver<F> {
             .iter()
             .map(|(&p, &t)| (key(p), (text(t), text(plan[&p]))))
             .collect();
-        let ends = (dst != NONE).then(|| (key(dst as usize), key(src as usize)));
-        let moved = ends.as_ref().map(|(d, s)| (d.as_str(), s.as_str()));
-        match self.host.apply(&effects, moved) {
+        let moves: Vec<_> = (dst != NONE)
+            .then(|| (key(dst as usize), key(src as usize)))
+            .into_iter()
+            .collect();
+        match self.host.apply(&effects, &moves) {
             Disposition::Refused | Disposition::Disabled => Err(ApplyRefusal::Changed),
             Disposition::Waiting => Err(ApplyRefusal::Busy),
             disposition => Ok(disposition),

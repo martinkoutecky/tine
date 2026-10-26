@@ -67,6 +67,11 @@ export function hide_policy_hides(policy: string, key: string, properties: strin
 export function install_panic_hook(): void;
 
 /**
+ * OG built-ins excluded from default query-table property columns.
+ */
+export function is_og_built_in_property(key: string): boolean;
+
+/**
  * Whether a parser-tokenized macro name is a query; O(name bytes), no I/O.
  */
 export function is_query_macro_name(name: string): boolean;
@@ -307,6 +312,7 @@ export interface InitOutput {
     readonly header_tokens_json: (a: number, b: number, c: number) => [number, number];
     readonly hide_policy_hides: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly install_panic_hook: () => void;
+    readonly is_og_built_in_property: (a: number, b: number) => number;
     readonly is_query_macro_name: (a: number, b: number) => number;
     readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly last_panic: () => [number, number];

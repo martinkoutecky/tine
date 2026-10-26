@@ -661,7 +661,8 @@ fn every_production_page_writer_runs_under_a_host_reservation() {
     }
     // The census (STEP3 §7) reaches the host.
     for writer in [
-        "crates/tine-graph-features/src/pages.rs::rename_page_after_inventory",
+        // A rename of several pages is one host operation (S2).
+        "crates/tine-graph-features/src/pages.rs::multi_rename",
         "crates/tine-graph-features/src/pages.rs::host_rename",
         "crates/tine-graph-features/src/pages.rs::merge_pages",
         "crates/tine-graph-features/src/pages.rs::rename_file_to_page",
@@ -951,7 +952,14 @@ fn undeclared(functions: &BTreeMap<String, Function>, operations: &[String]) -> 
                     OWN_KINDS => function.body.contains("in & kinds"),
                     kind => function.body.contains(&format!("EditKind :: {kind}")),
                 };
-            if runs && !declares {
+            // This binding wrapper forwards the same op (including kinds)
+            // to PageHost::apply; it never calls inner Host::apply or changes
+            // the kinds. The inner admission remains the one kind owner.
+            let forwards = *op == "apply"
+                && key == "binding_spelling.rs::apply_spellings"
+                && function.body.contains("self . apply (op)")
+                && !function.body.contains(". kinds");
+            if runs && !declares && !forwards {
                 found.push(format!("{key} runs {op} without took(…, EditKind::{kind})"));
             }
         }

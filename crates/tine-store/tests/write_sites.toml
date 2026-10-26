@@ -1164,6 +1164,26 @@ note = "Global CSS app-data parent directory setup; graph CSS delegates to Trans
 mutations = "fs::create_dir_all=1"
 
 [[site]]
+file = "src-tauri/src/css_files.rs"
+fn = "edit_global_css"
+domain = "app"
+guard = ""
+test = ""
+oracle = false
+note = "GH #778: create the app-config parent directory for global.css handoff; file creation delegates to the existing global_save/device_io::atomic_update guarded writer. Rust owns the path."
+mutations = "fs::create_dir_all=1"
+
+[[site]]
+file = "src-tauri/src/css_files.rs"
+fn = "install_global_css_watcher"
+domain = "app"
+guard = ""
+test = ""
+oracle = false
+note = "GH #778: ensure the app-config directory exists before installing its non-recursive global.css watch. No CSS file or graph content is written."
+mutations = "fs::create_dir_all=1"
+
+[[site]]
 file = "src-tauri/src/data_home.rs"
 fn = "probe_writable"
 domain = "app"
@@ -1550,8 +1570,28 @@ domain = "app"
 guard = ""
 test = ""
 oracle = false
-note = "Private application owner namespace setup (permissions 0700), outside graph."
-mutations = ".create=1, fs::create_dir_all=2"
+note = "Private application owner namespace setup (Unix permissions 0700); Windows delegates protected-DACL creation to windows_security::create_directory. Outside graph."
+mutations = ".create=1, fs::create_dir_all=1"
+
+[[site]]
+file = "src-tauri/src/owner/windows_security.rs"
+fn = "create_directory"
+domain = "app"
+guard = ""
+test = ""
+oracle = false
+note = "Account-derived LocalAppData/tine/owners coordination directories only, outside graph; explicit current-user protected DACL, no reparse points, ownership and permissions checked on use. Existing ACLs are never repaired."
+mutations = "CreateDirectoryW=1"
+
+[[site]]
+file = "src-tauri/src/owner/windows.rs"
+fn = "truncate_start_log"
+domain = "app"
+guard = ""
+test = ""
+oracle = false
+note = "Private bounded owner startup log only. ReOpenFile obtains truncate rights on the existing append-only stderr file object without resolving a pathname; called only after bound_log checks regular-file metadata and size."
+mutations = ".set_len=1"
 
 [[site]]
 file = "src-tauri/src/owner/serve.rs"

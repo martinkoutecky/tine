@@ -3,12 +3,19 @@ import { render } from "solid-js/web";
 import { backend } from "./backend";
 import * as css from "./customCss";
 import { GraphPublish } from "./components/GraphPublish";
-import { injectCustomCss } from "./graph";
+import { applyCustomCssChange, injectCustomCss } from "./graph";
 import { loadGlobalCss, openCssEditor, setCssEditorText, flushCssEditor, retireGraphCssEditor } from "./cssEditor";
 import * as published from "./publishedBackend";
 import { setToasts, toasts } from "./toasts";
 
 afterEach(() => { document.body.innerHTML = ""; vi.restoreAllMocks(); });
+
+it("applies an external global CSS notification without reopening the graph", async () => {
+  vi.spyOn(backend(), "readCssFile").mockResolvedValue({ text: "a { color: purple }", revision: "external" });
+  applyCustomCssChange({ global: true });
+  await vi.waitFor(() => expect(document.querySelector("#tine-global-css")?.textContent).toBe("a { color: purple }"));
+  expect(backend().readCssFile).toHaveBeenCalledWith(true);
+});
 
 it("keeps an external revision written after the durable save but before its IPC reply", async () => {
   vi.spyOn(backend(), "getAppString").mockResolvedValue("");

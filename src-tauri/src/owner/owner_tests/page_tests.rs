@@ -65,6 +65,7 @@ fn seed(graph: &Graph, files: &[(&str, &str)]) {
 }
 
 #[test]
+#[cfg(unix)]
 fn rename_home_config_failure_discloses_published_pages() {
     use std::os::unix::fs::PermissionsExt;
     let graph = Graph::new();

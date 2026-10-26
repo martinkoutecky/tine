@@ -783,7 +783,7 @@ pub fn write_highlights(
             annotation_steps(&mut tx, &annotation, &doc, true);
             let mut op = crate::retained::plan(tx)?;
             if let Some((source, ..)) = &annotation.legacy {
-                op.moved = Some((annotation.page.clone(), source.clone()));
+                op.moves.push((annotation.page.clone(), source.clone()));
             }
             let unchanged = op.pages.iter().all(|(_, effect, expected)| {
                 matches!((effect, expected),

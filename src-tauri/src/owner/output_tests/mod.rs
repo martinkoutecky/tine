@@ -15,7 +15,6 @@
 //! This is a directory module (`output_tests/mod.rs`) because
 //! `owner_tests::the_endpoint_has_no_webview_or_plugin_door` counts the `.rs`
 //! files directly under `owner/`.
-#![cfg(unix)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -131,7 +130,14 @@ impl Fixture {
     fn statuses(&self) -> Vec<Value> {
         let paths = |name: &str| GraphPaths {
             lock: self.owners.join(format!("{name}.lock")),
+            #[cfg(unix)]
             socket: self.owners.join(format!("{name}.sock")),
+            #[cfg(windows)]
+            socket: super::windows_security::pipe_name(&format!(
+                "{:016x}",
+                crate::settings::graph_hash(&self.root.join(name))
+            ))
+            .unwrap(),
             start_log: self.owners.join(format!("{name}.start.log")),
         };
         let claim = |paths: &GraphPaths, kind: &str| {

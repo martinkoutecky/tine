@@ -126,6 +126,8 @@ export interface MessageArgs {
   "code-display-could-not-remember-code-wrapping": { "error": string | number };
   "command-appearance-edit-custom-css": {};
   "command-appearance-edit-global-css": {};
+  "command-appearance-open-custom-css-default-app": {};
+  "command-appearance-open-global-css-default-app": {};
   "command-builtin-editor-ac-accept": {};
   "command-builtin-editor-ac-close": {};
   "command-builtin-editor-ac-nav": {};
@@ -520,6 +522,8 @@ export interface MessageArgs {
   "css-global-hint": {};
   "css-graph-file": {};
   "css-graph-hint": {};
+  "css-open-default-app": {};
+  "css-open-failed": { "error": string | number };
   "css-read-failed": { "error": string | number };
   "css-reload": {};
   "css-reload-confirm": {};

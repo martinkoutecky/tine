@@ -4,7 +4,7 @@ import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 // as a card with a quote header, an author chip and a marked passage in the
 // parent. The comment is an ordinary child block written through the document
 // door, so undo removes it like any other insert.
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { editingId, endEdit, startEditing } from "../editorController";
@@ -18,6 +18,9 @@ import { commentOnPaletteSelection, rememberEditorSelectionForPalette } from "..
 import { invalidateBinding } from "../binding";
 import { setToasts, toasts } from "../toasts";
 import { Block } from "./Block";
+import { PageView } from "./Page";
+import { paneRouter } from "../panes";
+import { resetTabsToJournals } from "../router";
 
 const PAGE = "MarginComments";
 
@@ -59,10 +62,41 @@ afterAll(() => disposeKeys?.());
 afterEach(() => {
   endEdit("page-navigation");
   resetStore();
+  resetTabsToJournals();
   document.body.innerHTML = "";
 });
 
 describe("Ctrl/Cmd+R creates a margin comment", () => {
+  it.each(["p", "ancestor"])("keeps the margin thread inline and replyable when zoomed into %s", async (zoomRoot) => {
+    loadSingle(page([block("ancestor", "Parent", [block("p", "Discuss these words", [
+      block("c", "My view\nquote:: words", [block("r", "Earlier reply")]),
+    ])])]));
+    paneRouter("main").replaceActiveRoute({ kind: "page", name: PAGE, pageKind: "page", block: zoomRoot });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <PageView />, root);
+    try {
+      const zoom = await vi.waitFor(() => {
+        const element = root.querySelector(".zoomed-block");
+        expect(element).not.toBeNull();
+        return element!;
+      });
+      expect(root.querySelector(".margin-column")).toBeNull();
+      const card = zoom.querySelector('[data-block-id="c"]')!;
+      expect(card.textContent).toContain("My view");
+      expect(card.textContent).toContain("Earlier reply");
+      const draft = card.querySelector<HTMLTextAreaElement>(".comment-composer textarea")!;
+      expect(draft).not.toBeNull();
+      draft.value = "Reply from zoom";
+      draft.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      draft.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      const reply = docNode(docNode("c")!.children.at(-1)!)!;
+      expect(reply.parent).toBe("c");
+      expect(reply.raw).toContain("Reply from zoom");
+      expect(zoom.textContent).toContain("Reply from zoom");
+    } finally { dispose(); }
+  });
+
   it("places root actions and author in the quote line and reply actions in its body", () => {
     const { root, dispose } = mount([block("p", "words", [block("c", "My view\nquote:: words", [block("r", "Evidence\nauthor:: Ada")])])]);
     try {
