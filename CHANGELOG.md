@@ -20,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Added
 
 - Windows: graph read/write commands and git runs now use a private named pipe to the app or `tine serve`, including automatic startup, app handover and `serve --stop` (REG-CLI-WINDOWS).
+- Windows: wait for busy command pipes and draining predecessor handles, and keep owner locks in `%LOCALAPPDATA%\tine-owners` outside the installer directory (REG-CLI-WINDOWS-R3).
 - Guide: a new **Share pages** page covers the Share dialog, folder exports, quick-share links, Re-share, Update all, Delete and Settings → Sharing. The tips page explains margin comments more fully (every way to start one, how replies and authors are stored), and the git autocommit section describes its status lines and the messages for a folder without git or a phone.
 - Command line: `page create`, `page rename` with reference rewriting, and confirmed `page delete` through the app's page operations; `ref` and `embed` print reusable syntax after ensuring a durable block id. Page deletion reports broken references.
 

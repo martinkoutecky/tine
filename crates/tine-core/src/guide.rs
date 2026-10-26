@@ -2046,6 +2046,7 @@ mod og_20d_guide_tests {
                 "owner-unsafe",
                 "exit 5",
             ],
+            vec!["busy pipe", "waits", "previous owner", "3 seconds"],
             vec!["android", "ios", "no command-line"],
             vec!["--json", "stdout", "tine.cli/1"],
             vec!["stderr", "exit", "diagnostics", "truncation"],

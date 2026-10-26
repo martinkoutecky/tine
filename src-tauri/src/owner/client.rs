@@ -88,7 +88,7 @@ mod local {
         replies: Option<Duration>,
     ) -> Result<Option<Conn>, OwnerError> {
         #[cfg(windows)]
-        let stream = match Stream::connect_checked(socket)? {
+        let stream = match Stream::connect_checked(socket, io)? {
             Some(stream) => stream,
             None => return Ok(None),
         };

@@ -130,7 +130,7 @@ fn account_dir() -> Result<PathBuf, OwnerError> {
         CoTaskMemFree(raw.cast());
         PathBuf::from(path)
     };
-    Ok(path.join("tine").join("owners"))
+    Ok(path.join("tine-owners"))
 }
 
 /// Mobile: one process per app, with per-app sandboxed data, no CLI host.
@@ -170,12 +170,8 @@ fn create_private(dir: &Path) -> Result<(), OwnerError> {
 
 #[cfg(windows)]
 fn create_private(dir: &Path) -> Result<(), OwnerError> {
-    // The Known Folder is trusted. Both components below it must be private:
-    // a writable parent could replace a protected owners directory wholesale.
-    let parent = dir
-        .parent()
-        .ok_or_else(|| OwnerError::Unsafe("owner directory has no parent".into()))?;
-    super::windows_security::create_directory(parent)?;
+    // The Known Folder is trusted. Create only our coordination directory,
+    // outside stable's case-insensitive LocalAppData\Tine install directory.
     super::windows_security::create_directory(dir)
 }
 
@@ -201,10 +197,7 @@ fn check_private(dir: &Path) -> Result<(), OwnerError> {
 fn check_private(dir: &Path) -> Result<(), OwnerError> {
     // Never repair a pre-existing DACL: a loosened directory may already
     // contain a lock file controlled by another account.
-    for path in std::iter::once(dir).chain(dir.parent()) {
-        super::windows_security::check_directory(path)?;
-    }
-    Ok(())
+    super::windows_security::check_directory(dir)
 }
 
 /// A Unix socket path must fit `sockaddr_un.sun_path` (108 bytes on Linux,
@@ -246,7 +239,7 @@ mod tests {
     fn windows_owner_directory_rejects_files_and_reparse_points() {
         use super::*;
         let data = tempfile::tempdir().unwrap();
-        let owners = data.path().join("coord/owners");
+        let owners = data.path().join("tine-owners");
         create_private(&owners).unwrap();
         check_private(&owners).unwrap();
         let file = data.path().join("file");
@@ -274,6 +267,7 @@ mod tests {
         let arm = &arm[..arm.find("\n}\n").unwrap()];
         assert!(arm.contains("SHGetKnownFolderPath"));
         assert!(arm.contains("FOLDERID_LocalAppData"));
+        assert!(arm.contains("join(\"tine-owners\")"));
         assert!(!arm.contains("std::env"));
         assert!(!arm.contains("Unsupported"));
         let mobile = production

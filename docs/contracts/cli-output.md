@@ -553,7 +553,7 @@ owner newer than this `tine`) exits `1`, like `internal`.
 | `protocol` | 5 | the owner speaks another protocol version |
 | `owner-mismatch` | 5 | the endpoint belongs to another graph (hash collision) |
 | `owner-start` | 5 | `tine serve` did not come up, or the owner's endpoint does not answer, or the owner stopped answering a read |
-| `owner-unsafe` | 5 | the owner namespace or endpoint path is not safe to use |
+| `owner-unsafe` | 5 | the owner namespace or endpoint path is unsafe: on a shared Windows machine another account pre-created or loosened the directory, or occupied the pipe name (a lingering predecessor name is retried for 3 s first) |
 | `owner-lock` | 5 | the owner lock call itself failed (not contention) |
 | `unsupported` | 5 | no CLI owner on this platform (iOS/Android and unshipped targets) |
 | `stale` | 6 | a write's page or block changed: `--rev` no longer matches, a handle no longer resolves (or resolves to several blocks), or the page changed twice while the write ran. Not admitted; read again |
@@ -566,17 +566,22 @@ owner newer than this `tine`) exits `1`, like `internal`.
 
 Linux, macOS and Windows support all graph commands against the app or `tine serve`,
 including automatic serve startup, app handover and `serve --stop`. Windows uses
-the account-wide lock under Known Folder LocalAppData/tine/owners and the local-only
-pipe `\\.\pipe\tine-<user-sid>-<16-hex-graph-hash>`. The owners directory and its
-tine parent are created with explicit protected DACLs. Existing directories may
+the account-wide lock under Known Folder LocalAppData/tine-owners (resolved through
+`SHGetKnownFolderPath(FOLDERID_LocalAppData)`) and the local-only
+pipe `\\.\pipe\tine-<user-sid>-<16-hex-graph-hash>`. The owners directory is
+created with an explicit protected DACL. Existing directories may
 have inherited or unprotected DACLs: both explicit and inherited ACEs are checked
 on every use. The owner must be the current user, SYSTEM or Administrators; reparse
 points, null DACLs, unknown ACE types, and grants of write, delete, delete-child,
 WRITE_DAC or WRITE_OWNER to anyone outside those principals refuse. Safe inherited
-directories keep their ACLs; no permissions are repaired. The pipe
+directories keep their ACLs; no permissions are repaired. New lock files also
+get an explicit private protected DACL; existing lock files keep theirs. An
+inherit-only CREATOR OWNER ACE is also safe on directories. The pipe
 grants access only to the current user, rejects remote clients, and its first
-instance refuses an occupied name. Before sending a hello the client checks the
-connected pipe's owner and protected DACL. Unsafe permissions or pipe creation
+instance retries an occupied name for 3 s while holding the owner lock, allowing
+a predecessor's handles to drain, then refuses it. A busy pipe is waited on up to
+the caller's I/O deadline; it is never reported as no owner. Before sending a hello
+the client checks the connected pipe's owner and protected DACL. Unsafe permissions or pipe creation
 conflicts report `owner-unsafe` (exit 5). Same-account processes are trusted.
 Framing, caps, deadlines, custody checks, the 60 s handover bound and the rule that
 a timeout never permits takeover are shared with Unix. App lock/namespace/bind

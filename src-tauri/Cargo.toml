@@ -108,10 +108,10 @@ jni = { version = "0.22.4", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "5.4.1"
-windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console", "Win32_Storage_Packaging_Appx", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_Com", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_IO"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console", "Win32_Storage_Packaging_Appx", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_Com", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_IO", "Win32_System_Pipes"] }
 # Already enabled by the desktop dependency graph; make the pipe adapter's
 # runtime and networking requirements explicit on Windows.
-tokio = { version = "1", default-features = false, features = ["net", "rt-multi-thread"] }
+tokio = { version = "1", default-features = false, features = ["net", "rt-multi-thread", "time"] }
 # Windows uses Schannel through native-tls: the default rustls transport does
 # not inherit every Windows network/certificate policy and failed before
 # fetching latest.json on an otherwise-online Windows 11 system (GH #241).

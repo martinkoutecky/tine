@@ -7,14 +7,17 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Poll, Waker};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::net::windows::named_pipe::{
     ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions,
 };
 use tokio::runtime::{Builder, Runtime};
-use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY};
+use windows_sys::Win32::Foundation::{
+    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_SEM_TIMEOUT,
+};
 use windows_sys::Win32::Storage::FileSystem::FlushFileBuffers;
+use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
 use windows_sys::Win32::System::Threading::{GetCurrentThreadId, OpenThread, THREAD_TERMINATE};
 use windows_sys::Win32::System::IO::{CancelIoEx, CancelSynchronousIo};
 
@@ -39,15 +42,20 @@ fn runtime() -> io::Result<&'static Runtime> {
 
 fn create_pipe(path: &Path, first: bool) -> Result<NamedPipeServer, OwnerError> {
     let descriptor = Descriptor::private(false)?;
-    create_with(path, first, &descriptor)
+    create_with(path, first, &descriptor).map_err(|e| pipe_create_error(path, e))
 }
 
-fn create_with(
-    path: &Path,
-    first: bool,
-    descriptor: &Descriptor,
-) -> Result<NamedPipeServer, OwnerError> {
-    let runtime = runtime().map_err(|e| OwnerError::Start(e.to_string()))?;
+fn pipe_create_error(path: &Path, error: io::Error) -> OwnerError {
+    OwnerError::Unsafe(format!(
+        "cannot create private owner pipe {} (name may be occupied): {error}",
+        path.display()
+    ))
+}
+
+const PREDECESSOR_WAIT: Duration = Duration::from_secs(3);
+
+fn create_with(path: &Path, first: bool, descriptor: &Descriptor) -> io::Result<NamedPipeServer> {
+    let runtime = runtime()?;
     let _entered = runtime.enter();
     let mut attributes = descriptor.attributes();
     // Tokio copies the descriptor during CreateNamedPipe; it outlives that call.
@@ -57,12 +65,6 @@ fn create_with(
             .reject_remote_clients(true)
             .create_with_security_attributes_raw(path, std::ptr::from_mut(&mut attributes).cast())
     }
-    .map_err(|e| {
-        OwnerError::Unsafe(format!(
-            "cannot create private owner pipe {} (possibly already occupied): {e}",
-            path.display()
-        ))
-    })
 }
 
 pub(super) struct Listener {
@@ -72,9 +74,32 @@ pub(super) struct Listener {
 
 impl Listener {
     pub(super) fn bind(path: &Path) -> Result<Self, OwnerError> {
+        let descriptor = Descriptor::private(false)?;
+        let deadline = Instant::now() + PREDECESSOR_WAIT;
+        // The caller holds the owner lock. An occupied name can belong to a
+        // draining predecessor (including IOCP retirement), or a squatter.
+        // Always request the first instance, even when retrying.
+        let pending = loop {
+            match create_with(path, true, &descriptor) {
+                Ok(pipe) => break pipe,
+                Err(e)
+                    if e.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32)
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(
+                        Duration::from_millis(50)
+                            .min(deadline.saturating_duration_since(Instant::now())),
+                    );
+                }
+                Err(e) => return Err(OwnerError::Unsafe(format!(
+                    "cannot claim first owner pipe {} after up to {} s waiting for predecessor handles (name may still be occupied): {e}",
+                    path.display(), PREDECESSOR_WAIT.as_secs()
+                ))),
+            }
+        };
         Ok(Self {
             path: path.to_owned(),
-            pending: Mutex::new(create_pipe(path, true)?),
+            pending: Mutex::new(pending),
         })
     }
 
@@ -154,24 +179,62 @@ impl Stream {
         })))
     }
 
-    /// Opening is nonblocking (ERROR_PIPE_BUSY means retry discovery). The
-    /// default SECURITY_IDENTIFICATION prevents a squatter impersonating us.
+    /// Busy instances still have an owner: wait within the caller's I/O bound.
+    /// The default SECURITY_IDENTIFICATION prevents a squatter impersonating us.
     /// Inspect the actual connected handle before sending any graph or text.
-    pub(super) fn connect_checked(path: &Path) -> Result<Option<Self>, OwnerError> {
+    pub(super) fn connect_checked(
+        path: &Path,
+        io_timeout: Duration,
+    ) -> Result<Option<Self>, OwnerError> {
         let runtime = runtime().map_err(|e| OwnerError::Start(e.to_string()))?;
         let _entered = runtime.enter();
-        let pipe = match ClientOptions::new().open(path) {
-            Ok(pipe) => pipe,
-            Err(e) if matches!(e.raw_os_error(), Some(code) if code == ERROR_FILE_NOT_FOUND as i32 || code == ERROR_PIPE_BUSY as i32) => {
-                return Ok(None)
-            }
-            Err(e) if e.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {
-                return Err(OwnerError::Unsafe(format!("owner pipe access denied: {e}")))
-            }
-            Err(e) => {
-                return Err(OwnerError::Start(format!(
-                    "cannot connect to owner pipe: {e}"
-                )))
+        let deadline = Instant::now() + io_timeout;
+        let name = security::wide(path.as_os_str());
+        let pipe = loop {
+            let error = match ClientOptions::new().open(path) {
+                Ok(pipe) => break pipe,
+                Err(e) => e,
+            };
+            match error.raw_os_error().map(|code| code as u32) {
+                Some(ERROR_FILE_NOT_FOUND) => return Ok(None),
+                Some(ERROR_PIPE_BUSY) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return Err(OwnerError::Start(
+                            "owner pipe is busy (connection timed out)".into(),
+                        ));
+                    }
+                    // Zero asks for the pipe's default wait, and u32::MAX is
+                    // infinite. Use neither; subsequent opens share a deadline.
+                    let millis = remaining.as_millis().clamp(1, u32::MAX as u128 - 1) as u32;
+                    if unsafe { WaitNamedPipeW(name.as_ptr(), millis) } != 0 {
+                        continue; // Another client may win the open race.
+                    }
+                    let error = io::Error::last_os_error();
+                    match error.raw_os_error().map(|code| code as u32) {
+                        Some(ERROR_FILE_NOT_FOUND) => return Ok(None),
+                        Some(ERROR_SEM_TIMEOUT) => {
+                            return Err(OwnerError::Start(
+                                "owner pipe is busy (connection timed out)".into(),
+                            ))
+                        }
+                        _ => {
+                            return Err(OwnerError::Start(format!(
+                                "cannot wait for owner pipe: {error}"
+                            )))
+                        }
+                    }
+                }
+                Some(ERROR_ACCESS_DENIED) => {
+                    return Err(OwnerError::Unsafe(format!(
+                        "owner pipe access denied: {error}"
+                    )))
+                }
+                _ => {
+                    return Err(OwnerError::Start(format!(
+                        "cannot connect to owner pipe: {error}"
+                    )))
+                }
             }
         };
         security::check_handle(pipe.as_raw_handle(), false)?;
@@ -180,7 +243,7 @@ impl Stream {
 
     #[cfg(test)]
     pub(super) fn connect(path: impl AsRef<Path>) -> io::Result<Self> {
-        Self::connect_checked(path.as_ref())
+        Self::connect_checked(path.as_ref(), super::endpoint::IO_TIMEOUT)
             .map_err(|e| io::Error::other(e.to_string()))?
             .ok_or_else(|| io::ErrorKind::NotFound.into())
     }
@@ -426,7 +489,7 @@ mod tests {
     fn pair() -> (Stream, Stream) {
         let path = name();
         let listener = Listener::bind(&path).unwrap();
-        let client = Stream::connect_checked(&path).unwrap().unwrap();
+        let client = Stream::connect(&path).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             match listener.accept() {
@@ -452,8 +515,11 @@ mod tests {
         let path = name();
         let listener = Listener::bind(&path).unwrap();
         security::check_handle(listener.pending.lock().unwrap().as_raw_handle(), false).unwrap();
+        let started = Instant::now();
         assert!(matches!(Listener::bind(&path), Err(OwnerError::Unsafe(_))));
-        let _client = Stream::connect_checked(&path).unwrap().unwrap();
+        assert!(started.elapsed() >= PREDECESSOR_WAIT);
+        assert!(started.elapsed() < PREDECESSOR_WAIT + Duration::from_secs(2));
+        let _client = Stream::connect(&path).unwrap();
         drop(listener);
         drop(_client);
         // IOCP may retire cancelled operations after Drop returns. The name
@@ -472,6 +538,112 @@ mod tests {
     }
 
     #[test]
+    fn a_busy_pipe_waits_for_the_next_instance_instead_of_reporting_no_owner() {
+        let path = name();
+        let listener = Listener::bind(&path).unwrap();
+        let _first = Stream::connect(&path).unwrap();
+        let runtime = runtime().unwrap();
+        let _entered = runtime.enter();
+        assert_eq!(
+            ClientOptions::new()
+                .open(&path)
+                .err()
+                .unwrap()
+                .raw_os_error(),
+            Some(ERROR_PIPE_BUSY as i32)
+        );
+        let (done, finished) = std::sync::mpsc::channel();
+        let (ready, running) = std::sync::mpsc::channel();
+        let second_path = path.clone();
+        let worker = std::thread::spawn(move || {
+            ready.send(()).unwrap();
+            assert!(done
+                .send(Stream::connect_checked(
+                    &second_path,
+                    Duration::from_secs(2)
+                ))
+                .is_ok());
+        });
+        running.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(matches!(
+            finished.recv_timeout(Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let _accepted = loop {
+            match listener.accept() {
+                Ok(accepted) => break accepted,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline)
+                }
+                Err(e) => panic!("{e}"),
+            }
+        };
+        // Like the production accept loop, poll the newly created instance's
+        // ConnectNamedPipe operation so WaitNamedPipe can observe it waiting.
+        let _second_server = loop {
+            match listener.accept() {
+                Ok(accepted) => break accepted,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline)
+                }
+                Err(e) => panic!("{e}"),
+            }
+        };
+        let _second = finished
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap()
+            .expect("busy is not no owner");
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn a_busy_pipe_times_out_as_an_error_but_a_missing_pipe_has_no_owner() {
+        let path = name();
+        assert!(Stream::connect_checked(&path, Duration::from_millis(100))
+            .unwrap()
+            .is_none());
+        let _listener = Listener::bind(&path).unwrap();
+        let _first = Stream::connect(&path).unwrap();
+        let started = Instant::now();
+        assert!(matches!(
+            Stream::connect_checked(&path, Duration::from_millis(100)),
+            Err(OwnerError::Start(message)) if message.contains("busy") && message.contains("timed out")
+        ));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn first_instance_bind_waits_for_a_predecessor_to_release_the_name() {
+        let path = name();
+        let descriptor = Descriptor::private(false).unwrap();
+        // A held instance models the name retained by a predecessor's client
+        // or delayed IOCP handle retirement. No disconnect before dropping it.
+        let predecessor = create_with(&path, true, &descriptor).unwrap();
+        let (done, finished) = std::sync::mpsc::channel();
+        let (ready, running) = std::sync::mpsc::channel();
+        let next_path = path.clone();
+        let worker = std::thread::spawn(move || {
+            ready.send(()).unwrap();
+            assert!(done.send(Listener::bind(&next_path)).is_ok());
+        });
+        running.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(matches!(
+            finished.recv_timeout(Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(predecessor);
+        let successor = finished
+            .recv_timeout(PREDECESSOR_WAIT + Duration::from_secs(2))
+            .unwrap()
+            .expect("a draining predecessor must not disable the endpoint");
+        let _client = Stream::connect(&path).unwrap();
+        drop(successor);
+        worker.join().unwrap();
+    }
+
+    #[test]
     fn client_refuses_a_pipe_granting_another_account_read_or_write() {
         for access in ["FR", "FW"] {
             let path = name();
@@ -481,7 +653,10 @@ mod tests {
                     .unwrap();
             let _squatter = create_with(&path, true, &descriptor).unwrap();
             assert!(
-                matches!(Stream::connect_checked(&path), Err(OwnerError::Unsafe(_))),
+                matches!(
+                    Stream::connect_checked(&path, Duration::from_secs(2)),
+                    Err(OwnerError::Unsafe(_))
+                ),
                 "{access}"
             );
         }
@@ -491,7 +666,7 @@ mod tests {
     fn shutdown_closes_clones_and_wakes_a_blocked_read_without_new_handles() {
         let path = name();
         let listener = Listener::bind(&path).unwrap();
-        let mut client = Stream::connect_checked(&path).unwrap().unwrap();
+        let mut client = Stream::connect(&path).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         let (server, _) = loop {
             if let Ok(accepted) = listener.accept() {

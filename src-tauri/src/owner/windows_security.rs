@@ -8,7 +8,8 @@ use std::path::Path;
 use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, LocalFree, GENERIC_EXECUTE, GENERIC_READ, HANDLE, INVALID_HANDLE_VALUE,
+    CloseHandle, LocalFree, GENERIC_EXECUTE, GENERIC_READ, GENERIC_WRITE, HANDLE,
+    INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo,
@@ -16,13 +17,14 @@ use windows_sys::Win32::Security::Authorization::{
 };
 use windows_sys::Win32::Security::{
     GetAce, GetSecurityDescriptorControl, GetTokenInformation, TokenUser, ACCESS_ALLOWED_ACE,
-    ACE_HEADER, ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
-    SECURITY_ATTRIBUTES, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER,
+    ACE_HEADER, ACL, DACL_SECURITY_INFORMATION, INHERIT_ONLY_ACE, OWNER_SECURITY_INFORMATION,
+    PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_READ_ATTRIBUTES,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, READ_CONTROL,
+    CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_EXECUTE,
+    FILE_GENERIC_READ, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    OPEN_ALWAYS, OPEN_EXISTING, READ_CONTROL,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -154,6 +156,35 @@ pub(super) fn create_directory(path: &Path) -> Result<(), OwnerError> {
     check_directory(path)
 }
 
+/// OPEN_ALWAYS never replaces the lock object. A fresh file gets a protected
+/// user-only DACL, even if the existing directory grants inheritable read access
+/// to another account (read access alone suffices to hold a Windows file lock).
+/// Windows ignores these attributes when opening an existing file.
+pub(super) fn open_lock_file(path: &Path) -> Result<std::fs::File, OwnerError> {
+    let descriptor = Descriptor::private(false)?;
+    let attributes = descriptor.attributes();
+    let name = wide(path.as_os_str());
+    let raw = unsafe {
+        CreateFileW(
+            name.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            &attributes,
+            OPEN_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            null_mut(),
+        )
+    };
+    if raw == INVALID_HANDLE_VALUE {
+        return Err(OwnerError::Lock(format!(
+            "cannot open {}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(unsafe { std::fs::File::from_raw_handle(raw) })
+}
+
 pub(super) fn check_directory(path: &Path) -> Result<(), OwnerError> {
     use std::os::windows::fs::MetadataExt;
     let meta = std::fs::symlink_metadata(path)
@@ -253,9 +284,15 @@ pub(super) fn check_handle(handle: HANDLE, directory: bool) -> Result<(), OwnerE
             return Err(OwnerError::Unsafe("unrecognized owner access rule".into()));
         }
         let ace = unsafe { &*raw.cast::<ACCESS_ALLOWED_ACE>() };
-        let principal = sid_text(std::ptr::addr_of!(ace.SidStart).cast_mut().cast())?;
+        // SID is variable-length and extends past ACCESS_ALLOWED_ACE. Derive
+        // its pointer from the whole ACE buffer, not a struct-sized reference.
+        let principal =
+            sid_text(unsafe { raw.byte_add(std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart)) })?;
         let trusted = principal == sid
-            || (directory && matches!(principal.as_str(), "S-1-5-18" | "S-1-5-32-544"));
+            || (directory && matches!(principal.as_str(), "S-1-5-18" | "S-1-5-32-544"))
+            || (directory
+                && principal == "S-1-3-0"
+                && u32::from(header.AceFlags) & INHERIT_ONLY_ACE != 0);
         let unsafe_access = if directory {
             // Every bit outside ordinary read/execute rights is refused; this
             // includes generic write/all, delete-child, WRITE_DAC/OWNER.
@@ -366,6 +403,62 @@ mod tests {
     }
 
     #[test]
+    fn new_locks_are_private_even_in_a_directory_with_inheritable_foreign_read() {
+        let data = tempfile::tempdir().unwrap();
+        let sid = user_sid().unwrap();
+        let owners = data.path().join("tine-owners");
+        create_with_dacl(&owners, &format!("D:P(A;OICI;FA;;;{sid})(A;OICI;FR;;;WD)"));
+        check_directory(&owners).unwrap();
+        let path = owners.join("graph.lock");
+        let lock = crate::owner::lock::OwnerLock::try_take(&path, "app")
+            .unwrap()
+            .unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        // The pipe-level check requires a protected DACL and no foreign grant.
+        check_handle(file.as_raw_handle(), false).unwrap();
+        assert!(crate::owner::lock::OwnerLock::try_take(&path, "serve")
+            .unwrap()
+            .is_none());
+        drop(lock);
+        assert!(crate::owner::lock::OwnerLock::try_take(&path, "serve")
+            .unwrap()
+            .is_some());
+
+        let existing = owners.join("existing.lock");
+        std::fs::write(&existing, b"previous lock file").unwrap();
+        let before = std::fs::File::open(&existing).unwrap();
+        assert!(check_handle(before.as_raw_handle(), false).is_err());
+        let reopened = open_lock_file(&existing).unwrap();
+        assert!(
+            check_handle(reopened.as_raw_handle(), false).is_err(),
+            "existing DACL must not be rewritten"
+        );
+    }
+
+    #[test]
+    fn only_inherit_only_creator_owner_grants_are_safe_on_directories() {
+        let data = tempfile::tempdir().unwrap();
+        let sid = user_sid().unwrap();
+        for (name, principal, flags, safe) in [
+            ("creator-owner-inherit-only", "CO", "OICIIO", true),
+            ("creator-owner-effective", "CO", "OICI", false),
+            ("creator-group-inherit-only", "CG", "OICIIO", false),
+        ] {
+            let path = data.path().join(name);
+            create_with_dacl(
+                &path,
+                &format!("D:P(A;OICI;FA;;;{sid})(A;{flags};GA;;;{principal})"),
+            );
+            let result = check_directory(&path);
+            if safe {
+                result.unwrap();
+            } else {
+                assert!(matches!(result, Err(OwnerError::Unsafe(_))), "{name}");
+            }
+        }
+    }
+
+    #[test]
     fn inherited_everyone_or_users_write_grants_refuse() {
         let data = tempfile::tempdir().unwrap();
         let sid = user_sid().unwrap();
@@ -437,7 +530,7 @@ mod tests {
             GetSecurityDescriptorDacl, PROTECTED_DACL_SECURITY_INFORMATION,
         };
         let data = tempfile::tempdir().unwrap();
-        let owners = data.path().join("coord/owners");
+        let owners = data.path().join("tine-owners");
         let namespace = crate::owner::namespace::Namespace::at(owners.clone()).unwrap();
         let sid = user_sid().unwrap();
         let descriptor =
