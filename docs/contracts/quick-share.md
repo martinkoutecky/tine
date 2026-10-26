@@ -392,7 +392,13 @@ new write path):
 - **Delete** (204) and **Forget** remove the property from every block whose
   value names that gist, whatever login prefix it carries (an account rename
   keeps the gist id; gist ids are unique on GitHub), and the row's own pending
-  marker, loading pages that are not open. A pending marker is never read as a
+  marker, loading pages that are not open. A definition still exactly as Start
+  appended it to the Exports page (a root block with no children whose raw is
+  the one query macro plus `tine.share::`) is deleted whole instead, so no stale
+  bullet stays on Exports; any other block keeps everything but the property
+  (D-20261026-QSD). The same holds when a definite failure removes a marker.
+  Delete says the link stops working within about 5 minutes: GitHub's raw host
+  caches a file for 300 s, so a reload can still show the share until then. A pending marker is never read as a
   gist (a record id never has a gist id's shape). A share GitHub no longer has
   (`gone`) keeps it until Forget, like its key. A gist deleted from Find shares
   on GitHub is removed the same way.
