@@ -770,7 +770,7 @@ fn fold_pair(
         }
         let mut op = crate::retained::plan(transaction(&fold, copy.is_some()))?;
         if let Some(source) = &copy {
-            op.moved = Some((page.clone(), source.clone()));
+            op.moves.push((page.clone(), source.clone()));
         }
         Ok(Some(op))
     };

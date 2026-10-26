@@ -55,6 +55,8 @@ pub enum FaultPoint {
     AbortAfterMoveRename,
     /// Abort immediately before a move attempts its atomic rename.
     AbortBeforeMoveRename,
+    /// Abort after the atomic entry move, before syncing its directories.
+    AbortBeforeMoveSync,
     /// Model an already-exists refusal with destination resolving to source.
     CaseMoveAliasRefusal,
     /// Model a folded-alias rename succeeding without changing its spelling.
@@ -93,6 +95,7 @@ pub(crate) enum FaultPoint {
     AbortAfterStep(usize),
     AbortAfterMoveRename,
     AbortBeforeMoveRename,
+    AbortBeforeMoveSync,
     CaseMoveAliasRefusal,
     CaseMoveAliasNoop,
     AbortAfterMoveRewrite,

@@ -209,7 +209,7 @@ impl<F: HostIo> Host<F> {
             }
             // While Tine runs: dst, then the referrers, then src's deletion.
             let versions = pages.iter().map(|(k, p)| (k.clone(), p.version)).collect();
-            let gates = full.then(|| Gates::new(target, source, versions));
+            let gates = full.then(|| Gates::new(vec![(target.into(), source.into())], versions));
             let reply = Reply::Caller(host.order.allocate(host.incarnation));
             host.install_operation(pages, records, reply, last_version, gates);
             Disposition::Pending
@@ -222,9 +222,9 @@ impl<F: HostIo> Host<F> {
     /// operation writing a feature's planned bytes to `effects`' pages,
     /// each `(new, expected)`: `new` None deletes the page; `expected` is
     /// the bytes the feature planned from (None: no file), checked against
-    /// the host's current bytes under the path locks. `moved` `(dst, src)`
-    /// orders the writes as a rename's (dst, then the others, then src's
-    /// deletion). Drafted, versioned and published like a rename; the host
+    /// the host's current bytes under the path locks. `moves`, each
+    /// `(dst, src)` with no page in two, order the writes as a rename's (the
+    /// dsts, then the others, then the srcs' deletions; `Gates`). Drafted, versioned and published like a rename; the host
     /// never computes the bytes. Refused when a page is dirty or its bytes
     /// moved since the plan (in-scope scenario: the window edited it, or an
     /// external editor or sync service changed the file); the caller
@@ -232,15 +232,18 @@ impl<F: HostIo> Host<F> {
     pub(super) fn apply(
         &mut self,
         effects: &BTreeMap<PageKey, (Text, Text)>,
-        moved: Option<(&str, &str)>,
+        moves: &[(PageKey, PageKey)],
     ) -> Disposition {
         let keys: BTreeSet<PageKey> = effects.keys().cloned().collect();
-        let shape = moved.is_none_or(|(dst, src)| {
+        let mut in_a_move = BTreeSet::new();
+        let shape = moves.iter().all(|(dst, src)| {
             dst != src
                 && effects
                     .get(src)
                     .is_some_and(|(new, old)| new.is_none() && old.is_some())
                 && effects.get(dst).is_some_and(|(new, _)| new.is_some())
+                && in_a_move.insert(dst)
+                && in_a_move.insert(src)
         });
         if !self.alive || keys.is_empty() || !self.keys.includes(&keys) || !shape {
             return Disposition::Refused;
@@ -290,7 +293,7 @@ impl<F: HostIo> Host<F> {
                 records.push(host.record(key, page));
             }
             let versions = pages.iter().map(|(k, p)| (k.clone(), p.version)).collect();
-            let gates = moved.map(|(dst, src)| Gates::new(dst, src, versions));
+            let gates = (!moves.is_empty()).then(|| Gates::new(moves.to_vec(), versions));
             let reply = Reply::Caller(host.order.allocate(host.incarnation));
             host.install_operation(pages, records, reply, last_version, gates);
             Disposition::Pending

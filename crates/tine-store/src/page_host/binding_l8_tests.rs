@@ -211,6 +211,71 @@ fn l8_01_a_recovered_draft_does_not_follow_a_folder_retargeted_while_stopped() {
     );
 }
 
+/// S3 B2: resolving a moved leaf must not resolve a case-variant folder
+/// retargeted while stopped. The original parent guard remains authoritative.
+#[cfg(unix)]
+#[test]
+fn recovered_leaf_alias_does_not_follow_a_retargeted_case_variant_parent() {
+    let dir = tempfile::tempdir().unwrap();
+    let graph = dir.path().join("graph");
+    fs::create_dir_all(graph.join("pages/Sub")).unwrap();
+    fs::write(graph.join("pages/Sub/a.md"), "- original\n").unwrap();
+    // On a folding volume sub is already the real directory's alias; only
+    // case-sensitive volumes can construct this distinct directory symlink.
+    if graph.join("pages/sub").exists() {
+        return;
+    }
+    std::os::unix::fs::symlink("Sub", graph.join("pages/sub")).unwrap();
+    let app = dir.path().join("app");
+    let drafts_dir = app.join("drafts-v2/test-graph");
+    fs::create_dir_all(&drafts_dir).unwrap();
+    let record = Record {
+        page: "pages/sub/a.md".into(),
+        wseq: 1,
+        version: 1,
+        base: Base::Known(Some(bytes("- original\n"))),
+        bytes: Some(bytes("- recovered\n")),
+    };
+    fs::write(
+        drafts_dir.join(crate::page_host::drafts::page_name(&record.page)),
+        crate::page_host::drafts::encode(&[record]),
+    )
+    .unwrap();
+    let store = Arc::new(Store::open(&graph, Default::default()).unwrap().0);
+    assert_eq!(
+        store.disk_spelling(&PageId::from("pages/sub/a.md")),
+        Some(PageId::from("pages/Sub/a.md"))
+    );
+    let host = PageHost::start_for_tests(&store, &app).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if host
+            .draft_status()
+            .unsaved
+            .iter()
+            .any(|page| page.recovered && page.failing)
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "recovery did not report its refused target"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        host.spelling("pages/sub/a.md"),
+        PageId::from("pages/sub/a.md")
+    );
+    assert_eq!(
+        fs::read(graph.join("pages/Sub/a.md")).unwrap(),
+        b"- original\n"
+    );
+    l8_retained(&host, "pages/sub/a.md", "- recovered\n");
+    host.stop();
+    store.close();
+}
+
 // Audit 2026-10-22 L8-02: a late owner at the creating save.
 // In-scope honest event: sync or an external editor delivers a file that
 // claims the name of a page the user has open but not yet created.

@@ -1256,6 +1256,8 @@ mod read;
 pub use read::{HostRead, HostReadError};
 #[path = "binding_apply.rs"]
 mod apply;
+#[path = "binding_spelling.rs"]
+mod spelling;
 #[cfg(test)]
 pub(super) use apply::creation_refusal;
 pub use apply::{ApplyRefusal, Effect, Expected, HostOp};

@@ -13,8 +13,8 @@ use crate::RenameMap;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RenameRefusal {
     /// `target` is another spelling of `source`'s own directory entry (a
-    /// case-folding volume, Q4): the caller moves it as a retained
-    /// transaction under a reservation of the page and `respell`s it.
+    /// case-folding volume, Q4): the caller plans its content as a HostOp;
+    /// apply follows it with the driver's byte-preserving spelling move.
     Alias,
     /// A page the rename would rewrite has unsaved input.
     Unsaved(PageId),
@@ -595,6 +595,7 @@ impl PageHost {
     /// moved `page`'s directory entry to `to`, another spelling of the same
     /// entry. The page keeps its key, buffer, drafts and queued requests;
     /// its I/O, path lock and held index follow `to`.
+    #[cfg(any(test, feature = "test-faults"))]
     pub fn respell(&self, page: &PageId, to: &PageId) {
         let graph = &self.store.graph;
         let lock = graph.page_lock(&graph.root.join(to.as_str()));

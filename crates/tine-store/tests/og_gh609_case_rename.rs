@@ -110,8 +110,9 @@ fn until(what: &str, test: impl Fn() -> bool) {
 }
 
 /// A case rename that fails (GH #609). On a case-folding volume `Old.md` is
-/// the source's own entry: the rename is a retained transaction, and a
-/// failed step rolls back to exactly `old.md`. On a case-sensitive volume the
+/// the source's own entry: the low-level transaction helper still has its
+/// undo tests below; HostOp spelling failures are in binding_apply_tests.
+/// On a case-sensitive volume the
 /// two spellings are distinct pages and the rename is the page host's
 /// (custody plus forward completion, STEP3-DESIGN's restated rollback tests):
 /// a failure before application (its draft) changes nothing, and after
@@ -198,16 +199,22 @@ fn transaction_case_move_failures() {
         if alias {
             store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
         }
-        assert!(hosted(&store, |host| rename_or_merge_page(
-            &store,
-            host,
-            "old",
-            "Old",
-            None,
-            None,
-            &[]
-        ))
-        .is_err());
+        // This is the transaction helper's undo contract, independent of
+        // the feature's HostOp + non-drafted spelling command (S3).
+        let src = store.file_id(tine_store::Area::Pages, "old.md").unwrap();
+        let dst = store.file_id(tine_store::Area::Pages, "Old.md").unwrap();
+        let rev = store.read(&src, None).unwrap().1;
+        let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+        tx.move_file(
+            &src,
+            rev,
+            &dst,
+            Some(&tine_store::RenameMap(vec![("old".into(), "Old".into())])),
+        );
+        assert!(matches!(
+            tx.commit(),
+            tine_store::TxOutcome::NotCommitted { .. }
+        ));
         assert_eq!(
             fs::read_to_string(dir.path().join("pages/old.md")).unwrap(),
             "- [[old]]\n"
@@ -274,16 +281,22 @@ fn case_rename_crash_worker() {
     match std::env::var("TINE_QD1_CRASH_POINT").unwrap().as_str() {
         "before" => store.inject_fault(tine_store::FaultPoint::AbortBeforeMoveRename),
         "publish" => store.inject_fault(tine_store::FaultPoint::AbortAfterMoveRename),
+        "move-unsynced" => store.inject_fault(tine_store::FaultPoint::AbortBeforeMoveSync),
         "rewrite" => store.inject_fault(tine_store::FaultPoint::AbortAfterMoveRewrite),
         "host-dst" => abort_before(Phase::PageRename, 0),
         "host-sync" => abort_before(Phase::PageSync, 0),
         "host-trash" => abort_before(Phase::TrashMove, 0),
+        "after" => {}
         _ => unreachable!(),
     }
     let app_data = std::env::var("TINE_QD1_APP_DATA").unwrap();
     let host =
         tine_store::PageHost::start_for_tests(&store, std::path::Path::new(&app_data)).unwrap();
-    let _ = rename_or_merge_page(&store, &host, "old", "Old", None, None, &[]);
+    let result = rename_or_merge_page(&store, &host, "old", "Old", None, None, &[]);
+    if std::env::var("TINE_QD1_CRASH_POINT").unwrap() == "after" {
+        result.unwrap();
+        std::process::abort();
+    }
     panic!("case rename did not reach abort boundary");
 }
 
@@ -297,6 +310,10 @@ fn kill_case_rename(dir: &std::path::Path, app_data: &std::path::Path, point: &s
         .output()
         .unwrap();
     assert!(!output.status.success());
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("panicked at"),
+        "must reach the injected abort, not panic before it ({point}): {output:?}"
+    );
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
@@ -315,7 +332,8 @@ fn kill_case_rename(dir: &std::path::Path, app_data: &std::path::Path, point: &s
 /// destination published before the kill is whole, a transient second
 /// spelling (an accepted effect of write-before-delete). A relaunch on the
 /// same app data completes the rename from its drafts, leaving exactly
-/// `Old.md`. On a case-folding volume it is the retained transaction's move.
+/// `Old.md`. On a case-folding volume the entry moves first; a retry
+/// finishes old text if no content draft was recorded yet.
 #[test]
 fn case_rename_kill_reopen_preserves_bytes_and_relaunch_completes() {
     let _integration_guard = crate::integration_lock();
@@ -363,46 +381,214 @@ fn case_rename_kill_reopen_preserves_bytes_and_relaunch_completes() {
     }
 }
 
-/// The retained case move on a case-folding volume, killed at each step:
-/// whole bytes, and a retry finishes it.
+/// The folding host path: entry first, then drafted content. Retry from the
+/// explicit title actually displayed after relaunch, only if still old.
 fn transaction_case_rename_kills() {
-    for point in ["before", "publish", "rewrite"] {
+    for point in [
+        "before",
+        "move-unsynced",
+        "publish",
+        "host-dst",
+        "host-sync",
+    ] {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
         fs::write(dir.path().join("pages/old.md"), "title:: old\n- [[old]]\n").unwrap();
         let app_data = tempfile::tempdir().unwrap();
         kill_case_rename(dir.path(), app_data.path(), point);
+        let drafted = matches!(point, "host-dst" | "host-sync");
+        if drafted {
+            assert!(
+                fs::read_dir(app_data.path().join("drafts-v2/test-graph"))
+                    .unwrap()
+                    .any(|entry| entry
+                        .unwrap()
+                        .path()
+                        .extension()
+                        .is_some_and(|ext| ext == "draft")),
+                "{point}: the killed content operation must leave its recorded draft"
+            );
+        }
         let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
-        store.whole_graph().unwrap();
-        if point == "before" {
+        let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+        if drafted {
+            until("recorded content completes on relaunch", || {
+                fs::read_to_string(dir.path().join("pages/Old.md")).unwrap()
+                    == "title:: Old\n- [[Old]]\n"
+            });
+        }
+        assert_eq!(
+            pages(dir.path()),
+            [if point == "before" {
+                "old.md"
+            } else {
+                "Old.md"
+            }]
+        );
+        if !drafted {
             assert_eq!(
                 fs::read_to_string(dir.path().join("pages/old.md")).unwrap(),
                 "title:: old\n- [[old]]\n"
             );
-            assert_eq!(fs::read_dir(dir.path().join("pages")).unwrap().count(), 1);
-            assert!(!dir.path().join("logseq/.tine-trash").exists());
-        } else {
-            let expected = if point == "publish" {
-                "title:: old\n- [[old]]\n"
-            } else {
-                "title:: Old\n- [[Old]]\n"
-            };
-            assert_eq!(
-                fs::read_to_string(dir.path().join("pages/Old.md")).unwrap(),
-                expected
-            );
+            rename_or_merge_page(&store, &host, "old", "Old", None, None, &[]).unwrap();
         }
-        hosted(&store, |host| {
-            rename_or_merge_page(&store, host, "old", "Old", None, None, &[])
-        })
-        .unwrap();
         assert_eq!(
             fs::read_to_string(dir.path().join("pages/Old.md")).unwrap(),
             "title:: Old\n- [[Old]]\n"
         );
-        assert_eq!(fs::read_dir(dir.path().join("pages")).unwrap().count(), 1);
+        assert_eq!(pages(dir.path()), ["Old.md"]);
+        drop(host);
         store.close();
     }
+}
+
+/// An unchanged title is never an instruction to normalize the filename.
+#[test]
+fn same_name_rename_preserves_legitimate_filename_case() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    fs::write(dir.path().join("pages/old.md"), "title:: Old\n- [[Old]]\n").unwrap();
+    let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    hosted(&store, |host| {
+        rename_or_merge_page(&store, host, "Old", "Old", None, None, &[])
+    })
+    .unwrap();
+    assert_eq!(pages(dir.path()), ["old.md"]);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("pages/old.md")).unwrap(),
+        "title:: Old\n- [[Old]]\n"
+    );
+    let unchanged = hosted(&store, |host| {
+        rename_or_merge_page(&store, host, "Old", "Old", None, None, &[])
+    })
+    .unwrap();
+    assert!(unchanged.touched.is_empty());
+    store.close();
+}
+
+#[test]
+fn same_name_namespace_preserves_children_and_references() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    fs::create_dir(dir.path().join("logseq")).unwrap();
+    fs::write(
+        dir.path().join("logseq/config.edn"),
+        "{:file/name-format :triple-lowbar}\n",
+    )
+    .unwrap();
+    for (file, body) in [
+        ("Space.md", "title:: Space\n- root\n"),
+        ("space___a.md", "- child\n"),
+        ("custom.md", "title:: Space/b\n- custom\n"),
+        ("Ref.md", "- [[space/a]]\n"),
+    ] {
+        fs::write(dir.path().join("pages").join(file), body).unwrap();
+    }
+    let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    hosted(&store, |host| {
+        rename_or_merge_page(&store, host, "Space", "Space", None, None, &[])
+    })
+    .unwrap();
+    assert_eq!(
+        pages(dir.path()),
+        ["Ref.md", "Space.md", "custom.md", "space___a.md"]
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("pages/Ref.md")).unwrap(),
+        "- [[space/a]]\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("pages/custom.md")).unwrap(),
+        "title:: Space/b\n- custom\n"
+    );
+    store.close();
+}
+
+/// Linux constructs the entry-first residues (a process kill cannot prove
+/// power-loss durability). During content, use real draft/publication kills
+/// at the already-moved path and relaunch with the same app data.
+#[test]
+fn ordinary_retry_recovers_every_entry_first_crash_boundary() {
+    let _integration_guard = crate::integration_lock();
+    for point in [
+        "before-move",
+        "move-unsynced",
+        "before-content",
+        "host-dst",
+        "host-sync",
+        "after",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        let old = "title:: old\n- user text [[old]]\n";
+        let new = "title:: Old\n- user text [[Old]]\n";
+        let file = if point == "before-move" {
+            "old.md"
+        } else {
+            "Old.md"
+        };
+        fs::write(dir.path().join("pages").join(file), old).unwrap();
+        fs::write(dir.path().join("pages/Ref.md"), "- [[old]]\n").unwrap();
+        if matches!(point, "host-dst" | "host-sync" | "after") {
+            kill_case_rename(dir.path(), app_data.path(), point);
+        }
+        let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+        let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+        if matches!(point, "host-dst" | "host-sync" | "after") {
+            until("recorded entry-first content finishes", || {
+                fs::read_to_string(dir.path().join("pages/Old.md")).unwrap() == new
+                    && fs::read_to_string(dir.path().join("pages/Ref.md")).unwrap() == "- [[Old]]\n"
+            });
+            // The displayed title is already the intended name; an unchanged
+            // confirmation must remain harmless even after a real crash.
+            let report =
+                rename_or_merge_page(&store, &host, "Old", "Old", None, None, &[]).unwrap();
+            assert!(report.touched.is_empty());
+        } else {
+            assert_eq!(
+                fs::read_to_string(dir.path().join("pages").join(file)).unwrap(),
+                old
+            );
+            rename_or_merge_page(&store, &host, "old", "Old", None, None, &[]).unwrap();
+        }
+        assert_eq!(pages(dir.path()), ["Old.md", "Ref.md"], "{point}");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("pages/Old.md")).unwrap(),
+            new,
+            "{point}"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("pages/Ref.md")).unwrap(),
+            "- [[Old]]\n",
+            "{point}"
+        );
+        drop(host);
+        store.close();
+    }
+}
+
+#[test]
+fn same_name_rename_preserves_decomposed_filename() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    fs::write(
+        dir.path().join("pages/cafe\u{301}.md"),
+        "title:: café\n- user text\n",
+    )
+    .unwrap();
+    let before = pages(dir.path());
+    let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    let report = hosted(&store, |host| {
+        rename_or_merge_page(&store, host, "café", "café", None, None, &[])
+    })
+    .unwrap();
+    assert!(report.touched.is_empty());
+    assert_eq!(pages(dir.path()), before);
+    store.close();
 }
 
 #[test]
@@ -585,6 +771,11 @@ fn folded_alias_refusal_uses_atomic_rename_and_checks_the_result() {
     for noop in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
+        if noop {
+            // Also exercise a graph retaining empty recovery directories on
+            // Linux, where the destination does not alias the live source.
+            fs::create_dir_all(dir.path().join("logseq/.tine-trash/pages")).unwrap();
+        }
         fs::write(dir.path().join("pages/old.md"), "- original\n").unwrap();
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
         let src = store.file_id(Area::Pages, "old.md").unwrap();
@@ -611,7 +802,36 @@ fn folded_alias_refusal_uses_atomic_rename_and_checks_the_result() {
             fs::read(dir.path().join("pages").join(&names[0])).unwrap(),
             b"- original\n"
         );
-        assert!(!dir.path().join("logseq/.tine-trash").exists());
+        let trash = dir.path().join("logseq/.tine-trash");
+        if noop {
+            // A real provider reports rename success before its unchanged
+            // listing refuses the operation. On folding volumes undo can
+            // stage the aliased live bytes, restore the source and remove
+            // the stage, leaving empty trash directories. That is valid
+            // recovery, not evidence of a successful move staging its page.
+            // Any recovery payload left behind must still be original bytes.
+            let mut dirs = vec![trash];
+            while let Some(dir) = dirs.pop() {
+                let entries = match fs::read_dir(dir) {
+                    Ok(entries) => entries,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => panic!("cannot inspect recovery: {error}"),
+                };
+                for entry in entries {
+                    let path = entry.unwrap().path();
+                    if path.is_dir() {
+                        dirs.push(path);
+                    } else {
+                        assert_eq!(fs::read(path).unwrap(), b"- original\n");
+                    }
+                }
+            }
+        } else {
+            assert!(
+                !trash.exists(),
+                "a successful byte-preserving move creates no trash"
+            );
+        }
         store.close();
     }
 }

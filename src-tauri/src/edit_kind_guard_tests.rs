@@ -148,12 +148,16 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         assert!(calls(body(CONCORD, name), route), "OG-RULES Rule 8: {name} changed its page-write route; exemplar src-tauri/src/commands/concord.rs");
     }
     let destinations = [
-        // A rename's transaction is `commit_rename` (a retained rename under
-        // the page host's reservation; a single page's rename is the host's).
-        (PAGES, "rename_page_after_inventory", "commit_rename("),
+        // A rename's transaction is `rename_transaction`: a rename of
+        // several pages plans it as a host operation (`multi_rename`), a
+        // case-only respell commits it under the host's reservation
+        // (`commit_rename`); a single page's rename is the host's.
+        (PAGES, "rename_page_after_inventory", "multi_rename("),
+        (PAGES, "multi_rename", "rename_transaction("),
+        (PAGES, "commit_rename", "rename_transaction("),
         (
             PAGES,
-            "commit_rename",
+            "rename_transaction",
             "transaction(Some(tine_store::EditKind::RenamePage))",
         ),
         (
@@ -238,6 +242,7 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         (JOURNALS, "trash_journal_file", "crate::retained::plan("),
         (PAGES, "rename_file_to_page", "crate::retained::plan("),
         (PAGES, "merge_pages", "crate::retained::plan("),
+        (PAGES, "multi_rename", "crate::retained::plan("),
         (CONFLICTS, "fold_pair", "crate::retained::plan("),
         (
             CONFLICTS,
