@@ -1,15 +1,17 @@
 // Block and page embeds ({{embed ((uuid))}} / {{embed [[page]]}}), split out of Macro.tsx (size ratchet).
-import { For, Show, useContext, type JSX } from "solid-js";
+import { For, Show, createSignal, useContext, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { pageIdentityKey } from "../ui";
 import { blocksContainEdit, createMembershipResource } from "../resultMembership";
 import { graphOwner, readOwned } from "../owned";
-import { blockHasPageEmbed, formatForBlock, pageByName, resolveGuidePageDto, node as docNode } from "../document";
+import { blockHasPageEmbed, formatForBlock, pageByName, resolveBlockRef, resolveGuidePageDto, node as docNode } from "../document";
+import { blockDtoExternalId } from "../blockIdentity";
 import { nearestAncestors } from "../render/blockTrail";
 import { visibleBody } from "../render/block";
 import { CollapseSurfaceContext } from "./Block";
 import { hostFolded } from "./macroFold";
 import { resolveBlockBatched } from "../resolveBatch";
+import { changed, pageChangeKey } from "../changeKeys";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { PageEmbedHeader } from "./PageEmbedHeader";
 import { InlineText, PageRef } from "../render/inline";
@@ -49,6 +51,15 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
       && pageIdentityKey(sourcePage) === pageIdentityKey(targetPage);
   };
 
+  // The host may answer a page embed under another spelling (journal day, case,
+  // a Guide page); the summary names the page it answered, so key on both.
+  const [answeredPage, setAnsweredPage] = createSignal<string>();
+  const pageRevision = () => {
+    const requested = pageChangeKey(pageTarget() ?? "");
+    const answered = answeredPage();
+    const answeredKey = answered === undefined ? requested : pageChangeKey(answered);
+    return answeredKey === requested ? changed(requested) : `${changed(requested)}\0${changed(answeredKey)}`;
+  };
   const [data] = createMembershipResource(
     () => selfPageEmbed() ? null : target(),
     target,
@@ -58,7 +69,7 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
       const g = await resolveBlockBatched(uuid);
       // embedId = the embedded block's own id, so its ref-count badge is hidden
       // inside the embed (OG hide-block-refs-count?); its children keep theirs.
-      return g ? { page: g.page, kind: g.kind, blocks: g.blocks, embedId: g.blocks[0]?.id } : null;
+      return g ? { page: g.page, kind: g.kind, path: g.path, blocks: g.blocks, embedId: g.blocks[0]?.id } : null;
     }
     const pageName = pageTarget();
     if (pageName) {
@@ -67,10 +78,12 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
       const result = await readOwned(graphOwner(), backend().getPage(pageName, "page"));
       if (result.kind === "stale") return null;
       const p = result.value ?? resolveGuidePageDto(pageName);
-      return p ? { page: p.name, kind: "page" as PageKind, blocks: p.blocks, embedId: undefined } : null;
+      setAnsweredPage(p?.name);
+      return p ? { page: p.name, kind: "page" as PageKind, path: result.value?.id, blocks: p.blocks, embedId: undefined } : null;
     }
     return null;
-  }, (value, id) => !!value && blocksContainEdit(value.blocks, id));
+  }, (value, id) => !!value && blocksContainEdit(value.blocks, id), () => true, false,
+  () => blockTarget() ? changed(`block:${blockTarget()}`) : pageRevision());
 
   const embedded = () => readOr(data, undefined, "embed");
   const foldedPageBody = () => {
@@ -89,7 +102,9 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
     return uuid ? blockRefTarget(uuid, e) : { page: e.page, pageKind: e.kind };
   };
   const sourceTrail = () => {
-    const id = embedded()?.embedId;
+    const e = embedded();
+    const dto = e?.embedId ? e.blocks[0] : undefined;
+    const id = e && dto ? resolveBlockRef({ uuid: blockDtoExternalId(dto), page: e.page, pageKind: e.kind, ...(e.path ? { path: e.path } : {}) }) : null;
     return id && docNode(id) ? nearestAncestors(id) : null;
   };
   return (
@@ -134,16 +149,16 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
                 <For each={(embedded()!.blocks[0]?.breadcrumb ?? []).slice(-3)}>{(label) => <><span class="ref-crumb-sep">›</span><span class="ref-crumb"><InlineText text={label} /></span></>}</For>
               }>
                 <For each={sourceTrail()!.ids}>{(id) => <><span class="ref-crumb-sep">›</span>
-                  <span class="ref-crumb"><InlineText text={visibleBody(docNode(id)?.raw ?? "")[0] || "…"} format={formatForBlock(id)} /></span></>}</For>
+                  <span class="ref-crumb"><InlineText text={visibleBody(docNode(id)?.raw ?? "", formatForBlock(id))[0] || "…"} format={formatForBlock(id)} /></span></>}</For>
               </Show>
             </div>
           </Show>
           <Show when={!insidePeek} fallback={
             <LinkDepthContext.Provider value={linkDepth + 1}>
-              <RefBlocks page={embedded()!.page} pageKind={embedded()!.kind} blocks={embedded()!.blocks} readOnly />
+              <RefBlocks page={embedded()!.page} pageKind={embedded()!.kind} path={embedded()!.path} blocks={embedded()!.blocks} readOnly />
             </LinkDepthContext.Provider>
           }>
-            <LiveRefGroup page={embedded()!.page} kind={embedded()!.kind} blocks={embedded()!.blocks} embedId={embedded()!.embedId} hostBlockId={props.blockId} surface="embed" />
+            <LiveRefGroup page={embedded()!.page} kind={embedded()!.kind} path={embedded()!.path} blocks={embedded()!.blocks} embedId={embedded()!.embedId} hostBlockId={props.blockId} surface="embed" />
           </Show>
         </Show>
       </Show>

@@ -9,7 +9,7 @@ import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
 import { markDirty, noteTitleIdentityIntent, pageFrozen } from "../host/wiring";
-import { canonicalPageHeaderDraft, withoutLeadingBlankLines, isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, pageHeaderBadLine, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
+import { canonicalPageHeaderDraft, withoutLeadingBlankLines, isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, pageHeaderBadLine, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty, isEditorEmpty } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
@@ -46,11 +46,10 @@ export function blockProperty(id: string, key: string): string | null {
   return null;
 }
 
-/** Whether a block lives on a read-only page (the org round-trip gate) — sheet
- *  write paths outside the block editor must consult this before mutating. */
+/** Read-only affordance for blocks and sheets, using the store's write gate. */
 export function blockPageReadOnly(id: string): boolean {
   const n = doc.byId[id];
-  return graphRewriteFrozen() || (n ? (pageByName(n.page)?.readOnly ?? false) : false);
+  return n ? !pageWritable(n.page) : graphRewriteFrozen();
 }
 
 /** Store mutation boundary. UI affordances also hide on read-only pages, but
@@ -59,8 +58,8 @@ export function blockPageReadOnly(id: string): boolean {
  * equally non-writable. */
 export function pageWritable(name: string): boolean {
   const page = pageByName(name);
-  // A transfer endpoint or a frozen page takes no input: the host holds its
-  // text apart from the display until the transfer or freeze ends (STEP3 §6, §8).
+  // A pending delete, transfer endpoint or frozen page takes no input: no
+  // mutation may precede markDirty's tombstone guard (audit L9-06).
   return !graphRewriteFrozen() && !!page && !page.readOnly && !page.guide && !pageFrozen(name);
 }
 
@@ -414,7 +413,7 @@ export function toggleOwnNumberedList(id: string): boolean {
  * `src/main/frontend/handler/editor.cljs:2498-2502` (6e7afa8eb). */
 export function stopOwnNumberedListOnEmptyEnter(id: string, visibleText: string): boolean {
   const node = doc.byId[id];
-  if (!node || visibleText.trim() !== "" || !isOrdered(id) || isOrdered(node.parent)) return false;
+  if (!node || visibleText.trim() !== "" || !isEditorEmpty(node.raw, BUILTIN_HIDE, formatForBlock(id)) || !isOrdered(id) || isOrdered(node.parent)) return false;
   return removeOwnNumberedList(id);
 }
 /** The ordered-list label for a block whose `logseq.order-list-type` is `number`

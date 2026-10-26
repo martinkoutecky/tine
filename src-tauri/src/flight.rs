@@ -750,20 +750,101 @@ async fn probe_defender() -> crate::defender::Realtime {
         .unwrap_or(crate::defender::Realtime::Unknown)
 }
 
-/// Build the report: app version, build commit/time (dropped unless they are a
-/// hex commit and an ISO timestamp), OS/arch, privacy flags, the number of open
-/// graph bindings, per-graph launch timings and shape statistics, and every
-/// retained event of this run. Never fails; an unreadable graph registry is
+/// Memory-only renderer samples supplied at export, never persisted as events.
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RendererStalls {
+    threshold_ms: u32,
+    capacity: u32,
+    supported: Vec<RendererObserver>,
+    stalls: Vec<RendererStall>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum RendererObserver {
+    LongAnimationFrame,
+    Event,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum RendererStallKind {
+    Frame,
+    KeyFrame,
+    Loaf,
+    Event,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RendererStall {
+    kind: RendererStallKind,
+    start_time: f64,
+    duration: f64,
+    blocking_duration: Option<f64>,
+    scripts: Option<Vec<RendererScript>>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct RendererScript {
+    source: Option<String>,
+    position: Option<u64>,
+    duration: f64,
+}
+
+// Export-only addition: never enters the persisted flight recorder.
+fn with_renderer(
+    mut report: DiagnosticReport,
+    renderer: Option<RendererStalls>,
+) -> DiagnosticReport {
+    if let Some(mut renderer) = renderer {
+        renderer.capacity = 32;
+        renderer.threshold_ms = 100;
+        renderer.supported.truncate(2);
+        renderer.stalls.truncate(32);
+        for stall in &mut renderer.stalls {
+            if let Some(scripts) = &mut stall.scripts {
+                scripts.truncate(8);
+                for script in scripts {
+                    if script.source.as_ref().is_some_and(|s| {
+                        s.len() > 120
+                            || !s.ends_with(".js")
+                            || !s
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+                    }) {
+                        script.source = None;
+                    }
+                }
+            }
+        }
+        if let Ok(mut value) = serde_json::from_str::<Value>(&report.text) {
+            value["renderer"] = json!(renderer);
+            if let Ok(text) = serde_json::to_string_pretty(&value) {
+                report.text = text;
+            }
+        }
+    }
+    report
+}
+
+/// Build the report: validated build metadata, graph statistics, retained
+/// events, and the bounded renderer snapshot. An unreadable graph registry is
 /// reported as a flag.
 #[tauri::command]
 pub(crate) async fn diagnostic_report(
     app: tauri::AppHandle,
     build_commit: String,
     build_time: String,
+    renderer: Option<RendererStalls>,
 ) -> DiagnosticReport {
     let (graph_bindings, graphs) = collect_graph_diagnostics(&app).await;
     let defender = probe_defender().await;
-    build_diagnostic_report(graph_bindings, graphs, build_commit, build_time, defender)
+    with_renderer(
+        build_diagnostic_report(graph_bindings, graphs, build_commit, build_time, defender),
+        renderer,
+    )
 }
 
 /// Save a freshly built report where the user chooses (desktop save dialog).
@@ -773,11 +854,14 @@ pub(crate) async fn save_diagnostic_report(
     app: tauri::AppHandle,
     build_commit: String,
     build_time: String,
+    renderer: Option<RendererStalls>,
 ) -> Result<bool, String> {
     let (graph_bindings, graphs) = collect_graph_diagnostics(&app).await;
     let defender = probe_defender().await;
-    let report =
-        build_diagnostic_report(graph_bindings, graphs, build_commit, build_time, defender);
+    let report = with_renderer(
+        build_diagnostic_report(graph_bindings, graphs, build_commit, build_time, defender),
+        renderer,
+    );
     #[cfg(desktop)]
     {
         use tauri_plugin_dialog::DialogExt as _;
@@ -835,6 +919,34 @@ pub(crate) async fn clear_diagnostics() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renderer_export_bounds_samples_and_redacts_script_paths() {
+        let sample = json!({"kind":"loaf", "startTime":1, "duration":200,
+            "scripts": (0..12).map(|_| json!({"source":"/private/graph.js", "duration":100})).collect::<Vec<_>>()});
+        let renderer = serde_json::from_value(json!({"thresholdMs":0,"capacity":999,
+            "supported":["event"],"stalls":vec![sample; 100]}))
+        .unwrap();
+        let report = with_renderer(
+            DiagnosticReport {
+                text: "{}".into(),
+                suggested_file_name: "test.json".into(),
+            },
+            Some(renderer),
+        );
+        let value: Value = serde_json::from_str(&report.text).unwrap();
+        assert_eq!(value["renderer"]["stalls"].as_array().unwrap().len(), 32);
+        assert_eq!(
+            value["renderer"]["stalls"][0]["scripts"]
+                .as_array()
+                .unwrap()
+                .len(),
+            8
+        );
+        assert_eq!(value["renderer"]["capacity"], 32);
+        assert!(!report.text.contains("private"));
+        assert!(!report.text.contains("graph.js"));
+    }
 
     fn production() -> &'static str {
         include_str!("flight.rs")

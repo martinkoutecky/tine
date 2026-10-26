@@ -11,6 +11,7 @@ import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from ".
 import { QueryWorkspace } from "./components/QueryWorkspace";
 import { ConflictOverview } from "./components/ConflictOverview";
 import { AllPages } from "./components/AllPages";
+import { AllGraphs } from "./components/AllGraphs";
 // pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
 // the viewer only when one is opened.
 const KeyedPdfViewer = lazy(() =>
@@ -54,16 +55,18 @@ import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeU
 
 installAliasDraftRouteHandler((name, kind) => openPage(name, kind));
 import { pushToast } from "./toasts";
+import { RootRecoveryNotice } from "./components/RootRecoveryNotice";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import { flushAll, subscribeOwnerFlush, appendToTodayJournal, captureToPage, unsavedDrafts, unsavedPageCount, pageByName } from "./document";
-import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
+import { flushAll, subscribeOwnerFlush, unsavedDrafts, unsavedPageCount, pageByName } from "./document";
+import { installQuickCaptureReceiver } from "./quickCaptureReceiver";
+export { installQuickCaptureReceiver } from "./quickCaptureReceiver";
 import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { openPublishedPermalink, publishedPermalinkForWorkspace, replacePublishedPermalink } from "./publishedPermalink";
 import { maybeShowDefenderHint } from "./defenderHint";
-import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owned, type Owner, type WriteOwner } from "./owned";
+import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owned, type Owner } from "./owned";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
@@ -91,6 +94,7 @@ import {
   layoutRoot,
   visibleLayoutNode,
   paneRouter,
+  openPdf,
   openPdfNotes,
   layoutPaneIds,
   allPaneIds,
@@ -315,6 +319,9 @@ function PaneContent(props: { router: PaneRouter }): JSX.Element {
       <Match when={props.router.route().kind === "all-pages"}>
         <AllPages router={props.router} />
       </Match>
+      <Match when={props.router.route().kind === "all-graphs"}>
+        <AllGraphs />
+      </Match>
     </Switch>
   );
 }
@@ -402,7 +409,12 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
               const current = props.router.route();
               if (current.kind === "pdf") openPdfNotes(props.paneId, hlsPageName(current.filename), block);
             }}
-            onViewState={(state) => props.router.updateActivePdfViewState(state)} />
+            onViewState={(state) => props.router.updateActivePdfViewState(state)}
+            onAnotherView={(state) => {
+              const current = props.router.route();
+              if (current.kind === "pdf") openPdf(current.filename, current.label, state.page, undefined,
+                { anotherView: true, sourcePaneId: props.paneId, scale: state.scale });
+            }} />
         </Suspense></FailureBoundary>
       </div>}
     </Show>
@@ -555,89 +567,6 @@ export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen(
   // Mobile only, where main is the sole window.
   mainWindow.document.addEventListener("click", onClick, true);
   return () => mainWindow.document.removeEventListener("click", onClick, true);
-}
-
-/** Install the graph window's capture receiver. Each request is deduplicated
- * by id (100 completed ids retained); writes use the document capture door.
- * Work is O(captured blocks + destination page). Transport setup failures reject;
- * Requests must carry the native capture-show binding generation; stale or
- * missing generations acknowledge false. The surface owner covers registration
- * and callbacks; writes capture graphOwner before starting. Save failure
- * acknowledges false and preserves the sender's scratch. Dispose
- * the returned listener when the app surface retires. */
-export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen(() => true)): Promise<() => void> {
-  const owner = ownedWhen(live);
-  const inFlight = new Map<string, Promise<boolean>>();
-  const completed = new Map<string, boolean>();
-  const completedOrder: string[] = [];
-  const rememberCompleted = (id: string, ok: boolean) => {
-    completed.set(id, ok);
-    completedOrder.push(id);
-    while (completedOrder.length > 100) {
-      const old = completedOrder.shift();
-      if (old) completed.delete(old);
-    }
-  };
-  const { emitTo, listen } = await import("@tauri-apps/api/event");
-  const { getCurrentWindow } = await import("@tauri-apps/api/window");
-  const windowLabel = getCurrentWindow().label;
-  const ack = (id: string | undefined, ok: boolean) => {
-    if (id) void emitTo("capture", "quick-capture-ack", { id, ok } satisfies QuickCaptureAck);
-  };
-  if (!owner()) return () => {};
-  const registration = await readOwnedResource(owner, listen<QuickCaptureRequest & { bindingGeneration: number }>("quick-capture", async (e) => {
-    // WebKitGTK currently exposes targeted Tauri events to every graph
-    // listener in this process. Treat the payload label as the authority so
-    // only the selected graph can ever perform the write.
-    if (!owner() || e.payload?.target !== windowLabel) return;
-    const id = e.payload?.id;
-    if (id && completed.has(id)) {
-      ack(id, completed.get(id) ?? false);
-      return;
-    }
-    const existing = id ? inFlight.get(id) : undefined;
-    if (existing) {
-      ack(id, await existing);
-      return;
-    }
-    if (!Number.isSafeInteger(e.payload.bindingGeneration) || e.payload.bindingGeneration <= 0
-        || e.payload.bindingGeneration !== backend().graphBindingGeneration()) {
-      ack(id, false);
-      return;
-    }
-    const saveOwner = bindingOwner(owner);
-    const text = e.payload?.text ?? "";
-    if (!text.trim()) {
-      ack(id, false);
-      return;
-    }
-    // A title routes the capture to a NEW (or existing) page; empty → today.
-    const title = (e.payload?.title ?? "").trim();
-    const save = async () => {
-      let ok = false;
-      try {
-        const result = await writeOwned(saveOwner, title ? captureToPage(title, text) : appendToTodayJournal(text));
-        ok = result.kind === "current" && result.value;
-      } catch {
-        ok = false;
-      }
-      if (saveOwner()) {
-        if (!ok) pushToast(msg("app-capture-couldn-t-be-saved-its-text"), "error");
-        else if (title) pushToast(msg("app-captured-to", { title }), "info");
-        else pushToast(msg("app-captured-to-today-s-journal"), "info");
-      }
-      return ok;
-    };
-    const promise = save();
-    if (id) inFlight.set(id, promise);
-    const ok = await promise;
-    if (id) {
-      inFlight.delete(id);
-      rememberCompleted(id, ok);
-    }
-    ack(id, ok);
-  }), (unlisten) => unlisten());
-  return registration.kind === "current" ? registration.value : () => {};
 }
 
 export function App(): JSX.Element {
@@ -1238,6 +1167,7 @@ export function App(): JSX.Element {
         </MobileDrawerPanel>
       </Show>
       <DrawerBackground class="main-container" blockedBy="left">
+        <FailureBoundary region="Graph recovery"><RootRecoveryNotice /></FailureBoundary>
         {/* In focus mode the topbar is hidden; this thin strip at the very top
             reveals it on hover (CSS adjacency), so controls are reachable. */}
         <DrawerBackground blockedBy="right">
@@ -1383,12 +1313,16 @@ export function App(): JSX.Element {
       <WindowOverlays
         windowId={MAIN_WINDOW_ID}
         deepLink={<FailureBoundary region="The graph chooser"><DeepLinkGraphChoice /></FailureBoundary>}
-        keyboardToolbar={<DrawerBackground class="drawer-floating-background" blockedBy="any">
-          {/* "Navigation buttons at the bottom" on: the keyboard hides that row, so the
-              editing toolbar carries the same group at its leading end (GH #598). */}
+        keyboardToolbar={<>
+          {/* GH #751: the editing dock stays usable above an open drawer, so it is not
+              drawer-background; the rendered-selection toolbar still is. "Navigation
+              buttons at the bottom" on: the keyboard hides that row, so the editing
+              toolbar carries the same group at its leading end (GH #598). */}
           <FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar navigation={navigationAtBottom() ? NavigationActions : undefined} /></FailureBoundary>
-          <FailureBoundary region="The selection toolbar"><RenderedSelectionToolbar /></FailureBoundary>
-        </DrawerBackground>}
+          <DrawerBackground class="drawer-floating-background" blockedBy="any">
+            <FailureBoundary region="The selection toolbar"><RenderedSelectionToolbar /></FailureBoundary>
+          </DrawerBackground>
+        </>}
         recovery={<FailureBoundary region="Unsaved recovery"><UnsavedRecovery /></FailureBoundary>}
         // First-run onboarding covers the (empty) app when no graph is configured;
         // it renders before Toasts so a "couldn't create graph" toast shows on top.

@@ -201,12 +201,23 @@ fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
         // destination page, and the source's custody marker. The referrer's
         // bytes travel in the operation draft as base and payload; its draft
         // record retires with that file, uncopied (RENAME-COST L1).
-        assert_eq!(cost.files_written, 4);
-        assert_eq!(cost.bytes_written, bytes);
-        // RO3 (a) (Martin 2026-10-11): 17 -> 16, the source's trash payload
-        // is no longer file-synced.
+        // Windows writes no custody marker (D-20261021-GQ3): three files,
+        // and the marker's bytes and syncs are not spent.
+        let markers = !MARKERS_OFF;
+        assert_eq!(cost.files_written, if markers { 4 } else { 3 });
         assert_eq!(
-            cost.fsyncs, 16,
+            cost.bytes_written,
+            if markers { bytes } else { bytes - MARKER_BYTES }
+        );
+        // RO3 (a) (Martin 2026-10-11): 17 -> 16, the source's trash payload
+        // is no longer file-synced. Of the 20 counted now: 15 are the rename,
+        // 1 is launch's draft sync (the counters reset before `hosted` starts
+        // the host), and 4 are this fresh graph's first deletion creating its
+        // directories (the trash chain's three parent syncs and the custody
+        // directory's), which the counter missed before GH4 (2026-10-21).
+        assert_eq!(
+            cost.fsyncs,
+            if markers { 20 } else { 17 },
             "file, directory and draft syncs of one rename: {cost:?}"
         );
         assert_eq!(
@@ -571,3 +582,7 @@ fn namespace_rename_cost_scale_probe() {
         store.close();
     }
 }
+/// Windows writes no custody marker (D-20261021-GQ3).
+const MARKERS_OFF: bool = cfg!(windows);
+/// The source page's custody marker, which names the page in its trash.
+const MARKER_BYTES: u64 = 101;

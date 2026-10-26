@@ -5,9 +5,10 @@ import { isFavoriteBlock, isFavoritesPage } from "../favorites";
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
 
-import { createExpansionGate, MACRO_EXPANSION_LIMIT_LABEL } from "./expansionBudget";
+import { createExpansionGate, expandTemplate, templateExpansionSize, MACRO_EXPANSION_LIMIT_LABEL } from "./expansionBudget";
+export { expandTemplate } from "./expansionBudget";
 import { leadingMarker, matchLeadingMarker } from "../markers";
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
+import { For, Show, createEffect, createRenderEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { assetRelPath, extOf, mediaKind } from "../media";
 import { openPage, openPageInNewTab, openInNewTab } from "../router";
@@ -16,7 +17,8 @@ import { openRefTarget } from "../blockRefActions";
 import { editOccurrence, occurrenceEditable, removeOccurrence, createShownOccurrence, useOccurrenceOwner } from "../refOccurrence";
 import { isJournalTitle } from "../journal";
 import { openPageInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
-import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { changed, changedAny, pageChangeKey } from "../changeKeys";
 import { pushToast } from "../toasts";
 import { openOutboundLink, reportLinkOpenFailure } from "../components/ExternalLink";
 import { copyImageFromSrc } from "../copyImage";
@@ -42,12 +44,15 @@ import { codeFences } from "../editor/fences";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
-import { writeClipboardText } from "../clipboard";
-import { acquireAssetBlob, assetVersion } from "../assetCache";
+import { acquireAssetBlob, acquireCachedAssetBlob, assetVersion } from "../assetCache";
 import { mediaEditorForAsset } from "../mediaEditors";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
+import { isQuickShareViewer } from "../publishedBackend";
+import { ShareMedia } from "../quickShare/ShareMedia";
+import { CopyButton } from "./CopyButton";
+export { CopyButton } from "./CopyButton";
 import { isMobilePlatform } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
 import { blockRefTarget, resolveBlockBatched } from "../resolveBatch";
@@ -269,6 +274,10 @@ function createPeekBridge(disabled: () => boolean) {
   let touchOpen = false;
   let openT: ReturnType<typeof setTimeout> | undefined;
   let closeT: ReturnType<typeof setTimeout> | undefined;
+  // The popup's editor holds the caret (D-20261023-VQ): no hover timer closes it.
+  let held = false;
+  const setHeld = (value: boolean) => { held = value; };
+  const closeLater = () => { closeT = setTimeout(() => { if (!held) setOpen(false); }, PEEK_CLOSE_MS); };
   const clearOpen = () => {
     if (openT) {
       clearTimeout(openT);
@@ -295,7 +304,7 @@ function createPeekBridge(disabled: () => boolean) {
     clearOpen();
     if (disabled()) return;
     clearClose();
-    closeT = setTimeout(() => setOpen(false), PEEK_CLOSE_MS);
+    closeLater();
   };
   const popupEnter = () => {
     if (disabled()) return;
@@ -305,7 +314,7 @@ function createPeekBridge(disabled: () => boolean) {
     if (touchOpen) return;
     if (disabled()) return;
     clearClose();
-    closeT = setTimeout(() => setOpen(false), PEEK_CLOSE_MS);
+    closeLater();
   };
   const dismiss = () => {
     touchOpen = false;
@@ -324,7 +333,7 @@ function createPeekBridge(disabled: () => boolean) {
     touchOpen = true;
     setOpen(true);
   };
-  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss, hold };
+  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss, hold, setHeld };
 }
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
@@ -374,9 +383,19 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // right-click and touch on desktop still use the page context menu.
   const longPress = createLongPress(() => anchorEl);
   onCleanup(longPress.dispose);
+  const [previewPage, setPreviewPage] = createSignal<string>();
   const [previewResource] = createResource(
-    () => (peek.open() && !isGuidePageName(targetName()) ? `${targetName()}\0${graphEpoch()}` : null),
-    () => backend().getPage(targetName(), kind()),
+    // Source-page revisions include descendant folds and dataRev full refreshes.
+    // An alias also follows the canonical page the backend answered with.
+    () => (peek.open() && !isGuidePageName(targetName()) ? `${targetName()}\0${changedAny([
+      ...new Set([pageChangeKey(targetName()), pageChangeKey(previewPage() ?? targetName())]),
+    ])}` : null),
+    async () => {
+      const result = await readOwned(graphOwner(), backend().getPage(targetName(), kind()));
+      if (result.kind === "stale") return null;
+      setPreviewPage(result.value?.name);
+      return result.value;
+    },
   );
   // A hover preview that cannot be fetched shows no popup; a rejection used to
   // throw out of this read and cost the whole page region.
@@ -429,44 +448,17 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           title={<span class="peek-popup-title-name"><EmojiText text={preview()!.title || preview()!.name} /></span>}
           blocks={() => capped().blocks}
           page={preview()!.name}
-          pageKind={kind()}
+          path={preview()!.id}
+          pageKind={preview()!.kind}
           properties={pageHeaderProperties(preview()!)}
           format={preview()!.format}
           truncatedCount={() => capped().truncated}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
-          onDismiss={peek.dismiss}
+          onDismiss={peek.dismiss} onHold={peek.setHeld}
         />
       </Show>
     </>
-  );
-}
-
-// One-click copy affordance (#24 — the logseq-copy-code / logseq-copy-url QoL).
-// Copies RAW source text (off the AST, never the rendered DOM) through the
-// backend clipboard path — WebKitGTK's navigator.clipboard is unreliable
-// ([[tine-webkitgtk-confirm]]) — and toasts. Shared by inline code + links
-// (here) and fenced code blocks (body.tsx). `class` positions it per site.
-export function CopyButton(props: { text: string; title: string; class?: string }): JSX.Element {
-  const onCopy = (e: MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    void writeClipboardText(props.text)
-      .then(() => pushToast(msg("render-copied-to-clipboard"), "success"))
-      .catch(() => pushToast(msg("render-couldn-t-copy-to-clipboard"), "error"));
-  };
-  return (
-    <button
-      class={`copy-btn${props.class ? " " + props.class : ""}`}
-      title={props.title}
-      aria-label={props.title}
-      onClick={onCopy}
-    >
-      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="9" y="9" width="11" height="11" rx="2" />
-        <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-      </svg>
-    </button>
   );
 }
 
@@ -492,7 +484,9 @@ function renderLink(
     return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} span={hostSpan(s, spanMode, macroExpansion)} />;
   }
   const dest = urlDest(url);
-  const fileTarget = assetLinkRel(dest) === null ? fileLinkTarget(dest) : null;
+  const assetTarget = assetLinkRel(dest);
+  const fileTarget = assetTarget === null ? fileLinkTarget(dest) : null;
+  if (isQuickShareViewer() && (assetTarget !== null || fileTarget !== null)) return <ShareMedia url={dest} />;
   // File URLs use the OS viewer, preserving their full path (GH #577).
   // File URLs must never enter the graph annotation reader.
   const externalPdf = (/^(?:https?:\/\/|file:)/i.test(dest) || fileTarget?.kind === "outside") && /\.pdf$/i.test(dest);
@@ -565,6 +559,7 @@ function pdfFilenameFromDest(dest: string): string {
 }
 
 function PdfAssetLink(props: { dest: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  if (isQuickShareViewer()) return <ShareMedia url={props.dest} label={props.label} />;
   // The route names the PDF by its path under assets/: highlights, sidecar and
   // hls page are keyed from it, so dropping `nested/` opened another resource.
   const filename = pdfAssetFile(props.dest);
@@ -804,6 +799,7 @@ function AssetImage(props: {
   token?: MediaToken;
   spanAttrs?: SpanDomAttrs;
 }): JSX.Element {
+  if (isQuickShareViewer()) return <ShareMedia url={props.url} label={props.alt} />;
   // Width sizes the WRAPPER, not the <img>: an inline-block sized by a
   // percentage child doesn't shrink to it, so the grip (positioned against the
   // wrapper) would otherwise stay at full column width after a resize. With the
@@ -827,7 +823,7 @@ function AssetImage(props: {
   // and the <img> re-reads the new bytes from disk.
   const [diskSrc, setDiskSrc] = createSignal("");
   const [previewUnavailable, setPreviewUnavailable] = createSignal(false);
-  createEffect(() => {
+  createRenderEffect(() => {
     setPreviewUnavailable(false);
     const r = rel();
     if (!r) {
@@ -838,8 +834,10 @@ function AssetImage(props: {
     assetVersion(r);
     let active = true;
     let release: (() => void) | undefined;
-    setDiskSrc("");
-    void acquireAssetBlob(r).then((lease) => {
+    const cached = acquireCachedAssetBlob(r);
+    setDiskSrc(cached?.url ?? "");
+    release = cached?.release;
+    if (!cached) void acquireAssetBlob(r).then((lease) => {
       if (!active) {
         lease.release();
         return;
@@ -1034,6 +1032,7 @@ function MediaEmbed(props: {
   token?: MediaToken;
   spanAttrs?: SpanDomAttrs;
 }): JSX.Element {
+  if (isQuickShareViewer()) return <ShareMedia url={props.url} label={props.alt} />;
   const [failed, setFailed] = createSignal(false);
   const [blobFallback, setBlobFallback] = createSignal("");
   // Audio has no fullscreen; the "Expand" button (below) opens a wide overlay
@@ -1224,10 +1223,6 @@ export function InlineText(props: { text: string; blockId?: string; format?: For
 // limit marker) — I-22, one budget with renderedText.ts.
 const userMacroGate = createExpansionGate();
 
-export function expandTemplate(template: string, args: string[]): string {
-  return template.replace(/\$(\d+)/g, (m, d) => args[Number(d) - 1] ?? m);
-}
-
 function isSingleParagraphExpansionBlock(b: AstBlock): boolean {
   // parseBlock re-bullets raw Markdown/Org block bodies, so a plain paragraph
   // arrives as the synthetic header bullet. A heading expansion has `size`.
@@ -1251,9 +1246,8 @@ function expansionHeadingLevel(expanded: string, fmt?: Format): number | null {
 // the args. Single-paragraph expansions stay inline; block-level expansions render
 // through the block renderer, matching OG's macro parse/render split.
 function UserMacroView(props: { name: string; template: string; args: string[]; blockId?: string }): JSX.Element {
-  const expanded = expandTemplate(props.template, props.args);
   return userMacroGate.expand(
-    expanded.length,
+    templateExpansionSize(props.template, props.args),
     () => <span class="macro">{`{{${props.name}}}`}</span>,
     () => (
       <span class="macro macro-expansion-limit" title={`{{${props.name}}}`}>
@@ -1262,6 +1256,7 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
     ),
     () => {
       const fmt = formatForBlock(props.blockId);
+      const expanded = expandTemplate(props.template, props.args);
       if (parserReady() && expansionIsBlockLevel(expanded, fmt)) {
         return (
           <div class="macro-blocks" data-foreign-source="macro">
@@ -1289,7 +1284,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   let anchorEl: HTMLSpanElement | undefined;
   const [grpResource] = createResource(
     // Not a UUID: nothing to resolve (OG's `parse-uuid` gate), so no lookup.
-    () => isBlockRefUuid(props.id) && `${props.id}\0${graphEpoch()}\0${dataRev()}`,
+    () => isBlockRefUuid(props.id) && `${props.id}\0${changed(`block:${props.id}`)}`,
     async () => {
       const result = await readOwned(graphOwner(), resolveBlockBatched(props.id));
       return result.kind === "current" ? result.value : null;
@@ -1327,7 +1322,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   const lines = () => props.label !== undefined
     ? [props.label]
     : targetRaw()
-      ? visibleBody(targetRaw()!)
+      ? visibleBody(targetRaw()!, fmt())
       : undefined;
   // Mirror the source's state with its shared recognizer and chip styling.
   // Explicit aliases remain label-only; targetRaw keeps live and unloaded
@@ -1335,7 +1330,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   const marker = () => {
     if (props.label !== undefined) return null;
     const raw = targetRaw();
-    return raw ? leadingMarker(raw) : null;
+    return raw ? leadingMarker(raw, fmt()) : null;
   };
   // Where the checkbox writes: the same exact owner the click navigates to.
   const checkboxTarget = () => {
@@ -1355,7 +1350,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   // descendant tree only after the hover dwell, through a backend operation
   // that applies the cap before DTO allocation and IPC serialization.
   const [previewResource] = createResource(
-    () => (peek.open() && grp() ? `${props.id}\0${graphEpoch()}\0${dataRev()}` : null),
+    () => (peek.open() && grp() ? `${props.id}\0${changedAny([`block:${props.id}`, pageChangeKey(grp()!.page)])}` : null),
     async () => {
       const result = await readOwned(graphOwner(), backend().previewBlock(props.id, PEEK_BLOCK_CAP));
       return result.kind === "current" ? result.value : null;
@@ -1463,6 +1458,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           title={<span class="peek-popup-title-name">{preview()!.group.page}</span>}
           blocks={() => capped().blocks}
           page={preview()!.group.page}
+          path={preview()!.group.path}
           pageKind={preview()!.group.kind}
           blockId={props.id}
           truncatedCount={previewTruncated}
@@ -1476,7 +1472,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           </Show>}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
-          onDismiss={peek.dismiss}
+          onDismiss={peek.dismiss} onHold={peek.setHeld}
         />
       </Show>
     </>

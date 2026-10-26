@@ -1,6 +1,7 @@
 /* Soft (GH #649), refined from EllisMorrow's medium palette. Installed only
  * while Soft is selected, before custom.css. Contrast: soft.test.ts. Secondary,
- * muted and bullet tones adjust minimally for selected hover/active surfaces. */
+ * muted and bullet tones adjust minimally for selected hover/active surfaces.
+ * Settings descriptions and metadata have separate, AA-readable text roles. */
 html[data-theme="light"] {
   --ls-active-primary-color: #16486f;
   --ls-primary-background-color: #cbc9c3;
@@ -28,6 +29,9 @@ html[data-theme="light"] {
   --ls-page-mark-color: #26251c;
   --ls-tag-text-color: #48275b;
   --text-muted: #3a3d35;
+  --soft-settings-title: var(--text-primary);
+  --soft-settings-description: #44473f;
+  --soft-settings-meta: #4b4e45;
   --marker-color: var(--text-muted);
   --done-color: var(--text-muted);
   --bullet-ring: rgba(44, 50, 47, 0.08);
@@ -66,7 +70,10 @@ html[data-theme="dark"] {
   --ls-page-mark-bg-color: #74602e;
   --ls-page-mark-color: #fff0bf;
   --ls-tag-text-color: #f0e3fa;
-  --text-muted: #d7dcd9;
+  --text-muted: #d7dcd8;
+  --soft-settings-title: var(--text-primary);
+  --soft-settings-description: #cbd1cd;
+  --soft-settings-meta: #c0c7c1;
   --marker-color: var(--text-muted);
   --done-color: var(--text-muted);
   --bullet-ring: rgba(225, 233, 240, 0.08);
@@ -77,6 +84,74 @@ html[data-theme="dark"] {
   --soft-modal-shadow: 0 20px 56px rgba(16, 20, 26, 0.34);
   --scrollbar-thumb: #6b7077;
   --scrollbar-thumb-hover: #81878e;
+}
+
+/* Settings hierarchy and quiet interaction details (GH #649 follow-up). */
+.settings-modal {
+  --soft-settings-divider: color-mix(in srgb, var(--border-color) 60%, transparent);
+  --soft-settings-hover-bg: color-mix(in srgb, var(--bg-primary) 55%, var(--bg-tertiary));
+  --soft-settings-selected-border: color-mix(in srgb, var(--link-color) 60%, var(--border-color));
+  --soft-settings-hover-border: color-mix(in srgb, var(--link-color) 35%, var(--border-color));
+}
+
+.settings-modal :is(.settings-label, .settings-section, .theme-gallery-name) {
+  color: var(--soft-settings-title);
+}
+
+.settings-modal .settings-label {
+  font-weight: 600;
+}
+
+.settings-modal .settings-hint {
+  color: var(--soft-settings-description);
+  font-weight: 400;
+  line-height: 1.55;
+}
+
+.settings-modal .settings-label + .settings-hint {
+  margin-top: 4px;
+}
+
+.settings-modal .settings-hint.settings-field-hint {
+  margin-top: 6px;
+}
+
+.settings-modal :is(
+  .theme-gallery-author,
+  .settings-nav-foot,
+  .about-ver-num,
+  .about-version > .settings-hint,
+  .about-commit,
+  .about-build,
+  .settings-label > .settings-hint,
+  .installed-theme-identity .settings-hint
+) {
+  color: var(--soft-settings-meta);
+}
+
+.settings-modal :is(.settings-row, .settings-field, .theme-gallery-hint) {
+  border-bottom-color: var(--soft-settings-divider);
+}
+
+.settings-modal .settings-nav-foot {
+  border-top-color: var(--soft-settings-divider);
+}
+
+.settings-modal :is(
+  .settings-btn:not(.settings-btn-primary):not(.settings-btn-danger):not(:disabled),
+  .settings-nav-item:not(.active):not(:disabled)
+):hover {
+  background: var(--soft-settings-hover-bg);
+}
+
+.settings-modal .theme-gallery-card:hover {
+  border-color: var(--soft-settings-hover-border);
+  background: var(--soft-settings-hover-bg);
+}
+
+.settings-modal .theme-gallery-card.selected {
+  border-color: var(--soft-settings-selected-border);
+  box-shadow: 0 0 0 1px var(--soft-settings-selected-border);
 }
 
 /* Refine app-owned states; retain all existing sizes and hit targets. */

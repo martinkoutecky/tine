@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -19,7 +20,7 @@ function mount(node: () => JSX.Element) {
   return { root, dispose: render(node, root) };
 }
 
-function paste(textarea: HTMLTextAreaElement, text: string, html = ""): Event {
+function paste(textarea: EditorDriver, text: string, html = ""): Event {
   const event = new Event("paste", { bubbles: true, cancelable: true });
   Object.defineProperty(event, "clipboardData", {
     value: {
@@ -29,15 +30,47 @@ function paste(textarea: HTMLTextAreaElement, text: string, html = ""): Event {
       getData: (type: string) => type === "text/html" ? html : text,
     },
   });
-  textarea.dispatchEvent(event);
+  textarea.paste(event);
   return event;
 }
 
-function keydown(textarea: HTMLTextAreaElement, init: KeyboardEventInit) {
-  textarea.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+function keydown(textarea: EditorDriver, init: KeyboardEventInit) {
+  textarea.keydown(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
 }
 
 describe("multiline paste into editor-visible empty blocks", () => {
+  it.each(["md", "org"] as const)("GH #759: inserts a copied HTML link at the caret in %s", async (format) => {
+    const block: BlockDto = { id: "75900000-1111-4111-8111-111111111111", raw: "before after", collapsed: false, children: [] };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", format, pre_block: null, blocks: [block] });
+    startEditing(block.id, 7);
+    const { root, dispose } = mount(() => <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
+    try {
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      textarea.select(7, 7);
+      const event = paste(textarea, "Example page", '<html><head></head><body><a href="https://example.com/page">Example page</a></body></html>');
+      await Promise.resolve();
+      const link = format === "org" ? "[[https://example.com/page][Example page]]" : "[Example page](https://example.com/page)";
+      expect(event.defaultPrevented).toBe(true);
+      expect(pageByName("Paste")!.roots).toEqual([block.id]);
+      expect(doc.byId[block.id].raw).toBe(`before ${link}after`);
+      expect(textarea.value()).toBe(`before ${link}after`);
+      expect(textarea.selection()[0]).toBe(7 + link.length);
+    } finally { dispose(); }
+  });
+
+  it.each(["md", "org"] as const)("review pastes siblings beside a clock-only block (%s)", format => {
+    const raw = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+    const block: BlockDto = { id: "clock-only", raw, collapsed: false, children: [] };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block], format });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => <For each={pageByName("Paste")?.roots ?? []}>{id => <Block id={id} />}</For>);
+    try {
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      expect(textarea.value()).toBe("");
+      paste(textarea, format === "org" ? "* first\n* second" : "- first\n- second");
+      expect(pageByName("Paste")!.roots.map(id => doc.byId[id].raw)).toEqual([raw, "first", "second"]);
+    } finally { dispose(); }
+  });
   it("I-22: refuses pasted outlines deeper than the UI render limit", () => {
     const block: BlockDto = { id: "aaaa1111-1111-4111-8111-111111111111", raw: "", collapsed: false, children: [] };
     loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
@@ -47,7 +80,7 @@ describe("multiline paste into editor-visible empty blocks", () => {
     ));
     try {
       const outline = Array.from({ length: 513 }, (_, depth) => `${"\t".repeat(depth)}- item ${depth}`).join("\n");
-      const event = paste(root.querySelector("textarea") as HTMLTextAreaElement, outline);
+      const event = paste(maybeEditorIn(root) as EditorDriver, outline);
       expect(event.defaultPrevented).toBe(true);
       expect(toasts().some((toast) => toast.message.includes("too deep")),
         "I-22: deep paste must report refusal; exemplar 513-level outline").toBe(true);
@@ -65,7 +98,7 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      paste(root.querySelector("textarea") as HTMLTextAreaElement,
+      paste(maybeEditorIn(root) as EditorDriver,
         Array.from({ length: 128 }, (_, depth) => `${"\t".repeat(depth)}- item ${depth}`).join("\n"));
       let current = pageByName("Paste")!.roots[0];
       for (let depth = 0; depth < 128; depth++) {
@@ -91,8 +124,8 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
-      expect(textarea.value).toBe("");
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      expect(textarea.value()).toBe("");
       paste(textarea, "- first\n- second");
       expect(pageByName("Paste")!.roots).toHaveLength(2);
       expect(pageByName("Paste")!.roots[0]).toBe(block.id);
@@ -116,8 +149,8 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
-      textarea.setSelectionRange(7, 7);
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      textarea.select(7, 7);
       keydown(textarea, { key: "v", code: "KeyV", ctrlKey: true, shiftKey: true });
       const event = paste(textarea, "first\nsecond");
 
@@ -137,9 +170,9 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       keydown(textarea, { key: "v", code: "KeyV", ctrlKey: true, shiftKey: true });
-      textarea.dispatchEvent(new KeyboardEvent("keyup", { key: "v", code: "KeyV", bubbles: true }));
+      textarea.keyup(new KeyboardEvent("keyup", { key: "v", code: "KeyV", bubbles: true }));
       paste(textarea, "first\nsecond");
       expect(pageByName("Paste")!.roots).toEqual([block.id]);
       expect(doc.byId[block.id].raw).toBe("first\nsecond");
@@ -161,9 +194,9 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
-      const start = textarea.value.indexOf("SELECT");
-      textarea.setSelectionRange(start, start + "SELECT".length);
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      const start = textarea.value().indexOf("SELECT");
+      textarea.select(start, start + "SELECT".length);
       const plain = "line1\nline2\nline3";
       const event = paste(textarea, plain);
       await Promise.resolve();
@@ -171,7 +204,7 @@ describe("multiline paste into editor-visible empty blocks", () => {
       expect(event.defaultPrevented).toBe(true);
       expect(pageByName("Paste")!.roots).toEqual([block.id]);
       expect(doc.byId[block.id].raw).toBe(`πrefix ${plain} suffix🧪`);
-      expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([
+      expect([textarea.selection()[0], textarea.selection()[1]]).toEqual([
         start + plain.length,
         start + plain.length,
       ]);
@@ -188,7 +221,7 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      paste(root.querySelector("textarea") as HTMLTextAreaElement, "  a\n\nb\n\n\n c  ");
+      paste(maybeEditorIn(root) as EditorDriver, "  a\n\nb\n\n\n c  ");
       expect(pageByName("Paste")!.roots.map((id) => doc.byId[id].raw)).toEqual(["a", "b", "c"]);
     } finally {
       dispose();
@@ -208,8 +241,8 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
-      textarea.setSelectionRange(3, 3);
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      textarea.select(3, 3);
       const latex = "\\begin{align}\n\n\\end{align}";
       const event = paste(textarea, latex);
       await Promise.resolve();
@@ -217,7 +250,7 @@ describe("multiline paste into editor-visible empty blocks", () => {
       expect(event.defaultPrevented).toBe(true);
       expect(pageByName("Paste")!.roots).toEqual([block.id]);
       expect(doc.byId[block.id].raw).toBe(`$$\n${latex}\n$$`);
-      expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([
+      expect([textarea.selection()[0], textarea.selection()[1]]).toEqual([
         3 + latex.length,
         3 + latex.length,
       ]);
@@ -239,8 +272,8 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
-      textarea.setSelectionRange(3, 10);
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      textarea.select(3, 10);
       const latex = "\\begin{align}\n\n\\end{align}";
       paste(textarea, latex);
 
@@ -259,8 +292,8 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
-      textarea.setSelectionRange(7, 7);
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      textarea.select(7, 7);
       paste(textarea, "  indented\n    deeper");
       expect(pageByName("Paste")!.roots).toEqual([block.id]);
       expect(doc.byId[block.id].raw).toBe("before   indented\n    deeperafter");
@@ -277,7 +310,7 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      paste(root.querySelector("textarea") as HTMLTextAreaElement, "# heading\nbody");
+      paste(maybeEditorIn(root) as EditorDriver, "# heading\nbody");
       expect(pageByName("Paste")!.roots.map((id) => doc.byId[id].raw)).toEqual(["# heading", "body"]);
     } finally {
       dispose();
@@ -293,7 +326,7 @@ describe("multiline paste into editor-visible empty blocks", () => {
     ));
     try {
       const numbered = "1. first\n2. second";
-      paste(root.querySelector("textarea") as HTMLTextAreaElement, numbered);
+      paste(maybeEditorIn(root) as EditorDriver, numbered);
       expect(pageByName("Paste")!.roots).toEqual([block.id]);
       expect(doc.byId[block.id].raw).toBe(numbered);
     } finally {
@@ -316,7 +349,7 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Org Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      paste(first.root.querySelector("textarea") as HTMLTextAreaElement, "* first\n* second");
+      paste(maybeEditorIn(first.root) as EditorDriver, "* first\n* second");
       expect(pageByName("Org Paste")!.roots.map((id) => doc.byId[id].raw)).toEqual(["first", "second"]);
     } finally {
       first.dispose();
@@ -339,7 +372,7 @@ describe("multiline paste into editor-visible empty blocks", () => {
     ));
     try {
       const prose = "line one\nline two";
-      paste(second.root.querySelector("textarea") as HTMLTextAreaElement, prose);
+      paste(maybeEditorIn(second.root) as EditorDriver, prose);
       expect(pageByName("Org Prose")!.roots).toEqual([proseBlock.id]);
       expect(doc.byId[proseBlock.id].raw).toBe(prose);
     } finally {
@@ -355,7 +388,7 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       paste(textarea, "Parent\nChild\nSibling", "<ul><li>Parent<ul><li>Child</li></ul></li><li>Sibling</li></ul>");
       const roots = pageByName("Paste")!.roots;
       expect(roots).toHaveLength(2);
@@ -380,7 +413,7 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      paste(root.querySelector("textarea") as HTMLTextAreaElement, table);
+      paste(maybeEditorIn(root) as EditorDriver, table);
       const roots = pageByName("Paste")!.roots;
       expect(roots).toHaveLength(1);
       expect(doc.byId[roots[0]].raw).toBe(table);
@@ -397,8 +430,8 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
-      textarea.setSelectionRange(6, 6);
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      textarea.select(6, 6);
       keydown(textarea, { key: "v", code: "KeyV", ctrlKey: true, shiftKey: true });
       paste(textarea, "\nParent\nChild", "<ul><li>Parent<ul><li>Child</li></ul></li></ul>");
       expect(pageByName("Paste")!.roots).toEqual([block.id]);
@@ -421,9 +454,9 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
-      const start = textarea.value.indexOf("SELECT");
-      textarea.setSelectionRange(start, start + "SELECT".length);
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      const start = textarea.value().indexOf("SELECT");
+      textarea.select(start, start + "SELECT".length);
       keydown(textarea, { key: "v", code: "KeyV", ctrlKey: true, shiftKey: true });
       const plain = "literal [plain](https://plain.test)";
       const event = paste(textarea, plain, "<ul><li>HTML</li><li>Outline</li></ul>");
@@ -432,7 +465,7 @@ describe("multiline paste into editor-visible empty blocks", () => {
       expect(event.defaultPrevented).toBe(true);
       expect(pageByName("Paste")!.roots).toEqual([block.id]);
       expect(doc.byId[block.id].raw).toBe(`πrefix ${plain} suffix🧪`);
-      expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([
+      expect([textarea.selection()[0], textarea.selection()[1]]).toEqual([
         start + plain.length,
         start + plain.length,
       ]);
@@ -454,9 +487,9 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
-      const start = textarea.value.indexOf("selected");
-      textarea.setSelectionRange(start, start + "selected".length);
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      const start = textarea.value().indexOf("selected");
+      textarea.select(start, start + "selected".length);
       keydown(textarea, { key: "v", code: "KeyV", metaKey: true, shiftKey: true });
       const url = "https://youtu.be/dQw4w9WgXcQ";
       const event = paste(textarea, url);
@@ -465,7 +498,7 @@ describe("multiline paste into editor-visible empty blocks", () => {
       expect(event.defaultPrevented).toBe(true);
       expect(pageByName("Paste")!.roots).toEqual([block.id]);
       expect(doc.byId[block.id].raw).toBe(`before ${url} after`);
-      expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([
+      expect([textarea.selection()[0], textarea.selection()[1]]).toEqual([
         start + url.length,
         start + url.length,
       ]);
@@ -487,9 +520,9 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
-      const start = textarea.value.indexOf("selected");
-      textarea.setSelectionRange(start, start + "selected".length);
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      const start = textarea.value().indexOf("selected");
+      textarea.select(start, start + "selected".length);
       keydown(textarea, { key: "v", code: "KeyV", ctrlKey: true, shiftKey: true });
       const event = paste(textarea, "", "<p>HTML fallback must not run</p>");
 
@@ -521,8 +554,8 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      textarea.select(textarea.value().length, textarea.value().length);
       const event = paste(textarea, url);
 
       expect(event.defaultPrevented).toBe(true);
@@ -545,9 +578,9 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
-      const start = textarea.value.indexOf("selected");
-      textarea.setSelectionRange(start, start + "selected".length);
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      const start = textarea.value().indexOf("selected");
+      textarea.select(start, start + "selected".length);
       const url = "https://youtu.be/dQw4w9WgXcQ";
       const event = paste(textarea, url);
 
@@ -571,8 +604,8 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      textarea.select(textarea.value().length, textarea.value().length);
       const event = paste(textarea, "https://example.com/watch?v=dQw4w9WgXcQ");
 
       expect(event.defaultPrevented).toBe(false);
@@ -592,7 +625,7 @@ describe("plain-text paste classification leaves literal source whole (C5 B Bloc
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      paste(root.querySelector("textarea") as HTMLTextAreaElement, text);
+      paste(maybeEditorIn(root) as EditorDriver, text);
       return pageByName("Paste")!.roots.map((id) => doc.byId[id].raw);
     } finally { dispose(); }
   }

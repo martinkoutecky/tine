@@ -31,9 +31,9 @@ const mobileMenu = (key, budget) => ({ env: "mobile", budget, what: `rows, menu.
 /** @type {Readonly<Record<string, Surface>>} */
 export const SURFACES = Object.freeze({
   // --- Commands: registries, no rendering ---------------------------------
-  "commands.registry": { env: "desktop", budget: 120, what: "command ids in the Shortcuts list (remappable)", source: "src/keybindings.ts COMMANDS via commandDefaults()" },
-  "commands.registry.editor": { env: "desktop", budget: 25, what: "editor-scope command ids", source: "commandDefaults() rows with scope \"editor\"" },
-  "commands.palette": { env: "desktop", budget: 68, what: "built-in rows in the command palette (plugin rows excluded)", source: "paletteCommands() minus plugin: ids; a registry command with paletteHidden stays out of it" },
+  "commands.registry": { env: "desktop", budget: 122, what: "command ids in the Shortcuts list (remappable)", source: "src/keybindings.ts COMMANDS via commandDefaults()" },
+  "commands.registry.editor": { env: "desktop", budget: 26, what: "editor-scope command ids", source: "commandDefaults() rows with scope \"editor\"" },
+  "commands.palette": { env: "desktop", budget: 69, what: "built-in rows in the command palette (plugin rows excluded)", source: "paletteCommands() minus plugin: ids; a registry command with paletteHidden stays out of it" },
   "keys.builtin": { env: "desktop", budget: 23, what: "non-remappable builtin key rows (documentation only)", source: "src/keybindings.ts BUILTIN_KEYS" },
   "slash.menu": { env: "desktop", budget: 53, what: "slash-menu rows", source: "src/editor/autocomplete.ts COMMANDS (COMMAND_DEFINITIONS)" },
   "angle.menu": { env: "desktop", budget: 16, what: "`<` block-menu rows", source: "src/editor/autocomplete.ts ADVANCED_BLOCK_COMMANDS" },
@@ -51,7 +51,7 @@ export const SURFACES = Object.freeze({
   "settings.backups.open": settingsOpen("backups", 3),
   "settings.graph.open": settingsOpen("graph", 7),
   "settings.plugins.open": settingsOpen("plugins", 5),
-  "settings.diagnostics.open": settingsOpen("diagnostics", 5),
+  "settings.diagnostics.open": settingsOpen("diagnostics", 6),
   "settings.shortcuts.open": settingsOpen("shortcuts", 1, " (the rows are the commands budget)"),
   "settings.about.open": settingsOpen("about", 8),
 

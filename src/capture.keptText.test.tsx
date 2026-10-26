@@ -63,12 +63,18 @@ it("keeps the captured text in the capture window when the main window could not
   const request = h.emitted.find((e) => e.event === "quick-capture")!.payload as { id: string; text: string };
   expect(request.text).toBe("- captured thought");
   await vi.waitFor(() => expect(h.listeners.has("quick-capture-ack")).toBe(true));
-  h.listeners.get("quick-capture-ack")!({ payload: { id: request.id, ok: false } });
+  h.listeners.get("quick-capture-ack")!({ payload: { id: request.id, ok: false, landed: true } });
   await new Promise((resolve) => setTimeout(resolve, 20));
   // The scratch editor was neither cleared nor emptied, so the text is still there to resubmit.
   expect(h.setRaw).toEqual([]);
   expect(h.deleted).toEqual([]);
   expect(document.body.textContent ?? "").toContain("text kept");
+  h.captureApi!.submit();
+  await vi.waitFor(() => expect(h.emitted.filter(e => e.event === "quick-capture")).toHaveLength(2));
+  const retry = h.emitted.filter(e => e.event === "quick-capture").at(-1)!.payload as { id: string };
+  expect(retry.id, "L9-08: a manual retry must identify the insertion that may already have landed").toBe(request.id);
+  h.listeners.get("quick-capture-ack")!({ payload: { id: retry.id, ok: true } });
+  await Promise.resolve();
 });
 
 it.each(["text", "title", "IME"])("acknowledges only the submitted snapshot, retaining later %s edits", async (change) => {
@@ -95,6 +101,10 @@ it.each(["text", "title", "IME"])("acknowledges only the submitted snapshot, ret
   expect(h.deleted).toEqual([]);
   expect(title.value).toBe(change === "title" ? "Later title" : "Destination");
   expect(h.hide).not.toHaveBeenCalled();
+  if (change === "IME") {
+    document.querySelector(".capture-shell")!.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    await Promise.resolve();
+  }
 });
 
 it("clears and hides after a successful acknowledgement when the snapshot is unchanged", async () => {
@@ -109,6 +119,29 @@ it("clears and hides after a successful acknowledgement when the snapshot is unc
   expect(document.querySelector<HTMLInputElement>(".capture-title")!.value).toBe("");
 });
 
+
+it("L9-08: a timeout retry retains the original payload while later edits stay in the scratch", async () => {
+  h.markdown = "- timed out capture";
+  h.setRaw.length = 0;
+  h.hide.mockClear();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const before = h.emitted.filter(e => e.event === "quick-capture").length;
+    h.captureApi!.submit();
+    await vi.waitFor(() => expect(h.emitted.filter(e => e.event === "quick-capture").length).toBeGreaterThan(before));
+    const request = h.emitted.filter(e => e.event === "quick-capture").at(-1)!.payload as { id: string; text: string };
+    await vi.advanceTimersByTimeAsync(15_001);
+    expect(document.body.textContent).toContain("Retry File capture");
+    h.markdown = "- later edit";
+    h.captureApi!.submit();
+    await vi.waitFor(() => expect(h.emitted.filter(e => e.event === "quick-capture")).toHaveLength(before + 4));
+    expect(h.emitted.filter(e => e.event === "quick-capture").at(-1)!.payload).toEqual(expect.objectContaining(request));
+    h.listeners.get("quick-capture-ack")!({ payload: { id: request.id, ok: true } });
+    await Promise.resolve();
+    expect(h.setRaw).toEqual([]);
+    expect(h.hide).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
 
 it("renders block-action feedback with a sticky copyable error in Quick Capture", async () => {
   const { pushToast, setToasts } = await import("./toasts");

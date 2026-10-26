@@ -153,6 +153,9 @@ pub(crate) struct Derived {
     /// invisibly.
     page_index_failures: RwLock<Vec<String>>,
     unreadable_pages: RwLock<Arc<Vec<(crate::store::FileId, String)>>>,
+    /// Retryable reads inside the racy window. Storage guards still need
+    /// this uncertainty even though automatic notices wait for settling.
+    unsettled_reads: RwLock<Arc<HashMap<PathBuf, String>>>,
     discovery_errors: RwLock<Vec<(crate::FileId, crate::IoError)>>,
     /// Memoized `list_pages()`, keyed by `cache_gen` (which every page
     /// create, delete and rename bumps), so quick-switch and `[[` complete
@@ -198,6 +201,7 @@ impl Default for Derived {
             observed_mtimes: RwLock::new(Arc::new(SharedMap::new())),
             page_index_failures: RwLock::new(Vec::new()),
             unreadable_pages: RwLock::new(Arc::new(Vec::new())),
+            unsettled_reads: RwLock::new(Arc::new(HashMap::new())),
             discovery_errors: RwLock::new(Vec::new()),
             page_list_cache: RwLock::new(None),
             find_entry_cache: RwLock::new(None),
@@ -356,6 +360,62 @@ impl Graph {
         self.derived.cache.read().unwrap().is_some()
     }
 
+    /// Apply the published day's existing claimant order to its parsed rows.
+    /// Only this day's claimants are visited. A promoted file is read once;
+    /// held files use their owner's published bytes, never a new disk read.
+    pub(crate) fn reconcile_journal_claimants(&self, entries: &[PageEntry]) -> Vec<PathBuf> {
+        let Some(winner) = entries.first() else {
+            return Vec::new();
+        };
+        let mut changed = Vec::new();
+        {
+            let mut cache = self.derived.cache.write().unwrap();
+            if let Some(pages) = cache.as_mut() {
+                for entry in &entries[1..] {
+                    if pages.positions.contains_key(entry.rel_path_str()) {
+                        self.retire_row(Some(Arc::make_mut(pages)), &entry.path, false);
+                        changed.push(entry.path.clone());
+                    }
+                }
+            }
+            if !changed.is_empty() {
+                let paths: Vec<_> = changed.iter().map(PathBuf::as_path).collect();
+                self.move_generation(cache.is_none(), &paths);
+            }
+        }
+        if self.with_cached(&winner.path, |row| row.is_some()) == Some(true) {
+            return changed;
+        }
+        match self.source(&winner.path) {
+            Source::Disk => {
+                if let SyncFileResult::ReadFailed(error) =
+                    self.sync_file_internal(&winner.path, None)
+                {
+                    let id = crate::FileId::from(winner.rel_path_str().to_owned());
+                    let mut errors = self.derived.unreadable_pages.write().unwrap();
+                    if !errors.iter().any(|(known, _)| *known == id) {
+                        Arc::make_mut(&mut errors).push((id, error.to_string()));
+                    }
+                }
+            }
+            Source::Held(bytes) => {
+                if let Some(row) = self
+                    .held_key(&winner.path)
+                    .and_then(|key| self.owned_row(&key, &bytes, None))
+                {
+                    let mut cache = self.derived.cache.write().unwrap();
+                    if let Some(pages) = cache.as_mut() {
+                        self.put_row(Arc::make_mut(pages), row);
+                        self.move_generation(false, &[&winner.path]);
+                    }
+                }
+            }
+            Source::HeldAbsent | Source::HeldUnindexed => {}
+        }
+        changed.push(winner.path.clone());
+        changed
+    }
+
     /// `f` over the cached row for `path` (None when not cached), under the
     /// cache read lock; None when the cache is not built.
     pub(super) fn with_cached<T>(
@@ -392,6 +452,48 @@ impl Graph {
     }
 
     pub(crate) fn unreadable_pages(&self) -> Arc<Vec<(crate::store::FileId, String)>> {
+        let mut rows = self.reported_unreadable_pages();
+        let pending = Arc::clone(&self.derived.unsettled_reads.read().unwrap());
+        if pending.is_empty() {
+            return rows;
+        }
+        let mut memo = Memo::default();
+        Arc::make_mut(&mut rows).extend(
+            pending
+                .iter()
+                .filter(|(path, _)| self.disk_sourced_in(&mut memo, path))
+                .map(|(path, reason)| (crate::FileId::from(self.rel_path(path)), reason.clone())),
+        );
+        Arc::make_mut(&mut rows).sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+        Arc::make_mut(&mut rows).dedup_by(|a, b| a.0 == b.0);
+        rows
+    }
+
+    pub(crate) fn note_unsettled_read(&self, path: &Path, reason: Option<String>) {
+        let mut pending = self.derived.unsettled_reads.write().unwrap();
+        match reason {
+            Some(reason) => {
+                Arc::make_mut(&mut pending).insert(path.to_path_buf(), reason);
+            }
+            None if pending.contains_key(path) => {
+                Arc::make_mut(&mut pending).remove(path);
+            }
+            None => {}
+        }
+    }
+
+    pub(crate) fn unsettled_read_paths(&self) -> Vec<PathBuf> {
+        self.derived
+            .unsettled_reads
+            .read()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    /// Only settled read failures belong in the published automatic notice.
+    pub(crate) fn reported_unreadable_pages(&self) -> Arc<Vec<(crate::store::FileId, String)>> {
         let mut rows = Arc::clone(&self.derived.unreadable_pages.read().unwrap());
         Arc::make_mut(&mut rows).extend(
             self.derived
@@ -713,16 +815,31 @@ impl Graph {
         }
     }
 
-    /// Record that `path`'s parse panicked (its page is no longer indexed).
+    /// Isolate a parser failure to `path`, retiring only its indexed row.
+    /// Capture can promote a journal mid-publication, so the cache must stay
+    /// built for unrelated pages and for the rest of that capture.
     /// A held page's index is its owner's, never a disk parse's.
     pub(super) fn record_index_failure(&self, path: &Path) {
-        let _cache = self.derived.cache.read().unwrap();
+        let mut cache = self.derived.cache.write().unwrap();
         if self.disk_sourced(path) {
-            self.derived
-                .page_index_failures
-                .write()
-                .unwrap()
-                .push(self.rel_path(path));
+            // A quiet retry must not erase an already reported launch error.
+            self.retire_row(cache.as_mut().map(Arc::make_mut), path, false);
+            let rel = self.rel_path(path);
+            let mut failures = self.derived.page_index_failures.write().unwrap();
+            if !failures.contains(&rel) {
+                failures.push(rel.clone());
+            }
+            drop(failures);
+            // A checkpoint launch also reconciles through this boundary.
+            // Replacing a whole-cache rebuild must retain its per-page error
+            // reporting, including when the watcher defers its own notice.
+            let mut unreadable = self.derived.unreadable_pages.write().unwrap();
+            let id = crate::FileId::from(rel);
+            if !unreadable.iter().any(|(known, _)| *known == id) {
+                Arc::make_mut(&mut unreadable).push((id, ParserPanicked.to_string()));
+            }
+            drop(unreadable);
+            self.move_generation(cache.is_none(), &[path]);
         }
     }
 
@@ -1139,6 +1256,11 @@ impl Graph {
         }
         Arc::make_mut(&mut self.derived.unreadable_pages.write().unwrap())
             .retain(|(id, _)| id.as_str() != rel);
+        self.derived
+            .page_index_failures
+            .write()
+            .unwrap()
+            .retain(|failed| *failed != rel);
     }
 
     /// Remove `path`'s row from `pages` with its revision, anchor and file

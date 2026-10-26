@@ -8,6 +8,26 @@ import { GraphSwitcher, Sidebar } from "./Sidebar";
 import { openJournals, route } from "../router";
 import { readFileSync } from "node:fs";
 
+it("GH #761: sidebar sections and graph switcher share SVG disclosures that follow folding", () => {
+  setFavorites([{ name: "Tine", kind: "page" }]);
+  setRecentPages([{ name: "Tine", kind: "page" }]);
+  const host = document.body.appendChild(document.createElement("div"));
+  const dispose = render(() => <Sidebar />, host);
+  try {
+    const controls = [...host.querySelectorAll<HTMLElement>(".nav-section-toggle")];
+    expect(controls.length).toBeGreaterThanOrEqual(2);
+    for (const control of controls) {
+      const caret = control.querySelector(".nav-toggle-caret")!;
+      expect(caret.querySelector("svg")).not.toBeNull();
+      const collapsed = caret.classList.contains("collapsed");
+      control.click();
+      expect(caret.classList.contains("collapsed")).toBe(!collapsed);
+      control.click();
+    }
+    expect(host.querySelector(".graph-switch-caret svg")).not.toBeNull();
+  } finally { dispose(); }
+});
+
 it("GH #335: All pages opens the full view directly", () => {
   openJournals();
   const root = document.createElement("div"); document.body.append(root);

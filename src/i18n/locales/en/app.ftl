@@ -57,3 +57,9 @@ app-pane-split-navigation = { $kind ->
 # Helper-return and component-prop interface text (GH #107).
 app-prose-navigation-sidebar = Navigation sidebar
 app-prose-unexpected-failure = Unexpected failure.
+capture-snapshot-saved = Earlier capture saved — submitted text removed where unchanged; newer edits kept
+capture-title-needs-text = Add text to file this title — title kept
+capture-retry-unconfirmed = Saving is unconfirmed — text kept. Retry File capture to finish the same capture.
+capture-previous-graph = Capture may be in the previous graph; saving is unconfirmed — text kept. Check that graph before capturing again.
+capture-start-new = Start a new capture
+capture-new-request = Text kept for a new capture. Remove anything already saved in the previous graph before filing again.

@@ -125,7 +125,7 @@ fn large_unrelated_flat_conflict_uses_bounded_fallback_without_data_loss() {
     );
     assert_eq!(
         merge_blocks(&mine, &theirs, &std::collections::HashMap::new()).unwrap(),
-        mine
+        [mine, theirs].concat()
     );
 }
 
@@ -206,15 +206,20 @@ fn raws(blocks: &[DocBlock]) -> Vec<String> {
 }
 
 #[test]
-fn merge_default_keeps_winner() {
-    // No decisions → winner wins: modified keeps mine's body, added kept,
-    // removed dropped. Result equals the winner's blocks.
+fn merge_default_keeps_both_sides() {
+    // L9-03: omitted choices never silently discard an external edit.
     let mine = parse("- alpha\n- the quick brown fox jumps\n- winner only\n");
     let theirs = parse("- alpha\n- the quick brown fox leaps\n- conflict only\n");
     let merged = merge_blocks(&mine.roots, &theirs.roots, &HashMap::new()).unwrap();
     assert_eq!(
         raws(&merged),
-        vec!["alpha", "the quick brown fox jumps", "winner only"]
+        vec![
+            "alpha",
+            "the quick brown fox jumps",
+            "the quick brown fox leaps",
+            "winner only",
+            "conflict only"
+        ]
     );
 }
 

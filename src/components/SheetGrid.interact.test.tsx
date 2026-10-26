@@ -1,3 +1,4 @@
+import { maybeEditorIn, editorsIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
@@ -158,7 +159,7 @@ function cell(root: HTMLElement, row: number, col: number): HTMLElement {
   return el;
 }
 
-function keydown(target: EventTarget, key: string, init: Partial<KeyboardEvent> = {}): KeyboardEvent {
+function keydown(target: EventTarget | EditorDriver, key: string, init: Partial<KeyboardEvent> = {}): KeyboardEvent {
   const event = new KeyboardEvent("keydown", {
     key,
     code: init.code ?? (key === "Tab" ? "Tab" : key.startsWith("Arrow") ? key : ""),
@@ -169,7 +170,7 @@ function keydown(target: EventTarget, key: string, init: Partial<KeyboardEvent> 
     metaKey: init.metaKey ?? false,
     altKey: init.altKey ?? false,
   });
-  target.dispatchEvent(event);
+  if ("kind" in target) target.keydown(event); else target.dispatchEvent(event);
   return event;
 }
 
@@ -223,8 +224,8 @@ function selectedCell(root: HTMLElement): HTMLElement | null {
   return root.querySelector(".sheet-cell-selected") as HTMLElement | null;
 }
 
-function activeEditor(root: HTMLElement): HTMLTextAreaElement {
-  const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement | null;
+function activeEditor(root: HTMLElement): EditorDriver {
+  const textarea = maybeEditorIn(root) as EditorDriver | null;
   if (!textarea) throw new Error("missing active editor");
   return textarea;
 }
@@ -245,9 +246,9 @@ function cssRule(selector: string): CSSStyleRule | null {
   return null;
 }
 
-function inputText(textarea: HTMLTextAreaElement, text: string): void {
-  textarea.value = text;
-  textarea.dispatchEvent(new Event("input", { bubbles: true }) as InputEvent);
+function inputText(textarea: EditorDriver, text: string): void {
+  textarea.replaceText(text);
+  textarea.reportInput(new Event("input", { bubbles: true }) as InputEvent);
 }
 
 function childrenSnapshot(): Record<string, string[]> {
@@ -281,12 +282,12 @@ function pasteText(text: string): ClipboardEvent {
   return event;
 }
 
-function pasteInto(target: EventTarget, text: string): ClipboardEvent {
+function pasteInto(target: EventTarget | EditorDriver, text: string): ClipboardEvent {
   const event = new Event("paste", { bubbles: true, cancelable: true }) as ClipboardEvent;
   Object.defineProperty(event, "clipboardData", {
     value: { getData: (type: string) => (type === "text/plain" ? text : "") },
   });
-  target.dispatchEvent(event);
+  if ("kind" in target) target.paste(event); else target.dispatchEvent(event);
   return event;
 }
 
@@ -366,9 +367,9 @@ describe("SheetGrid interaction", () => {
 
     keydown(window, "Enter");
     await tick();
-    const editors = root.querySelectorAll("textarea.block-editor");
+    const editors = editorsIn(root);
     expect(editors).toHaveLength(1);
-    expect(editors[0].closest('[data-sheet-surface-id="pane:pane-2"]')).not.toBeNull();
+    expect(editors[0].element.closest('[data-sheet-surface-id="pane:pane-2"]')).not.toBeNull();
     endEdit("select-block");
     dispose();
   });
@@ -383,7 +384,7 @@ describe("SheetGrid interaction", () => {
     keydown(window, "Enter"); // cell selection → cell editor
     await tick();
     const textarea = activeEditor(root);
-    expect(textarea.value.length).toBeGreaterThan(0);
+    expect(textarea.value().length).toBeGreaterThan(0);
 
     // In a cell editor, the grid owns Mod+A: one press must NOT enter the
     // outline block-selection ladder (no block selection at all; the cell's
@@ -422,7 +423,7 @@ describe("SheetGrid interaction", () => {
     keydown(window, "Enter");
     await tick();
     expect(editingId()).toBe("n11");
-    expect(root.querySelectorAll("textarea.block-editor")).toHaveLength(1);
+    expect(editorsIn(root)).toHaveLength(1);
     endEdit("select-block");
     dispose();
   });
@@ -450,9 +451,9 @@ describe("SheetGrid interaction", () => {
 
     handleCellSelectionKey(new KeyboardEvent("keydown", { key: "Z" }));
     await tick();
-    const editors = root.querySelectorAll("textarea.block-editor");
+    const editors = editorsIn(root);
     expect(editors).toHaveLength(1);
-    expect(editors[0].closest('[data-sheet-surface-id="pane:right"]')).not.toBeNull();
+    expect(editors[0].element.closest('[data-sheet-surface-id="pane:right"]')).not.toBeNull();
     endEdit("select-block");
     dispose();
   });
@@ -478,9 +479,9 @@ describe("SheetGrid interaction", () => {
 
     handleCellSelectionKey(new KeyboardEvent("keydown", { key: "Enter" }));
     await tick();
-    const editors = root.querySelectorAll("textarea.block-editor");
+    const editors = editorsIn(root);
     expect(editors).toHaveLength(1);
-    expect(editors[0].closest('[data-sheet-surface-id="pane:right"]')).not.toBeNull();
+    expect(editors[0].element.closest('[data-sheet-surface-id="pane:right"]')).not.toBeNull();
     endEdit("select-block");
     dispose();
   });
@@ -502,7 +503,7 @@ describe("SheetGrid interaction", () => {
     expect(doc.byId[rowId].children).toHaveLength(1);
     const cellId = doc.byId[rowId].children[0];
     expect(editingId()).toBe(cellId);
-    expect(activeEditor(root).value).toBe("");
+    expect(activeEditor(root).value()).toBe("");
 
     dispose();
   });
@@ -580,7 +581,7 @@ describe("SheetGrid interaction", () => {
 
     expect(calls()).toBe(1);
     expect(editingId()).toBe("c1");
-    expect(activeEditor(root).selectionStart).toBe(2);
+    expect(activeEditor(root).selection()[0]).toBe(2);
 
     dispose();
   });
@@ -755,7 +756,7 @@ describe("SheetGrid interaction", () => {
     await tick();
 
     expect(editingId()).toBe("c1");
-    expect(activeEditor(root).value).toBe("Z");
+    expect(activeEditor(root).value()).toBe("Z");
     expect(doc.byId.c1.raw).toBe("Z");
 
     keydown(activeEditor(root), "Enter");
@@ -784,7 +785,7 @@ describe("SheetGrid interaction", () => {
     await tick();
 
     let editor = activeEditor(root);
-    expect(editor.value).toBe("Visible body");
+    expect(editor.value()).toBe("Visible body");
     inputText(editor, "Changed body");
     expect(doc.byId.c1.raw).toBe("Changed body\ntine.view:: grid\nid:: abc-123");
 
@@ -819,7 +820,7 @@ describe("SheetGrid interaction", () => {
     await tick();
 
     const editor = activeEditor(root);
-    editor.setSelectionRange(editor.value.length, editor.value.length);
+    editor.select(editor.value().length, editor.value().length);
     keydown(editor, "ArrowDown");
     await tick();
 
@@ -843,12 +844,12 @@ describe("SheetGrid interaction", () => {
     await tick();
 
     const editor = activeEditor(root);
-    editor.setSelectionRange(editor.value.length, editor.value.length);
+    editor.select(editor.value().length, editor.value().length);
     keydown(editor, "ArrowDown");
     await tick();
 
     expect(editingId()).toBe("c1child");
-    expect(activeEditor(root).value).toBe("Child");
+    expect(activeEditor(root).value()).toBe("Child");
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
 
     keydown(activeEditor(root), "Escape");
@@ -871,7 +872,7 @@ describe("SheetGrid interaction", () => {
     await tick();
 
     expect(editingId()).toBe("c1child");
-    expect(activeEditor(root).value).toBe("Child");
+    expect(activeEditor(root).value()).toBe("Child");
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
 
     dispose();
@@ -904,7 +905,7 @@ describe("SheetGrid interaction", () => {
     await tick();
 
     const editor = activeEditor(root);
-    editor.setSelectionRange(1, 1);
+    editor.select(1, 1);
     keydown(editor, "ArrowDown");
     await tick();
 
@@ -925,7 +926,7 @@ describe("SheetGrid interaction", () => {
 
     const beforeIds = Object.keys(doc.byId).sort();
     const editor = activeEditor(root);
-    editor.setSelectionRange(editor.value.length, editor.value.length);
+    editor.select(editor.value().length, editor.value().length);
     const event = pasteInto(editor, "\nline two\twith tab");
     await tick();
 
@@ -952,7 +953,7 @@ describe("SheetGrid interaction", () => {
     const child = doc.byId.c1.children[0];
     expect(doc.byId[child].raw).toBe("");
     expect(editingId()).toBe(child);
-    expect(activeEditor(root).value).toBe("");
+    expect(activeEditor(root).value()).toBe("");
 
     dispose();
   });
@@ -998,7 +999,7 @@ describe("SheetGrid interaction", () => {
     const child = doc.byId.c1.children[0];
     expect(doc.byId[child].raw).toBe("");
     expect(editingId()).toBe(child);
-    expect(activeEditor(root).value).toBe("");
+    expect(activeEditor(root).value()).toBe("");
 
     dispose();
   });
@@ -1016,7 +1017,7 @@ describe("SheetGrid interaction", () => {
     const rowId = doc.byId.grid.children[1];
     const cellId = doc.byId[rowId].children[0];
     expect(editingId()).toBe(cellId);
-    expect(activeEditor(root).value).toBe("N");
+    expect(activeEditor(root).value()).toBe("N");
     expect(doc.byId[cellId].raw).toBe("N");
 
     dispose();
@@ -1049,7 +1050,7 @@ describe("SheetGrid interaction", () => {
     expect(doc.byId.r2.children).toHaveLength(2);
     const made = doc.byId.r2.children[1];
     expect(editingId()).toBe(made);
-    expect(activeEditor(root).value).toBe("H");
+    expect(activeEditor(root).value()).toBe("H");
     expect(doc.byId[made].raw).toBe("H");
 
     dispose();
@@ -1066,7 +1067,7 @@ describe("SheetGrid interaction", () => {
     expect(doc.byId.r1.children).toHaveLength(3);
     const made = doc.byId.r1.children[1];
     expect(editingId()).toBe(made);
-    expect(activeEditor(root).value).toBe("C");
+    expect(activeEditor(root).value()).toBe("C");
     expect(blockProperty("grid", "tine.col-widths")).toBe("0=120;2=80");
 
     dispose();

@@ -88,6 +88,8 @@ export interface GitAutocommitStatus {
 }
 
 export interface BackupInfo {
+  /** Present for an on-demand old-location snapshot; restore requires confirmation. */
+  old_root?: string;
   /** What `restoreBackup` takes: `zip:<name>` or `dir:<name>` (a zip and a
    *  legacy snapshot directory with the same name are distinct backups). */
   id: string;
@@ -218,6 +220,33 @@ export interface GraphAnswersChange {
   rev: string;
   inventoryChanged: boolean;
   blockRefCounts: Record<string, number>;
+  /** Absent with older hosts and synthetic legacy notifications. */
+  summary?: ChangeSummary;
+}
+
+/** Publication invalidation evidence for the shared keyed refresh layer.
+ * `blocks` includes runtime and persisted ids, plus affected ancestors.
+ * `props` maps source-page/alias keys to changed property keys; `linksTo`
+ * includes old and new explicit targets even if membership did not change. */
+export interface ChangeSummary {
+  rev: string;
+  pages: string[];
+  blocks: string[];
+  linksTo: string[];
+  /** S2 fields are optional for older hosts. */
+  textTo?: string[];
+  tagsTo?: string[];
+  tagTableTo?: string[];
+  refsTo?: string[];
+  /** Mounted query subscription identities affected by this publication. */
+  queryTo?: string[];
+  /** S5 hints; absent on older hosts means conservative family invalidation. */
+  days?: boolean;
+  journals?: boolean;
+  templates?: boolean;
+  props: Record<string, string[]>;
+  inventoryChanged: boolean;
+  full: boolean;
 }
 
 /** `graph-custom-css-changed`: an outside actor created, replaced or deleted

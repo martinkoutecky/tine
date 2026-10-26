@@ -9,7 +9,7 @@ import { msg, t } from "./i18n";
  * snapshot file counts and bytes, and graph reload. */
 import { backend, type BackupInfo } from "./backend";
 import { bindingOwner, ownedWhen, readOwned, writeOwned } from "./owned";
-import { consumedAnswer, flushAll } from "./document";
+import { bindHost, consumedAnswer, flushAll, tryFreezeGraphRewrite } from "./document";
 import { loadGraphPath } from "./graph";
 import { graphMeta } from "./graphSession";
 import { pushToast } from "./toasts";
@@ -34,14 +34,21 @@ export async function restoreBackupFromSettings(
   // cannot start while the first one's dialog is open.
   setBusy(true);
   let transitioning = false;
+  let unfreeze: (() => void) | null = null;
   try {
     const confirmed = await readOwned(owner, backend().confirm(
-      t("backup-restore-confirmation", { when, files: String(backup.files) }),
+      t("backup-restore-confirmation", { when, files: String(backup.files) })
+        + (backup.old_root ? "\n\n" + t("backup-old-location", { path: backup.old_root }) : ""),
       { okLabel: t("confirm-restore-backup"), cancelLabel: t("confirm-cancel") },
     ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     setGraphTransitioning(true);
     transitioning = true;
+    unfreeze = tryFreezeGraphRewrite();
+    if (!unfreeze) {
+      pushToast(msg("graph-a-rename-is-still-running-switch"), "error");
+      return;
+    }
     if (!(await flushAll())) {
       if (owner()) pushToast(msg("backup-restore-some-pages-couldn-t-be-saved-resolve-conflicts"), "error");
       return;
@@ -52,6 +59,10 @@ export async function restoreBackupFromSettings(
     const { error, reloaded } = restored.value;
     // A stop that could not save every page restores nothing (the host keeps running).
     if (error && !reloaded) throw error;
+    // The native stop ended the old session; a flush in loadGraphPath must
+    // address the replacement host. Keep input frozen across this handoff.
+    if (reloaded) await bindHost();
+    unfreeze(); unfreeze = null;
     // The page host relaunched on the tree as it now is (after a partial
     // failure too): reload, which rebinds this window to it.
     const outcome = await loadGraphPath(root, { forceRefresh: true, transitionHeld: true });
@@ -69,6 +80,7 @@ export async function restoreBackupFromSettings(
   } catch (error) {
     pushToast(msg("backup-restore-restore-failed", { error: String(error) }), "error");
   } finally {
+    unfreeze?.();
     if (transitioning && ownsTransition()) setGraphTransitioning(false);
     setBusy(false);
   }

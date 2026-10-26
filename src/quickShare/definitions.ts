@@ -7,10 +7,10 @@
 // deleteBlock) and its normal guarded save; this module adds no write path.
 import { backend } from "../backend";
 import {
-  appendQueryBlock, blockProperty, blockWritable, childIds, deleteBlock, ensurePageLoaded, flushPage, node, pageByName,
-  pageRoots, reportPageLoadRefusal, setBlockProperty,
+  appendQueryBlock, blockProperty, blockWritable, childIds, deleteBlock, ensurePageLoaded, flushPage, formatForPage,
+  node, pageByName, pageRoots, queryBlockRaw, reportPageLoadRefusal, setBlockProperty,
 } from "../document";
-import { SHARE_PROPERTY, ensureExportsPage } from "../exportsPage";
+import { SHARE_PROPERTY, ensureExportsPage, locateExportsPages } from "../exportsPage";
 import { queryMacroExtents } from "../editor/queryMacro";
 import { bindingOwner, ownedWhen, readOwned, type Owner, type WriteOwner } from "../owned";
 import type { PageKind } from "../types";
@@ -109,8 +109,9 @@ function pageBlocks(page: string): string[] {
 }
 
 /** Remove every `tine.share::` naming `gistId` (a share was deleted or forgotten), wherever the definition lives
- *  and whatever login prefix it carries (an account rename). See rewriteShareProperty for how pages are found,
- *  loaded and saved. Answers the pages it changed; throws when a page holding the share could not be changed, so
+ *  and whatever login prefix it carries (an account rename). A definition the share itself appended to the Exports
+ *  page, still exactly as written, goes whole (D-20261026-QSD; see rewriteShareProperty). See rewriteShareProperty
+ *  for how pages are found, loaded and saved. Answers the pages it changed; throws when a page holding the share could not be changed, so
  *  the caller says so instead of leaving a stale listing unmentioned. */
 export async function removeShareProperty(gistId: string, bound: WriteOwner = bindingOwner()): Promise<string[]> {
   if (!gistId) return [];
@@ -164,7 +165,23 @@ async function sharePropertyQuery(bound: Owner) {
   return result.value;
 }
 
-/** Set every `tine.share::` whose value `matches` to `next` (null removes it). The engine's `(property tine.share)`
+/** Whether block `id` is a definition exactly as markSharePending appended it to an Exports page: a root block
+ *  with no children whose raw is the one query macro plus its `tine.share::`, spelled as appendQueryBlock spells
+ *  it. Removing its share deletes the block (D-20261026-QSD): left behind it is a stale plain query. A block the
+ *  user edited (more text, another property, an id, children) or one elsewhere keeps everything but the property. */
+function appendedDefinition(id: string, exportsPages: ReadonlySet<string>): boolean {
+  const block = node(id);
+  const value = blockProperty(id, SHARE_PROPERTY);
+  if (!block || value === null || !exportsPages.has(block.page) || childIds(id).length) return false;
+  if (!pageRoots(block.page).includes(id)) return false;
+  const extents = queryMacroExtents(block.raw);
+  if (extents.length !== 1 || extents[0].start !== 0) return false;
+  const macro = block.raw.slice(extents[0].start, extents[0].end);
+  return block.raw.trimEnd() === queryBlockRaw(macro, [[SHARE_PROPERTY, value]], formatForPage(block.page));
+}
+
+/** Set every `tine.share::` whose value `matches` to `next` (null removes it; a definition the share appended to
+ *  the Exports page is deleted whole instead, see appendedDefinition). The engine's `(property tine.share)`
  *  finds the pages (those whose matching raw holds `needle`), plus the `extra` pages; each is loaded into the working
  *  set (a read; a loaded page keeps its unsaved edits) and the property goes through setBlockProperty and the
  *  normal save. `bound` is the graph binding the action started on: rechecked after every await and before every
@@ -174,6 +191,8 @@ async function rewriteShareProperty(needle: string, matches: (value: string) => 
   const carries = (id: string) => { const value = blockProperty(id, SHARE_PROPERTY); return value !== null && matches(value); };
   const answer = await sharePropertyQuery(owner);
   if (!answer) return [];
+  const exportsPages = new Set(next === null ? await locateExportsPages() : []);
+  if (!owner()) return [];
   const pages = new Map<string, PageKind>();
   for (const group of answer.groups) if (group.blocks.some((block) => block.raw.includes(needle))) pages.set(group.page, group.kind);
   for (const name of extra) if (!pages.has(name)) pages.set(name, pageByName(name)?.kind ?? "page");
@@ -190,7 +209,10 @@ async function rewriteShareProperty(needle: string, matches: (value: string) => 
     }
     const ids = pageBlocks(name).filter(carries);
     if (!ids.length) continue;
-    for (const id of ids) setBlockProperty(id, SHARE_PROPERTY, next);
+    for (const id of ids) {
+      if (next === null && appendedDefinition(id, exportsPages)) deleteBlock(id);
+      else setBlockProperty(id, SHARE_PROPERTY, next);
+    }
     if (ids.some(carries)) { failed.push(name); continue; }
     const saved = await flushPage(name);
     if (!owner()) return changed;

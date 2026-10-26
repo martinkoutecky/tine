@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { endEdit } from "../editorController";
 import { resetStore } from "../document";
@@ -10,7 +11,7 @@ function node(id: string, raw: string, parent: string | null, children: string[]
 }
 
 describe("typing over a selected sheet cell (I-20)", () => {
-  let textarea: HTMLTextAreaElement;
+  let textarea: EditorDriver;
   beforeEach(() => {
     setDoc({
       byId: {
@@ -27,11 +28,12 @@ describe("typing over a selected sheet cell (I-20)", () => {
     cell.dataset.sheetGridId = "grid";
     cell.dataset.row = "0";
     cell.dataset.col = "0";
-    textarea = document.createElement("textarea");
-    textarea.className = "block-editor";
-    textarea.value = "A";
-    cell.append(textarea);
+    const element = document.createElement("textarea");
+    element.className = "block-editor";
+    cell.append(element);
     document.body.append(cell);
+    textarea = editorIn(cell);
+    textarea.replaceText("A");
     setCellSel({ gridId: "grid", row: 0, col: 0 });
   });
   afterEach(() => {
@@ -49,18 +51,18 @@ describe("typing over a selected sheet cell (I-20)", () => {
   it("replaces the cell text through the editor it started", async () => {
     expect(type("x")).toBe(true);
     await flush();
-    expect(textarea.value).toBe("x");
+    expect(textarea.value()).toBe("x");
   });
   it("does not type into a same-coordinate cell after another graph opened", async () => {
     expect(type("x")).toBe(true);
     bumpGraphEpoch();
     await flush();
-    expect(textarea.value).toBe("A");
+    expect(textarea.value()).toBe("A");
   });
   it("does not type once the editor the keystroke started was closed", async () => {
     expect(type("x")).toBe(true);
     endEdit("blur");
     await flush();
-    expect(textarea.value).toBe("A");
+    expect(textarea.value()).toBe("A");
   });
 });

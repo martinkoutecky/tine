@@ -63,11 +63,16 @@ export interface Backend {
   graphBindingGeneration(): number;
   inspectGraphAccess(path: string): Promise<GraphAccessInspection>;
   approveExternalAssets(graphRoot: string, assetsPath: string): Promise<void>;
-  loadGraph(path: string): Promise<LoadGraphResult>;
+  loadGraph(path: string, options?: { relocatedFrom: string }): Promise<LoadGraphResult>;
+  /** Native-only, background app-data census after open; never scans the graph. */
+  orphanDrafts?(): Promise<{ id: string; old_root: string | null }[]>;
+  /** Explicit recovery, with both desktop owner locks and a stopped clean host. */
+  recoverOrphanDrafts?(id: string, consumedLastId: number): Promise<{ error: string | null; reloaded: { session: number; nextId: number } | null }>;
   openGraphWindow(path: string): Promise<LoadGraphResult>;
   startupGraphPath(): Promise<string | null>;
   tineLinks?: NativeTineLinks;
   captureTarget(): Promise<string>;
+  captureReceipt(id: string, action: "claim" | "saved" | "release" | "forget" | "status", receiptGeneration: number): Promise<"new" | "pending" | "saved" | "missing">;
   /** Lease the graph selected for this Quick Capture show before issuing
    * graph-scoped reads from its independent WebView. */
   bindCaptureGraph(): Promise<void>;
@@ -172,6 +177,9 @@ export interface Backend {
    *  Linked References filter. Ordinary backlink DTOs stay shallow. */
   getBacklinkFilterContext(name: string, targets: BacklinkFilterTarget[]): Promise<BacklinkFilterContext>;
   getUnlinkedRefs(name: string): Promise<RefGroup[]>;
+  registerUnlinkedReference?(subscription: string, target: string | null, bindingGeneration: number): Promise<void>;
+  registerQuerySubscription?(subscription: string, request: import("./querySubscription").QuerySubscription | null,
+    bindingGeneration: number): Promise<import("./querySubscription").QueryRegistration>;
   /** True once the background whole-graph warm has built derived graph-open caches. */
   warmDone(): Promise<boolean>;
   /** Map of block uuid → number of blocks that reference it (the count badge). */
@@ -200,13 +208,15 @@ export interface Backend {
    * the token and each share's key stay native; failures reject with a
    * `QuickShareError`. Prepare builds the exact payload a later create uploads,
    * kept natively for 10 minutes under `prepareId`. */
-  quickSharePrepare(request: QueryPublicationRequest): Promise<QuickSharePrepared>;
+  quickSharePrepare(request: QueryPublicationRequest, shareId?: string): Promise<QuickSharePrepared>;
   /** Upload the prepared payload once (never retried) and copy the link to the
    *  clipboard natively; the link is not returned. */
   quickShareCreate(prepareId: string): Promise<QuickShareCreated>;
   quickShareDiscard(prepareId: string): Promise<void>;
   /** This device's shares and the connected account; `enabled` is the build gate. */
   quickShareList(): Promise<QuickShareListing>;
+  /** Development-only, unauthenticated HTTPS GET; returns only a fixed diagnostic code. */
+  quickShareTestConnection(): Promise<import("./quickShare/commands").QuickShareConnectionTest>;
   /** Look for a pending share on GitHub (connected account only); found → live. */
   quickShareCheck(shareId: string): Promise<QuickShareCheckOutcome>;
   /** The account's Tine shares that no record on this device knows. */
@@ -627,6 +637,8 @@ export interface Backend {
   setWatchMode(mode: string): Promise<void>;
   /** Available snapshots for the current graph, newest first. */
   listBackups(): Promise<BackupInfo[]>;
+  /** Native only: delete snapshots at a revalidated old location under its lock. */
+  deleteOldBackups?(id: string): Promise<void>;
   /** Restore a snapshot (graph text at original paths, config, and sidecars; snapshots current
    *  state first). Destructive — confirm before calling. `consumedLastId`: the
    *  last page-host answer the window consumed. `reloaded` is the session of the

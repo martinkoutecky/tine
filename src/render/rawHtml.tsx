@@ -4,6 +4,8 @@ import { rawHtmlPresentation } from "./htmlSanitize";
 import { allowLocalFileImages } from "../localFileSettings";
 import { acquireLocalImageBlob } from "../assetCache";
 import type { SpanDomAttrs } from "./spans";
+import { isQuickShareViewer } from "../publishedBackend";
+import { ShareMedia, shareHtml } from "../quickShare/ShareMedia";
 
 // Video-embed hosts (youtube/vimeo/loom/bilibili) that reject an embed when it
 // arrives with no referrer — YouTube in particular fails with error 153. For
@@ -48,6 +50,9 @@ export function renderSanitizedHtml(text: string, spanAttrs?: SpanDomAttrs): JSX
 // document-order match to the scanned paths). Off by default; see ADR 0019.
 function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs; allowIframe?: boolean }): JSX.Element {
   const presentation = createMemo(() => rawHtmlPresentation(props.text, props.allowIframe));
+  if (isQuickShareViewer()) return <Show when={presentation().iframe} fallback={<span class="raw-html" innerHTML={shareHtml(presentation().html, presentation().localImages)} {...(props.spanAttrs ?? {})} />}>
+    {(frame) => <ShareMedia url={frame().src} />}
+  </Show>;
   let host: HTMLSpanElement | undefined;
   createEffect(() => {
     const shown = presentation(); // one projection for HTML, iframe and local resources

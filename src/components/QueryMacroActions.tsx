@@ -3,17 +3,20 @@ import { backend } from "../backend";
 import { graphOwner, readOwned } from "../owned";
 import { openInNewTab, makeQueryRoute } from "../router";
 import { sourcePrintDialect, type ParsedQuery } from "../editor/queryIr";
-import type { PageEntry, RefGroup } from "../types";
+import type { PageEntry, RefGroup, QueryPublicationRequest } from "../types";
+import { openQueryExport } from "../ui";
 import { pushToastUnique } from "../toasts";
 import { t } from "../i18n";
 import { QueryActions } from "./QueryActions";
 import { ShareIcon } from "./ShareIcon";
 import { openQueryResultsCopy } from "./queryResultsCopy";
 import { queryResultsHaveCollapsed } from "./QueryCollapse";
+import { QuickShareExportActions } from "./QuickShareExportActions";
 
 /** Graph-owned macro actions. Editing, export and folding enter the host's
  * existing guarded paths; this component introduces no writer. */
 export function QueryMacroActions(props: {
+  hostBlockId?: string;
   current: () => ParsedQuery | undefined;
   groups: () => RefGroup[];
   pages: () => Pick<PageEntry, "name">[];
@@ -22,6 +25,7 @@ export function QueryMacroActions(props: {
   edit: (tab: "filter" | "display" | "text") => void;
   fold?: (collapsed: boolean) => void;
   export: () => void;
+  exportRequest?: () => QueryPublicationRequest;
   /** The block asks for "Pages and blocks" (`tine.result-kinds`); Search then shows both families. */
   both?: () => boolean;
   /** Open the share dialog seeded with this block (enabled with zero results: the dialog shows 0). */
@@ -52,6 +56,8 @@ export function QueryMacroActions(props: {
     );
   };
   return <>
+    <Show when={props.hostBlockId}>{id => <QuickShareExportActions hostBlockId={id()} reshare={props.share}
+      reexport={folder => { const request = props.exportRequest?.(); if (request) openQueryExport({ ...request, folder, replace: true }); }} />}</Show>
     <button type="button" class="qc-share" title={t("share-query-icon")} aria-label={t("share-query-icon")}
       onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); props.share(); }}>
       <ShareIcon class="share-icon" />

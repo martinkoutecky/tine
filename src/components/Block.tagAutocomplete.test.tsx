@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -37,17 +38,17 @@ describe("bare hashtag autocomplete after IME input (GH #167)", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = editorIn(root);
       textarea.focus();
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-      textarea.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
-      textarea.dispatchEvent(new InputEvent("input", {
+      textarea.select(textarea.value().length, textarea.value().length);
+      textarea.compositionStart("");
+      textarea.reportInput({
         bubbles: true,
         inputType: "insertCompositionText",
         data: "倘",
         isComposing: true,
-      }));
-      textarea.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "倘" }));
+      });
+      textarea.compositionEnd("倘");
 
       await vi.waitFor(() => {
         expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Create #倘");

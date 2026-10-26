@@ -21,7 +21,7 @@ import { EmojiText } from "../render/emoji";
 import { pageIcon } from "../pageIconBatch";
 import { PageIcon } from "./PageIcon";
 import { backend } from "../backend";
-import { ensurePageLoaded, pageByName, readPageProperties, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, formatForBlock, blockRef, blockPositionRef, node as docNode } from "../document";
+import { emptyPage, ensurePageLoaded, pageByName, readPageProperties, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, formatForBlock, blockRef, blockPositionRef, node as docNode } from "../document";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
 import { TaggedPages } from "./TaggedPages";
 import { AliasGroupHeader } from "./AliasGroup";
@@ -263,12 +263,15 @@ function useEnsurePage(
           // Drop a load that resolved after a graph switch — otherwise it would
           // insert an old-graph page into the new graph's working set.
           if (!active || epoch !== graphEpoch()) return;
-          if (dto) {
+          // Like the main pane, a name with no file is an editable empty page.
+          // An exact file path that disappeared must not become a new page.
+          const pageDto = dto ?? (!p ? emptyPage(n, k) : null);
+          if (pageDto) {
             // Alias-map warmup usually canonicalizes before the item is created.
             // A restored/early mixed-case item can race it; adopt the backend's
             // canonical page name before the exact-keyed store renders the body.
-            if (!p && k === "page" && dto.name !== n) adoptResolvedPageName(n, dto.name);
-            const refusal = ensurePageLoaded(dto);
+            if (!p && k === "page" && pageDto.name !== n) adoptResolvedPageName(n, pageDto.name);
+            const refusal = ensurePageLoaded(pageDto);
             if (!refusal) return;
             setLoadError(pageLoadRefusalMessage(refusal));
             stopWaiting = whenPageReplaceable(refusal.page, `sidebar:${uid}`, () => setRetry((count) => count + 1));
@@ -546,7 +549,7 @@ function BlockItem(props: {
                   <span class="crumb-sep">›</span>
                   <a class="rs-crumb" onMouseDown={internalLinkMouseDown} onClick={(e) => openCrumb(aid, e)}
                     onAuxClick={(e) => internalLinkAuxClick(e, () => openCrumb(aid, e))}>
-                    <InlineText text={visibleBody(docNode(aid)?.raw ?? "")[0] || "…"} format={formatForBlock(aid)} />
+                    <InlineText text={visibleBody(docNode(aid)?.raw ?? "", formatForBlock(aid))[0] || "…"} format={formatForBlock(aid)} />
                   </a>
                 </>
               )}

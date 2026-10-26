@@ -222,6 +222,29 @@ fn the_read_verbs_answer_over_the_socket() {
     assert_eq!(code(conn.call("page.edit", Value::Null)), "unknown-verb");
 }
 
+/// GH #771: on macOS an accepted socket inherits the listener's O_NONBLOCK.
+#[test]
+fn an_accepted_connection_is_made_blocking() {
+    use std::os::unix::io::AsRawFd;
+    use std::os::unix::net::UnixStream;
+    let (stream, _peer) = UnixStream::pair().unwrap();
+    stream.set_nonblocking(true).unwrap();
+    super::endpoint::blocking_connection(&stream).unwrap();
+    let flags = unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_GETFL) };
+    assert_eq!(flags & libc::O_NONBLOCK, 0);
+}
+
+/// GH #771: a client that pauses between the hello and its first request is
+/// still served (the macOS owner closed it at once and the CLI saw EINVAL).
+#[test]
+fn a_client_that_waits_before_its_first_request_is_served() {
+    let graph = Graph::new();
+    let (_endpoint, _gate) = endpoint(&graph, Arc::new(graph.slot()));
+    let mut conn = graph.connect();
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(conn.call("owner.status", Value::Null).is_ok());
+}
+
 #[test]
 fn a_paused_owner_answers_busy_and_still_reports_status() {
     let graph = Graph::new();
@@ -464,14 +487,14 @@ fn the_namespace_is_private_and_fits_a_socket_path() {
 }
 
 /// AGENTS.md §2: a platform `cfg` family names every shipped target. The
-/// namespace's arms cover Linux and macOS (an endpoint) and refuse on
-/// Windows, iOS and Android; the catch-all means "not a Tine platform".
+/// namespace's arms cover desktop locks and mobile sandbox exclusion;
+/// the catch-all means "not a Tine platform".
 #[test]
 fn the_namespace_names_every_shipped_target() {
     let source = include_str!("namespace.rs");
     assert_eq!(
         source.matches("fn account_dir()").count(),
-        4,
+        5,
         "one account_dir per platform family"
     );
     let cfgs: Vec<&str> = source
@@ -889,6 +912,191 @@ fn block_handle(page: &Value, index: usize) -> String {
 }
 
 #[test]
+fn block_edit_identity_ignores_a_nonprimary_id_lookalike() {
+    let graph = Graph::new();
+    let file = graph.root.join("pages/lookalike.org");
+    let raw = format!("one\nbody\n:PROPERTIES:\n:id: {UUID}\n:END:");
+    let regions = tine_core::block_regions::parse(&raw, true);
+    assert!(regions.property("id").is_some());
+    assert!(regions.id.is_none());
+    std::fs::write(&file, format!("* {raw}\n")).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "lookalike"})).unwrap();
+    let supplied = "650e8400-e29b-41d4-a716-446655440000";
+    let text = format!(
+        "edited\n:PROPERTIES:\n:id: {supplied}\n:END:\nbody\n:PROPERTIES:\n:id: {UUID}\n:END:"
+    );
+    verb(
+        &slot,
+        "block.edit",
+        json!({"handle": format!("lookalike/{}", block_handle(&read, 0)), "text": text}),
+    )
+    .unwrap();
+    let doc = graph
+        .store
+        .page(&PageId::from("pages/lookalike.org"))
+        .unwrap()
+        .doc;
+    let regions = tine_core::block_regions::parse(&doc.blocks[0].raw, true);
+    assert_eq!(regions.id.unwrap().value, supplied);
+    assert!(doc.blocks[0]
+        .raw
+        .contains(&format!("body\n:PROPERTIES:\n:id: {UUID}\n:END:")));
+}
+
+#[test]
+fn block_edit_identity_accepts_case_equivalent_uuid_values() {
+    const ID: &str = "650e8400-e29b-41d4-a716-446655440000";
+    for org in [false, true] {
+        for uppercase_current in [false, true] {
+            let graph = Graph::new();
+            let file = graph.root.join(if org {
+                "pages/identity.org"
+            } else {
+                "pages/identity.md"
+            });
+            let (current, supplied) = if uppercase_current {
+                (ID.to_ascii_uppercase(), ID.to_string())
+            } else {
+                (ID.to_string(), ID.to_ascii_uppercase())
+            };
+            let initial = if org {
+                format!("* one\n:PROPERTIES:\n:id: {current}\n:END:\n")
+            } else {
+                format!("- one\n  id:: {current}\n")
+            };
+            std::fs::write(&file, initial).unwrap();
+            graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+            let slot = graph.slot();
+            let read = verb(&slot, "page.show", json!({"name": "identity"})).unwrap();
+            let text = if org {
+                format!("edited\n:PROPERTIES:\n:ID: {supplied}  \n:END:")
+            } else {
+                format!("edited\nID:: {supplied}  ")
+            };
+            verb(
+                &slot,
+                "block.edit",
+                json!({"handle": format!("identity/{}", block_handle(&read, 0)), "text": text}),
+            )
+            .unwrap();
+            let doc = graph
+                .store
+                .page(&PageId::from(if org {
+                    "pages/identity.org"
+                } else {
+                    "pages/identity.md"
+                }))
+                .unwrap()
+                .doc;
+            assert_eq!(
+                tine_core::block_regions::parse(&doc.blocks[0].raw, org)
+                    .id
+                    .unwrap()
+                    .value
+                    .trim(),
+                supplied
+            );
+            // The old spelling still resolves to this block by the existing UUID rule.
+            verb(
+                &slot,
+                "block.edit",
+                json!({"handle": current, "text": "resolved"}),
+            )
+            .unwrap();
+            assert!(std::fs::read_to_string(&file).unwrap().contains("resolved"));
+        }
+    }
+}
+
+#[test]
+fn block_edit_refuses_a_different_identity_without_writing() {
+    const OTHER: &str = "650e8400-e29b-41d4-a716-446655440000";
+    for org in [false, true] {
+        let graph = Graph::new();
+        if org {
+            std::fs::write(
+                graph.root.join("pages/identity.org"),
+                format!("* one\n:PROPERTIES:\n:id: {UUID}\n:END:\n"),
+            )
+            .unwrap();
+            graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+        }
+        let slot = graph.slot();
+        let target = if org { "identity" } else { "a" };
+        let read = verb(&slot, "page.show", json!({"name": target})).unwrap();
+        let handle = format!("{target}/{}", block_handle(&read, 0));
+        let file = graph.root.join(if org {
+            "pages/identity.org"
+        } else {
+            "pages/a.md"
+        });
+        let before = std::fs::read(&file).unwrap();
+        let text = if org {
+            format!("edited\n:PROPERTIES:\n:ID: {OTHER}\n:END:")
+        } else {
+            format!("edited\nID:: {OTHER}")
+        };
+        let error = verb(&slot, "block.edit", json!({"handle": handle, "text": text}))
+            .expect_err("identity change must be refused");
+        assert_eq!(error.code, "refused");
+        assert_eq!(error.detail.as_ref().unwrap()["reason"], "identity-change");
+        let error_text = serde_json::to_string(&error).unwrap();
+        assert!(
+            error_text.contains(UUID) && error_text.contains(OTHER),
+            "{error_text}"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+        for text in [
+            if org {
+                format!("same\n:PROPERTIES:\n:id: {UUID}\n:END:")
+            } else {
+                format!("same\nid:: {UUID}")
+            },
+            "omitted".to_string(),
+            if org {
+                format!("literal\n#+BEGIN_SRC\n:id: {OTHER}\n#+END_SRC")
+            } else {
+                format!("literal\n```\nid:: {OTHER}\n```")
+            },
+        ] {
+            let read = verb(&slot, "page.show", json!({"name": target})).unwrap();
+            let handle = format!("{target}/{}", block_handle(&read, 0));
+            verb(&slot, "block.edit", json!({"handle": handle, "text": text})).unwrap();
+            let doc = graph
+                .store
+                .page(&PageId::from(if org {
+                    "pages/identity.org"
+                } else {
+                    "pages/a.md"
+                }))
+                .unwrap()
+                .doc;
+            assert_eq!(
+                tine_core::block_regions::parse(&doc.blocks[0].raw, org)
+                    .property("id")
+                    .unwrap()
+                    .value,
+                UUID
+            );
+        }
+    }
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "a"})).unwrap();
+    verb(&slot, "block.edit", json!({"handle": format!("a/{}", block_handle(&read, 1)), "text": format!("new identity\nid:: {OTHER}")})).unwrap();
+    let doc = graph.store.page(&PageId::from("pages/a.md")).unwrap().doc;
+    assert_eq!(
+        tine_core::block_regions::parse(&doc.blocks[1].raw, false)
+            .property("id")
+            .unwrap()
+            .value,
+        OTHER
+    );
+}
+
+#[test]
 fn edit_and_prop_write_through_the_host_and_keep_hidden_properties() {
     let graph = Graph::new();
     let slot = graph.slot();
@@ -1017,8 +1225,38 @@ fn add_places_forests_and_attributes_every_created_block_only() {
         )
         .unwrap();
         let bytes = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+        // An ordinary block's author is editor text, as on OG; replacing that
+        // buffer removes it. A comment's hidden author is covered separately.
         assert_eq!(bytes.matches("author::").count(), 2);
         assert!(!bytes.contains("author:: agent"));
+    }
+}
+
+#[test]
+fn block_edit_preserves_comment_metadata_but_replaces_ordinary_author_text() {
+    for (content, expected) in [
+        ("ordinary\nauthor:: Ada", "edited"),
+        (
+            "comment\nquote:: one\nquote-prefix:: before\nquote-suffix:: after\nauthor:: Ada",
+            "edited\nquote:: one\nquote-prefix:: before\nquote-suffix:: after\nauthor:: Ada",
+        ),
+    ] {
+        let graph = Graph::new();
+        let slot = graph.slot();
+        let added = verb(
+            &slot,
+            "block.add",
+            json!({"page": "a", "content": content, "author": "Ada"}),
+        )
+        .unwrap();
+        verb(
+            &slot,
+            "block.edit",
+            json!({"handle": added["blocks"][0], "text": "edited"}),
+        )
+        .unwrap();
+        let doc = graph.store.page(&PageId::from("pages/a.md")).unwrap().doc;
+        assert_eq!(doc.blocks.last().unwrap().raw, expected);
     }
 }
 

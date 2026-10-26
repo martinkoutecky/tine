@@ -4,7 +4,7 @@
 // budget (`expansionBudget.ts`) now bounds each top-level expansion tree in
 // both the DOM renderer and the rendered-text walk; hostile shapes are paired
 // with benign extremes that must still render in full.
-import { describe, it, expect, beforeAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { AstBody } from "./body";
@@ -32,6 +32,20 @@ const count = (text: string, needle: string) => text.split(needle).length - 1;
 const TEXT: RenderedTextOptions = { typographicGlyphs: false, stripLinks: false, removeTags: false, removeProperties: false };
 
 describe("user macro expansion budget (I-22)", () => {
+  it("refuses oversized argument substitution before materializing it (L7s8-02)", () => {
+    const template = "$1".repeat(4000);
+    setGraphMeta({ macros: { big: template } } as never);
+    const replace = String.prototype.replace;
+    let materialized = false;
+    const spy = vi.spyOn(String.prototype, "replace").mockImplementation(function (this: string, ...args: any[]) {
+      if (String(this) === template) materialized = true;
+      return Reflect.apply(replace, this, args);
+    } as typeof replace);
+    try {
+      expect(html(() => <AstBody raw={`{{big ${"x".repeat(100)}}}`} />)).toContain(MACRO_EXPANSION_LIMIT_LABEL);
+      expect(materialized).toBe(false);
+    } finally { spy.mockRestore(); }
+  });
   it("bounds a branching self-expansion and shows the limit marker", () => {
     setGraphMeta({ macros: { m: "{{m}}{{m}}" } } as never);
     const out = html(() => <AstBody raw="{{m}}" />);

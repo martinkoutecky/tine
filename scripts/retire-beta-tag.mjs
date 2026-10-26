@@ -23,7 +23,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { FIRST_FIXED_MANIFEST_BETA, betaVersion, servingProblems, zsyncAssetName, ZSYNC_ARCHES } from "./pages-beta-manifest.mjs";
-import { IDENTITY } from "./lib/app-identity.mjs";
+import { IDENTITIES } from "./lib/app-identity.mjs";
+// The bridge only ever serves Tine Beta installs, whichever identity this tree ships.
+const BETA = IDENTITIES.experiment;
 import { releaseLayout } from "./release-layout.mjs";
 import { BETA_ENDPOINT, BETA_TAG, LEGACY_BETA_ENDPOINT } from "./release-policy.mjs";
 
@@ -43,13 +45,13 @@ export function bridgeLinks(repository, tag, layout) {
 
 export function bridgeNotes(repository, tag, layout) {
   return [
-    `This release only helps older ${IDENTITY.productName} installs find their next update. It contains no app.`,
+    `This release only helps older ${BETA.productName} installs find their next update. It contains no app.`,
     ``,
     `**Get the current Beta from [${tag}](https://github.com/${repository}/releases/tag/${tag})**, or download it directly:`,
     ``,
     ...bridgeLinks(repository, tag, layout).map(([label, asset, url]) => `- ${label}: [${asset}](${url})`),
     ``,
-    `Install it over your current ${IDENTITY.productName} and reopen it. From ${tag} on, ${IDENTITY.productName} updates itself from each Beta's own release, so you will not land on this page again.`,
+    `Install it over your current ${BETA.productName} and reopen it. From ${tag} on, ${BETA.productName} updates itself from each Beta's own release, so you will not land on this page again.`,
     ``,
     `(Betas before ${tag} read the update information in this release. It stays here, pointing at ${tag}, so that any of them can still update.)`,
   ].join("\n");
@@ -106,7 +108,7 @@ function main() {
   if (target.isDraft || !target.isPrerelease) throw new Error(`${tag} is not a published prerelease`);
   const commit = commitOf(tag);
   if (!commit) throw new Error(`tag ${tag} does not exist`);
-  const layout = releaseLayout(tag.slice(1));
+  const layout = releaseLayout(tag.slice(1), BETA);
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "tine-retire-beta-"));
   try {
     const bridgeFiles = ["latest.json", ...ZSYNC_ARCHES.map((arch) => zsyncAssetName(tag, arch))];
@@ -124,7 +126,7 @@ function main() {
 
     // Each step below is resumable: a rerun after any failure finds the state
     // it left and continues from there.
-    const bridgeTitle = `${IDENTITY.productName} update bridge`;
+    const bridgeTitle = `${BETA.productName} update bridge`;
     // The release at `beta`, from the REST API so that each answer keeps its
     // status: `gh release view` can report "release not found" for an outage.
     // A published release answers the tag endpoint; only after its 404 does a

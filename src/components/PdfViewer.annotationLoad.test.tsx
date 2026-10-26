@@ -142,4 +142,62 @@ describe("PDF annotation loading ownership (GH #557)", () => {
       expect(view.host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready")).toBe("true");
     } finally { view.dispose(); }
   });
+
+  it.each(["close", "graph retirement", "failure"])("destroys a loading task once on %s", async action => {
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
+    let reject!: (error: Error) => void;
+    const promise = new Promise((_, no) => { reject = no; });
+    const destroy = vi.fn().mockImplementation(() => { reject(new Error("loading cancelled")); return Promise.resolve(); });
+    getDocument.mockReturnValue({ promise, destroy });
+    const view = mount();
+    try {
+      await flush();
+      expect(getDocument).toHaveBeenCalledOnce();
+      if (action === "failure") reject(new Error("invalid PDF"));
+      else if (action === "graph retirement") retirePdfOwnership();
+      else view.setRoute(null);
+      await flush();
+      expect(destroy).toHaveBeenCalledOnce();
+      if (action !== "failure") expect(view.host.textContent).not.toContain("Couldn't load this PDF");
+    } finally { view.dispose(); }
+    expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it("passes successful loading-task ownership to the document proxy", async () => {
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
+    const proxyDestroy = vi.fn().mockResolvedValue(undefined);
+    const taskDestroy = vi.fn().mockResolvedValue(undefined);
+    getDocument.mockReturnValue({ destroy: taskDestroy, promise: Promise.resolve({
+      numPages: 1,
+      getPage: vi.fn().mockResolvedValue({ getViewport: () => ({ width: 612, height: 792 }) }),
+      getOutline: vi.fn().mockResolvedValue([]),
+      destroy: proxyDestroy,
+    }) });
+    const view = mount();
+    try {
+      await flush();
+      expect(view.host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready")).toBe("true");
+      expect(taskDestroy).not.toHaveBeenCalled();
+    } finally { view.dispose(); }
+    expect(proxyDestroy).toHaveBeenCalledOnce();
+    expect(taskDestroy).not.toHaveBeenCalled();
+  });
+
+  it("retires a proxy when close falls between loader success and viewer continuation", async () => {
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
+    let resolve!: (value: unknown) => void;
+    const promise = new Promise(yes => { resolve = yes; });
+    const destroy = vi.fn().mockResolvedValue(undefined);
+    getDocument.mockReturnValue({ promise, destroy: vi.fn().mockResolvedValue(undefined) });
+    const view = mount();
+    try {
+      await flush();
+      resolve({ numPages: 1, destroy, getOutline: () => Promise.resolve([]), getPage: () => new Promise(() => {}) });
+      queueMicrotask(() => view.setRoute(null));
+      await flush();
+      expect(destroy).toHaveBeenCalledOnce();
+      expect(view.host.querySelector(".pdf-viewer")).toBeNull();
+    } finally { view.dispose(); }
+    expect(destroy).toHaveBeenCalledOnce();
+  });
 });

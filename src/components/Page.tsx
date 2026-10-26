@@ -12,8 +12,11 @@ import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from ".
 import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, contextMenu, renamePageInNavigation, adoptResolvedPageName } from "../ui";
 import { openShareDialog } from "../shareState";
 import { ShareIcon } from "./ShareIcon";
-import { graphEpoch, dataRev, graphMeta } from "../graphSession";
+import { QuickShareAll } from "./QuickShareAll";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { changed } from "../changeKeys";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "../binding";
+import { createTagTableResource } from "../tagTable";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
 import { blockRef, isConflicted, pageLoadRefusalMessage, reportPageLoadRefusal, whenPageReplaceable, type PageLoadRefusal } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
@@ -35,7 +38,7 @@ import { SheetTable } from "./SheetTable";
 import { TodayTaskSummary } from "./TodayTaskSummary";
 import { selectedThemePresentation } from "../themeGallery";
 import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
-import { aliasNamesOf, visibleBody } from "../render/block";
+import { aliasNamesOf, visibleBody, isRenderHiddenPageProp } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
 import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, appNow, parseJournalTitle } from "../journal";
@@ -46,6 +49,7 @@ import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../
 import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { PagePropertyValue } from "./PagePropertyValue";
+import { PropertyKey } from "../render/PropertyKey";
 import { PageConflictResolution } from "./ConflictResolution";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
@@ -57,6 +61,7 @@ import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useO
 import { captureReadingViewport } from "./readingViewportAnchor";
 import { createMarginSurface } from "./MarginColumn";
 import { MarginContext } from "./marginContext";
+import { JournalFeedDays } from "./JournalFeedDays";
 
 installPageIdentityNavigation((from, to) => {
   // Rewrite both pinned and formerly pathless routes to the exact file owner.
@@ -352,15 +357,8 @@ async function completeJournalFeed(owner: JournalsFeedOwner, generation: number,
   }
 }
 
-// Page properties NOT shown in the under-title property list: `alias` is surfaced
-// as the alias group rows above (AliasGroupHeader). `tine.icon` and the OG-compatible `icon` stay editable here as well as decorating the
-// title (OG's editable-built-in-properties lists `icon`). Hide internal tag-table metadata.
-// `tine/exports` is the exports page marker (docs/contracts/export-definitions.md), not something to edit.
-// GH #730: OG util/property.cljs `hidden-editable-page-properties` (#{:title :filters :icon})
-// hides `filters` (the linked-references filter store) from the pre-block display; it
-// stays in the raw editor text. Tine shows `icon` here on purpose (GH #346). Block chips
-// have their own list (render_facets.rs RENDER_HIDDEN), unchanged.
-const PAGE_PROPS_HIDDEN = new Set(["alias", "filters", "tine.tag-table", "tine/exports"]);
+// OG's pre-block predicate lives in Rust alongside ordinary-block visibility.
+// Aliases retain their AliasGroupHeader; title/icon remain editable in Properties.
 const TAG_TABLE_PROP = "tine.tag-table";
 
 function paneContextFromContext() {
@@ -466,7 +464,7 @@ export function PageView(): JSX.Element {
     );
     void (async () => {
       try {
-        if (r.kind === "query" || r.kind === "pdf" || r.kind === "invalid" || r.kind === "conflicts" || r.kind === "all-pages") {
+        if (r.kind === "query" || r.kind === "pdf" || r.kind === "invalid" || r.kind === "conflicts" || r.kind === "all-pages" || r.kind === "all-graphs") {
           // Query workspaces are rendered by PaneLeaf, not PageView. Keep this
           // guard so the page loader never interprets a virtual route as a file.
           setLoadedRoute(r);
@@ -664,12 +662,12 @@ export function PageView(): JSX.Element {
 
   // A deferred watcher/midnight refresh is retried only when the existing edit
   // lifecycle has advanced; it never replaces a dirty feed with a stale window.
-  let previousReferenceRev = dataRev();
+  let previousReferenceRev = changed("days");
   createEffect(() => {
     const route = currentRoute();
     if (route.kind !== "journals") return;
     editingId();
-    const revision = dataRev();
+    const revision = changed("days");
     if (revision !== previousReferenceRev) {
       previousReferenceRev = revision;
       pendingFeedRestart = true;
@@ -744,6 +742,13 @@ export function PageView(): JSX.Element {
     const r = loadedRoute();
     return !!r && ready() && sameRoute(r, currentRoute()) && (r.kind !== "journals" || isLoaded() || !!feedRefusal());
   };
+  const renderDay = (p: FeedPage) => <PageSection page={p}>
+    {/* OG page/today-queries and journal: queries precede agenda. */}
+    <Show when={p.kind === "journal" && p.name === journalTitle(localDateFromDayKey(currentDayKey()))}>
+      <TodaySections today={p.name} upcoming={<UpcomingSection feed={currentRoute().kind === "journals"} />} />
+    </Show>
+    <Show when={currentRoute().kind === "journals"}><JournalLinkedReferences name={p.name} /></Show>
+  </PageSection>;
 
   return (
     <Show when={!loadError()} fallback={
@@ -762,19 +767,11 @@ export function PageView(): JSX.Element {
     }>
       <Show when={zoomValid()} fallback={
         <div class="page" ref={feedRoot}>
-          <For each={pagesToRender()}>
-            {(p) => (
-              <PageSection page={p}>
-                {/* OG page/today-queries and journal: queries precede agenda. */}
-                <Show when={p.kind === "journal" && p.name === journalTitle(localDateFromDayKey(currentDayKey()))}>
-                  <TodaySections today={p.name} upcoming={<UpcomingSection feed={currentRoute().kind === "journals"} />} />
-                </Show>
-                <Show when={currentRoute().kind === "journals"}>
-                  <JournalLinkedReferences name={p.name} />
-                </Show>
-              </PageSection>
-            )}
-          </For>
+          <Show when={currentRoute().kind === "journals"} fallback={
+            <For each={pagesToRender()}>{renderDay}</For>
+          }>
+          <JournalFeedDays>{renderDay}</JournalFeedDays>
+          </Show>
           <Show when={currentRoute().kind === "journals" && feedRefusal()}>
             {(why) => <div class="page-load-error" role="status">{why()}</div>}
           </Show>
@@ -825,7 +822,7 @@ export function PageView(): JSX.Element {
 // when the opted-in section mounts; Journals reuses its existing feed read.
 function UpcomingSection(props: { feed: boolean }): JSX.Element {
   const [days, { refetch }] = createResource(
-    () => props.feed ? null : `${graphEpoch()}\0${dataRev()}`,
+    () => props.feed ? null : changed("days"),
     async () => {
       const result = await readOwned(graphOwner(), backend().journalFeedPage(1, null, true));
       return result.kind === "current" ? result.value.upcoming ?? [] : [];
@@ -892,7 +889,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
     const owner = pageByName(pageName());
     return owner ? pageTargetFromFeedPage(owner) : { name: pageName(), pageKind: pageKind() };
   };
-  const crumb = (id: string) => visibleBody(docNode(id).raw)[0] || "…";
+  const crumb = (id: string) => visibleBody(docNode(id).raw, formatForBlock(id))[0] || "…";
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   const focusTrailing = () => {
     const root = docNode(props.id);
@@ -1167,6 +1164,9 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         <Show when={!props.page.guide}>
           <CarryActions page={props.page} />
           <TagTableToggle page={props.page} />
+          <Show when={!isPublishedExport() && readPageProperty(props.page.name, "tine/exports")?.toLowerCase() === "true"}>
+            <QuickShareAll />
+          </Show>
         </Show>
         <Show when={props.page.guide}>
           <button class="guide-copy-btn" onClick={() => void copyGuideIntoGraph(props.page.name)}>{t("page-ui-copy-the-guide-into-your-graph")}</button>
@@ -1231,13 +1231,13 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         inGraph={!props.page.guide}
         onEdit={editPageHeader}
       />
-      <Show when={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
+      <Show when={headerProperties().filter(([k]) => !isRenderHiddenPageProp(k, graphMeta()?.block_hidden_properties)).length}>
         <div class="page-properties" onClick={editPageHeader}>
-          {/* `alias` is surfaced by AliasGroupHeader — see PAGE_PROPS_HIDDEN. */}
-          <For each={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
+          {/* `alias` is surfaced by AliasGroupHeader. */}
+          <For each={headerProperties().filter(([k]) => !isRenderHiddenPageProp(k, graphMeta()?.block_hidden_properties))}>
             {([key, value]) => (
               <div class="prop-row">
-                <span class="prop-key">{key}</span>
+                <span class="prop-key"><Show when={!props.page.guide} fallback={key}><PropertyKey name={key} /></Show></span>{props.page.guide ? " " : ": "}
                 <span class="prop-value">
                   <PagePropertyValue propertyKey={key} value={value} format={props.page.format} />
                 </span>
@@ -1346,45 +1346,16 @@ function tagTableEnabled(pageName: string): boolean {
   return readPageProperty(pageName, TAG_TABLE_PROP)?.toLowerCase() === "true";
 }
 
-function quoteQueryString(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
-}
-
-function tagQuery(pageName: string): string {
-  return `(tag ${quoteQueryString(pageName)})`;
-}
-
 function taggedCount(groups: readonly RefGroup[] | undefined): number {
   return groups?.reduce((sum, group) => sum + group.blocks.length, 0) ?? 0;
 }
 
-async function tagTableGroups(pageName: string, owners: object): Promise<{ groups: RefGroup[]; error?: string } | undefined> {
-  const owner = latestOwner(owners, "tag-table", graphOwner());
-  try {
-    const reading = await readOwned(owner, backend().parseQuery(tagQuery(pageName), "macro_query"));
-    if (reading.kind === "stale") return undefined;
-    const result = await readOwned(owner, backend().queryRun(reading.value.query, reading.value.view));
-    if (result.kind === "stale") return undefined;
-    const answer = result.value;
-    const diagnostic = (answer.diagnostics ?? []).find((item) => !item.disabled);
-    return diagnostic
-      ? { groups: [], error: diagnostic.message }
-      : { groups: answer.anchor === "block" ? answer.groups : [] };
-  } catch (error) {
-    return { groups: [], error: error instanceof Error ? error.message : String(error) };
-  }
-}
-
 export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
-  const owners = {};
   // A published export has no query engine behind `queryRun` and cannot save the
   // page property this button toggles, so it offers no toggle and asks nothing
   // (master GH #549).
   const live = !isPublishedExport();
-  const [groups] = createResource(
-    () => (live && props.page.kind === "page" ? `${props.page.name}\0${dataRev()}` : null),
-    () => tagTableGroups(props.page.name, owners)
-  );
+  const [groups] = createTagTableResource(() => props.page.name, () => live && props.page.kind === "page");
   const enabled = () => tagTableEnabled(props.page.name);
   const visible = () => live && props.page.kind === "page" && (enabled() || taggedCount(readOr(groups, undefined, "tag table toggle")?.groups) > 0);
   return (
@@ -1400,12 +1371,8 @@ export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
 }
 
 export function TagPageTable(props: { pageName: string }): JSX.Element {
-  const owners = {};
-  const [groupsResource, { refetch }] = createResource(
-    () => `${props.pageName}\0${dataRev()}`,
-    () => tagTableGroups(props.pageName, owners)
-  );
-  // A rejected read (tagTableGroups reports its own failures as `error`, so this
+  const [groupsResource, { refetch }] = createTagTableResource(() => props.pageName);
+  // A rejected read (the query lifecycle reports its own failures as `error`, so this
   // is the unanticipated case) must not throw into render: readOr, and the
   // failure row because an empty table would claim "no tagged blocks".
   const answer = () => readOr(groupsResource, undefined, "tag table");

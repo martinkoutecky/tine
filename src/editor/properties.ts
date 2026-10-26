@@ -1,13 +1,13 @@
 import { msg, render } from "../i18n";
-// Pure helpers for reading/editing `key:: value` property lines — a block's
-// continuation lines or a page's pre-block. No store/DOM, so unit-testable.
+// Parser helpers for reading/editing a block's properties or a page pre-block.
+// Standard editor policies additionally read the current graph's hidden keys.
 
 import { displayMathOpenAfter, closesDisplayMath, fenceExitTrim } from "./fences";
 import type { Format } from "../render/ast";
-import { blockRegions, editorOffsetOfRaw, editorText, editorTextJoin, hidePolicyHides, parserReady, rawByteOfEditor, parseBlock } from "../render/parse";
+import { blockRegions, editorOffsetOfRaw, editorText, editorTextJoin, mayHaveLogbook, hidePolicyHides, parserReady, rawByteOfEditor } from "../render/parse";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
-import { rebulletedSourceByteToRawByte } from "../render/spans";
 import { reportUiFailure } from "../uiFailure";
+import { graphMeta } from "../graphSession";
 
 import { property_line_json, page_regions_json, page_header_json } from "../render/wasm/lsdoc_wasm.js";
 import type { RegionProperty } from "../render/parse";
@@ -209,11 +209,51 @@ export function splitPagePreamble(raw: string | null | undefined): {
 /** Which accepted primary properties an editor hides: the outline kernel's
  *  `editor_text::HidePolicy` (twin 13). The kernel owns the key lists. */
 export type HidePolicy =
-  | { readonly kind: "builtin" | "sheet_cell" | "all" }
+  | { readonly kind: "builtin" | "sheet_cell" | "all" | "form_managed" | "structural" }
+  | { readonly kind: "configured"; readonly keys: readonly string[]; readonly sheet_cell?: boolean }
   | { readonly kind: "keys"; readonly keys: readonly string[]; readonly norm?: boolean };
-/** A normal block editor: the built-in `id::`, `collapsed::` and
- *  `logseq.order-list-type::`, kept in the file but never in the textarea (as OG). */
+/** A normal block editor: LOGBOOK and OG hidden built-ins; comment context and
+ *  author only when its own primary properties include quote. */
 export const BUILTIN_HIDE: HidePolicy = Object.freeze({ kind: "builtin" });
+/** Properties with dedicated controls; other metadata remains editable in the form. */
+export const FORM_MANAGED: HidePolicy = Object.freeze({ kind: "form_managed" });
+const STRUCTURAL_HIDE: HidePolicy = Object.freeze({ kind: "structural" });
+/** Hidden clocks still count as content for deletion and trailing-block reuse. */
+export function hasLogbookDrawer(raw: string, format: Format = "md"): boolean {
+  // Negative-only prefilter: accepted ownership still comes from the parser.
+  // Ordinary property-only buffers must keep their existing parse budget.
+  if (!mayHaveLogbook(raw)) return false;
+  return blockRegions(raw, format).drawers.some(d => d.name.toLowerCase() === "logbook");
+}
+/** Opaque accepted history, separate from property syntax for rich transfers
+ * and active authoring. Hidden Org transport rows have no PROPERTIES wrapper;
+ * use Markdown ownership for that transport, as the kernel join does. */
+export function splitLogbook(raw: string, format: Format): { text: string; drawers: string } {
+  if (!mayHaveLogbook(raw)) return { text: raw, drawers: "" };
+  const regions = blockRegions(raw, format);
+  if (regions.quarantined) throw new Error("Drawer transfer refused: block parsing is quarantined");
+  const bytes = new TextEncoder().encode(raw);
+  const decoder = new TextDecoder();
+  let start = 0;
+  const text: string[] = [];
+  const drawers: string[] = [];
+  for (const drawer of regions.drawers.filter(d => d.name.toLowerCase() === "logbook")) {
+    text.push(decoder.decode(bytes.subarray(start, drawer.range[0])));
+    drawers.push(decoder.decode(bytes.subarray(drawer.range[0], drawer.range[1])).replace(/[\r\n]+$/, ""));
+    start = drawer.range[1];
+  }
+  text.push(decoder.decode(bytes.subarray(start)));
+  return { text: text.join("").replace(/[\r\n]+$/, ""), drawers: drawers.join("\n") };
+}
+
+/** A destructive empty-host decision must account for opaque history too. */
+export function isEditorEmpty(raw: string, hide: HidePolicy, format: Format): boolean {
+  // Newly hidden values are still authored data. A metadata-only block cannot
+  // become a disposable trailing block or paste host merely because it hides
+  // more lines now. Identity/fold/list metadata retain their previous behavior.
+  return !hasLogbookDrawer(raw, format) && splitProps(raw, hide, format).visible.trim() === ""
+    && splitProps(raw, STRUCTURAL_HIDE, format).visible.trim() === "";
+}
 /** A sheet cell: the built-ins plus every `tine.*` key. */
 export const SHEET_CELL_HIDE: HidePolicy = Object.freeze({ kind: "sheet_cell" });
 /** Every property (annotation blocks edit only their text). */
@@ -223,14 +263,31 @@ export const HIDE_ID: HidePolicy = Object.freeze({ kind: "keys", keys: ["id"] })
 /** Exactly `keys` (lower-cased); `norm` compares through `propertyKeyNorm`. */
 export const hideKeys = (keys: readonly string[], norm = false): HidePolicy => Object.freeze({ kind: "keys", keys, norm });
 const policyJson = new WeakMap<HidePolicy, string>();
+// One slot per kind: a sheet-cell projection must not evict the editor's policy,
+// whose identity keys the property session's cache.
+const configured: Partial<Record<"builtin" | "sheet_cell", { signature: string; policy: HidePolicy }>> = {};
+/** Snapshot current graph config for projections, session caches and kernel verbs.
+ * Config is read reactively, including when an editor is already mounted. */
+export function editorHidePolicy(policy: HidePolicy = BUILTIN_HIDE): HidePolicy {
+  if (policy.kind !== "builtin" && policy.kind !== "sheet_cell") return policy;
+  const keys = graphMeta()?.block_hidden_properties ?? [];
+  if (!keys.length) return policy;
+  const signature = JSON.stringify([policy.kind, keys]);
+  const slot = configured[policy.kind];
+  if (slot?.signature === signature) return slot.policy;
+  const next = { signature, policy: Object.freeze({ kind: "configured", keys: [...keys], sheet_cell: policy.kind === "sheet_cell" }) as HidePolicy };
+  configured[policy.kind] = next;
+  return next.policy;
+}
 function policyText(policy: HidePolicy): string {
+  policy = editorHidePolicy(policy);
   let json = policyJson.get(policy);
   if (json === undefined) policyJson.set(policy, (json = JSON.stringify(policy)));
   return json;
 }
-/** Whether `policy` hides property `key` (as the parser spelled it). */
-export function hides(policy: HidePolicy, key: string): boolean {
-  return hidePolicyHides(policyText(policy), key);
+/** Whether `policy` hides `key`, given this block's parsed own primary properties. */
+export function hides(policy: HidePolicy, key: string, properties: readonly (readonly [string, string])[]): boolean {
+  return hidePolicyHides(policyText(policy), key, properties);
 }
 
 /** For a multi-line editor that normally keeps Enter inside it, return the text
@@ -300,25 +357,16 @@ export function visibleOffsetToRawByte(raw: string, visibleOffset: number, hide:
   return rawByteOfEditor(raw, format, policyText(hide), visibleOffset);
 }
 
-/** Reattach hidden property lines to the visible text — the inverse of
- *  {@link splitProps}. Markdown appends them below the body; Org folds them back
- *  into a `:PROPERTIES:` drawer at OG's canonical spot. A metadata-only block
- *  (empty visible) is just its hidden lines. */
-export function joinProps(visible: string, hidden: string, format: PropFormat = "md"): string {
-  // OG property/insert-property prepends metadata to a titleless quote. A
-  // trailing unquoted line is a lazy continuation of its quoted paragraph.
-  // A title above the quote keeps its properties between title and quote.
-  // Only an accepted trailing quote can consume appended metadata; inline
-  // greater-than signs and literal containers retain the normal policy.
-  if (format === "md" && hidden && visible.includes(">") && parserReady()) {
-    const last = parseBlock(visible, false).filter(b => b.kind !== "properties").at(-1);
-    if (last?.kind === "quote" && last.span) {
-      const at = utf8ToUtf16Cursor(visible)(rebulletedSourceByteToRawByte(visible, last.span[0]));
-      const lineStart = visible.lastIndexOf("\n", at - 1) + 1;
-      const payload = hidden.endsWith("\r") ? hidden.slice(0, -1) : hidden;
-      return `${visible.slice(0, lineStart)}${payload}\n${visible.slice(lineStart)}`;
-    }
-  }
+/** Reattach hidden property lines to visible text. With a source, text edits
+ *  preserve its layout; a cleared Markdown block keeps its empty title line.
+ *  Structural replacements use the kernel's canonical property placement. */
+export function joinProps(visible: string, hidden: string, format: PropFormat = "md", source?: string, hide: HidePolicy = BUILTIN_HIDE): string {
+  // `hide` is the policy that split `hidden` from `source`: the splice re-splits with it.
+  if (source !== undefined) return editorTextJoin(visible, hidden, format, source, policyText(hide));
+  if (hidden && hasLogbookDrawer(hidden, "md")) return editorTextJoin(visible, hidden, format);
+  // The kernel places the rows: at the end of the block's own property group,
+  // else before a final quote (its lazy continuation would swallow them), else
+  // below the body (REG-HIDDEN-PROPS-STAY-IN-THE-GROUP, GH #684, #721 F3).
   return editorTextJoin(visible, hidden, format);
 }
 

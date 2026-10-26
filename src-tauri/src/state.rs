@@ -42,7 +42,7 @@ pub(crate) struct GraphSlot {
     pub(crate) warm_generation: AtomicU64,
     /// Revoked as soon as this exact window→graph binding is replaced/removed.
     /// Detached warm/backup workers check it before and during graph-sized work.
-    pub(crate) background_cancelled: AtomicBool,
+    pub(crate) background_cancelled: Arc<AtomicBool>,
     /// Concord's derived conflict queue (memory only; see `ConflictQueue`).
     pub(crate) conflict_queue: tine_graph_features::conflicts::ConflictQueue,
     /// Concord base ledger, attached at graph open (`concord_ledger::attach`);
@@ -179,7 +179,7 @@ impl GraphSlot {
             startup_changed: Condvar::new(),
             warm_done: AtomicBool::new(false),
             warm_generation: AtomicU64::new(0),
-            background_cancelled: AtomicBool::new(false),
+            background_cancelled: Arc::new(AtomicBool::new(false)),
             conflict_queue: Default::default(),
             concord_ledger: Default::default(),
             rescan: Default::default(),
@@ -400,8 +400,8 @@ pub(crate) fn release_own_overlap(
 }
 
 /// Before an open of `root`: wait, outside the registry lock, up to `bound`
-/// for each retiring graph whose root overlaps it (another root: the same
-/// root is adopted) to save and close. `waiting` runs once, with that
+/// for each retiring graph whose root overlaps it to save and close (the same
+/// root is adopted only while its binding is intact). `waiting` runs once, with that
 /// graph's root, when the open has to wait. Past the bound, the refusal
 /// `bind` would give.
 pub(crate) fn wait_for_retiring_overlaps(
@@ -427,6 +427,24 @@ pub(crate) struct GraphRegistry {
 }
 
 impl GraphRegistry {
+    /// graph_load serializes opens/adoption; holding this registry lock also
+    /// excludes transfers into retirement. Only the target whose host is under
+    /// the saved-stop barrier may be exempted during explicit recovery.
+    pub(crate) fn draft_namespace_held(
+        &self,
+        source: &str,
+        target: &str,
+        stopped_target: Option<&Arc<GraphSlot>>,
+    ) -> bool {
+        self.by_window.values().any(|slot| {
+            if stopped_target.is_some_and(|stopped| Arc::ptr_eq(stopped, slot)) {
+                return false;
+            }
+            let id = crate::settings::host_graph_id(&slot.root_key);
+            id == source || id == target
+        }) || self.retirement.draft_namespace_held(source, target)
+    }
+
     pub(crate) fn slot(&self, window: &str) -> Option<Arc<GraphSlot>> {
         self.by_window.get(window).cloned()
     }
@@ -727,6 +745,34 @@ pub(crate) fn capture_quick_switch_slot(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn off_ui_slow_read_yields_to_its_caller() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Wake, Waker};
+        struct Noop;
+        impl Wake for Noop {
+            fn wake(self: Arc<Self>) {}
+        }
+        let caller = std::thread::current().id();
+        let (release, wait) = std::sync::mpsc::channel();
+        let mut read = Box::pin(off_ui(move || {
+            assert_ne!(std::thread::current().id(), caller);
+            wait.recv().unwrap();
+            Ok("unchanged bytes")
+        }));
+        let waker = Waker::from(Arc::new(Noop));
+        // A suspended native read cannot block the caller's event dispatch.
+        assert!(matches!(
+            read.as_mut().poll(&mut Context::from_waker(&waker)),
+            Poll::Pending
+        ));
+        release.send(()).unwrap();
+        assert_eq!(
+            tauri::async_runtime::block_on(read).unwrap(),
+            "unchanged bytes"
+        );
+    }
 
     /// G6: every exit is the revocable waiter's. The last window's
     /// `close_graph_window` and the `Destroyed` hook each release the

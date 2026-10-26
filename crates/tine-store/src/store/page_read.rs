@@ -112,13 +112,15 @@ impl Store {
         self.page_read(id, doc)
     }
 
-    /// Stage a byte-exact copy of `old`, the bytes of marker-bearing page file
+    /// Stage a byte-exact copy of `old`, the bytes of a conflicted page file
     /// `file`, under `logseq/.tine-trash/conflicts/<stamp>__markers__<name>`
     /// (no-replace, fsync'd), before a host operation resolves them (DESIGN
     /// §3.4 pre): a crash leaves the old file plus its copy, or the resolved
     /// file plus the copy, never a lost side. A refused operation leaves the
     /// copy in trash. One write + fsync of `old`.
     pub fn stage_marker_copy(&self, file: &FileId, old: &[u8]) -> Result<FileId, crate::Why> {
+        #[cfg(test)]
+        super::pause_at_hook(&self.marker_copy_pause);
         self.transaction(None).stage_marker_file(file, old)
     }
 

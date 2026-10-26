@@ -115,10 +115,10 @@ describe("MobileKeyboardToolbar", () => {
     dispose();
   });
 
-  it("moves the focused editor fully above the toolbar without disturbing an already-visible block (GH #384)", async () => {
+  it.each(["main-content", "right-sidebar", "left-sidebar-scroll"])("reveals the focused editor in its own %s scroller (GH #384, GH #751)", async (surface) => {
     const { revealFocusedEditorAboveToolbar } = await import("./MobileKeyboardToolbar");
     const scroller = document.createElement("main");
-    scroller.className = "main-content";
+    scroller.className = surface;
     const editor = document.createElement("textarea");
     editor.className = "block-editor";
     scroller.appendChild(editor);
@@ -165,6 +165,35 @@ describe("MobileKeyboardToolbar", () => {
     expect(scroller.scrollTop).toBe(28); // 500 + 8 - 480
     formatting.remove();
     scroller.remove();
+  });
+
+  it("routes drawer toolbar actions to the current editor after a pane/left/right handoff (GH #751)", async () => {
+    const { render } = await import("solid-js/web");
+    const bridge = await import("../editorCommandBridge");
+    const { MobileKeyboardToolbar } = await import("./MobileKeyboardToolbar");
+    const { div, dispose } = mount(render, MobileKeyboardToolbar);
+    const calls: string[] = [];
+    for (const surface of ["main-content", "left-sidebar-scroll", "right-sidebar"]) {
+      const host = document.createElement("div");
+      host.className = surface;
+      const editor = document.createElement("textarea");
+      editor.className = "block-editor";
+      host.append(editor);
+      document.body.append(host);
+      editor.focus();
+      const unregister = bridge.registerFocusedEditorCommandBridge({
+        blockId: surface,
+        dispatch(command) { calls.push(`${surface}:${command}`); return true; },
+        blur() { editor.blur(); },
+      });
+      await Promise.resolve();
+      div.querySelector<HTMLButtonElement>('[aria-label="TODO"]')!.click();
+      expect(document.activeElement).toBe(editor);
+      unregister();
+      host.remove();
+    }
+    expect(calls).toEqual(["main-content:editor/cycle-todo", "left-sidebar-scroll:editor/cycle-todo", "right-sidebar:editor/cycle-todo"]);
+    dispose();
   });
 
   it("consumes the full hide-keyboard gesture instead of touching through (GH #336)", async () => {

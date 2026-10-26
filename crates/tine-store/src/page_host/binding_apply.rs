@@ -180,6 +180,18 @@ impl PageHost {
                 Some((page.file(), name, source))
             })
             .collect();
+        let save_rules: Vec<_> = creations
+            .iter()
+            .map(|(file, name, source)| {
+                let key = spellings[&PageId::from(file.as_str())].clone();
+                (
+                    key.clone(),
+                    effects[&key].0.clone(),
+                    name.clone(),
+                    source.clone(),
+                )
+            })
+            .collect();
         let slot = loop {
             let (effects, keys, moved) = (effects.clone(), keys.clone(), moved.clone());
             let kinds = kinds.clone();
@@ -187,6 +199,7 @@ impl PageHost {
             let store = store.clone();
             let creations = creations.clone();
             let view = op.view.clone();
+            let save_rules = save_rules.clone();
             let admit = move |state: &mut HostState| {
                 let host = &state.progress.host;
                 if !host.alive {
@@ -214,6 +227,12 @@ impl PageHost {
                 let (disposition, reply) = state.progress.with_host(|host| {
                     let disposition = host.apply(&effects, &moved);
                     let pending = disposition == Disposition::Pending;
+                    if pending {
+                        for (key, bytes, name, source) in &save_rules {
+                            host.fs
+                                .note_creation(key, bytes.clone(), name.clone(), source.clone());
+                        }
+                    }
                     (
                         disposition,
                         pending.then(|| host.register_reply()).flatten(),

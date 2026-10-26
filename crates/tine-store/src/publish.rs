@@ -19,7 +19,7 @@ use same_file::Handle as FileIdentity;
 #[cfg(test)]
 use std::cell::RefCell;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 // `same_file::Handle` keeps its Windows handle open without FILE_SHARE_DELETE,
@@ -349,7 +349,7 @@ impl Store {
                     validate_leaf(folder)?;
                     let parent = self.graph.root.join("published-queries");
                     self.graph.ensure_write_target(&parent)?;
-                    fs::create_dir_all(&parent)?;
+                    crate::directory_durability::create_dir_all_durable(&parent, &self.graph.root)?;
                     crate::directory_durability::sync_directory_entry(&self.graph.root)?;
                     parent.join(folder)
                 }
@@ -415,13 +415,16 @@ fn validate_leaf(leaf: &str) -> io::Result<()> {
 }
 
 /// Inspect a portable query leaf without creating output. Returns its display
-/// path, whether it exists, and the first unused -N suggestion on collision.
-/// Cost O(colliding sibling names). I/O/unsafe layout errors refuse review;
+/// path, whether it exists, the first unused -N suggestion on collision, and
+/// optional bounded bytes of its previous app snapshot. Unavailable snapshot
+/// evidence is None; it never prevents a count-only review.
+/// Cost O(colliding sibling names + requested snapshot bytes). Unsafe layout errors refuse review;
 /// the suggestion is advisory, and commit never reallocates a chosen name.
 pub fn query_publication_destination(
     store: &Store,
     folder: &str,
-) -> io::Result<(String, bool, Option<String>)> {
+    snapshot_byte_limit: Option<u64>,
+) -> io::Result<(String, bool, Option<String>, Option<Vec<u8>>)> {
     validate_leaf(folder)?;
     let parent = store.graph.root.join("published-queries");
     store.graph.ensure_write_target(&parent.join(folder))?;
@@ -447,7 +450,51 @@ pub fn query_publication_destination(
         parent.join(folder).display().to_string(),
         occupied,
         suggested,
+        snapshot_byte_limit
+            .filter(|_| occupied)
+            .and_then(|limit| query_publication_snapshot(store, folder, limit).ok()),
     ))
+}
+
+/// Read only the existing query leaf's app snapshot, confined to the graph
+/// capability even through symlinks. No lock, publication or graph mutation.
+/// Cost O(snapshot bytes), bounded before allocation and during the read.
+fn query_publication_snapshot(store: &Store, folder: &str, max_bytes: u64) -> io::Result<Vec<u8>> {
+    validate_leaf(folder)?;
+    if store.is_closed() {
+        return Err(io::Error::new(io::ErrorKind::BrokenPipe, "store closed"));
+    }
+    let root = Dir::open_ambient_dir(&store.graph.root, ambient_authority())?;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        // A replaced snapshot must not block the planning worker as a FIFO.
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let input = root.open_with(
+        format!("published-queries/{folder}/app/snapshot.json"),
+        &options,
+    )?;
+    let metadata = input.metadata()?;
+    if !metadata.is_file() || metadata.len() > max_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "snapshot is not a bounded regular file",
+        ));
+    }
+    let mut bytes = Vec::new();
+    input
+        .take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "snapshot exceeds byte limit",
+        ));
+    }
+    Ok(bytes)
 }
 
 struct PublishRecovery {

@@ -12,22 +12,39 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const request = { argument: "(task TODO)", dialect: "macro-query", properties: [], name: "Tasks" } as never;
 let dispose: (() => void) | undefined;
 afterEach(() => { dispose?.(); document.body.innerHTML = ""; vi.restoreAllMocks(); });
-async function dialog(exists = false, extra: Record<string, unknown> = {}) {
+async function dialog(exists = false, extra: Record<string, unknown> = {}, presetReplace = false) {
   vi.spyOn(backend(), "publishQueryPlan").mockResolvedValue({ anchor: "block", rowCount: 1,
     pages: [{ name: "Public", path: "pages/Public.md", journal: false }], leftOut: [], selectsHostPage: false,
     folder: "tasks", fingerprint: "reviewed",
     path: "/graph/published-queries/tasks", exists, suggestedFolder: exists ? "tasks-2" : null, ...extra } as never);
   const root = document.createElement("div"); document.body.append(root);
-  dispose = render(() => <QueryExportDialog request={() => request} />, root);
+  dispose = render(() => <QueryExportDialog request={() => presetReplace ? { ...request as object, replace: true, folder: "tasks" } as never : request} />, root);
   for (let i = 0; i < 4; i++) await tick();
   (root.querySelector('input[type="checkbox"]') as HTMLInputElement).click();
   return root;
 }
 function exportButton(root: HTMLElement) { return [...root.querySelectorAll("button")].find((b) => b.textContent === "Export")!; }
+it("opens a definition re-export in Replace without writing before confirmation", async () => {
+  const api = vi.spyOn(backend(), "publishQuery").mockResolvedValue({ path: "site", pages: 1, files: 12, retired: null, warnings: [] } as never);
+  const root = await dialog(true, { previousPages: ["Old"] }, true);
+  expect(root.querySelector<HTMLInputElement>('input[type="radio"]')?.checked).toBe(true);
+  expect(exportButton(root).disabled).toBe(false);
+  expect(api).not.toHaveBeenCalled();
+  expect(root.querySelector(".folder-export-membership")?.textContent).toContain("+1 new / −1 gone");
+  exportButton(root).click();
+  await vi.waitFor(() => expect(api).toHaveBeenCalled());
+  expect(api.mock.calls[0][0]).toMatchObject({ folder: "tasks", replace: true });
+});
+it("counts a page spelled twice in a malformed prior snapshot once", async () => {
+  vi.spyOn(backend(), "publishQuery").mockResolvedValue({ path: "site", pages: 1, files: 12, retired: null, warnings: [] } as never);
+  const root = await dialog(true, { previousPages: ["Old", "old", "Public"] }, true);
+  expect(root.querySelector(".folder-export-membership")?.textContent).toContain("+0 new / −1 gone");
+});
 it("exports a reviewed query directly into its graph and reports recovery and missing assets", async () => {
   const api = vi.spyOn(backend(), "publishQuery").mockResolvedValue({ path: "/graph/published-queries/tasks", pages: 1,
     files: 12, retired: "/graph/logseq/.tine-trash/conflicts/old/previous", warnings: ["missing.png omitted"] } as never);
   const root = await dialog();
+  expect(root.querySelector(".folder-export-membership")).toBeNull();
   expect(exportButton(root).disabled, "the graph leaf needs no external folder picker").toBe(false);
   exportButton(root).click(); for (let i = 0; i < 4; i++) await tick();
   expect(api).toHaveBeenCalled();

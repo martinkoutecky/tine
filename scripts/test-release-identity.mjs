@@ -85,7 +85,7 @@ try {
     }
     // Stable layout preserves every previous asset name, including RPM separators.
     if (ship === "release") {
-      assert.ok(layout.platformAssets.every((name) => name.startsWith(`Tine_${version}_`) || name.startsWith(`Tine-${version}-1.`)));
+      assert.ok(layout.platformAssets.every((name) => name === "quick-share-viewer-g1.zip" || name.startsWith(`Tine_${version}_`) || name.startsWith(`Tine-${version}-1.`)));
     }
     const gradle = `android {\n namespace = "fixture.kotlin.package"\n applicationId = "${identity.androidApplicationId}"\n}\n`;
     fs.writeFileSync(path.join(root, "src-tauri/gen/android/app/build.gradle.kts"), gradle);

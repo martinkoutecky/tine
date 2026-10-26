@@ -73,6 +73,7 @@ pub struct RestoreFailed {
 }
 
 struct Recovery {
+    binding: std::sync::Arc<crate::root_binding::RootBinding>,
     root_path: PathBuf,
     root: Dir,
     dir: Dir,
@@ -181,6 +182,9 @@ impl Store {
                 io::Error::new(io::ErrorKind::BrokenPipe, "store closed"),
                 done,
             ));
+        }
+        if let Err(error) = self.graph.root_binding.check() {
+            return Err(fail("restore", error, done));
         }
         // The recorded scope decides what a whole-graph restore may write and
         // retire, so a later `:hidden` edit cannot retire text it never saw.
@@ -298,12 +302,22 @@ impl Store {
             std::process::id(),
             RECOVERY_SEQ.fetch_add(1, Ordering::Relaxed)
         );
-        let graph = match reserve(&root_path, Path::new("logseq/.tine-trash"), &recovery_id) {
+        let graph = match reserve(
+            &root_path,
+            Path::new("logseq/.tine-trash"),
+            &recovery_id,
+            self.graph.root_binding.clone(),
+        ) {
             Ok(value) => value,
             Err(error) => return Err(fail("couldn't create restore recovery area", error, done)),
         };
         done.recovery.push(graph.path.clone());
-        let assets = match reserve(&assets_path, Path::new(ASSET_RECOVERY), &recovery_id) {
+        let assets = match reserve(
+            &assets_path,
+            Path::new(ASSET_RECOVERY),
+            &recovery_id,
+            self.graph.root_binding.clone(),
+        ) {
             Ok(value) => value,
             Err(error) => {
                 return Err(fail(
@@ -549,6 +563,38 @@ mod config_directory_tests {
 mod destination_tests {
     use super::*;
     use std::fs;
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn l9_restore_refuses_a_replaced_root_before_reserving_recovery() {
+        let data = tempfile::tempdir().unwrap();
+        let root = data.path().join("graph");
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::write(root.join("pages/A.md"), b"- original\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        fs::rename(&root, data.path().join("moved")).unwrap();
+        fs::create_dir_all(root.join("assets")).unwrap();
+        let result = store.restore(
+            crate::EditKind::ReplacePage,
+            vec![RestoreFile {
+                area: Area::Pages,
+                rel: "A.md".into(),
+                bytes: b"- backup\n".to_vec(),
+            }],
+            None,
+        );
+        let error = result.expect_err("must never restore into a replacement graph");
+        assert!(
+            error.done.recovery.is_empty(),
+            "nothing reserved under the replacement"
+        );
+        assert!(!root.join("pages/A.md").exists());
+        assert_eq!(
+            fs::read(data.path().join("moved/pages/A.md")).unwrap(),
+            b"- original\n"
+        );
+    }
 
     fn graph(tag: &str) -> (PathBuf, PathBuf) {
         let base = std::env::temp_dir().join(format!("tine-restore-{tag}-{}", std::process::id()));
@@ -850,7 +896,13 @@ fn folds_case(dir: &Path) -> bool {
 /// a recovery tree whose directory entries never reached disk loses the only
 /// copy of a retired file (an external editor's edit made after the safety
 /// snapshot). One sync per path component, once per restore.
-fn reserve(root_path: &Path, parent_rel: &Path, id: &str) -> io::Result<Recovery> {
+fn reserve(
+    root_path: &Path,
+    parent_rel: &Path,
+    id: &str,
+    binding: std::sync::Arc<crate::root_binding::RootBinding>,
+) -> io::Result<Recovery> {
+    binding.check()?;
     let root = Dir::open_ambient_dir(root_path, ambient_authority())?;
     let parent = real_parent(&root, parent_rel, Some(root_path))?;
     parent.create_dir(id)?;
@@ -863,6 +915,7 @@ fn reserve(root_path: &Path, parent_rel: &Path, id: &str) -> io::Result<Recovery
     }
     let dir = parent.open_dir(id)?;
     Ok(Recovery {
+        binding,
         root_path: root_path.to_path_buf(),
         root,
         dir,
@@ -910,6 +963,7 @@ fn real_parent(root: &Dir, rel: &Path, create: Option<&Path>) -> io::Result<Dir>
 }
 
 fn move_if_present(recovery: &Recovery, live: &Path, recover: &Path) -> io::Result<bool> {
+    recovery.binding.check()?;
     let name = live
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing live file name"))?;
@@ -986,6 +1040,7 @@ fn move_if_present(recovery: &Recovery, live: &Path, recover: &Path) -> io::Resu
 }
 
 fn copy_new(recovery: &Recovery, live: &Path, bytes: &[u8]) -> io::Result<()> {
+    recovery.binding.check()?;
     let name = live
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing live file name"))?;

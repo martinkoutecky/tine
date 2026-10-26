@@ -748,3 +748,4 @@ settings-prose-launch-with-the-main-window-hidden-open-it-from-the = 启动时�
 
 settings-prose-last-rescan = 上次重新扫描完成于 { $time }。
 settings-prose-file-size = { $value } { $unit }
+diagnostics-refresh-everything = 每次保存时刷新所有内容（调试）

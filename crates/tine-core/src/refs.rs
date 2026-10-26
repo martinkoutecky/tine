@@ -81,6 +81,60 @@ fn code_ranges_for(raw: &str, is_org: bool) -> Vec<std::ops::Range<usize>> {
         .collect()
 }
 
+/// Ask lsdoc once for tag names and exact source extents. Parsing a suffix at
+/// every `#` would make namespace rename quadratic. Mask the existing literal
+/// ranges first, retaining byte offsets and line breaks, so inline parsing
+/// cannot pair code delimiters across separate fenced blocks.
+/// OG 0.10.9 `replace-tag-ref!` only allows trailing commas/dots; the rename
+/// contract here follows lsdoc's complete token, including its other delimiters.
+fn tag_tokens_for(
+    raw: &str,
+    is_org: bool,
+    code: &[std::ops::Range<usize>],
+    properties: &[crate::block_regions::Property],
+) -> std::collections::HashMap<usize, (usize, String)> {
+    use lsdoc::ast::{Inline, Span};
+    let mut masked = raw.as_bytes().to_vec();
+    // Inline parsing must not turn parser-owned Org directive names (such as
+    // `#+TITLE:`) into bare tags when renaming a page named `+TITLE`.
+    let directives = properties
+        .iter()
+        .filter(|p| p.directive)
+        .map(|p| p.line.0..p.value_range.0);
+    for range in code.iter().cloned().chain(directives) {
+        for byte in &mut masked[range] {
+            if !matches!(*byte, b'\n' | b'\r') {
+                *byte = b' ';
+            }
+        }
+    }
+    let masked = String::from_utf8(masked).expect("literal masks preserve UTF-8");
+    let inline = crate::render::parse_inline_bounded(&masked, if is_org { "org" } else { "md" })
+        .unwrap_or_default();
+    let mut pending = vec![inline.as_slice()];
+    let mut tokens = std::collections::HashMap::new();
+    while let Some(nodes) = pending.pop() {
+        for node in nodes {
+            match node {
+                Inline::Tag {
+                    children,
+                    span: Some(Span(start, end)),
+                } => {
+                    let mut name = String::new();
+                    crate::doc::tag_text(children, &mut name);
+                    tokens.insert(*start, (*end, normalize(&name)));
+                }
+                Inline::Emphasis { children, .. }
+                | Inline::Subscript { children, .. }
+                | Inline::Superscript { children, .. } => pending.push(children),
+                Inline::Link { label, .. } => pending.push(label),
+                _ => {}
+            }
+        }
+    }
+    tokens
+}
+
 /// A `#tag` is only a tag at a word boundary: `#` at the start, or preceded by a
 /// char that isn't itself tag-body material. So `word#x`, `ex.com#x`, `path/#x`
 /// (URL fragments) are NOT tags — matching OG — while ` #x`, `(#x`, `]#x` are.
@@ -168,7 +222,9 @@ pub fn rename_refs_multi(
     is_org: bool,
     file_name_format: FileNameFormat,
 ) -> String {
-    let code = code_ranges_for(raw, is_org);
+    let regions = crate::block_regions::parse(raw, is_org);
+    let code: Vec<_> = regions.literals.iter().map(|r| r.0..r.1).collect();
+    let tags = tag_tokens_for(raw, is_org, &code, &regions.properties);
     let mut code_cur = 0usize; // monotone cursor into `code` (i only increases)
     let mut out = String::with_capacity(raw.len());
     let mut i = 0;
@@ -216,16 +272,16 @@ pub fn rename_refs_multi(
                     }
                 }
             }
-            if rest.starts_with('#') && tag_boundary(raw, i) {
-                let after = &rest[1..];
-                let len = after.find(|c: char| !is_tag_char(c)).unwrap_or(after.len());
-                if len > 0 {
-                    if let Some(to) = renames.get(&normalize(&after[..len])) {
+            // Bracketed tags keep the recovery above: an unmatched `#[[` must
+            // not swallow a later valid reference (C3W W3).
+            if rest.starts_with('#') && !rest.starts_with("#[[") && tag_boundary(raw, i) {
+                if let Some((end, name)) = tags.get(&i) {
+                    if let Some(to) = renames.get(name) {
                         out.push_str(&tag_for(to));
                     } else {
-                        out.push_str(&raw[i..i + 1 + len]);
+                        out.push_str(&raw[i..*end]);
                     }
-                    i += 1 + len;
+                    i = *end;
                     continue;
                 }
             }
@@ -424,6 +480,103 @@ mod tests {
         let mut map = std::collections::HashMap::with_capacity(1);
         map.insert(normalize(from), to.to_string());
         rename_refs_multi(raw, &map, is_org, FileNameFormat::TripleLowbar)
+    }
+
+    #[test]
+    fn audit_l3_02_rename_uses_complete_parser_tag_tokens() {
+        let cases = [
+            ("#foo+bar", "foo", "#foo+bar"),
+            ("#c++", "c", "#c++"),
+            ("#c++", "c++", "#New"),
+            ("#R&D", "R", "#R&D"),
+            ("#foo🎉", "foo", "#foo🎉"),
+            ("#foo.", "foo", "#New."),
+            ("#foo...", "foo", "#New..."),
+            ("#foo,", "foo", "#New,"),
+            // Intentional OG difference: lsdoc also excludes these trailing
+            // delimiters, while OG's replace-tag-ref! only accepts commas/dots.
+            ("#foo;", "foo", "#New;"),
+            ("#foo!", "foo", "#New!"),
+            ("#foo.bar", "foo", "#foo.bar"),
+            ("#foo.bar", "foo.bar", "#New"),
+            ("#foo", "foo", "#New"),
+            ("[[foo]] and #foo+bar", "foo", "[[New]] and #foo+bar"),
+        ];
+        let mut failures = Vec::new();
+        for is_org in [false, true] {
+            let bullet = if is_org { "* " } else { "- " };
+            for (tag, from, expected) in cases {
+                // Both EOL and whitespace after the token/delimiter run.
+                for suffix in ["", " next\n"] {
+                    let raw = format!("{bullet}{tag}{suffix}");
+                    let expected = format!("{bullet}{expected}{suffix}");
+                    let got = rename_refs(&raw, from, "New", is_org);
+                    if got != expected {
+                        failures.push(format!(
+                            "org={is_org} {from:?}: {raw:?} => {got:?}, expected {expected:?}"
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn audit_l3_02_rename_controls_and_literals() {
+        assert_eq!(
+            rename_refs("#+TITLE: Example\n* see #+TITLE\n", "+TITLE", "New", true),
+            "#+TITLE: Example\n* see #New\n"
+        );
+        for is_org in [false, true] {
+            assert_eq!(
+                rename_refs("a tag #[[ opener then #[[foo]] too", "foo", "New", is_org),
+                "a tag #[[ opener then #New too"
+            );
+            let raw = "[[foo]] #foo #[[foo]] #food https://ex.com/#foo";
+            assert_eq!(
+                rename_refs(raw, "foo", "New", is_org),
+                "[[New]] #New #New #food https://ex.com/#foo"
+            );
+            let (raw, expected) = if is_org {
+                (
+                    "* =#foo. #foo+bar #c++=\n#+BEGIN_SRC\n#foo. #foo+bar #c++\n#+END_SRC\n* #foo\n",
+                    "* =#foo. #foo+bar #c++=\n#+BEGIN_SRC\n#foo. #foo+bar #c++\n#+END_SRC\n* #New\n",
+                )
+            } else {
+                (
+                    "- `#foo. #foo+bar #c++`\n```\n#foo. #foo+bar #c++\n```\n- #foo\n",
+                    "- `#foo. #foo+bar #c++`\n```\n#foo. #foo+bar #c++\n```\n- #New\n",
+                )
+            };
+            assert_eq!(rename_refs(raw, "foo", "New", is_org), expected);
+            assert_eq!(rename_refs(raw, "c", "New", is_org), raw);
+            assert_eq!(rename_refs(raw, "c++", "New", is_org), raw);
+        }
+    }
+
+    #[test]
+    fn audit_l3_02_bare_tags_property_matches_whole_members() {
+        let raw = "tags:: foo+bar, c++, R&D, foo🎉, foo.bar, foo\n";
+        assert_eq!(rename_tags_property(raw, "c", "New", false), raw);
+        assert_eq!(rename_tags_property(raw, "R", "New", false), raw);
+        assert_eq!(
+            rename_tags_property(raw, "foo", "New", false),
+            "tags:: foo+bar, c++, R&D, foo🎉, foo.bar, New\n"
+        );
+        assert_eq!(
+            rename_tags_property(raw, "c++", "New", false),
+            "tags:: foo+bar, New, R&D, foo🎉, foo.bar, foo\n"
+        );
+        assert_eq!(
+            rename_rewrite(
+                "tags:: #foo+bar, #foo., c++\n",
+                false,
+                &[("foo".into(), "New".into()), ("c++".into(), "Cpp".into())],
+                FileNameFormat::TripleLowbar,
+            ),
+            "tags:: #foo+bar, #New., Cpp\n"
+        );
     }
 
     #[test]

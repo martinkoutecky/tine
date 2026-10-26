@@ -337,6 +337,7 @@ html[data-system-insets="native-viewport"] {
   min-width: 0;
 }
 .workspace-switcher-btn {
+  font: inherit;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -372,7 +373,7 @@ html[data-system-insets="native-viewport"] {
   white-space: nowrap;
   font-size: 12px;
 }
-.workspace-switcher-caret { flex: none; font-size: 9px; opacity: .7; }
+.workspace-switcher-caret { opacity: .7; }
 .workspace-switcher-compact .workspace-switcher-btn {
   gap: 3px;
   padding-inline: 5px;
@@ -1174,6 +1175,7 @@ html[data-system-insets="native-viewport"] {
   margin-top: 4px;
 }
 .graph-switch-btn {
+  font: inherit;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1203,7 +1205,6 @@ html[data-system-insets="native-viewport"] {
   white-space: nowrap;
 }
 .graph-switch-caret {
-  font-size: 9px;
   opacity: 0.7;
 }
 .graph-switch-backdrop {
@@ -1308,6 +1309,7 @@ html[data-system-insets="native-viewport"] {
   border: 0;
   background: transparent;
   font: inherit;
+  font-size: 11px;
   text-align: left;
   cursor: pointer;
   user-select: none;
@@ -1317,13 +1319,11 @@ html[data-system-insets="native-viewport"] {
 }
 .nav-all-pages-open { width: 100%; text-align: left; background: transparent; border: 0; font: inherit; cursor: pointer; }
 .nav-all-pages-open:hover, .nav-all-pages-open.active { color: var(--text-primary); background: var(--bg-tertiary); }
-.nav-toggle-caret {
-  display: inline-block;
-  transition: transform 0.1s ease;
-  font-size: 9px;
-}
-.nav-toggle-caret.open {
-  transform: rotate(90deg);
+.nav-toggle-caret,
+.graph-switch-caret,
+.workspace-switcher-caret {
+  flex: none;
+  margin-right: 0;
 }
 .nav-section-count {
   margin-left: auto;
@@ -3399,8 +3399,6 @@ html[data-system-insets="native-viewport"] {
 }
 
 .prop-row {
-  display: flex;
-  gap: 8px;
   padding: 1px 0;
 }
 
@@ -4121,7 +4119,8 @@ html[data-system-insets="native-viewport"] {
   position: fixed;
   left: var(--system-inset-left);
   right: var(--system-inset-right);
-  z-index: 80;
+  /* Above mobile drawers (90), below their portaled popups (96) and dialogs. */
+  z-index: 95;
   transform: translateY(-100%);
   display: flex;
   align-items: stretch;
@@ -4165,6 +4164,24 @@ html[data-system-insets="native-viewport"] {
 }
 .mobile-keyboard-toolbar-nav .icon-btn:active {
   background: var(--bg-tertiary);
+}
+
+/* GH #751: while the editing dock (z-index 95) is shown, these body-level
+   popups must clear it as well as the drawer. Without the dock the existing
+   layer order stands. Dialogs (100+), context menus (150), help (118), and
+   toast/media overlays (200+) already clear the dock. */
+html[data-mobile-editing-dock] :is(
+  .autocomplete, .peek-popup, .dp-overlay, .pp-overlay,
+  .formula-editor-overlay, .rs-actions-menu.rs-item-menu, .tab-overview
+) {
+  z-index: 96;
+}
+
+/* Give the drawer's last editor enough scroll range above keyboard + dock.
+   The lift is measured from the real dock top, for both resized and overlay
+   viewports; scroll-padding alone would not create this missing scroll range. */
+html[data-mobile-editing-dock] .app-container[data-mobile-drawer-mode="true"] :is(.right-sidebar, .left-sidebar-scroll) {
+  padding-bottom: var(--mobile-kb-toolbar-lift, 0px);
 }
 
 .mobile-keyboard-toolbar-strip {
@@ -4600,8 +4617,12 @@ mark {
   color: var(--text-primary);
 }
 .peek-popup-title {
-  padding: 2px 4px 7px;
-  margin-bottom: 2px;
+  position: sticky;
+  top: -8px;
+  z-index: 1;
+  background: var(--bg-primary);
+  padding: 10px 12px 7px;
+  margin: -8px -8px 2px;
   border-bottom: 1px solid var(--border-color);
 }
 .peek-popup-title-name {
@@ -6760,7 +6781,6 @@ ol.md-list { list-style: decimal; }
   width: 14px;
   text-align: center;
   color: var(--text-muted);
-  font-size: 10px;
   flex: 0 0 auto;
 }
 .ns-node-label {
@@ -7092,6 +7112,11 @@ img.emoji {
   border-radius: 8px;
   padding: 0 7px;
   line-height: 18px;
+}
+
+.references-count-stale {
+  color: var(--text-muted);
+  opacity: 0.6;
 }
 
 .reference-group {
@@ -7806,20 +7831,9 @@ html.tine-embed-shading-accent .embed-block {
   background: none;
 }
 
-/* A whole-block block embed is visually the referenced outline, not an empty
-   parent followed by another root. Block.tsx removes only the macro host's
-   controls; the referenced root keeps its real interactive bullet, collapse
-   toggle, zoom/sidebar actions, and editor surface. Removing the wrapper inset
-   puts that surviving bullet on the ordinary outline column. Its descendant
-   guide is slightly heavier to identify the embedded boundary without a box. */
-.block-embed-host > .block-main > .block-content-wrapper > .macro-host {
-  padding: 0;
-}
-.block-embed-host > .block-main > .block-content-wrapper > .macro-host > .embed-block {
-  border-left: 0;
-  padding-left: 0;
-  margin: 0;
-}
+/* GH #726: retain the host's control column and the embed's inset, as OG's
+   block-embed does. The source bullet is a distinct handle inside the host's
+   content. Its descendant guide identifies the source outline boundary. */
 .block-embed-host .embed-block > .live-ref-group > .ls-block > .block-main > .block-controls .bullet {
   background: var(--tine-embed-accent, var(--block-embed-accent));
 }
@@ -8908,7 +8922,7 @@ html.tine-embed-shading-accent .embed-block {
   border: 0;
   background: transparent;
 }
-/* GH #619 item 8: the page's properties, plain selectable text under its title. */
+/* GH #619 item 8: the page's properties under its title (GH #753 linked keys). */
 .query-page-props {
   grid-column: 1 / -1;
   display: flex;
@@ -9110,3 +9124,7 @@ html.tine-embed-shading-accent .embed-block {
     gap: 2px;
   }
 }
+.root-recovery-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border-color); }
+.root-recovery-notice > span { min-width: 0; overflow-wrap: anywhere; }
+.settings-backup-origin { display: block; color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.settings-backup-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }

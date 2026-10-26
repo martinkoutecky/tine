@@ -50,7 +50,9 @@ import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
 import { queryWorkspaceDsl } from "./queryWorkspaceDsl";
 import { PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY, type BothFamilies } from "./queryMacroSupport";
 import { bothFamilies } from "../queryTwin";
-import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { createQuerySubscription } from "../querySubscription";
+import { createAnswerDay } from "../journal";
 import { SearchResultRow } from "./SearchResultRow";
 import { QueryPageResults, type QueryPageHit } from "./QueryPageResults";
 import { QueryResultSections, type ResultFamily } from "./QueryResultSections";
@@ -822,6 +824,15 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const pageView = createMemo(() => queryDisplaySettings(pageDisplay(), {}, pagePresentation() ?? presentation()));
   const blockView = createMemo(() => queryDisplaySettings(blockDisplay(), {}, blockPresentation() ?? presentation()));
   const executionScope = {};
+  const answerDay = createAnswerDay();
+  const [asOfDay, setAsOfDay] = createSignal<number | null>(null);
+  answerDay.follow(asOfDay);
+  const subscription = createQuerySubscription(() => {
+    if (!source().trim()) return undefined;
+    if (sourceKind() === "search" || props.route.resultKinds === PAGES_AND_BLOCKS) return { kind: "full" };
+    const dsl = queryWorkspaceDsl(source().trim());
+    return { kind: "source", source: dsl.argument, dialect: dsl.dialect };
+  }, answerDay.day);
   const [execution] = createMembershipResource(
     () => ({
       id: props.route.id,
@@ -836,11 +847,12 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     }),
     () => JSON.stringify([props.route.id, source().trim(), sourceKind(), explain(), pageMatchScope(), pageView(), blockView(), props.route.resultKinds, sourceKind() === "search" && pinyinMatchingEnabled()]),
     async (request): Promise<QueryExecution> => {
+      const cancelled: QueryExecution = { hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: true };
+      if (!await subscription.ready()) return cancelled;
       if (!request.source) {
         return { hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false };
       }
       const owner = latestOwner(executionScope, "run", graphOwner(() => alive && props.route.id === request.id));
-      const cancelled: QueryExecution = { hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: true };
       if (request.sourceKind === "search") {
         const result = await readOwned(owner, deps().runGraphSearch(
           request.source,
@@ -860,11 +872,12 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       setDslReading({ source: request.source, parsed: parsed.value });
       const result = await readOwned(owner, deps().queryRun(parsed.value.query, queryDisplaySettings(blockDisplay(), parsed.value.view, presentation())));
       if (result.kind === "stale" || !owner()) return cancelled;
+      setAsOfDay(result.value.as_of_day ?? null);
       // "Pages and blocks" (the block's `tine.result-kinds`): the engine re-reads the same conditions at the
       // other anchor, exactly as the block and the sheet's live preview do (one answerer, queryTwin.ts).
       const twin = request.resultKinds === PAGES_AND_BLOCKS
         ? await bothFamilies(owner, {
-          scope: `${graphMeta()?.root ?? ""}\0${graphEpoch()}`, key: `workspace\0${request.id}\0${request.source}\0${dataRev()}`,
+          scope: `${graphMeta()?.root ?? ""}\0${graphEpoch()}`, key: `workspace\0${request.id}\0${request.source}\0${subscription.revision()}\0${subscription.publication()}`,
           query: parsed.value.query, view: queryDisplaySettings(blockDisplay(), parsed.value.view, presentation()), own: result.value,
         })
         : undefined;
@@ -878,6 +891,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     (value, id) => value.hits.some((hit) => hit.entity === "block" && hit.block.id === id),
     () => true,
     true,
+    subscription.revision,
   );
 
   // Failure is drawn from `execution.error` below; a read never throws into render.

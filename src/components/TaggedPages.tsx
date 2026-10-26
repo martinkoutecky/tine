@@ -1,33 +1,38 @@
 import { t } from "../i18n";
 import { For, Show, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { dataRev } from "../graphSession";
+import { changed } from "../changeKeys";
+import { referenceKey } from "../referenceKeys";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { isPublishedExport } from "../publishedBackend";
 import { readOr } from "../resourceRead";
 import { PageRef } from "../render/inline";
 import { ResourceFailure } from "./ResourceFailure";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
+import { createCollapsedRevision } from "../collapsedRevision";
+import { StaleReferenceCount } from "./StaleReferenceCount";
 
 /** OG page.cljs tagged-pages: list pages whose page tags contain this name or,
  * unlike OG (GH #715), any name in its alias group, the same group Linked
  * References use; a page tagging itself so is listed too, as in OG. The backend owns membership
  * (`tagged_pages`: normalization, Org, aliases); `(page-tags …)` queries stay
- * literal. Cost: one page scan per graph revision, O(pages), plus O(matches log
+ * literal. Cost: one page scan per relevant tag change, O(pages), plus O(matches log
  * matches) display sorting. Read failures render a retry; stale graph reads are
  * discarded. Published exports have no live query engine and omit the section. */
 export function TaggedPages(props: { name: string }): JSX.Element {
   const owners = {};
   const [collapsed, setCollapsed] = createSignal(false);
+  const freshness = createCollapsedRevision(() => changed(referenceKey("tags", props.name)), collapsed, () => props.name);
   const [answer, { refetch }] = createResource(
-    () => isPublishedExport() ? null : `${props.name}\0${dataRev()}`,
-    async () => {
+    () => isPublishedExport() ? null : freshness.revision(),
+    async (token) => {
       const owner = latestOwner(owners, "tagged-pages", graphOwner());
       const result = await readOwned(owner, backend().taggedPages(props.name));
       if (result.kind === "stale") return undefined;
       const diagnostic = result.value.diagnostics?.find(item => !item.disabled);
       if (diagnostic) throw new Error(diagnostic.message);
       if (result.value.anchor !== "page") throw new Error("Expected tagged pages");
+      freshness.remember(token);
       return { ...result.value, pages: [...result.value.pages].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())) };
     },
   );
@@ -38,6 +43,7 @@ export function TaggedPages(props: { name: string }): JSX.Element {
       <section class="tagged-pages linked-references">
         <button type="button" class="references-header" aria-expanded={!collapsed()} onClick={() => setCollapsed(!collapsed())}>
           <ReferenceDisclosure collapsed={collapsed()} />{t("tagged-pages-heading", { name: props.name })}
+          <span class="references-count"> {rows()?.pages.length}</span><StaleReferenceCount stale={freshness.stale()} />
         </button>
         <Show when={!collapsed()}>
           <ul><For each={rows()?.pages}>{page => <li><PageRef name={page.name} alias={page.name} /></li>}</For></ul>

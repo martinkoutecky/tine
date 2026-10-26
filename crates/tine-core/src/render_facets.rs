@@ -3,55 +3,57 @@
 //! this one predicate, so a property chip hidden in the app is hidden in a
 //! published page and the reverse.
 //!
-//! Deliberately SEPARATE concepts (do not merge): the editor's textarea hide
-//! list (`BUILTIN_HIDDEN` in `src/editor/properties.ts`), the query filter
-//! blacklist (`INTERNAL_PROPS` in `query.rs`), and the page-property area
-//! (`PAGE_PROPS_HIDDEN` in `components/Page.tsx`).
-//!
-//! Dependency-free on purpose: `lsdoc-wasm` includes this file by path.
+//! OG util/property.cljs `get-visible-ordered-properties`: built-ins shared
+//! with the editor, plus exceptions for ordinary blocks and page pre-blocks.
+//! Query filter availability remains a separate question.
 
 /// Built-in keys that are never shown as a rendered chip (id/collapsed, Logseq
 /// internals, display-only keys), already in `normalize` form.
-pub const RENDER_HIDDEN: &[&str] = &[
-    "id",
-    "collapsed",
-    "hl-page",
-    "hl-color",
-    "hl-type",
-    "ls-type",
-    "background-color",
-    "logseq.order-list-type",
-    "heading",
-    "title",
-    "filters",
-    "created-at",
-    "updated-at",
-    "last-modified-at",
-    "query-table",
-    "query-properties",
-    "query-sort-by",
-    "query-sort-desc",
-    "logseq.tldraw.shape",
-];
+pub use tine_outline::property_visibility::BUILTIN_HIDDEN as RENDER_HIDDEN;
 
 /// A property key's comparison form: trimmed, ASCII-lowercased, spaces and
 /// underscores as hyphens. Byte-for-byte `doc::property_key_norm`;
 /// `tests/og_r_render_facets.rs` pins the two together because this file cannot
 /// depend on `doc`.
 pub fn normalize(key: &str) -> String {
-    key.trim().to_ascii_lowercase().replace([' ', '_'], "-")
+    tine_outline::property_visibility::normalize(key)
 }
 
 /// Whether a block property key is hidden from the rendered chips: a built-in
-/// internal key, a `tine.*` view setting, a `logseq.table.*` table setting (OG
+/// internal key, a `tine.*` view setting, a known `logseq.table.*` setting (OG
 /// resolves those from the block, `shui/table/v2.cljs`), or a key the graph
 /// lists in `:block-hidden-properties`. Case- and separator-insensitive.
 /// O(key bytes + hidden keys), no allocation beyond the normalized key.
 pub fn is_render_hidden_prop(key: &str, user_hidden: &[String]) -> bool {
     let key = normalize(key);
     key.starts_with("tine.")
-        || key.starts_with("logseq.table.")
+        || matches!(
+            key.as_str(),
+            "logseq.color"
+                | "logseq.query/nlp-date"
+                | "logseq.table.version"
+                | "logseq.table.compact"
+                | "logseq.table.headers"
+                | "logseq.table.hover"
+                | "logseq.table.borders"
+                | "logseq.table.stripes"
+                | "logseq.table.max-width"
+        )
         || RENDER_HIDDEN.contains(&key.as_str())
+        || user_hidden.iter().any(|hidden| normalize(hidden) == key)
+}
+
+/// Page pre-blocks hide title/icon/filters but show editable table/view keys.
+/// Tine additionally surfaces aliases in AliasGroupHeader and hides its page
+/// markers. Unlike OG's empty-properties-order fallthrough, filtering always
+/// applies, including to properties created by external tools.
+pub fn is_render_hidden_page_prop(key: &str, user_hidden: &[String]) -> bool {
+    let key = normalize(key);
+    RENDER_HIDDEN.contains(&key.as_str())
+        || matches!(
+            key.as_str(),
+            "title" | "icon" | "filters" | "alias" | "tine.tag-table" | "tine/exports"
+        )
         || user_hidden.iter().any(|hidden| normalize(hidden) == key)
 }
 

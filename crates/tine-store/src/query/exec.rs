@@ -102,6 +102,30 @@ pub(crate) struct PlanCheckpointParts<'a> {
 }
 
 impl Plan {
+    /// The shared page-edit predicate for memo eviction and mounted readers.
+    /// Global inputs retain their precise registry/tag checks; link plans have
+    /// no sound page-local test and deliberately invalidate on every edit.
+    pub(crate) fn touches_edit(
+        &self,
+        entry: &PageEntry,
+        before: &Document,
+        after: &Document,
+        old_facts: &PageFacts,
+        new_facts: &PageFacts,
+        config: &ParseConfig,
+    ) -> bool {
+        // Both before/after tests use the current instant. Neither can prove
+        // that a row matched when a mounted answer was computed earlier. The
+        // memo never retains these answers; readers must likewise invalidate
+        // on every publication rather than trust current-time rejection.
+        self.reads_clock()
+            || self.reads_links()
+            || self.registry().is_some() && old_facts.registry_rows_differ(new_facts)
+            || self.reads_tag_targets() && old_facts.tags() != new_facts.tags()
+            || self.touches(entry, before, old_facts, config)
+            || self.touches(entry, after, new_facts, config)
+    }
+
     pub(super) fn estimated_bytes(&self) -> usize {
         super::memo::retained::serialized_bytes(&self.filter)
             .saturating_add(self.compiled.estimated_bytes())
@@ -123,7 +147,7 @@ impl Plan {
     /// milliseconds (`resolve_timestamp_token`); every other date token is
     /// anchored at the day's midnight. The memo files answers per day, so a
     /// clock-reading answer must not be retained (checkpoint-5 L02 B3).
-    pub(super) fn reads_clock(&self) -> bool {
+    pub(crate) fn reads_clock(&self) -> bool {
         fn is_now(value: &tine_core::query::ir::Value) -> bool {
             use tine_core::query::ir::Value;
             match value {
@@ -1209,12 +1233,22 @@ pub(crate) fn query_ir(
     request: crate::IrRequest<'_>,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<crate::IrAnswer>, StatisticsResourceLimit> {
-    query_ir_on_day_cancellable(
+    let began = (matches!(&request, crate::IrRequest::Run { .. })
+        && crate::bench_events::enabled())
+    .then(std::time::Instant::now);
+    let answer = query_ir_on_day_cancellable(
         graph,
         request,
         tine_core::date::JournalDate::today(),
         cancelled,
-    )
+    );
+    if let Some(began) = began {
+        crate::bench_events::mark(
+            "query_run_us",
+            began.elapsed().as_micros().try_into().unwrap_or(u64::MAX),
+        );
+    }
+    answer
 }
 
 /// Same production entry body, with the sampled day explicit for conformance.

@@ -24,7 +24,10 @@
 # by Martin 2026-10-10; A-R1 then cut PageHost::release (13 -> 12).
 # GH #181: read_link_identity_at takes a LinkProbe so a cold link can rule out a closed graph without opening
 # it (rule 3: parameter on the existing link question, not a sibling)
-## Lifecycle (ceiling: 24)
+# L9-02: canonical_root can resolve a path, but cannot compare it with a retiring
+# Store's held physical witness. check_graph_root supplies that lifecycle check
+# before adoption; it exposes no path, inode, cache or new persisted identity.
+## Lifecycle (ceiling: 25)
 enum store::WatchMode
 enum store::OpenError
 field store::GraphAccessInspection.external_assets
@@ -37,6 +40,7 @@ fn store::Store::create_graph
 fn store::Store::suggest_graph_name
 fn store::Store::inspect
 fn store::Store::canonical_root
+fn root_binding::Store::check_graph_root
 fn store::GraphAccessInspection::approves_external_assets
 fn store::Store::open
 fn store::Store::set_watch_mode
@@ -51,7 +55,30 @@ struct link_identity::LinkInspection
 field link_identity::LinkInspection.identity
 field link_identity::LinkInspection.target_possible
 
-## Freshness (ceiling: 26)
+## Freshness (ceiling: 33)
+# GX4 S2 explicitly requires mounted unlinked targets in the publication host.
+# Store::subscribe owns the one dispatch stream, not the changing set of views;
+# adding a subscribe parameter cannot register/release targets after dispatch
+# starts without replacing that stream. One native lifetime-bound registration
+# operation controls those transient dependencies; it does not add a faster
+# sibling of an existing reader. Revocation uses the existing binding flag.
+# GX4 S4: extend that existing operation's parameter to query/registry readers;
+# the old string names only an unlinked target and cannot carry a query plan.
+# register_reader_while_live replaces register_unlinked_reference_while_live,
+# so the operation count stays 49. The two parameter/result carriers and their
+# result fields carry dependencies, refresh policy and a publication revision,
+# not caller-visible cache/readiness state. No faster sibling reader is added.
+fn store::Store::register_reader_while_live
+enum store::QuerySubscription
+struct store::QueryRegistration
+field store::QueryRegistration.mode
+field store::QueryRegistration.rev
+# test-oracle: query fixtures register without a native binding's revocation
+# flag; production uses the same lifetime-bound reader operation above.
+fn store::Store::register_query_subscription
+# test-oracle: Store-only fixtures register readers without a native window's
+# cancellation flag; production uses the lifetime-bound operation above.
+fn store::Store::register_unlinked_reference
 enum store::Depth
 enum store::ChangeKind
 enum store::Origin
@@ -94,7 +121,11 @@ fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
 
-## Reads (ceiling: 16)
+## Reads (ceiling: 17)
+# Audit L8-03: the orphan-asset inventory moved from WholeGraph::referenced_assets
+# (parsed pages only, cannot read set-aside duplicate-day files or fail on an
+# unreadable one) to the store, which can; the WholeGraph question left the surface.
+fn store::Store::referenced_assets
 const model::PARSE_INPUT_MAX_BYTES
 fn model::parse_input_depth_within_limit
 field store::PageRead.doc
@@ -283,11 +314,10 @@ struct store::Inventory
 struct store::InventoryEntry
 struct store::WholeGraph
 
-## WholeGraph: References (ceiling: 5)
+## WholeGraph: References (ceiling: 4)
 fn store::WholeGraph::backlink_filter_context
 fn store::WholeGraph::backlinks
 fn store::WholeGraph::explicit_referrers
-fn store::WholeGraph::referenced_assets
 fn store::WholeGraph::unlinked_references
 
 ## WholeGraph: Block refs (ceiling: 5)
@@ -417,7 +447,9 @@ field page_host::HostRead.page
 field page_host::HostRead.bytes
 field page_host::HostRead.revision
 enum page_host::HostReadError
-## Re-exports (ceiling: 11)
+## Re-exports (ceiling: 12)
+# GX4 S4: typed parameters/results for the existing reader registration door.
+use crate::store::change_summary::{QueryRegistration,QuerySubscription}
 use crate::tine_outline::edit_kind
 use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,ReserveRefusal,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind

@@ -251,15 +251,8 @@ mod permissions {
             })
     }
 
-    // KNOWN GAP (queue card g8baTc, receipt Q1): `Depth::Stamps` (the Poll tick and
-    // the window-focus rescan) trusts an unchanged mtime/length/identity, and a
-    // chmod repair moves only ctime, so the unreadable list keeps the file until
-    // the live notifier hashes it (next test, which passes) or a Bytes/Rebuild
-    // scan. Whether Stamps should retry files listed as unreadable is a storage
-    // trade-off for the manager; this probe documents the behaviour, un-ignore
-    // it with the fix.
+    // GH #543 retries I/O failures even when a repair changes no content stamp.
     #[test]
-    #[ignore = "known gap: Depth::Stamps never retries a permission-denied page whose stamps are unchanged (receipt Q1)"]
     fn a_permission_denied_page_made_readable_again_appears_and_signals() {
         if running_as_root() {
             return;

@@ -6,9 +6,10 @@ import type { PdfTarget } from "./pdfViewerPrimitives";
 import { PdfViewer } from "./PdfViewer";
 
 /**
- * A PDF filename is a resource identity, not a navigation request. Key only on
- * that identity: page/highlight changes within one asset stay reactive, while
- * switching assets still tears down every document-local cache and pdf.js task.
+ * A view (viewId) is the mount identity, not a navigation request: page and
+ * highlight changes within one view stay reactive, while switching views or
+ * assets tears down every view-local cache and pdf.js task. Views of the same
+ * file share only their highlights (acquirePdfHighlightState).
  */
 export function KeyedPdfViewer(props: {
   route: () => PdfRoute | null;
@@ -17,6 +18,7 @@ export function KeyedPdfViewer(props: {
   onClose?: () => void;
   onOpenNotes?: (block?: string) => void;
   onViewState?: (state: { page: number; scale: number }) => void;
+  onAnotherView?: (state: { page: number; scale: number }) => void;
 }): JSX.Element {
   const resolvedTarget = (): PdfTarget | null => {
     const route = props.route();
@@ -52,6 +54,7 @@ export function KeyedPdfViewer(props: {
             onClose={props.onClose}
             onOpenNotes={props.onOpenNotes}
             onViewState={props.onViewState}
+            onAnotherView={props.onAnotherView}
           />
         );
       }}

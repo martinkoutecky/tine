@@ -83,8 +83,11 @@ pub(crate) struct PublishHooks {
 
 #[cfg(test)]
 impl PublishHooks {
-    pub(super) fn before_publish(&self, snapshot: &Arc<Snapshot>) {
+    pub(super) fn before_publish(&self) {
         super::pause_at_hook(&self.pause);
+    }
+
+    pub(super) fn published(&self, snapshot: &Arc<Snapshot>) {
         self.log.lock().unwrap().push(Arc::clone(snapshot));
     }
 }
@@ -135,13 +138,13 @@ impl Snapshot {
         rebuild: bool,
         rev: GraphRev,
         published: &HashMap<FileId, PageEntry>,
+        targets: &super::change_summary::RegisteredTargets,
     ) -> Self {
         // The publication caller holds the store writer lock. A load worker
         // publishes only after its initial parse has finished.
         graph.with_pages(|_| ());
         let config = config.read().unwrap().clone();
         let journal_format = graph.current_journal_format();
-        let cache_generation = graph.cache_generation();
         // Paths whose rows a hold or respelling retired since the last
         // capture (E105): each is renamed from what it names now.
         let mut files = files.to_vec();
@@ -299,7 +302,35 @@ impl Snapshot {
             let old = old.expect("name index from old generation");
             (Arc::clone(&old.list), Arc::clone(&old.claimants))
         };
-        let changed_paths: Vec<String> = files
+        // A file arrival can displace an indexed journal; a removal can promote
+        // a previously set-aside file. Patch only the affected day buckets,
+        // reusing the same complete claimant index that resolve() exposes.
+        let journal_keys: HashSet<_> = if config_changed || rebuild || old.is_none() {
+            claimants
+                .iter()
+                .filter(|((journal, _), entries)| *journal && entries.len() > 1)
+                .map(|(key, _)| key.clone())
+                .collect()
+        } else {
+            files
+                .iter()
+                .filter_map(|(id, _, _)| {
+                    let path = graph.root.join(id.as_str());
+                    name_by_path
+                        .get(&path)
+                        .or_else(|| old.and_then(|old| old.name_by_path.get(&path)))
+                        .filter(|(kind, _)| *kind == PageKind::Journal)
+                        .map(|(_, name)| (true, tine_core::refs::page_key(name)))
+                })
+                .collect()
+        };
+        let journal_paths: Vec<_> = journal_keys
+            .iter()
+            .filter_map(|key| claimants.get(key))
+            .flat_map(|entries| graph.reconcile_journal_claimants(entries))
+            .collect();
+        let cache_generation = graph.cache_generation();
+        let mut changed_paths: Vec<String> = files
             .iter()
             .filter(|(id, _, _)| {
                 let root = &graph.root;
@@ -311,7 +342,17 @@ impl Snapshot {
             })
             .map(|(id, _, _)| id.as_str().to_owned())
             .collect();
+        changed_paths.extend(journal_paths.iter().map(|path| graph.rel_path(path)));
+        changed_paths.sort();
+        changed_paths.dedup();
         let mut folds_only = false;
+        // Share one old/new document lookup between memo carry and the wire
+        // summary. Do not retain these previous documents in the new snapshot.
+        // Anything but "nothing text-eligible changed" or a computed edit list
+        // stays None, which the summary publishes as `full` (ADR 0014: over-
+        // invalidate, never stale).
+        let mut edited_pages =
+            (changed_paths.is_empty() && !config_changed && !rebuild).then(Vec::new);
         let evaluator = if let Some(old) = old.filter(|old| {
             old.cache_generation == cache_generation && !config_changed && !rebuild && !unnamed
         }) {
@@ -327,7 +368,13 @@ impl Snapshot {
             );
             if !name_set_changed {
                 if let Some(old) = old {
-                    let folds = evaluator.carry_from(&old.graph, &changed_paths);
+                    let edits = evaluator.edited_pages(&old.graph, &changed_paths);
+                    let folds = edits
+                        .as_deref()
+                        .is_some_and(|edits| evaluator.carry_from(&old.graph, edits));
+                    if !config_changed && !rebuild {
+                        edited_pages = edits;
+                    }
                     folds_only = folds
                         && files
                             .iter()
@@ -345,11 +392,21 @@ impl Snapshot {
             list,
             claimants,
             name_by_path,
-            unreadable: graph.unreadable_pages(),
+            unreadable: graph.reported_unreadable_pages(),
             answers: Default::default(),
             folds_only,
         };
-        snapshot.answers = snapshot.answer_changes(old, &changed_paths, name_set_changed);
+        let (inventory, counts) = snapshot.answer_changes(old, &changed_paths, name_set_changed);
+        let summary = snapshot.change_summary(
+            old,
+            &changed_paths,
+            name_set_changed,
+            inventory,
+            edited_pages.as_deref(),
+            &targets.unlinked,
+            &targets.queries,
+        );
+        snapshot.answers = (inventory, counts, summary);
         snapshot
     }
 }

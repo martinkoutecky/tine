@@ -5,7 +5,7 @@
 # Pull requests get one lightweight Linux validation job and docs-only PRs skip it.
 name: ci
 
-run-name: ci / ${{ github.event_name == 'workflow_dispatch' && inputs.scope || 'pull-request' }} / ${{ github.sha }}
+run-name: ci / ${{ github.event_name == 'workflow_dispatch' && inputs.scope || 'pull-request' }}${{ github.event_name == 'workflow_dispatch' && inputs.purpose == 'development' && ' / development' || '' }} / ${{ github.sha }}
 
 on:
   pull_request:
@@ -30,6 +30,14 @@ on:
           - performance
           - multiwindow
           - macos
+      purpose:
+        description: release (default) checks release metadata; development skips only that check, and release.yml accepts such a run only with publish=false
+        required: false
+        default: release
+        type: choice
+        options:
+          - release
+          - development
 
 permissions:
   contents: read
@@ -40,9 +48,9 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -95,16 +103,21 @@ jobs:
       - name: Rust core tests
         run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
 
+      # Real TS HostClient against a real native PageHost (builds the tine-store
+      # lib-test peer, reusing this job's target). Mandatory: it must not skip.
+      - name: Storage conformance (client vs native host)
+        run: npm run test:storage-conformance
+
   test:
     name: Full CI / Linux tests and release contracts
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -128,7 +141,7 @@ jobs:
       - name: Committed lsdoc WASM contract is current
         run: node scripts/check-wasm-pin.mjs
 
-      # og: website/demo is master's and is not checked here
+      # develop: website/demo is master's and is not checked here
       # (scripts/build-guide-demo.mjs header).
 
       - name: F-Droid clean-source WASM rebuild succeeds
@@ -159,10 +172,19 @@ jobs:
       - name: Performance A/B multi-round reliability fixtures
         run: node scripts/test-bench-ab.mjs
 
+      - name: Install the browser for deployed viewer compatibility
+        # Release readiness now exercises the deployed viewer in a browser.
+        # Development-purpose CI still skips the viewer-first release gate.
+        run: npx playwright install --with-deps chromium
+
       - name: UI regression catalog and release evidence contracts
         run: |
           npm run check:regressions
-          npm run check:release-readiness
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.purpose || 'release' }}" = development ]; then
+            echo "purpose=development: release readiness not checked; release.yml accepts this run only with publish=false"
+          else
+            npm run check:release-readiness
+          fi
 
       # The pin guard otherwise only runs inside `npm run build`, which fast CI
       # skips — a Cargo lsdoc bump with stale vendored WASM must fail HERE, not
@@ -181,6 +203,11 @@ jobs:
 
       - name: Rust core tests
         run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
+
+      # Real TS HostClient against a real native PageHost (builds the tine-store
+      # lib-test peer, reusing this job's target). Mandatory: it must not skip.
+      - name: Storage conformance (client vs native host)
+        run: npm run test:storage-conformance
 
       # The app crate's own tests (commands, query wiring, IPC guards) ran
       # nowhere until GH #628 broke one unnoticed; they need the WebKitGTK headers.
@@ -220,8 +247,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'windows')
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -243,6 +270,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           cargo test --release -p tine-store --lib probe_deletion_step_timing -- --ignored --nocapture
+          cargo test --release -p tine-store --lib root_binding::tests::l9_measure_per_save_root_checks -- --ignored --exact --nocapture --test-threads=1
           cargo test --release -p tine-graph-features --test integration rename_cost::probe_rename_wall_time -- --ignored --exact --nocapture
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
@@ -284,8 +312,8 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -309,7 +337,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'android')
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
           targets: aarch64-linux-android
@@ -339,8 +367,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -393,7 +421,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'performance')
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -411,17 +439,17 @@ jobs:
           echo "immutable=$(node -p "require('./scripts/bench-policy.json').immutableBaseline.ref")" >> "$GITHUB_OUTPUT"
           echo "previous=$(node -p "require('./scripts/bench-policy.json').previousRelease.ref")" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ steps.perf-policy.outputs.immutable }}
           path: .bench/immutable
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ steps.perf-policy.outputs.previous }}
           path: .bench/previous
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -485,7 +513,7 @@ jobs:
     continue-on-error: true
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
@@ -548,8 +576,8 @@ jobs:
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm

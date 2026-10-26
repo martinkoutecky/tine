@@ -77,3 +77,9 @@ app-pane-split-navigation = { $kind ->
 # Helper-return and component-prop interface text (GH #107).
 app-prose-navigation-sidebar = 导航侧边栏
 app-prose-unexpected-failure = 发生意外错误。
+capture-snapshot-saved = 之前的速记已保存 — 已移除未改动的已提交文字，保留了较新的编辑
+capture-title-needs-text = 请添加正文以归档此标题 — 已保留标题
+capture-retry-unconfirmed = 尚未确认保存 — 已保留文字。请重试归档以完成同一次速记。
+capture-previous-graph = 速记可能已进入上一个图谱；尚未确认保存 — 已保留文字。再次速记前，请先检查该图谱。
+capture-start-new = 开始新的速记
+capture-new-request = 已为新的速记保留文字。再次归档前，请移除已保存在上一个图谱中的内容。

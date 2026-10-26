@@ -2,13 +2,38 @@ import { afterEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { Settings } from "./Settings";
 import { closeSettings, openSettings } from "../ui";
-import { graphMeta, setGraphMeta } from "../graphSession";
+import { bumpDataRev, bumpGraphEpoch, graphMeta, setGraphMeta } from "../graphSession";
+import { applyChangeSummary } from "../changeSummary";
 import { applyConfigDerivedState } from "../graph";
 import { backend } from "../backend";
 import { type GraphMeta } from "../types";
 import golden from "../../tests/fixtures/og-journal-formats.json";
 
 afterEach(() => { closeSettings(); setGraphMeta(null); vi.restoreAllMocks(); vi.useRealTimers(); document.body.innerHTML = ""; });
+
+it("GX4: the sections-page note follows marker changes, full and gaps while unrelated saves do not locate again", async () => {
+  bumpGraphEpoch(); let rev = 0;
+  const publish = (props: Record<string, string[]> = {}, full = false) => {
+    applyChangeSummary({ rev: String(++rev), full, pages: [], blocks: [], linksTo: [], props, inventoryChanged: false });
+    bumpDataRev(true);
+  };
+  publish();
+  const read = vi.spyOn(backend(), "queryRun").mockResolvedValue({ anchor: "page", pages: [], diagnostics: [], report: { ran: [], ignored: [], supported: true }, total: 0, exceeded: false });
+  setGraphMeta({ root: "/fixture", journal_config_diagnostics: [] } as unknown as GraphMeta);
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <Settings />, root);
+  try {
+    openSettings("journals");
+    await vi.waitFor(() => expect(read).toHaveBeenCalled()); read.mockClear();
+    publish({ unrelated: ["icon"] }); await new Promise(resolve => setTimeout(resolve, 0));
+    expect(read).not.toHaveBeenCalled();
+    for (const reason of ["marker", "full", "gap"]) {
+      if (reason === "gap") rev += 2;
+      publish(reason === "marker" ? { sections: ["tine/journal-sections"] } : {}, reason === "full");
+      await vi.waitFor(() => expect(read).toHaveBeenCalled()); read.mockClear();
+    }
+  } finally { dispose(); }
+});
 
 it("shows backend journal pattern notes by the format picker and follows fresh config snapshots", async () => {
   const notes = [

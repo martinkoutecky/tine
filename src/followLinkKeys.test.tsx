@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "./tests/editorDriver";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { installKeybindings } from "./keybindings";
 import * as router from "./router";
@@ -10,20 +11,19 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function editorWith(text: string, caret: number): HTMLTextAreaElement {
+function editorWith(text: string, caret: number): EditorDriver {
   const ta = document.createElement("textarea");
   ta.className = "block-editor";
-  ta.value = text;
   document.body.appendChild(ta);
-  ta.focus();
-  ta.setSelectionRange(caret, caret);
-  return ta;
+  const editor = editorIn();
+  editor.replaceText(text);
+  editor.focus();
+  editor.select(caret, caret);
+  return editor;
 }
 
-function press(target: HTMLElement, init: KeyboardEventInit): KeyboardEvent {
-  const e = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
-  target.dispatchEvent(e);
-  return e;
+function press(target: EditorDriver, init: KeyboardEventInit & { key: string }): KeyboardEvent {
+  return target.keydown({ bubbles: true, cancelable: true, ...init });
 }
 
 describe("Ctrl+O follows the link at the caret (GH #274)", () => {

@@ -1,3 +1,4 @@
+import { maybeEditorIn, focusedEditor } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -76,14 +77,15 @@ function mouseDownAndUp(element: Element): void {
 }
 
 describe("block embed hierarchy", () => {
-  it("uses only the embedded root's interactive bullet", async () => {
+  it("gives the host and embedded source separate interactive bullets", async () => {
     const targetId = "embed-hierarchy-root";
     const { root, dispose, hostId } = renderFixture(targetId);
 
     try {
       const host = root.querySelector<HTMLElement>(`[data-block-id="${hostId}"]`);
       expect(host).not.toBeNull();
-      await vi.waitFor(() => expect(host?.querySelectorAll(".bullet-container")).toHaveLength(3));
+      await vi.waitFor(() => expect(host?.querySelectorAll(".bullet-container")).toHaveLength(4));
+      expect(host?.querySelector(":scope > .block-main > .block-controls .bullet-container")).not.toBeNull();
       expect(host?.classList.contains("block-embed-host")).toBe(true);
       expect(host?.querySelector(".embed-block .bullet-container")).not.toBeNull();
     } finally {
@@ -107,9 +109,7 @@ describe("block embed hierarchy", () => {
     }
   });
 
-  // Master GH #514: a whole-block embed shows the source root's bullet where the
-  // host's own would be, so dragging it moves the OCCURRENCE (the host). Nested
-  // rows inside the embed are the source's own outline and drag themselves.
+  // GH #726 supersedes GH #514: each visible bullet drags its own block.
   function dragFrom(element: Element): string | null {
     // jsdom has no elementFromPoint; the drag hit-test only needs "nothing there".
     Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => null });
@@ -121,7 +121,7 @@ describe("block embed hierarchy", () => {
     return dragging;
   }
 
-  it("dragging the embedded root's bullet moves the host occurrence, not the source block", async () => {
+  it("dragging the embedded root's bullet moves the source block", async () => {
     const targetId = "embed-drag-root";
     const { root, dispose, hostId } = renderFixture(targetId);
     try {
@@ -130,7 +130,10 @@ describe("block embed hierarchy", () => {
         expect(el).not.toBeNull();
         return el!;
       });
-      expect(dragFrom(rootBullet)).toBe(hostId);
+      expect(dragFrom(rootBullet)).toBe(targetId);
+      const hostBullet = root.querySelector(`[data-block-id="${hostId}"] > .block-main > .block-controls .bullet-container`);
+      expect(hostBullet).not.toBeNull();
+      expect(dragFrom(hostBullet!)).toBe(hostId);
     } finally {
       dispose();
     }
@@ -269,21 +272,19 @@ describe("block embed hierarchy", () => {
       mouseDownAndUp(embeddedContent);
 
       const embeddedEditor = await vi.waitFor(() => {
-        const editor = root.querySelector<HTMLTextAreaElement>(
-          `.embed-block [data-block-id="${targetId}"] textarea.block-editor`,
-        );
+        const editor = maybeEditorIn(root.querySelector<HTMLElement>(`.embed-block [data-block-id="${targetId}"]`)!);
         expect(editor).not.toBeNull();
         return editor!;
       });
-      embeddedEditor.setSelectionRange(embeddedEditor.value.length, embeddedEditor.value.length);
-      embeddedEditor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      embeddedEditor.select(embeddedEditor.value().length, embeddedEditor.value().length);
+      embeddedEditor.keydown(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
 
       const createdId = editingId();
       expect(createdId).not.toBeNull();
       expect(createdId).not.toBe(targetId);
       await vi.waitFor(() => {
         const active = document.activeElement;
-        expect(active).toBeInstanceOf(HTMLTextAreaElement);
+        expect(focusedEditor()).not.toBeNull();
         expect(active?.closest(".embed-block")).not.toBeNull();
         expect(active?.closest(`[data-block-id="${createdId}"]`)).not.toBeNull();
       });
@@ -311,33 +312,27 @@ describe("block embed hierarchy", () => {
       mouseDownAndUp(embeddedChild);
 
       const childEditor = await vi.waitFor(() => {
-        const editor = root.querySelector<HTMLTextAreaElement>(
-          `.embed-block [data-block-id="${childId}"] textarea.block-editor`,
-        );
+        const editor = maybeEditorIn(root.querySelector<HTMLElement>(`.embed-block [data-block-id="${childId}"]`)!);
         expect(editor).not.toBeNull();
         return editor!;
       });
-      childEditor.setSelectionRange(0, 0);
-      childEditor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+      childEditor.select(0, 0);
+      childEditor.keydown(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
 
       const parentEditor = await vi.waitFor(() => {
-        const editor = root.querySelector<HTMLTextAreaElement>(
-          `.embed-block [data-block-id="${targetId}"] textarea.block-editor`,
-        );
+        const editor = maybeEditorIn(root.querySelector<HTMLElement>(`.embed-block [data-block-id="${targetId}"]`)!);
         expect(editor).not.toBeNull();
-        expect(document.activeElement).toBe(editor);
+        expect(document.activeElement).toBe(editor?.element);
         return editor!;
       });
       expect(editingId()).toBe(targetId);
 
-      parentEditor.setSelectionRange(parentEditor.value.length, parentEditor.value.length);
-      parentEditor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+      parentEditor.select(parentEditor.value().length, parentEditor.value().length);
+      parentEditor.keydown(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
       await vi.waitFor(() => {
-        const editor = root.querySelector<HTMLTextAreaElement>(
-          `.embed-block [data-block-id="${childId}"] textarea.block-editor`,
-        );
+        const editor = maybeEditorIn(root.querySelector<HTMLElement>(`.embed-block [data-block-id="${childId}"]`)!);
         expect(editor).not.toBeNull();
-        expect(document.activeElement).toBe(editor);
+        expect(document.activeElement).toBe(editor?.element);
       });
       expect(editingId()).toBe(childId);
     } finally {
@@ -361,34 +356,30 @@ describe("block embed hierarchy", () => {
       mouseDownAndUp(embeddedChild);
 
       const editor = await vi.waitFor(() => {
-        const element = root.querySelector<HTMLTextAreaElement>(
-          `.embed-block [data-block-id="${childId}"] textarea.block-editor`,
-        );
+        const element = maybeEditorIn(root.querySelector<HTMLElement>(`.embed-block [data-block-id="${childId}"]`)!);
         expect(element).not.toBeNull();
         return element!;
       });
-      editor.setSelectionRange(0, editor.value.length);
-      editor.value = "";
-      editor.dispatchEvent(new InputEvent("input", {
+      editor.select(0, editor.value().length);
+      editor.replaceText("");
+      editor.reportInput({
         bubbles: true,
         inputType: "deleteContentForward",
-      }));
+      });
 
       await vi.waitFor(() => {
         expect(doc.byId[childId].raw).toBe("");
         expect(editingId()).toBe(childId);
-        expect(document.activeElement).toBe(editor);
-        expect(editor.closest(".embed-block")).not.toBeNull();
+        expect(document.activeElement).toBe(editor?.element);
+        expect(editor.element.closest(".embed-block")).not.toBeNull();
       });
 
-      editor.setSelectionRange(0, 0);
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
+      editor.select(0, 0);
+      editor.keydown(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
       await vi.waitFor(() => {
-        const parentEditor = root.querySelector<HTMLTextAreaElement>(
-          `.embed-block [data-block-id="${targetId}"] textarea.block-editor`,
-        );
+        const parentEditor = maybeEditorIn(root.querySelector<HTMLElement>(`.embed-block [data-block-id="${targetId}"]`)!);
         expect(parentEditor).not.toBeNull();
-        expect(document.activeElement).toBe(parentEditor);
+        expect(document.activeElement).toBe(parentEditor?.element);
         expect(editingId()).toBe(targetId);
         expect(doc.byId[childId]).toBeUndefined();
       });

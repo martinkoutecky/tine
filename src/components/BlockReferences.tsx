@@ -1,6 +1,6 @@
 import { t } from "../i18n";
 import { bulkCollapseTarget } from "../collapseToggle";
-import { For, Show, createSignal, type JSX } from "solid-js";
+import { For, Show, createSignal, createEffect, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openPage, openPageInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
@@ -13,26 +13,30 @@ import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createMembershipResource, groupsContainEdit } from "../resultMembership";
+import { referenceRevision } from "../referenceKeys";
 
 // Block-level "linked references": the blocks that reference THIS block (via
 // `((uuid))` / `[..](((uuid)))` / `{{embed ((uuid))}}`), grouped by page. Toggled
 // open by the per-block reference-count badge (Block.tsx). Mirrors the page-level
 // LinkedReferences, minus the co-reference filter chips (OG doesn't show those on
-// the block-ref panel). Refetches when the graph generation changes.
+// the block-ref panel). Refetches when incoming referrers or shown blocks change.
 /** Show the source locations of one block's references. Reads the bounded
- * referrer answer on graph revision changes; disclosure is local to this panel
+ * referrer answer on keyed changes; disclosure is local to this panel
  * and can be changed for one group or all groups without writing the graph. */
 export function BlockReferences(props: { id: string }): JSX.Element {
+  const dependency = referenceRevision(() => `refsTo:${blockExternalId(props.id) ?? props.id}`);
   const [groupsResource, { refetch }] = createMembershipResource(
     () => blockExternalId(props.id) ?? props.id,
     () => blockExternalId(props.id) ?? props.id,
     (id) => backend().getBlockReferrers(id),
     groupsContainEdit,
+    undefined, false, dependency.revision,
   );
   // Unlike the page-level panels this one has no fetcher wrapper, so it owns
   // both halves: readOr keeps a failed read out of the page's render, and the
   // row below keeps the panel from silently claiming there are no references.
   const groups = () => readOr(groupsResource, undefined, "block references");
+  createEffect(() => dependency.remember(groups() ?? []));
   const count = () => (groups() ?? []).reduce((acc, g) => acc + g.blocks.length, 0);
   const [collapsedGroups, setCollapsedGroups] = createSignal<Set<string>>(new Set());
   const groupKey = (group: { page: string; kind: string; path?: string }) =>
@@ -95,7 +99,7 @@ export function BlockReferences(props: { id: string }): JSX.Element {
               <div class="reference-blocks">
                 {/* OG shows each referrer's ancestor breadcrumb in the block-ref
                     panel (:breadcrumb-show? true) for "where does this live" context. */}
-                <LiveRefGroup page={g.page} kind={g.kind} blocks={g.blocks} surface="ref" showBreadcrumb />
+                <LiveRefGroup page={g.page} kind={g.kind} path={g.path} blocks={g.blocks} surface="ref" showBreadcrumb />
               </div>
               </Show>
             </div>

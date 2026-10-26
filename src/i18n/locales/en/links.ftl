@@ -14,6 +14,15 @@ references-linked = Linked References
 journals-upcoming = Upcoming
 references-unlinked = Unlinked References
 references-loading = Loading…
+references-count-stale = Count may be out of date
+## The number beside Linked/Unlinked References counts referencing blocks (as in Logseq); GH #755.
+references-count-title = { $blocks ->
+    [one] 1 block
+   *[other] { $blocks } blocks
+} on { $pages ->
+    [one] 1 page
+   *[other] { $pages } pages
+}
 references-copy-linked = Copy / export linked references
 references-copy-unlinked = Copy / export unlinked references
 references-copy-linked-title = Copy / export selected linked references

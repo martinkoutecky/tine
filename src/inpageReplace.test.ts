@@ -24,6 +24,12 @@ const plan = (raw: string, query: string, replacement: string, ordinals: readonl
 beforeAll(async () => { await initParser(); });
 
 describe("planBlockReplacement: only what find shows, only where the editor edits", () => {
+  it("replaces an OG-layout block without skipping or reordering its hidden rows", () => {
+    for (const raw of ["foo\ncard-repeats:: 2\nowner:: Ada\nbody", "foo\ncard-repeats:: 2\nowner:: Ada\nbody foo"]) {
+      expect(plan(raw, "foo", "bar")).toEqual({ raw: raw.replaceAll("foo", "bar"), replaced: raw.endsWith("foo") ? 2 : 1, skipped: 0 });
+    }
+  });
+
   it("replaces visible text and a link label but never the link target", () => {
     // A raw-text replace would rewrite https://foo.com as well.
     expect(plan("foo [label foo](https://foo.com) foo", "foo", "bar"))
@@ -34,6 +40,12 @@ describe("planBlockReplacement: only what find shows, only where the editor edit
     const raw = `true story\ncollapsed:: true\nid:: ${ID}`;
     expect(plan(raw, "true", "false")).toEqual({ raw: `false story\ncollapsed:: true\nid:: ${ID}`, replaced: 1, skipped: 0 });
     expect(plan(raw, "6501f00a", "x").replaced).toBe(0);
+  });
+
+  it("replaces task text without moving or replacing its hidden LOGBOOK", () => {
+    const raw = "DOING foo\ncollapsed:: true\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:00:00]\n:END:\nDEADLINE: <2026-10-22 Thu>";
+    expect(plan(raw, "foo", "bar")).toEqual({raw: raw.replace("foo", "bar"), replaced: 1, skipped: 0});
+    expect(plan(raw, "CLOCK", "lost").replaced).toBe(0);
   });
 
   it("replaces only the requested occurrence", () => {

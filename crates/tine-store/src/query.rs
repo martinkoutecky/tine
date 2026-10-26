@@ -447,6 +447,15 @@ fn equivalent_page_names(
     edges: &AliasEdges,
     target: &str,
 ) -> (String, Vec<String>, String) {
+    equivalent_page_names_with(real_pages, edges, target, |_| Vec::new())
+}
+
+fn equivalent_page_names_with(
+    real_pages: &RealPageNames,
+    edges: &AliasEdges,
+    target: &str,
+    widen: impl Fn(&str) -> Vec<String>,
+) -> (String, Vec<String>, String) {
     let target_norm = refs::page_key(target);
     let mut component = std::collections::BTreeSet::new();
     let mut pending = vec![target_norm.clone()];
@@ -455,6 +464,7 @@ fn equivalent_page_names(
             continue;
         }
         pending.extend(edges.neighbors(&name).cloned());
+        pending.extend(widen(&name));
     }
 
     let canonical = component
@@ -590,6 +600,36 @@ fn widen_for_journal_day(names_norm: &mut Vec<String>, format: &JournalFormat, t
     }
 }
 
+fn invalidation_page_names(
+    real_pages: &RealPageNames,
+    aliases: &AliasEdges,
+    journal: &JournalFormat,
+    target: &str,
+) -> (String, Vec<String>) {
+    let (canonical, mut names, _) = equivalent_page_names(real_pages, aliases, target);
+    widen_for_journal_day(&mut names, journal, target);
+    (canonical, names)
+}
+
+/// The same conservative closure as scoped backlink/unlinked invalidation.
+/// Unlike query-time canonical journal selection, this never scans journals.
+pub(crate) fn reference_invalidation_names(graph: &ReadSnapshot, target: &str) -> Vec<String> {
+    let journal = journal_format(graph.config());
+    // Include aliases of day spellings, and day spellings reached via aliases.
+    // This uses the same component traversal, visiting each key once.
+    equivalent_page_names_with(
+        &real_page_names(graph),
+        &graph.alias_edges(),
+        target,
+        |name| {
+            let mut names = Vec::new();
+            widen_for_journal_day(&mut names, &journal, name);
+            names
+        },
+    )
+    .1
+}
+
 fn page_property_block(entry: &PageEntry, pre: &str) -> Option<DocBlock> {
     page_property_block_with_config(entry, pre, &tine_core::query::atom::ParseConfig::default())
 }
@@ -634,29 +674,64 @@ pub(crate) fn document_explicit_reference_names(
     doc: &Document,
     config: &tine_core::config::Config,
 ) -> Vec<String> {
-    fn collect(blocks: &[DocBlock], names: &mut Vec<String>) {
+    explicit_reference_names_where(entry, doc, config, &|_| true, true)
+}
+
+/// Publication uses the same parser/policy projection, selecting changed
+/// blocks and their ancestors rather than sending every target on the page.
+pub(crate) fn changed_explicit_reference_names(
+    entry: &PageEntry,
+    doc: &Document,
+    config: &tine_core::config::Config,
+    changed: &std::collections::BTreeSet<String>,
+    header_changed: bool,
+) -> Vec<String> {
+    explicit_reference_names_where(
+        entry,
+        doc,
+        config,
+        &|block| changed.contains(&block.uuid),
+        header_changed,
+    )
+}
+
+fn explicit_reference_names_where(
+    entry: &PageEntry,
+    doc: &Document,
+    config: &tine_core::config::Config,
+    accept: &dyn Fn(&DocBlock) -> bool,
+    include_header: bool,
+) -> Vec<String> {
+    fn collect(blocks: &[DocBlock], names: &mut Vec<String>, accept: &dyn Fn(&DocBlock) -> bool) {
         for block in blocks {
-            names.extend(
-                block
-                    .projection()
-                    .reference_source()
-                    .explicit
-                    .iter()
-                    .flat_map(|reference| refs::namespace_refs(&reference.name))
-                    .map(refs::page_key),
-            );
-            collect(&block.children, names);
+            if accept(block) {
+                names.extend(
+                    block
+                        .projection()
+                        .reference_source()
+                        .explicit
+                        .iter()
+                        .flat_map(|reference| refs::namespace_refs(&reference.name))
+                        .map(refs::page_key),
+                );
+            }
+            collect(&block.children, names, accept);
         }
     }
 
     let mut names = Vec::new();
-    if let Some(block) = doc.pre_block.as_deref().and_then(|pre| {
-        page_property_block_with_config(
-            entry,
-            pre,
-            &tine_core::query::atom::ParseConfig::from_config(config),
-        )
-    }) {
+    if let Some(block) = doc
+        .pre_block
+        .as_deref()
+        .filter(|_| include_header)
+        .and_then(|pre| {
+            page_property_block_with_config(
+                entry,
+                pre,
+                &tine_core::query::atom::ParseConfig::from_config(config),
+            )
+        })
+    {
         names.extend(
             block
                 .projection()
@@ -667,7 +742,7 @@ pub(crate) fn document_explicit_reference_names(
                 .map(refs::page_key),
         );
     }
-    collect(&doc.roots, &mut names);
+    collect(&doc.roots, &mut names, accept);
     names.sort_unstable();
     names.dedup();
     names
@@ -1277,8 +1352,7 @@ pub(crate) fn page_affects_backlinks(
     doc: &Document,
     config: &tine_core::config::Config,
 ) -> bool {
-    let (canonical, mut names_norm, _) = equivalent_page_names(real_pages, aliases, target);
-    widen_for_journal_day(&mut names_norm, journal, target);
+    let (canonical, names_norm) = invalidation_page_names(real_pages, aliases, journal, target);
     // Invalidation shares the live graph's property-reference policy with reads.
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
@@ -1323,8 +1397,7 @@ pub(crate) fn page_affects_unlinked(
     doc: &Document,
     config: &tine_core::config::Config,
 ) -> bool {
-    let (canonical, mut names_norm, _) = equivalent_page_names(real_pages, aliases, target);
-    widen_for_journal_day(&mut names_norm, journal, target);
+    let (canonical, names_norm) = invalidation_page_names(real_pages, aliases, journal, target);
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
         page_property_block_with_config(
@@ -1380,6 +1453,98 @@ pub(crate) fn page_affects_block_referrers(uuid: &str, doc: &Document) -> bool {
         }
     });
     hit
+}
+
+/// Publication's bounded subset of the same parser-owned plain occurrence
+/// predicate as unlinked reads. Ancestors are selected too: displayed subtrees
+/// can change underneath a retained mention. Names/exclusions share the readers'
+/// owners, without the query-time journal source selection scan.
+pub(crate) fn changed_page_affects_unlinked(
+    graph: &ReadSnapshot,
+    target: &str,
+    entry: &PageEntry,
+    blocks: &[&DocBlock],
+    header: Option<&DocBlock>,
+) -> bool {
+    let real = real_page_names(graph);
+    let aliases = graph.alias_edges();
+    let config = graph.config();
+    let (_, _, self_page) =
+        graph_equivalent_page_names_with(&real, &aliases, &journal_format(config), target, |day| {
+            graph.reference_journal_name(day)
+        });
+    if refs::ReferenceSourceExclusions::new(&self_page, config.favorites_page.as_deref())
+        .excludes_name(&entry.name)
+    {
+        return false;
+    }
+    let names = reference_invalidation_names(graph, target);
+    let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names);
+    if header
+        .is_some_and(|block| block_has_reference(block, &needles, ReferenceKind::Plain, config))
+    {
+        return true;
+    }
+    blocks
+        .iter()
+        .any(|block| block_has_reference(block, &needles, ReferenceKind::Plain, config))
+}
+
+/// Select once per edited page side, outside the registered-target loop.
+pub(crate) fn changed_reference_source_blocks<'a>(
+    entry: &PageEntry,
+    doc: &'a Document,
+    config: &tine_core::config::Config,
+    changed: &std::collections::BTreeSet<String>,
+    header_changed: bool,
+) -> (Option<DocBlock>, Vec<&'a DocBlock>) {
+    fn select<'a>(
+        roots: &'a [DocBlock],
+        changed: &std::collections::BTreeSet<String>,
+        out: &mut Vec<&'a DocBlock>,
+    ) {
+        for block in roots {
+            if changed.contains(&block.uuid) {
+                out.push(block);
+            }
+            select(&block.children, changed, out);
+        }
+    }
+    let mut blocks = Vec::new();
+    select(&doc.roots, changed, &mut blocks);
+    let header = doc
+        .pre_block
+        .as_deref()
+        .filter(|_| header_changed)
+        .and_then(|pre| {
+            page_property_block_with_config(
+                entry,
+                pre,
+                &tine_core::query::atom::ParseConfig::from_config(config),
+            )
+        });
+    (header, blocks)
+}
+
+/// Incoming block-referrer answers also change when referrer text changes but
+/// its target set does not. Emit the union of old/new selected projections.
+pub(crate) fn changed_block_reference_targets(
+    doc: &Document,
+    changed: &std::collections::BTreeSet<String>,
+    header_changed: bool,
+) -> Vec<String> {
+    let mut targets = Vec::new();
+    if header_changed {
+        if let Some(block) = document_page_property_block(doc) {
+            targets.extend(block.projection().block_refs().iter().cloned());
+        }
+    }
+    walk(&doc.roots, &mut |block| {
+        if changed.contains(&block.uuid) {
+            targets.extend(block.projection().block_refs().iter().cloned());
+        }
+    });
+    targets
 }
 
 pub(crate) fn rejected_advanced_query(reason: &str) -> AdvancedResult {
@@ -1806,14 +1971,15 @@ pub(crate) fn quick_switch_for_editor(
     crate::query_plan::page_hits_to_entries(plan.execute(graph, || false).hits)
 }
 
-/// Resolve many `((uuid))` block references in a single graph pass — the real
-/// batch behind `Graph::resolve_blocks` (a page full of refs/embeds is one IPC,
-/// and now one scan rather than U independent `resolve_block` calls, each of which
-/// could whole-graph-scan on a hint miss). Hinted ids are grouped by page and each
-/// hinted page is walked ONCE for all of its ids; whatever a hint missed (stale or
-/// absent) falls back to a SINGLE whole-graph scan. Match semantics + first-block-
-/// wins ordering are identical to `resolve_block`. Output is positional and
-/// per-input (duplicate input uuids each get their own `Some(..)`/`None`).
+/// Resolve many `((uuid))` block references — the batch behind
+/// `Graph::resolve_blocks` (a page full of refs/embeds is one IPC). Each id's
+/// answering page comes from the exact block index (`block_owner_page`): an
+/// id no page holds is `None` without a walk, and each answering page is
+/// walked once for all of its ids (I-13: cost is O(ids + the answering
+/// pages' blocks), independent of page count). First-block-wins ordering is
+/// the full scan's: the first page in page order, then walk order. Output is
+/// positional and per-input (duplicate input uuids each get their own
+/// `Some(..)`/`None`).
 #[cfg(test)]
 pub(crate) fn resolve_blocks(graph: &ReadSnapshot, uuids: &[String]) -> Vec<Option<RefGroup>> {
     resolve_blocks_bounded(graph, uuids, usize::MAX, usize::MAX).0
@@ -1825,57 +1991,23 @@ pub(crate) fn resolve_blocks_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> (Vec<Option<RefGroup>>, bool, usize) {
-    use std::collections::{HashMap, HashSet};
-    // Distinct requested ids (a page often refs the same uuid repeatedly).
-    let distinct: HashSet<&str> = uuids.iter().map(String::as_str).collect();
-    if distinct.is_empty() {
-        return (uuids.iter().map(|_| None).collect(), false, 0);
-    }
-    // Bucket each distinct id under its page hint (O(1) per id off the cached
-    // uuid index); unhinted ids go straight to the whole-graph fallback.
-    let mut by_page: HashMap<String, Vec<&str>> = HashMap::new();
-    let mut unhinted: Vec<&str> = Vec::new();
-    for &id in &distinct {
-        match graph.block_page_hint(id) {
-            Some(page) => by_page.entry(page).or_default().push(id),
-            None => unhinted.push(id),
+    use std::collections::{BTreeMap, HashMap, HashSet};
+    type Want<'a> = (&'a (PageEntry, std::sync::Arc<Document>), HashSet<&'a str>);
+    let mut by_page: BTreeMap<usize, Want<'_>> = BTreeMap::new();
+    for id in uuids {
+        if let Some((slot, page)) = graph.block_owner_page(id) {
+            by_page
+                .entry(slot)
+                .or_insert_with(|| (page, HashSet::new()))
+                .1
+                .insert(id.as_str());
         }
     }
-
     let mut resolved: HashMap<&str, RefGroup> = HashMap::new();
     let mut resolved_budget = ConstructionBudget::new(max_rows, max_bytes);
-    graph.with_pages(|pages| {
-        let mut page_by_name: HashMap<&str, (&PageEntry, &std::sync::Arc<Document>)> =
-            HashMap::with_capacity(pages.len());
-        for (entry, doc) in pages {
-            page_by_name
-                .entry(entry.name.as_str())
-                .or_insert((entry, doc));
-        }
-        // 1) Each hinted page: ONE walk resolving all of its hinted ids.
-        for (page, ids) in &by_page {
-            if let Some(&(entry, doc)) = page_by_name.get(page.as_str()) {
-                let want: HashSet<&str> = ids.iter().copied().collect();
-                resolve_ids_in_page(entry, doc, &want, &mut resolved, &mut resolved_budget);
-            }
-        }
-        // 2) Remaining ids (no hint, or the hinted page didn't actually hold the
-        //    block) get ONE whole-graph scan — never one-scan-per-id.
-        let mut remaining: HashSet<&str> = unhinted.into_iter().collect();
-        for &id in &distinct {
-            if !resolved.contains_key(id) {
-                remaining.insert(id);
-            }
-        }
-        if !remaining.is_empty() {
-            for (entry, doc) in pages {
-                if resolved.len() == distinct.len() {
-                    break; // everything found
-                }
-                resolve_ids_in_page(entry, doc, &remaining, &mut resolved, &mut resolved_budget);
-            }
-        }
-    });
+    for ((entry, doc), want) in by_page.values() {
+        resolve_ids_in_page(entry, doc, want, &mut resolved, &mut resolved_budget);
+    }
 
     let mut output_budget = ConstructionBudget::new(max_rows, max_bytes);
     let output = uuids
@@ -2148,57 +2280,39 @@ pub(crate) fn preview_block_with_budget(
 ) -> Option<BlockPreview> {
     let max_nodes = max_nodes.max(1);
     let max_bytes = max_bytes.max(1);
-    let hint = graph.block_page_hint(uuid);
-    graph.with_pages(|pages| {
-        let find_in = |entry: &PageEntry, doc: &Document| -> Option<BlockPreview> {
-            let mut found: Option<&DocBlock> = None;
-            walk(&doc.roots, &mut |block| {
-                if found.is_none()
-                    && (block.uuid == uuid || block.property("id").as_deref() == Some(uuid))
-                {
-                    found = Some(block);
-                }
-            });
-            found.map(|block| {
-                let total = subtree_node_count(block);
-                let mut remaining_nodes = max_nodes;
-                let mut remaining_bytes = max_bytes;
-                let blocks =
-                    block_to_bounded_dto(block, &mut remaining_nodes, &mut remaining_bytes)
-                        .into_iter()
-                        .collect::<Vec<_>>();
-                let emitted = max_nodes - remaining_nodes;
-                BlockPreview {
-                    group: RefGroup {
-                        page: entry.name.clone(),
-                        kind: entry.kind,
-                        blocks,
-                        evidence: Vec::new(),
-                    },
-                    truncated: total.saturating_sub(emitted),
-                }
-            })
-        };
-        if let Some(hint) = &hint {
-            if let Some((entry, doc)) = pages.iter().find(|(entry, _)| &entry.name == hint) {
-                if let Some(preview) = find_in(entry, doc) {
-                    return Some(preview);
-                }
-            }
+    // The exact block index names the answering page (see `resolve_blocks`).
+    let (_, (entry, doc)) = graph.block_owner_page(uuid)?;
+    touch_page();
+    let mut found: Option<&DocBlock> = None;
+    walk(&doc.roots, &mut |block| {
+        if found.is_none() && (block.uuid == uuid || block.property("id").as_deref() == Some(uuid))
+        {
+            found = Some(block);
         }
-        for (entry, doc) in pages {
-            if let Some(preview) = find_in(entry, doc) {
-                return Some(preview);
-            }
-        }
-        None
+    });
+    let block = found?;
+    let total = subtree_node_count(block);
+    let mut remaining_nodes = max_nodes;
+    let mut remaining_bytes = max_bytes;
+    let blocks = block_to_bounded_dto(block, &mut remaining_nodes, &mut remaining_bytes)
+        .into_iter()
+        .collect::<Vec<_>>();
+    let emitted = max_nodes - remaining_nodes;
+    Some(BlockPreview {
+        group: RefGroup {
+            page: entry.name.clone(),
+            kind: entry.kind,
+            blocks,
+            evidence: Vec::new(),
+        },
+        truncated: total.saturating_sub(emitted),
     })
 }
 
 /// The pages holding a block whose persisted `id::` is `uuid`, in page
 /// order, compared case-insensitively, stopping at the second: a writer needs to know the id names exactly
-/// one block's page. The block-id index is only a hint, so this walks every
-/// page (O(B), one in-memory pass; no cache).
+/// one block's page. A writer's check, so it walks every page itself rather
+/// than trust the block-id index (O(B), one in-memory pass; no cache).
 pub(crate) fn block_pages(graph: &ReadSnapshot, uuid: &str) -> Vec<String> {
     graph.with_pages(|pages| {
         let mut found = Vec::new();
@@ -2221,9 +2335,8 @@ pub(crate) fn block_pages(graph: &ReadSnapshot, uuid: &str) -> Vec<String> {
     })
 }
 
-/// Walk `doc` once, resolving any block whose uuid (or persisted `id::`) is a
-/// still-unresolved id in `want`. First block in walk order wins per id (matches
-/// `resolve_block`).
+/// Walk `doc` once, resolving every still-unresolved id in `want` that is a
+/// block's uuid or persisted `id::`. First block in walk order wins per id.
 fn resolve_ids_in_page<'a>(
     entry: &PageEntry,
     doc: &Document,
@@ -2231,37 +2344,53 @@ fn resolve_ids_in_page<'a>(
     resolved: &mut std::collections::HashMap<&'a str, RefGroup>,
     budget: &mut ConstructionBudget,
 ) {
+    touch_page();
     walk(&doc.roots, &mut |b| {
-        // A block's identity is its uuid OR its persisted `id::`; check both
-        // against the wanted set with O(1) lookups (no per-id rescan).
-        let hit: Option<&'a str> = want
-            .get(b.uuid.as_str())
-            .copied()
-            .filter(|id| !resolved.contains_key(id))
-            .or_else(|| {
-                b.property("id")
-                    .and_then(|id| want.get(id.as_str()).copied())
-                    .filter(|id| !resolved.contains_key(id))
-            });
-        if let Some(id) = hit {
+        // A block's identity is its uuid AND its persisted `id::`: one block
+        // can answer two requested ids. O(1) lookups, no per-id rescan.
+        let property = b.property("id");
+        for key in [Some(b.uuid.as_str()), property.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            let Some(&id) = want.get(key) else {
+                continue;
+            };
+            if resolved.contains_key(id) {
+                continue;
+            }
             if budget.closed() {
                 budget.deny_match();
                 return;
             }
             if budget.admit_estimated(&entry.name, shallow_dto_estimated_bytes(b, &[])) {
-                let dto = result_dto(b);
                 resolved.insert(
                     id,
                     RefGroup {
                         page: entry.name.clone(),
                         kind: entry.kind,
-                        blocks: vec![dto],
+                        blocks: vec![result_dto(b)],
                         evidence: Vec::new(),
                     },
                 );
             }
         }
     });
+}
+
+#[cfg(test)]
+thread_local! {
+    static RESOLVE_PAGES_TOUCHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn resolve_pages_touched() -> usize {
+    RESOLVE_PAGES_TOUCHED.with(std::cell::Cell::get)
+}
+
+fn touch_page() {
+    #[cfg(test)]
+    RESOLVE_PAGES_TOUCHED.with(|count| count.set(count.get() + 1));
 }
 
 #[cfg(test)]
@@ -2657,12 +2786,14 @@ mod tests {
 
     #[test]
     fn content_terms_unescape_and_match_canonical_unicode() {
-        // `\"`/`\\` inside a quoted term are unescaped; any other backslash is
-        // literal, so `"C:\tmp"` stays `C:\tmp`.
+        // Quoted terms are EDN strings: `\"`/`\\` unescape, and so do EDN's other
+        // escapes such as `\t`.
         assert!(selects("\"foo \\\"bar\\\"\"", "note: foo \"bar\" baz"));
         assert!(!selects("\"foo \\\"bar\\\"\"", "note: foo bar baz"));
         assert!(selects("\"a\\\\b\"", "x a\\b y"));
-        assert!(selects("\"C:\\tmp\"", "open C:\\tmp now"));
+        // EDN (OG's cljs reader): `\t` is TAB, so `"C:\tmp"` is `C:<TAB>mp` (audit RN-B).
+        assert!(selects("\"C:\\tmp\"", "open C:\tmp now"));
+        assert!(!selects("\"C:\\tmp\"", "open C:\\tmp now"));
         assert!(selects("\"quick brown\"", "the quick brown fox"));
         assert!(!selects("\"slow\"", "the quick brown fox"));
         // D4 (2026-10-04): canonical composition only; no accent or case fold.
@@ -2742,28 +2873,20 @@ mod tests {
     }
 
     #[test]
-    fn advanced_exact_page_property_pair_matches_page_property_predicate() {
+    fn advanced_own_entity_property_map_pair_refuses_visibly() {
         let source = r#"[:find (pull ?p [*])
                          :where
                          [?p :block/properties ?props]
                          [(get ?props :class)]]"#;
         let with = one_page("Classy", None, "class:: yes\n\n- body\n");
         let without = one_page("Plain", None, "other:: yes\n\n- body\n");
-        let result = run_advanced_query(&with, source);
-        assert!(result.supported, "{:?}", result.ignored);
-        assert_eq!(
-            result
-                .groups
-                .iter()
-                .map(|g| g.page.as_str())
-                .collect::<Vec<_>>(),
-            run_query(&with, "(page-property :class)")
-                .iter()
-                .map(|g| g.page.as_str())
-                .collect::<Vec<_>>()
-        );
-        assert!(!result.groups.is_empty());
-        assert!(run_advanced_query(&without, source).groups.is_empty());
+        // Audit RN-B (L7s1-02, D-18): OG also matches the property block itself, so
+        // the old page-only lowering was a guessed answer; it is now refused visibly.
+        for graph in [&with, &without] {
+            let result = run_advanced_query(graph, source);
+            assert!(!result.supported);
+            assert!(result.groups.is_empty());
+        }
     }
 
     #[test]

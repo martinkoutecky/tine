@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Show, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -23,7 +24,8 @@ import { isSaving, pendingDataRevision } from "../document/host/wiring";
 import { conflictedInHost, openAsLoaded } from "./hostConflict.test.support";
 import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRecentPages, setRightSidebar } from "../ui";
 import { closeShareDialog, shareTarget } from "../shareState";
-import { bumpGraphEpoch, graphEpoch, setGraphMeta } from "../graphSession";
+import { bumpGraphEpoch, bumpDataRev, graphEpoch, setGraphMeta } from "../graphSession";
+import { applyChangeSummary } from "../changeSummary";
 import { setToasts, toasts } from "../toasts";
 import { favorites, isFavorite, seedFavorites } from "../favorites";
 import type { GraphMeta } from "../types";
@@ -114,11 +116,64 @@ it.each([
   const mounted = mount(() => <PageView />);
   try {
     await vi.waitFor(() => expect([...mounted.root.querySelectorAll(".block-content mark")].map(el => el.textContent)).toEqual(["one", "two"]));
-    expect(mounted.root.querySelector("textarea.block-editor")).toBeNull();
+    expect(maybeEditorIn(mounted.root)).toBeNull();
   } finally { mounted.dispose(); }
 });
 
 describe("Journals feed generation lifecycle", () => {
+  it("refreshes directly routed Upcoming for day evidence, full and gaps only", async () => {
+    bumpGraphEpoch();
+    let rev = 0;
+    const publish = (days = false, full = false) => {
+      applyChangeSummary({ rev: String(++rev), pages: [], blocks: [], linksTo: [], props: {}, inventoryChanged: false, full, days });
+      bumpDataRev(true);
+    };
+    publish();
+    const today = journalDto(journalTitle(new Date()));
+    const section: PageDto = { name: "S5 sections", title: "S5 sections", kind: "page", pre_block: "tine/journal-sections:: true",
+      blocks: [{ id: "upcoming-section", raw: "{{upcoming}}", collapsed: false, children: [] }] };
+    vi.spyOn(backend(), "getPage").mockImplementation(async name => unpinned(name === section.name ? section : today));
+    vi.spyOn(backend(), "queryRun").mockResolvedValue({ anchor: "page", pages: [{ name: section.name }] } as unknown as Awaited<ReturnType<ReturnType<typeof backend>["queryRun"]>>);
+    const api = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([], { upcoming: [unpinned(journalDto("Future day"))] }));
+    mainPaneRouter.replaceActiveRoute({ kind: "page", name: today.name, pageKind: "journal" });
+    const mounted = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(mounted.root.querySelector(".journal-upcoming")).not.toBeNull());
+      api.mockClear();
+      publish(); await flushMicrotasks();
+      expect(api).not.toHaveBeenCalled();
+      for (const reason of ["related", "full", "gap"]) {
+        if (reason === "gap") rev += 2;
+        publish(reason === "related", reason === "full");
+        await vi.waitFor(() => expect(api).toHaveBeenCalledWith(1, null, true));
+        await flushMicrotasks(); api.mockClear();
+      }
+    } finally { mounted.dispose(); }
+  });
+
+  it("refreshes the feed for day evidence, full and gaps, leaving unrelated saves alone", async () => {
+    bumpGraphEpoch();
+    let rev = 0;
+    const publish = (days = false, full = false) => {
+      applyChangeSummary({ rev: String(++rev), pages: [], blocks: [], linksTo: [], props: {}, inventoryChanged: false, full, days });
+      bumpDataRev(true);
+    };
+    publish();
+    const api = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([journalDto("Keyed day")]));
+    const mounted = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(doc.feed).toContain("Keyed day"));
+      api.mockClear();
+      publish(); await flushMicrotasks();
+      expect(api).not.toHaveBeenCalled();
+      for (const reason of ["related", "full", "gap"]) {
+        if (reason === "gap") rev += 2;
+        publish(reason === "related", reason === "full");
+        await vi.waitFor(() => expect(api).toHaveBeenCalled());
+        await flushMicrotasks(); api.mockClear();
+      }
+    } finally { mounted.dispose(); }
+  });
   it.each([false, true])("adds a new day around an active editor (dirty: %s)", async (dirty) => {
     vi.stubGlobal("IntersectionObserver", class {
       observe() {}
@@ -136,15 +191,15 @@ describe("Journals feed generation lifecycle", () => {
       await vi.waitFor(() => expect(mounted.root.textContent).toContain("Existing notes stay here"));
       startEditing(old.blocks[0].id, 5);
       await flushMicrotasks();
-      const editor = mounted.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+      const editor = maybeEditorIn(mounted.root)!;
       expect(editor).not.toBeNull();
       if (dirty) {
-        editor.value = "Existing notes with unsaved overnight text";
-        editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "text" }));
+        editor.replaceText("Existing notes with unsaved overnight text");
+        editor.reportInput({ bubbles: true, inputType: "insertText", data: "text" });
       }
-      editor.focus();
-      editor.setSelectionRange(3, 12, "backward");
-      const text = editor.value;
+      editor.element.focus();
+      editor.select(3, 12, "backward");
+      const text = editor.value();
       const owner = editingOwner();
       const surface = activeSurface();
       const oldPage = pageByName(previous);
@@ -157,10 +212,10 @@ describe("Journals feed generation lifecycle", () => {
       expect(doc.feed).toContain(previous);
       expect(pageByName(previous)).toBe(oldPage);
       expect(doc.byId[old.blocks[0].id]).toBe(oldNode);
-      expect(mounted.root.querySelector("textarea.block-editor")).toBe(editor);
-      expect(editor.value).toBe(text);
-      expect([editor.selectionStart, editor.selectionEnd, editor.selectionDirection]).toEqual([3, 12, "backward"]);
-      expect(document.activeElement).toBe(editor);
+      expect(maybeEditorIn(mounted.root)?.element).toBe(editor.element);
+      expect(editor.value()).toBe(text);
+      expect([editor.selection()[0], editor.selection()[1], editor.direction()]).toEqual([3, 12, "backward"]);
+      expect(document.activeElement).toBe(editor?.element);
       expect(editingId()).toBe(old.blocks[0].id);
       expect(editingOwner()).toBe(owner);
       expect(activeSurface()).toBe(surface);
@@ -192,9 +247,9 @@ describe("Journals feed generation lifecycle", () => {
       const refresh = reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => true });
       startEditing(old.blocks[0].id, 4);
       await flushMicrotasks();
-      const editor = mounted.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      editor.focus();
-      editor.setSelectionRange(2, 8, "backward");
+      const editor = maybeEditorIn(mounted.root)!;
+      editor.element.focus();
+      editor.select(2, 8, "backward");
       const owner = editingOwner();
       const oldNode = doc.byId[old.blocks[0].id];
       finishRead(feedResponse([old]));
@@ -202,9 +257,9 @@ describe("Journals feed generation lifecycle", () => {
       await flushMicrotasks();
       expect(doc.feed[0]).toBe(journalTitle(new Date()));
       expect(doc.byId[old.blocks[0].id]).toBe(oldNode);
-      expect(mounted.root.querySelector("textarea.block-editor")).toBe(editor);
-      expect([editor.selectionStart, editor.selectionEnd, editor.selectionDirection]).toEqual([2, 8, "backward"]);
-      expect(document.activeElement).toBe(editor);
+      expect(maybeEditorIn(mounted.root)?.element).toBe(editor.element);
+      expect([editor.selection()[0], editor.selection()[1], editor.direction()]).toEqual([2, 8, "backward"]);
+      expect(document.activeElement).toBe(editor?.element);
       expect(editingOwner()).toBe(owner);
     } finally {
       mounted.dispose();
@@ -227,19 +282,19 @@ describe("Journals feed generation lifecycle", () => {
     try {
       await vi.waitFor(() => expect(mounted.root.querySelector(`[data-block-id="${second.blocks[0].id}"]`)).not.toBeNull());
       startEditing(second.blocks[0].id, 3);
-      await vi.waitFor(() => expect(mounted.root.querySelector("textarea.block-editor")).not.toBeNull());
-      const editor = mounted.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      editor.focus();
-      editor.setSelectionRange(2, 2);
+      await vi.waitFor(() => expect(maybeEditorIn(mounted.root)).not.toBeNull());
+      const editor = maybeEditorIn(mounted.root)!;
+      editor.element.focus();
+      editor.select(2, 2);
       const original = doc.byId[second.blocks[0].id];
       expect(await moveBlockFeed(second.blocks[0].id, -1)).toBe("crossed");
       expect(doc.byId[second.blocks[0].id]).toBe(original);
       expect(doc.byId[second.blocks[0].id].page).toBe(today);
       expect(editingId()).toBe(second.blocks[0].id);
-      await vi.waitFor(() => expect(mounted.root.querySelector<HTMLTextAreaElement>(`[data-block-id="${second.blocks[0].id}"] textarea`)).not.toBeNull());
-      const movedEditor = mounted.root.querySelector<HTMLTextAreaElement>(`[data-block-id="${second.blocks[0].id}"] textarea`)!;
-      expect(movedEditor.value).toBe("Move me");
-      expect(document.activeElement).toBe(movedEditor);
+      await vi.waitFor(() => expect(maybeEditorIn(mounted.root.querySelector<HTMLElement>(`[data-block-id="${second.blocks[0].id}"]`)!)).not.toBeNull());
+      const movedEditor = maybeEditorIn(mounted.root.querySelector<HTMLElement>(`[data-block-id="${second.blocks[0].id}"]`)!)!;
+      expect(movedEditor.value()).toBe("Move me");
+      expect(document.activeElement).toBe(movedEditor?.element);
     } finally {
       mounted.dispose();
       vi.unstubAllGlobals();
@@ -1010,15 +1065,15 @@ describe("zoomed block view", () => {
       await vi.waitFor(() => expect(root.querySelector(".zoomed-page")).not.toBeNull());
       startEditing(parent, 0);
       await tick();
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
-      textarea.selectionStart = 0;
-      textarea.selectionEnd = 0;
-      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      const textarea = maybeEditorIn(root) as EditorDriver;
+      textarea.select(0, textarea.selection()[1]);
+      textarea.select(textarea.selection()[0], 0);
+      textarea.keydown(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
       await tick();
       const created = doc.byId[parent].children[0];
       expect(created).not.toBe(oldChild);
       expect(editingId()).toBe(created);
-      expect(root.querySelector(`[data-block-id="${created}"] textarea`)).not.toBeNull();
+      expect(maybeEditorIn(root.querySelector<HTMLElement>(`[data-block-id="${created}"]`)!)).not.toBeNull();
       expect(doc.pages[0].roots).toEqual([parent, outside]);
       expect(doc.byId[parent].collapsed).toBe(true);
     } finally {
@@ -1051,16 +1106,16 @@ describe("trailing page block target", () => {
       expect(doc.pages[0].roots).toHaveLength(2);
       const created = doc.pages[0].roots[1];
       expect(editingId()).toBe(created);
-      const textarea = root.querySelector(`[data-block-id="${created}"] textarea`) as HTMLTextAreaElement | null;
+      const textarea = maybeEditorIn(root.querySelector<HTMLElement>(`[data-block-id="${created}"]`)!) as EditorDriver | null;
       expect(textarea).not.toBeNull();
-      expect(document.activeElement).toBe(textarea);
-      expect(textarea?.selectionStart).toBe(0);
-      expect(textarea?.selectionEnd).toBe(0);
-      textarea!.value = "typed immediately";
-      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+      expect(document.activeElement).toBe(textarea?.element);
+      expect(textarea?.selection()[0]).toBe(0);
+      expect(textarea?.selection()[1]).toBe(0);
+      textarea!.replaceText("typed immediately");
+      textarea!.reportInput({ bubbles: true }, "plain");
       expect(doc.byId[created].raw).toBe("typed immediately");
-      textarea!.value = "";
-      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+      textarea!.replaceText("");
+      textarea!.reportInput({ bubbles: true }, "plain");
       endEdit("blur");
       target.click();
       await tick();
@@ -1109,7 +1164,7 @@ describe("trailing page block target", () => {
       const created = doc.pages[0].roots[1];
       expect(doc.byId[created].parent).toBeNull();
       expect(editingId()).toBe(created);
-      expect(root.querySelector(`[data-block-id="${created}"] textarea`)).not.toBeNull();
+      expect(maybeEditorIn(root.querySelector<HTMLElement>(`[data-block-id="${created}"]`)!)).not.toBeNull();
     } finally { dispose(); }
   });
 
@@ -1430,11 +1485,12 @@ describe("page actions entry point", () => {
     }
   });
 
-  it("opens the share dialog for the page from the title-row share button, and hides the exports marker", async () => {
+  it.each(["Exports", "Renamed exports"])("opens sharing and Re-share all on the marked page %s, and hides the exports marker", async name => {
+    vi.spyOn(backend(), "quickShareList").mockResolvedValue({ enabled: true, error: null, account: null, shares: [] });
     const dto: PageDto = {
-      name: "Exports",
+      name,
       kind: "page",
-      title: "Exports",
+      title: name,
       pre_block: "tine/exports:: true\npublic:: false",
       blocks: [{ id: "exports-root", raw: "Body", collapsed: false, children: [] }],
     };
@@ -1454,8 +1510,9 @@ describe("page actions entry point", () => {
       const button = root.querySelector<HTMLButtonElement>(".page-title-actions .page-share-btn")!;
       expect(button).not.toBeNull();
       expect(button.getAttribute("aria-label")).toBe("Share this page");
+      expect(root.querySelector(".quick-share-all")?.textContent).toBe("Update all");
       button.click();
-      expect(shareTarget()).toEqual({ page: "Exports" });
+      expect(shareTarget()).toEqual({ page: name });
       // The marker is machinery, not a property to edit; an ordinary property still shows.
       expect(root.textContent).not.toContain("tine/exports");
     } finally {
@@ -1842,7 +1899,7 @@ describe("page route loading", () => {
       expect(editingId()).not.toBe("hidden");
       expect(doc.pages[0].roots).toHaveLength(3);
       const created = doc.pages[0].roots[2];
-      expect(root.querySelector(`[data-block-id="${created}"] textarea`)).not.toBeNull();
+      expect(maybeEditorIn(root.querySelector<HTMLElement>(`[data-block-id="${created}"]`)!)).not.toBeNull();
     } finally {
       dispose();
     }
@@ -1884,7 +1941,7 @@ describe("page route loading", () => {
       expect(editingId()).not.toBe("storage");
       expect(doc.pages[0].roots).toHaveLength(3);
       const created = doc.pages[0].roots[2];
-      expect(root.querySelector(`[data-block-id="${created}"] textarea`)).not.toBeNull();
+      expect(maybeEditorIn(root.querySelector<HTMLElement>(`[data-block-id="${created}"]`)!)).not.toBeNull();
     } finally {
       dispose();
     }
@@ -1930,11 +1987,11 @@ describe("page properties", () => {
       expect([...root.querySelectorAll(".page-properties .prop-key")].map(el => el.textContent)).toEqual(["owner"]);
       (root.querySelector(".page-properties .prop-row") as HTMLElement).click();
       await tick();
-      expect(root.querySelector("textarea")?.value).toContain(`filters:: ${value}`);
+      expect(maybeEditorIn(root)?.value()).toContain(`filters:: ${value}`);
       expect(doc.byId[propsId].raw).toBe(raw);
     } finally { dispose(); }
   });
-  it.each(["icon", "tine.icon"])("GH #346: keeps %s:: visible in the properties list and editable beside the title icon", async (key) => {
+  it.each(["tine.icon"])("GH #346: keeps %s:: visible in the properties list and editable beside the title icon", async (key) => {
     const propsId = "11111111-1111-4111-8111-111111111111";
     const dto = { name: "Flag", kind: "page" as const, title: "Flag", pre_block: null,
       blocks: [{ id: propsId, raw: `${key}:: 🚩`, collapsed: false, children: [] }] };
@@ -1949,7 +2006,7 @@ describe("page properties", () => {
       (root.querySelector(".page-properties .prop-row") as HTMLElement).click();
       await tick();
       expect(editingId()).toBe(propsId);
-      expect(root.querySelector("textarea")?.value).toContain(`${key}:: 🚩`);
+      expect(maybeEditorIn(root)?.value()).toContain(`${key}:: 🚩`);
     } finally { dispose(); }
   });
   it("keeps a first-bullet alias editor mounted while the property is being typed (GH #62)", async () => {
@@ -1978,11 +2035,11 @@ describe("page properties", () => {
       setDoc("byId", propsId, "raw", "alias::");
       await tick();
       expect(editingId()).toBe(propsId);
-      expect(root.querySelector(`[data-block-id="${propsId}"] textarea`)).not.toBeNull();
+      expect(maybeEditorIn(root.querySelector<HTMLElement>(`[data-block-id="${propsId}"]`)!)).not.toBeNull();
 
       setDoc("byId", propsId, "raw", "alias:: book");
       await tick();
-      expect(root.querySelector(`[data-block-id="${propsId}"] textarea`)).not.toBeNull();
+      expect(maybeEditorIn(root.querySelector<HTMLElement>(`[data-block-id="${propsId}"]`)!)).not.toBeNull();
 
       endEdit("blur");
       await tick();
@@ -2066,13 +2123,13 @@ describe("page properties", () => {
       await tick();
       const rows = [...root.querySelectorAll<HTMLElement>(".prop-row")];
       const row = (key: string) => rows.find((candidate) => candidate.querySelector(".prop-key")?.textContent === key)!;
-      expect([...row("tags").querySelectorAll(".page-ref")].map((link) => link.textContent)).toEqual(["books", "Knowledge work"]);
-      expect([...row("aliases").querySelectorAll(".page-ref")].map((link) => link.textContent)).toEqual(["Book shelf", "Reading"]);
-      expect(row("owner").querySelector(".page-ref")).toBeNull();
+      expect([...row("tags").querySelectorAll(".prop-value .page-ref")].map((link) => link.textContent)).toEqual(["books", "Knowledge work"]);
+      expect([...row("aliases").querySelectorAll(".prop-value .page-ref")].map((link) => link.textContent)).toEqual(["Book shelf", "Reading"]);
+      expect(row("owner").querySelector(".prop-value .page-ref")).toBeNull();
       // Explicit custom-property refs keep the app's ordinary dimmed [[bracket]]
       // styling; only the newly inferred bare built-ins need a plain label.
-      expect([...row("reviewer").querySelectorAll(".page-ref")].map((link) => link.textContent)).toEqual(["[[Jane Doe]]"]);
-      expect(row("status").querySelector(".page-ref")).toBeNull();
+      expect([...row("reviewer").querySelectorAll(".prop-value .page-ref")].map((link) => link.textContent)).toEqual(["[[Jane Doe]]"]);
+      expect(row("status").querySelector(".prop-value .page-ref")).toBeNull();
     } finally {
       dispose();
     }
@@ -2142,14 +2199,14 @@ describe("Markdown preamble content", () => {
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
       await tick();
       expect(editingId()).toBe(child);
-      const editor = root.querySelector<HTMLTextAreaElement>(`[data-block-id="${child}"] textarea`)!;
+      const editor = maybeEditorIn(root.querySelector<HTMLElement>(`[data-block-id="${child}"]`)!)!;
       if (repair === "delete" || repair === "move") {
-        editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        editor.keydown(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
         expect(selectedIds()).toEqual([child]);
         if (repair === "delete") deleteSelection();
         else expect(await moveBlock(child, null, 1)).toBe(true);
       } else {
-        editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
+        editor.keydown(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
         expect(doc.byId[child].parent).toBeNull();
       }
       await tick();
@@ -2235,21 +2292,21 @@ describe("Markdown preamble content", () => {
       (root.querySelector(".page-properties .prop-row") as HTMLElement).click();
       await tick();
       const headerId = pageByName(dto.name)!.roots[0];
-      const editor = root.querySelector(`[data-block-id="${headerId}"] textarea`) as HTMLTextAreaElement;
-      expect(editor.value).toBe(dto.pre_block);
+      const editor = maybeEditorIn(root.querySelector<HTMLElement>(`[data-block-id="${headerId}"]`)!) as EditorDriver;
+      expect(editor.value()).toBe(dto.pre_block);
       expect(doc.byId[headerId].originatedFromPageHeader).toBe(true);
       expect(isDirty(dto.name)).toBe(false);
       expect(pageToDto(dto.name)?.pre_block).toBe(dto.pre_block);
 
-      editor.value = "klíč:: změněno\n\nalias:: Book";
-      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      editor.replaceText("klíč:: změněno\n\nalias:: Book");
+      editor.reportInput({ bubbles: true }, "plain");
       expect(isDirty(dto.name)).toBe(true);
       expect(pageToDto(dto.name)?.pre_block).toBe("klíč:: změněno\n\nalias:: Book");
       expect(pageToDto(dto.name)?.blocks.map((block) => block.raw)).toEqual(["First body"]);
       endEdit("blur");
       await tick();
       expect(root.querySelector(".page-properties")?.textContent).toContain("změněno");
-      expect(root.querySelector(`[data-block-id="${headerId}"] textarea`)).toBeNull();
+      expect(maybeEditorIn(root.querySelector<HTMLElement>(`[data-block-id="${headerId}"]`)!)).toBeNull();
     } finally {
       dispose();
     }
@@ -2287,7 +2344,7 @@ describe("Markdown preamble content", () => {
       expect(doc.byId[promoted].raw).toBe("Intro before the outline");
       expect(pageByName(dto.name)?.preBlock).toBeNull();
       expect(editingId()).toBe(promoted);
-      expect(root.querySelector(`[data-block-id="${promoted}"] textarea`)).not.toBeNull();
+      expect(maybeEditorIn(root.querySelector<HTMLElement>(`[data-block-id="${promoted}"]`)!)).not.toBeNull();
     } finally {
       dispose();
     }

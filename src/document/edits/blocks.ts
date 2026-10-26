@@ -14,7 +14,7 @@ import { markDirty, noteTitleIdentityIntent } from "../host/wiring";
 import { produce } from "solid-js/store";
 import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, type OutlineChange, type OutlinePlace } from "../kernel";
 import { outlineMaxDepth, outlineDepth, type OutlineNode } from "../../editor/outline";
-import { splitProps, BUILTIN_HIDE, isPropertiesOnly, readPropertyValue, visibleOffsetToRawByte } from "../../editor/properties";
+import { isEditorEmpty, BUILTIN_HIDE, isPropertiesOnly, readPropertyValue, visibleOffsetToRawByte } from "../../editor/properties";
 import { startEditing, editingId, endEdit, type EditorSelection } from "../../editorController";
 import { batch } from "solid-js";
 import { isBlockMoving, setBlockMoving } from "./moves";
@@ -371,8 +371,7 @@ export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): 
   if (!nodes.length || !current || current.children.length || !blockWritable(id)) return null;
   if (!outlineFits(id, nodes)) return null;
   const format = formatForBlock(id);
-  const split = splitProps(current.raw, BUILTIN_HIDE, format);
-  if (split.visible.trim()) return null;
+  if (!isEditorEmpty(current.raw, BUILTIN_HIDE, format)) return null;
   const change = importedOutlineChange(id, nodes, { at: "before", key: id }, id);
   if ("refused" in change) return null;
   pushUndo("paste-replace-empty", [current.page]);

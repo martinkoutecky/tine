@@ -2,7 +2,7 @@
 
 Status: **decided syntax, Beta** (M3, vision §4.3 revision, D-20261004-V2d;
 syntax decided by Martin 2026-10-18, D-20261018-T1). The spelling below is
-persisted in users' pages, so it is the one-way door; the rest can move. On og
+persisted in users' pages, so it is the one-way door; the rest can move. On develop
 (Beta) only; stable takes it after conceptual model v0 defines links on nodes.
 
 TQL is Tine's own query text (`{{tine-query …}}`). These conditions are
@@ -13,6 +13,24 @@ another link condition. At `@block` they do not apply (the condition is kept and
 reported, as `blocks` is at `@block`).
 
 ## Syntax
+
+Live refresh on development (GX4 S4): mounted query readers register their
+resolved plan with the host. Narrow queries refresh only when the memo's
+page-local invalidation predicate says an edited page can affect them. Queries
+over links/near, tag targets or the property registry coalesce relevant changes
+until 1.5 seconds after the latest local edit, and wait for that edit's
+publication before running. Tag-target and registry readers retain precise
+invalidation for their respective inputs. Links/near remain conservatively
+affected by every page edit, as the memo is. Full summaries, missed revisions
+and unknown dependencies always invalidate; answers are fully recomputed.
+Conservative `full` registrations (including Pages and blocks twins and graph
+search) use the same quiet period because their work may be graph-wide. After
+asynchronous registration renewal, readers recheck the latest input and
+publication gates before starting execution, rearming when either gate moved.
+Instant-dependent `now` plans invalidate on every publication: a currently
+nonmatching page cannot prove that the displayed answer is still current.
+Collapsed reference sections retain their last count, mark it as potentially
+out of date, and fetch the current answer when opened.
 
 ```
 any(links, <page condition>)        every(links, …)       none(links, …)

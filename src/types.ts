@@ -85,6 +85,8 @@ export interface QueryPublicationPlan {
   exists: boolean;
   suggestedFolder: string | null;
   fingerprint: string;
+  /** Names in the existing leaf snapshot, excluding its synthetic home; absent when unavailable. */
+  previousPages?: string[] | null;
 }
 
 export interface PublicationReceipt {
@@ -174,7 +176,7 @@ export interface PageInventoryEntry {
 export interface PageInventory {
   rev: string;
   entries: PageInventoryEntry[];
-  /** Graph-relative paths whose page name couldn't be read; left out of `entries`
+  /** Graph-relative `path: reason` strings whose page name couldn't be read; left out of `entries`
    *  names but never failing the inventory. */
   unreadable?: string[];
 }
@@ -551,6 +553,8 @@ export interface GraphMeta {
   shortcuts: Record<string, string>;
   start_of_week: number; // Logseq :start-of-week, 0=Monday … 6=Sunday (default 6)
   block_hidden_properties: string[];
+  /** `:property-pages/enabled?`; absent means enabled, as in OG. */
+  property_pages_enabled?: boolean;
   /** config.edn `:ref/linked-references-collapsed-threshold` (OG default 100; 0 = always collapsed). */
   linked_references_collapsed_threshold: number;
   default_journal_template: string | null;

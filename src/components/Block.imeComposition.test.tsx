@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -46,51 +47,51 @@ function page(raw: string): PageDto {
   return { name: "IME composition", kind: "page", title: "IME composition", pre_block: null, blocks: [block] };
 }
 
-function composingInput(textarea: HTMLTextAreaElement, value: string, caret = value.length) {
-  textarea.value = value;
-  textarea.setSelectionRange(caret, caret);
+function composingInput(textarea: EditorDriver, value: string, caret = value.length) {
+  textarea.replaceText(value);
+  textarea.select(caret, caret);
   const event = new InputEvent("input", {
     bubbles: true,
     inputType: "insertCompositionText",
     data: value[caret - 1] ?? null,
   });
   Object.defineProperty(event, "isComposing", { value: true });
-  textarea.dispatchEvent(event);
+  textarea.reportInput(event);
 }
 
-function input(textarea: HTMLTextAreaElement, value: string, caret = value.length) {
-  textarea.value = value;
-  textarea.setSelectionRange(caret, caret);
-  textarea.dispatchEvent(new InputEvent("input", {
+function input(textarea: EditorDriver, value: string, caret = value.length) {
+  textarea.replaceText(value);
+  textarea.select(caret, caret);
+  textarea.reportInput({
     bubbles: true,
     inputType: "insertText",
     data: value[caret - 1] ?? null,
-  }));
+  });
 }
 
-function compositionStart(textarea: HTMLTextAreaElement) {
-  textarea.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+function compositionStart(textarea: EditorDriver) {
+  textarea.compositionStart(new CompositionEvent("compositionstart", { bubbles: true }));
 }
 
-function compositionEnd(textarea: HTMLTextAreaElement) {
-  textarea.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+function compositionEnd(textarea: EditorDriver) {
+  textarea.compositionEnd(new CompositionEvent("compositionend", { bubbles: true }));
 }
 
 function pageEntry(name: string): PageEntry {
   return { name, kind: "page", date_key: null, path: `pages/${name}.md` };
 }
 
-function composingEnter(textarea: HTMLTextAreaElement) {
+function composingEnter(textarea: EditorDriver) {
   const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
   Object.defineProperty(event, "isComposing", { value: true });
-  textarea.dispatchEvent(event);
+  textarea.keydown(event);
   return event;
 }
 
-function legacyImeEnter(textarea: HTMLTextAreaElement) {
+function legacyImeEnter(textarea: EditorDriver) {
   const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
   Object.defineProperty(event, "keyCode", { value: 229 });
-  textarea.dispatchEvent(event);
+  textarea.keydown(event);
   return event;
 }
 
@@ -108,20 +109,20 @@ describe("IME composition", () => {
           startEditing("ime-composition", 0);
           const { root, dispose } = mount(() => <Block id="ime-composition" />);
           try {
-            const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+            const textarea = maybeEditorIn(root) as EditorDriver;
             setRawSpy.mockClear();
             if (composition) {
               compositionStart(textarea);
               composingInput(textarea, opener);
-              expect(textarea.value).toBe(opener);
+              expect(textarea.value()).toBe(opener);
               expect(setRawSpy).not.toHaveBeenCalled();
               compositionEnd(textarea);
             } else {
               input(textarea, opener[0]);
               input(textarea, opener);
             }
-            expect(textarea.value).toBe(normalized);
-            expect(textarea.selectionStart).toBe(caret);
+            expect(textarea.value()).toBe(normalized);
+            expect(textarea.selection()[0]).toBe(caret);
             expect(doc.byId["ime-composition"].raw).toBe(normalized);
             await vi.advanceTimersByTimeAsync(100);
             if (opener === "（（") {
@@ -152,12 +153,12 @@ describe("IME composition", () => {
       startEditing("ime-composition", 0);
       const { root, dispose } = mount(() => <Block id="ime-composition" />);
       try {
-        const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-        textarea.setSelectionRange(1, 4);
-        textarea.dispatchEvent(new KeyboardEvent("keydown", { key: opener, bubbles: true, cancelable: true }));
+        const textarea = maybeEditorIn(root) as EditorDriver;
+        textarea.select(1, 4);
+        textarea.keydown(new KeyboardEvent("keydown", { key: opener, bubbles: true, cancelable: true }));
         await Promise.resolve();
-        expect(textarea.value).toBe(opener === "（" ? "h(ell)o" : "h[ell]o");
-        expect(textarea.value.slice(textarea.selectionStart, textarea.selectionEnd)).toBe("ell");
+        expect(textarea.value()).toBe(opener === "（" ? "h(ell)o" : "h[ell]o");
+        expect(textarea.value().slice(textarea.selection()[0], textarea.selection()[1])).toBe("ell");
       } finally {
         dispose();
       }
@@ -171,7 +172,7 @@ describe("IME composition", () => {
       <For each={pageByName("IME composition")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       setRawSpy.mockClear();
 
       // No compositionstart: the composing flag on the input is the only signal.
@@ -201,7 +202,7 @@ describe("IME composition", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       setRawSpy.mockClear();
       const autosize = vi.spyOn(window, "requestAnimationFrame");
 
@@ -209,7 +210,7 @@ describe("IME composition", () => {
       composingInput(textarea, "[[P");
       composingInput(textarea, "[[Pa");
 
-      expect(textarea.value).toBe("[[Pa");
+      expect(textarea.value()).toBe("[[Pa");
       expect(doc.byId["ime-composition"].raw).toBe("");
       expect(setRawSpy).not.toHaveBeenCalled();
       expect(autosize).not.toHaveBeenCalled();
@@ -248,7 +249,7 @@ describe("IME composition", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       setRawSpy.mockClear();
 
       compositionStart(textarea);
@@ -258,10 +259,10 @@ describe("IME composition", () => {
       expect(doc.byId["ime-composition"].raw).toBe("");
 
       compositionEnd(textarea);
-      textarea.blur();
+      textarea.element.blur();
 
-      expect(textarea.value).toBe("[[]]");
-      expect(textarea.selectionStart).toBe(2);
+      expect(textarea.value()).toBe("[[]]");
+      expect(textarea.selection()[0]).toBe(2);
       expect(doc.byId["ime-composition"].raw).toBe("[[]]");
       expect(setRawSpy).toHaveBeenCalledTimes(1);
     } finally {
@@ -279,7 +280,7 @@ describe("IME composition", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       input(textarea, "[[P]]", 3);
       await vi.advanceTimersByTimeAsync(100);
       await Promise.resolve();
@@ -292,7 +293,7 @@ describe("IME composition", () => {
       const event = composingEnter(textarea);
 
       expect(event.defaultPrevented).toBe(false);
-      expect(textarea.value).toBe("[[Pa]]");
+      expect(textarea.value()).toBe("[[Pa]]");
       expect(doc.byId["ime-composition"].raw).toBe("[[P]]");
       expect(pageByName("IME composition")?.roots).toEqual(["ime-composition"]);
       expect(setRawSpy).not.toHaveBeenCalled();
@@ -320,7 +321,7 @@ describe("IME composition", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       input(textarea, "[[P]]", 3);
       await vi.advanceTimersByTimeAsync(100);
       await Promise.resolve();
@@ -332,7 +333,7 @@ describe("IME composition", () => {
       const event = legacyImeEnter(textarea);
 
       expect(event.defaultPrevented).toBe(false);
-      expect(textarea.value).toBe("[[Pa]]");
+      expect(textarea.value()).toBe("[[Pa]]");
       expect(doc.byId["ime-composition"].raw).toBe("[[P]]");
       expect(pageByName("IME composition")?.roots).toEqual(["ime-composition"]);
       expect(setRawSpy).not.toHaveBeenCalled();

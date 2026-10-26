@@ -36,6 +36,9 @@ fn test_host(store: &std::sync::Arc<tine_store::Store>) -> TestHost {
 #[path = "br3_page_open_before_ready.rs"]
 mod br3_page_open_before_ready;
 
+#[path = "audit_rn_b.rs"]
+mod audit_rn_b;
+
 #[path = "c3s_sync_copy_base.rs"]
 mod c3s_sync_copy_base;
 
@@ -128,6 +131,12 @@ mod identity_switch_guide;
 
 #[path = "journal_migrations.rs"]
 mod journal_migrations;
+
+#[path = "l8_03_duplicate_day_asset.rs"]
+mod l8_03_duplicate_day_asset;
+
+#[path = "l9_live_safety.rs"]
+mod l9_live_safety;
 
 #[path = "legacy_config.rs"]
 mod legacy_config;

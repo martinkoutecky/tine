@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -91,7 +92,7 @@ describe("asset paste durability", () => {
     });
     const { root, dispose } = mount(() => <Block id="picked-switch" />);
     try {
-      root.querySelector("textarea")!.focus();
+      maybeEditorIn(root)!.element.focus();
       expect(dispatchFocusedEditorCommand("editor/upload-asset")).toBe(true);
       generation = 2;
       finishPick("/tmp/picked.png");
@@ -117,7 +118,7 @@ describe("asset paste durability", () => {
     });
     const { root, dispose } = mount(() => <Block id="capture-switch" />);
     try {
-      root.querySelector("textarea")!.focus();
+      maybeEditorIn(root)!.element.focus();
       expect(dispatchFocusedEditorCommand("editor/capture-photo")).toBe(true);
       generation = 2;
       finishCapture({ status: "ok", path: "/cache/tine_photo_1.jpg", ext: "jpg" });
@@ -143,7 +144,7 @@ describe("asset paste durability", () => {
     });
     const { root, dispose } = mount(() => <Block id="clipboard-switch" />);
     try {
-      root.querySelector("textarea")!.dispatchEvent(filePasteEvent([
+      maybeEditorIn(root)!.paste(filePasteEvent([
         new File(["x"], "clip.pdf", { type: "application/pdf" }),
       ]));
       generation = 2;
@@ -172,7 +173,7 @@ describe("asset paste durability", () => {
     });
     const { root, dispose } = mount(() => <Block id="bytes-switch" />);
     try {
-      root.querySelector("textarea")!.dispatchEvent(filePasteEvent([file]));
+      maybeEditorIn(root)!.paste(filePasteEvent([file]));
       await vi.waitFor(() => expect(arrayBuffer).toHaveBeenCalledOnce());
       generation = 2;
       finishBytes(new Uint8Array([1]).buffer);
@@ -198,11 +199,11 @@ describe("asset paste durability", () => {
     });
     const { root, dispose } = mount(() => <Block id="drawio-switch" />);
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.focus();
-      textarea.value = "/drawio";
-      textarea.setSelectionRange(7, 7);
-      textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "o" }));
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.element.focus();
+      textarea.replaceText("/drawio");
+      textarea.select(7, 7);
+      textarea.reportInput({ bubbles: true, inputType: "insertText", data: "o" });
       await vi.waitFor(() => expect([...document.querySelectorAll(".autocomplete .ac-label")].map((x) => x.textContent)).toContain("Draw.io diagram"));
       const item = [...document.querySelectorAll<HTMLElement>(".autocomplete .ac-item")]
         .find((x) => x.querySelector(".ac-label")?.textContent === "Draw.io diagram")!;
@@ -230,11 +231,11 @@ describe("asset paste durability", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement | null;
+      const textarea = maybeEditorIn(root) as EditorDriver | null;
       expect(textarea).not.toBeNull();
-      textarea!.focus();
-      textarea!.setSelectionRange(0, 0);
-      textarea!.dispatchEvent(imagePasteEvent(new File([new Uint8Array([1, 2, 3])], "paste.png", { type: "image/png" })));
+      textarea!.element.focus();
+      textarea!.select(0, 0);
+      textarea!.paste(imagePasteEvent(new File([new Uint8Array([1, 2, 3])], "paste.png", { type: "image/png" })));
 
       await settle();
 
@@ -263,8 +264,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(imagePasteEvent(new File([new Uint8Array([1])], "paste.png", { type: "image/png" })));
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(imagePasteEvent(new File([new Uint8Array([1])], "paste.png", { type: "image/png" })));
       await settle();
       expect(backend().saveAsset).toHaveBeenCalledOnce();
       expect(doc.byId[id].raw).toBe("");
@@ -294,7 +295,7 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      root.querySelector("textarea")!.dispatchEvent(imagePasteEvent(
+      maybeEditorIn(root)!.paste(imagePasteEvent(
         new File([new Uint8Array([1])], "paste.png", { type: "image/png" })
       ));
       await settle();
@@ -326,8 +327,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.focus();
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.element.focus();
       expect(dispatchFocusedEditorCommand("editor/upload-asset")).toBe(true);
       await settle();
       expect(backend().importAsset).toHaveBeenCalledOnce();
@@ -365,8 +366,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(imagePasteEvent(new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" })));
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(imagePasteEvent(new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" })));
       await settle();
 
       // The native reader sees a pseudo path, then the event image bytes win and
@@ -399,8 +400,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(imagePasteEvent(huge));
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(imagePasteEvent(huge));
       await settle();
       expect(arrayBuffer).not.toHaveBeenCalled();
       expect(nativeImage).not.toHaveBeenCalled();
@@ -423,7 +424,7 @@ describe("asset paste durability", () => {
     try {
       const file = new File([], "image.png", { type: "image/png" });
       if (kind === "unreadable") Object.defineProperty(file, "arrayBuffer", { value: () => Promise.reject(new Error("URI unavailable in WebView")) });
-      root.querySelector("textarea")!.dispatchEvent(imagePasteEvent(file));
+      maybeEditorIn(root)!.paste(imagePasteEvent(file));
       await settle();
       await vi.waitFor(() => expect(doc.byId[id].raw).toBe("![](../assets/uri.png)"));
       expect(toasts().some((toast) => toast.message.startsWith("Skipped "))).toBe(false);
@@ -440,7 +441,7 @@ describe("asset paste durability", () => {
     const save = vi.spyOn(backend(), "saveAsset");
     const { root, dispose } = mount(() => <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>);
     try {
-      root.querySelector("textarea")!.dispatchEvent(imagePasteEvent(new File([], "image.png", { type: "image/png" })));
+      maybeEditorIn(root)!.paste(imagePasteEvent(new File([], "image.png", { type: "image/png" })));
       await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
       startEditing(second, 0);
       finish(new Uint8Array([1, 2, 3]));
@@ -461,7 +462,7 @@ describe("asset paste durability", () => {
     vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:asset"), revokeObjectURL: vi.fn() });
     const { root, dispose } = mount(() => <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>);
     try {
-      root.querySelector("textarea")!.dispatchEvent(filePasteEvent([new File([], "image.png")]));
+      maybeEditorIn(root)!.paste(filePasteEvent([new File([], "image.png")]));
       await vi.waitFor(() => expect(doc.byId[id].raw).toBe("![](../assets/untyped-uri.png)"));
       expect(toasts().some((toast) => toast.message.startsWith("Skipped "))).toBe(false);
     } finally { dispose(); }
@@ -487,8 +488,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(filePasteEvent([
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(filePasteEvent([
         new File([new Uint8Array([1])], "photo.png", { type: "image/png" }),
         new File([new Uint8Array([2])], "report.pdf", { type: "application/pdf" }),
       ]));
@@ -518,8 +519,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Nested assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(filePasteEvent([
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(filePasteEvent([
         new File([new Uint8Array([1])], "Research paper.pdf", { type: "application/pdf" }),
       ]));
       await settle();
@@ -550,8 +551,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Org assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(filePasteEvent([
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(filePasteEvent([
         new File([new Uint8Array([1])], "Paper.pdf", { type: "application/pdf" }),
       ]));
       await settle();
@@ -577,9 +578,9 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root)! as EditorDriver;
       const event = filePasteEvent([], "C:\\Users\\me\\report.pdf");
-      textarea.dispatchEvent(event);
+      textarea.paste(event);
       await settle();
 
       expect(event.defaultPrevented).toBe(true);
@@ -603,8 +604,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(filePasteEvent([new File([new Uint8Array([1, 2, 3])], "notes.pdf", { type })]));
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(filePasteEvent([new File([new Uint8Array([1, 2, 3])], "notes.pdf", { type })]));
       await settle();
 
       expect(backend().saveAsset).toHaveBeenCalledOnce();
@@ -627,8 +628,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(filePasteEvent([huge]));
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(filePasteEvent([huge]));
       await settle();
 
       expect(arrayBuffer).not.toHaveBeenCalled();

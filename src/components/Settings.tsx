@@ -15,7 +15,8 @@ import { JournalFilenamePanel } from "./JournalFilenamePanel";
 import { ConflictFileRow } from "./JournalConflictFileRow";
 import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
-import { setJournalTemplate, graphMeta, graphEpoch, dataRev } from "../graphSession";
+import { setJournalTemplate, graphMeta } from "../graphSession";
+import { changed } from "../changeKeys";
 import { locateSectionsPages } from "../journalSections";
 import { pushToast } from "../toasts";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
@@ -1027,7 +1028,7 @@ function JournalsTab(props: { search: string }): JSX.Element {
 function SectionsPageNote(): JSX.Element {
   // Keep the optional note empty while loading: an undefined first value must
   // neither crash its index lookup nor suspend the entire Settings dialog.
-  const [pages] = createResource(() => `${graphEpoch()}\0${dataRev()}`, () => locateSectionsPages(), { initialValue: [] as string[] });
+  const [pages] = createResource(() => changed("prop:tine/journal-sections"), () => locateSectionsPages(), { initialValue: [] as string[] });
   const page = () => readOr(pages, [] as string[], "sections page note")[0];
   return (
     <Show when={page()}>
@@ -1096,6 +1097,22 @@ function BackupsTab(): JSX.Element {
     void restoreBackupFromSettings(b, fmtStamp(b.stamp), setBusy, () => { void refresh(); });
   };
 
+  const deleteOld = async (b: BackupInfo) => {
+    const remove = backend().deleteOldBackups;
+    if (!remove || !b.old_root || !ready() || busy()) return;
+    const owner = bindingOwner(() => alive);
+    setBusy(true);
+    try {
+      const confirmed = await readOwned(owner,backend().confirm(t("backup-delete-old-confirm", { path: b.old_root }),
+        { okLabel:t("backup-delete-old"),cancelLabel:t("confirm-cancel") }));
+      if (confirmed.kind === "stale" || !confirmed.value) return;
+      const result = await writeOwned(owner,remove.call(backend(),b.id));
+      if (result.kind !== "stale") void refresh();
+    } catch (error) {
+      pushToast(msg("backup-delete-old-failed", { error:String(error) }),"error");
+    } finally { if (owner()) setBusy(false); }
+  };
+
   return (
     <>
       <div class="settings-hint settings-block">{t("settings-ui-tine-snapshots-your-graph-s-markdown-to-a-local")}</div>
@@ -1145,13 +1162,18 @@ function BackupsTab(): JSX.Element {
           <For each={list()}>
             {(b) => (
               <div class="settings-backup-row">
-                <span class="settings-backup-when">{fmtStamp(b.stamp)}</span>
+                <span class="settings-backup-when">{fmtStamp(b.stamp)}
+                  <Show when={b.old_root}>{(path) => <span class="settings-backup-origin">{t("backup-old-location",{ path:path() })}</span>}</Show>
+                </span>
                 <span class="settings-backup-files mono">
                   {b.status === "ok"
                     ? t("settings-ui-files-2", { files: b.files })
                     : t("settings-ui-files-backup-status", { files: b.files, status: t(BACKUP_STATUS_KEY[b.status]) })}
                 </span>
-                <button class="settings-btn" disabled={!ready() || busy() || b.status !== "ok"} onClick={() => void restore(b)}>{t("settings-ui-restore")}</button>
+                <div class="settings-backup-actions">
+                  <button class="settings-btn" disabled={!ready() || busy() || b.status !== "ok"} onClick={() => void restore(b)}>{t("settings-ui-restore")}</button>
+                  <Show when={b.old_root && backend().deleteOldBackups}><button class="settings-btn" disabled={!ready() || busy()} onClick={() => void deleteOld(b)}>{t("backup-delete-old")}</button></Show>
+                </div>
               </div>
             )}
           </For>

@@ -1,10 +1,13 @@
 import { t } from "./i18n";
+import { errorFamily } from "./errorFamily";
 // Backend abstraction. In the Tauri app we call Rust via `invoke`. In a plain
 // browser (Vite dev / Playwright screenshots) we fall back to an in-memory mock
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
 
 import { markCommandSlow } from "./slowBackend";
+import { renderStallSnapshot, clearRenderStalls } from "./renderStalls";
 import { orderedLane } from "./orderedWrites";
+import { REFRESH_READ_COMMANDS, trackRefreshRead } from "./refreshReads";
 import { timingNamesForCommand } from "./focusTiming";
 import type { GraphVerificationProgress, GraphVerificationReport } from "./graphVerification";
 import type {
@@ -104,6 +107,11 @@ const TIMED_COMMANDS: ReadonlySet<string> = new Set([
 /** A command still running after this long is recorded as `slow`. */
 const SLOW_IPC_MS = 500;
 
+function graphOpenFailure(error: unknown): never {
+  if (errorFamily(error) === "graph-app-owner") throw new Error(t("graph-open-other-app"));
+  throw error;
+}
+
 class TauriBackend implements Backend {
   private invoke!: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
   private convertFileSrc!: (path: string, protocol?: string) => string;
@@ -127,9 +135,11 @@ class TauriBackend implements Backend {
 
   graphBindingGeneration() { return this.bindingGeneration; }
 
-  /** R3: write commands keep their call order (src/orderedWrites.ts). */
+  /** R3: write commands keep their call order (src/orderedWrites.ts). A
+   *  refresh read is counted until it settles (src/refreshReads.ts). */
   private call<T>(cmd: string, args?: Record<string, unknown>, bindingGeneration = this.bindingGeneration): Promise<T> {
-    return this.ordered(cmd, () => this.issue<T>(cmd, args, bindingGeneration));
+    const issued = this.ordered(cmd, () => this.issue<T>(cmd, args, bindingGeneration));
+    return REFRESH_READ_COMMANDS.has(cmd) ? trackRefreshRead(issued) : issued;
   }
 
   private async issue<T>(cmd: string, args: Record<string, unknown> | undefined, bindingGeneration: number): Promise<T> {
@@ -193,10 +203,16 @@ class TauriBackend implements Backend {
     return this.call<T>(cmd, args, bindingGeneration);
   }
 
-  async loadGraph(path: string) {
-    const result = await this.call<LoadGraphResult>("load_graph", { path });
+  async loadGraph(path: string, options?: { relocatedFrom: string }) {
+    const result = await this.call<LoadGraphResult>("load_graph", { path, relocatedFrom: options?.relocatedFrom }).catch(graphOpenFailure);
     if (result.kind !== "focused_existing") this.bindingGeneration = result.binding_generation;
     return result;
+  }
+  orphanDrafts() {
+    return this.call<{ id: string; old_root: string | null }[]>("orphan_drafts");
+  }
+  recoverOrphanDrafts(id: string, consumedLastId: number) {
+    return this.call<{ error: string | null; reloaded: { session: number; nextId: number } | null }>("recover_orphan_drafts", { id, consumedLastId });
   }
   inspectGraphAccess(path: string) {
     return this.call<GraphAccessInspection>("inspect_graph_access", { path });
@@ -205,7 +221,7 @@ class TauriBackend implements Backend {
     return this.call<void>("approve_external_assets", { graphRoot, assetsPath });
   }
   openGraphWindow(path: string) {
-    return this.call<LoadGraphResult>("open_graph_window", { path });
+    return this.call<LoadGraphResult>("open_graph_window", { path }).catch(graphOpenFailure);
   }
   readonly tineLinks = nativeTineLinks((cmd, args) => this.call(cmd, args), (cb) => this.on<void>("tine-link-pending", cb));
   startupGraphPath() {
@@ -213,6 +229,9 @@ class TauriBackend implements Backend {
   }
   captureTarget() {
     return this.call<string>("capture_target");
+  }
+  captureReceipt(id: string, action: "claim" | "saved" | "release" | "forget" | "status", receiptGeneration: number) {
+    return this.call<"new" | "pending" | "saved" | "missing">("capture_receipt", { id, action, receiptGeneration });
   }
   async bindCaptureGraph() {
     const result = await this.call<CaptureGraphBindingResult>("capture_graph_binding");
@@ -381,6 +400,12 @@ class TauriBackend implements Backend {
   getUnlinkedRefs(name: string) {
     return this.call<RefGroup[]>("get_unlinked_refs", { name });
   }
+  registerUnlinkedReference(subscription: string, target: string | null, bindingGeneration: number) {
+    return this.call<void>("register_unlinked_reference", { subscription, target }, bindingGeneration);
+  }
+  registerQuerySubscription(subscription: string, request: import("./querySubscription").QuerySubscription | null, bindingGeneration: number) {
+    return this.call<import("./querySubscription").QueryRegistration>("register_query_subscription", { subscription, request }, bindingGeneration);
+  }
   warmDone() {
     return this.call<boolean>("warm_done");
   }
@@ -405,8 +430,8 @@ class TauriBackend implements Backend {
   publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[]) {
     return this.call<PublicationReceipt>("publish_live", { destination, name, allPages, sheets });
   }
-  quickSharePrepare(request: QueryPublicationRequest) {
-    return this.call<QuickSharePrepared>("quick_share_prepare", { request });
+  quickSharePrepare(request: QueryPublicationRequest, shareId?: string) {
+    return this.call<QuickSharePrepared>("quick_share_prepare", { request, shareId });
   }
   quickShareCreate(prepareId: string) {
     return this.call<QuickShareCreated>("quick_share_create", { prepareId });
@@ -416,6 +441,9 @@ class TauriBackend implements Backend {
   }
   quickShareList() {
     return this.call<QuickShareListing>("quick_share_list");
+  }
+  quickShareTestConnection() {
+    return this.call<import("./quickShare/commands").QuickShareConnectionTest>("quick_share_test_connection");
   }
   quickShareCheck(shareId: string) {
     return this.call<QuickShareCheckOutcome>("quick_share_check", { shareId });
@@ -873,6 +901,9 @@ class TauriBackend implements Backend {
   listBackups() {
     return this.call<BackupInfo[]>("list_backups");
   }
+  deleteOldBackups(id: string) {
+    return this.call<void>("delete_old_backups", { id });
+  }
   restoreBackup(id: string, _kind: "replace-page", consumedLastId: number) {
     return this.call<{ error: string | null; reloaded: { session: number; nextId: number } | null }>(
       "restore_backup", { id, consumedLastId });
@@ -902,12 +933,13 @@ class TauriBackend implements Backend {
     return this.call<void>("debug_log", { line });
   }
   diagnosticReport(buildCommit: string, buildTime: string) {
-    return this.call<DiagnosticReport>("diagnostic_report", { buildCommit, buildTime });
+    return this.call<DiagnosticReport>("diagnostic_report", { buildCommit, buildTime, renderer: renderStallSnapshot() });
   }
   saveDiagnosticReport(buildCommit: string, buildTime: string) {
-    return this.call<boolean>("save_diagnostic_report", { buildCommit, buildTime });
+    return this.call<boolean>("save_diagnostic_report", { buildCommit, buildTime, renderer: renderStallSnapshot() });
   }
   clearDiagnostics() {
+    clearRenderStalls();
     return this.call<void>("clear_diagnostics");
   }
   createGraphVerification(operationId: string) { return this.call<GraphVerificationReport>("create_graph_verification", { operationId }); }

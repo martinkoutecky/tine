@@ -2,6 +2,153 @@
 use super::*;
 use crate::owner::terminal::{error_json, error_text, exit_code, render};
 
+#[test]
+fn cli_edit_keeps_builtin_srs_and_configured_hidden_lines() {
+    for org in [false, true] {
+        let graph = Graph::new();
+        let rel = if org {
+            "pages/task.org"
+        } else {
+            "pages/task.md"
+        };
+        let lines = if org {
+            format!("* Body\n:PROPERTIES:\n:id: {UUID}\n:heading: true  \n:card-last-score: 5\n:secret: opaque  \n:END:\n")
+        } else {
+            format!("- Body\n  id:: {UUID}\n  heading:: true  \n  card-last-score:: 5\n  secret:: opaque  \n")
+        };
+        std::fs::write(graph.root.join("pages/a.md"), "- other\n").unwrap();
+        std::fs::write(graph.root.join(rel), &lines).unwrap();
+        std::fs::write(
+            graph.root.join("logseq/config.edn"),
+            "{:block-hidden-properties #{:secret}}\n",
+        )
+        .unwrap();
+        graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+        let slot = graph.slot();
+        let hidden = |file: &str| {
+            let parsed = if org {
+                tine_core::org::parse_org(file)
+            } else {
+                tine_core::doc::parse(file)
+            };
+            let hide = tine_core::editor_text::HidePolicy::Configured {
+                keys: vec!["secret".into()],
+                sheet_cell: false,
+            };
+            tine_core::editor_text::split(parsed.roots[0].raw(), org, &hide).hidden
+        };
+        let expected = hidden(&lines);
+        for text in ["Revised", ""] {
+            verb(&slot, "block.edit", json!({"handle": UUID, "text": text})).unwrap();
+            let written = std::fs::read_to_string(graph.root.join(rel)).unwrap();
+            // Clearing text puts the first retained Markdown property on the
+            // bullet line, just like id:: today. Compare parser-owned raw bytes,
+            // excluding that structural bullet/continuation indentation.
+            assert_eq!(hidden(&written), expected, "{org}/{text}");
+        }
+    }
+}
+
+#[test]
+fn rn_f_cli_supplied_history_uses_revision() {
+    for org in [false, true] {
+        for supplied in [false, true] {
+            let history_a = ":LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\n:END:";
+            let history_b = history_a.replace("20 Tue", "21 Wed");
+            let block = format!("DOING old\n{history_a}");
+            let serialize = |raw: &str| {
+                if org {
+                    format!("* {raw}\n")
+                } else {
+                    format!("- {}\n", raw.replace('\n', "\n  "))
+                }
+            };
+            let (graph, slot, path) = fixture(&serialize(&block), org);
+            let read = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
+            let handle = format!("proof/{}", block_handle(&read, 0));
+            let current = serialize(&format!("DOING old\n{history_b}"));
+            std::fs::write(&path, &current).unwrap();
+            graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+            let text = if supplied {
+                format!("DOING new\n{history_a}")
+            } else {
+                "DOING new".into()
+            };
+            // Both kinds detect a concurrent history-only change with --rev.
+            let (code, _) = error_code(verb(
+                &slot,
+                "block.edit",
+                json!({"handle": handle, "text": text, "rev": read["rev"]}),
+            ));
+            assert_eq!(code, "stale");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), current);
+            // Without --rev the visible fingerprint still resolves. Plain text
+            // keeps B; an explicitly supplied drawer intentionally replaces B
+            // with A, which is why full-buffer clients must supply the revision.
+            verb(&slot, "block.edit", json!({"handle": handle, "text": text})).unwrap();
+            let written = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(
+                written,
+                serialize(&format!(
+                    "DOING new\n{}",
+                    if supplied { history_a } else { &history_b }
+                ))
+            );
+        }
+    }
+}
+
+#[test]
+fn rn_f_cli_edit_preserves_one_running_clock_and_closes_it() {
+    for org in [false, true] {
+        for seconds in [false, true] {
+            for (marker, text) in [
+                ("DOING", "DOING work"),
+                ("DOING", "DONE work"),
+                ("NOW", "NOW work"),
+                ("NOW", "DONE work"),
+            ] {
+                let graph = Graph::new();
+                let rel = if org {
+                    "pages/task.org"
+                } else {
+                    "pages/task.md"
+                };
+                let start = if seconds {
+                    "2026-01-01 Thu 09:00:00"
+                } else {
+                    "2026-01-01 Thu 09:00"
+                };
+                let source = if org {
+                    format!("* {marker}\n:PROPERTIES:\n:id: {UUID}\n:END:\n:LOGBOOK:\nCLOCK: [{start}]\n:END:\n")
+                } else {
+                    format!("- {marker}\n  id:: {UUID}\n  :LOGBOOK:\n  CLOCK: [{start}]\n  :END:\n")
+                };
+                std::fs::write(graph.root.join("pages/a.md"), "- other\n").unwrap();
+                std::fs::write(graph.root.join(rel), source).unwrap();
+                std::fs::write(graph.root.join("logseq/config.edn"), format!(
+                    "{{:file/name-format :triple-lowbar :feature/enable-timetracking? true :logbook/settings {{:with-second-support? {seconds}}}}}\n"
+                )).unwrap();
+                graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+                let slot = graph.slot();
+                // RN-F: the CLI edits the same text as the editor, retaining clocks.
+                verb(&slot, "block.edit", json!({"handle": UUID, "text": text})).unwrap();
+                let written = std::fs::read_to_string(graph.root.join(rel)).unwrap();
+                assert_eq!(
+                    written.matches("CLOCK:").count(),
+                    1,
+                    "{org}/{seconds}/{text}: {written}"
+                );
+                assert_eq!(
+                    written.contains("]--["),
+                    text == "DONE work",
+                    "{org}/{seconds}/{text}: {written}"
+                );
+            }
+        }
+    }
+}
+
 fn cli_command(verb: &str, args: &Value) -> Vec<String> {
     let get = |key: &str| args[key].as_str().unwrap().to_string();
     let mut command = vec!["tine".to_string()];

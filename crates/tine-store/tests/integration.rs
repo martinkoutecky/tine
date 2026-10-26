@@ -35,11 +35,17 @@ fn isolated_case(name: &str) -> bool {
 #[path = "alias_edit_cost.rs"]
 mod alias_edit_cost;
 
+#[path = "assumption_ledger.rs"]
+mod assumption_ledger;
+
 #[path = "alias_groups.rs"]
 mod alias_groups;
 
 #[path = "answer_changes.rs"]
 mod answer_changes;
+
+#[path = "change_summary.rs"]
+mod change_summary;
 
 #[path = "asset_watch.rs"]
 mod asset_watch;
@@ -79,6 +85,9 @@ mod cold_search_cost;
 
 #[path = "config_live_reload.rs"]
 mod config_live_reload;
+
+#[path = "conformance_f3.rs"]
+mod conformance_f3;
 
 #[path = "directory_durability_guard.rs"]
 mod directory_durability_guard;

@@ -7,7 +7,8 @@ import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { autocompleteFacets, backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import { bumpGraphEpoch, setDataRev } from "../graphSession";
+import { bumpGraphEpoch, bumpDataRev } from "../graphSession";
+import { setRefreshEverything } from "../changeKeys";
 import type { RegistrySnapshot } from "../editor/queryIr";
 import {
   clearTransientLayersForTest,
@@ -98,6 +99,7 @@ const shown = (family: PopoverFamily, sheet: HTMLElement): Element | null =>
  *  report how many backend calls it took. */
 async function settleRegistry(registry: { mock: { calls: unknown[][] } }): Promise<number> {
   for (let tick = 0; tick < 8; tick += 1) await Promise.resolve();
+  await new Promise(resolve => setTimeout(resolve, 0));
   return registry.mock.calls.length;
 }
 
@@ -117,6 +119,7 @@ function snapshot(keys: [string, number][]): RegistrySnapshot {
 }
 
 afterEach(() => {
+  setRefreshEverything(false);
   clearTransientLayersForTest();
   resetSharedQueryResultsForTests();
   resetQueryRegistryRevisionForTests();
@@ -126,6 +129,9 @@ afterEach(() => {
 
 
 beforeEach(() => {
+  // This fixture tests popover and shared-registry ownership; the scheduler's
+  // quiet period is covered separately with fake time and native typing.
+  setRefreshEverything(true);
   // The vocabulary list is virtualized, so a picker in a zero-height jsdom
   // viewport would mount overscan alone (N2). Production sizing is unchanged.
   resetQueryRegistryRevisionForTests();
@@ -156,9 +162,7 @@ describe("QueryBuilder transient ownership (post-GH #161)", () => {
       expect(registry).toHaveBeenCalledTimes(0);
 
       const sheet = open();
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(registry).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(registry).toHaveBeenCalledTimes(1));
 
       // Opening the picker and typing in its search is pure frontend work over
       // the snapshot already in hand — never a keystroke-per-request (I-13).
@@ -171,10 +175,8 @@ describe("QueryBuilder transient ownership (post-GH #161)", () => {
       await Promise.resolve();
       expect(registry).toHaveBeenCalledTimes(1);
 
-      setDataRev((revision) => revision + 1);
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(registry).toHaveBeenCalledTimes(2);
+      bumpDataRev();
+      await vi.waitFor(() => expect(registry).toHaveBeenCalledTimes(2));
 
       // The facets read the builder used to make is gone entirely. The
       // autocomplete producer's `queryFacets(true)` is a different question and
@@ -399,7 +401,7 @@ describe("QueryBuilder registry sharing (Harvest W4-P1 item 3)", () => {
     return keys;
   }
 
-  it("issues one shared registry request per (graph scope, dataRev, declaration) for five mounted builders", async () => {
+  it("issues one shared registry request per (graph scope, publication, declaration) for five mounted builders", async () => {
     const payloads = [
       snapshot([["revision-one", 3]]),
       snapshot([["revision-two", 3]]),
@@ -431,7 +433,7 @@ describe("QueryBuilder registry sharing (Harvest W4-P1 item 3)", () => {
       // sheet showing the vocabulary the graph had before the last save.
       registry.mockClear();
       current = 1;
-      setDataRev((revision) => revision + 1);
+      bumpDataRev();
       const perRevision = await settleRegistry(registry);
       for (const sheet of sheets) {
         expect(propertyKeysOffered(sheet)).toEqual(["revision-two"]);
@@ -499,7 +501,7 @@ describe("QueryBuilder registry landing (I-20)", () => {
       const sheet = builder.open();
       await settleRegistry(registry);
       expect(propertyKeys(sheet)).toEqual(["obsolete-type"]);
-      if (kind === "data") setDataRev((n) => n + 1);
+      if (kind === "data") bumpDataRev();
       else requestQueryRegistryRefresh();
       await settleRegistry(registry);
       expect(propertyKeys(sheet)).toEqual(["obsolete-type"]);

@@ -5,6 +5,24 @@ import { msg, render, renderEnglish, setActiveLocale, t } from "./index";
 import { friendlySearchToDsl } from "../editor/searchQuery";
 import { initParser } from "../render/parse";
 
+it("explains unavailable storage and backup deletion risk in Chinese recovery text", async () => {
+  try {
+    await setActiveLocale("zh-CN");
+    for (const text of [
+      t("root-recovery-notice", { location: "/disk/notes" }),
+      t("backup-old-location", { path: "/disk/notes" }),
+      t("backup-delete-old-confirm", { path: "/disk/notes" }),
+    ]) {
+      expect(text).toContain("已移动或暂时不可用");
+      expect(text).toContain("驱动器已断开连接");
+      expect(text).toContain("/disk/notes");
+    }
+    expect(t("backup-delete-old-confirm", { path: "/disk/notes" })).toContain("仅有的备份");
+    expect(t("root-recovery-moved-durability-unwitnessed")).toContain("已移入当前图谱");
+    expect(t("root-recovery-moved-durability-unwitnessed")).toContain("无法确认");
+  } finally { await setActiveLocale("en"); }
+});
+
 it("GH #107: empty friendly-search validation uses the current locale", async () => {
   await initParser();
   try {

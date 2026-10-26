@@ -1,0 +1,1 @@
+Eighth Tine 0.8 Beta, fixes for the stable candidate. Typing DOING no longer moves the rest of your text, and a stray CLOCK line no longer blanks the page. On a long page with images, Enter or Backspace no longer throws the view away from the block you are editing.

@@ -5,8 +5,9 @@ import {
   blockPageReadOnly, blockProperty, formatForBlock, node, pageByName,
   readPageProperties, readPageProperty, setBlockProperty, setPageProperty,
 } from "../document";
-import { PAGE_PROP_SPECS, isEditablePropertyKey, SHEET_CELL_HIDE, hides, type PagePropSpec } from "../editor/properties";
+import { PAGE_PROP_SPECS, isEditablePropertyKey, FORM_MANAGED, hides, type PagePropSpec } from "../editor/properties";
 import { facetsOf } from "../render/facets";
+import { blockRegions } from "../render/parse";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 import { bindingCurrent, type Binding } from "../binding";
 import { pushToast } from "../toasts";
@@ -28,9 +29,14 @@ export function PageProps(): JSX.Element {
 }
 
 // Machine-managed keys (`id`, `collapsed`, `logseq.order-list-type`, `tine.*`)
-// keep their own surfaces. Same question as the sheet-cell editor asks, so it
-// delegates rather than minting a second hidden set.
-const machineManaged = (key: string) => hides(SHEET_CELL_HIDE, key);
+// keep their own surfaces. Other hidden editor keys remain editable here.
+// The Rust policy owns this list independently of textarea visibility.
+function machineManaged(scope: PropsPanelScope, key: string): boolean {
+  const raw = scope.kind === "block" ? node(scope.id)?.raw ?? "" : pageByName(scope.name)?.preBlock ?? "";
+  const format = scope.kind === "block" ? formatForBlock(scope.id) : pageByName(scope.name)?.format ?? "md";
+  const own = blockRegions(raw, format).properties.filter((p) => p.primary).map((p): [string, string] => [p.key, p.value]);
+  return hides(FORM_MANAGED, key, own);
+}
 
 function existingProperties(scope: PropsPanelScope): [string, string][] {
   if (scope.kind === "page") return readPageProperties(scope.name);
@@ -85,7 +91,7 @@ function rowsFor(scope: PropsPanelScope): PagePropSpec[] {
   const seen = new Set(rows.map((spec) => spec.key.toLowerCase()));
   for (const [key] of existingProperties(scope)) {
     const lower = key.toLowerCase();
-    if (seen.has(lower) || machineManaged(lower)) continue;
+    if (seen.has(lower) || machineManaged(scope, lower)) continue;
     seen.add(lower);
     rows.push({ key, label: key, hint: "", kind: "text" });
   }
@@ -231,7 +237,7 @@ function AddRow(props: { scope: PropsPanelScope; write: Write }): JSX.Element {
     const k = trimmed();
     if (!k) return null;
     if (!isEditablePropertyKey(k)) return t("page-prose-key-grammar");
-    if (machineManaged(k)) return t("page-prose-key-managed", { key: k });
+    if (machineManaged(props.scope, k)) return t("page-prose-key-managed", { key: k });
     if (readOne(props.scope, k) !== null) return t("page-prose-key-exists", { key: k });
     return null;
   });

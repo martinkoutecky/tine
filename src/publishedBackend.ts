@@ -84,6 +84,11 @@ export function isPublishedExport(): boolean {
   return publishedSnapshotUrl() !== null;
 }
 
+/** Share mode has a stricter media policy than an author's own published site. */
+export function isQuickShareViewer(): boolean {
+  return publishedSnapshotUrl() === QUICK_SHARE_SNAPSHOT;
+}
+
 let snapshotPromise: Promise<PublishedSnapshot> | null = null;
 
 /** Largest snapshot document a viewer will read (I-22). Far above any real export;
@@ -253,6 +258,10 @@ function firstMappedSpan(text: string, needle: string): { start: number; end: nu
 /** Methods declared optional on `Backend`; a published export leaves them
  *  absent so the browser fallbacks in `backend.ts` take over. */
 const OPTIONAL_METHODS = new Set([
+  // Device-local graph relocation/recovery has no namespace in a published site.
+  "orphanDrafts",
+  "recoverOrphanDrafts",
+  "deleteOldBackups",
   "loadDrafts",
   "storeDraft",
   "retireDraft",
@@ -841,6 +850,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return "main";
     },
     async bindCaptureGraph() {},
+    async captureReceipt() { return "pending" as const; },
     async defaultGraphParent() {
       return "";
     },
@@ -1036,6 +1046,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "openDevtools",
   "captureTarget",
   "bindCaptureGraph",
+  "captureReceipt",
   "defaultGraphParent",
   "conflictInventory",
   "listJournalConflicts",
@@ -1077,6 +1088,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
  *  capture, native UI, OS. Pinned here so a new `Backend` method must be
  *  classified deliberately. */
 export const PUBLISHED_REFUSED_METHODS = [
+  "quickShareTestConnection",
   "addDefenderExclusion",
   "savePages",
   "publishLive",
@@ -1109,6 +1121,8 @@ export const PUBLISHED_REFUSED_METHODS = [
   "pagePrintHtml",
   "queryExplainEmpty",
   "taggedPages",
+  "registerUnlinkedReference",
+  "registerQuerySubscription",
   "runQuery",
   "exportQuerySubtrees",
   "runAdvancedQuery",

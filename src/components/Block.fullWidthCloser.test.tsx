@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 // GH #53 follow-up: typing through full-width closing brackets. `【【` becomes
 // `[[]]` with the caret inside; a Chinese IME's `】` typed before the ASCII `]`
 // steps over it like `]` does, so `【【name】】` ends as `[[name]]` with the caret
@@ -33,20 +34,14 @@ function mount(node: () => JSX.Element) {
 const page = (raw: string): PageDto => ({ name: "FW", kind: "page", title: "FW", pre_block: null,
   blocks: [{ id: "fw", raw, collapsed: false, children: [] }] });
 
-function composing(textarea: HTMLTextAreaElement, value: string, caret: number) {
-  textarea.value = value;
-  textarea.setSelectionRange(caret, caret);
-  const event = new InputEvent("input", { bubbles: true, inputType: "insertCompositionText", data: value[caret - 1] ?? null });
-  Object.defineProperty(event, "isComposing", { value: true });
-  textarea.dispatchEvent(event);
+function composing(textarea: EditorDriver, value: string, caret: number) {
+  textarea.input(value, caret, { inputType: "insertCompositionText", isComposing: true });
 }
-function input(textarea: HTMLTextAreaElement, value: string, caret: number) {
-  textarea.value = value;
-  textarea.setSelectionRange(caret, caret);
-  textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value[caret - 1] ?? null }));
+function input(textarea: EditorDriver, value: string, caret: number) {
+  textarea.input(value, caret, { inputType: "insertText", data: value[caret - 1] ?? null });
 }
-const compositionStart = (t: HTMLTextAreaElement) => t.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
-const compositionEnd = (t: HTMLTextAreaElement) => t.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+const compositionStart = (t: EditorDriver) => t.compositionStart();
+const compositionEnd = (t: EditorDriver) => t.compositionEnd();
 
 describe("typing through full-width closers (GH #53)", () => {
   for (const pairing of [false, true]) {
@@ -64,28 +59,28 @@ describe("typing through full-width closers (GH #53)", () => {
           startEditing("fw", 0);
           const { root, dispose } = mount(() => <Block id="fw" />);
           try {
-            const t = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+            const t = editorIn(root);
             const type = (ch: string) => {
-              const at = t.selectionStart;
-              const value = t.value.slice(0, at) + ch + t.value.slice(at);
+              const at = t.selection()[0];
+              const value = t.value().slice(0, at) + ch + t.value().slice(at);
               if (composition) { compositionStart(t); composing(t, value, at + ch.length); compositionEnd(t); }
               else input(t, value, at + ch.length);
             };
             if (composition) { compositionStart(t); composing(t, open, 2); compositionEnd(t); }
             else { input(t, open[0], 1); input(t, open, 2); }
-            expect(t.value).toBe(`${ascii}${closer}${closer}`);
+            expect(t.value()).toBe(`${ascii}${closer}${closer}`);
             for (const ch of "name") type(ch);
-            expect(t.value).toBe(`${ascii}name${closer}${closer}`);
+            expect(t.value()).toBe(`${ascii}name${closer}${closer}`);
             type(close);
-            expect(t.value).toBe(`${ascii}name${closer}${closer}`);
-            expect(t.selectionStart).toBe(ascii.length + 4 + 1);
+            expect(t.value()).toBe(`${ascii}name${closer}${closer}`);
+            expect(t.selection()[0]).toBe(ascii.length + 4 + 1);
             type(close);
-            expect(t.value).toBe(`${ascii}name${closer}${closer}`);
-            expect(t.selectionStart).toBe(ascii.length + 4 + 2);
+            expect(t.value()).toBe(`${ascii}name${closer}${closer}`);
+            expect(t.selection()[0]).toBe(ascii.length + 4 + 2);
             expect(doc.byId.fw.raw).toBe(`${ascii}name${closer}${closer}`);
             // The text after the finished reference is ordinary again.
             type(close);
-            expect(t.value).toBe(`${ascii}name${closer}${closer}${close}`);
+            expect(t.value()).toBe(`${ascii}name${closer}${closer}${close}`);
           } finally {
             dispose();
             setAutoPairing(previous);

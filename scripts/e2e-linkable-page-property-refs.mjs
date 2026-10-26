@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
-import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { currentPageTitle, openPageByName } from "./lib/e2e-navigation.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
@@ -18,9 +18,10 @@ for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(GRAPH,
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, dir));
 fs.writeFileSync(path.join(GRAPH, "logseq/config.edn"), "{:property/separated-by-commas #{:related}}\n");
 const SOURCE = path.join(GRAPH, "pages/Source.md");
-const INITIAL = "related:: Plugins，Witness\n\n- Body\n";
+const INITIAL = "related:: Plugins，Witness\naad:: val12\n\n- Body\n";
 fs.writeFileSync(SOURCE, INITIAL);
 fs.writeFileSync(path.join(GRAPH, "pages/Plugins.md"), "- Target\n");
+fs.writeFileSync(path.join(GRAPH, "pages/Witness.md"), "- Second target\n");
 fs.writeFileSync(path.join(GRAPH, "pages/Queries.md"), "- {{query [[Plugins]]}}\n");
 const now = new Date();
 const day = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
@@ -34,7 +35,7 @@ const port = Number(process.env.E2E_DRIVER_PORT || 4896);
 const log = fs.openSync(path.join(TMP, "driver.log"), "w");
 const driver = spawn(DRIVER, ["--port", String(port), "--native-port", String(port + 1), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], { env, stdio: ["ignore", log, log], detached: true });
 let browser;
-const proof = { app: APP, binarySha256: createHash("sha256").update(fs.readFileSync(APP)).digest("hex"), graph: GRAPH, steps: [] };
+const proof = { app: APP, testedCommit: process.env.E2E_TESTED_COMMIT, binarySha256: createHash("sha256").update(fs.readFileSync(APP)).digest("hex"), graph: GRAPH, steps: [] };
 async function visible(selector, present) {
   await browser.waitUntil(() => browser.execute((scope, expected) => {
     const node = document.querySelector(scope);
@@ -47,12 +48,72 @@ try {
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 2, connectionRetryTimeout: 30_000,
     capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } } });
   await browser.$(".app-container").waitForExist({ timeout: 30_000 });
+  // GH #753 development follow-up: the source and its references use linked
+  // keys, with the same navigation before and after editing the header.
+  const keyState = (selector) => browser.execute((scope) =>
+    [...document.querySelectorAll(`${scope} .prop-key`)].map(key => ({ text: key.textContent, linked: !!key.querySelector("a.page-ref") })), selector);
+  await openPageByName(browser, "Source");
+  await browser.$(".main-content .page-properties .prop-key a.page-ref").waitForDisplayed({ timeout: 15_000 });
+  const sourceKeys = await keyState(".main-content .page-properties");
+  if (sourceKeys.length !== 2 || sourceKeys.some(key => !key.linked)) throw new Error("GH753: source keys must be page links");
   await openPageByName(browser, "Queries");
   await visible(".main-content .query-block", true);
   proof.steps.push("configured bare page-property atom appears in rendered page-reference query");
   await openPageByName(browser, "Plugins");
   await visible(".main-content .linked-references", true);
+  if (JSON.stringify(await keyState(".main-content .linked-references .page-property-reference")) !== JSON.stringify(sourceKeys)) {
+    throw new Error("GH753: source and Linked References keys differ before editing");
+  }
   proof.steps.push("configured bare page-property atom appears in Linked References");
+  // GH #753: the literal report journey, followed by another group for Source.
+  // Compare the read-only property markup within this run, allowing the edited
+  // value to change. This checks renderer consistency without pinning a design.
+  const rowMarkup = () => browser.execute(() => {
+    const row = document.querySelector(".main-content .linked-references .page-property-reference .block-content");
+    return row?.innerHTML.replaceAll("val13", "val12") ?? null;
+  });
+  const before = await rowMarkup();
+  if (!before) throw new Error("GH753: missing initial page-property row");
+  await browser.$(".main-content .linked-references .page-property-reference-row:last-child .prop-value").click();
+  const editor = await browser.$(".main-content .linked-references textarea");
+  await editor.waitForDisplayed({ timeout: 10_000 });
+  await editor.click();
+  await browser.execute(() => {
+    const textarea = document.querySelector(".main-content .linked-references textarea");
+    const start = textarea.value.indexOf("val12");
+    if (start < 0) throw new Error("GH753: initial property value missing in editor");
+    textarea.setSelectionRange(start, start + "val12".length);
+  });
+  await browser.keys("val13");
+  await browser.$(".main-content .linked-references .reference-page").click();
+  await browser.waitUntil(() => fs.readFileSync(SOURCE, "utf8").includes("aad:: val13"), {
+    timeout: 15_000, timeoutMsg: "GH753: edited property was not saved to the source file",
+  });
+  await openPageByName(browser, "Plugins");
+  await visible(".main-content .linked-references", true);
+  await browser.waitUntil(async () => (await rowMarkup()) === before, {
+    timeout: 15_000, timeoutMsg: "GH753: property row changed appearance after clicking the group title",
+  });
+  await openPageByName(browser, "Witness");
+  await visible(".main-content .linked-references", true);
+  await browser.waitUntil(async () => (await rowMarkup()) === before, {
+    timeout: 15_000, timeoutMsg: "GH753: another group for Source changed appearance after editing",
+  });
+  proof.steps.push("GH753: click property, edit val12 to val13, click group title; same read-only markup on both targets and edit saved on disk");
+  if (JSON.stringify(await keyState(".main-content .linked-references .page-property-reference")) !== JSON.stringify(sourceKeys)) {
+    throw new Error("GH753: key links changed after editing");
+  }
+  await openPageByName(browser, "Source");
+  await browser.$(".main-content .page-properties .prop-key a.page-ref").waitForDisplayed({ timeout: 15_000 });
+  if (JSON.stringify(await keyState(".main-content .page-properties")) !== JSON.stringify(sourceKeys)) throw new Error("GH753: source keys changed after editing");
+  await browser.$(".main-content .page-properties .prop-row:last-child .prop-key a.page-ref").click();
+  await browser.waitUntil(async () => (await currentPageTitle(browser)).toLowerCase() === "aad", {
+    timeout: 15_000, timeoutMsg: "GH753: clicking the key did not open its page",
+  });
+  proof.steps.push("GH753: main-page and Linked References keys match before/after editing; clicking aad opens its page");
+  fs.writeFileSync(path.join(TMP, "gh753-after-edit-dom.html"), await browser.execute(() => document.body.innerHTML));
+  await openPageByName(browser, "Plugins");
+  await visible(".main-content .linked-references", true);
   // External delivery invalidates the cached projection and both read answers.
   fs.writeFileSync(SOURCE, "related:: Different，Witness\n\n- Body\n");
   await visible(".main-content .linked-references", false);
@@ -67,7 +128,9 @@ try {
 } catch (error) {
   proof.error = String(error);
   proof.classification = "ambiguous; inspect DOM and driver log";
-  if (browser) fs.writeFileSync(path.join(TMP, "failure-dom.html"), await browser.execute(() => document.body.innerHTML).catch(() => ""));
+  if (browser) {
+    fs.writeFileSync(path.join(TMP, "failure-dom.html"), await browser.execute(() => document.body.innerHTML).catch(() => ""));
+  }
   throw error;
 } finally {
   fs.writeFileSync(path.join(TMP, "proof.json"), `${JSON.stringify(proof, null, 2)}\n`);

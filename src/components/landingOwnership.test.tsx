@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 // og-G2 row #52 (master cdd0eda4b317, Harvest D): ported outcome tests.
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
@@ -162,7 +163,7 @@ describe("O3 asset landing after a graph switch (master Block.assetPaste.test.ts
       const file = new File([new Uint8Array([1])], "paste.png", { type: "image/png" });
       const ev = new Event("paste", { bubbles: true, cancelable: true });
       Object.defineProperty(ev, "clipboardData", { value: { getData: () => "", items: [{ kind: "file", type: "image/png", getAsFile: () => file }], types: ["Files"] } });
-      root.querySelector("textarea")!.dispatchEvent(ev);
+      maybeEditorIn(root)!.paste(ev);
       await settle();
       expect(backend().saveAsset).toHaveBeenCalledOnce();
       gen.value++;

@@ -16,8 +16,8 @@
 
 .comment-quote {
   display: flex;
-  gap: 8px;
-  align-items: baseline;
+  gap: 6px;
+  align-items: center;
   min-width: 0;
   padding: 3px 0 0 0;
   font-size: 12px;
@@ -25,6 +25,7 @@
   color: var(--text-muted);
 }
 .comment-quote-text {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -40,7 +41,11 @@
   border-left-color: var(--text-muted);
 }
 .comment-quote-stale {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  max-width: 35%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: 11px;
   padding: 0 6px;
   border-radius: 7px;
@@ -99,6 +104,85 @@
 .comment-handle {
   cursor: grab;
 }
+
+.comment-actions {
+  display: inline-flex;
+  align-items: center;
+}
+/* Root controls share the quote line. Reply controls float beside the first
+   body line, letting subsequent lines use the entire narrow margin. */
+.comment-first-line-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 65%;
+  flex: 0 1 auto;
+}
+.comment-first-line-controls > .author-chip {
+  float: none;
+  margin-left: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.comment-first-line-controls > .comment-actions { flex: 0 0 24px; }
+.comment-in-thread > .block-main > .block-content-wrapper > .comment-first-line-controls {
+  float: right;
+  margin-left: 6px;
+}
+.comment-in-thread > .block-main.editing > .block-content-wrapper > .comment-first-line-controls {
+  float: none;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+.comment-in-thread > .block-main.editing > .block-content-wrapper:has(> .comment-first-line-controls) {
+  position: relative;
+  padding-right: 24px;
+}
+.comment-in-thread > .block-main.editing .comment-first-line-controls > .author-chip { display: none; }
+.comment-composer { display: none; margin: 8px 0 2px; }
+.comment-card:hover > .comment-composer,
+.comment-card:focus-within > .comment-composer,
+.margin-thread.active > .comment-card > .comment-composer,
+.comment-composer.expanded { display: block; }
+.comment-reply-draft {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+}
+.comment-composer-footer { margin-top: 6px; }
+.comment-composer-footer button { font: inherit; font-size: 12px; cursor: pointer; }
+.comment-actions button {
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  min-height: 24px;
+  min-width: 24px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.comment-actions button:hover,
+.comment-actions button:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+/* The selection toolbar normally holds icon-width formatting actions. */
+.sel-toolbar [data-selection-action="comment"] { flex-shrink: 0; }
 
 /* The passage a comment quotes, inside the parent's text. */
 .comment-quote-anchor {

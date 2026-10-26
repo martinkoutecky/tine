@@ -25,6 +25,7 @@ import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
 import {
   openJournals,
+  openAllGraphs,
   openQueryInNewTab,
   openPage,
   goBack,
@@ -316,6 +317,7 @@ const COMMANDS: CommandDef[] = [
   { id: "ui/toggle-devtools", binding: "mod+shift+j", label: msg("command-ui-toggle-devtools"), scope: "global", run: openDevtools, global: true },
   { id: "ui/toggle-custom-css", binding: "", label: msg("command-ui-toggle-custom-css"), scope: "global", run: () => setCustomCssDisabled(!customCssDisabled()), global: true },
   { id: "go/journals", binding: "g j", label: msg("command-go-journals"), scope: "global", run: openJournals },
+  { id: "go/all-graphs", binding: "g shift+g", label: msg("command-go-all-graphs"), scope: "global", run: openAllGraphs },
   { id: "go/home", binding: "g h", label: msg("command-go-home"), scope: "global", run: goHome },
   { id: "go/journal-next", binding: "g n", label: msg("command-go-journal-next"), scope: "global", run: () => goAdjacentJournal(1) },
   { id: "go/journal-prev", binding: "g p", label: msg("command-go-journal-prev"), scope: "global", run: () => goAdjacentJournal(-1) },
@@ -389,7 +391,7 @@ const COMMANDS: CommandDef[] = [
   { id: "ui/toggle-brackets", binding: "mod+c mod+b", label: msg("command-ui-toggle-brackets"), scope: "global", run: () => changeShowBrackets(!showBrackets()), global: true },
   { id: "ui/toggle-left-sidebar", binding: "t l", label: msg("command-ui-toggle-left-sidebar"), scope: "global", run: toggleSidebar },
   { id: "ui/toggle-right-sidebar", binding: "t r", label: msg("command-ui-toggle-right-sidebar"), scope: "global", run: toggleRightSidebar },
-  { id: "ui/open-settings", binding: "t s", label: msg("command-ui-open-settings"), scope: "global", run: openSettings },
+  { id: "ui/open-settings", binding: "t s", alias: "mod+,", label: msg("command-ui-open-settings"), scope: "global", run: openSettings },
   { id: "appearance/edit-custom-css", binding: "", label: msg("command-appearance-edit-custom-css"), scope: "global", run: () => void openCssEditor(false) },
   { id: "appearance/edit-global-css", binding: "", label: msg("command-appearance-edit-global-css"), scope: "global", run: () => void openCssEditor(true) },
   { id: "graph/export-html", binding: "", label: msg("command-graph-export-html"), scope: "global", run: () => openSettings("graph") },
@@ -479,6 +481,7 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/strike-through", binding: "mod+shift+s", label: msg("command-editor-strike-through"), scope: "editor" },
   { id: "editor/highlight", binding: "mod+shift+h", label: msg("command-editor-highlight"), scope: "editor" },
   { id: "editor/insert-link", binding: "mod+l", label: msg("command-editor-insert-link"), scope: "editor" },
+  { id: "editor/insert-youtube-timestamp", binding: "mod+shift+y", label: msg("command-editor-insert-youtube-timestamp"), scope: "editor" },
   // Margin dialogue (vision §3.7): a child comment quoting the selected text.
   // Consumed in the editor, so it never reaches the webview's reload.
   { id: "editor/comment", binding: "mod+r", label: msg("command-editor-comment"), scope: "editor" },

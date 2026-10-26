@@ -62,7 +62,13 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// 17 (card yzhAbnbE): a memoized plan carries `top_level_only`, and an
 /// advanced query with `:remove-block-children? false` now lists every match; its
 /// memo key (the unchanged source text) held the top-level-only answer.
-pub(crate) const FORMAT: u32 = 17;
+/// 18 (store fresh parity): live duplicate-day journal strays no longer
+/// contribute query/backlink rows. Discard older disposable indexes that may
+/// contain those rows; the serialized shape and graph files are unchanged.
+/// 19 (HB4 / HI1): exact block owners, serialized in load-time runtime-id
+/// space by the idle writer and decoded directly on warm launch. Page-grouped
+/// binary runtime UUIDs keep this one development format bump compact.
+pub(crate) const FORMAT: u32 = 19;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";
@@ -551,7 +557,9 @@ impl ChangeFeed {
             folds_only: false,
         };
         // The first publication carries every answer, as a cold one does.
-        snapshot.answers = snapshot.answer_changes(None, &[], true);
+        let (inventory, counts) = snapshot.answer_changes(None, &[], true);
+        let summary = snapshot.change_summary(None, &[], true, inventory, None, &[], &[]);
+        snapshot.answers = (inventory, counts, summary);
         let change = Change {
             graph_rev: snapshot.rev,
             origin: Origin::External,

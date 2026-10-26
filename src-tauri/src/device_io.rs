@@ -499,3 +499,16 @@ pub(crate) fn publish_directory_entry(from: &Path, to: &Path) -> io::Result<()> 
 fn sync_dir(dir: &Path) -> io::Result<()> {
     tine_store::directory_durability::sync_directory_entry(dir)
 }
+
+/// App-data renames need a strong witness. Reuse Store's public witness
+/// primitive without exposing its internal draft-directory helper: graph saves
+/// may tolerate Unsupported, while an app-data relocation reports it.
+pub(crate) fn sync_private_directory(dir: &Path) -> io::Result<()> {
+    match directory_durability::sync_directory_witness(dir)? {
+        directory_durability::DirectoryWitness::Durable => Ok(()),
+        directory_durability::DirectoryWitness::Unsupported => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "device directory sync has no durability witness",
+        )),
+    }
+}

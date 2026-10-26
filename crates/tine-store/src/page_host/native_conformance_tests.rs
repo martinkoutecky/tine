@@ -10,6 +10,81 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+/// Replay the model's phase-boundary root schedules on real directories. The
+/// model's interior mkdir schedules are separately pinned by bounded-creation
+/// tests: the production filesystem has no general syscall scheduler.
+#[test]
+fn l9_native_and_model_refuse_the_same_detached_root_phases() {
+    for replaced in [false, true] {
+        if replaced && cfg!(target_os = "android") {
+            continue; // The Android fallback does not claim replacement identity.
+        }
+        for phase in [
+            Phase::Read,
+            Phase::PageTemp,
+            Phase::PageRename,
+            Phase::PageSync,
+            Phase::TrashMove,
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let graph = temp.path().join("graph");
+            fs::create_dir(&graph).unwrap();
+            fs::write(graph.join("a.md"), b"original").unwrap();
+            let mut native = ProductionIo::attach(
+                &graph,
+                &temp.path().join("app"),
+                "native",
+                &graph.join("logseq/.tine-trash/pages"),
+            );
+            let mut model = ModelFs::default();
+            model.external("a.md", Some(Arc::from(&b"original"[..])), true);
+            if phase == Phase::PageRename {
+                native
+                    .page_temp("a.md", &Some(Arc::from(&b"typed"[..])))
+                    .unwrap();
+                model
+                    .page_temp("a.md", &Some(Arc::from(&b"typed"[..])))
+                    .unwrap();
+            }
+            fs::rename(&graph, temp.path().join("moved")).unwrap();
+            if replaced {
+                fs::create_dir(&graph).unwrap();
+            }
+            model.inject(
+                phase,
+                [if replaced {
+                    Fault::RootReplaced(0)
+                } else {
+                    Fault::RootGone(0)
+                }],
+            );
+            let exercise = |fs: &mut dyn HostIo| -> IoResult<()> {
+                match phase {
+                    Phase::Read => fs.read_page("a.md").map(|_| ()),
+                    Phase::PageTemp => fs.page_temp("a.md", &Some(Arc::from(&b"typed"[..]))),
+                    Phase::PageRename => fs.page_rename("a.md"),
+                    Phase::PageSync => fs.page_sync("a.md").map(|_| ()),
+                    Phase::TrashMove => fs.trash_move("a.md", "payload").result,
+                    _ => unreachable!(),
+                }
+            };
+            assert_eq!(
+                exercise(&mut native).unwrap_err().operation,
+                Some("GraphRootMoved")
+            );
+            assert_eq!(
+                exercise(&mut model).unwrap_err().operation,
+                Some("GraphRootMoved")
+            );
+            assert_eq!(
+                fs::read(temp.path().join("moved/a.md")).unwrap(),
+                b"original"
+            );
+            assert!(!graph.join("a.md").exists());
+        }
+    }
+}
+
 struct NativeFs {
     root: tempfile::TempDir,
     graph: PathBuf,
@@ -477,6 +552,53 @@ const NATIVE_REFINEMENTS: &[&str] = &[
     "weak/ownSlotClaimAfterAdmission:twin-saveFail-refinement",
     "all/ownSlotClaimAfterAdmission:twin-saveFail-refinement",
 ];
+
+/// F8: native API/file ordering at each existing temp/rename/sync fault seam.
+/// This proves retry and readable whole bytes against ModelFs's independent
+/// physical ledger. It makes no claim about losing the machine's page cache.
+#[test]
+fn native_temp_rename_sync_faults_preserve_whole_bytes_and_retry() {
+    for phase in [Phase::PageTemp, Phase::PageRename, Phase::PageSync] {
+        let mut fs = NativeFs::fresh("base", 3);
+        let page = key(0);
+        let old = fs.read_page(&page).unwrap();
+        let new = text(3);
+        fs.ledger.inject(phase, [Fault::Before]);
+        let result = match phase {
+            Phase::PageTemp => fs.page_temp(&page, &new),
+            Phase::PageRename => {
+                fs.page_temp(&page, &new).unwrap();
+                fs.page_rename(&page)
+            }
+            Phase::PageSync => {
+                fs.page_temp(&page, &new).unwrap();
+                fs.page_rename(&page).unwrap();
+                fs.page_sync(&page).map(|_| ())
+            }
+            _ => unreachable!(),
+        };
+        assert!(
+            result.is_err(),
+            "native phase {phase:?} must report its injected failure"
+        );
+        assert_eq!(
+            fs.read_page(&page).unwrap(),
+            if phase == Phase::PageSync {
+                new.clone()
+            } else {
+                old
+            }
+        );
+        // Repeating from preparation is safe after any of the three errors.
+        fs.page_temp(&page, &new).unwrap();
+        fs.page_rename(&page).unwrap();
+        fs.page_sync(&page).unwrap();
+        fs.page_finish(&page);
+        fs.crash(); // adapter reattach, explicitly not an OS process kill
+        assert_eq!(fs.read_page(&page).unwrap(), new);
+    }
+    eprintln!("F8 native faults: temp=1 rename=1 sync=1, retry=3");
+}
 
 #[test]
 fn s35_native_creation_positive_control() {

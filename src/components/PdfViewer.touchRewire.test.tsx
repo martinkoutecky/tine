@@ -114,6 +114,75 @@ const swatches = (host: HTMLElement) => host.querySelectorAll(".pdf-color-swatch
 const selectionChangeListeners = (spy: ReturnType<typeof vi.spyOn>) =>
   spy.mock.calls.filter(([type]) => type === "selectionchange").map(([, fn]) => fn);
 
+function touchEvent(el: Element, type: string, points: [number, number, number][]) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "touches", { value: points.map(([identifier, clientX, clientY]) =>
+    ({ identifier, clientX, clientY })) });
+  el.dispatchEvent(event);
+  return event;
+}
+
+it("previews a touch pinch without rasterizing, then commits exactly one shared zoom", async () => {
+  const { host, dispose } = await mountViewer();
+  try {
+    const scroll = host.querySelector<HTMLElement>(".pdf-scroll")!;
+    const page = host.querySelector<HTMLElement>(".pdf-page")!;
+    vi.spyOn(page, "getBoundingClientRect").mockImplementation(() => {
+      const scale = Number(scroll.style.getPropertyValue("--scale-factor"));
+      return { left: 20 - scroll.scrollLeft, top: 40 - scroll.scrollTop, width: 612 * scale,
+        height: 792 * scale, right: 20 - scroll.scrollLeft + 612 * scale,
+        bottom: 40 - scroll.scrollTop + 792 * scale } as DOMRect;
+    });
+    const doc = await getDocumentMock.mock.results[0].value.promise;
+    const pdfPage = await doc.getPage(1);
+    const renders = pdfPage.render.mock.calls.length;
+    const before = host.querySelector(".pdf-zoom-level")!.textContent;
+    touchEvent(scroll, "touchstart", [[1, 100, 100]]);
+    const start = touchEvent(scroll, "touchstart", [[1, 100, 100], [2, 200, 100]]);
+    expect(start.defaultPrevented).toBe(true);
+    touchEvent(scroll, "touchmove", [[1, 60, 110], [2, 260, 110]]);
+    expect(page.style.transform).toContain("scale(2)");
+    expect(page.style.transform).toContain("translate(10px, 10px)");
+    expect(host.querySelector(".pdf-zoom-level")!.textContent).toBe(before);
+    expect(pdfPage.render).toHaveBeenCalledTimes(renders);
+    touchEvent(scroll, "touchend", [[1, 50, 100]]);
+    await flush();
+    expect(host.querySelector(".pdf-zoom-level")!.textContent).toContain("200%");
+    expect(page.style.transform).toBe("");
+    expect(scroll.scrollLeft).toBeCloseTo(120);
+    expect(scroll.scrollTop).toBeCloseTo(50);
+    touchEvent(scroll, "touchend", []);
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    await flush();
+    expect(pdfPage.render).toHaveBeenCalledTimes(renders + 1);
+  } finally { dispose(); }
+});
+
+it("cancels a pinch and suppresses its selection, while the next one-finger selection still works", async () => {
+  setTouchInput(false, true);
+  const { host, dispose } = await mountViewer();
+  try {
+    const span = selectPdfText(host);
+    const scroll = host.querySelector<HTMLElement>(".pdf-scroll")!;
+    const before = host.querySelector(".pdf-zoom-level")!.textContent;
+    touchEvent(span, "touchstart", [[1, 100, 100], [2, 200, 100]]);
+    touchEvent(span, "touchmove", [[1, 50, 100], [2, 250, 100]]);
+    document.dispatchEvent(new Event("selectionchange"));
+    await settle();
+    expect(swatches(host)).toBe(0);
+    touchEvent(span, "touchcancel", []);
+    touchEvent(span, "touchend", []);
+    await settle();
+    expect(host.querySelector(".pdf-zoom-level")!.textContent).toBe(before);
+    expect(swatches(host)).toBe(0);
+    expect(scroll.classList.contains("pdf-pinching")).toBe(false);
+    expect(touchEvent(span, "touchstart", [[3, 100, 100]]).defaultPrevented).toBe(false);
+    touchEvent(span, "touchend", []);
+    await flush();
+    expect(swatches(host)).toBe(5);
+  } finally { dispose(); }
+});
+
 describe("PDF touch selection follows the input capability (D-20261018-W1 review r1)", () => {
   it("offers the highlight colours once a touch input appears after the PDF opened", async () => {
     const { host, dispose } = await mountViewer();

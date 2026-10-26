@@ -22,23 +22,26 @@ import { isMac } from "../nativeChrome";
 import { touchCapable } from "../inputCapability";
 import { pdfTakesOverPane } from "../viewportClass";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
-import { createPdfHighlightState } from "./pdfHighlightState";
+import { acquirePdfHighlightState } from "./pdfHighlightState";
+import { acquirePdfDocument, type OpenPdfDocument } from "./pdfDocumentShare";
 import { pdfTextSelection, type PdfTextSelection } from "./pdfSelection";
 import { createPdfFind } from "./pdfFind";
 import { createPdfTiles, PDF_TILE_PIXEL_BUDGET } from "./pdfTiles";
 import { pdfProbe } from "./pdfProbe";
+import { createPdfPinch } from "./pdfPinch";
 import { createWheelZoomAccumulator, highestPriorityPage, PDF_PREFETCH_PAGES, PDF_ZOOM_SETTLE_MS } from "./pdfRenderQueue";
 import { COLOR_RGB, COLOR_RGBA, type PdfTheme } from "./pdfViewerPalette";
 export { PDF_FIND_TEXT_CACHE_BYTES, PDF_FIND_PAGE_TEXT_BYTES, PDF_FIND_MATCH_CAP } from "./pdfFind";
 import {
   isPdfOwnershipCurrent,
+  pdfOwnershipKey,
   drainPdfWork,
   registerPdfParticipant,
   trackPdfMutation,
   type PdfOwnership,
 } from "../pdfOwnership";
 import { PDF_THEME_KEY, MAX_PDF_BYTES, MAX_PDF_PAGES, PDF_CANVAS_CACHE_PIXEL_BUDGET,
-  PDF_CANVAS_CACHE_PAGE_CAP, storedPdfTheme, isPdfPageRef, discardPdfDocument,
+  PDF_CANVAS_CACHE_PAGE_CAP, storedPdfTheme, isPdfPageRef,
   isPdfAreaModifier, pageDimensionsError, safeCanvasSize, cropPdfArea,
   errorMessage, type PendingArea, type PdfTarget } from "./pdfViewerPrimitives";
 import { newIntersectionObserver, requestFrame, useOwnerWindow } from "../windowRealm";
@@ -63,6 +66,7 @@ export function PdfViewer(props: {
   onClose?: () => void;
   onOpenNotes?: (block?: string) => void;
   onViewState?: (state: { page: number; scale: number }) => void;
+  onAnotherView?: (state: { page: number; scale: number }) => void;
 }): JSX.Element {
   const owner = props.owner, binding = captureBinding();
   // The Tine window this viewer renders in: its listeners and frames live there.
@@ -117,6 +121,8 @@ export function PdfViewer(props: {
   let pending: PdfTextSelection | null = null;
   let pendingArea: PendingArea | null = null;
   let pdfDoc: pdfjs.PDFDocumentProxy | null = null;
+  // This view's hold on the document it shares with its siblings.
+  let releaseDocument = () => {};
   let disposed = false;
   let activeHighlightId: string | undefined;
 
@@ -191,6 +197,8 @@ export function PdfViewer(props: {
   // Client point a pending scale change keeps fixed (pointer for Ctrl+wheel,
   // top-centre of the view for keys and buttons); consumed by onZoom.
   let zoomOrigin: { x: number; y: number } | null = null;
+  let pinchAnchor: ReturnType<typeof zoomAnchorAt> = null;
+  let committedPinchAnchor: ReturnType<typeof zoomAnchorAt> = null;
   // Render queue (pdf.js PDFRenderingQueue): one page paints at a time. Every
   // render's 15 ms chunk asks `mayContinue`; a render that lost priority parks
   // its continuation in `pausedRenders` and resumes when it is highest again.
@@ -275,13 +283,16 @@ export function PdfViewer(props: {
     });
   }
 
-  const highlightState = createPdfHighlightState({
+  // Shared with every other mounted view of this PDF; this view lends its page
+  // geometry for writes once its document has loaded.
+  const highlightLease = acquirePdfHighlightState({
     filename: props.filename,
     label: props.label,
     backendGeneration: binding.backendGeneration,
     owner,
-    prepare: highlightsForWrite,
   });
+  const highlightState = highlightLease.state;
+  let detachHighlightPrepare = () => {};
   const highlights = highlightState.highlights;
   const unsavedHighlights = highlightState.unsaved;
   const highlightConflict = highlightState.conflict;
@@ -350,6 +361,7 @@ export function PdfViewer(props: {
   };
 
   function failPdf(message: string) {
+    detachHighlightPrepare(); // a failed document lends no geometry to siblings
     if (loadError()) return;
     io?.disconnect();
     io = null;
@@ -363,7 +375,7 @@ export function PdfViewer(props: {
       delete tasks[Number(k)];
     }
     scrollRef?.replaceChildren();
-    if (pdfDoc) discardPdfDocument(pdfDoc);
+    releaseDocument();
     pdfDoc = null;
     setLoadError(message);
   }
@@ -1020,7 +1032,8 @@ export function PdfViewer(props: {
     const view = scrollRef.getBoundingClientRect();
     const origin = zoomOrigin ?? { x: view.left + view.width / 2, y: view.top };
     zoomOrigin = null;
-    const anchor = zoomAnchorAt(origin);
+    const anchor = committedPinchAnchor ?? zoomAnchorAt(origin);
+    committedPinchAnchor = null;
     zoomSettling = true;
     pdfProbe({ type: "zoom-input", page: 0, scale: s });
     highestPriority = null;
@@ -1054,6 +1067,8 @@ export function PdfViewer(props: {
 
   function cancelOwnedWork() {
     disposed = true;
+    if (!pdfDoc) releaseDocument(); // a load still under way stops with its last view
+    pinch.cancel();
     pdfTiles.reset();
     latestOwner(viewerRequests, "navigation");
     io?.disconnect();
@@ -1075,6 +1090,35 @@ export function PdfViewer(props: {
 
   let unregisterPdfParticipant = () => {};
 
+  // Reads and parses the PDF once for every view of it in this graph binding;
+  // owned by the binding, not by this view, since a sibling may outlive it.
+  const openSharedDocument: OpenPdfDocument = async (adopt) => {
+    // The binding, not the display epoch: a repaint must not fail a load a
+    // sibling view is about to join.
+    const loadOwner = bindingOwner(() => isPdfOwnershipCurrent(owner));
+    let bytes: Uint8Array;
+    try {
+      const result = await readOwned(loadOwner, backend().readAsset(props.filename, MAX_PDF_BYTES));
+      if (result.kind === "stale") return { kind: "error", message: "This graph was closed while the PDF was loading." };
+      bytes = result.value;
+    } catch (err) {
+      return { kind: "error", message: errorFamily(err) === "asset-too-large"
+        ? "This PDF is larger than 256 MiB and can't be opened safely."
+        : errorMessage("Couldn't read this PDF asset", err) };
+    }
+    if (!bytes.length) return { kind: "error", message: "Couldn't read this PDF asset: file is empty" };
+    if (bytes.byteLength > MAX_PDF_BYTES) return { kind: "error", message: "This PDF is larger than 256 MiB and can't be opened safely." };
+    const task = pdfjs.getDocument({ data: bytes });
+    adopt.task(task);
+    try {
+      const doc = await task.promise;
+      adopt.document(doc);
+      return { kind: "ok", doc };
+    } catch (err) {
+      return { kind: "error", message: errorMessage("Couldn't load this PDF", err) };
+    }
+  };
+
   onMount(async () => {
     const loadOwner = graphOwner(() => !disposed && isPdfOwnershipCurrent(owner));
     setLoadError(null);
@@ -1084,49 +1128,30 @@ export function PdfViewer(props: {
       const result = await readOwned(loadOwner, backend().openPdf(props.filename, props.label, binding.backendGeneration));
       if (result.kind === "stale") return;
       const state = result.value;
-      highlightState.load(state.highlights);
+      highlightState.loadInitial(state.highlights);
       restoredPage = state.page;
       restoredScale = state.scale;
     } catch (error) {
       if (!loadOwner()) return;
-      highlightState.load([]);
+      // Seed nothing: a sibling view's successful read must still win.
       pushToast(msg("pdf-couldn-t-load-pdf-annotations", { detail: String(error) }), "error");
     }
-    let bytes: Uint8Array;
-    try {
-      const result = await readOwned(loadOwner, backend().readAsset(props.filename, MAX_PDF_BYTES));
-      if (result.kind === "stale") return;
-      bytes = result.value;
-    } catch (err) {
-      if (!loadOwner()) return;
-      if (errorFamily(err) === "asset-too-large")
-        failPdf("This PDF is larger than 256 MiB and can't be opened safely.");
-      else failPdf(errorMessage("Couldn't read this PDF asset", err));
+    const shared = acquirePdfDocument(
+      `${pdfOwnershipKey(owner)}\0${binding.backendGeneration}\0${props.filename}`, openSharedDocument);
+    releaseDocument = shared.release;
+    if (disposed) { releaseDocument(); return; }
+    const opened = await shared.loaded;
+    if (!loadOwner()) return;
+    if (opened.kind === "error") {
+      failPdf(opened.message);
       return;
     }
-    if (!bytes.length) {
-      failPdf("Couldn't read this PDF asset: file is empty");
-      return;
-    }
-    if (bytes.byteLength > MAX_PDF_BYTES) {
-      failPdf("This PDF is larger than 256 MiB and can't be opened safely.");
-      return;
-    }
-    try {
-      const loaded = await pdfjs.getDocument({ data: bytes }).promise;
-      if (disposed) {
-        discardPdfDocument(loaded);
-        return;
-      }
-      pdfDoc = loaded;
-    } catch (err) {
-      failPdf(errorMessage("Couldn't load this PDF", err));
-      return;
-    }
+    pdfDoc = opened.doc;
     if (!Number.isSafeInteger(pdfDoc.numPages) || pdfDoc.numPages < 1 || pdfDoc.numPages > MAX_PDF_PAGES) {
       failPdf(`This PDF reports an unsafe page count (${pdfDoc.numPages}); at most ${MAX_PDF_PAGES} pages can be displayed.`);
       return;
     }
+    detachHighlightPrepare = highlightState.attachPrepare(highlightsForWrite);
     // Outline parsing can be slow on large PDFs. Start it once per document,
     // but never await it on the page-one/layout path that controls first paint.
     void loadOutline(pdfDoc);
@@ -1169,13 +1194,15 @@ export function PdfViewer(props: {
   onCleanup(() => {
     unregisterPdfParticipant();
     cancelOwnedWork();
+    detachHighlightPrepare();
+    highlightLease.release();
     setOutlineOpen(false);
     setSettingsOpen(false);
     setOutlineItems([]);
     setOutlineReady(false);
     setExpandedOutlineIds(new Set<string>());
     releaseAllCanvases();
-    if (pdfDoc) discardPdfDocument(pdfDoc);
+    releaseDocument();
     pdfDoc = null;
   });
 
@@ -1269,6 +1296,75 @@ export function PdfViewer(props: {
     setScale(next);
   };
 
+  let pinchPages: { el: HTMLDivElement; left: number; top: number }[] = [];
+  const pinch = createPdfPinch({
+    scale,
+    start(origin) {
+      pendingHighlight = null;
+      pending = null;
+      closeHighlightMenu();
+      areaDrag?.band.remove();
+      areaDrag = null;
+      ownerWindow.removeEventListener("mousemove", onAreaMove);
+      ownerWindow.removeEventListener("mouseup", onAreaUp);
+      ownerWindow.getSelection()?.removeAllRanges();
+      pinchAnchor = zoomAnchorAt(origin);
+      clearTimeout(zoomTimer);
+      zoomSettling = true;
+      pinchPages = [...new Set([...lru, ...visible])].flatMap((n) => {
+        const el = pageEls[n];
+        if (!el) return [];
+        const rect = el.getBoundingClientRect();
+        return [{ el, left: rect.left, top: rect.top }];
+      });
+      scrollRef.classList.add("pdf-pinching");
+    },
+    preview({ factor, origin, midpoint }) {
+      for (const { el, left, top } of pinchPages) {
+        el.style.transformOrigin = `${origin.x - left}px ${origin.y - top}px`;
+        el.style.transform = `translate(${midpoint.x - origin.x}px, ${midpoint.y - origin.y}px) scale(${factor})`;
+      }
+    },
+    finish(value) {
+      for (const { el } of pinchPages) {
+        el.style.transform = "";
+        el.style.transformOrigin = "";
+      }
+      pinchPages = [];
+      scrollRef?.classList.remove("pdf-pinching");
+      if (value && !disposed) {
+        committedPinchAnchor = pinchAnchor ? { ...pinchAnchor, x: value.midpoint.x, y: value.midpoint.y } : null;
+        const previous = scale();
+        zoomBy(value.scale / previous, value.midpoint);
+        // A midpoint translation can finish at the same scale.
+        if (scale() === previous) onZoom();
+      } else if (!disposed) settleZoom();
+      pinchAnchor = null;
+    },
+  });
+  onMount(() => {
+    const el = scrollRef;
+    const listeners = (["touchstart", "touchmove", "touchend", "touchcancel"] as const).map((type) => {
+      const listener = (event: TouchEvent) => {
+        if (!ready() || disposed) return;
+        const phase = type === "touchstart" ? "start" : type === "touchmove" ? "move" : type === "touchend" ? "end" : "cancel";
+        if (pinch.update(Array.from(event.touches), phase)) event.preventDefault();
+      };
+      el.addEventListener(type, listener, { passive: false });
+      return { type, listener };
+    });
+    const suppressActivation = (event: Event) => {
+      if (pinch.suppressed()) { event.preventDefault(); event.stopImmediatePropagation(); }
+    };
+    el.addEventListener("click", suppressActivation, true);
+    el.addEventListener("contextmenu", suppressActivation, true);
+    onCleanup(() => {
+      for (const { type, listener } of listeners) el.removeEventListener(type, listener);
+      el.removeEventListener("click", suppressActivation, true);
+      el.removeEventListener("contextmenu", suppressActivation, true);
+    });
+  });
+
   // Ctrl/Cmd + wheel zooms around the pointer (like a PDF reader): wheel notches
   // and pixel deltas accumulate into ×1.1 steps, a trackpad pinch into a
   // continuous factor; modifier-added momentum tails are only consumed.
@@ -1309,6 +1405,9 @@ export function PdfViewer(props: {
   const onKeyZoom = (e: KeyboardEvent) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
     if (shortcutKey(e) === "f") {
+      // With a PDF pane focused, only that view searches (two views of one PDF
+      // are common now); otherwise every open reader keeps its old behavior.
+      if (props.focused && !props.focused() && focusedRouter().route().kind === "pdf") return;
       e.preventDefault();
       openFind();
       return;
@@ -1333,7 +1432,7 @@ export function PdfViewer(props: {
   });
 
   const captureTextSelection = (target: EventTarget | null, anchor?: { x: number; y: number }) => {
-    if (areaMode() || areaDrag) return;
+    if (areaMode() || areaDrag || pinch.suppressed()) return;
     pendingArea = null;
     const selected = pdfTextSelection(target, anchor, dims, scale());
     if (!selected) { setMenu(null); return; }
@@ -1495,7 +1594,9 @@ export function PdfViewer(props: {
 
   const createAreaHighlight = async (color: string) => {
     try {
-      await trackPdfMutation(owner, () => createAreaHighlightOwned(color));
+      // Held from the crop on: closing the last view while the image saves
+      // must not drop the session its highlight is about to join.
+      await highlightState.hold(() => trackPdfMutation(owner, () => createAreaHighlightOwned(color)));
     } catch {
       // Ownership retirement cancels a not-yet-started area mutation.  It must
       // not be retried after another graph is bound.
@@ -1696,7 +1797,7 @@ export function PdfViewer(props: {
   });
 
   unregisterPdfParticipant = registerPdfParticipant(owner, {
-    flush: async () => !highlightState.drainBlocked() && (!unsavedHighlights() || await persist()),
+    flush: highlightState.flush,
     cancel: cancelOwnedWork,
   });
 

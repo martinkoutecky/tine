@@ -1,6 +1,7 @@
 import { createMemo, createResource, onCleanup, untrack, type Accessor, type Resource } from "solid-js";
 import { editingId } from "./editorController";
-import { dataRev, graphEpoch } from "./graphSession";
+import { graphEpoch } from "./graphSession";
+import { changed } from "./changeKeys";
 import { node as docNode, isConflicted, isDirty, isSaving, pendingDataRevision } from "./document";
 import { graphOwner, readOwned } from "./owned";
 import { readOr, readLatestOr } from "./resourceRead";
@@ -30,6 +31,8 @@ export function createMembershipResource<S, T>(
   contains: (value: T, id: string) => boolean,
   invalidate: Accessor<boolean> = () => true,
   guardResults = false,
+  // An unclassified caller must conservatively refresh on every publication.
+  revisionSource: Accessor<unknown> = () => changed("publication"),
 ) {
   let snapshot: T | undefined;
   let scope = "";
@@ -38,14 +41,14 @@ export function createMembershipResource<S, T>(
   let release = 0;
   let alive = true;
   let resolvedScope = "";
-  let answered: { input: S | undefined | null | false; scope: string; revision: number; epoch: number; release: number; guarded: boolean } | undefined;
+  let answered: { input: S | undefined | null | false; scope: string; revision: unknown; epoch: number; release: number; guarded: boolean } | undefined;
   onCleanup(() => { alive = false; });
   const inputs = createMemo(source);
   const currentScope = () => `${bindingIdentity()}\0${graphEpoch()}\0${identity()}`;
   const request = createMemo(() => {
     const nextScope = currentScope();
     const input = inputs();
-    const revision = invalidate() ? dataRev() : 0;
+    const revision = invalidate() ? revisionSource() : 0;
     // A suppressed (collapsed) read is display-only: never stamped, so never acted on.
     const guarded = guardResults && invalidate();
     const epoch = guarded ? resultsEpoch() : 0;

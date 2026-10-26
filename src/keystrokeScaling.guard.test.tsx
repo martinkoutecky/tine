@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "./tests/editorDriver";
 // Keystroke-scaling guard (sweep after GH #248). See keystrokeProbe.test.support.ts
 // for what is measured. For each editing surface this mounts the surface on a
 // small and a large page, performs single-character edits on one node, and
@@ -645,12 +646,12 @@ async function edit(m: Mounted, via: "setDoc" | "input"): Promise<Measurement> {
     const base = doc.byId[id].raw.replace(/ ?~\d+$/, "");
     return measure(id, () => setDoc("byId", id, "raw", `${base} ~${++seq}`));
   }
-  const ta = document.querySelector<HTMLTextAreaElement>("textarea.block-editor");
+  const ta = maybeEditorIn(document);
   if (!ta) throw new Error("no editor textarea");
   return measure(id, () => {
-    ta.value = ta.value + "x";
-    ta.setSelectionRange(ta.value.length, ta.value.length);
-    ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "x" }));
+    ta.replaceText(ta.value() + "x");
+    ta.select(ta.value().length, ta.value().length);
+    ta.reportInput({ bubbles: true, inputType: "insertText", data: "x" });
   });
 }
 
@@ -667,7 +668,7 @@ async function run(surface: Surface, n: number, via: "setDoc" | "input") {
         content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
         content.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
       } else startEditing(m.editId, 0);
-      await vi.waitFor(() => expect(document.querySelector("textarea.block-editor")).not.toBeNull());
+      await vi.waitFor(() => expect(maybeEditorIn(document)).not.toBeNull());
     }
     const first = await edit(m, via);
     const steady: Measurement[] = [];

@@ -15,6 +15,16 @@ async function tauriBackend() {
 
 const phases = () => invoke.mock.calls.filter(([cmd]) => cmd === "diagnostic_ipc_event").map(([, args]) => args);
 
+it("sends the same bounded renderer snapshot through copy and save export paths", async () => {
+  invoke.mockResolvedValue(null);
+  const backend = await tauriBackend();
+  await backend.diagnosticReport("abc", "time");
+  await backend.saveDiagnosticReport("abc", "time");
+  for (const command of ["diagnostic_report", "save_diagnostic_report"]) {
+    expect(invoke).toHaveBeenCalledWith(command, { buildCommit: "abc", buildTime: "time", renderer: { capacity: 32, thresholdMs: 100, supported: [], stalls: [] } });
+  }
+});
+
 it("records a slow command when it crosses the threshold and again when it completes", async () => {
   let finish!: (value: unknown) => void;
   invoke.mockImplementation((cmd: string) => cmd === "inspect_graph_access"

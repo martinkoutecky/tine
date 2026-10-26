@@ -3,7 +3,8 @@ import { stepMonth } from "./primitives";
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { openPage } from "../router";
 import { journalTitle, appNow } from "../journal";
-import { dataRev, graphEpoch } from "../graphSession";
+import { graphEpoch } from "../graphSession";
+import { changed } from "../changeKeys";
 import { firstDayOfWeek } from "../ui";
 import { backend } from "../backend";
 import { graphOwner, readOwned } from "../owned";
@@ -63,9 +64,9 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
     view().y === today().getFullYear() && view().m === today().getMonth() && d === today().getDate();
 
   // Journal days that have content, fetched while the popup is open (re-fetched
-  // on dataRev so adding content updates the dots). yyyymmdd keys, month 1-based.
+  // on journal content changes). yyyymmdd keys, month 1-based.
   const [contentDaysResource] = createResource(
-    () => (open() ? { rev: dataRev(), epoch: graphEpoch() } : null),
+    () => (open() ? { rev: changed("journals"), epoch: graphEpoch() } : null),
     async () => {
       const owner = graphOwner();
       const epoch = graphEpoch();

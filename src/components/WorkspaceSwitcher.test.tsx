@@ -107,7 +107,7 @@ describe("WorkspaceSwitcher", () => {
     const root = host.querySelector<HTMLElement>('[data-workspace-switcher-compact="true"]')!;
     expect(root.querySelector(".workspace-switcher-name")).toBeNull();
     expect(root.querySelector(".workspace-switcher-mark")?.textContent).toBe("W");
-    expect(root.querySelector(".workspace-switcher-caret")?.textContent).toBe("▾");
+    expect(root.querySelector(".workspace-switcher-caret svg")).not.toBeNull();
   });
 
   it("offers hover quick-switch and a click menu with new, rename, and confirmed delete actions", async () => {

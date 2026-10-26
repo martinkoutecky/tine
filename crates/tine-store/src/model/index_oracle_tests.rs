@@ -7,16 +7,53 @@
 //! in hash order; neither order carries meaning.
 use super::*;
 
-fn block_lines(out: &mut String, block: &DocBlock, depth: usize) {
-    out.push_str(&format!(
-        "  block {depth} {:?} {:?} {}\n",
-        block.uuid,
-        block.raw(),
-        serde_json::to_string(block.projection()).unwrap()
-    ));
-    for child in &block.children {
-        block_lines(out, child, depth + 1);
-    }
+pub(crate) use super::index_oracle::snapshot_image;
+
+#[test]
+fn the_block_oracle_includes_ids_absent_from_every_page() {
+    let dir = fixture();
+    let graph = Graph::open(dir.path());
+    graph.with_pages(|_| ());
+    let mut snapshot = ReadSnapshot::capture(
+        &graph,
+        graph.config.clone(),
+        Arc::new(EntryList::from(graph.list_pages_shared().as_slice())),
+        None,
+        &[],
+    );
+    let slot = snapshot.pages.slots().next().unwrap().0;
+    let mut index = snapshot.block_index.get().unwrap().clone();
+    index.edit("stale-key-held-by-no-page", |owners| owners.push(slot));
+    let _ = snapshot.block_index.take();
+    snapshot.block_index.set(index).ok().unwrap();
+    assert!(snapshot_image(&snapshot, &[]).contains("block owners \"stale-key-held-by-no-page\""));
+}
+
+#[test]
+#[should_panic(expected = "block index missed held id")]
+fn an_index_miss_checks_every_page_in_tests() {
+    let dir = fixture();
+    let graph = Graph::open(dir.path());
+    graph.with_pages(|_| ());
+    let mut snapshot = ReadSnapshot::capture(
+        &graph,
+        graph.config.clone(),
+        Arc::new(EntryList::from(graph.list_pages_shared().as_slice())),
+        None,
+        &[],
+    );
+    let id = snapshot
+        .pages
+        .iter()
+        .find_map(|(_, doc)| doc.roots.first())
+        .unwrap()
+        .uuid
+        .clone();
+    let mut index = snapshot.block_index.get().unwrap().clone();
+    index.edit(&id, Vec::clear);
+    snapshot.block_index.take();
+    snapshot.block_index.set(index).ok().unwrap();
+    snapshot.block_owner_page(&id);
 }
 
 /// The canonical image of `graph`'s initial build.
@@ -31,228 +68,6 @@ pub(super) fn initial_build_image(graph: &Graph) -> String {
     );
     snapshot_image(&snapshot, &[])
 }
-
-/// The canonical image of one snapshot: what its capture built, then every
-/// lazily built index, forced here (referenced names and their per-page
-/// index, editor baselines, block hints, aliases, block-ref counts, icons,
-/// the query index through queries, backlinks and unlinked references for
-/// `probes` and the first pages). Forcing them is what lets a later
-/// publication inherit them by per-file deltas.
-pub(crate) fn snapshot_image(snapshot: &ReadSnapshot, probes: &[&str]) -> String {
-    let config = snapshot.config.clone();
-    let mut out = String::new();
-    let mut rel_by_slot = HashMap::new();
-    let mut pages: Vec<(String, &PageEntry, &Arc<Document>)> = Vec::new();
-    for (slot, (entry, doc)) in snapshot.pages.slots() {
-        let rel = entry
-            .rel_path
-            .as_ref()
-            .map(|rel| rel.as_str().to_owned())
-            .unwrap_or_default();
-        rel_by_slot.insert(slot, rel.clone());
-        pages.push((rel, entry, doc));
-    }
-    pages.sort_by(|a, b| a.0.cmp(&b.0));
-    for (rel, entry, doc) in &pages {
-        out.push_str(&format!(
-            "page {rel:?} {:?} {:?} pre={:?}\n",
-            entry.kind, entry.name, doc.pre_block
-        ));
-        for block in &doc.roots {
-            block_lines(&mut out, block, 0);
-        }
-        let mut referenced = collect_document_referenced_names(doc);
-        referenced.sort();
-        out.push_str(&format!("  referenced {referenced:?}\n"));
-        out.push_str(&format!(
-            "  explicit {:?}\n",
-            crate::query::document_explicit_reference_names(entry, doc, &config)
-        ));
-        let mut counts: Vec<_> = document_block_ref_counts(doc).into_iter().collect();
-        counts.sort();
-        out.push_str(&format!("  block_ref_counts {counts:?}\n"));
-    }
-    for (shard, map) in snapshot.explicit_index.shards.iter().enumerate() {
-        for (name, paths) in map.iter() {
-            let paths: Vec<_> = paths.iter().map(|(path, _)| path).collect();
-            out.push_str(&format!("explicit {shard} {name:?} {paths:?}\n"));
-        }
-    }
-    let candidates = snapshot.reference_candidate_index.read().unwrap();
-    out.push_str(&format!(
-        "candidates page_count={} complete={}\n",
-        candidates.page_count, candidates.complete
-    ));
-    let mut signatures: Vec<_> = candidates
-        .signatures
-        .iter()
-        .map(|(slot, signatures)| (rel_by_slot[slot].clone(), signatures))
-        .collect();
-    signatures.sort_by(|a, b| a.0.cmp(&b.0));
-    for (rel, signatures) in signatures {
-        out.push_str(&format!(
-            "signatures {rel:?} {}\n",
-            serde_json::to_string(signatures.as_ref()).unwrap()
-        ));
-    }
-    drop(candidates);
-    // Sharded by absolute-path hash; flattened so the image is the same
-    // wherever the graph lives.
-    let mut aliases: Vec<_> = (snapshot.alias_index.get().unwrap().shards.iter())
-        .flat_map(|shard| {
-            shard
-                .iter()
-                .map(|(path, names)| (path.clone(), names.clone()))
-        })
-        .collect();
-    aliases.sort();
-    out.push_str(&format!("aliases {aliases:?}\n"));
-    out.push_str(&format!(
-        "block_ref_counts {}\n",
-        serde_json::to_string(snapshot.block_ref_counts().as_ref()).unwrap()
-    ));
-    out.push_str(&format!(
-        "real_page_names {}\n",
-        serde_json::to_string(snapshot.real_page_names.as_ref()).unwrap()
-    ));
-    for (name, keys) in snapshot.transliteration_names.iter() {
-        out.push_str(&format!("name_keys {name:?} {keys:?}\n"));
-    }
-    for (name, owners) in snapshot.transliteration_owners.iter() {
-        out.push_str(&format!("name_owners {name:?} {owners}\n"));
-    }
-    // The icon index keys pages by slot; its slot-free projection is the
-    // icon each page name resolves to.
-    let names: Vec<String> = pages
-        .iter()
-        .map(|(_, entry, _)| entry.name.clone())
-        .collect();
-    let mut icons: Vec<_> = snapshot.page_icons(&names).into_iter().collect();
-    icons.sort();
-    out.push_str(&format!("icons {icons:?}\n"));
-    lazy_lines(&mut out, snapshot, &pages, probes);
-    out
-}
-
-fn lazy_lines(
-    out: &mut String,
-    snapshot: &ReadSnapshot,
-    pages: &[(String, &PageEntry, &Arc<Document>)],
-    probes: &[&str],
-) {
-    let mut referenced = snapshot.referenced_page_names();
-    referenced.sort();
-    out.push_str(&format!("lazy referenced_page_names {referenced:?}\n"));
-    let index = snapshot
-        .referenced_name_index
-        .get()
-        .expect("referenced_page_names builds the index");
-    for (rel, entry, _) in pages {
-        let mut names = index.get(&entry.path).cloned();
-        if let Some(names) = names.as_mut() {
-            names.sort();
-        }
-        out.push_str(&format!("lazy referenced_index {rel:?} {names:?}\n"));
-    }
-    let stride = (pages.len() / 8).max(1);
-    for (rel, entry, doc) in pages.iter().step_by(stride) {
-        if let Some(block) = doc.roots.first() {
-            let original = format!("[[GJ5 Baseline]] [[孤独基线]] {}", block.raw());
-            let mut names =
-                snapshot.referenced_page_names_for_editor(&entry.name, &block.uuid, &original);
-            names.sort();
-            out.push_str(&format!("lazy editor {rel:?} {names:?}\n"));
-        }
-    }
-    fn hints(out: &mut String, snapshot: &ReadSnapshot, block: &DocBlock) {
-        out.push_str(&format!(
-            "lazy hint {:?} {:?}\n",
-            block.uuid,
-            snapshot.block_page_hint(&block.uuid)
-        ));
-        for child in &block.children {
-            hints(out, snapshot, child);
-        }
-    }
-    for (_, _, doc) in pages {
-        for block in &doc.roots {
-            hints(out, snapshot, block);
-        }
-    }
-    let mut aliases = snapshot.page_aliases_with_owners();
-    aliases.sort();
-    out.push_str(&format!("lazy aliases {aliases:?}\n"));
-    let mut spellings = snapshot.page_alias_spellings_with_owners();
-    spellings.sort();
-    out.push_str(&format!("lazy alias_spellings {spellings:?}\n"));
-    // The alias relation (edges, owner paths, list) as one image; the delta
-    // that patches it must equal the build that walks every page.
-    out.push_str(&format!(
-        "lazy alias_relation\n{}",
-        snapshot.alias_relation().image()
-    ));
-    let mut counts: Vec<_> = snapshot
-        .public_block_ref_counts()
-        .iter()
-        .map(|(uuid, count)| (uuid.clone(), *count))
-        .collect();
-    counts.sort();
-    out.push_str(&format!("lazy public_block_ref_counts {counts:?}\n"));
-    let groups = |result: BoundedRefGroups| {
-        format!(
-            "{} {} {}",
-            result.total,
-            result.exceeded,
-            serde_json::to_string(result.groups.as_ref()).unwrap()
-        )
-    };
-    let (rows, bytes) = (
-        crate::store::RESULT_BRIDGE_MAX_ROWS,
-        crate::store::RESULT_BRIDGE_MAX_BYTES,
-    );
-    for query in QUERIES {
-        out.push_str(&format!(
-            "lazy query {query:?} {}\n",
-            groups(snapshot.run_query_bounded(query, rows, bytes))
-        ));
-    }
-    let targets = probes.iter().map(|name| (*name).to_owned()).chain(
-        pages
-            .iter()
-            .take(20)
-            .map(|(_, entry, _)| entry.name.clone()),
-    );
-    for name in targets {
-        out.push_str(&format!(
-            "lazy backlinks {name:?} {}\n",
-            groups(snapshot.backlinks_bounded(&name, rows, bytes))
-        ));
-        out.push_str(&format!(
-            "lazy unlinked {name:?} {}\n",
-            groups(snapshot.unlinked_refs_bounded(&name, rows, bytes))
-        ));
-    }
-}
-
-/// Queries over every fact class the query index keeps: tasks, page tags,
-/// page and block properties, page references (Han included).
-const QUERIES: &[&str] = &[
-    "(task TODO)",
-    "(task TODO DONE)",
-    "(page-tags hub0)",
-    "(page-tags gj5tag)",
-    "(property status open)",
-    "(property custom_key)",
-    "(property gj5key)",
-    "(page-property tags hub1)",
-    "[[Shared]]",
-    "[[Topic 3]]",
-    "[[中文页面]]",
-    "[[孤独测试]]",
-    "[[GJ5 Probe]]",
-    "(and (task TODO) [[Shared]])",
-    "(or [[GJ5 Probe]] #gj5edited)",
-];
 
 /// `TINE_INDEX_ORACLE_GRAPH=<graph copy> TINE_INDEX_ORACLE_OUT=<file>
 /// cargo test -p tine-store index_oracle_image -- --ignored` writes the image;

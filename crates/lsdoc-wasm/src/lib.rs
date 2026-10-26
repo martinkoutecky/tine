@@ -68,6 +68,12 @@ pub fn canonical_group_field(value: &str) -> Option<String> {
 
 use tine_outline::page_filename;
 
+/// The native file-format answer, including mixed-case Org extensions.
+#[wasm_bindgen]
+pub fn page_file_format(path: &str) -> String {
+    tine_outline::page_format::Format::from_path(std::path::Path::new(path)).ext().to_string()
+}
+
 /// Encode a Windows-safe Logseq page stem; legacy selects percent-encoded
 /// namespaces, false selects triple-lowbar. O(title bytes), no I/O or failure.
 #[wasm_bindgen]
@@ -103,8 +109,12 @@ mod render_facets;
 /// Whether a block property key is hidden from rendered chips (I-12: the one
 /// answerer the static export also asks). O(key bytes + hidden keys), no I/O.
 #[wasm_bindgen]
-pub fn is_render_hidden_prop(key: &str, user_hidden: Vec<String>) -> bool {
-    render_facets::is_render_hidden_prop(key, &user_hidden)
+pub fn is_render_hidden_prop(key: &str, user_hidden: Vec<String>, pre_block: bool) -> bool {
+    if pre_block {
+        render_facets::is_render_hidden_page_prop(key, &user_hidden)
+    } else {
+        render_facets::is_render_hidden_prop(key, &user_hidden)
+    }
 }
 
 /// The checkbox a task marker draws: true checked, false empty, undefined none.
@@ -235,18 +245,14 @@ pub fn logbook_clock_out(raw: &str, is_org: bool, with_seconds: bool) -> String 
 pub fn logbook_apply_marker_transition(
     raw: &str,
     is_org: bool,
-    old_marker: &str,
-    new_marker: &str,
+    old_raw: &str,
     enabled: bool,
     with_seconds: bool,
 ) -> String {
-    let old = (!old_marker.is_empty()).then_some(old_marker);
-    let new = (!new_marker.is_empty()).then_some(new_marker);
-    logbook::apply_marker_transition_at(
+    logbook::apply_edit_transition_at(
+        old_raw,
         raw,
         logbook_format(is_org),
-        old,
-        new,
         enabled,
         with_seconds,
         now_parts(),
@@ -480,18 +486,40 @@ pub fn raw_byte_of_editor(raw: &str, is_org: bool, regions: &JsValue, policy: &s
     Ok(editor_text::visible_to_raw_with(raw, is_org, &r, &p, editor_text::utf16_to_byte(&visible, editor_utf16)))
 }
 
-/// Editor text plus hidden lines back to raw (`editor_text::join_with`); the
-/// regions are the window's cached ones for exactly `visible` (read for Org).
+/// Parser-boundary negative-only prefilter; true still needs drawer ownership.
 #[wasm_bindgen]
-pub fn editor_text_join(visible: &str, hidden: &str, is_org: bool, visible_regions: &JsValue) -> Result<String, JsValue> {
-    let r = if is_org && !hidden.is_empty() { regions_from_js(visible, visible_regions)? } else { block_regions::BlockRegions::default() };
+pub fn block_may_have_logbook(raw: &str) -> bool {
+    block_regions::may_have_logbook(raw)
+}
+
+/// Editor text plus hidden lines back to raw (`editor_text::join_with`), with
+/// optional exact source for metadata-preserving text-only edits.
+#[wasm_bindgen]
+pub fn editor_text_join(visible: &str, hidden: &str, is_org: bool, visible_regions: &JsValue, source: Option<String>, policy: Option<String>) -> Result<String, JsValue> {
+    if let Some(source) = source {
+        // The policy that split `hidden` from `source` (the built-ins when absent).
+        let hide = match policy { Some(p) => hide_policy(&p)?, None => editor_text::HidePolicy::Builtin };
+        return editor_text::join_preserving(visible, hidden, is_org, &source, &hide).map_err(|e| JsValue::from_str(&e));
+    }
+    let r = if !hidden.is_empty() && (is_org || !visible_regions.is_null()) { regions_from_js(visible, visible_regions)? } else { block_regions::BlockRegions::default() };
     editor_text::join_with(visible, hidden, is_org, &r).map_err(|e| JsValue::from_str(&e))
 }
 
 /// Whether hide `policy` hides property `key` (`HidePolicy::hides`).
 #[wasm_bindgen]
-pub fn hide_policy_hides(policy: &str, key: &str) -> Result<bool, JsValue> {
-    Ok(hide_policy(policy)?.hides(key))
+pub fn hide_policy_hides(policy: &str, key: &str, properties: &str) -> Result<bool, JsValue> {
+    let properties: Vec<(String, String)> = serde_json::from_str(properties)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    Ok(hide_policy(policy)?.hides_properties(key, properties.iter().map(|(k, v)| (k.as_str(), v.as_str()))))
+}
+
+/// The same own-property discriminator that editor_text uses to hide comment metadata.
+#[wasm_bindgen]
+pub fn comment_quote(properties: &str) -> Result<Option<String>, JsValue> {
+    let properties: Vec<(String, String)> = serde_json::from_str(properties)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    Ok(editor_text::comment_quote(properties.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        .map(str::to_owned))
 }
 
 /// The kernel's outline depth cap (twin 4).
@@ -515,9 +543,12 @@ pub fn outline_apply_json(request: &str) -> Result<String, JsValue> {
         pages: Vec<outline::OutlinePage>,
         verb: outline::Verb,
         keys: outline::KeySource,
+        #[serde(default)]
+        hide: Option<editor_text::HidePolicy>,
     }
     let req: Request = outline_request(request)?;
-    Ok(match outline::apply(&req.pages, &req.verb, &req.keys) {
+    let hide = req.hide.unwrap_or(editor_text::HidePolicy::Builtin);
+    Ok(match outline::apply_with_policy(&req.pages, &req.verb, &req.keys, &hide) {
         Err(reason) => serde_json::json!({ "refused": reason }).to_string(),
         Ok(change) => {
             let editor_offset = change.focus.as_ref().and_then(|f| {
@@ -537,10 +568,9 @@ pub fn outline_apply_json(request: &str) -> Result<String, JsValue> {
                     })?;
                 let org = format.is_org();
                 let r = block_regions::parse(raw, org);
-                let p = editor_text::HidePolicy::Builtin;
-                let at = editor_text::raw_to_visible_with(raw, org, &r, &p, offset);
+                let at = editor_text::raw_to_visible_with(raw, org, &r, &hide, offset);
                 Some(editor_text::byte_to_utf16(
-                    &editor_text::split_with(raw, org, &r, &p).visible,
+                    &editor_text::split_with(raw, org, &r, &hide).visible,
                     at,
                 ))
             });

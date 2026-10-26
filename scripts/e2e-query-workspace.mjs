@@ -568,7 +568,10 @@ await withApp(2, async (browser) => {
     const tagged = groups.find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Tagged source");
     return {
       groupCount: groups.length,
-      totalRoots: Number(document.querySelector(".linked-references .references-count")?.textContent?.trim()),
+      // TaggedPages shares the linked-references styling class and has its own
+      // count. Identify the backlink section by its reference controls.
+      totalRoots: Number(document.querySelector(".reference-bulk-controls")
+        ?.closest(".linked-references")?.querySelector(".references-header .references-count")?.textContent?.trim()),
       mentions: source?.querySelector(".reference-mention-count")?.textContent?.trim(),
       jumps: source?.querySelectorAll(".reference-occurrence-jump").length,
       taggedPresent: !!tagged,

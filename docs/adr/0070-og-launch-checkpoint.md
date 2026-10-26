@@ -59,6 +59,55 @@ index.
 
 ## Decision
 
+Development follow-up (HB4 / HI1 / HJ6, L10-06; FORMAT 19): the block-id index
+is exact and eager, including every runtime uuid and authored `id` property,
+with all owning page slots in ascending order. The checkpoint writer derives
+its serialized keys from the captured pages in the structural id space that
+`assign_doc_runtime_ids` assigns on load. It performs that work off the store
+writer; the loader decodes the index directly and never reconstructs it from
+the block forest. Runtime UUIDs are stored as one packed 16-byte-id buffer per
+page slot, with exact authored ids alongside. The writer borrows documents and
+their cached projections; it neither clones page forests nor builds a temporary
+owner tree. Cold construction sorts borrowed ids once and consumes unique
+entries in a linear AVL build alongside the other independent index workers.
+Decoding keeps canonical lowercase UUIDs as u128 keys in a separate persistent
+AVL with inline entries, without allocating a string or entry Arc per id.
+Other spellings keep exact string keys. The writer and loader share namespace
+and structural-child derivation. Live publications replace only changed pages' ids.
+Dangling references require no page walk, and a moved id retains its surviving
+owner across a warm launch. Invalid owner slots decline the whole checkpoint,
+as any other mismatch does. The disposable cache remains postcard+zstd with
+the same guarded atomic replace and idle cadence. Measurements and the I-25
+unit-cost line are recorded in the exact-block-index implementation receipts.
+
+Measured 2026-10-25 against og `8796c6316`, using the existing release
+`checkpoint_launch_bench` (open → Ready; cold means no checkpoint), with
+seven interleaved trials per binary and mode, excluding warmups. Every Rust
+benchmark process ran under a 2 GiB address-space cap. The source graph was
+read only; both fixtures were copies under the worktree's ignored artifacts.
+The second fixture retains the 1,075 source files and adds unchanged copies
+with distinct filenames to reach 13,000. It is **not** the historical g13k
+fixture measured above, whose location was not supplied.
+
+| Fixture | Warm median, ms (before → after) | Cold median, ms | Checkpoint bytes | Checkpoint write median, ms |
+| --- | --- | --- | --- | --- |
+| Anonymized, 1,075 pages | 47.7 → 51.3 (+3.7) | 98.9 → 100.3 (+1.4) | 1,410,073 → 1,668,484 (+258,411) | 43.1 → 43.9 (+0.8) |
+| Derived, 13,000 files | 563.0 → 579.1 (+16.1) | 922.8 → 939.2 (+16.5) | 8,729,252 → 11,705,012 (+2,975,760) | 447.7 → 477.3 (+29.6) |
+
+Raw postcard size grew by 256,316 B and 3,087,551 B respectively. On the 13k
+fixture that is 17.41 raw / 16.78 compressed bytes per distinct held id, versus
+r0's 40.05 / 22.88. The r2 compact index retains 15,687,904 allocator-usable
+live heap bytes (14.96 MiB, 88.4 B/id) for 177,374 ids, versus r1's
+27,040,016 B (25.79 MiB, 152.4 B/id), a 42.0% reduction using the same probe
+under the 2 GiB cap. Live allocations fall from 533,020 to 178,272. Raw wire
+size is unchanged from r1; both binaries load each other's FORMAT 19 caches.
+The same run interleaves og, r1 and r2: r2 warms 10.9 ms faster than r1 on
+13k, with cold launch 59.6 ms slower; all og-relative launch/write budgets
+are met. Checkpoint writer-held capture is 4.5 → 6.9 ms and 61.0 → 67.3 ms;
+load-id derivation and encoding run after capture. Historical g13k acceptance
+remains unverified. The index adds zero bytes or files per edit;
+the checkpoint is rewritten only on the existing cadence, one file per write.
+
 - **Where:** app data `launch-checkpoints/<graph-id>.bin`, keyed like the
   session and draft files (`settings::session_id`), never under the graph root.
   The app-data directory is Tauri's `app_data_dir` (`graph::checkpoint_app_data`,
@@ -79,12 +128,13 @@ index.
   After the header comes the zstd-compressed postcard body:
   - the published `GraphState`: parsed pages, entry list, the explicit,
     reference-candidate, alias, real-name, icon and block-ref indexes, the
+    exact block-id owners in load-time runtime-id space, the
     observed mtimes and content revisions;
   - the claimants and name tables;
   - every path's stamp as recorded when its bytes were read;
   - the racy set;
   - the generation's derived half, each part in whatever state it was in:
-    the lazily built block, referenced-name, alias and block-ref-count
+    the lazily built referenced-name, alias and block-ref-count
     indexes; the query index slot (built or seeded); and the memos (the
     derived-result cache and the query memo).
 

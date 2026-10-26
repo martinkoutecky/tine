@@ -94,6 +94,36 @@ impl<K: Ord, V> Map<K, V> {
     pub(crate) fn new() -> Self {
         Self::default()
     }
+    /// Consume unique, key-sorted entries in one pass, without a second sort
+    /// or an intermediate array of shared entries.
+    pub(crate) fn from_sorted_unique(entries: Vec<(K, V)>) -> Self {
+        debug_assert!(entries.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        fn build<K, V>(
+            rows: &mut impl Iterator<Item = (K, V)>,
+            len: usize,
+        ) -> Option<Arc<Node<K, V>>> {
+            if len == 0 {
+                return None;
+            }
+            let left_len = len / 2;
+            let left = build(rows, left_len);
+            let entry = Arc::new(rows.next().expect("counted sorted entries"));
+            let right = build(rows, len - left_len - 1);
+            let mut node = Node {
+                entry,
+                left,
+                right,
+                height: 0,
+                len: 0,
+            };
+            node.update();
+            Some(Arc::new(node))
+        }
+        let len = entries.len();
+        Self {
+            root: build(&mut entries.into_iter(), len),
+        }
+    }
     pub(crate) fn len(&self) -> usize {
         Node::len(&self.root)
     }
@@ -429,6 +459,9 @@ impl Clone for EntryList {
     }
 }
 impl EntryList {
+    pub(crate) fn get_path(&self, path: &std::path::Path) -> Option<&PageEntry> {
+        self.paths.get(path).and_then(|slot| self.rows.get(slot))
+    }
     pub(crate) fn iter(&self) -> impl Iterator<Item = &PageEntry> {
         self.rows.values()
     }

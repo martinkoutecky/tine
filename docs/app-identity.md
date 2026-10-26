@@ -162,10 +162,12 @@ staging dir, fsyncs it, and renames it into place.
 - In a release build it is a no-op (`APP_IDENTIFIER == RELEASE_IDENTIFIER`).
 - Only on desktop. Mobile app data is private to each application id.
 
-**Delete it when the switch ships `release`.** Remove the file, its `_tests.rs`,
-the `mod` line and the one call in `lib::run()`, and its
-`APPROVED_WRITER_SITES` entry in `scripts/lib/og-enforcement.mjs`.
-`src/appIdentity.guard.test.ts` fails until you do.
+**Delete it when the switch ships `release`** (done in 0.7.0 and again in
+0.8.0). Remove the file, its `_tests.rs`, the `mod` line and the one call in
+`lib::run()`, and its rows in the portable host-path allowlist
+(`src-tauri/src/portable.rs`) and the regression row's test list; point the
+updater endpoint at the stable address. `src/appIdentity.guard.test.ts` fails
+until you do.
 
 About, update notifications and copied version information derive their app name
 from the same switch through `src/appIdentity.ts`. **Copy version** preserves

@@ -1,8 +1,8 @@
 //! I-25 unit-cost probe for the query index and answer memo (og 14 Q2 G3):
 //! work and allocated bytes per 1-block and 60-block page edit, on a small and
 //! a 10k-page graph, with a warmed property registry and a populated memo.
-//! The query side of an edit (index patch, registry carry, memo carry,
-//! re-answering warmed queries) must not grow with the graph.
+//! Save allocations and the query side of an edit (index patch, registry carry,
+//! memo carry, re-answering warmed queries) must not grow with the graph.
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -313,14 +313,26 @@ fn a_query_side_edit_cost_does_not_grow_with_the_graph() {
         );
         // A populated memo is carried across the edit by changed-page work
         // only: on a 10k graph it may add at most a small constant to the
-        // save's bytes over a registry-only warm (the rest of the save's
-        // bytes are the snapshot publication, which this lane does not own).
+        // save's bytes over a registry-only warm. Keep this comparison too:
+        // graph-independent memo overhead on both graph sizes would cancel
+        // out of the growth check below.
         assert!(
             large.save_bytes <= bare.save_bytes + 64 * 1024,
             "I-25: carrying the query memo across one edit cost {} bytes on a 10k graph \
              (memo) vs {} (registry only); exemplar query/memo.rs Entry::pages",
             large.save_bytes,
             bare.save_bytes
+        );
+        // Shared save work also has to stay bounded: comparing two 10k
+        // probes alone misses a graph-sized allocation common to both.
+        // Measured 20 -> 10k growth is about 1.1 KiB for both page sizes;
+        // 64 KiB allows fixed noise while rejecting even 16 bytes per page.
+        // Count helper threads too; only watcher work is billed separately.
+        assert!(
+            large.save_bytes <= small.save_bytes + 64 * 1024,
+            "I-25: save-side bytes per edit grew with the graph: {} (20 pages) → {} (10k pages)",
+            small.save_bytes,
+            large.save_bytes
         );
         // Bytes on the query side follow the edited page, not the graph: the
         // 10k graph may cost at most a small constant more than 20 pages.

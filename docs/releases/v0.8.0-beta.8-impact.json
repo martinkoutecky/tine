@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "version": "0.8.0-beta.8",
+  "baseTag": "v0.8.0-beta.7",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "**Typing `DOING` no longer sends the rest of your text to the end of the block, and a stray `CLOCK:` line no longer blanks the page.** The clock-in that Tine writes under a task (the `:LOGBOOK:` lines) moved the caret to the end of the block, so the next characters you typed landed after `:END:`; the caret now stays on the task line. Typing on after `DOING` also no longer adds a second clock-in line. A `CLOCK:` line that is not inside a complete `:LOGBOOK:` drawer (for example `:END:  test`) used to make the page show \"This page could not be displayed\" (`TypeError: Cannot read properties of undefined (reading 'year')`); it now renders as a time stamp, and any other time stamp shape Tine does not know renders as nothing instead of failing (GH #741, UI-GH741-DOING-CLOCK-IN). This happened on stable 0.7.x too.",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH741-DOING-CLOCK-IN"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH741-DOING-CLOCK-IN. Unit fail-before on release/0.8 (Block.clockInParagraph tests, 2 new tests fail before db404c314, 20/20 after); native journey scripts/e2e-gh741-doing-clockin.mjs passed in the og and release/0.8 integration gates (Linux).",
+        "refs": [
+          "src/components/Block.clockInParagraph.test.tsx",
+          "scripts/e2e-gh741-doing-clockin.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**On a long page with images, pressing Enter, Backspace or another structural key no longer throws the view back down or loses the block you were editing (most visible on Windows)**: the edit briefly re-lays out the blocks around it, and the editor no longer lets the webview scroll to that interim position; the view now moves only as far as showing the caret needs, and not at all while it is already visible, below any pinned parent rows. Not new in 0.8 (GH #745).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH745-STRUCTURAL-EDIT-CARET-STAYS-VISIBLE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH745-STRUCTURAL-EDIT-CARET-STAYS-VISIBLE. Unit tests of the reveal rule (src/editor/caretReveal.test.ts); native journey scripts/e2e-gh745-structural-edit-viewport.mjs passed in the og and release/0.8 gates (Linux). Independent check on real WebView2 (hosted Windows runs 39680641992 base, 39680638028 fix): both reported symptoms reproduce on beta.7 and not with the fix.",
+        "refs": [
+          "src/editor/caretReveal.test.ts",
+          "scripts/e2e-gh745-structural-edit-viewport.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix: no documented behaviour changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); the stable cut regenerates it.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}

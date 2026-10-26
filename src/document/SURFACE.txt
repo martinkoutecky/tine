@@ -21,7 +21,7 @@ applyGraphChange
 applyGraphChangesBulk  # why: a checkout-sized watcher batch (graph-changed-bulk) is applied once (family 10); batch22a
 applyLiveResolution  # why: conflict dock applies a live-buffer resolution through the page host; batch-og-s3b
 beginPageHeaderEdit
-bindHost  # why: graph open binds the page host client for the new working set; batch-og-s3b
+bindHost  # why: graph open binds the page host client; explicit L9-01 draft adoption can refresh loaded pages from relaunched host custody without requiring publication; batch-og-s3b
 blockExternalId
 blockHasFoldableBody  # why: the bullet arrow, keyboard folds and setCollapsed share one answer to whether a block has a body to fold (children, a page embed, a query macro: OG collapsable?) (GH #619); batch-fix-gh619-query-oct18
 blockHasPageEmbed  # why: host disclosure and keyboard folds share parser-owned page-embed eligibility (GH #694); batch-embed-find
@@ -132,6 +132,7 @@ persistBlockRefTarget
 pinPageWhileDrafting  # why: a draft outside the block editor (sheet prop cell) pins the page its commit writes, so eviction cannot drop it (K17a); batch15a
 prevVisible
 promotePagePreamble
+queryBlockRaw  # why: quick-share Delete recognises the definition appendQueryBlock wrote (D-20261026-QSD); batch-og-qs-delete-definition
 queryWorkspacePage
 readPageProperties  # why: list every page property for the GH #164 properties editor; batch14q5
 readPageProperty
@@ -154,6 +155,7 @@ resolveConflict  # why: one conflict resolution intent; batch03
 resolveGuideBlockRef
 resolveGuidePageDto
 restoreTodayJournalInFeed
+retireFeedPages  # why: releases measured offscreen journal documents through the shared safety gate; batch-og-l10-03
 revealNode
 sameLiveDraft  # why: a live resolution applies only to the exact draft the user reviewed (og 8e); batch21a
 sanitizeOutlineIdsForPaste  # why: prevent off-screen ID collisions in ordinary paste; batch05

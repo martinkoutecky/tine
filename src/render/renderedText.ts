@@ -12,34 +12,64 @@ import { urlDest } from "./urlDest";
 // user's `:block-hidden-properties` (graph state).
 
 import { parseBlock } from "./parse";
-import { createExpansionGate, MACRO_EXPANSION_LIMIT_LABEL, MAX_MACRO_EXPANSION_DEPTH } from "./expansionBudget";
+import { createExpansionGate, expandTemplate, templateExpansionSize, MACRO_EXPANSION_LIMIT_LABEL, MAX_MACRO_EXPANSION_DEPTH } from "./expansionBudget";
 import { typographic } from "./typography";
 import { isRenderHiddenProp } from "./block";
 import type { Block, Format, Inline, ListItem, TimestampInline, TimestampPoint } from "./ast";
 
 /** The `<…>`(active) / `[…]`(inactive) display text of a timestamp inline —
- *  shared with the renderer (render/inline.tsx) so there is one formatter. */
+ *  shared with the renderer (render/inline.tsx) so there is one formatter.
+ *
+ *  `s.date` is mldoc's raw record and its shape depends on `ts`: a point
+ *  (`Date`/`Scheduled`/`Deadline`/`Closed`), `{start, stop}` (`Range`), or a
+ *  `[kind, value]` pair (`Clock`: `["Started", point]` /
+ *  `["Stopped", {start, stop}]`). A CLOCK line that is not inside a recognised
+ *  :LOGBOOK: drawer reaches here as an inline (GH #741), so any shape this
+ *  formatter does not know yields empty text instead of a throw: a render error
+ *  here blanks the whole page. OG renders an unknown timestamp as "". */
 export function timestampText(s: TimestampInline): { text: string; active: boolean } {
   const pad2 = (n: number) => String(n).padStart(2, "0");
+  const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+  const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+  const asPoint = (v: unknown): TimestampPoint | null => {
+    if (!isRecord(v) || !isRecord(v.date)) return null;
+    const d = v.date;
+    return isNum(d.year) && isNum(d.month) && isNum(d.day) ? (v as unknown as TimestampPoint) : null;
+  };
   const point = (p: TimestampPoint): string => {
     const d = p.date;
     let out = `${d.year}-${pad2(d.month)}-${pad2(d.day)}`;
-    if (p.wday) out += ` ${p.wday}`;
-    if (p.time) out += ` ${pad2(p.time.hour)}:${pad2(p.time.min)}`;
+    if (typeof p.wday === "string" && p.wday) out += ` ${p.wday}`;
+    const t = p.time as unknown;
+    if (isRecord(t) && isNum(t.hour) && isNum(t.min)) out += ` ${pad2(t.hour)}:${pad2(t.min)}`;
     return out;
   };
-  const v = s.date as Record<string, unknown>;
-  let active = true;
-  let inner: string;
-  if (s.ts === "Range" && v.start && v.stop) {
-    const start = v.start as TimestampPoint;
-    active = start.active ?? true;
-    inner = `${point(start)}--${point(v.stop as TimestampPoint)}`;
-  } else {
-    const p = v as unknown as TimestampPoint;
-    active = p.active ?? true;
-    inner = point(p);
+  const range = (v: unknown): { start: TimestampPoint; stop: TimestampPoint } | null => {
+    if (!isRecord(v)) return null;
+    const start = asPoint(v.start);
+    const stop = asPoint(v.stop);
+    return start && stop ? { start, stop } : null;
+  };
+  // `Clock` carries a [kind, value] pair; unwrap it to the point or range it holds.
+  let value: unknown = s.date;
+  let isRange = s.ts === "Range";
+  if (s.ts === "Clock") {
+    const pair: unknown[] = Array.isArray(s.date) ? s.date : [];
+    value = pair[1];
+    isRange = pair[0] === "Stopped";
   }
+  const unknown = { text: "", active: true };
+  if (isRange) {
+    const r = range(value);
+    if (!r) return unknown;
+    const active = r.start.active ?? true;
+    const inner = `${point(r.start)}--${point(r.stop)}`;
+    return { text: active ? `<${inner}>` : `[${inner}]`, active };
+  }
+  const p = asPoint(value);
+  if (!p) return unknown;
+  const active = p.active ?? true;
+  const inner = point(p);
   return { text: active ? `<${inner}>` : `[${inner}]`, active };
 }
 
@@ -59,6 +89,8 @@ export interface RenderedTextResolvedLeaf {
   raw: string;
   format: Format;
   text?: string;
+  /** Unexpanded user template: charge substitutions before allocating them. */
+  templateArgs?: string[];
 }
 
 // Resolved block refs and macros share one gate: depth cap plus the per-tree
@@ -73,10 +105,10 @@ function macroLiteral(name: string, args: string[]): string {
  *  visible limit marker past the tree's budget. */
 function expandResolved(fallback: string, resolved: RenderedTextResolvedLeaf, o: RenderedTextOptions, shape: (text: string) => string): string {
   return resolveGate.expand(
-    (resolved.text ?? resolved.raw).length,
+    resolved.templateArgs ? templateExpansionSize(resolved.raw, resolved.templateArgs) : (resolved.text ?? resolved.raw).length,
     () => fallback,
     () => `${fallback} (${MACRO_EXPANSION_LIMIT_LABEL})`,
-    () => shape(resolved.text ?? renderedBlockText(resolved.raw, resolved.format, o)),
+    () => shape(resolved.text ?? renderedBlockText(resolved.templateArgs ? expandTemplate(resolved.raw, resolved.templateArgs) : resolved.raw, resolved.format, o)),
   );
 }
 

@@ -41,7 +41,7 @@ import { typoTypeReplace } from "../render/typography";
 import { rangeInLiteral } from "../editor/inlineLiteral";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
-import { restoreMovedSelection } from "../editor/restoreMovedSelection";
+import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
 import { pageByName, blockPageReadOnly, blockWritable, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
@@ -60,7 +60,7 @@ import {
   takeHistoryEditorSelectionFor,
 } from "../editorController";
 import { OUTLINE_MAX_SOURCE_CHARS, pastedPlainBlocks, type OutlineNode } from "../editor/outline";
-import { structuredHtmlOutline } from "../editor/htmlPaste";
+import { structuredHtmlPaste } from "../editor/htmlPaste";
 import {
   toggleInlineFormat,
   insertLink,
@@ -98,13 +98,14 @@ import { isMobilePlatform } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
 import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
-import { youtubeTimestampMacroFor } from "./Macro";
+import { youtubeTimestampMacroFor, insertYoutubeTimestamp } from "./youtubeTimestampEdit";
 import { Rendered, detectMacro } from "./Rendered";
 import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecorationStyle, threadLineSettings, type ThreadLineDecoration } from "./block/rowChrome";
 import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
 import { ResultWriteTargetContext, liveWriteTarget } from "./queryResultIdentity";
-import { dataRev, graphEpoch } from "../graphSession";
+import { graphEpoch } from "../graphSession";
+import { changed } from "../changeKeys";
 import { pushToast, dismissToast } from "../toasts";
 import { copyBlockLink } from "./blockLinkCopy";
 import { seedAssetBlob } from "../assetCache";
@@ -124,11 +125,12 @@ import {
   caretAtLastRow,
   caretColumnOnVisualRow,
   caretOffsetOnLastRow,
-  textareaCaretLeft,
   textareaCaretLineRect,
 } from "../editor/caretRows";
-import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
+import { revealCaretColumn, revealCaretSettled } from "../editor/caretReveal";
+import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, isEditorEmpty, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
+import { editorCommitRecovery } from "../editor/commitRecovery";
 import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
@@ -155,7 +157,7 @@ import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
-import { blockMenuOwner, ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenuPolicy";
+import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { followBlockSwipe } from "./blockSwipeWiring";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, renderedClickOffset } from "./blockGestures";
 import { clipboardSizeAllowed } from "../clipboardImage";
@@ -164,7 +166,7 @@ import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
 import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
 import { commentFromEditor, replyOnEnter } from "../commentActions";
-import { AuthorChip, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
+import { AuthorChip, CommentActions, CommentComposer, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, onEachWindow, requestFrame, viewportOf, windowOf } from "../windowRealm";
@@ -220,6 +222,9 @@ export const OutlineScopeContext = createContext<OutlineScope | null>(null);
 // block preceding the embed on the host page (OG leaves the embed upward instead
 // of trapping the caret).
 export const EmbedNavExitContext = createContext<{ hostBlockId: string; firstRoot: () => string | undefined } | null>(null);
+/** A plain bullet click opens the block here instead of zooming the pane (a
+ *  hover preview opens it in a new tab, D-20261023-VQ). */
+export const BulletOpenContext = createContext<((id: string) => void) | null>(null);
 export interface CollapseSurfaceApi {
   collapsed: (id: string, stored: boolean) => boolean;
   toggle: (id: string, current: boolean) => void;
@@ -234,7 +239,7 @@ export const CollapseSurfaceContext = createContext<CollapseSurfaceApi | null>(n
 
 /** Render and edit one document block through the document door. Work scales
  * with its visible descendants; a failed structured paste shows fixed text. */
-export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean; dragHostId?: string }): JSX.Element {
+export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean }): JSX.Element {
   // Share one node read across this block's derivations.
   const node = createMemo(() => docNode(props.id));
   const propertySession = propertyEditorSession();
@@ -248,6 +253,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const surfaceKey = useContext(SurfaceContext);
   const outlineScope = useContext(OutlineScopeContext);
   const collapseSurface = useContext(CollapseSurfaceContext);
+  const bulletOpen = useContext(BulletOpenContext);
   const editing = () => {
     if (editingId() !== props.id) return false;
     const owner = editingOwner();
@@ -314,14 +320,13 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // An org page Tine can't round-trip is shown but NOT editable (Tine must never
   // rewrite it). Clicking a block doesn't enter the editor on such a page.
   const readOnly = () => blockPageReadOnly(props.id);
-  // A whole-block `{{embed ((uuid))}}` is a transparent host for the referenced
-  // outline. Showing both this storage block's controls and the referenced root's
-  // controls produces two consecutive bullets. Keep the referenced root controls
-  // (they own collapse/zoom/sidebar behavior) and suppress only the macro host.
+  // GH #726: OG block.cljs block-embed/page-embed keep the source outline
+  // inside the host's content. Both host and source retain their own handles;
+  // every menu and drag acts on the block whose bullet was pressed.
   const macro = createMemo(() => detectMacro(node().raw, fmt())); // shared with `Rendered`
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
   const { commentSelector, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt);
-  const stickyParent = () => stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !macro(); // a macro host's first line IS the live macro: a pin would mount a 2nd copy (GH #619)
+  const stickyParent = () => stickyParents() && !bulletless() && hasChildren() && (props.forceExpanded || !collapsed()) && !macro(); // Thread rows have no bullet pins; the spacer would pull the body over its quote.
   let mainEl: HTMLDivElement | undefined;
 
   return (
@@ -344,7 +349,14 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
       <Show when={stickyParent()}><StickyAncestor id={props.id} raw={node().raw} /></Show>
-      <CommentQuoteHeader parentId={node().parent} selector={commentSelector()} />
+      <CommentQuoteHeader parentId={node().parent} selector={commentSelector()} controls={
+        <Show when={bulletless()}>
+          <span class="comment-first-line-controls">
+            <Show when={showsAuthor()}><AuthorChip author={author()} handleOf={props.id} /></Show>
+            <CommentActions id={props.id} />
+          </span>
+        </Show>
+      } />
       <div
         class="block-main"
         ref={(el) => {
@@ -371,10 +383,10 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           // GH #726: a nested result/embed row owns its menu (contextMenuPolicy).
           if (!ownsBlockContextMenu(e.target, mainEl) || !shouldOpenBlockContextMenu(e.target)) return;
           e.preventDefault();
-          openContextMenu(e.clientX, e.clientY, blockMenuOwner(mainEl, props.id, props.dragHostId));
+          openContextMenu(e.clientX, e.clientY, props.id);
         }}
       >
-        <Show when={!blockEmbedHost() && !bulletless()}>
+        <Show when={!bulletless()}>
         <div class="block-controls">
           <span
             class="collapse-toggle"
@@ -400,13 +412,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               // Shared link gesture contract (GH #207): suppress shift-range selection
               // and middle-button autoscroll / PRIMARY-paste the destinations replace.
               internalLinkMouseDown(e);
-              // A transparent whole-block embed has only this root bullet. Its drag
-              // moves the occurrence; click/zoom still belongs to the source
-              // (master GH #514). Inline/page embeds keep ordinary source drag.
-              const host = e.currentTarget.closest<HTMLElement>(".block-embed-host");
-              const dragOwner = props.dragHostId && host?.dataset.blockId === props.dragHostId
-                ? props.dragHostId : props.id;
-              if (e.button === 0 && !blockPageReadOnly(dragOwner)) beginDrag(dragOwner, e);
+              if (e.button === 0 && !readOnly()) beginDrag(props.id, e);
             }}
             onClick={(e) => {
               e.stopPropagation();
@@ -416,7 +422,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                 case "sidebar": openDurableBlock(props.id, "sidebar"); break;
                 case "background": openDurableBlock(props.id, "tab"); break;
                 case "pane": openDurableBlock(props.id, "pane"); break;
-                default: zoomInto(props.id);
+                default: if (bulletOpen) bulletOpen(props.id); else zoomInto(props.id);
               }
             }}
             onAuxClick={(e) => {
@@ -442,6 +448,12 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               beginEditGesture(e, props.id, docNode(props.id).raw.length, instanceId, outlineScope);
           }}
         >
+          <Show when={bulletless() && !commentSelector()}>
+            <span class="comment-first-line-controls">
+              <Show when={showsAuthor()}><AuthorChip author={author()} handleOf={props.id} /></Show>
+              <CommentActions id={props.id} />
+            </span>
+          </Show>
           <Show
             when={editing()}
             fallback={
@@ -457,7 +469,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                   outlineScope={outlineScope}
                   refCountBadge={<>
                     <BlockRefCountBadge id={props.id} hidden={props.hideRefCount} open={showRefs()} toggle={() => setShowRefs((v) => !v)} />
-                    <Show when={showsAuthor()}>
+                    <Show when={showsAuthor() && !bulletless()}>
                       <AuthorChip author={author()} handleOf={bulletless() ? props.id : undefined} />
                     </Show>
                   </>}
@@ -504,6 +516,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           </Match>
         </Switch>
       </Show>
+      <Show when={commentClasses()["comment-card"]}><CommentComposer id={props.id} surface={surfaceKey} /></Show>
     </div>
   );
 }
@@ -544,14 +557,14 @@ interface AcItem {
 // One recorder app-wide: the starting editor's token outlives that editor, so Stop anywhere still stores it.
 let mobileRecordingEditorToken: AssetEditorToken | null = null;
 let templateCache: import("../types").TemplateDto[] | null = null;
-let templateCacheRev = -1;
+let templateCacheRev = "";
 let templateCacheEpoch = -1;
 async function getTemplates(): Promise<import("../types").TemplateDto[]> {
   // Re-fetch when the graph has changed since the last fetch,
   // so a template just created (here or externally) shows up without a reload.
-  const rev = dataRev(), epoch = graphEpoch();
+  const rev = changed("templates"), epoch = graphEpoch();
   if (templateCache && templateCacheRev === rev && templateCacheEpoch === epoch) return templateCache;
-  const owner = graphOwner(() => dataRev() === rev && graphEpoch() === epoch);
+  const owner = graphOwner(() => changed("templates") === rev && graphEpoch() === epoch);
   try {
     const templates = await readOwned(owner, backend().listTemplates());
     if (templates.kind === "stale") return []; templateCache = templates.value;
@@ -585,6 +598,7 @@ function isBlockEmbedMacro(m: ReturnType<typeof detectMacro>): boolean {
 
 export function Editor(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
   const propertySession = props.propertySession ?? propertyEditorSession();
+  propertySession.begin();
   // Non-null only inside the quick-capture window (see CaptureCtx).
   const cap = useContext(CaptureCtx);
   const sheetCell = useContext(SheetCellContext);
@@ -695,6 +709,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
   onCleanup(releaseCompletionLease);
   let rawBeforeLastCommit = node().raw;
+  const commitRecovery = editorCommitRecovery(() => ref, () => node() === shownNode);
   const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => {
     // A disposed editor whose block was replaced never writes (see shownNode).
     if (replacedUnderEditor()) return;
@@ -711,11 +726,11 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // unchanged, don't rewrite. Needed for org, where reattaching the hidden
     // drawer canonicalizes its position — so `next === raw` alone wouldn't catch
     // a block whose drawer wasn't already canonical, and would churn the file.
-    if (!commitAsCalc && !codeShown() && text === editorValue()) return;
+    if (!commitAsCalc && !codeShown() && text === editorValue()) { commitRecovery.applied(); return; }
     // For a code wrapper `text` is the payload body: re-attach the exact wrapper
     // bytes (GH #412/#413: the body-only projection is reversible).
     const visible = commitAsCalc ? serializeCalcExitCommit(text, editorValue()) : text;
-    const next = (!commitAsCalc ? codeWrapCommit(text) : null) ?? propertySession.join(visible, editorParts().hidden, node().raw, hideFn(), pageFmt());
+    const next = commitRecovery.join(() => (!commitAsCalc ? codeWrapCommit(text) : null) ?? propertySession.join(visible, editorParts().hidden, node().raw, hideFn(), pageFmt()), text);
     if (next === node().raw) return;
     const setRawOpts = opts && "timetracking" in opts ? { timetracking: opts.timetracking } : undefined;
     // GH #515: capture once for the autosize frame, before live mirrors above react.
@@ -725,7 +740,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     }
     autosize();
     rawBeforeLastCommit = node().raw;
-    setRaw(props.id, next, setRawOpts);
+    keepCaretThroughRewrite(ref, !commitAsCalc && !codeShown() && !compositionActive, () => setRaw(props.id, next, setRawOpts));
   };
 
   // Nest/un-nest an in-block list item by ±2 leading spaces (Tab/Shift-Tab when
@@ -1069,8 +1084,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const applyEdit = (ed: Edit) => {
     commit(ed.text);
     queueMicrotask(() => {
-      ref.value = ed.text;
-      ref.setSelectionRange(ed.start, ed.end, ed.direction);
+      syncTextareaToStore(ref, ed.text, textareaValue(), ed.start, ed.end, ed.direction);
       ref.focus();
       autosize();
     });
@@ -1255,8 +1269,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     commit(newRaw);
     const pos = start + text.length;
     queueMicrotask(() => {
-      ref.value = newRaw;
-      ref.setSelectionRange(pos, pos);
+      syncTextareaToStore(ref, newRaw, textareaValue(), pos);
       autosize();
     });
   };
@@ -1688,8 +1701,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         commit(next);
         closeAc();
         queueMicrotask(() => {
-          ref.value = next;
-          ref.setSelectionRange(next.length, next.length);
+          syncTextareaToStore(ref, next, textareaValue(), next.length);
           ref.focus();
           autosize();
         });
@@ -1730,10 +1742,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         replaceTrigger(timeStamp());
         return;
       case "youtube-timestamp": {
-        // OG inserts nothing when no player is registered/ready
-        // (youtube.cljs:113-122) — the slash text is still consumed.
-        const macro = youtubeTimestampMacroFor(ref);
-        replaceTrigger(macro ?? "");
+        replaceTrigger(youtubeTimestampMacroFor(ref) ?? "");
         return;
       }
       case "page-reference":
@@ -1880,21 +1889,6 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   createEffect(() => { textareaValue(); if (ref) autosize(); });
   onCleanup(() => autosizeRaf?.());
   createEffect(() => { codeWrapping(); if (ref && codeEditing()) autosize(); });
-  // A `wrap="off"` editor (a code card) mounts with its whole value assigned,
-  // which parks the selection at the end; focusing reveals that end and the
-  // later setSelectionRange does not scroll back, so a long line opened the
-  // editor on blank space hundreds of columns past the code (GH #489). Put the
-  // horizontal view where the caret is; one mirror measure, and only for an
-  // editor that can scroll horizontally at all, never an ordinary block.
-  const revealCaretColumn = (offset: number) => {
-    if (!ref || ref.scrollWidth <= ref.clientWidth) return;
-    const x = textareaCaretLeft(ref, offset);
-    if (x === null) return;
-    const margin = 24;
-    if (x < ref.scrollLeft + margin) ref.scrollLeft = Math.max(0, x - margin);
-    else if (x > ref.scrollLeft + ref.clientWidth - margin) ref.scrollLeft = x - ref.clientWidth + margin;
-  };
-
   const focusNow = () => {
     const historySelection = takeHistoryEditorSelectionFor(props.id, surfaceKey);
     const want = takeCaretFor(props.id);
@@ -1902,19 +1896,19 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       : typeof want === "number" ? want : null;
     if (rawCaret !== null) codeView.enter(rawCaret, historySelection?.end ?? rawCaret);
     ref.value = codeShown()?.body ?? (historySelection ? editorValue() : ref.value);
-    ref.focus();
+    ref.focus({ preventScroll: true }); // the engine's own focus scroll differs; revealCaretSettled (onMount) owns it (GH #745)
     const v = ref.value;
     if (historySelection) {
       const offset = codeView.mixed() ? codeShown()!.open.length : 0;
       const end = Math.min(historySelection.end - offset, v.length);
       const start = Math.min(historySelection.start - offset, end);
       ref.setSelectionRange(start, end);
-      revealCaretColumn(start);
+      revealCaretColumn(ref, start);
       return;
     }
     if (want !== null && typeof want === "object" && "start" in want) {
       ref.setSelectionRange(want.start, want.end, want.direction);
-      revealCaretColumn(want.direction === "backward" ? want.start : want.end);
+      revealCaretColumn(ref, want.direction === "backward" ? want.start : want.end);
       return;
     }
     let offset: number;
@@ -1945,7 +1939,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     }
     const o = Math.min(offset, v.length);
     ref.setSelectionRange(o, o);
-    revealCaretColumn(o);
+    revealCaretColumn(ref, o);
   };
   onMount(() => {
     const unregisterHistoryTarget = registerHistoryEditorTarget({
@@ -1983,6 +1977,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       });
     }
     resizeNow();
+    onCleanup(revealCaretSettled(ref, nearestScrollableY(ref)));
     // A split can change the editor's wrapping width after this mount-time
     // measurement. Observe width only so the height write in `resizeNow` cannot
     // feed an observer loop; `autosize` keeps repeated layout changes to one
@@ -2223,8 +2218,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     commit(newRaw);
     const pos = Math.max(0, start + delta);
     queueMicrotask(() => {
-      ref.value = newRaw;
-      ref.setSelectionRange(pos, pos);
+      syncTextareaToStore(ref, newRaw, textareaValue(), pos);
       autosize();
     });
   };
@@ -2290,6 +2284,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // its own preventDefault when it handles the event and returns whether it did
   // (false → fall through to native handling). Read ref fresh at call time.
   const runEditorCmd: Record<string, (e: KeyboardEvent) => boolean> = {
+    "editor/insert-youtube-timestamp": (e) => { e.preventDefault(); insertYoutubeTimestamp(ref, applyEdit); return true; },
     "editor/select-embedding-block": (e) => {
       if (!embedNavExit) return false;
       e.preventDefault();
@@ -2898,7 +2893,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         }
         const n = docNode(props.id);
         const next = nextVisible(props.id, structuralScope);
-        if (n && splitProps(n.raw, hideFn(), pageFmt()).visible.trim() === "" && n.children.length === 0 && next && docNode(next)?.page === n.page) {
+        if (n && isEditorEmpty(n.raw, hideFn(), pageFmt()) && n.children.length === 0 && next && docNode(next)?.page === n.page) {
           e.preventDefault();
           deleteBlock(props.id);
           startEditing(next, 0, null, editSurface());
@@ -3174,10 +3169,11 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       return;
     }
     // Preserve explicit clipboard HTML structure on ordinary editor surfaces.
-    const htmlNodes = syntaxSensitive ? null : structuredHtmlOutline(html, text, pageFmt());
-    if (htmlNodes) {
+    const htmlPaste = syntaxSensitive ? null : structuredHtmlPaste(html, text, pageFmt());
+    if (htmlPaste) {
       e.preventDefault();
-      insertPastedOutline(htmlNodes, "structured-paste");
+      if (htmlPaste.inlineText !== null) pasteLiteralText(htmlPaste.inlineText);
+      else insertPastedOutline(htmlPaste.outline, "structured-paste");
       return;
     }
     if (text.includes("\n")) {
@@ -3283,9 +3279,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         if (!inserted) pushToast(msg("editor-block-pasted-outline-was-refused"), "error");
         return;
       }
-      const wasEmpty = rawAtPaste.trim() === "" && docNode(props.id).children.length === 0;
       const lastId = withUndoUnit(tag, [pageAtPaste], () => {
         commit(rawAtPaste);
+        const host = docNode(props.id);
+        const wasEmpty = rawAtPaste.trim() === "" && isEditorEmpty(host.raw, hideFn(), pageFmt()) && host.children.length === 0;
         return (wasEmpty
           ? replaceEmptyBlockWithOutline(props.id, prepared)
           : insertOutlineAfter(props.id, prepared)) ?? false;
@@ -3314,7 +3311,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         classList={{ [`h${editorHeadingLevel()}`]: editorHeadingLevel() != null, "code-edit": codeEditing() }}
         wrap={codeEditing() && !codeWrapping() ? "off" : "soft"}
         spellcheck={spellcheckEnabled()}
-        // A frozen page (a transfer endpoint, a rename, a graph switch) takes
+        // A frozen page (a delete, transfer, rename or graph switch) takes
         // no input at all, so nothing typed is shown and then dropped (Q-TS2).
         readOnly={!blockWritable(props.id)}
         value={textareaValue()}
@@ -3382,6 +3379,12 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
             aria-expanded={selectionOverflowOpen()}
             onClick={() => setSelectionOverflowOpen((open) => !open)}
           >…</button>
+          <Show when={!cap}>
+            <button type="button" data-selection-action="comment" title={translate("comment-toolbar-shortcut")} aria-label={translate("comment-toolbar")}
+              onClick={() => commentFromEditor(props.id, ref, commit, editSurface())}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-3 3V11.5a10 10 0 0 1 20 0Z" /></svg>
+            </button>
+          </Show>
           <Show when={selectionOverflowOpen()}>
             <div ref={selectionOverflowRef} class="sel-toolbar-overflow" role="menu" aria-label={translate("editor-block-more-formatting")}>
               <For each={secondarySelectionActions}>{(action) => (

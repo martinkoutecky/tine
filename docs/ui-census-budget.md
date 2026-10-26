@@ -57,6 +57,14 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-10-24, D-20261024-QA (GH #758 and GH #757 part 3): `commands.registry` 120→122,
+  `commands.registry.editor` 25→26, `commands.palette` 68→69 for the explicitly approved
+  **All graphs** navigation command (`g shift+g`, also required in the palette) and
+  **Insert YouTube timestamp** editor command (`mod+shift+y`). Both remain remappable
+  through the existing Shortcuts list; no extra settings or slash commands were added.
+- 2026-10-22, GX4 S3 target 1 / Change Summary design §5 (D-20261022-HJ, HJ7):
+  `settings.diagnostics.open` 5→6 for the explicitly required session-only
+  **Refresh everything on every save (debug)** comparison switch.
 - 2026-10-19, D-20261018-W1 (Martin: "Open in new tab" back on mobile): `mobile.menu.block.plain` 14→15,
   `block.full` 18→19, `block.multi` 13→14, `block.readonly` 5→6, `page.link` 11→12, `page.header.page` 14→15,
   `page.header.journal` 14→15. The mobile census now runs as a touch-first device (`touchPrimary`), since

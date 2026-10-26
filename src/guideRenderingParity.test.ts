@@ -1,5 +1,21 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+it("the Guide explains query pauses and stale collapsed reference counts", () => {
+  const queries = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
+  const references = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
+  for (const outcome of ["pause typing for 1.5 seconds", "latest saved publication", "last answer visible"]) expect(queries).toContain(outcome);
+  for (const outcome of ["keep their last count", "Count may be out of date", "opening the section reloads"]) expect(references).toContain(outcome);
+});
+it("the Guide explains preview placement and reachable source actions (GH #750, GH #752)", () => {
+  const guide = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
+  for (const outcome of ["space above or below the link", "stays in place as its content changes", "title and **Open source** stay visible while you scroll"]) expect(guide).toContain(outcome);
+});
+it("the Guide teaches time tracking for selected task cycling", () => {
+  const guide = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
+  for (const outcome of ["**Time tracking** on", "DOING / NOW records a clock-in", "into DONE records a clock-out", "Ctrl/Cmd+Enter cycles several selected blocks, in one Undo step"]) expect(guide).toContain(outcome);
+  for (const outcome of ["logbook stays out of the text editor", "**Enter** at the end of its text leaves the history on that task", "keeps both histories in the surviving block's logbook", "editor stays open with your typed text", "use **Copy** on that message"]) expect(guide).toContain(outcome);
+  for (const outcome of ["type by hand stays visible until you leave the editor", "Copying or cutting whole blocks carries their clock history", "between Markdown and Org pages"]) expect(guide).toContain(outcome);
+});
 it("the Guide teaches result-scoped columns and retained saved choices", () => {
   const guide = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
   for (const outcome of ["only columns found in the current results", "saved column choice stays intact", "checkbox returns when the column appears again"]) expect(guide).toContain(outcome);
@@ -18,7 +34,7 @@ it("the Guide teaches inline checklist clicks, nesting, Org and own-content coll
 });
 it("the canonical Guide teaches linked property keys, shaded embeds and the tagged-page section", () => {
   const guide = readFileSync(new URL("../crates/tine-core/src/templates/pages-links-references-search.md", import.meta.url), "utf8");
-  for (const outcome of ["click the key to open its page", "Later groups remain in the file", "shaded background in both light and dark", '**Pages tagged with "X"**', "before Linked References", "Inline block tags still belong to Linked References"]) expect(guide).toContain(outcome);
+  for (const outcome of ["Click a property key to open its page", "Shift-click opens it in the right sidebar", "before and after editing", ":property-pages/enabled? false", "it does not remove key links", "Later groups remain in the file", "shaded background in both light and dark", '**Pages tagged with "X"**', "before Linked References", "Inline block tags still belong to Linked References"]) expect(guide).toContain(outcome);
 });
 
 it("the Guide explains journal feed references and their lazy/collapse behavior", () => {

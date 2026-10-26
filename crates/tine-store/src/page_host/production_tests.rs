@@ -10,6 +10,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+#[path = "production_guard_tests.rs"]
+mod guard_tests;
+
 struct Fixture {
     root: tempfile::TempDir,
     graph: PathBuf,
@@ -154,6 +157,34 @@ fn real_page_read_error_is_not_absence_and_cannot_publish_over_it() {
     assert!(!f.host.pages.contains_key("c.md"));
     assert!(f.graph.join("c.md").is_dir());
     assert_eq!(f.host.start_save("c.md"), Disposition::Disabled);
+}
+
+/// Audit L6-02: the host reads pages through the store's 64 MiB parse cap.
+/// An external replacement past it fails the read (the save cannot publish
+/// over it) instead of allocating the whole file; the typed text stays.
+#[test]
+fn a_page_replaced_past_the_parse_cap_is_a_read_failure_and_keeps_the_typing() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    let huge = fs::OpenOptions::new()
+        .write(true)
+        .open(f.graph.join("a.md"))
+        .unwrap();
+    huge.set_len(crate::PARSE_INPUT_MAX_BYTES + 1).unwrap();
+    drop(huge);
+    assert!(f.host.fs.read_page("a.md").is_err());
+    assert_ne!(f.save("a.md"), Outcome::Published);
+    assert_eq!(
+        fs::metadata(f.graph.join("a.md")).unwrap().len(),
+        crate::PARSE_INPUT_MAX_BYTES + 1
+    );
+    let page = &f.host.pages["a.md"];
+    assert_eq!(page.buf.as_deref(), Some(&b"mine"[..]));
+    assert!(page
+        .obs
+        .as_ref()
+        .and_then(|obs| obs.as_ref())
+        .is_none_or(|obs| obs.len() as u64 <= crate::PARSE_INPUT_MAX_BYTES));
 }
 
 #[test]
@@ -2255,4 +2286,120 @@ fn gh685_unreadable_os_ancestor_keeps_drafts_on() {
         "GH #685: crash recovery must stay on"
     );
     assert!(app.join("drafts-v2/g").is_dir());
+}
+
+/// Backdate every trash ancestor's modification time past `SETTLED`, each to
+/// a distinct time so a later entry change always moves it.
+#[cfg(all(feature = "test-faults", unix))] // the witness is Unix-only; Windows cannot open a directory as a file
+fn settle(f: &Fixture) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static AGE: AtomicU64 = AtomicU64::new(3_600);
+    for dir in chain(f).iter().skip(1) {
+        let age = AGE.fetch_add(1, Ordering::Relaxed);
+        let time = std::time::SystemTime::now() - std::time::Duration::from_secs(age);
+        fs::File::open(dir).unwrap().set_modified(time).unwrap();
+    }
+}
+
+/// GH3 step 2 (Martin 2026-10-11 "redundant post-move ancestor syncs"): once a
+/// deletion has synced every trash ancestor durably in this incarnation, later
+/// deletions sync only the trash directory. A failed chain sync, a recreated
+/// chain directory and a relaunch each sync the whole chain again.
+#[cfg(all(feature = "test-faults", unix))]
+#[test]
+fn trash_ancestors_are_synced_once_per_incarnation() {
+    use crate::directory_durability::{take_synced_directories, SYNC_ERROR};
+    let f = &mut Fixture::new();
+    for name in ["p1", "p2", "p3", "p4", "p5"] {
+        fs::write(f.trash.join(name), name).unwrap();
+    }
+    let whole = chain(f);
+    assert_eq!(whole.len(), 4, "{whole:?}");
+    // A sync the filesystem does not offer witnesses nothing either.
+    settle(f);
+    take_synced_directories();
+    SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::InvalidInput)));
+    assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Unsupported));
+    assert_eq!(take_synced_directories(), whole);
+    assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Durable));
+    assert_eq!(
+        take_synced_directories(),
+        whole,
+        "Unsupported recorded a witness"
+    );
+    // Start over with fresh times.
+    fs::File::open(&whole[1])
+        .unwrap()
+        .set_modified(std::time::SystemTime::now())
+        .unwrap();
+    // Fresh modification times witness nothing (a same-tick change is invisible).
+    take_synced_directories();
+    assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), whole);
+    assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), whole);
+    settle(f);
+    // A failed ancestor sync witnesses nothing.
+    take_synced_directories();
+    SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
+    assert!(f.host.fs.trash_sync("a.md", "p1").is_err());
+    take_synced_directories();
+    assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), whole);
+    assert_eq!(f.host.fs.trash_sync("b.md", "p2"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), vec![f.trash.clone()]);
+    // A tool that sets an ancestor's time back (`rsync -a`, `cp -a`) moves its
+    // status-change time (on the kernel's coarse clock: wait out one tick so
+    // the restore does not share the last change's).
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let parent = fs::File::open(&whole[1]).unwrap();
+    parent
+        .set_modified(parent.metadata().unwrap().modified().unwrap())
+        .unwrap();
+    assert_eq!(f.host.fs.trash_sync("b.md", "p2"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), whole);
+    assert_eq!(f.host.fs.trash_sync("b.md", "p2"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), vec![f.trash.clone()]);
+    // Another program recreates the trash directory: a new entry to make durable.
+    fs::remove_dir_all(&f.trash).unwrap();
+    fs::create_dir(&f.trash).unwrap();
+    fs::write(f.trash.join("p3"), "p3").unwrap();
+    settle(f); // even with every time settled, the parent's time moved
+    assert_eq!(f.host.fs.trash_sync("a.md", "p3"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), chain(f));
+    assert_eq!(f.host.fs.trash_sync("a.md", "p3"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), vec![f.trash.clone()]);
+    // A new incarnation trusts no earlier witness.
+    relaunch(f);
+    fs::write(f.trash.join("p4"), "p4").unwrap();
+    take_synced_directories();
+    assert_eq!(f.host.fs.trash_sync("a.md", "p4"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), chain(f));
+}
+
+/// D-20261021-GQ3: with marker files off (the Windows setting) a deletion
+/// writes and unlinks no custody marker, and still publishes with the payload
+/// in the trash.
+#[test]
+fn without_marker_files_a_deletion_leaves_no_custody_file() {
+    let mut f = Fixture::new();
+    f.host.fs.marker_files = false;
+    f.send("a.md", RequestKind::Open);
+    assert_eq!(f.host.delete("a.md"), Disposition::Pending);
+    f.drain();
+    reset_syncs();
+    assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
+    f.host.advance_save(); // guard
+    f.host.advance_save(); // marker (named, not written)
+    assert_eq!(markers(&mut f), 0);
+    f.host.advance_save(); // move
+    assert!(!f.graph.join("a.md").exists());
+    assert_eq!(markers(&mut f), 0);
+    while f.host.job.is_some() {
+        f.host.advance_save();
+    }
+    assert_eq!(syncs(), 0, "no marker temp fsync");
+    assert_eq!(markers(&mut f), 0);
+    assert!(f.host.fs.unwritten.is_empty(), "retired");
+    assert!(trash_holds(&f, b"A"));
 }

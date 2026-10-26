@@ -35,8 +35,7 @@ use crate::path_identity::canonical_existing_path;
 mod page_identity;
 #[cfg(any(test, feature = "test-faults"))]
 mod save_failure;
-use std::collections::{BTreeMap, VecDeque};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -95,6 +94,8 @@ const PREVIEW_MAX_BYTES: usize = RESULT_BRIDGE_MAX_BYTES - 4 * 1024;
 /// Opening lists page and journal files and starts background parsing; see
 /// [`Self::open`]. `Store` is `Send + Sync`; callers can share it through `Arc`.
 pub struct Store {
+    #[cfg(test)]
+    pub(crate) marker_copy_pause: Mutex<Option<TestPause>>,
     pub(crate) graph: Arc<Graph>,
     pub(crate) writer: Arc<Mutex<()>>,
     load: Arc<LoadState>,
@@ -220,9 +221,10 @@ pub enum ChangeKind {
 /// `Change` is `Send + Sync` and can cross worker-thread boundaries.
 /// Its Serialize implementation emits a bounded derived-answer wire: `rev`,
 /// `inventoryChanged` (name/alias/reference-name or unreadable inventory inputs),
-/// and `blockRefCounts` (final changed-target counts, zero for removal). Save
+/// `blockRefCounts` (final changed-target counts, zero for removal), and a
+/// transport-only `summary` of changed page/block/reference/property keys. Save
 /// results and notifications use this same signal. Serialization costs O(changed
-/// targets); publication computes it from changed parsed pages without inventory
+/// targets and summary keys); publication computes it from changed parsed pages without inventory
 /// materialization. Initial publication may include all counts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Change {
@@ -249,7 +251,7 @@ pub struct Change {
     /// they are excluded from parsed search, backlinks, and page inventory.
     pub files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
     pages: Vec<(FileId, PageKind, String)>,
-    answers: (bool, BTreeMap<String, usize>),
+    answers: (bool, BTreeMap<String, usize>, change_summary::ChangeSummary),
     /// The watcher batch that produced this publication, for latency
     /// receipts (GH #337 diagnosis); `None` for every other publisher.
     pub watch: Option<WatchBatch>,
@@ -301,6 +303,9 @@ pub enum SubscriptionEnd {
 }
 
 pub(crate) struct ChangeFeed {
+    /// Mounted unlinked readers only; owned by this graph/window's binding.
+    unlinked_targets: Mutex<change_summary::UnlinkedRegistry>,
+    query_targets: Mutex<change_summary::QueryRegistry>,
     state: Mutex<FeedState>,
     ready: Condvar,
     graph: Arc<Graph>,
@@ -341,12 +346,14 @@ struct Snapshot {
     claimants: Arc<SharedMap<(bool, String), Vec<PageEntry>>>,
     name_by_path: Arc<SharedMap<PathBuf, (PageKind, String)>>,
     unreadable: Arc<Vec<(FileId, String)>>,
-    answers: (bool, BTreeMap<String, usize>),
+    answers: (bool, BTreeMap<String, usize>, change_summary::ChangeSummary),
     /// This publication only folded or unfolded blocks (GH #623 item 3).
     folds_only: bool,
 }
 
 mod answer_changes;
+mod asset_inventory;
+pub(crate) mod change_summary;
 pub(crate) mod checkpoint;
 mod diagnostics;
 mod first_view;
@@ -396,6 +403,8 @@ impl ChangeFeed {
         journal_ids: Arc<Mutex<HashMap<Day, PageId>>>,
     ) -> Self {
         Self {
+            unlinked_targets: Default::default(),
+            query_targets: Default::default(),
             state: Mutex::new(FeedState {
                 rev: 0,
                 subscription: 0,
@@ -426,6 +435,7 @@ impl ChangeFeed {
             false,
             GraphRev(0),
             &HashMap::new(),
+            &Default::default(),
         );
         *self.snapshot.write().unwrap() = Some(Arc::new(snapshot));
     }
@@ -496,20 +506,25 @@ impl ChangeFeed {
         )
     }
 
-    /// Publish after a forced rebuild (`WatchHandle::rebuild_all`): the new
+    /// Publish after a forced rebuild or restore: the new
     /// snapshot recomputes the name index and the read evaluator from the
     /// rebuilt cache instead of carrying the previous generation's.
-    pub(crate) fn publish_rebuilt(&self, files: Vec<(FileId, ChangeKind, Option<FileRev>)>) {
+    pub(crate) fn publish_rebuilt(
+        &self,
+        origin: Origin,
+        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+        config_changed: bool,
+    ) -> GraphRev {
         self.publish_inner(
-            Origin::External,
+            origin,
             files,
-            false,
+            config_changed,
             Vec::new(),
             || {},
             None,
             true,
             &HashMap::new(),
-        );
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -538,7 +553,8 @@ impl ChangeFeed {
                 journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
         }
         let rev = GraphRev(self.rev().0 + 1);
-        let snapshot = Arc::new(Snapshot::capture(
+        let targets = self.registered_targets();
+        let mut snapshot = Snapshot::capture(
             &self.graph,
             &self.config,
             old.as_deref(),
@@ -547,7 +563,8 @@ impl ChangeFeed {
             rebuild,
             rev,
             published,
-        ));
+            &targets,
+        );
         // A fold leaves the launch checkpoint's derived state true; its file
         // stamp is stale, so the next launch diff rereads that one file
         // (ADR 0070) instead of the whole checkpoint being rewritten for it.
@@ -556,13 +573,21 @@ impl ChangeFeed {
             self.checkpoint.get().inspect(|signal| signal.published());
         }
         #[cfg(test)]
-        self.publish_hooks.before_publish(&snapshot);
+        self.publish_hooks.before_publish();
         let mut state = self.state.lock().unwrap();
         state.rev += 1;
         let rev = GraphRev(state.rev);
         debug_assert_eq!(snapshot.rev, rev);
+        // Holding the snapshot write lock orders a later registration's first
+        // read after this install; one made during the capture fires here.
+        let mut current = self.snapshot.write().unwrap();
+        self.fire_registered_since(&targets, &mut snapshot);
+        let snapshot = Arc::new(snapshot);
+        #[cfg(test)]
+        self.publish_hooks.published(&snapshot);
         let answers = snapshot.answers.clone();
-        *self.snapshot.write().unwrap() = Some(snapshot);
+        *current = Some(snapshot);
+        drop(current);
         before_notify();
         if !state.closed {
             state.queue.push_back(Change {
@@ -930,6 +955,7 @@ impl Store {
             changes,
             watch,
             faults: Mutex::new(std::collections::HashSet::new()),
+            marker_copy_pause: Mutex::new(None),
         }
     }
 
@@ -1268,6 +1294,8 @@ impl Store {
                 watch,
                 #[cfg(any(test, feature = "test-faults"))]
                 faults: Mutex::new(std::collections::HashSet::new()),
+                #[cfg(test)]
+                marker_copy_pause: Mutex::new(None),
             },
             meta,
             config,
@@ -1396,9 +1424,11 @@ impl Store {
     /// base revision, so a save made over a file a refresh found changed is
     /// refused like any other stale save.
     ///
-    /// Config changes enumerate and reparse O(P + B) pages/blocks under the
-    /// writer before publication. Recovery from a failed initial load parses
-    /// the whole graph synchronously before reconciliation, at every depth
+    /// Config changes enumerate names (reading page preambles) and rebuild
+    /// in-memory indexes under the writer before publication; only changes
+    /// to the build config key also re-read and reparse O(P + B) pages/blocks.
+    /// Recovery from a failed initial load parses the whole graph synchronously
+    /// before reconciliation, at every depth
     /// (already a cold build). A concurrent edit can make that recovery parse
     /// fail; retry with another explicit call after edits settle. A
     /// previously unreadable subtree is retried on this full scan; newly
@@ -2873,8 +2903,9 @@ impl WholeGraph {
     /// Asset names mentioned in page preambles or blocks, including decoded URL
     /// spellings and the first segment of nested image references. Cost
     /// O(P + B + scanned text bytes) on every call. This does not infer a
-    /// sidecar reference merely from its PDF base name.
-    pub fn referenced_assets(&self) -> Arc<HashSet<String>> {
+    /// sidecar reference merely from its PDF base name. Parsed pages only:
+    /// orphan safety uses [`Store::referenced_assets`] (set-aside files too).
+    pub(crate) fn referenced_assets(&self) -> Arc<HashSet<String>> {
         let mut names = HashSet::new();
         self.graph.with_pages(|pages| {
             for (_, doc) in pages {
@@ -3204,8 +3235,9 @@ impl WholeGraph {
     /// Resolve runtime structural block ids or persisted `id::` values in
     /// request order; unknown ids yield `None`. Runtime ids can change when
     /// the page structure changes, while persisted ids remain external refs.
-    /// Cost ranges from the identified page's blocks to O(B) if the id cannot
-    /// be routed directly to a page. More than 20,000 requested ids returns
+    /// Cost: one index lookup per id and one walk per answering page; a miss
+    /// never scans pages (I-13). Per-file deltas maintain the index.
+    /// More than 20,000 requested ids returns
     /// `ResultTooLarge` with `RequestedBlockRefs`; result data is also limited
     /// to 20,000 rows and 32 MiB.
     pub fn blocks(&self, uuids: &[String]) -> Result<Vec<Option<RefGroup>>, QueryError> {
@@ -3243,8 +3275,7 @@ impl WholeGraph {
     /// Bounded subtree preview. `max_nodes` is clamped to 1..=2,000 and
     /// output is capped below 32 MiB. Inspect `BlockPreview::truncated`:
     /// `Some` can omit descendants or even the root under the byte cap.
-    /// Cost ranges from one identified page's blocks to O(B) if the id cannot
-    /// be routed directly to a page.
+    /// Cost: one index lookup and one walk of the answering page; see [`Self::blocks`].
     pub fn preview_block(
         &self,
         uuid: &str,
@@ -5027,6 +5058,73 @@ mod rev5_tests {
             assert_eq!(count, 1);
             assert!(matches!(resolved, Resolved::Existing { .. }));
         }
+        store.close();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reader_registration_during_publication_neither_waits_nor_goes_stale() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-d3-unlinked-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/Source.md"), "- before\n").unwrap();
+        fs::write(root.join("pages/Target.md"), "- target\n").unwrap();
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        store.whole_graph().unwrap();
+        let id = PageId::from("pages/Source.md");
+        let read = store.page(&id).unwrap();
+        let mut doc = read.doc;
+        // Not a mention of Target: only the late registration can fire its key.
+        doc.blocks[0].raw.push_str(" edited");
+        let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        *store.changes.publish_hooks.pause.lock().unwrap() = Some(Arc::clone(&pause));
+        let writer_store = Arc::clone(&store);
+        let writer = std::thread::spawn(move || {
+            writer_store.save(
+                crate::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &doc,
+            )
+        });
+        wait_hook(&pause);
+        assert!(
+            store.writer.try_lock().is_err(),
+            "publication holds the writer"
+        );
+        let (send, receive) = mpsc::channel();
+        let register_store = Arc::clone(&store);
+        let register = std::thread::spawn(move || {
+            register_store.register_unlinked_reference("late".into(), Some("Target".into()));
+            let (query, _) = tine_core::query::parse_query_text(
+                "@page and name = 'Target'",
+                tine_core::query::QueryDialect::Tql,
+                tine_core::date::JournalDate::today(),
+            );
+            register_store
+                .register_query_subscription(
+                    "late-query".into(),
+                    Some(change_summary::QuerySubscription::Query {
+                        query,
+                        context: Default::default(),
+                    }),
+                    None,
+                )
+                .unwrap();
+            send.send(()).unwrap();
+        });
+        let registered = receive.recv_timeout(Duration::from_secs(2));
+        release_hook(&pause);
+        *store.changes.publish_hooks.pause.lock().unwrap() = None;
+        assert!(matches!(writer.join().unwrap(), SaveOutcome::Saved(_)));
+        register.join().unwrap();
+        registered.expect("registration waited behind the writer");
+        let published = store.changes.snapshot.read().unwrap().clone().unwrap();
+        assert!(published.answers.2.fires_text("target"));
+        assert!(published.answers.2.fires_query("late-query"));
         store.close();
         fs::remove_dir_all(root).unwrap();
     }

@@ -14,6 +14,7 @@ import { capturePages, markDirty, pageFrozen, persistTransfer } from "./host/wir
 import { doc, keySource, keysUsed, pageByName, setDoc } from "./model";
 import { msg } from "../i18n";
 import { pushToastUnique } from "../toasts";
+import { editorHidePolicy } from "../editor/properties";
 
 /** Why a verb did nothing (`outline::Reason`). */
 export type OutlineRefusal =
@@ -142,7 +143,7 @@ export function outlineChange(verb: OutlineVerb, pageNames: readonly string[]): 
   const names = [...new Set(pageNames)];
   const ask = (reads: readonly OutlineRead[] | null) => {
     const pages = names.map((name) => outlinePage(name, reads)).filter((p) => p !== null);
-    return JSON.parse(outlineApply(JSON.stringify({ pages, verb, keys: keySource() })));
+    return JSON.parse(outlineApply(JSON.stringify({ pages, verb, keys: keySource(), hide: editorHidePolicy() })));
   };
   const reads = outlineMarshal.whole || verb.verb === "insert_outline" ? null : (JSON.parse(outlineReads(JSON.stringify(verb))) as OutlineRead[]);
   let answer = ask(reads);

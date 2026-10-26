@@ -11,12 +11,14 @@ import { FailureBoundary } from "./FailureBoundary";
  *  run (`sharedQueryResult`). */
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { createQuerySubscription } from "../querySubscription";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { sharedQueryResult } from "../queryResultCache";
 import { readLatestOr } from "../resourceRead";
 import { createAnswerDay } from "../journal";
 import { visibleBody } from "../render/block";
+import { formatForPage } from "../document";
 import { bothFamilies } from "../queryTwin";
 import { SearchResultRow } from "./SearchResultRow";
 import type { ExecutionContext, PageRow, Query, ViewSettings } from "../editor/queryIr";
@@ -62,7 +64,7 @@ type PreviewBlock = PreviewAnswer["blocks"][number];
 const previewBlocks = (groups: RefGroup[]): PreviewBlock[] => groups.flatMap((group) => group.blocks.map((block) => ({
   page: group.page,
   breadcrumb: block.breadcrumb ?? [],
-  text: [block.marker, ...visibleBody(block.raw)].filter(Boolean).join(" "),
+  text: [block.marker, ...visibleBody(block.raw, formatForPage(group.page))].filter(Boolean).join(" "),
 })));
 
 function without(groups: RefGroup[], hostBlockId: string | undefined): RefGroup[] {
@@ -87,13 +89,18 @@ export function QueryLivePreview(props: {
 
 function QueryLivePreviewContent(props: Parameters<typeof QueryLivePreview>[0]): JSX.Element {
   const answerDay = createAnswerDay();
+  const subscription = createQuerySubscription(() => {
+    const query = props.query();
+    return !query ? undefined : props.both?.() ? { kind: "full" }
+      : { kind: "query", query, context: props.context?.() ?? {} };
+  }, answerDay.day);
   const request = createMemo<PreviewRequest | undefined>(() => {
     const query = props.query();
     if (!query || !resultsSettled()) return undefined;
     const view = props.view();
     const context = props.context?.();
     const both = props.both?.() === true;
-    return { query, view, context, both, key: JSON.stringify([query, view, context ?? null, both, resultsEpoch(), dataRev(), answerDay.day()]) };
+    return { query, view, context, both, key: JSON.stringify([query, view, context ?? null, both, resultsEpoch(), subscription.revision(), answerDay.day()]) };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
 
   const [settled, setSettled] = createSignal<PreviewRequest | undefined>(untrack(request));
@@ -108,7 +115,8 @@ function QueryLivePreviewContent(props: Parameters<typeof QueryLivePreview>[0]):
   const [answer] = createResource(settled, async (req): Promise<PreviewAnswer | undefined> => {
     const owner = latestOwner(owners, "preview", graphOwner());
     const scope = `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
-    const revision = untrack(dataRev);
+    if (!await subscription.ready()) return undefined;
+    const revision = `${untrack(subscription.revision)}\0${subscription.publication()}`;
     const ticket = captureResultsTicket();
     if (!ticket.settled) return undefined;
     const landed = await readOwned(owner, sharedQueryResult(

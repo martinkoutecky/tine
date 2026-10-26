@@ -2,7 +2,8 @@ import { For, Show, createEffect, createResource, createSignal, onCleanup, type 
 import { pageIcon } from "../pageIconBatch";
 import { msg, t } from "../i18n";
 import { JournalsIcon } from "./JournalsIcon";
-import { openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
+import { openAllGraphs, openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
 import { openSwitcher, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
 import { graphMeta } from "../graphSession";
@@ -70,7 +71,7 @@ export interface GraphNavigationActions {
   createNew(): Promise<LoadGraphPathOutcome>;
 }
 
-const graphNavigationActions: GraphNavigationActions = {
+export const graphNavigationActions: GraphNavigationActions = {
   openKnown: openKnownGraph,
   openPicked: switchGraph,
   createNew: createNewGraph,
@@ -136,7 +137,7 @@ export function Sidebar(props: {
               aria-controls="sidebar-favorites-list"
               onClick={toggleFavoritesSection}
             >
-              <span class="nav-toggle-caret" classList={{ open: favoritesSectionExpanded() }}>▸</span>{t("sidebar-favorites")}<span class="nav-section-count">{favoriteCount()}</span>
+              <ReferenceDisclosure class="nav-toggle-caret" collapsed={!favoritesSectionExpanded()} />{t("sidebar-favorites")}<span class="nav-section-count">{favoriteCount()}</span>
             </button>
             <Show when={favoritesSectionExpanded()}>
               <SidebarFavorites
@@ -160,7 +161,7 @@ export function Sidebar(props: {
               aria-controls="sidebar-recent-list"
               onClick={toggleRecentSection}
             >
-              <span class="nav-toggle-caret" classList={{ open: recentSectionExpanded() }}>▸</span>{t("sidebar-recent")}<span class="nav-section-count">{recentPages().length}</span>
+              <ReferenceDisclosure class="nav-toggle-caret" collapsed={!recentSectionExpanded()} />{t("sidebar-recent")}<span class="nav-section-count">{recentPages().length}</span>
             </button>
             <Show when={recentSectionExpanded()}>
               <div id="sidebar-recent-list">
@@ -211,7 +212,7 @@ export function Sidebar(props: {
             class="nav-section-header nav-section-toggle"
             onClick={() => setShowNs(!showNs())}
           >
-            <span class="nav-toggle-caret" classList={{ open: showNs() }}>▸</span>{t("sidebar-namespaces")}</div>
+            <ReferenceDisclosure class="nav-toggle-caret" collapsed={!showNs()} />{t("sidebar-namespaces")}</div>
           <Show when={showNs()}>
             <NamespaceTree onPageContextMenu={openRowMenu} onActiveNavigationComplete={props.onActiveNavigationComplete} />
           </Show>
@@ -304,7 +305,7 @@ export function GraphSwitcher(props: {
           <path d="M5 12v7c0 1.66 3.13 3 7 3s7-1.34 7-3v-7" fill="none" stroke="currentColor" stroke-width="1.6" />
         </svg>
         <span class="graph-switch-name">{graphDisplayName()}</span>
-        <span class="graph-switch-caret">▾</span>
+        <ReferenceDisclosure class="graph-switch-caret" collapsed={false} />
       </button>
       <Show when={open()}>
         <div
@@ -317,6 +318,7 @@ export function GraphSwitcher(props: {
         />
         <div class="ctx-menu graph-switch-menu">
           <ResourceFailure of={knownGraphsResource} what="your other graphs" onRetry={() => void refetch()} />
+          <button class="ctx-item" onClick={() => { close(); openAllGraphs(); props.onActiveNavigationComplete?.(); }}>{t("command-go-all-graphs")}</button>
           <For each={knownGraphs() ?? []}>
             {(graph) => (
               <div

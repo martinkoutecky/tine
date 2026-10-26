@@ -43,7 +43,8 @@ import {
 } from "./QuerySheet";
 import { sharedQueryResult } from "../queryResultCache";
 import { graphOwner, ownedWhen, readOwned } from "../owned";
-import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { createQuerySubscription } from "../querySubscription";
 import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
 import { queryTextOpen, setQueryTextOpen as rememberTextOpen } from "../navSettings";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
@@ -427,11 +428,12 @@ export function resetQueryRegistryRevisionForTests(): void {
 }
 
 /** **One registry read, however many surfaces ask for it** (D-14, I-12): every open builder keys the same
- * `sharedQueryResult` entry by graph scope, data revision and declaration revision. */
+ * `sharedQueryResult` entry by graph scope, registry key and declaration revision. */
 export function createQueryRegistryAccess(active: () => boolean): RegistryAccess {
+  const subscription = createQuerySubscription(() => active() ? { kind: "registry" } : undefined);
   const registryScope = () => `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
   const registryKey = () =>
-    active() ? `${dataRev()}\0${declarationRevision()}` : undefined;
+    active() ? `${subscription.revision()}\0${declarationRevision()}` : undefined;
   const [registrySnapshot] = createResource(
     () => {
       const key = registryKey();
@@ -439,9 +441,10 @@ export function createQueryRegistryAccess(active: () => boolean): RegistryAccess
     },
     async (request): Promise<RegistryRead | undefined> => {
       try {
+        if (!await subscription.ready()) return undefined;
         const landed = await readOwned(
           graphOwner(),
-          sharedQueryResult(request.scope, `query-registry\0${request.key}`, () => backend().queryRegistry()),
+          sharedQueryResult(request.scope, `query-registry\0${request.key}\0${subscription.publication()}`, () => backend().queryRegistry()),
         );
         if (landed.kind === "stale") return undefined;
         return { scope: request.scope, key: request.key, snapshot: landed.value, failure: null };

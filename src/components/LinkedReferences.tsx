@@ -27,6 +27,9 @@ import { activeSurface } from "../editorController";
 import { navigationName } from "../pageIndex";
 import { readPageProperty, setPageProperty } from "../document";
 import { parseReferenceFilters, writeReferenceFilters } from "../referenceFilters";
+import { referenceKey, referenceRevision, registerUnlinkedReader } from "../referenceKeys";
+import { createCollapsedRevision } from "../collapsedRevision";
+import { StaleReferenceCount } from "./StaleReferenceCount";
 
 // One identity fold for chips, filters and group merging: the old private `norm`
 // (trim + toLowerCase) split NFC/NFD and boundary-slash spellings of one page
@@ -121,14 +124,29 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
   let alive = true;
   onCleanup(() => { alive = false; });
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
+  const registration = registerUnlinkedReader(() => props.unlinked ? props.name : undefined);
+  const dependency = referenceRevision(() => referenceKey(props.unlinked ? "text" : "links", props.name));
+  // The first answer establishes the count, including when initially folded.
+  const [loadedCount, setLoadedCount] = createSignal(0);
+  const savedCollapse = () => props.unlinked ? !(sectionOverride(section, props.name) ?? false) : sectionOverride(section, props.name) ?? null;
+  const [collapsedOverride, setCollapsedOverrideSignal] = createSignal<boolean | null>(savedCollapse());
+  const collapsed = () => collapsedOverride() ?? loadedCount() >= referenceCollapseThreshold();
+  const freshness = createCollapsedRevision(dependency.revision, collapsed, () => props.name);
+  const answerRevisions = new WeakMap<RefGroup[], string>();
   const [groupsResource] = createMembershipResource(
     () => props.name,
     () => props.name,
     async (n) => {
+      const token = freshness.revision();
       const owner = latestOwner(readScope, "backlinks", graphOwner(() => alive && props.name === n));
       setLoadError(null);
       try {
+        if (props.unlinked) await registration();
+        if (!owner()) return [];
         const result = await readOwned(owner, props.unlinked ? backend().getUnlinkedRefs(n) : backend().getBacklinks(n));
+        if (result.kind === "current") {
+          answerRevisions.set(result.value, token);
+        }
         return result.kind === "current" ? result.value : [];
       } catch (error) {
         if (owner()) setLoadError(classifyReferenceLoadError(error));
@@ -139,13 +157,22 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
     // backlinks change. Only an editor inside the result surface needs its
     // answer retained until blur; source edits may follow published revisions.
     (groups, id) => (!props.journalFeed || !!activeSurface()?.startsWith("ref:")) && groupsContainEdit(groups, id),
+    undefined, false, freshness.revision,
   );
   // The resource loader reports failures through loadError; readOr covers reads.
   const groups = () => readOr(groupsResource, undefined, "linked references");
   const mergedGroups = createMemo(() => mergeReferenceGroups(groups() ?? []));
+  createEffect(() => {
+    const adopted = groups();
+    dependency.remember(adopted ?? []);
+    if (!adopted) return;
+    // A late response may have been rejected while an edited result is held.
+    // Only adopted membership can change the threshold or count freshness.
+    setLoadedCount(mergedGroups().reduce((count, group) => count + group.blocks.length, 0));
+    const token = answerRevisions.get(adopted);
+    if (token !== undefined) freshness.remember(token);
+  });
   // Unlinked's saved override is historically "open", linked's is "collapsed".
-  const savedCollapse = () => props.unlinked ? !(sectionOverride(section, props.name) ?? false) : sectionOverride(section, props.name) ?? null;
-  const [collapsedOverride, setCollapsedOverrideSignal] = createSignal<boolean | null>(savedCollapse());
   const setCollapsedOverride = (value: boolean) => {
     setSectionOverride(section, props.name, props.unlinked ? !value : value);
     setCollapsedOverrideSignal(value);
@@ -202,7 +229,13 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
   // The "Couldn't index descendant text" row below was unreachable: reading a
   // rejected `nativeContext` threw before any Show could render it.
   const nativeContext = () => readOr(nativeContextResource, undefined, "reference filter index");
-  const fallbackByRoot = createMemo(() =>
+  const parsedSearch = createMemo(() => parseSearchQuery(searchQuery(), searchRemoveAccents()));
+  // GH #746: the filter index (folded search text, page facets) costs a wasm
+  // fold per reference root and is built only while a filter or search needs
+  // it. Memos run eagerly, so an ungated index was rebuilt over every result
+  // (13 MB of unlinked references: 0.7 s) after each save, collapsed or not.
+  const indexNeeded = () => filterOpen() || Object.keys(filters()).length > 0 || parsedSearch().kind !== "empty";
+  const fallbackByRoot = createMemo(() => !indexNeeded() ? new Map<string, SearchableFilterEntry>() :
     new Map(
       mergedGroups().flatMap((group) =>
         group.blocks.map((block) => [
@@ -230,7 +263,6 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
     })
   );
 
-  const parsedSearch = createMemo(() => parseSearchQuery(searchQuery(), searchRemoveAccents()));
   const searchError = createMemo(() => {
     const parsed = parsedSearch();
     return parsed.kind === "invalid" ? parsed.error : null;
@@ -253,6 +285,8 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
   // Co-referenced pages/tags and task states in each backlink tree, with counts.
   const coRefs = createMemo(() => {
     const counts = new Map<string, { name: string; count: number }>();
+    // Only the open filter panel shows the chips.
+    if (!filterOpen()) return [];
     for (const g of textMatchedGroups()) {
       for (const b of g.blocks) {
         // Count reference roots, not spellings: two aliases (or an alias and
@@ -316,7 +350,6 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
   };
   const count = () => shown().reduce((acc, g) => acc + g.blocks.length, 0);
   const totalCount = () => mergedGroups().reduce((acc, g) => acc + g.blocks.length, 0);
-  const collapsed = () => collapsedOverride() ?? totalCount() >= referenceCollapseThreshold();
   const occurrenceLimit = createMemo(() => {
     let shown = 0;
     let total = 0;
@@ -361,8 +394,9 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
       <div class={`${section}-references`}>
         <div class="references-header" onClick={() => setCollapsedOverride(!collapsed())}>
           <ReferenceDisclosure collapsed={collapsed()} />
-          {heading()} <span class="references-count">{count()}</span>
-          <Show when={props.unlinked && groupsResource.loading}><span class="references-loading"> {t("references-loading")}</span></Show>
+          {heading()} <span class="references-count" title={t("references-count-title", { blocks: count(), pages: shown().filter((g) => g.blocks.length > 0).length })}>{count()}</span>
+          <StaleReferenceCount stale={freshness.stale()} />
+          <Show when={props.unlinked && groupsResource.loading && groups() === undefined}><span class="references-loading"> {t("references-loading")}</span></Show>
           <button type="button" class="reference-export-toggle"
             aria-label={t(props.unlinked ? "references-copy-unlinked" : "references-copy-linked")} title={t(props.unlinked ? "references-copy-unlinked-title" : "references-copy-linked-title")}
             disabled={!count()}

@@ -35,6 +35,72 @@ fn bundle() -> Vec<(String, Vec<u8>)> {
 }
 
 #[test]
+fn folder_membership_review_is_read_only_and_ignores_unavailable_snapshots() {
+    let _integration_guard = crate::integration_lock();
+    let (graph, output, store) = fixture();
+    let request = QueryExportRequest {
+        argument: "(task TODO)".into(),
+        dialect: QueryTextDialect::MacroQuery,
+        properties: vec![],
+        current_page: None,
+        name: "Review".into(),
+        host_block_id: None,
+        folder: Some("saved".into()),
+        replace: true,
+        asset_budget_bytes: None,
+        include_query_text: false,
+    };
+    assert!(plan_query(&store, &request)
+        .unwrap()
+        .previous_pages
+        .is_none());
+    assert!(!graph.join("published-queries").exists());
+    let app = graph.join("published-queries/saved/app");
+    fs::create_dir_all(&app).unwrap();
+    assert!(plan_query(&store, &request)
+        .unwrap()
+        .previous_pages
+        .is_none());
+    fs::write(app.join("snapshot.json"), b"invalid").unwrap();
+    assert!(plan_query(&store, &request)
+        .unwrap()
+        .previous_pages
+        .is_none());
+    let snapshot =
+        br#"{"pages":[{"name":"generated","path":""},{"name":"Old","path":"pages/Old.md"}]}"#;
+    fs::write(app.join("snapshot.json"), snapshot).unwrap();
+    assert_eq!(
+        plan_query(&store, &request).unwrap().previous_pages,
+        Some(vec!["Old".into()])
+    );
+    assert_eq!(fs::read(app.join("snapshot.json")).unwrap(), snapshot);
+    assert!(
+        tine_store::publish::query_publication_destination(&store, "saved", Some(4))
+            .unwrap()
+            .3
+            .is_none()
+    );
+    assert!(
+        tine_store::publish::query_publication_destination(&store, "../outside", Some(1024))
+            .is_err()
+    );
+    #[cfg(unix)]
+    {
+        let outside = output.join("snapshot.json");
+        fs::write(&outside, snapshot).unwrap();
+        std::os::unix::fs::symlink(&outside, app.join("outside.json")).unwrap();
+        // Replace only the disposable fixture snapshot with an escaping symlink.
+        fs::rename(app.join("snapshot.json"), app.join("original.json")).unwrap();
+        std::os::unix::fs::symlink(&outside, app.join("snapshot.json")).unwrap();
+        assert!(plan_query(&store, &request)
+            .unwrap()
+            .previous_pages
+            .is_none());
+        assert_eq!(fs::read(&outside).unwrap(), snapshot);
+    }
+}
+
+#[test]
 fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
     let _integration_guard = crate::integration_lock();
     let (graph, _output, store) = fixture();
@@ -69,6 +135,11 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
     let fresh = plan_query(&store, &request).unwrap();
     let receipt = publish_query(&store, &request, &fresh.fingerprint, &bundle()).unwrap();
     assert_eq!(receipt.pages, 1);
+    let repeat = plan_query(&store, &request).unwrap();
+    assert_eq!(
+        serde_json::to_value(&repeat).unwrap()["previousPages"],
+        serde_json::json!(["Public"])
+    );
     assert!(graph
         .join("published-queries/my-todos/public.html")
         .exists());

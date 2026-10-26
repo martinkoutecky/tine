@@ -9,14 +9,15 @@
 //! error or log line carries either (`tests.rs` pins it). Tine never writes the
 //! graph for sharing: the records are app data.
 //!
-//! Gate: until the generation-1 viewer is deployed (phase 3), every command
-//! that reaches GitHub refuses unless [`enabled`]: a debug build, or the
-//! `TINE_QUICK_SHARE=1` environment variable at launch.
+//! Gate: every GitHub command requires a build-time attestation from the
+//! deployed viewer's headless compatibility check. Debug builds and launch
+//! environment variables cannot bypass it.
 
 pub(crate) mod github;
 #[cfg(test)]
 mod quick_share_tests;
 pub(crate) mod records;
+mod reshare;
 
 use github::{Endpoints, GhError, GitHub, ListedGist, TokenPoll};
 use records::{Account, Records, ShareRow, ShareState};
@@ -33,15 +34,68 @@ pub(crate) const README_TEXT: &str =
     "This is an encrypted Tine share. Open the link you were given to read it. https://tine.page\n";
 /// A prepared payload is uploadable this long (DESIGN §3.2).
 const PREPARED_TTL: Duration = Duration::from_secs(10 * 60);
-/// Prepared payloads kept at once (each up to 6 MiB); the oldest goes first.
-const MAX_PREPARED: usize = 4;
+/// Prepared payloads are held in memory until uploaded, discarded or expired.
+/// The bound is their total size: four writer-limit payloads (6 MiB each), so
+/// the worst case is unchanged while small shares can be prepared together
+/// (Re-share all). The count bound only limits bookkeeping. Overflow refuses
+/// the new preparation; it never evicts a reviewed payload.
+const MAX_PREPARED_BYTES: usize = 4 * 6 * 1024 * 1024;
+const MAX_PREPARED: usize = 64;
 /// Listing pages read by Check and Find (100 gists each, DESIGN §3.6).
 const MAX_LIST_PAGES: usize = 30;
 
-/// Is quick share switched on in this build? Off in a shipped build until
-/// phase 3 deploys the viewer (the link would not open).
+/// A build can offer links only after check-release-readiness rendered this
+/// exact fixture corpus using the deployed generation's verified files.
 pub(crate) fn enabled() -> bool {
-    cfg!(debug_assertions) || std::env::var("TINE_QUICK_SHARE").is_ok_and(|v| v == "1")
+    viewer_attested(option_env!("TINE_QUICK_SHARE_VIEWER_G1_READY"))
+}
+
+fn viewer_attested(proof: Option<&str>) -> bool {
+    use sha2::{Digest, Sha256};
+    let Some(proof) = proof else {
+        return false;
+    };
+    let fixtures: &[(&str, &[u8])] = &[
+        (
+            "one-page/document.json",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/one-page/document.json"),
+        ),
+        (
+            "one-page/link.txt",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/one-page/link.txt"),
+        ),
+        (
+            "one-page/tine-share.bin",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/one-page/tine-share.bin"),
+        ),
+        (
+            "one-page/writer.json",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/one-page/writer.json"),
+        ),
+        (
+            "pages/document.json",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/pages/document.json"),
+        ),
+        (
+            "pages/link.txt",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/pages/link.txt"),
+        ),
+        (
+            "pages/tine-share.bin",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/pages/tine-share.bin"),
+        ),
+        (
+            "pages/writer.json",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/pages/writer.json"),
+        ),
+    ];
+    let mut hash = Sha256::new();
+    for (name, bytes) in fixtures {
+        hash.update(name.as_bytes());
+        hash.update([0]);
+        hash.update(bytes);
+    }
+    proof == format!("{:x}", hash.finalize())
 }
 
 /// A secret string (the OAuth token, a device code): `Debug` and `Display`
@@ -106,8 +160,12 @@ pub(crate) enum QsError {
         #[serde(rename = "shareId")]
         share_id: String,
     },
+    MaybeUpdated,
+    ShareChanged,
     /// The prepared payload expired, was discarded, or was already used.
     PreviewExpired,
+    /// The bounded in-memory pool is full; existing previews remain valid.
+    PreviewCapacity,
     /// The share belongs to another account (DESIGN §3.6).
     WrongAccount {
         login: String,
@@ -194,6 +252,7 @@ struct Prepared {
     title: String,
     pages: usize,
     expires: Instant,
+    update: Option<reshare::UpdateReview>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -204,6 +263,7 @@ pub(crate) struct PrepareResult {
     /// header). The webview marks the query block with it before Create.
     pub share_id: String,
     pub preview: SharePreview,
+    pub membership: Option<reshare::Membership>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -241,6 +301,8 @@ pub(crate) struct ConnectedAccount {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Listing {
     pub enabled: bool,
+    /// Development builds only: an unauthenticated, read-only HTTPS diagnostic.
+    pub connection_test_available: bool,
     pub account: Option<ConnectedAccount>,
     pub shares: Vec<ListedShare>,
     /// The shares file could not be read (shares is then empty).
@@ -252,6 +314,12 @@ pub(crate) struct Listing {
 pub(crate) enum CheckOutcome {
     Live,
     NotFoundYet,
+    Current {
+        title: String,
+        #[serde(rename = "createdAt")]
+        created_at: String,
+        pages: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -277,6 +345,8 @@ pub(crate) struct Service {
     poll_unit: Duration,
     flow: Mutex<Flow>,
     prepared: Mutex<Vec<Prepared>>,
+    update_locks:
+        Mutex<std::collections::BTreeMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>,
 }
 
 fn random_id() -> String {
@@ -333,6 +403,7 @@ impl Service {
             poll_unit,
             flow: Mutex::new(Flow::default()),
             prepared: Mutex::new(Vec::new()),
+            update_locks: Mutex::new(std::collections::BTreeMap::new()),
         })
     }
 
@@ -631,8 +702,9 @@ impl Service {
         let mut all = self.prepared.lock().unwrap_or_else(|p| p.into_inner());
         let now = Instant::now();
         all.retain(|p| p.expires > now);
-        while all.len() >= MAX_PREPARED {
-            all.remove(0);
+        let held: usize = all.iter().map(|p| p.payload.len()).sum();
+        if all.len() >= MAX_PREPARED || held + prepared.payload.len() > MAX_PREPARED_BYTES {
+            return Err(QsError::PreviewCapacity);
         }
         all.push(Prepared {
             id: id.clone(),
@@ -641,11 +713,13 @@ impl Service {
             title: prepared.preview.title.clone(),
             pages: prepared.preview.pages.len(),
             expires: now + PREPARED_TTL,
+            update: None,
         });
         Ok(PrepareResult {
             prepare_id: id,
             share_id: share::b64u(&share_id),
             preview: prepared.preview,
+            membership: None,
         })
     }
 
@@ -672,6 +746,9 @@ impl Service {
         let prepared = self
             .take_prepared(prepare_id)
             .ok_or(QsError::PreviewExpired)?;
+        if prepared.update.is_some() {
+            return self.update_share(prepared, copy).await;
+        }
         let account = self.connected()?;
         let sealed = share::seal_fresh_as(&prepared.payload, prepared.share_id).map_err(|_| {
             QsError::Refused {
@@ -773,6 +850,7 @@ impl Service {
             .collect();
         Listing {
             enabled: enabled(),
+            connection_test_available: cfg!(debug_assertions),
             account: account.map(|a| ConnectedAccount {
                 login: a.login,
                 account_id: a.account_id,
@@ -803,7 +881,17 @@ impl Service {
     pub(crate) async fn check_share(&self, share_id: &str) -> Result<CheckOutcome, QsError> {
         let (account, row) = self.owned_row(share_id)?;
         if row.state == ShareState::Live {
-            return Ok(CheckOutcome::Live);
+            // Check also resolves an unknown PATCH: authenticate the current
+            // snapshot rather than treating a local live row as proof.
+            let lock = self.update_lock(share_id);
+            let _guard = lock.lock().await;
+            let (_, document) = self.read_update_snapshot(&account, &row).await?;
+            self.refresh_update_record(&row, &document)?;
+            return Ok(CheckOutcome::Current {
+                title: document["title"].as_str().unwrap_or(&row.title).to_owned(),
+                created_at: document["created_at"].as_str().unwrap_or("").to_owned(),
+                pages: reshare::snapshot_pages(&document).into_values().collect(),
+            });
         }
         let key =
             decode_key(&row).ok_or_else(|| records_error("a share's key is damaged".into()))?;
@@ -1011,6 +1099,7 @@ fn clipboard(app: &tauri::AppHandle) -> impl FnOnce(&str) -> bool + '_ {
 #[tauri::command]
 pub(crate) async fn quick_share_prepare(
     request: QueryExportRequest,
+    share_id: Option<String>,
     state: crate::state::GraphContext<'_>,
 ) -> Result<PrepareResult, QsError> {
     use tauri::Manager;
@@ -1023,13 +1112,18 @@ pub(crate) async fn quick_share_prepare(
         .path()
         .app_cache_dir()
         .map_err(|_| records_error("Tine has no cache folder".into()))?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let builder = Arc::clone(&service);
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
         std::fs::create_dir_all(&scratch)
             .map_err(|_| records_error("Tine could not create its cache folder".into()))?;
-        service.prepare_share(&slot.store, &request, &scratch)
+        builder.prepare_share(&slot.store, &request, &scratch)
     })
     .await
-    .map_err(|_| QsError::Unavailable)?
+    .map_err(|_| QsError::Unavailable)??;
+    match share_id {
+        Some(id) => service.review_update(prepared, &id).await,
+        None => Ok(prepared),
+    }
 }
 
 #[tauri::command]
@@ -1060,6 +1154,23 @@ pub(crate) async fn quick_share_list(app: tauri::AppHandle) -> Result<Listing, Q
     tauri::async_runtime::spawn_blocking(move || service.listing())
         .await
         .map_err(|_| QsError::Unavailable)
+}
+
+/// No service, account, token, graph or caller-supplied URL is involved. Release
+/// builds cannot make this diagnostic request even through direct IPC.
+#[tauri::command]
+pub(crate) async fn quick_share_test_connection() -> github::ConnectionTestResult {
+    #[cfg(debug_assertions)]
+    {
+        match GitHub::new(Endpoints::github_https()) {
+            Ok(github) => github.test_connection().await,
+            Err(_) => github::ConnectionTestResult::Network,
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        github::ConnectionTestResult::Disabled
+    }
 }
 
 #[tauri::command]

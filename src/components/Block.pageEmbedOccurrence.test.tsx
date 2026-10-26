@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -21,13 +22,14 @@ function mount() {
   const dispose = render(() => <Block id="host" />, root);
   return { root, dispose };
 }
-function key(editor: HTMLTextAreaElement, direction: "Up" | "Down") {
-  editor.dispatchEvent(new KeyboardEvent("keydown", { key: `Arrow${direction}`, ctrlKey: true, bubbles: true, cancelable: true }));
+function key(editor: EditorDriver, direction: "Up" | "Down") {
+  editor.keydown({ key: `Arrow${direction}`, ctrlKey: true, bubbles: true, cancelable: true });
 }
 for (const format of ["md", "org"] as const) {
   it(`${format}: block embed root page body follows explicit host overrides with mouse and keyboard`, async () => {
     const target = { id: "target", raw: "{{embed [[Source]]}}", collapsed: false, children: [] };
     vi.spyOn(backend(), "getPage").mockResolvedValue({ ...source, format });
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue({ ...source, format });
     vi.spyOn(backend(), "resolveBlocks").mockImplementation(async ids => ids.map(() => ({ page: "Host", kind: "page", blocks: [target] })));
     loadSingle({ name: "Host", title: "Host", kind: "page", format, pre_block: null,
       blocks: [target, { id: "host", raw: "{{embed ((target))}}", collapsed: false, children: [] }] });
@@ -40,7 +42,7 @@ for (const format of ["md", "org"] as const) {
       expect(root.textContent).not.toContain("deep body");
       row.querySelector<HTMLElement>(".block-content")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 })); await tick();
-      const editor = row.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+      const editor = editorIn(row);
       key(editor, "Down"); await tick();
       expect(blockProperty("host", "collapsed")).toBe("false");
       key(editor, "Up");
@@ -57,9 +59,10 @@ for (const format of ["md", "org"] as const) {
     it(`${format}: page embed nested in ${container} embed ${action} folds locally without changing source`, async () => {
     const nested = { id: "nested", raw: "{{embed [[Deep]]}}", collapsed: false, children: [] };
     const target = { id: "target", raw: "outer block", collapsed: false, children: [nested] };
-    vi.spyOn(backend(), "getPage").mockImplementation(async name => name === "Source"
-      ? { ...source, format, blocks: [nested] }
-      : { ...source, name: "Deep", title: "Deep", format });
+    const sourcePage = { ...source, format, blocks: [nested] };
+    const deepPage = { ...source, id: "pages/Deep", name: "Deep", title: "Deep", format };
+    vi.spyOn(backend(), "getPage").mockImplementation(async name => name === "Source" ? sourcePage : deepPage);
+    vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => path === sourcePage.id ? sourcePage : deepPage);
     vi.spyOn(backend(), "resolveBlocks").mockImplementation(async ids => ids.map(() => ({ page: "Host", kind: "page", blocks: [target] })));
     loadSingle({ name: "Host", title: "Host", kind: "page", format, pre_block: null,
       blocks: [...(container === "block" ? [target] : []),
@@ -72,14 +75,14 @@ for (const format of ["md", "org"] as const) {
       else {
         row.querySelector<HTMLElement>(".block-content")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
         document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 })); await tick();
-        key(row.querySelector<HTMLTextAreaElement>("textarea.block-editor")!, "Up");
+        key(editorIn(row), "Up");
       }
       await tick();
       expect(blockProperty("nested", "collapsed")).toBeNull();
       expect(doc.byId.nested.collapsed).toBe(false);
       expect(row.textContent).not.toContain("deep body");
       if (action === "keyboard") {
-        key(row.querySelector<HTMLTextAreaElement>("textarea.block-editor")!, "Down");
+        key(editorIn(row), "Down");
         expect(blockProperty("nested", "collapsed")).toBeNull();
         endEdit("page-navigation");
       } else row.querySelector<HTMLButtonElement>(".collapse-toggle")!.click();
@@ -90,6 +93,7 @@ for (const format of ["md", "org"] as const) {
   for (const raw of ["See {{embed [[Source]]}}", "Title\n{{embed [[Source]]}}"])
     it(`${format}: ordinary child folding preserves embed body in ${JSON.stringify(raw)}`, async () => {
       vi.spyOn(backend(), "getPage").mockResolvedValue({ ...source, format });
+      vi.spyOn(backend(), "getPageByPath").mockResolvedValue({ ...source, format });
       loadSingle({ name: "Host", title: "Host", kind: "page", format, pre_block: null,
         blocks: [{ id: "host", raw, collapsed: false, children: [{ id: "child", raw: "child body", collapsed: false, children: [] }] }] });
       const { root, dispose } = mount();
@@ -103,6 +107,7 @@ for (const format of ["md", "org"] as const) {
 
   it(`${format}: unresolved folded embed retains its identifying label`, async () => {
     vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
     loadSingle({ name: "Host", title: "Host", kind: "page", format, pre_block: null,
       blocks: [{ id: "host", raw: "{{embed [[Absent]]}}", collapsed: false, children: [] }] });
     const { root, dispose } = mount();

@@ -67,7 +67,13 @@ type Phase =
 
 export interface Answered { took: boolean; refusal: PageRefusal | string | null }
 
-interface Acquisition { pin: boolean; commit?: () => Promise<boolean> | boolean }
+interface Acquisition {
+  pin: boolean;
+  commit?: () => Promise<boolean> | boolean;
+  /** The page that holds it. `rebind` moves it onto the reopened page, so a
+   * release made before the rebind still frees what it acquired. */
+  page: Page;
+}
 
 interface Page {
   name: string;
@@ -164,6 +170,10 @@ export class HostClient {
     const { session, nextId } = await this.host.windowReloaded();
     this.session = session;
     this.nextId = nextId;
+    // windowReloaded retired the prior session's mail. A fresh host starts at
+    // zero; a surviving host supplies its existing request floor. Neither the
+    // previous client's watermark nor an unconditional zero proves that floor.
+    this.consumed = Math.max(0, nextId - 1);
   }
 
   /** Rebind after a restore or relaunch (S8): drop every page's client state and
@@ -182,8 +192,9 @@ export class HostClient {
       const early = this.rebinding;
       this.rebinding = null;
       for (const [name, refs] of acquired) {
+        if (!refs.size) continue; // every acquisition was released while binding
         const page = this.state(name);
-        for (const ref of refs) page.refs.add(ref);
+        for (const ref of refs) { page.refs.add(ref); ref.page = page; }
         this.open(page);
       }
       for (const mail of early) this.receive(mail);
@@ -199,14 +210,16 @@ export class HostClient {
    * freeze awaits before it counts the pin's input (a failed commit fails it). */
   acquire(name: string, options: { pin?: boolean; commit?: () => Promise<boolean> | boolean } = {}): () => void {
     const page = this.state(name);
-    const ref: Acquisition = { pin: !!options.pin, commit: options.commit };
+    const ref: Acquisition = { pin: !!options.pin, commit: options.commit, page };
     page.refs.add(ref);
     this.open(page);
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      // The page object, not its name: a title rename (`rekey`) keeps it.
+      // The page object, not its name: a title rename (`rekey`) keeps it, and
+      // a rebind moves the acquisition (a release during one is not carried over).
+      const page = ref.page;
       if (!page.refs.delete(ref) || this.pages.get(page.name) !== page) return;
       if (ref.pin) this.reevaluate(page);
       this.maybeClose(page);
@@ -797,6 +810,8 @@ export class HostClient {
       // A close is never answered (model wClose/upClose): admitted, this
       // window's view of the page has ended. Input typed or acquired
       // meanwhile reopens it; its mail, stashed or late, is not this view's.
+      // Close has no mail answer: its admitted command reply is its receipt.
+      this.consumed = Math.max(this.consumed, id);
       page.phase = { kind: "idle" };
       this.unbind(page);
       this.settled(page, { took: false, refusal: null });

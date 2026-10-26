@@ -27,10 +27,24 @@ pub(super) enum Fault {
     /// The call's first `k` system calls complete and the next one fails, as
     /// an error there or a process or power cut between the two.
     Cut(usize),
+    RootGone(usize),
+    RootReplaced(usize),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum RootState {
+    #[default]
+    Bound,
+    Gone,
+    Replaced(u64),
 }
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct ModelFs {
+    pub root: RootState,
+    pub detached: BTreeMap<String, Arc<[u8]>>,
+    pub root_fault: Option<(usize, RootState)>,
+    pub graph_io: bool,
     pub files: BTreeMap<String, Arc<[u8]>>,
     pub stable: BTreeMap<String, Arc<[u8]>>,
     pub faults: BTreeMap<Phase, VecDeque<Fault>>,
@@ -59,8 +73,15 @@ pub(super) struct ModelFs {
     /// Adapter memory (STEP3 §2), lost at a crash. A model entry is named by
     /// its key; a spelling only orders the driver's path locks.
     pub spellings: BTreeMap<String, String>,
+    /// Scripted production-only owner refusals; conformance independently
+    /// requires matching physical claimant bytes before accepting saveFail.
+    pub owners: BTreeMap<String, String>,
     /// Draft I/O is down (M2): every draft effect fails untouched.
     pub down: bool,
+    /// The adapter's trash-chain witness: every ancestor was synced durably by
+    /// a `trash_sync` in this incarnation, so later ones sync only the trash
+    /// directory (production `trash_chain`, GH3 step 2). Lost at a crash.
+    pub chain_witnessed: bool,
 }
 
 /// One power outcome for readable trash names that are not yet durable.
@@ -205,6 +226,7 @@ impl ModelFs {
         self.owed.clear();
         self.spellings.clear();
         self.down = false;
+        self.chain_witnessed = false;
     }
 
     /// The least surviving outcome: only forced trash names, with their data.
@@ -255,6 +277,15 @@ impl ModelFs {
         effect: impl FnOnce(&mut Self) -> IoResult<T>,
     ) -> IoResult<T> {
         self.calls.push(phase);
+        self.graph_io = matches!(
+            phase,
+            Phase::Read
+                | Phase::PageTemp
+                | Phase::PageRename
+                | Phase::PageSync
+                | Phase::TrashMove
+                | Phase::TrashSync
+        );
         let draft = matches!(
             phase,
             Phase::DraftTemp
@@ -273,6 +304,24 @@ impl ModelFs {
         }
         let fault = self.faults.get_mut(&phase).and_then(VecDeque::pop_front);
         match fault {
+            Some(Fault::RootGone(calls)) => {
+                self.root_fault = Some((calls, RootState::Gone));
+                let result = effect(self);
+                assert!(
+                    self.root_fault.take().is_none(),
+                    "root fault did not land: {phase:?}/{calls}"
+                );
+                result
+            }
+            Some(Fault::RootReplaced(calls)) => {
+                self.root_fault = Some((calls, RootState::Replaced(1)));
+                let result = effect(self);
+                assert!(
+                    self.root_fault.take().is_none(),
+                    "root fault did not land: {phase:?}/{calls}"
+                );
+                result
+            }
             Some(Fault::Before) => Err(IoFailure {
                 kind: ErrorKind::Io,
                 completed: false,
@@ -311,6 +360,7 @@ impl ModelFs {
     /// One system call of the current HostIo call; fails once a cut's budget
     /// is spent.
     fn call(&mut self) -> IoResult<()> {
+        self.root_step()?;
         match &mut self.budget {
             Some(0) => {
                 self.budget = None;
@@ -326,6 +376,43 @@ impl ModelFs {
                 Ok(())
             }
             None => Ok(()),
+        }
+    }
+
+    /// Root faults can land between modeled syscalls. Existing graph entries
+    /// belong to the detached epoch; only app-data drafts remain at this root.
+    fn root_step(&mut self) -> IoResult<()> {
+        match self.root_fault {
+            Some((0, next)) => {
+                self.root_fault = None;
+                self.root = next;
+                let graph_key = |key: &str| {
+                    key.starts_with("graph/")
+                        || key.starts_with("dir/")
+                        || key.starts_with("trash/")
+                        || key.starts_with("temp/page/")
+                };
+                self.detached.extend(
+                    self.files
+                        .iter()
+                        .filter(|(key, _)| graph_key(key))
+                        .map(|(key, bytes)| (key.clone(), bytes.clone())),
+                );
+                self.files.retain(|key, _| !graph_key(key));
+                self.stable.retain(|key, _| !graph_key(key));
+            }
+            Some((left, next)) => self.root_fault = Some((left - 1, next)),
+            None => {}
+        }
+        if self.graph_io && self.root != RootState::Bound {
+            Err(IoFailure {
+                kind: ErrorKind::Io,
+                completed: false,
+                operation: Some("GraphRootMoved"),
+                os_error: None,
+            })
+        } else {
+            Ok(())
         }
     }
 
@@ -393,12 +480,14 @@ impl HostIo for ModelFs {
 
     fn read_page(&mut self, page: &str) -> IoResult<Text> {
         self.run(Phase::Read, |fs| {
+            fs.root_step()?;
             Ok(fs.files.get(&format!("graph/{page}")).cloned())
         })
     }
 
     fn page_temp(&mut self, page: &str, bytes: &Text) -> IoResult<()> {
         self.run(Phase::PageTemp, |fs| {
+            fs.root_step()?;
             set(&mut fs.files, &format!("temp/page/{page}"), bytes.clone());
             Ok(())
         })
@@ -406,6 +495,7 @@ impl HostIo for ModelFs {
 
     fn page_rename(&mut self, page: &str) -> IoResult<()> {
         self.run(Phase::PageRename, |fs| {
+            fs.root_step()?;
             let bytes = fs.files.remove(&format!("temp/page/{page}"));
             fs.publications.insert(page.into(), bytes.clone());
             set(&mut fs.files, &format!("graph/{page}"), bytes);
@@ -417,6 +507,7 @@ impl HostIo for ModelFs {
 
     fn page_sync(&mut self, page: &str) -> IoResult<Witness> {
         self.run(Phase::PageSync, |fs| {
+            fs.root_step()?;
             if fs.weak_graph {
                 return Ok(Witness::Unsupported);
             }
@@ -446,9 +537,19 @@ impl HostIo for ModelFs {
             .then_some(twin))
     }
 
+    fn page_owner(
+        &mut self,
+        page: &str,
+        _bytes: &Text,
+        _source: Option<&str>,
+    ) -> IoResult<Option<String>> {
+        Ok(self.owners.get(page).cloned())
+    }
+
     fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult {
         let removed = self.files.get(&format!("graph/{page}")).cloned();
         let result = self.run(Phase::TrashMove, |fs| {
+            fs.root_step()?;
             let source = format!("graph/{page}");
             if !fs.files.contains_key(&source) {
                 fs.publications.insert(page.into(), None);
@@ -498,6 +599,7 @@ impl HostIo for ModelFs {
 
     fn trash_sync(&mut self, page: &str, payload: &str) -> IoResult<Witness> {
         self.run(Phase::TrashSync, |fs| {
+            fs.root_step()?;
             let key = format!("trash/{page}/{payload}");
             if !fs.files.contains_key(&key) {
                 return Ok(Witness::Durable); // R-PURGE: nothing left to keep
@@ -509,9 +611,12 @@ impl HostIo for ModelFs {
             // durable, up to the graph root.
             fs.call()?;
             fs.sync_entry(&key);
-            for dir in CHAIN.iter().rev() {
-                fs.call()?;
-                fs.sync_entry(dir);
+            if !fs.chain_witnessed {
+                for dir in CHAIN.iter().rev() {
+                    fs.call()?;
+                    fs.sync_entry(dir);
+                }
+                fs.chain_witnessed = !fs.weak_graph;
             }
             Ok(if fs.weak_graph {
                 Witness::Unsupported

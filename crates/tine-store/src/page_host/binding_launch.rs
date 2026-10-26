@@ -107,16 +107,32 @@ impl PageHost {
         let (app_data, graph_id) = (app_data.as_path(), graph_id.as_str());
         let graph = store.graph.clone();
         let trash = crate::model::trash_root(&graph.root).join("pages");
-        let mut io = ProductionIo::attach(&graph.root, app_data, graph_id, &trash);
+        let mut io = ProductionIo::attach_bound(
+            &graph.root,
+            app_data,
+            graph_id,
+            &trash,
+            graph.root_binding.clone(),
+        );
         let spellings = io.spellings().clone();
         io.marks = Some(graph.clone());
+        io.store = Arc::downgrade(store);
         let mut host = Host::new(io, BTreeMap::new());
         host.stop();
         let mut recovered = Vec::new();
         let keys = host.recovered_keys();
         for key in keys.iter().cloned() {
             let id = PageId::from(super::super::production::key_base(&key));
-            let spelling = store.disk_spelling(&id).unwrap_or(id);
+            // Refuse disk resolution through a retargeted folder, but register
+            // the logical key so launch keeps recovering its text and draft.
+            let spelling = if graph
+                .ensure_write_target(&graph.root.join(id.as_str()))
+                .is_ok()
+            {
+                store.disk_spelling(&id).unwrap_or(id)
+            } else {
+                id
+            };
             let lock = graph.page_lock(&graph.root.join(spelling.as_str()));
             host.register(key.clone(), spelling.as_str(), lock);
             recovered.push((key, spelling));

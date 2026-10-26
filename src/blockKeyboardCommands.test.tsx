@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "./tests/editorDriver";
 // R2 lane B1: keyboard block commands (GH #576, #448, #379, #634, #525, #633,
 // #513). Each assertion is the user outcome (clipboard text, tree shape, search
 // field contents), reached the way a user reaches it: the palette entry or a
@@ -128,15 +129,15 @@ describe("duplicate block (GH #379)", () => {
     const keys = installKeybindings({ "editor/duplicate-block-above": "alt+shift+u" });
     try {
       startEditing(A, 5);
-      const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      editor.focus();
-      editor.setSelectionRange(5, 5);
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "U", code: "KeyU", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+      const editor = maybeEditorIn(root)!;
+      editor.element.focus();
+      editor.select(5, 5);
+      editor.keydown(new KeyboardEvent("keydown", { key: "U", code: "KeyU", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
       await vi.waitFor(() => expect(pageByName("P")!.roots).toHaveLength(3));
       expect(doc.byId[A].raw).toBe(`Alpha\nid:: ${A}`);
-      expect(root.querySelector<HTMLTextAreaElement>("textarea.block-editor")?.value).toBe("Alpha");
+      expect(maybeEditorIn(root)?.value()).toBe("Alpha");
       expect(editingId()).toBe(pageByName("P")!.roots[0]);
-      root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!.dispatchEvent(new FocusEvent("blur"));
+      maybeEditorIn(root)!.reportBlur();
       expect(doc.byId[A].raw).toBe(`Alpha\nid:: ${A}`);
     } finally { keys(); dispose(); }
   });
@@ -372,7 +373,7 @@ describe("collapse / expand one level (GH #525)", () => {
 
 describe("search for the selected text (GH #633)", () => {
   it("opens search with the editor's selected text filled in", () => {
-    const area = document.createElement("textarea");
+    const area: HTMLTextAreaElement = document.createElement("textarea");
     area.value = "find the  quick fox here";
     document.body.append(area);
     area.focus();

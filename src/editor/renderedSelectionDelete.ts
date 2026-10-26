@@ -92,7 +92,7 @@ export function deleteRenderedTextSelection(): boolean {
   const e = Math.min(end, split.visible.length);
   if (s === e) return false;
   const newVisible = split.visible.slice(0, s) + split.visible.slice(e);
-  const newRaw = joinProps(newVisible, split.hidden, fmt);
+  const newRaw = joinProps(newVisible, split.hidden, fmt, node.raw);
   if (newRaw === node.raw) return false;
 
   setRaw(id, newRaw);

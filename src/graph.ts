@@ -2,6 +2,7 @@
 // persisting the choice so it reopens next launch.
 
 import { closeAllWorkspaceWindows } from "./workspaceWindows";
+import { refreshRootRecovery } from "./rootRecoveryState";
 import { backend, type CustomCssChange, type GraphConfigChange } from "./backend";
 import { captureBinding, bindingCurrent } from "./binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "./owned";
@@ -28,6 +29,7 @@ import { endEdit } from "./editorController";
 import { journalHasContent } from "./journalContent";
 import { activatePdfOwnership, drainPdfWork, retirePdfOwnership } from "./pdfOwnership";
 import { openConfiguredHomePage } from "./homePage";
+import { hasRestoredSession } from "./session";
 import { isPublishedExport } from "./publishedBackend";
 import { clearWorkspaces } from "./workspaces";
 import { reportUiFailure } from "./uiFailure";
@@ -288,7 +290,9 @@ export async function loadGraphPath(
     waitingToast = pushToast(msg("toast-graph-open-owner-waiting", { progress }), "info", { sticky: true });
   }).catch(() => () => {});
   try {
-    result = await backend().loadGraph(path);
+    const loadArgs: [string, { relocatedFrom: string }?] = path !== requestedPath
+      ? [path, { relocatedFrom: requestedPath }] : [path];
+    result = await backend().loadGraph(...loadArgs);
   } catch (error) {
     // load_graph failed before installing a replacement binding.  Publish a new
     // local generation for the still-bound old graph; the retired viewer stays
@@ -332,6 +336,7 @@ export async function loadGraphPath(
   // The shared config door publishes the title format before meta/epoch,
   // then starts derived reads in that epoch (including force refresh).
   applyConfigDerivedState(meta, null);
+  void refreshRootRecovery();
   const configProblem = "config_problem" in result ? result.config_problem : null;
   setGraphConfigProblem(configProblem);
   if (configProblem) reportUiFailure("config-read", configProblem);
@@ -366,10 +371,10 @@ export async function loadGraphPath(
     // session before the backend knew which graph this webview would own.
     await restoreSession();
   }
-  // A configured home page (config.edn `:default-home`) replaces the landing
-  // on an ordinary open — first bind or switch, never a same-graph refresh —
-  // unless a rebind or navigation lands first.
-  if (result.kind === "loaded" && (switching || !hadGraph)) {
+  // Home supplies a fresh landing only. A readable saved session owns every
+  // restored route, regardless of how its tabs were opened (internal card 3x4).
+  // Published exports have no local session and retain their home landing.
+  if (result.kind === "loaded" && (switching || !hadGraph) && !hasRestoredSession()) {
     if (isPublishedExport()) await openConfiguredHomePage();
     else void openConfiguredHomePage();
   }

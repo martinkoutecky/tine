@@ -18,7 +18,7 @@ fn write(root: &Path, rel: &str, text: &str) {
 }
 
 /// The page keys a `@page` TQL query selects.
-fn pages(graph: &WholeGraph, tql: &str) -> BTreeSet<String> {
+pub(super) fn pages(graph: &WholeGraph, tql: &str) -> BTreeSet<String> {
     let (query, view) = parse_query_input(
         tql,
         QueryInput::Tql,

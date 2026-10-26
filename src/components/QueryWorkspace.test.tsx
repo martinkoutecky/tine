@@ -390,7 +390,8 @@ function workspaceDeps(): QueryWorkspaceDependencies {
 }
 
 async function waitFor(check: () => void): Promise<void> {
-  await vi.waitFor(check, { timeout: 1_000, interval: 5 });
+  // Search/full registrations may wait through HK3's 1.5-second quiet period.
+  await vi.waitFor(check, { timeout: 3_000, interval: 5 });
 }
 
 describe("QueryWorkspace", () => {
@@ -609,6 +610,7 @@ describe("QueryWorkspace", () => {
       await Promise.resolve(); await Promise.resolve();
       expect(root.textContent).toContain("An alpha result");
       endEdit("blur");
+      await waitFor(() => expect(deps.runGraphSearch).toHaveBeenCalledTimes(2));
       await waitFor(() => expect(root.textContent).not.toContain("An alpha result"));
       expect(deps.runGraphSearch).toHaveBeenCalledTimes(2);
     } finally { endEdit("blur"); dispose(); }
@@ -684,7 +686,7 @@ describe("QueryWorkspace", () => {
       const input = root.querySelector<HTMLInputElement>(".query-workspace-source")!;
       input.value = "beta"; input.dispatchEvent(new InputEvent("input", { bubbles: true }));
       await waitFor(() => expect(root.querySelector('[data-query-result-kind="page"]')?.textContent).toContain("No matching pages."));
-      expect(root.querySelector('[data-query-result-kind="block"]')?.textContent).toContain("An alpha result");
+      await waitFor(() => expect(root.querySelector('[data-query-result-kind="block"]')?.textContent).toContain("An alpha result"));
     } finally { dispose(); }
   });
   it("opens an alias match through the owner path and marks each family's truncation", async () => {

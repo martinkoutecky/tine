@@ -138,10 +138,15 @@ const COLLECTION_RULE = "I-21: module Map/Set state must end with its graph or h
   + "exemplar src/lazyObserve.ts renderedBlocks and src/binding.ts clearOnBindingInvalidated. "
   + "The existing collection baseline may only shrink";
 const BOUNDED_COLLECTIONS: Record<string, string> = {
+  "src/editorController.ts#editEntryGuards": "one guard per mounted native property input; FieldCell registers on mount and its Solid cleanup removes it on commit, cancel or unmount; captureResultDraft still guards the write's binding",
   "src/inputCapability.ts#watched": "one entry per media-query string asked (pointer: coarse, any-pointer: coarse); app-lifetime, no graph state",
   "src/assetCache.ts#cache": "MAX_CACHE_ENTRIES=128 / MAX_CACHE_BYTES=128MiB retained LRU, plus pending mounted reads",
   "src/assetCache.ts#liveEntries": "active asset leases only; last release deletes the evicted entry; clearAssetBlobCache ends graph reuse",
-  "src/render/parse.ts#cache": "CACHE_MAX=8000 LRU",
+  "src/components/pdfDocumentShare.ts#entries": "one entry per PDF with a mounted view (keyed by ownership generation, so never reused across graphs); the last view's release deletes it and destroys the document",
+  "src/components/pdfHighlightState.ts#sessions": "one entry per PDF with a mounted view or unresolved highlight work (keyed by ownership generation, so never reused across graphs); deleted once viewless and idle, and when the binding retires",
+  "src/render/seededFacets.ts#seeded": "one reference-counted entry per loaded-node raw; resetStore releases owners and clears",
+  "src/render/seededFacets.ts#owners": "one observer per loaded node; releases on raw change, replacement, deletion and resetStore",
+  "src/changeKeys.ts#invalidators": "one permanent callback per importing cache module, no graph payload",
   "src/i18n/index.ts#bundles": "one Fluent bundle per shipped UI locale (the generated LOCALES registry), app-lifetime; not graph state",
   "src/i18n/index.ts#loading": "one in-flight catalog load per shipped UI locale; deleted when the load settles",
   "src/i18n/index.ts#reported": "one key per (locale, message id) that failed to format: bounded by the catalog's message count",
@@ -176,7 +181,13 @@ export function moduleCollections(sources: Sources = repoSources()): Collection[
           }
           ts.forEachChild(child, visit);
         };
-        node.arguments.forEach(visit);
+        node.arguments.forEach(argument => {
+          visit(argument);
+          if (ts.isIdentifier(argument)) {
+            const declaration = tree.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === argument.text);
+            if (declaration) visit(declaration);
+          }
+        });
       }
       ts.forEachChild(node, findClears);
     };
@@ -231,7 +242,6 @@ const LEGACY_COLLECTIONS = new Set([
   "src/modeHooks.ts#outlineSelectionListeners",
   "src/modeHooks.ts#editingStartListeners",
   "src/modeHooks.ts#modeResetListeners",
-  "src/pageIconBatch.ts#requested",
   "src/panes.ts#routers",
   "src/pdfNavigation.ts#intents",
   "src/pdfOwnership.ts#participants",
@@ -243,10 +253,6 @@ const LEGACY_COLLECTIONS = new Set([
   "src/referenceSectionState.ts#groups",
   "src/reloadOnFocus.ts#waiters",
   "src/reloadOnFocus.ts#applications",
-  "src/render/facets.ts#seeded",
-  "src/resolveBatch.ts#cache",
-  "src/resolveBatch.ts#resolvedCache",
-  "src/resolveBatch.ts#pending",
   "src/resourceRead.ts#recorded",
   "src/sheet/matrix.ts#dimensionEntries",
   "src/sheet/queryHydration.ts#runningHydrationItems",
@@ -259,7 +265,7 @@ const LEGACY_COLLECTIONS = new Set([
   "src/transientLayers.ts#layers",
   "src/themes/manager.ts#[revokedThemeVersions, setRevokedThemeVersions]",
 ]);
-const LEGACY_COLLECTION_COUNT = 45;
+const LEGACY_COLLECTION_COUNT = 41;
 function unownedCollections(sources: Sources): string[] {
   return moduleCollections(sources).filter((c) => !c.scoped && !c.fixed && !BOUNDED_COLLECTIONS[c.key]).map((c) => c.key);
 }
@@ -283,6 +289,7 @@ export function unprovenPopupConsumers(sources: Sources = repoSources()): string
 // Readers of a graph-scoped target that do not prove a binding check, and why
 // each cannot write into another graph. Shrink-only.
 const CLASSIFIED_CONSUMERS: Record<string, string> = {
+  "src/changeSummary.ts#latest": "read-only publication evidence; graphScopedSignal clears it at binding invalidation, the accessor checks graphEpoch, and it never writes graph content",
   "src/queryResultDrafts.ts#drafts": "read-only result retention leases, not a popup writer; graphScopedSignal clears them at binding invalidation, release checks its captured binding, and captureResultDraft guards the actual cell write",
   "src/components/Page.tsx#upcomingFeed": "reads graph-bound feed metadata for rendering only; the owned feed restart publishes it after its graph/surface admission checks",
   "src/components/RightSidebar.tsx#rightSidebarFocusRequest": "scrolls and focuses the mounted card only; no graph write. The queued callback rechecks request identity, and graphScopedSignal clears the request on a graph switch",
@@ -306,7 +313,7 @@ describe("graph-scoped UI state (I-20)", () => {
     expect(route).toMatch(/function openPageAtBlock[\s\S]*?const current = \(\) => stillBound\(binding\)[\s\S]*?routeIntentRevision\(\) === intent/);
     expect(route).toMatch(/const scroller = mainScroller\(\);[\s\S]*?scroller\?\.querySelector/);
     const calendar = readFileSync("src/components/CalendarJump.tsx", "utf8");
-    expect(calendar).toMatch(/rev: dataRev\(\), epoch: graphEpoch\(\)/);
+    expect(calendar).toMatch(/rev: changed\("journals"\), epoch: graphEpoch\(\)/);
     expect(calendar).toMatch(/readOwned\(owner, backend\(\)\.journalContentDays\(\)\)/);
     const session = readFileSync("src/session.ts", "utf8");
     expect(session).toMatch(/const mayApply = \(\) => owner\(\) && JSON\.stringify\(buildPersistedSession\(\)\) === initialSession/);
@@ -330,6 +337,8 @@ describe("graph-scoped UI state (I-20)", () => {
       "src/components/DatePicker.tsx#datePicker",
       "src/components/FormulaEditor.tsx#formulaEditor",
       "src/components/GraphNamePrompt.tsx#graphNameRequest",
+      "src/components/QuickShareAll.tsx#batchOwner",
+      "src/components/RootRecoveryNotice.tsx#rootRecoveryOffers",
       "src/components/Settings.tsx#orphanScan",
     ]);
     const picker = readFileSync("src/components/DatePicker.tsx", "utf8");
@@ -367,6 +376,8 @@ describe("graph-scoped UI state (I-20)", () => {
     const planted = new Map<string, string>([["src/planted.ts", "const state = { retained: new Map<string, string>() };\nconst seen = new Set<string>();"]]);
     expect(unownedCollections(planted)).toEqual(["src/planted.ts#state", "src/planted.ts#seen"]);
     planted.set("src/planted.ts", "const seen = new Set<string>();\nclearOnBindingInvalidated(() => { seen.clear(); });\nconst vocabulary = new Set(['a', 'b']);");
+    expect(unownedCollections(planted)).toEqual([]);
+    planted.set("src/namedCleanup.ts", "const retained = new Map<string, string>();\nfunction clear() { retained.clear(); }\nclearOnBindingInvalidated(clear);");
     expect(unownedCollections(planted)).toEqual([]);
     planted.set("src/consumer.ts", "vocabulary.add(userInput);");
     expect(unownedCollections(planted)).toEqual(["src/planted.ts#vocabulary"]);

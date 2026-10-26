@@ -34,6 +34,7 @@ pdf-area-highlight-drag-a-rectangle-to-capture-a-region-as-an-image = Area highl
 pdf-open-highlights-notes-page = Open highlights & notes page
 pdf-notes = Notes
 pdf-outline = Outline
+pdf-open-another-view = Open another view
 pdf-more-settings = More settings
 pdf-close-pdf = Close PDF
 pdf-highlight-conflict-resolve-it-before-editing-more-highlights = Highlight conflict. Resolve it before editing more highlights.

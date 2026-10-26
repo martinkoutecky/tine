@@ -2,9 +2,19 @@
 /* eslint-disable */
 
 /**
+ * Parser-boundary negative-only prefilter; true still needs drawer ownership.
+ */
+export function block_may_have_logbook(raw: string): boolean;
+
+/**
  * Native group-field grammar: O(value bytes), no I/O; invalid tokens return null.
  */
 export function canonical_group_field(value: string): string | undefined;
+
+/**
+ * The same own-property discriminator that editor_text uses to hide comment metadata.
+ */
+export function comment_quote(properties: string): string | undefined;
 
 /**
  * Decode a Logseq page stem in legacy or triple-lowbar (legacy = false) format.
@@ -20,10 +30,10 @@ export function edit_block_regions_json(raw: string, is_org: boolean, regions: a
 export function editor_offset_of_raw(raw: string, is_org: boolean, regions: any, policy: string, raw_utf16: number): number;
 
 /**
- * Editor text plus hidden lines back to raw (`editor_text::join_with`); the
- * regions are the window's cached ones for exactly `visible` (read for Org).
+ * Editor text plus hidden lines back to raw (`editor_text::join_with`), with
+ * optional exact source for metadata-preserving text-only edits.
  */
-export function editor_text_join(visible: string, hidden: string, is_org: boolean, visible_regions: any): string;
+export function editor_text_join(visible: string, hidden: string, is_org: boolean, visible_regions: any, source?: string | null, policy?: string | null): string;
 
 /**
  * The editor's view of one block (outline kernel `editor_text`, twin 13):
@@ -52,7 +62,7 @@ export function header_tokens_json(raw: string, is_org: boolean): string;
 /**
  * Whether hide `policy` hides property `key` (`HidePolicy::hides`).
  */
-export function hide_policy_hides(policy: string, key: string): boolean;
+export function hide_policy_hides(policy: string, key: string, properties: string): boolean;
 
 export function install_panic_hook(): void;
 
@@ -65,7 +75,7 @@ export function is_query_macro_name(name: string): boolean;
  * Whether a block property key is hidden from rendered chips (I-12: the one
  * answerer the static export also asks). O(key bytes + hidden keys), no I/O.
  */
-export function is_render_hidden_prop(key: string, user_hidden: string[]): boolean;
+export function is_render_hidden_prop(key: string, user_hidden: string[], pre_block: boolean): boolean;
 
 /**
  * The message of the most recent panic in this instance ("" if none). A trapped
@@ -78,7 +88,7 @@ export function last_panic(): string;
  */
 export function linkable_property_names(value: string, is_org: boolean): string[];
 
-export function logbook_apply_marker_transition(raw: string, is_org: boolean, old_marker: string, new_marker: string, enabled: boolean, with_seconds: boolean): string;
+export function logbook_apply_marker_transition(raw: string, is_org: boolean, old_raw: string, enabled: boolean, with_seconds: boolean): string;
 
 export function logbook_clock_in(raw: string, is_org: boolean, with_seconds: boolean): string;
 
@@ -122,6 +132,11 @@ export function outline_max_depth(): number;
  * the window can send only those (DESIGN §5.3, §8).
  */
 export function outline_reads_json(verb: string): string;
+
+/**
+ * The native file-format answer, including mixed-case Org extensions.
+ */
+export function page_file_format(path: string): string;
 
 /**
  * Markdown page header (leading accepted properties, see `block_regions::page_header`).
@@ -279,22 +294,24 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly block_may_have_logbook: (a: number, b: number) => number;
     readonly canonical_group_field: (a: number, b: number) => [number, number];
+    readonly comment_quote: (a: number, b: number) => [number, number, number, number];
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];
     readonly edit_block_regions_json: (a: number, b: number, c: number, d: any, e: any) => [number, number, number, number];
     readonly editor_offset_of_raw: (a: number, b: number, c: number, d: any, e: number, f: number, g: number) => [number, number, number];
-    readonly editor_text_join: (a: number, b: number, c: number, d: number, e: number, f: any) => [number, number, number, number];
+    readonly editor_text_join: (a: number, b: number, c: number, d: number, e: number, f: any, g: number, h: number, i: number, j: number) => [number, number, number, number];
     readonly editor_text_json: (a: number, b: number, c: number, d: any, e: number, f: number) => [number, number, number, number];
     readonly encode_page_name: (a: number, b: number, c: number) => [number, number];
     readonly format_journal_date: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly header_tokens_json: (a: number, b: number, c: number) => [number, number];
-    readonly hide_policy_hides: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly hide_policy_hides: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly install_panic_hook: () => void;
     readonly is_query_macro_name: (a: number, b: number) => number;
-    readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number) => number;
+    readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly last_panic: () => [number, number];
     readonly linkable_property_names: (a: number, b: number, c: number) => [number, number];
-    readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
+    readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
     readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_info_json: (a: number, b: number, c: number) => [number, number];
@@ -305,6 +322,7 @@ export interface InitOutput {
     readonly outline_apply_json: (a: number, b: number) => [number, number, number, number];
     readonly outline_max_depth: () => number;
     readonly outline_reads_json: (a: number, b: number) => [number, number, number, number];
+    readonly page_file_format: (a: number, b: number) => [number, number];
     readonly page_header_json: (a: number, b: number) => [number, number];
     readonly page_identity_key: (a: number, b: number) => [number, number];
     readonly page_regions_json: (a: number, b: number, c: number) => [number, number];

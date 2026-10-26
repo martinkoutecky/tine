@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAIN_WINDOW_ID, registerWindow } from "./windowRealm";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
 import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal, runGlobalCommand } from "./keybindings";
-import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherMode, switcherOpen, switcherPluginBlock } from "./ui";
+import { closeSettings, settingsOpen, closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherMode, switcherOpen, switcherPluginBlock } from "./ui";
 import { makePdfRoute } from "./router";
 import { bumpGraphEpoch, setGraphMeta } from "./graphSession";
 import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
@@ -722,10 +722,7 @@ describe("block-selection commands", () => {
     resetStore();
     setWorkflow("todo");
     loadSingle({
-      name: "Tasks",
-      kind: "page",
-      title: "Tasks",
-      pre_block: null,
+      name: "Tasks", kind: "page", title: "Tasks", pre_block: null,
       blocks: [
         { id: "task-a", raw: "one", collapsed: false, children: [] },
         { id: "task-b", raw: "TODO two", collapsed: false, children: [] },
@@ -740,7 +737,7 @@ describe("block-selection commands", () => {
     fake.dispatchCaptureKeydown(pressed.event);
 
     expect(doc.byId["task-a"].raw).toBe("TODO one");
-    expect(doc.byId["task-b"].raw).toBe("DOING two");
+    expect(doc.byId["task-b"].raw).toContain("DOING two\n:LOGBOOK:\nCLOCK: [");
     expect(pressed.prevented()).toBe(true);
     dispose();
   });
@@ -1101,6 +1098,41 @@ describe("g h opens the graph home page (config.edn :default-home)", () => {
 });
 
 describe("secondary default chords (aliases)", () => {
+  it("mod+comma opens Settings outside and inside editing, while t s remains available", () => {
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    try {
+      for (const target of [null, { tagName: "TEXTAREA" }]) {
+        closeSettings();
+        const alias = trackedKeyEvent({ key: ",", code: "Comma", ctrlKey: true, target: target as unknown as EventTarget });
+        fake.dispatchCaptureKeydown(alias.event);
+        expect(settingsOpen()).toBe(true);
+        expect(alias.prevented()).toBe(true);
+      }
+      closeSettings();
+      fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "t", code: "KeyT" }).event);
+      fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "s", code: "KeyS" }).event);
+      expect(settingsOpen()).toBe(true);
+      const holders = commandDefaults().filter((c) => c.binding.split(/\s+/).includes("mod+,") || c.alias === "mod+,");
+      expect(holders.map((c) => c.id)).toEqual(["ui/open-settings"]);
+    } finally {
+      dispose();
+      closeSettings();
+    }
+  });
+
+  it("remapping or disabling Settings suppresses its default alias", () => {
+    const fake = installFakeWindow();
+    for (const binding of ["mod+alt+s", "false"]) {
+      const dispose = installKeybindings({ "ui/open-settings": binding });
+      try {
+        closeSettings();
+        fake.dispatchCaptureKeydown(trackedKeyEvent({ key: ",", code: "Comma", ctrlKey: true }).event);
+        expect(settingsOpen()).toBe(false);
+      } finally { dispose(); }
+    }
+  });
+
   // GH #491: Ctrl+Z undid, Ctrl+Y did nothing. Logseq binds redo to
   // mod+shift+z and leaves Ctrl+Y unbound, so on Windows the key every other
   // editor treats as redo reached no command at all.

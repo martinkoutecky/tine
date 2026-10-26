@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -33,20 +34,14 @@ function page(raw: string): PageDto {
   return { name: "Ac outside", kind: "page", title: "Ac outside", pre_block: null, blocks: [block] };
 }
 
-function inputAt(textarea: HTMLTextAreaElement, value: string, caret: number) {
+function inputAt(textarea: EditorDriver, value: string, caret: number) {
   textarea.focus();
-  textarea.value = value;
-  textarea.setSelectionRange(caret, caret);
-  textarea.dispatchEvent(new InputEvent("input", {
-    bubbles: true,
-    inputType: "insertText",
-    data: value[caret - 1] ?? null,
-  }));
+  textarea.input(value, caret, { inputType: "insertText", data: value[caret - 1] ?? null });
 }
 
-function moveCaretByClick(textarea: HTMLTextAreaElement, caret: number) {
-  textarea.setSelectionRange(caret, caret);
-  textarea.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+function moveCaretByClick(textarea: EditorDriver, caret: number) {
+  textarea.select(caret, caret);
+  textarea.mouseup({ bubbles: true });
 }
 
 async function openPopup(value: string, caret: number) {
@@ -55,7 +50,7 @@ async function openPopup(value: string, caret: number) {
   const mounted = mount(() => (
     <For each={pageByName("Ac outside")?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ));
-  const textarea = mounted.root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+  const textarea = editorIn(mounted.root);
   inputAt(textarea, value, caret);
   await vi.waitFor(() => expect(document.body.querySelector(".autocomplete")).not.toBeNull());
   return { ...mounted, textarea };
@@ -70,8 +65,7 @@ describe("page completion closes when the caret leaves the reference", () => {
     try {
       moveCaretByClick(textarea, VALUE.length);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete")).toBeNull());
-      const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
-      textarea.dispatchEvent(enter);
+      textarea.keydown({ key: "Enter", bubbles: true, cancelable: true });
       expect(doc.byId["ac-outside"].raw.startsWith("see [[Alpha]] then")).toBe(true);
     } finally {
       dispose();
@@ -81,7 +75,7 @@ describe("page completion closes when the caret leaves the reference", () => {
   it("closes when a selectionchange moves the caret out (keyboard / programmatic moves)", async () => {
     const { textarea, dispose } = await openPopup(VALUE, INSIDE);
     try {
-      textarea.setSelectionRange(1, 1);
+      textarea.select(1, 1);
       document.dispatchEvent(new Event("selectionchange"));
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete")).toBeNull());
     } finally {

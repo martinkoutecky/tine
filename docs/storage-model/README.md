@@ -81,6 +81,10 @@ are four independent arbitrary booleans.
 **What is not modelled:** progress (how soon text is saved; the implementation's obligation is about one
 second), torn or in-place writes, document-provider semantics, finding every page that refers to a renamed
 page and computing the right rewrite (the model takes both as arbitrary inputs), and anything about the UI.
+The binding-level conflicted-delete recovery copy is also outside the model:
+an existing file uses a clean disk-based plan, while an already absent file
+answers Applied after staging and checking recovery, without `delete_checked`
+(see SPEC-s3's D4 exception).
 
 ## Version lineage
 
@@ -143,6 +147,56 @@ above, finding every referrer and computing its rewrite, and the one-designated-
 
 ## The trust gaps
 
+The real window has a bounded native conformance harness in
+`src/document/host/nativeConformance.test.ts`. It runs the actual
+`wiring.ts`, `HostClient`, planner drain and settle barrier through a controlled
+JSON-lines transport to `binding_window_tests.rs` (an ignored lib-test peer,
+never linked into the application). A one-page, three-text prefix follows the
+existing Quint-derived Rust oracle through open, typing, sends, typing during
+a send, answers and publication; it compares window acquisition, outstanding
+work and full authored text at semantic boundaries, then the native buffer's
+version and serialized text. Admission checks inspect actual queued/applying
+requests before returning the native command reply. The model's `wSend`
+abstracts synchronous request capture; command refusal is a stutter outside
+that prefix. This does not claim whole application/model state equality.
+
+The same seeded journeys check both reply/mail orders, newer input under a
+real coalesced answer, stale-session admission and mail, two declared admission
+refusals and retry, title rekeys with newer input, same-name replacement refusal,
+close with publication debt, and saved-stop/relaunch around restore. After each
+settled edit batch, reversed or ordered native `Change` publications update the
+mounted count mirror, including reversed publications of different counts for
+the same target. Initial count replies arrive either before or behind the deltas;
+real query-cache results and working-set names/text are compared with a separate
+Store reopened on copied files and a new document assembled from its DTOs.
+Cold query evaluation uses the production IR entry. Runtime block ids and
+file revisions are incidental; authored raws, outline shape, full query result
+fields and count multiplicities are checked. A new count epoch is checked to
+clear the prior graph's counts. Late query replies across an epoch are exercised,
+but old and new calls use different scope-prefixed cache keys, so this checks key
+isolation only: it does not certify the cache's retired-generation write guard
+(removing that guard still passes). Declared branch counters are required, and
+the seed count can be extended with `TINE_WINDOW_SEEDS=200` (default six). The
+suite builds the native peer with cargo, so it runs as its own command,
+`npm run test:storage-conformance`, after the Rust tests in CI's Linux jobs and
+in the batch gate; the default `npm test` does not run it.
+
+This transport calls the same PageHost methods as the thin `page_*` commands;
+it excludes Tauri context/slot resolution, task dispatch, invoke argument
+marshalling and window event routing. The existing `scripts/e2e-host-saves.mjs`
+drives real app editing, conflict resolution and crash/relaunch through that
+slice, but does not enumerate the controlled delivery schedules. The test does
+not run Store's multi-file restore protocol, ModelFs faults, native power cuts,
+all admission refusal variants, arbitrary random Quint traces through the real
+window, mounted query-component invalidation/key construction, Org fixtures,
+or controlled-clock liveness. The cache harness supplies a native-revision key.
+Those limits remain outside its claim.
+
+The lane also reproduced a lifecycle gap: releasing an acquisition made before
+client rebind left the reopened page held (`REG-HOST-REBIND-ACQUISITION-RELEASE`).
+The client fix moves each acquisition onto its reopened page; the same test file
+checks against the native host that the final release after rebind closes it.
+
 The chain is: prose spec → Quint model (checked) → Lean model (proved: complete for s2, s3, s3.1 and s3.5, partial for s3.2 to s3.4) → Rust code
 (tested against the model, not proved). Two links are evidence rather than proof:
 
@@ -155,14 +209,150 @@ The chain is: prose spec → Quint model (checked) → Lean model (proved: compl
    simulated filesystem that drops unsynced data at a power cut, compare the code's state with the model's
    after every step, and run deliberately broken variants that must be caught. The production host runs the
    same steps (on the simulated filesystem and on real files), and each observed state must be a successor
-   the model allows. Production may refuse more than the model in three listed cases (a twin file at a
-   creating save, a create over an occupied name, a page whose input is still queued); each has a predicate,
+   the model allows. Production may refuse more than the model in four listed cases (a twin file at a
+   creating save, a create over an occupied name, a page whose input is still queued, and an arriving
+   logical claimant or possible unreadable owner at a creating save, audit L8-02); each has a predicate,
    a no-change check and a planted spurious refusal that the tests catch.
 
-The model also assumes the filesystem properties listed above, and takes reference discovery and rewriting
-as given.
+The test-only physical scheduler also calls production `begin_draft_retiring`:
+whole-operation retirement refines a sequence of enabled single-page
+`draftSync` removals. It checks every physical barrier, the terminal's virtual
+single-page cuts (including ghosts), busy custody/publication debt, and
+crash/power recovery. The ordinary H/N per-page adapter remains unchanged.
+Seeded walks interleave that worker with `opApply` (current and older captured
+plans, present and absent effects), logical claimant arrival/removal, switch
+completion, external deletion, and all eight three-page graph survivor sets.
+Plan inputs come from host buffers/files; the oracle checks their outcomes.
+Required branch/disposition counters fail if any declared branch is missing;
+power counters also require both keeping and reverting changed graph bytes.
+Apply's existing occupied-name/queued-input refusals are checked no-change
+stutters; physical worker/allocator custody returns Busy, stale plans return
+Changed (or an earlier documented Unsaved/Busy refusal), and switch completion
+waits while work/input/drafts prevent it. Environment no-ops and writes in a
+forbidden R1 window are disabled choices, not invented host actions. Directed
+retirement tests inject before/after unlink/sync faults and restart at every
+worker cut. This is ModelFs safety evidence, not native power-loss or real
+Progress/driver liveness coverage.
+
+The filesystem/process assumptions, their existing guards and tests, and the
+remaining gaps are recorded in [ASSUMPTIONS.md](ASSUMPTIONS.md). The assumption
+meta-test checks those references and the existing model/replay hash (G8).
+The i01 mutation census walks production source and checks the classified
+`crates/tine-store/tests/write_sites.toml` ledger. These are static review
+ratchets, not a stronger formal claim. In particular, root identity remains
+unguarded and the final containment-check-to-OS-call race remains accepted,
+like R1; environment-fault schedules beyond today's conformance are pending.
 
 ## How to check it yourself
+
+### Evidence classes and semantic conformance
+
+These four kinds of durability evidence have different boundaries:
+
+| Evidence class | What it certifies | Tests and limits |
+|---|---|---|
+| Model power cuts | Safety under the model's explicitly chosen unsynced survivors and filesystem axioms, checked after each transition. | Quint/Lean s3.5, `page_host/conformance_tests.rs`, `scheduler.rs` and `scheduler_retirement_tests.rs` with ModelFs. Simulated persistence is not a physical device experiment. |
+| Native API/file ordering | Real adapter calls, returned errors/witnesses, readable whole files and their order agree with an independent physical ledger. | `page_host/native_conformance_tests.rs`: `native_committed_scenarios_in_four_profiles` and `native_temp_rename_sync_faults_preserve_whole_bytes_and_retry`. The latter injects errors before temp preparation, rename and directory sync using existing adapter seams, then retries. It does not inject partial writes inside a syscall. Adapter reattachment is in-process. |
+| OS process abort/reopen | Bytes already visible to the OS survive termination of the writing process, remain live/recoverable, and can be reopened/retried. | `tests/i02_crash_gaps.rs`, including `generated_restore_abort_every_cut_conserves_payloads_and_external_arrivals`, plus the existing transaction, rewritten-move, undo and feature abort journeys. On Unix the generated worker must terminate with SIGABRT; a panic does not count. The OS and its page cache keep running. |
+| Filesystem/platform power-survival assumptions | No native test here certifies device/controller cache behavior or actual power survival on every shipped filesystem. | [ASSUMPTIONS.md](ASSUMPTIONS.md), platform directory-sync/no-replace implementations and their directed tests state the premises. Neither a successful sync API nor process abort discharges those premises. |
+
+F3 adds a separate semantic oracle, rather than forcing retained transactions
+or restore into the host model. `crates/tine-store/tests/conformance_f3.rs`
+generates Markdown/Org fixtures and constructs exact expected rename/merge
+bytes from typed pieces. It calls the actual graph-feature entry points:
+single-page host rename, retained namespace rename/rename-merge, and the
+distinct host `merge_pages` operation (which preserves inbound references). It
+covers explicit titles/aliases, ambiguous title twins, namespace descendants,
+journal referrers, a clean held referrer, block references, Unicode/space
+names, and export-definition selectors. OG 0.10.9's
+`src/main/frontend/handler/page.cljs` functions `replace-page-ref!`,
+`replace-tag-ref!`, `rename-update-refs!`, `rename-namespace-pages!` and
+`merge-pages!` establish the link/tag and append-order expectation; definition
+selectors follow Tine's existing export-definition contract. No production
+rewrite function computes expected bytes.
+The renderer also records Tine's existing file-level `RenameMap` policy:
+bracketed query arguments in an already selected file are rewritten, whereas
+OG selects individual ref-bearing blocks. This is not a full OG byte-parity
+certificate; ordinary quoted TQL selectors remain literal.
+
+The same suite and generated extensions in `tests/transaction.rs` and
+`tests/restore.rs` reuse the F2/F5 snapshot oracle, factored into the
+test-only `model/index_oracle.rs`. They warm lazy indexes before an operation
+and compare afterward with a separate cold Store built on copied files.
+Query observations include the original 15 fixed Simple queries plus Simple
+and TQL block-reference queries for the generated old/new/alias names and
+restore's `Before`/`After`. TQL page observations cover `any(links, ...)`,
+`any(linked_by, ...)` and one-step `near` in all three directions; `Ref0` is
+also probed to observe a renamed target's incoming edges. Nested `linked_by`
+observations cover restore's fileless `Before`/`After` targets, which cannot
+themselves appear as physical page rows. Fixture/schedule-derived positive
+and negative controls check actual referring pages before and after changes;
+aliases have positive Simple-query controls. Shared aliases can connect both
+merge owners before the rename even when no block literally names the new
+owner, so the Simple and TQL link expectations distinguish those cases.
+This certifies these query consumers on the generated fixtures, not every
+TQL expression, query plan, memo layout or advanced-query behavior.
+Runtime block IDs are normalized by structural position; persisted ID
+properties, reference targets, authored raws and projections remain exact.
+Optional block-routing hints and incomplete candidate-signature cache layout
+are compared through their consumers (full subtree previews, backlinks,
+unlinked references and queries), since a broad restore invalidation legally
+falls back to a full scan. The original oracle's layout checks remain intact
+for its existing callers.
+
+Generated transaction schedules permute create/save/move/trash and inject
+existing indexed I/O and revision-guard failures, including external writes
+during undo. Restore schedules vary payloads, format, width and within-area
+order, collide each input's recovery name through the existing bound-handle
+pause, and abort after every existing move/copy boundary. Copy failure at each
+input is also exercised on Unix with a disposable child's OS file-size limit:
+only the selected input exceeds the limit, making its temporary write return
+`FileTooLarge` after detaching the old bytes, without a production hook.
+Every failed operation checks byte custody immediately and after reopen,
+and compares the observed live/fresh indexes. Live custody candidates are
+the schedule's explicit live paths. Transactions allow only their page/asset
+trash and conflict-copy namespaces. Restore validates its reported graph and
+asset recovery roots and checks every displaced payload against its original
+live path or those roots. After an abort, discovery accepts only recognised
+restore-id directories in the two contract namespaces; retry keeps both the
+interrupted operation's roots and the new report's roots. Arbitrary hidden
+folders and unreported recovery directories cannot establish custody.
+Abort journeys introduce an
+external arrival at each cut (preferentially the detached target) and retry.
+An external actor's own overwrite supersedes those old bytes; an unprocessed
+backup input remains the backup caller's custody, rather than being promised
+as a new durable host draft. These are bounded generated tests, not a new
+formal proof or exhaustive fault model. The default is one seed, which still
+runs both semantic formats and all four entry paths. Transaction/restore
+format, width and order are less varied at that default; existing directed
+Org tests remain necessary. Run the default with
+`cargo test -p tine-store --test integration generated_ -- --nocapture`.
+For a soak use `TINE_F3_SEEDS=16` with the same command and retain its emitted
+coverage counters and seed count. Two or more seeds are appropriate when
+validating storage changes. The seed count must be positive.
+
+Recorded deterministic coverage counters (seed numbers `1..=N`):
+
+| Coverage | 1 seed (default) | 2 seeds | 16 seeds (soak) |
+|---|---:|---:|---:|
+| Semantic graphs / held referrers | 8 / 8 | 16 / 16 | 128 / 128 |
+| Generated referrer files | 22 | 43 | 378 |
+| Ambiguous-title refusals | 2 | 4 | 32 |
+| Transaction failure schedules / undo races | 12 / 4 | 23 / 7 | 178 / 50 |
+| Transaction step positions | 4 | 8 | 64 |
+| Restore recovery-name failures / successful controls | 5 / 1 | 11 / 2 | 95 / 16 |
+| Restore copy-write errors (Unix) | 5 | 11 | 95 |
+| Restore abort cuts / detached-target arrivals | 13 / 5 | 28 / 11 | 238 / 95 |
+| Live/cold snapshot comparisons | 146 | 300 | 2,460 |
+
+The one- and sixteen-seed runs exercise the repaired custody/query oracle;
+the two-seed counters are from the preceding baseline with the same generator.
+Each seed includes both Markdown and Org semantic graphs; transaction and
+restore format/order/width are selected per seed. These counters describe
+executed schedules, not exhaustive state-space coverage. Sequential generated
+test wall time was 147.4 s at the old two-seed default and 78.4 s at the new
+one-seed default, including the stronger query and reopen custody assertions
+(compilation excluded; Linux, 2026-10-23).
 
 ### Quint (model checking)
 

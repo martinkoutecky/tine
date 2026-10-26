@@ -14,7 +14,10 @@ export type QuickShareError =
   | { kind: "network" }
   | { kind: "unavailable" }
   | { kind: "maybeUploaded"; shareId: string }
+  | { kind: "maybeUpdated" }
+  | { kind: "shareChanged" }
   | { kind: "previewExpired" }
+  | { kind: "previewCapacity" }
   | { kind: "wrongAccount"; login: string }
   | { kind: "notFound" }
   | { kind: "refused"; message: string }
@@ -37,7 +40,7 @@ export interface QuickSharePreview {
 }
 /** `shareId`: the record id the create will use; the share dialog marks the query block `tine.share:: pending/<shareId>`
  *  with it before the upload (D-20261018-QS3). Not secret (it is in the envelope header). */
-export interface QuickSharePrepared { prepareId: string; shareId: string; preview: QuickSharePreview }
+export interface QuickSharePrepared { prepareId: string; shareId: string; preview: QuickSharePreview; membership?: { added: string[]; removed: string[]; currentSnapshotAt?: string } | null }
 export interface QuickShareCreated { shareId: string; gistId: string; login: string; copied: boolean }
 export interface QuickShareListed {
   shareId: string;
@@ -53,12 +56,15 @@ export interface QuickShareListed {
 export interface QuickShareListing {
   /** Quick share is on in this build (DESIGN §5: off until the viewer is deployed). */
   enabled: boolean;
+  /** Native debug builds only; never initiates a request by itself. */
+  connectionTestAvailable?: boolean;
   account: { login: string; accountId: number } | null;
   shares: QuickShareListed[];
   /** The shares file could not be read; `shares` is then empty. */
   error: string | null;
 }
-export type QuickShareCheckOutcome = "live" | "notFoundYet";
+export type QuickShareConnectionTest = "connected" | "tls" | "network" | "refused" | "badAnswer" | "disabled";
+export type QuickShareCheckOutcome = "live" | "notFoundYet" | { current: { title: string; createdAt: string; pages: string[] } };
 export type QuickShareDeleteOutcome = "deleted" | "gone";
 export interface QuickShareFound { gistId: string; createdAt: string }
 
@@ -84,7 +90,10 @@ export function quickShareErrorText(error: unknown): string {
     case "network": return t("quick-share-error-network");
     case "unavailable": return t("quick-share-error-unavailable");
     case "maybeUploaded": return t("quick-share-error-maybe-uploaded");
+    case "maybeUpdated": return t("quick-share-error-maybe-updated");
+    case "shareChanged": return t("quick-share-error-share-changed");
     case "previewExpired": return t("quick-share-error-preview-expired");
+    case "previewCapacity": return t("quick-share-error-preview-capacity");
     case "wrongAccount": return t("quick-share-error-wrong-account", { login: error.login });
     case "notFound": return t("quick-share-error-not-found");
     case "refused": return t("quick-share-error-refused", { message: error.message });

@@ -100,6 +100,13 @@ pub(crate) struct Stamp {
 
 pub(crate) type RestoreBaseline = HashMap<PathBuf, Stamp>;
 
+/// A settled read refusal, valid only for this exact metadata observation.
+/// Kept in memory: changing or replacing the file makes it eligible again.
+struct ReadRefusal {
+    stamp: Stamp,
+    reason: String,
+}
+
 fn stamp(path: &Path) -> Option<Stamp> {
     let mut value = stamp_metadata(path)?;
     #[cfg(test)]
@@ -462,6 +469,7 @@ pub(crate) struct Core {
     #[cfg(test)]
     full_walk_pause: Mutex<Option<crate::store::TestPause>>,
     unreadable_dirs: Mutex<HashMap<PathBuf, String>>,
+    read_refusals: Mutex<HashMap<PathBuf, ReadRefusal>>,
     closed: AtomicBool,
     #[cfg(test)]
     pub(crate) recovery_reconcile_pause: Mutex<Option<crate::store::TestPause>>,
@@ -756,6 +764,7 @@ impl Core {
                 raced.insert(path);
                 continue;
             }
+            self.graph.note_unsettled_read(&path, None);
             if tracked {
                 if let Some(value) = current.clone() {
                     snapshot.insert(path.clone(), value);
@@ -841,6 +850,7 @@ impl WatchHandle {
             #[cfg(test)]
             full_walk_pause: Mutex::new(None),
             unreadable_dirs: Mutex::new(HashMap::new()),
+            read_refusals: Mutex::new(HashMap::new()),
             closed: AtomicBool::new(false),
             #[cfg(test)]
             recovery_reconcile_pause: Mutex::new(None),
@@ -2053,6 +2063,14 @@ mod tests {
         let writer = store.writer.lock().unwrap();
         let core = store.watch.core_for_load();
         fs::write(&path, "- new content\n").unwrap();
+        // A persistent failure is announced only after the existing racy
+        // observation window. Fresh delivery failures are covered separately.
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
         store
             .graph
             .fail_sync_read_once

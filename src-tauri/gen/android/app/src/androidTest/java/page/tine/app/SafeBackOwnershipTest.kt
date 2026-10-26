@@ -45,89 +45,90 @@ class SafeBackOwnershipTest {
   @Test
   fun tineOwnsBackAfterTauriStartupEvenWhenTheWebViewHasHistory() {
     val scenario = ActivityScenario.launch(MainActivity::class.java)
-    try {
-      val webView = awaitWebViewHandle()
-      // Not the handle: the app's own first document, committed.
-      val document = awaitAppDocument(scenario)
+    // The scenario is deliberately never closed. Closing it destroys Tauri's
+    // only window, and the app process then exits (cleanly, code 0) before
+    // the runner records any result: hosted run 39944945311 reported only
+    // "Process crashed" (logcat: "exited cleanly (0)" at STOPPED). The runner
+    // force-stops the app once instrumentation finishes, so nothing leaks.
+    val webView = awaitWebViewHandle()
+    // Not the handle: the app's own first document, committed.
+    val document = awaitAppDocument(scenario)
 
-      // Exactly what the production mobile router does on every navigation
-      // (pushMobileHistoryEntry, src/router.ts). Deliberately not a loadUrl:
-      // Tine is an SPA and never performs a second real navigation, so proving
-      // ownership behind a loadUrl would prove it under conditions that never
-      // occur on Martin's phone.
-      val loadState = awaitLoadComplete(scenario)
-      val historyBefore = evaluateInt(scenario, "history.length")
-      var historyAfter = historyBefore
-      var pushes = 0
-      // A pushState issued while the document is still loading grows the JS
-      // history without adding a WebView back/forward entry: run 32180708057
-      // reported `history.length 1 -> 2` beside `canGoBack=false`, with the
-      // list still holding only [initial, first commit]. Waiting for the load
-      // to finish is the fix; repeating the push is the belt, because a
-      // software-GL emulator can report `complete` while the first frame is
-      // still settling.
-      while (pushes < MAX_HISTORY_PUSHES) {
-        evaluate(scenario, "history.pushState(null, '', location.href)")
-        historyAfter = evaluateInt(scenario, "history.length")
-        pushes += 1
-        if (awaitTrue(PUSH_SETTLE_MS) { onUiThread(scenario) { webView.canGoBack() } }) break
-      }
-
-      // Last resort, and reported as such: a real same-document navigation.
-      // pushState is what production does, so it is tried first and three
-      // times; but a run that observes ownership under a fragment navigation
-      // still answers the question this fixture exists to answer, and a run
-      // that observes nothing answers nothing at all.
-      var historyMode = "pushState"
-      if (!onUiThread(scenario) { webView.canGoBack() }) {
-        historyMode = "fragment"
-        scenario.onActivity { webView.loadUrl(webView.url + "#tine-back-probe") }
-        awaitTrue(SETTLE_TIMEOUT_MS) { onUiThread(scenario) { webView.canGoBack() } }
-      }
-
-      if (!onUiThread(scenario) { webView.canGoBack() }) {
-        // Name the failure instead of leaving the next receipt to guess. If the
-        // JS history grew but the WebView's back/forward list did not, then
-        // pushState does not feed canGoBack() on this device and the production
-        // premise behind pushMobileHistoryEntry is itself wrong — a different
-        // finding, not a flaky fixture.
-        val list = onUiThread(scenario) { webView.copyBackForwardList() }
-        fail(
-          "the fixture could not give the WebView a history entry, so this run " +
-            "cannot observe Back ownership at all. document=$document " +
-            "loadState=$loadState pushes=$pushes mode=$historyMode " +
-            "history.length $historyBefore -> $historyAfter, " +
-            "backForwardList size=${list.size} currentIndex=${list.currentIndex}, " +
-            "canGoBack=${onUiThread(scenario) { webView.canGoBack() }}",
-        )
-      }
-
-      val before = SafeBackBridge.gesturesReceived
-      val deliveredBefore = SafeBackBridge.dispatchesDelivered
-      scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-
-      assertTrue(
-        "Back did not reach Tine's SafeBack owner (history arranged by " +
-          "$historyMode): another OnBackPressedCallback (Tauri's AppPlugin) was " +
-          "registered later and answered the gesture with WebView history " +
-          "navigation instead",
-        awaitTrue(SETTLE_TIMEOUT_MS) { SafeBackBridge.gesturesReceived > before },
-      )
-
-      // Owning Back and DELIVERING it are different things, and this fixture
-      // used to prove only the first. An inlined plugin with no ACL manifest
-      // has `plugin:safe-back|registerListener` refused before it reaches
-      // Android, so `hasListener` stays false, every gesture is consumed with
-      // nowhere to send it, and the counter above still climbs. That shipped.
-      assertTrue(
-        "Back reached Tine's owner but was never handed to the frontend: the " +
-          "\"android-safe-back\" listener is not registered, which is what an " +
-          "ACL refusal of plugin:safe-back|registerListener looks like from here",
-        awaitTrue(SETTLE_TIMEOUT_MS) { SafeBackBridge.dispatchesDelivered > deliveredBefore },
-      )
-    } finally {
-      scenario.close()
+    // Exactly what the production mobile router does on every navigation
+    // (pushMobileHistoryEntry, src/router.ts). Deliberately not a loadUrl:
+    // Tine is an SPA and never performs a second real navigation, so proving
+    // ownership behind a loadUrl would prove it under conditions that never
+    // occur on Martin's phone.
+    val loadState = awaitLoadComplete(scenario)
+    val historyBefore = evaluateInt(scenario, "history.length")
+    var historyAfter = historyBefore
+    var pushes = 0
+    // A pushState issued while the document is still loading grows the JS
+    // history without adding a WebView back/forward entry: run 32180708057
+    // reported `history.length 1 -> 2` beside `canGoBack=false`, with the
+    // list still holding only [initial, first commit]. Waiting for the load
+    // to finish is the fix; repeating the push is the belt, because a
+    // software-GL emulator can report `complete` while the first frame is
+    // still settling.
+    while (pushes < MAX_HISTORY_PUSHES) {
+      evaluate(scenario, "history.pushState(null, '', location.href)")
+      historyAfter = evaluateInt(scenario, "history.length")
+      pushes += 1
+      if (awaitTrue(PUSH_SETTLE_MS) { onUiThread(scenario) { webView.canGoBack() } }) break
     }
+
+    // Last resort, and reported as such: a real same-document navigation.
+    // pushState is what production does, so it is tried first and three
+    // times; but a run that observes ownership under a fragment navigation
+    // still answers the question this fixture exists to answer, and a run
+    // that observes nothing answers nothing at all.
+    var historyMode = "pushState"
+    if (!onUiThread(scenario) { webView.canGoBack() }) {
+      historyMode = "fragment"
+      scenario.onActivity { webView.loadUrl(webView.url + "#tine-back-probe") }
+      awaitTrue(SETTLE_TIMEOUT_MS) { onUiThread(scenario) { webView.canGoBack() } }
+    }
+
+    if (!onUiThread(scenario) { webView.canGoBack() }) {
+      // Name the failure instead of leaving the next receipt to guess. If the
+      // JS history grew but the WebView's back/forward list did not, then
+      // pushState does not feed canGoBack() on this device and the production
+      // premise behind pushMobileHistoryEntry is itself wrong — a different
+      // finding, not a flaky fixture.
+      val list = onUiThread(scenario) { webView.copyBackForwardList() }
+      fail(
+        "the fixture could not give the WebView a history entry, so this run " +
+          "cannot observe Back ownership at all. document=$document " +
+          "loadState=$loadState pushes=$pushes mode=$historyMode " +
+          "history.length $historyBefore -> $historyAfter, " +
+          "backForwardList size=${list.size} currentIndex=${list.currentIndex}, " +
+          "canGoBack=${onUiThread(scenario) { webView.canGoBack() }}",
+      )
+    }
+
+    val before = SafeBackBridge.gesturesReceived
+    val deliveredBefore = SafeBackBridge.dispatchesDelivered
+    scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+
+    assertTrue(
+      "Back did not reach Tine's SafeBack owner (history arranged by " +
+        "$historyMode): another OnBackPressedCallback (Tauri's AppPlugin) was " +
+        "registered later and answered the gesture with WebView history " +
+        "navigation instead",
+      awaitTrue(SETTLE_TIMEOUT_MS) { SafeBackBridge.gesturesReceived > before },
+    )
+
+    // Owning Back and DELIVERING it are different things, and this fixture
+    // used to prove only the first. An inlined plugin with no ACL manifest
+    // has `plugin:safe-back|registerListener` refused before it reaches
+    // Android, so `hasListener` stays false, every gesture is consumed with
+    // nowhere to send it, and the counter above still climbs. That shipped.
+    assertTrue(
+      "Back reached Tine's owner but was never handed to the frontend: the " +
+        "\"android-safe-back\" listener is not registered, which is what an " +
+        "ACL refusal of plugin:safe-back|registerListener looks like from here",
+      awaitTrue(SETTLE_TIMEOUT_MS) { SafeBackBridge.dispatchesDelivered > deliveredBefore },
+    )
   }
 
   /** The plugin's WebView reference. Present long before the app's document is. */

@@ -10,6 +10,7 @@
  *  request, a log or an error message. */
 import { pageIdentityKey } from "../pageIdentity";
 import limits from "../../docs/contracts/quick-share-limits.json";
+import blockedGists from "./blocked-gists.json";
 import type { PublishedSnapshot } from "../publishedBackend";
 import { readBounded, validateSnapshot } from "../publishedBackend";
 
@@ -26,6 +27,7 @@ const RAW_HOST = "gist.githubusercontent.com";
 
 export type QuickShareReason =
   | "bad-link"
+  | "blocked"
   | "unsupported-browser"
   | "not-found"
   | "unreachable"
@@ -90,7 +92,8 @@ export function parseShareFragment(hash: string): ShareLink | null {
 
 /** Whether this browser has what a share needs. */
 export function quickShareSupported(): boolean {
-  return typeof globalThis.crypto?.subtle?.deriveKey === "function" && typeof globalThis.DecompressionStream === "function";
+  if (typeof globalThis.crypto?.subtle?.deriveKey !== "function" || typeof globalThis.DecompressionStream !== "function") return false;
+  try { new DecompressionStream("gzip"); return true; } catch { return false; }
 }
 
 /** Decrypt envelope text to the compressed share document `P`, checking in
@@ -290,7 +293,16 @@ export interface LoadedShare extends ShareDocument {
 /** Load the share a fragment names: at most three requests, one at a time. */
 export async function loadQuickShare(hash: string, fetchImpl: Fetch = (url, init) => fetch(url, init)): Promise<LoadedShare> {
   if (!quickShareSupported()) fail("unsupported-browser", "This browser cannot open Tine shares; use a current Firefox, Chrome, Edge or Safari.");
+  // Presence of subtle alone does not guarantee its HKDF/AES implementation.
+  // Probe algorithms before contacting GitHub, using public all-zero bytes.
+  try {
+    const base = await crypto.subtle.importKey("raw", new Uint8Array(32), "HKDF", false, ["deriveKey"]);
+    await crypto.subtle.deriveKey({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(16), info: ENC_INFO }, base, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+  } catch {
+    fail("unsupported-browser", "This browser cannot open Tine shares; use a current Firefox, Chrome, Edge or Safari.");
+  }
   const link = parseShareFragment(hash) ?? fail("bad-link", "This share link is incomplete; copy the whole link.");
+  if ((blockedGists as string[]).includes(link.gist)) fail("blocked", "This share is unavailable on tine.page.");
   const text = await envelopeText(link, fetchImpl);
   const payload = await openEnvelope(text, link.key);
   const document = decodeShareDocument(await gunzipBounded(payload, limits.viewer.document_bytes));

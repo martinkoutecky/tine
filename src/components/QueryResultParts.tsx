@@ -1,4 +1,5 @@
 import { TableWrap } from "./TableWrap";
+import { PropertyKey, visiblePageProperties } from "../render/PropertyKey";
 import { t, msg, render } from "../i18n";
 import { Rich } from "../i18n/Rich";
 import { For, Match, Show, Switch, createMemo, type JSX } from "solid-js";
@@ -14,6 +15,14 @@ import { openPagePropertiesFromRow } from "../queryPageProps";
 // Presentation parts of a query block's answer: page rows, the engine's
 // statistics and the engine's Logseq-form hint. None decides membership or
 // computes an answer (I-12).
+
+/** GH #726: the results draw OTHER blocks; a right click in here never opens the
+ *  host block's menu (contextMenuPolicy reads `data-block-surface`). A real box,
+ *  not `display: contents`: TableWrap measures its parent, and a contents box has
+ *  no geometry, which pushed wide result tables off the pane (GH #749). */
+export function QueryResultsRegion(props: { children: JSX.Element }): JSX.Element {
+  return <div class="query-results-region" data-block-surface="query">{props.children}</div>;
+}
 
 export type QueryView = ViewKind;
 
@@ -58,13 +67,13 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
     </button>
   );
   // GH #619 item 8 (D-20261018-Q619): Search/List page rows show the page's
-  // properties as plain selectable text under the title, as comment 3 promised;
+  // properties under the title; keys share the page-header navigation;
   // the pencil edits them through the guarded page editor.
   const propertyStrip = (row: PageRow) => (
     <Show when={row.properties.length > 0}>
       <span class="query-page-props" data-selectable="text">
-        <For each={row.properties}>{([key, val]) => (
-          <span class="query-page-prop"><span class="query-page-prop-key">{key}:</span> {val}</span>
+        <For each={visiblePageProperties(row.properties)}>{([key, val]) => (
+          <span class="query-page-prop"><span class="query-page-prop-key"><PropertyKey name={key} />:</span> {val}</span>
         )}</For>
       </span>
     </Show>

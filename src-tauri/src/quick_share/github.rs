@@ -10,7 +10,7 @@
 //! are parsed for their documented fields and otherwise dropped.
 
 use super::Token;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// The GitHub OAuth App "Tine" (registered 2026-10-17; public, not a secret).
@@ -40,6 +40,21 @@ pub(crate) struct Endpoints {
 
 impl Endpoints {
     pub(crate) fn github() -> Self {
+        // Native E2E runs the real service and dialog against a loopback GitHub.
+        // This seam is compiled out of release builds; even debug accepts only
+        // a bare local origin, never a remote HTTP destination.
+        #[cfg(debug_assertions)]
+        if let Ok(origin) = std::env::var("TINE_QUICK_SHARE_TEST_ORIGIN") {
+            if let Some(endpoints) = Self::loopback_test(&origin) {
+                return endpoints;
+            }
+        }
+        Self::github_https()
+    }
+
+    /// Fixed production origins, including for the development connectivity
+    /// diagnostic. It cannot be redirected by the loopback E2E override.
+    pub(super) fn github_https() -> Self {
         Self {
             oauth: "https://github.com".into(),
             api: "https://api.github.com".into(),
@@ -48,6 +63,31 @@ impl Endpoints {
             connect_timeout: Duration::from_secs(15),
             read_timeout: Duration::from_secs(60),
         }
+    }
+
+    #[cfg(any(debug_assertions, test))]
+    pub(super) fn loopback_test(origin: &str) -> Option<Self> {
+        let url = reqwest::Url::parse(origin).ok()?;
+        if url.scheme() != "http"
+            || url.host_str() != Some("127.0.0.1")
+            || url.port().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || url.path() != "/"
+        {
+            return None;
+        }
+        let origin = origin.trim_end_matches('/').to_owned();
+        Some(Self {
+            oauth: origin.clone(),
+            api: origin.clone(),
+            raw: origin,
+            https_only: false,
+            connect_timeout: Duration::from_secs(5),
+            read_timeout: Duration::from_secs(10),
+        })
     }
 }
 
@@ -99,6 +139,49 @@ pub(crate) struct Answer {
 pub(crate) struct GitHub {
     pub endpoints: Endpoints,
     client: reqwest::Client,
+}
+
+/// A fixed, secret-free diagnostic. No remote body, URL or transport error text
+/// reaches the WebView. Disabled is returned by release builds without I/O.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum ConnectionTestResult {
+    Connected,
+    Tls,
+    Network,
+    Refused,
+    BadAnswer,
+    Disabled,
+}
+
+#[cfg(debug_assertions)]
+fn connection_test_error(error: &reqwest::Error) -> ConnectionTestResult {
+    // Preserve a useful TLS diagnosis without serializing error chains (which
+    // can contain URLs). Windows keeps Schannel and reports the network code;
+    // the four rustls targets can identify its typed certificate/TLS errors.
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "android",
+        target_os = "ios"
+    ))]
+    {
+        use std::error::Error;
+        let mut cause = error.source();
+        while let Some(inner) = cause {
+            if inner.is::<rustls::Error>() {
+                return ConnectionTestResult::Tls;
+            }
+            // io::Error::source can skip its contained error. TLS errors from
+            // tokio-rustls are commonly nested in one or more io::Errors.
+            cause = inner
+                .downcast_ref::<std::io::Error>()
+                .and_then(|io| io.get_ref())
+                .map(|error| error as &(dyn Error + 'static))
+                .or_else(|| inner.source());
+        }
+    }
+    ConnectionTestResult::Network
 }
 
 fn tls(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
@@ -284,6 +367,7 @@ pub(crate) struct ListedGist {
     pub description: Option<String>,
     pub files: Vec<String>,
     pub share_raw_url: Option<String>,
+    pub revision: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -297,6 +381,12 @@ struct RawGist {
     owner: Option<RawOwner>,
     #[serde(default)]
     files: std::collections::BTreeMap<String, RawFile>,
+    #[serde(default)]
+    history: Vec<RawRevision>,
+}
+#[derive(Deserialize)]
+struct RawRevision {
+    version: String,
 }
 #[derive(Deserialize)]
 struct RawOwner {
@@ -321,6 +411,7 @@ impl From<RawGist> for ListedGist {
             description: gist.description,
             files: gist.files.into_keys().collect(),
             share_raw_url,
+            revision: gist.history.first().map(|h| h.version.clone()),
         }
     }
 }
@@ -331,6 +422,37 @@ pub(crate) fn valid_gist_id(id: &str) -> bool {
 }
 
 impl GitHub {
+    /// Replace the complete envelope once. GitHub documents no conditional
+    /// PATCH for gists; the service re-reads the reviewed revision first.
+    pub(crate) async fn update_gist(
+        &self,
+        token: &Token,
+        id: &str,
+        envelope: &str,
+    ) -> Result<(), GhError> {
+        if !valid_gist_id(id) {
+            return Err(GhError::NotFound);
+        }
+        let body = serde_json::json!({"files": {super::SHARE_FILE: {"content": envelope}}});
+        let request = self
+            .api(reqwest::Method::PATCH, &format!("/gists/{id}"), token)
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_vec(&body).map_err(|_| GhError::NotSent)?);
+        let answer = Self::check(self.exchange(request, MAX_API_BYTES).await?, &[200], token)?;
+        let updated: RawGist =
+            serde_json::from_slice(&answer.body).map_err(|_| GhError::BadAnswer)?;
+        let updated = ListedGist::from(updated);
+        if updated.id != id
+            || !super::is_tine_share(&updated)
+            || updated.owner_id.is_none()
+            || !updated.revision.as_deref().is_some_and(|version| {
+                version.len() == 40 && version.bytes().all(|b| b.is_ascii_hexdigit())
+            })
+        {
+            return Err(GhError::BadAnswer);
+        }
+        Ok(())
+    }
     pub(crate) fn new(endpoints: Endpoints) -> Result<Self, GhError> {
         let builder = reqwest::Client::builder()
             .user_agent(format!("Tine/{}", env!("CARGO_PKG_VERSION")))
@@ -340,6 +462,26 @@ impl GitHub {
             .read_timeout(endpoints.read_timeout);
         let client = tls(builder).build().map_err(|_| GhError::NotSent)?;
         Ok(Self { endpoints, client })
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) async fn test_connection(&self) -> ConnectionTestResult {
+        let response = match self
+            .client
+            .get(format!("{}/zen", self.endpoints.api))
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => return connection_test_error(&error),
+        };
+        if response.status() != reqwest::StatusCode::OK {
+            return ConnectionTestResult::Refused;
+        }
+        match bounded_body(response, MAX_OAUTH_BYTES).await {
+            Ok(body) if !body.is_empty() => ConnectionTestResult::Connected,
+            _ => ConnectionTestResult::BadAnswer,
+        }
     }
 
     async fn exchange(

@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -46,36 +47,47 @@ async function mountEditor(mobile: boolean) {
   const mounted = mount(() => (
     <For each={pageByName("Mobile selection")?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ));
-  const textarea = mounted.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-  textarea.focus();
+  const textarea = maybeEditorIn(mounted.root)!;
+  textarea.element.focus();
   return { ...mounted, textarea };
 }
 
 async function mountSelectedEditor(mobile: boolean) {
   const mounted = await mountEditor(mobile);
   const { textarea } = mounted;
-  textarea.setSelectionRange(6, 14);
-  textarea.dispatchEvent(new Event("select", { bubbles: true }));
+  textarea.select(6, 14);
+  textarea.reportSelection(new Event("select", { bubbles: true }));
   await vi.waitFor(() => expect(mounted.root.querySelector(".sel-toolbar")).not.toBeNull());
   return { ...mounted, textarea, toolbar: mounted.root.querySelector<HTMLElement>(".sel-toolbar")! };
 }
 
 describe("selected-text toolbar platform ownership (GH #375)", () => {
+  it.each([true, false])("keeps Comment at the right edge as an icon (touch=%s)", async mobile => {
+    const mounted = await mountSelectedEditor(mobile);
+    try {
+      const button = mounted.toolbar.querySelector('[data-selection-action="comment"]')!;
+      expect(button.querySelector("svg")).not.toBeNull();
+      expect(mounted.toolbar.querySelector(":scope > button:last-of-type")).toBe(button);
+      expect(button.getAttribute("title")).toContain("Ctrl/Cmd+R");
+    } finally { mounted.dispose(); }
+  });
   // A selection in another RENDERED block no longer hands off to that block's
   // editor (D-20261018-LP2): RenderedSelectionToolbar.test.tsx owns that path.
   it("tracks native selectionchange without a select or mouseup event", async () => {
     const mounted = await mountEditor(true);
     try {
+      // WebView native selection getters change without desktop selection events.
+      if (mounted.textarea.kind !== "textarea") return;
       let start = 6;
       let end = 14;
       // Native WebView selection updates the DOM range without the desktop
       // select/mouseup events. Avoid jsdom's synthetic setSelectionRange events.
-      Object.defineProperty(mounted.textarea, "selectionStart", { configurable: true, get: () => start });
-      Object.defineProperty(mounted.textarea, "selectionEnd", { configurable: true, get: () => end });
+      Object.defineProperty(mounted.textarea.element, "selectionStart", { configurable: true, get: () => start });
+      Object.defineProperty(mounted.textarea.element, "selectionEnd", { configurable: true, get: () => end });
       document.dispatchEvent(new Event("selectionchange"));
       expect(mounted.root.querySelector("[data-mobile-selection-toolbar]")).not.toBeNull();
       start = end;
-      mounted.textarea.dispatchEvent(new Event("selectionchange"));
+      mounted.textarea.reportSelection(new Event("selectionchange"));
       expect(mounted.root.querySelector("[data-mobile-selection-toolbar]")).toBeNull();
     } finally {
       mounted.dispose();
@@ -84,12 +96,14 @@ describe("selected-text toolbar platform ownership (GH #375)", () => {
 
   it("ignores selection changes owned by another focused control", async () => {
     const mounted = await mountEditor(true);
-    const other = document.createElement("textarea");
+    const other: HTMLTextAreaElement = document.createElement("textarea");
     document.body.append(other);
     try {
+      // Native textarea getters simulate a selection owned by another control.
+      if (mounted.textarea.kind !== "textarea") return;
       other.focus();
-      Object.defineProperty(mounted.textarea, "selectionStart", { configurable: true, get: () => 6 });
-      Object.defineProperty(mounted.textarea, "selectionEnd", { configurable: true, get: () => 14 });
+      Object.defineProperty(mounted.textarea.element, "selectionStart", { configurable: true, get: () => 6 });
+      Object.defineProperty(mounted.textarea.element, "selectionEnd", { configurable: true, get: () => 14 });
       document.dispatchEvent(new Event("selectionchange"));
       expect(mounted.root.querySelector("[data-mobile-selection-toolbar]")).toBeNull();
     } finally {

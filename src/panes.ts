@@ -606,7 +606,7 @@ export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId(
     // source context (matching the embryo-switcher flow) — openInNewTab here
     // would leave a stray duplicate tab beside the target.
     if (route.kind === "journals") router.openJournals();
-    else if (route.kind === "query" || route.kind === "pdf" || route.kind === "invalid" || route.kind === "conflicts" || route.kind === "all-pages") router.replaceActiveRoute(route);
+    else if (route.kind === "query" || route.kind === "pdf" || route.kind === "invalid" || route.kind === "conflicts" || route.kind === "all-pages" || route.kind === "all-graphs") router.replaceActiveRoute(route);
     else if (route.block) {
       // A block route means zoom, whereas openPageAtBlock is a whole-page
       // search-result scroll. Keep the same route semantics as an existing pane.
@@ -623,8 +623,8 @@ export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId(
 }
 
 function pdfTab(filename: string): { paneId: string; tabId: string; route: PdfRoute } | null {
-  // One editable view per file app-wide (annotation mutation ownership), so the
-  // search covers every window.
+  // A plain open reuses a view of the file in any window; views of one PDF
+  // share its highlights, so any of them is the file's editor.
   for (const paneId of allPaneIds()) {
     for (const tab of paneRouter(paneId).tabs()) {
       const route = tabRoute(tab);
@@ -638,12 +638,17 @@ export interface OpenPdfOptions {
   sourcePaneId?: string;
   inPlace?: boolean;
   background?: boolean;
+  /** Open a second view beside, even when one is open: its own page and zoom,
+   * the same highlights (shared per PDF, pdfHighlightState.ts). */
   anotherView?: boolean;
+  /** The new view's zoom (another view starts where its source is). */
+  scale?: number;
 }
 
-/** Open a graph PDF as an ordinary route. Reuses one view per file, keeping its
- * page when no target is requested. Desktop uses a companion pane; mobile uses
- * the current tab's history. Cost O(open tabs), no graph I/O. */
+/** Open a graph PDF as an ordinary route. A plain open reuses an existing view
+ * of the file, keeping its page when no target is requested; anotherView always
+ * opens a new one. Desktop uses a companion pane; mobile uses the current tab's
+ * history (and has no second view). Cost O(open tabs), no graph I/O. */
 export function openPdf(filename: string, label: string, page?: number,
   highlightId?: string, options: OpenPdfOptions = {}): PdfRoute | null {
   const sourcePaneId = options.sourcePaneId && allPaneIds().includes(options.sourcePaneId)
@@ -661,9 +666,9 @@ export function openPdf(filename: string, label: string, page?: number,
     if (!options.background) focusPane(existing.paneId);
     return existing.route;
   }
-  // A second editable view needs shared annotation mutation ownership.
-  if (options.anotherView) return null;
-  const route = makePdfRoute(filename, label, { page });
+  // A phone shows one PDF per pane; a second view there would only replace it.
+  if (options.anotherView && pdfTakesOverPane()) return null;
+  const route = makePdfRoute(filename, label, { page, scale: options.scale });
   publishPdfNavigationIntent(route.viewId, { page, highlightId });
   if (pdfTakesOverPane() || options.inPlace) {
     paneRouter(sourcePaneId).openPdf(route);

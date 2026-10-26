@@ -331,6 +331,11 @@ pub fn delete_page_expected(
                 Err(error) => return Err(store_error(error)),
                 Ok(_) => return Err(error(io::ErrorKind::NotFound, "stale page target")),
             }
+            // A conflicted draft of the vanished file is kept recoverably
+            // before the window discards it (L9 review R1).
+            if let Some(page) = store.as_page(&file) {
+                return Ok(host.delete(session, &page, None));
+            }
         }
         return Ok(PageOperation::Applied);
     };
@@ -338,7 +343,7 @@ pub fn delete_page_expected(
     let (checked, _) = store
         .read(&id.file(), Some(tine_store::PARSE_INPUT_MAX_BYTES))
         .map_err(store_error)?;
-    Ok(host.delete(session, id, &checked))
+    Ok(host.delete(session, id, Some(&checked[..])))
 }
 
 /// Rename a page and its file-backed namespace descendants in one transaction.
@@ -589,12 +594,10 @@ impl RenamePlan {
             let (content, rev) = read_text(store, &file)
                 .map_err(|e| error(e.kind(), &format!("{}: {e}", file.as_str())))?;
             // As `commit_rename` decides: a referrer is written when the
-            // transaction's rewrite (Org by its exact `.org` extension)
+            // transaction's rewrite (using the page's source format)
             // changes it and it carries no VCS conflict markers.
-            let org = std::path::Path::new(file.as_str())
-                .extension()
-                .is_some_and(|ext| ext == "org");
             let syntax = Format::from_path(id.as_str().as_ref());
+            let org = syntax == Format::Org;
             let rewritten = refs::rename_rewrite(&content, org, &self.map.0, format);
             let changed = rewritten != content;
             let marked =

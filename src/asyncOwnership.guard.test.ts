@@ -39,13 +39,13 @@ describe("async ownership guard", () => {
   });
 
   it("owns capture delivery, acknowledgement, page targets and media gestures", () => {
-    check("src/App.tsx", "export async function installQuickCaptureReceiver(", "export function App(", [
+    check("src/quickCaptureReceiver.ts", "export async function installQuickCaptureReceiver(", "\n}\n", [
       /bindingGeneration !== backend\(\)\.graphBindingGeneration\(\)/,
       /bindingOwner\(owner\)/, /writeOwned\(saveOwner/,
       /readOwnedResource\(owner, listen/, /if \(!owner\(\) \|\| e\.payload\?\.target/,
     ]);
     check("src/capture.tsx", "  const scratchMarkdown =", "  const captureApi:", [
-      /const bindingGeneration = backend\(\)\.graphBindingGeneration\(\)/,
+      /generation: backend\(\)\.graphBindingGeneration\(\)/,
       /payload: \{ id, target, bindingGeneration/,
       /scratchRevision !== submittedRevision/, /scratchMarkdown\(\) !== submittedScratch/, /title\(\) !== submittedTitle/,
       /if \(pendingCapture === pending\) scheduleTimeout\(\)/,

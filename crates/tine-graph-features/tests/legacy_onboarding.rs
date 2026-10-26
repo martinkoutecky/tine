@@ -195,6 +195,23 @@ fn guide_explains_margin_comments() {
         .find(|page| page.title == "Features/Tips & shortcuts")
         .expect("tips guide is bundled");
     assert!(tips.markdown.contains("## Comment on a passage — Ctrl+R"));
+    for workflow in [
+        "selection toolbar's **Comment** button",
+        "quote context and author metadata stay hidden",
+        "speech bubble at the right edge",
+        "click its **Reply…** box at the bottom",
+        "**Shift+Enter** adds a line",
+        "**Escape** or **Cancel** discards the draft",
+        "empty reply creates no block and does not save the page",
+        "short quote inside that same thread",
+        "deletes that comment and its replies",
+        "**Ctrl/Cmd+Z** restores them together",
+    ] {
+        assert!(
+            tips.markdown.contains(workflow),
+            "missing comment workflow: {workflow}"
+        );
+    }
     assert!(tips
         .markdown
         .contains("select a few words and press **Ctrl/Cmd+R**"));

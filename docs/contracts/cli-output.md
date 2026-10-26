@@ -237,9 +237,29 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
   page's format (Markdown `- ` or Org outline). Every created block gets `author::` (from `--author`, else
   `TINE_AUTHOR`, else `agent`); edits never add one. An anchor without `id::` gets one in the same write. A
   `((uuid))` that names no block is refused `broken-ref`.
-- **`block.edit`**: the text replaces the block's editor text, as typing it would: hidden `id::`, `collapsed::`
-  and `logseq.order-list-type::` lines and the children are kept; a marker change writes the logbook as the app
-  does.
+- **`block.edit`**: the text replaces the block's editor text, as typing it would: OG hidden built-ins
+  (including SRS keys) and graph-configured hidden property lines are kept byte-exact; children are kept too.
+  Raw text returned by reads may be submitted directly: an explicitly supplied primary property replaces
+  the retained row with the same normalized key, so a read-then-edit never adds a second copy. This also
+  permits an explicit new value, except that a supplied primary `id` differing from an existing accepted
+  block `id` is refused (`reason: identity-change`) with both ids in the error. The in-scope threat is
+  malformed agent input, such as submitting another block's raw text or mistyping its UUID.
+  IDs compare after trimming, ignoring ASCII letter case, as block-handle resolution does. Same-id and
+  omitted-id edits keep the identity; a block without an accepted id may receive one, even when its body
+  contains a non-primary lookalike. A property-looking line inside a fence does not replace metadata.
+  On a block whose own primary properties
+  include `quote`, the four comment lines (`quote::`, `quote-prefix::`, `quote-suffix::`, `author::`) are also
+  kept. On an ordinary block, `author::` and quote-context lines belong to the replaced editor text, as on OG.
+  Text-only edits preserve the source position and order of hidden rows and LOGBOOK when that keeps
+  property ownership and creates no more property groups than canonical placement. Otherwise the join
+  restores canonical placement so OG can read the retained properties, including repairing earlier split groups.
+  If the supplied text contains a parsed LOGBOOK drawer, that drawer replaces the retained one; fence lookalikes
+  remain ordinary text. A marker change writes the logbook as the app does.
+  Clients supplying LOGBOOK content must pass `--rev` from the read that supplied it. A clock-only change does
+  not change an editor-text fingerprint: without that revision, an old full buffer can replace newer history.
+  Plain visible-text edits retain the current history, including clock changes since the client's read.
+  The CLI currently permits explicit history replacement without `--rev`; the revision requirement is a client
+  concurrency obligation, not an enforced refusal.
 - **`block.move`**: the block and its children go under (last child), after or before a target on the same page.
   A move to another page is refused `cross-page` in this version.
 - **`--run RUN`** (optional, every write; or `TINE_RUN`): commit the write to the graph's git repository as
@@ -314,6 +334,23 @@ Each `--run` write, after its guarded save succeeds, commits only the file it wr
 ignores is not committed (`refused:git`). The file's index entry then follows the commit, unless the user had other
 content staged for it (`git.index`).
 
+Both raw-content writers (runs and autocommits) check the exact work-tree-relative path, including a nested
+graph prefix, for `filter`, `ident` and `working-tree-encoding` attributes. An attribute set to a value or true
+refuses a run write with `refused:git`, naming the path and attribute, before flushing or saving the page.
+False and unspecified attributes allow exact bytes; Tine never executes external filters. The check repeats
+before creating any snapshot or agent blob, so a conversion introduced after the save leaves the saved page
+uncommitted without storing its raw content in Git.
+
+Both writers revalidate the captured branch identity while holding `index.lock`, before moving a ref or
+changing the index. A concurrent checkout refuses the commit explicitly; a run reply reports
+`git.committed: false` and says the file was saved but its commit is missing. It never retries on the new
+branch. A same-branch concurrent commit still uses compare-and-swap retries.
+
+| Refusal | In-scope threat | Recovery |
+| --- | --- | --- |
+| `refused:git` naming a conversion attribute | repository content conversion, including git-crypt plaintext disclosure | use Git's own conversion workflow; no page, ref, index or raw object is changed by the refused run write |
+| `git.committed: false` naming a changed branch | concurrent honest terminal checkout between repository open and index locking | inspect the saved page and active branch before starting another write; neither branch nor the new branch's index is changed by the refused commit |
+
 - **`run.begin`**: kind `run`; `run` (the id, `r<hex seconds>-<8 hex>`), `branch`. Text: the id.
 - **`run.show RUN`**: kind `run-commits`; `run`, `commits` (newest first: `commit`, `agent` (boolean; `false` =
   the user's snapshot), `author`, `subject`). Text: one line per commit.
@@ -360,8 +397,11 @@ id pages/a.md rev 9e8b1eedbf3d8ef0
 
 - The address of a page read is the block's **handle**, `POS~FP`: its outline position (`1`, `1.2`,
   PROTOCOL §10) and a 6-character fingerprint of its editor text (lowercase base32 of FNV-1a 64 over
-  the text a block editor shows; hidden `id::`, `collapsed::` and `logseq.order-list-type::` lines
-  are left out). A write names a block as `PAGE/POS~FP` or by its `id::` UUID; the fingerprint
+  the shared built-in editor projection; OG hidden built-ins, including SRS keys,
+  are left out, as are `quote::`, `quote-prefix::`, `quote-suffix::` and `author::` only when the block's own
+  primary properties include `quote`). Ordinary author/context properties contribute to the fingerprint.
+  Graph-configured hiding does not alter fingerprints; handles remain independent of that display preference.
+  A write names a block as `PAGE/POS~FP` or by its `id::` UUID; the fingerprint
   resolves only when exactly one block on the page has it, else `stale`. The `--json` page carries the
   same string as each block's `handle`. Continuation lines align under the first line's text.
   A block preview (`block show`) prints the same handles: page-absolute positions (a block at `3.1`
@@ -442,6 +482,13 @@ owner newer than this `tine`) exits `1`, like `internal`.
 | `superseded` | 8 | a write applied, then a later edit replaced it before it was saved |
 | `uncertain` | 8 | admitted, outcome unknown (the connection was lost after the request was sent; `tine serve --stop`) |
 | `internal` | 1 | an owner bug or unnamed failure; the message leads with a diagnostic id |
+
+Windows still has no CLI endpoint, but the app now takes the account-wide graph
+owner lock under Known Folder LocalAppData/tine/owners. Another holder refuses
+the app open through the existing app-owner error; no Windows handover is
+attempted. Lock errors retain the diagnosed fail-open policy. Linux/macOS keep
+their existing lock and endpoint; iOS/Android rely on one process per sandboxed
+app. See `docs/storage-contract.md` (L9-01/L9-02).
 
 **Refusal reasons** (`detail.reason`, and `refused:<reason>` in the text):
 

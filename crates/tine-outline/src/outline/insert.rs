@@ -142,10 +142,11 @@ pub(super) fn insert_outline(
         .flatten();
     let hidden = if let Some(key) = reuse {
         let b = cx.txs[t].block(key).ok_or(Reason::Incomplete)?;
-        let text = editor_text::split(&b.raw, format.is_org(), &HidePolicy::Builtin);
+        let text = editor_text::split(&b.raw, format.is_org(), &HidePolicy::Structural);
         if nodes.is_empty()
             || !b.children.is_empty()
             || !js_blank(&text.visible)
+            || !editor_text::logbook_hidden(&b.raw, format.is_org()).is_empty()
             || list.get(at).map(String::as_str) != Some(key)
         {
             return Err(Reason::Incomplete);

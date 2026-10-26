@@ -85,6 +85,10 @@ pub const GUIDE_TEMPLATES: &[GuideTemplate] = &[
         markdown: include_str!("templates/pdf.md"),
     },
     GuideTemplate {
+        title: "Features/Share pages",
+        markdown: include_str!("templates/share-pages.md"),
+    },
+    GuideTemplate {
         title: "Features/Plugins",
         markdown: include_str!("templates/plugins.md"),
     },
@@ -374,11 +378,17 @@ mod journal_guide_tests {
         }
         let previews = include_str!("templates/pages-links-references-search.md");
         for detail in [
-            "read-only preview",
+            "a preview of its blocks",
+            // D-20261023-VQ: the preview's blocks are live and editable in place.
+            "click a block's text to edit it right there",
+            "the first **Esc** ends the edit and the next one closes the preview",
             // GH #735: Logseq's hover delay and height cap, and page-faithful content.
             "opens after a one-second pause",
             "It stops at 600 pixels or half the window, whichever is taller",
             "shows code blocks, callouts, quotes and folds the way the page does",
+            "Its arrow folds or unfolds the source block",
+            "Undo restores both",
+            "the fold stays local to the preview",
             "**Open source**",
             "source page's title and page properties",
             "These actions switch to the new tab",
@@ -624,6 +634,8 @@ mod pdf_workspace_guide_tests {
             "visible page regions",
             "long-press a highlight",
             "use **Back**",
+            "**Open another view**",
+            "appears in the other at once",
         ] {
             assert!(
                 pdf.contains(detail),
@@ -848,6 +860,9 @@ mod rename_guide_tests {
         assert!(tips.contains("**Alt-click** opens the other pane"));
         assert!(tips.contains("an outline bullet's dot"));
         assert!(tips.contains("a pane's only tab still has a close button"));
+        assert!(tips.contains("opens a graph without a saved session"));
+        assert!(tips.contains("restores every tab's last page, order and pin state"));
+        assert!(tips.contains("the same active tab"));
         let refs = include_str!("templates/pages-links-references-search.md");
         assert!(refs.contains("follows its source's fold state live"));
     }
@@ -916,10 +931,35 @@ mod rename_guide_tests {
             "Tine never pushes or pulls",
             "changes you staged elsewhere stay staged",
             "`index.lock`",
+            "from 1 to 1440 minutes",
+            "run `git init` in the graph folder",
+            "Git is not available on this device yet",
+            "the branch Tine commits to and the last commit",
+            "Last attempt failed",
         ] {
             assert!(
                 files.contains(behavior),
                 "missing git Guide text: {behavior}"
+            );
+        }
+    }
+
+    #[test]
+    fn margin_comments_are_documented() {
+        let tips = include_str!("templates/tips.md");
+        for behavior in [
+            "- ## Comment on a passage — Ctrl+R",
+            "**Comment on selection**",
+            "**Comment on selected text**",
+            "**Settings > Editor > Your name**",
+            "**quoted text changed**",
+            "**Reply…**",
+            "`author:: <your name>`",
+            "**Ctrl/Cmd+Z** restores them together",
+        ] {
+            assert!(
+                tips.contains(behavior),
+                "missing margin-comment Guide text: {behavior}"
             );
         }
     }
@@ -1202,6 +1242,30 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn moved_graph_guide_explains_kept_edits_explicit_recovery_and_old_backups() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for concept in [
+            "never recreates the old graph folder",
+            "Recover into this graph",
+            "Not now",
+            "notice returns on the next open",
+            "moved or unavailable",
+            "disconnected drive",
+            "only backups of a graph",
+            "does not prevent ejecting its drive",
+            "recovery refuses",
+            "then try again",
+            "safety snapshot of the current graph",
+            "archives are kept unchanged",
+        ] {
+            assert!(
+                files.contains(concept),
+                "missing moved-graph onboarding outcome: {concept}"
+            );
+        }
+    }
+
+    #[test]
     fn unlinked_reference_guide_says_the_highlight_is_clickable() {
         // GH #200 (master 552d988c9): nothing in the UI announces that a
         // highlighted mention is a control, so the Guide has to.
@@ -1281,9 +1345,9 @@ mod rename_guide_tests {
     #[test]
     fn share_guide_explains_the_dialog_the_review_and_the_exports_page() {
         // Share step 1 (docs/contracts/export-definitions.md): the Guide moves with the product.
-        let files = include_str!("templates/files-external-edits-backups.md");
+        let share = include_str!("templates/share-pages.md");
         for outcome in [
-            "- ## Share pages",
+            "- # Share pages",
             "the share icon in the top bar",
             "**Share…** in a page's **⋯** menu",
             "**This page**",
@@ -1294,15 +1358,45 @@ mod rename_guide_tests {
             "`export:: <folder>`",
             "marked `tine/exports:: true` and `public:: false`",
             "Exports 2",
+            "Share pages with a link",
+            "The key is in the link, after `#`",
+            "GitHub keeps old revisions",
+            "update the same link",
+            "+N new / −M gone",
+            "**Re-share as a new link**",
+            "**Re-export** on a folder definition",
+            "**Replace** selected",
+            "keeps the previous export in recovery",
+            "**Update all** beside the Exports page title prepares folder exports and quick shares together",
+            "Nothing is written or uploaded until you confirm",
+            "each result is shown even if another export fails",
+            "Folder exports work even when quick share is off or disconnected",
+            "**Delete** removes the hosted gist",
+            "Delete from a share's query on the **Exports page**",
+            "even when its key is on another device",
+            "properties hidden from display",
+            "Images and other files are not included",
+            "it does not delete the gist",
+            "**Share this page** in the **···** menu",
+            "**Find shares on GitHub**",
+            "**Pending in this graph**",
+            "**Remove marker**",
+            "**Report abuse**",
+            "**Forget**",
         ] {
             assert!(
-                files.contains(outcome),
+                share.contains(outcome),
                 "share onboarding must explain {outcome}"
             );
         }
+        let files = include_str!("templates/files-external-edits-backups.md");
+        assert!(files.contains("- ## Share pages"));
+        assert!(files.contains("[[Features/Share pages]]"));
         let queries = include_str!("templates/queries.md");
         assert!(queries.contains("**Share…** in a query's **⋯** menu"));
-        assert!(queries.contains("**Share pages**"));
+        assert!(queries.contains("[[Features/Share pages]]"));
+        let index = include_str!("templates/guide.md");
+        assert!(index.contains("[[Features/Share pages]]"));
     }
 
     #[test]
@@ -1370,6 +1464,19 @@ mod rename_guide_tests {
         // GH #164 (family 4): both doors, the add-row, non-ASCII keys, and the
         // read-only refusal; nothing else tells a reader the form exists.
         let tips = include_str!("templates/tips.md");
+        let properties = include_str!("templates/pages-links-references-search.md");
+        for outcome in [
+            "Click a property key to open its page",
+            "Shift-click opens it in the right sidebar",
+            "before and after editing",
+            ":property-pages/enabled? false",
+            "it does not remove key links",
+        ] {
+            assert!(
+                properties.contains(outcome),
+                "missing property navigation: {outcome}"
+            );
+        }
         for control in [
             "**Page properties…**",
             "right-click a block for **Properties…**",
@@ -2154,10 +2261,23 @@ mod i2_guide_sentence_tests {
     }
 
     #[test]
-    fn embed_root_bullet_drag_versus_click_is_documented() {
+    fn embed_host_and_source_bullet_ownership_is_documented() {
         let page = include_str!("templates/pages-links-references-search.md");
-        assert!(page.contains("drag its visible root bullet to move the embed on the host page"));
-        assert!(page.contains("clicking that bullet still zooms into the source block"));
+        for outcome in [
+            "Block and page embeds have their own host bullet",
+            "dragging that bullet act on the block containing `{{embed ...}}`",
+            "Every bullet inside the embed, including the source root, acts on its source block",
+            "Cutting and pasting inside an embed really moves the source block",
+            "Deleting inside an embed deletes the source",
+            "**Undo** restores these changes",
+            "Clicking a source bullet zooms into the source block",
+            "extending it across the host/source boundary is refused",
+        ] {
+            assert!(
+                page.contains(outcome),
+                "embed onboarding must explain {outcome}"
+            );
+        }
     }
 
     #[test]
@@ -2228,6 +2348,24 @@ mod external_link_guide_tests {
 #[cfg(test)]
 mod asset_manifest_tests {
     use super::*;
+
+    #[test]
+    fn capture_guide_explains_snapshot_remainders_and_unconfirmed_exit() {
+        let guide = GUIDE_TEMPLATES
+            .iter()
+            .find(|page| page.title == "Features/Quick capture")
+            .unwrap()
+            .markdown;
+        assert!(guide.contains("additions stay for your next capture"));
+        assert!(guide.contains("plain retry"));
+        assert!(guide.contains("**Add text** reminder"));
+        assert!(guide.contains("never reached a graph"));
+        assert!(guide.contains("After a refused filing, **Esc** keeps the text too"));
+        assert!(guide.contains("reopen the capture box to file it into the current graph"));
+        assert!(guide.contains("previous graph"));
+        assert!(guide.contains("without clearing its text or retry identity"));
+        assert!(guide.contains("does not survive quitting"));
+    }
 
     fn collect_guide_asset_refs(markdown: &str, into: &mut std::collections::HashSet<String>) {
         let mut rest = markdown;

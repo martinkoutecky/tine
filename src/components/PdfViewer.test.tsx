@@ -24,6 +24,8 @@ import {
   retirePdfOwnership,
   type PdfOwnership,
 } from "../pdfOwnership";
+import { pdfHighlightSessionCount } from "./pdfHighlightState";
+import { sharedPdfDocumentCount } from "./pdfDocumentShare";
 import {
   clearTransientLayersForTest,
   dismissTopTransient,
@@ -162,13 +164,14 @@ describe("PdfViewer resource safety", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     document.body.replaceChildren();
+    resetPdfOwnershipForTest(); // a viewless session with unsaved work outlives its view
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     Reflect.deleteProperty(document, "elementFromPoint");
   });
 
   it("shows an error and creates no page wrappers when pdf.js rejects the document", async () => {
     vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1, 2, 3]));
-    getDocumentMock.mockReturnValue({ promise: Promise.reject(new Error("invalid pdf")) });
+    getDocumentMock.mockReturnValue({ promise: Promise.reject(new Error("invalid pdf")), destroy: vi.fn().mockResolvedValue(undefined) });
 
     const host = document.createElement("div");
     document.body.appendChild(host);
@@ -703,6 +706,7 @@ describe("PdfViewer OG area-highlight selection", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     document.body.replaceChildren();
+    resetPdfOwnershipForTest(); // a viewless session with unsaved work outlives its view
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     Reflect.deleteProperty(document, "elementFromPoint");
   });
@@ -1064,6 +1068,7 @@ describe("PdfViewer OG state and reference behavior", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     document.body.replaceChildren();
+    resetPdfOwnershipForTest(); // a viewless session with unsaved work outlives its view
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     Reflect.deleteProperty(document, "elementFromPoint");
   });
@@ -1109,6 +1114,152 @@ describe("PdfViewer OG state and reference behavior", () => {
       expect(write.mock.calls[2][3][0].color).toBe("blue");
     } finally {
       dispose();
+    }
+  });
+
+  it("shares one highlight state between two views of the same PDF", async () => {
+    const id = "22222222-2222-4222-8222-222222222222";
+    const rect = { top: 40, left: 20, width: 80, height: 12 };
+    const loaded = { id, page: 1, position: { page: 1, bounding: rect, rects: [rect] }, color: "yellow", text: "text", image: null };
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [loaded], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const write = vi.spyOn(backend(), "writeHighlights").mockImplementation(async (_pdf, _label, items) => items);
+    getDocumentMock.mockImplementation(() => ({ promise: Promise.resolve(documentWithPages([page(612, 792)])) }));
+    const hostA = document.createElement("div"), hostB = document.createElement("div");
+    document.body.append(hostA, hostB);
+    const [showB, setShowB] = createSignal(true);
+    const disposeA = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, hostA);
+    const disposeB = render(() => <Show when={showB()}><PdfViewer filename="paper.pdf" label="Paper" /></Show>, hostB);
+    const overlay = (host: HTMLElement) => host.querySelector<HTMLElement>(`[data-highlight-id="${id}"]`);
+    const recolor = async (host: HTMLElement, swatch: number) => {
+      overlay(host)!.click();
+      await flush();
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[swatch].dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, cancelable: true })
+      );
+      await flush();
+    };
+    try {
+      await flush();
+      for (const observer of TestIntersectionObserver.instances) {
+        for (const element of observer.elements) if (element.classList.contains("pdf-page")) observer.show(element);
+      }
+      await flush();
+      const yellow = overlay(hostB)!.style.background;
+      await recolor(hostA, 1); // green, made in view A
+      await flush();
+      expect(overlay(hostA)!.style.background).not.toBe(yellow);
+      expect(overlay(hostB)!.style.background).toBe(overlay(hostA)!.style.background);
+      await recolor(hostB, 2); // blue, made in view B on top of A's committed green
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(write.mock.calls[1][3][0].color).toBe("green");
+      expect(write.mock.calls[1][2][0].color).toBe("blue");
+      expect(overlay(hostA)!.style.background).toBe(overlay(hostB)!.style.background);
+      expect(pdfHighlightSessionCount()).toBe(1);
+      // Closing one view keeps the other's state; draining writes nothing more.
+      setShowB(false);
+      await flush();
+      expect(pdfHighlightSessionCount()).toBe(1);
+      expect(await drainPdfWork()).toBe(true);
+      expect(write).toHaveBeenCalledTimes(2);
+    } finally {
+      disposeA();
+      disposeB();
+    }
+    expect(pdfHighlightSessionCount()).toBe(0);
+  });
+
+  it("reads and parses a PDF once for two views and frees it with the last", async () => {
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
+    const read = vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const doc = documentWithPages([page(612, 792)]);
+    getDocumentMock.mockImplementation(() => ({ promise: Promise.resolve(doc) }));
+    const hostA = document.createElement("div"), hostB = document.createElement("div");
+    document.body.append(hostA, hostB);
+    const [showB, setShowB] = createSignal(true);
+    const disposeA = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, hostA);
+    const disposeB = render(() => <Show when={showB()}><PdfViewer filename="paper.pdf" label="Paper" /></Show>, hostB);
+    try {
+      await flush();
+      expect(hostA.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready")).toBe("true");
+      expect(hostB.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready")).toBe("true");
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(getDocumentMock).toHaveBeenCalledTimes(1);
+      setShowB(false);
+      await flush();
+      expect(doc.destroy).not.toHaveBeenCalled(); // view A still reads it
+      expect(sharedPdfDocumentCount()).toBe(1);
+    } finally {
+      disposeA();
+      disposeB();
+    }
+    expect(doc.destroy).toHaveBeenCalledTimes(1);
+    expect(sharedPdfDocumentCount()).toBe(0);
+  });
+
+  it("saves a view's edit while a sibling view of the same PDF is still loading", async () => {
+    const id = "33333333-3333-4333-8333-333333333333";
+    const rect = { top: 40, left: 20, width: 80, height: 12 };
+    const loaded = { id, page: 1, position: { page: 1, bounding: rect, rects: [rect] }, color: "yellow", text: "text", image: null };
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [loaded], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const write = vi.spyOn(backend(), "writeHighlights").mockImplementation(async (_pdf, _label, items) => items);
+    getDocumentMock
+      .mockImplementationOnce(() => ({ promise: Promise.resolve(documentWithPages([page(612, 792)])) }))
+      .mockImplementationOnce(() => ({ promise: new Promise(() => {}), destroy: async () => {} })); // view B never finishes parsing
+    const hostA = document.createElement("div"), hostB = document.createElement("div");
+    document.body.append(hostA, hostB);
+    const disposeA = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, hostA);
+    const disposeB = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, hostB);
+    try {
+      await flush();
+      for (const observer of TestIntersectionObserver.instances) {
+        for (const element of observer.elements) if (element.classList.contains("pdf-page")) observer.show(element);
+      }
+      await flush();
+      hostA.querySelector<HTMLElement>(`[data-highlight-id="${id}"]`)!.click();
+      await flush();
+      hostA.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[1].dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, cancelable: true })
+      );
+      await flush();
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(write.mock.calls[0][2][0].color).toBe("green");
+      expect(write.mock.calls[0][2][0].position.bounding.source_width).toBe(612); // A's page geometry
+    } finally {
+      disposeA();
+      disposeB();
+    }
+  });
+
+  it("shows the disk highlights when one view's annotation read failed and a sibling's succeeded", async () => {
+    const id = "44444444-4444-4444-8444-444444444444";
+    const rect = { top: 40, left: 20, width: 80, height: 12 };
+    const loaded = { id, page: 1, position: { page: 1, bounding: rect, rects: [rect] }, color: "yellow", text: "text", image: null };
+    vi.spyOn(backend(), "openPdf")
+      .mockRejectedValueOnce(new Error("annotations busy"))
+      .mockResolvedValue({ highlights: [loaded], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    getDocumentMock.mockImplementation(() => ({ promise: Promise.resolve(documentWithPages([page(612, 792)])) }));
+    const hostA = document.createElement("div"), hostB = document.createElement("div");
+    document.body.append(hostA, hostB);
+    const disposeA = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, hostA);
+    const disposeB = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, hostB);
+    try {
+      await flush();
+      for (const observer of TestIntersectionObserver.instances) {
+        for (const element of observer.elements) if (element.classList.contains("pdf-page")) observer.show(element);
+      }
+      await flush();
+      expect(hostA.querySelector(`[data-highlight-id="${id}"]`)).not.toBeNull();
+      expect(hostB.querySelector(`[data-highlight-id="${id}"]`)).not.toBeNull();
+    } finally {
+      disposeA();
+      disposeB();
     }
   });
 
@@ -1635,8 +1786,9 @@ describe("PdfViewer OG state and reference behavior", () => {
     const current = documentWithPages([page(612, 792)]);
     let resolveStale!: (document: typeof stale) => void;
     const staleLoad = new Promise<typeof stale>((resolve) => { resolveStale = resolve; });
+    const destroyLoadingTask = vi.fn(async () => { await staleLoad; await stale.destroy(); });
     getDocumentMock
-      .mockReturnValueOnce({ promise: staleLoad })
+      .mockReturnValueOnce({ promise: staleLoad, destroy: destroyLoadingTask })
       .mockReturnValueOnce({ promise: Promise.resolve(current) });
     const [target, setTarget] = createSignal({ filename: "a.pdf", label: "A" });
 
@@ -1647,6 +1799,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       await flush();
       setTarget({ filename: "b.pdf", label: "B" });
       await flush();
+      expect(destroyLoadingTask).toHaveBeenCalledOnce();
       resolveStale(stale);
       await flush();
 
@@ -1938,6 +2091,7 @@ describe("PdfViewer local transient ownership", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     document.body.replaceChildren();
+    resetPdfOwnershipForTest(); // a viewless session with unsaved work outlives its view
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     Reflect.deleteProperty(document, "elementFromPoint");
   });
@@ -2183,6 +2337,7 @@ describe("PdfViewer released-OG themes and outline", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     document.body.replaceChildren();
+    resetPdfOwnershipForTest(); // a viewless session with unsaved work outlives its view
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     Reflect.deleteProperty(document, "elementFromPoint");
   });

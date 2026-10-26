@@ -23,7 +23,8 @@ import { STALE_VERSION } from "./document/host/protocol";
 import { bindTestHost, submittedPages } from "./document/host/wiring.test.support";
 import { installDiskHost } from "./diskHost.test.support";
 import { favorites, recentPages, setFavorites, setRecentPages, rightSidebar, setRightSidebar, seedFavorites, renamePageInNavigation, setWorkflow } from "./ui";
-import { dataRev, pageInventoryRev, setGraphMeta } from "./graphSession";
+import { pageInventoryRev, setGraphMeta } from "./graphSession";
+import { dataRev } from "./dataRevision";
 import { toasts, setToasts } from "./toasts";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto, PageRead } from "./types";
@@ -633,22 +634,18 @@ describe("cycle tasks across a block selection (GH #136)", () => {
     cycleSelectionTasks();
     expect(shape()).toEqual([
       ["TODO write docs"],
-      ["DOING test it"],
+      [expect.stringContaining("DOING test it\n:LOGBOOK:\nCLOCK: [")],
       ["DONE ship it"],
       ["   "],
     ]);
     expect(selectedIds()).toEqual(dto.blocks.map((block) => block.id));
+    const cycled = shape();
 
     undo();
     expect(shape()).toEqual([["write docs"], ["TODO test it"], ["DOING ship it"], ["   "]]);
     expect(selectedIds()).toEqual(dto.blocks.map((block) => block.id));
     redo();
-    expect(shape()).toEqual([
-      ["TODO write docs"],
-      ["DOING test it"],
-      ["DONE ship it"],
-      ["   "],
-    ]);
+    expect(shape()).toEqual(cycled);
   });
 
   it("is atomic when any selected non-empty block is read-only", () => {
@@ -881,6 +878,12 @@ describe("property splitting is fence-aware", () => {
 });
 
 describe("trailing space: kept in the editor buffer, trimmed only on save", () => {
+  it("editing a comment body leaves the final hidden metadata line byte-exact on save", () => {
+    const hidden = "quote:: selected words\nauthor:: Ada Test  \t";
+    const dto = load([blk(`My view\n${hidden}`)]);
+    setRaw(dto.blocks[0].id, `My revised view\n${hidden}`);
+    expect(pageToDto("Test")!.blocks[0].raw).toBe(`My revised view\n${hidden}`);
+  });
   // Regression for the "backspace eats the preceding space" bug: the live buffer
   // (doc.byId[].raw — what the reactive textarea mirrors) must KEEP a trailing
   // space the user left, so deleting a word back to "this is a " doesn't pull the

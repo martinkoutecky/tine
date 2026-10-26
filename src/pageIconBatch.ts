@@ -2,7 +2,9 @@ import { msg } from "./i18n";
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
 import { graphOwner, readOwned } from "./owned";
-import { dataRev, graphEpoch } from "./graphSession";
+import { graphEpoch } from "./graphSession";
+import { changed, iconChangeKey } from "./changeKeys";
+import { clearOnBindingInvalidated } from "./binding";
 import { pageByName, readPageProperty } from "./document";
 import { pushToast } from "./toasts";
 import { PAGE_ICON_PROPERTIES } from "./pageIconImage";
@@ -10,7 +12,7 @@ import { pageNameForPath, resolvedTarget } from "./pageIndex";
 
 // Inline page-icon lookups, made cheap for icon-heavy pages. Every icon property
 // requested in the same microtask tick is coalesced into ONE page_icons IPC, each
-// name is fetched at most ONCE per publication, and — crucially — a batch whose
+// name is fetched at most ONCE per icon-key revision, and a batch whose
 // answers match what is shown does NOT touch the signal, so the common case (few/no
 // icon pages, e.g. a 2000-block page of plain refs) costs one IPC and zero
 // re-renders. A publication keeps the shown icons until their fresh answer lands
@@ -18,32 +20,32 @@ import { pageNameForPath, resolvedTarget } from "./pageIndex";
 // A plain reactive read (not createResource-per-ref) keeps the per-reference cost
 // to a signal read + object lookup for unloaded pages. Loaded pages use the
 // reactive parser-owned header (O(header bytes), no IPC), including unsaved
-// edits. Unloaded names refresh on publication, in one batch per microtask.
+// edits. Unloaded names refresh on matching property publications or full
+// invalidations, in one batch per microtask.
 let cacheRev = -1;
-let cacheDataRev = -1;
 const [iconMap, setIconMap] = createSignal<Record<string, string>>({});
-const requested = new Set<string>();
-let pending: string[] = [];
+const requested = new Map<string, string>();
+let pending = new Map<string, string>();
 let scheduled = false;
+clearOnBindingInvalidated(() => { requested.clear(); pending.clear(); cacheRev = -1; setIconMap({}); });
 
 function ensureRev() {
   const epoch = graphEpoch();
-  const revision = dataRev();
-  if (epoch !== cacheRev || revision !== cacheDataRev) {
-    if (epoch !== cacheRev) setIconMap({}); // new graph: drop the previous graph's icons
+  if (epoch !== cacheRev) {
+    setIconMap({}); // new graph: drop the previous graph's icons
     cacheRev = epoch;
-    cacheDataRev = revision;
-    requested.clear(); // re-ask on publication; the answer replaces (or removes) each icon
-    pending = [];
+    requested.clear();
+    pending.clear();
   }
   return epoch;
 }
 
 function flush() {
   scheduled = false;
-  if (!pending.length) return;
-  const batch = pending;
-  pending = [];
+  if (!pending.size) return;
+  const revisions = pending;
+  const batch = [...revisions.keys()];
+  pending = new Map();
   // Before the window's graph is bound (a sidebar ref restored at launch)
   // page_icons refuses with no-graph/missing-graph-binding: a transient state,
   // not a failure. The binding bumps graphEpoch, which re-requests them.
@@ -52,18 +54,18 @@ function flush() {
     return;
   }
   const batchRev = cacheRev;
-  const batchDataRev = cacheDataRev;
-  const owner = graphOwner(() => graphEpoch() === batchRev && dataRev() === batchDataRev);
+  const owner = graphOwner(() => graphEpoch() === batchRev);
   void readOwned(owner, backend().pageIcons(batch))
     .then((result) => {
       if (result.kind === "stale") return;
       const map = result.value;
+      const current = batch.filter(name => changed(iconChangeKey(name)) === revisions.get(name));
       // Only re-render if an answer differs from what is shown — otherwise the
       // signal (and every reference subscribed to it) stays untouched.
       const prev = iconMap();
-      if (!batch.some((n) => (map[n] ?? "") !== (prev[n] ?? ""))) return;
+      if (!current.some((n) => (map[n] ?? "") !== (prev[n] ?? ""))) return;
       const next = { ...prev };
-      for (const n of batch) {
+      for (const n of current) {
         if (map[n]) next[n] = map[n];
         else delete next[n];
       }
@@ -71,7 +73,7 @@ function flush() {
     })
     .catch(() => {
       if (!owner()) return;
-      batch.forEach((name) => requested.delete(name));
+      batch.forEach((name) => { if (requested.get(name) === revisions.get(name)) requested.delete(name); });
       pushToast(msg("page-icon-ui-could-not-load-page-icons-they-will-retry-when"), "error");
     });
 }
@@ -81,9 +83,10 @@ function flush() {
 export function pageIcon(name: string): string {
   if (pageByName(name)) return readPageIconProperty(name);
   ensureRev();
-  if (!requested.has(name)) {
-    requested.add(name);
-    pending.push(name);
+  const revision = changed(iconChangeKey(name));
+  if (requested.get(name) !== revision) {
+    requested.set(name, revision);
+    pending.set(name, revision);
     if (!scheduled) {
       scheduled = true;
       queueMicrotask(flush);

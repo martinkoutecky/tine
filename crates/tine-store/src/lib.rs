@@ -99,6 +99,7 @@ mod no_replace;
 mod no_replace_tests;
 mod page_backlinks;
 mod page_host;
+mod root_binding;
 /// Fault and abort plants in the page host's I/O (tests only, Q-P2b-2).
 #[cfg(feature = "test-faults")]
 pub use page_host::faults as host_faults;
@@ -131,6 +132,7 @@ mod transliteration;
 mod watch;
 pub use publish::{PublishDest, PublishFailed, PublishReceipt, SiteWriter};
 pub use restore::{RestoreFailed, RestoreFile, RestoreReport};
+pub use store::change_summary::{QueryRegistration, QuerySubscription};
 #[cfg(any(test, feature = "test-faults"))]
 pub use store::checkpoint::CheckpointWrite;
 pub use store::{
@@ -148,3 +150,5 @@ pub use transaction::{
     Content, IoError, Refusal, RenameMap, RewriteEffect, Rollback, StepResult, TitleRebind,
     Transaction, TrashIf, TxOutcome, Why,
 };
+#[cfg(test)]
+mod resolve_blocks_work_tests;

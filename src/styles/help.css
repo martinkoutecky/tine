@@ -12,6 +12,19 @@
   z-index: 118;
 }
 
+/* A docked mobile selection toolbar (editor or rendered selection) sits on the
+   same bottom edge, full width, so the FAB would cover its last buttons. Lift
+   the FAB above it: the toolbar's own bottom (touchGestures.css, same
+   expressions) + its height (.sel-toolbar: 24px buttons + 2×3px padding +
+   2×1px border = 32px) + an 8px gap. */
+:root:has(.sel-toolbar-mobile:not(.rendered-selection-toolbar)) .help-corner {
+  bottom: calc(var(--mobile-kb-toolbar-lift, calc(64px + var(--system-inset-bottom))) + 32px + 8px);
+}
+
+:root:has(.sel-toolbar-mobile.rendered-selection-toolbar) .help-corner {
+  bottom: calc(max(calc(var(--overlay-inset-bottom, 0px) + var(--mobile-navigation-height, 0px) + 8px), var(--mobile-kb-toolbar-lift, 0px)) + 32px + 8px);
+}
+
 .help-corner-btn {
   width: 34px;
   height: 34px;

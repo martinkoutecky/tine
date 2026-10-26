@@ -124,7 +124,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "mergePages", "renameFileToPage", "resolveSyncConflict", "resolveVcsMarkerConflict", "resolveDuplicateJournalDay", "trashSyncConflict", "saveAsset",
   "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard", "copyAssetFileToClipboard",
   "writeHighlights", "savePdfAreaImage", "rollbackPdfAreaImage",
-  "setBackupKeep", "setGitAutocommit", "setCaptureEnterFiles", "setWatchMode", "restoreBackup",
+  "setBackupKeep", "setGitAutocommit", "setCaptureEnterFiles", "setWatchMode", "restoreBackup", "recoverOrphanDrafts", "deleteOldBackups",
   "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck", "setUiLocale",
   "debugLog", "diagnosticFrontendEvent", "diagnosticTimingEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
   "saveGraphVerificationReport", "addDefenderExclusion", "dismissDefenderHint",
@@ -140,7 +140,7 @@ const DURABLE_BACKEND_METHODS = new Set([
 const NON_DURABLE_BACKEND_METHODS = new Set([
   "createGraphVerification", "cancelGraphVerification", "onGraphVerificationProgress",
   "graphBindingGeneration", "inspectGraphAccess", "loadGraph", "openGraphWindow", "startupGraphPath",
-  "captureTarget", "bindCaptureGraph", "listKnownGraphs", "revealKnownGraph", "appPlatform", "listInstalledPlugins",
+  "captureTarget", "bindCaptureGraph", "captureReceipt", "listKnownGraphs", "revealKnownGraph", "appPlatform", "listInstalledPlugins",
   "readPluginEntry", "verifyPluginRegistry", "loadPluginRegistryCache", "defaultGraphParent", "suggestGraphName",
   "closeGraphWindow", "trayApply", "openDevtools", "pageInventory", "pageModified", "pageBacklinkCounts", "journalFeedPage", "journalContentDays",
   "getPage", "resolvePage", "pageAliasGroup",
@@ -149,7 +149,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   // queries, the draft I/O re-probe, the v1 drafts path, the read-only merge.
   "pageWindowReloaded", "pageOpen", "pageWait", "pageOwed", "onPageMail", "onGraphOpenWaiting", "onGraphOpenOwnerWaiting", "pageDraftsRetry",
   "legacyDraftsFile", "mergeLiveConflict", "guidePages", "getBacklinks",
-  "getBacklinkFilterContext", "getUnlinkedRefs", "warmDone", "getBlockRefCounts", "getBlockReferrers",
+  "getBacklinkFilterContext", "getUnlinkedRefs", "registerUnlinkedReference", "registerQuerySubscription", "warmDone", "getBlockRefCounts", "getBlockReferrers",
   "pagePrintHtml", "sheetExportInputs", "exportQuerySubtrees", "parseQuery", "printQuery", "queryOgExpressible", "queryRegistry",
   "queryRun", "taggedPages", "queryExplainEmpty", "queryFacets", "publishQueryPlan", "pageIcons",
   "readCustomCss", "openExternal", "openAsset", "openGraphFile", "openPageFile", "detectMediaEditor", "listOrphanAssets",
@@ -161,13 +161,13 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   // bind; it writes no graph data (master 027b5ae15).
   "pickGraphFolder", "prepareGraphFolder", "pickFile", "capturePhoto", "startRecording", "stopRecording", "cancelRecording",
   "openPdf", "readHighlights", "onGraphChanged", "onGraphChangedBulk", "onGraphWatchStatus", "onGraphRescanComplete", "rescanGraphNow", "onGraphConfigChanged", "onCustomCssChanged", "onAssetChanged", "onOwnerFlushRequest", "ownerFlushAnswer", "getBackupKeep", "gitAutocommitStatus", "getCaptureEnterFiles", "getLinkFirstMatch",
-  "getWatchMode", "listBackups", "loadSession", "loadWorkspaces", "localClock", "gpuEnv", "getSmoothScroll",
+  "getWatchMode", "listBackups", "orphanDrafts", "loadSession", "loadWorkspaces", "localClock", "gpuEnv", "getSmoothScroll",
   "getAppBool", "getAppString", "listSpellcheckDictionaries", "debugInfo",
   "diagnosticReport", "defenderHint", "appArchitecture", "watcherLatencyRecent", "takeDataHomeFallbackNotice",
   // Quick share reads and in-memory controls: prepare keeps a payload in memory,
   // discard and cancel drop one.
   "quickShareList", "quickSharePrepare", "quickShareDiscard", "quickShareFind", "quickShareConnectStatus",
-  "quickShareConnectCancel",
+  "quickShareConnectCancel", "quickShareTestConnection",
 ]);
 // These helpers receive Owner from audited constructor call sites. Arbitrary
 // Owner parameters do not prove provenance to this syntax scan.

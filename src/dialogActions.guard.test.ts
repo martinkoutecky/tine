@@ -131,6 +131,8 @@ const CANCEL_OUTSIDE_PRIMITIVE: Array<[string, RegExp]> = [
 ];
 
 const NOT_A_CONFIRM_ROW: Record<string, string> = {
+  "settings-backup-actions": "Independent per-snapshot Restore/Delete operations; each opens its own native confirmation, with no Cancel choice in this row",
+  "comment-actions": "inline Reply/Delete controls on a comment, not a confirm/cancel row",
   // Extra classes handed to <DialogActions class=...>: sizing only, never order.
   "share-foot": "DialogActions extra class (ShareDialog)",
   "dp-foot": "DialogActions extra class (DatePicker); CalendarJump reuses the class for its single jump button",

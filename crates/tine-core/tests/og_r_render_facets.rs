@@ -1,7 +1,8 @@
 //! Checkpoint-5 packet R (I-12): the render facts shared with the app.
 use tine_core::doc;
 use tine_core::render_facets::{
-    is_render_hidden_prop, normalize, task_checkbox_state, RENDER_HIDDEN,
+    is_render_hidden_page_prop, is_render_hidden_prop, normalize, task_checkbox_state,
+    RENDER_HIDDEN,
 };
 
 #[test]
@@ -13,13 +14,43 @@ fn built_in_keys_tine_and_table_settings_are_hidden() {
         "hl color",
         "tine.view",
         "logseq.table.version",
-        "Title",
+        "logseq.color",
     ] {
         assert!(is_render_hidden_prop(key, &[]), "{key}");
     }
-    for key in ["logseq.custom", "status", "tags", "alias", "public"] {
+    for key in [
+        "logseq.custom",
+        "status",
+        "tags",
+        "alias",
+        "public",
+        "title",
+        "filters",
+        "icon",
+    ] {
         assert!(!is_render_hidden_prop(key, &[]), "{key}");
     }
+}
+
+#[test]
+fn og_page_and_block_surfaces_filter_even_without_a_property_order() {
+    for key in RENDER_HIDDEN {
+        assert!(is_render_hidden_prop(key, &[]));
+        assert!(is_render_hidden_page_prop(key, &[]));
+    }
+    for key in ["title", "icon", "filters"] {
+        assert!(!is_render_hidden_prop(key, &[]));
+        assert!(is_render_hidden_page_prop(key, &[]));
+    }
+    for key in [
+        "logseq.color",
+        "logseq.query/nlp-date",
+        "logseq.table.compact",
+    ] {
+        assert!(is_render_hidden_prop(key, &[]));
+        assert!(!is_render_hidden_page_prop(key, &[]));
+    }
+    assert!(is_render_hidden_page_prop("secret", &["secret".into()]));
 }
 
 #[test]

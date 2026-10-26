@@ -7,7 +7,7 @@
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tine_core::editor_text::{set_text, split, HidePolicy};
+use tine_core::editor_text::{set_text_with_policy, split, HidePolicy};
 use tine_core::model::{BlockDto, Format, PageDto};
 use tine_store::{
     ApplyRefusal, EditKind, HostExpected, HostReadError, Input, PageId, SaveBase, StoreError, Why,
@@ -484,6 +484,10 @@ pub(super) fn write_page_from_bytes(
     create: bool,
     mut compute: impl FnMut(&PageDto, &PageId, &[u8]) -> Result<Planned, ErrorBody>,
 ) -> Result<Value, ErrorBody> {
+    #[cfg(desktop)]
+    if RUN.with(|r| r.borrow().is_some()) {
+        super::git_run::check_page(slot, page)?;
+    }
     let flush = || {
         crate::page_commands::with_host(slot, |host| host.flush_input(std::slice::from_ref(page)))
             .map_err(host_failed)?
@@ -761,17 +765,41 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
             let mut next = doc.clone();
             let block = block_at_mut(&mut next.blocks, &path).expect("resolved path");
             let old = block.raw.clone();
-            let joined = set_text(&old, org, &new_text).map_err(|e| kernel_refused(page, e))?;
-            let marker = |raw: &str| tine_core::block_regions::header_tokens(raw, org).marker;
-            block.raw = tine_core::logbook::apply_marker_transition_at(
+            // Raw CLI reads may be sent back verbatim. A copied buffer from
+            // another block must not silently replace this block's identity.
+            // Use accepted properties so fenced examples remain plain text.
+            let current = tine_core::block_regions::parse(&old, org);
+            if let Some(id) = current.id {
+                let submitted = tine_core::block_regions::parse(&new_text, org);
+                if let Some(other) = submitted.properties.iter().find(|p| {
+                    p.primary
+                        && p.key.eq_ignore_ascii_case("id")
+                        && !p.value.trim().eq_ignore_ascii_case(id.value.trim())
+                }) {
+                    return Err(refused(
+                        "identity-change",
+                        Some(page),
+                        format!(
+                            "block.edit refuses to replace existing id {} with supplied id {}",
+                            id.value, other.value
+                        ),
+                    ));
+                }
+            }
+            let hide = HidePolicy::Configured {
+                keys: config.block_hidden_properties.clone(),
+                sheet_cell: false,
+            };
+            let joined = set_text_with_policy(&old, org, &new_text, &hide)
+                .map_err(|e| kernel_refused(page, e))?;
+            block.raw = tine_core::logbook::apply_edit_transition_at(
+                &old,
                 &joined,
                 if org {
                     tine_core::logbook::LogbookFormat::Org
                 } else {
                     tine_core::logbook::LogbookFormat::Markdown
                 },
-                marker(&old).as_deref(),
-                marker(&joined).as_deref(),
                 config.enable_timetracking,
                 config.logbook.with_second_support,
                 now_parts(),
@@ -991,5 +1019,14 @@ mod tests {
             plain
         );
         assert_ne!(fingerprint("TODO writes", false), plain);
+        for org in [false, true] {
+            assert_eq!(
+                fingerprint(
+                    "TODO write\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:00]\n:END:",
+                    org
+                ),
+                plain
+            );
+        }
     }
 }

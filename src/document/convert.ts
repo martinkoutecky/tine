@@ -1,8 +1,11 @@
 import { type BlockDto, type Format, type PageDto, type RefGroup } from "../types";
 import { Node, FeedPage, DocState, doc, freshId } from "./model";
-import { seedFacets, facetsFromDto } from "../render/facets";
+import { facetsFromDto } from "../render/facets";
+import { acquireSeededFacets } from "../render/seededFacets";
 import { trimBlockTrailingSpace } from "../editor/format";
-import { BLOCK_SCOPED_PROPERTY_KEYS, canonicalPageHeaderDraft, isPropertiesOnly } from "../editor/properties";
+import { BLOCK_SCOPED_PROPERTY_KEYS, BUILTIN_HIDE, canonicalPageHeaderDraft, hides, isPropertiesOnly } from "../editor/properties";
+import { blockRegions } from "../render/parse";
+import { utf8ByteLength } from "../render/spans";
 import { journalTitle, appNow } from "../journal";
 import { pageHeaderDraftProblem, rawWithCollapsed } from "./edits/properties";
 import { existingBlockId, orgRawWithProperty } from "./edits/identity";
@@ -145,7 +148,6 @@ function flatten(
   return dtos.map((d) => {
     // Seed the header-facet cache from the backend (one Rust lsdoc parse, shipped) so
     // the rendered chip reads off the DTO — zero frontend parse on load (M1 / P1).
-    seedFacets(d.raw, format, facetsFromDto(d));
     // Cross-page id:: collision guard: if another LOADED page already owns this
     // id (two files share a persisted `id::` — copy-pasted raw, or a sync hiccup),
     // give this block a fresh store key instead of overwriting the other page's
@@ -158,6 +160,7 @@ function flatten(
     // they would all collapse into one node.
     const existing = d.id ? byId[d.id] : undefined;
     const key = !d.id ? freshId() : existing && existing.page !== pageName ? `dup~${crypto.randomUUID()}` : d.id;
+    acquireSeededFacets(d.raw, format, facetsFromDto(d), () => doc.byId[key]);
     const childIds = flatten(d.children, key, pageName, byId, format);
     byId[key] = {
       id: key,
@@ -210,7 +213,17 @@ function toDto(id: string): BlockDto {
   const n = doc.byId[id];
   // Only an edited block gets OG's trailing-space trim. Loaded siblings must
   // retain their exact raw bytes when another block on the page is saved.
-  const raw = n.loadedRaw === n.raw ? n.raw : trimBlockTrailingSpace(n.raw);
+  let raw = n.loadedRaw === n.raw ? n.raw : trimBlockTrailingSpace(n.raw);
+  if (raw !== n.raw) {
+    // Convenience spaces belong to editor text. A final hidden property line
+    // is preserved user data, including its trailing bytes. Ask the same
+    // parser and hide policy as the editor, only when trimming changed bytes.
+    const end = utf8ByteLength(n.raw);
+    const format = doc.pages.find((page) => page.name === n.page)?.format ?? "md";
+    const own = blockRegions(n.raw, format).properties.filter((p) => p.primary);
+    const properties = own.map((p): [string, string] => [p.key, p.value]);
+    if (own.some((p) => p.line[1] === end && hides(BUILTIN_HIDE, p.key, properties))) raw = n.raw;
+  }
   return { id: n.id, raw, collapsed: n.collapsed, children: n.children.map(toDto) };
 }
 

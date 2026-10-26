@@ -9,6 +9,15 @@ import {
   releaseSection,
   validateDisposition,
 } from "./release-readiness-lib.mjs";
+import { checkQuickShareReadiness } from "./check-quick-share-readiness.mjs";
+
+// A first viewer deployment does not require a new app version or release
+// metadata. The manager runs this mode before the trial app is built.
+if (process.argv.includes("--quick-share-only")) {
+  await checkQuickShareReadiness();
+  console.log("Quick share viewer-first gate passed");
+  process.exit(0);
+}
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const version = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8")).version;
@@ -22,6 +31,9 @@ for (const inventory of regressionIndex.inventories ?? []) {
   for (const entry of catalog.entries ?? []) catalogIds.add(entry.id);
 }
 const problems = [];
+// Not a release blocker: without a deployed viewer the build keeps the writer disabled.
+try { await checkQuickShareReadiness(); }
+catch { console.warn("note: generation 1 quick share viewer is unavailable or incompatible at https://tine.page/s/1/; this build will not offer quick share"); }
 
 if (!section) problems.push(`CHANGELOG.md has no released section for ${version}`);
 if (!fs.existsSync(impactPath)) problems.push(`missing docs/releases/v${version}-impact.json`);

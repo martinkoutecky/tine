@@ -136,6 +136,16 @@ pub fn seal(payload: &[u8], key: &[u8; 32], share_id: &[u8; 16], nonce: &[u8; 12
     b64u(&file)
 }
 
+/// Re-share preserves the link key and authenticated share id, with a fresh
+/// OS-random nonce for every complete snapshot.
+pub fn seal_update(payload: &[u8], key: &[u8; 32], share_id: &[u8; 16]) -> io::Result<String> {
+    let mut nonce = [0; NONCE_LEN];
+    SystemRandom::new()
+        .fill(&mut nonce)
+        .map_err(|_| io::Error::other("the system random source failed"))?;
+    Ok(seal(payload, key, share_id, &nonce))
+}
+
 /// A fresh share id from the OS CSPRNG whose base64url spelling is never a
 /// gist id (`[0-9a-f]{20,32}`): a pending marker `tine.share:: pending/<id>`
 /// (D-20261018-QS3) then never reads as `<login>/<gist_id>`, even for a GitHub
@@ -241,7 +251,7 @@ fn store_error(error: StoreError) -> io::Error {
 
 /// The viewer's admission checks (`quick-share-limits.json` `viewer`), run on
 /// the writer side so a share the viewer would refuse is refused at prepare.
-fn validate_document(document: &[u8]) -> io::Result<()> {
+pub fn validate_document(document: &[u8]) -> io::Result<()> {
     if document.len() > MAX_DOCUMENT_BYTES {
         return Err(refusal("the shared pages exceed the 32 MiB share limit"));
     }
@@ -387,7 +397,13 @@ pub fn prepare(
         let private_graph = private
             .whole_graph()
             .map_err(|error| io::Error::other(format!("{error:?}")))?;
-        let corpus = private_graph.corpus();
+        let mut corpus = private_graph.corpus();
+        // The private store lists its pages in directory order, which differs
+        // by filesystem (hash order on ext4, name order on NTFS). The share
+        // lists them in the order the review showed: by path, as the plan.
+        corpus
+            .pages
+            .sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
         let wanted: BTreeSet<_> = selected.pages.iter().map(|p| p.id.as_str()).collect();
         let got: BTreeSet<_> = corpus.pages.iter().map(|p| p.id.as_str()).collect();
         if wanted != got {

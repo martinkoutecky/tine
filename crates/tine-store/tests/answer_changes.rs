@@ -66,6 +66,10 @@ fn save_signals_are_bounded_and_match_the_publication() {
     let (_dir, store) = fixture();
     let sub = store.subscribe();
     let text = save(&store, "after");
+    assert_eq!(text["summary"]["full"], false);
+    assert_eq!(text["summary"]["pages"], json!(["a"]));
+    assert_eq!(text["summary"]["blocks"].as_array().unwrap().len(), 1);
+    assert_eq!(text["summary"]["rev"], text["rev"]);
     assert_eq!(text["inventoryChanged"], false);
     counts(&text, json!({}));
     assert_eq!(text, serde_json::to_value(sub.recv().unwrap()).unwrap());
@@ -114,6 +118,7 @@ fn create_delete_and_rename_publish_both_answers() {
         panic!("create refused");
     };
     let created = serde_json::to_value(change).unwrap();
+    assert_eq!(created["summary"]["full"], true);
     assert_eq!(created["inventoryChanged"], true);
     counts(&created, json!({ONE:1}));
     let renamed = store.file_id(Area::Pages, "Renamed.md").unwrap();
@@ -123,6 +128,7 @@ fn create_delete_and_rename_publish_both_answers() {
         panic!("rename refused");
     };
     let moved = serde_json::to_value(change).unwrap();
+    assert_eq!(moved["summary"]["full"], true);
     assert_eq!(moved["inventoryChanged"], true);
     counts(&moved, json!({}));
     let mut tx = store.transaction(Some(EditKind::DeletePage));
@@ -135,6 +141,7 @@ fn create_delete_and_rename_publish_both_answers() {
         panic!("delete refused");
     };
     let deleted = serde_json::to_value(change).unwrap();
+    assert_eq!(deleted["summary"]["full"], true);
     assert_eq!(deleted["inventoryChanged"], true);
     counts(&deleted, json!({ONE:0}));
     store.close();
@@ -151,6 +158,7 @@ fn external_single_and_bulk_changes_publish_final_target_counts() {
     .unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
     let (inventory, single) = settled(&sub, ONE, 1);
+    assert_eq!(single["summary"]["full"], true, "alias changes are full");
     assert!(inventory);
     counts(&single, json!({ONE:1}));
     for i in 0..40 {

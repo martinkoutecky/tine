@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { createSignal, type JSX } from "solid-js";
@@ -694,7 +695,7 @@ describe("QueryMacro sheet integration", () => {
       expect(doc.byId.query.raw).toBe(raw);
       startEditing("query");
       await settleQuery();
-      expect(root.querySelector<HTMLTextAreaElement>("textarea.block-editor")?.value).toContain(raw.split("\n")[0]);
+      expect(maybeEditorIn(root)?.value()).toContain(raw.split("\n")[0]);
     } finally { dispose(); }
   });
 
@@ -1582,11 +1583,11 @@ it("choosing the Query slash command opens its sheet on the condition list, choo
   startEditing("query", 6);
   const { root, dispose } = mount(() => <Block id="query" />);
   try {
-    const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-    editor.focus();
-    editor.value = "/query";
-    editor.setSelectionRange(6, 6);
-    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "y" }));
+    const editor = maybeEditorIn(root)!;
+    editor.element.focus();
+    editor.replaceText("/query");
+    editor.select(6, 6);
+    editor.reportInput({ bubbles: true, inputType: "insertText", data: "y" });
     const command = await vi.waitFor(() => {
       const found = [...document.querySelectorAll<HTMLElement>(".autocomplete .ac-item")]
         .filter(item => item.querySelector(".ac-label")?.textContent === "Query");

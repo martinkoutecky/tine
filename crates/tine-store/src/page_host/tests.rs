@@ -87,6 +87,57 @@ pub(super) fn host() -> Host<ModelFs> {
     Host::new(fs, locks)
 }
 
+#[test]
+fn l9_root_faults_preserve_admitted_input_in_device_drafts() {
+    for fault in [Fault::RootGone(0), Fault::RootReplaced(0)] {
+        for phase in [
+            Phase::Read,
+            Phase::PageTemp,
+            Phase::PageRename,
+            Phase::PageSync,
+        ] {
+            let mut h = host();
+            open(&mut h, "a.md");
+            edit(&mut h, "a.md", "input after move");
+            h.fs.inject(phase, [fault]);
+            assert_eq!(h.start_save("a.md"), Disposition::Pending);
+            for _ in 0..12 {
+                if h.job.is_none() {
+                    break;
+                }
+                h.advance_save();
+            }
+            assert!(!h.pages["a.md"].clean(), "{phase:?}/{fault:?}");
+            draft(&mut h, "a.md");
+            assert_eq!(
+                drafts::scan(h.fs.draft_files(true)).logical["a.md"].bytes,
+                text("input after move")
+            );
+            assert!(
+                !h.fs.files.keys().any(|key| key.starts_with("graph/")),
+                "no publication under a detached epoch"
+            );
+        }
+    }
+}
+
+#[test]
+fn l9_root_faults_between_trash_syscalls_never_create_a_replacement_tree() {
+    for offset in 0..8 {
+        for fault in [Fault::RootGone(offset), Fault::RootReplaced(offset)] {
+            let mut fs = ModelFs::default();
+            fs.external("a.md", text("original"), true);
+            fs.inject(Phase::TrashMove, [fault]);
+            let moved = fs.trash_move("a.md", "payload");
+            assert!(moved.result.is_err(), "{offset}/{fault:?}");
+            assert_eq!(moved.result.unwrap_err().operation, Some("GraphRootMoved"));
+            assert!(!fs.files.keys().any(|key| key.starts_with("dir/")
+                || key.starts_with("graph/")
+                || key.starts_with("trash/")));
+        }
+    }
+}
+
 pub(super) fn send(host: &mut Host<ModelFs>, key: &str, kind: RequestKind) -> Disposition {
     let request = Request {
         id: host.last_admitted + 1,
@@ -1108,6 +1159,7 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
     let runtime = [
         ("mod.rs", include_str!("mod.rs")),
         ("binding.rs", include_str!("binding.rs")),
+        ("binding_delete.rs", include_str!("binding_delete.rs")),
         ("binding_bridge.rs", include_str!("binding_bridge.rs")),
         ("binding_retained.rs", include_str!("binding_retained.rs")),
         (
@@ -1127,10 +1179,10 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
         ("operations.rs", include_str!("operations.rs")),
         ("order.rs", include_str!("order.rs")),
         ("progress.rs", include_str!("progress.rs")),
+        ("production_guard.rs", include_str!("production_guard.rs")),
         ("save.rs", include_str!("save.rs")),
     ];
-    // Every runtime file is scanned: a file split out of a scanned one must
-    // join this list. Any other file here is the adapter, or a module
+    // Every runtime file joins this scan; other files are the adapter or a module
     // declared under `#[cfg(test)]` or inside such a module.
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/page_host");
     let mut test_only: BTreeSet<String> = BTreeSet::new();

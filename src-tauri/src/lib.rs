@@ -6,10 +6,13 @@
 mod android_clipboard;
 mod android_folder_picker;
 mod android_media;
+#[cfg(target_os = "android")]
+mod android_quick_share_tls;
 mod android_safe_back;
 mod android_system_bars;
 mod app_identity;
 mod backup;
+mod capture_receipts;
 mod capture_target;
 #[cfg(desktop)]
 mod cli;
@@ -43,6 +46,7 @@ mod host_slot_guard_tests;
 mod i18n_shell;
 #[cfg(target_os = "ios")]
 mod ios_folder_picker;
+mod linux_inline_preedit;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
 #[cfg(test)]
@@ -66,6 +70,7 @@ mod query_ir;
 mod quick_share;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod quit_signal;
+mod root_identity;
 mod search_workspace;
 mod settings;
 mod share_inbox;
@@ -80,7 +85,7 @@ mod workspace_windows;
 mod youtube_identity;
 use css_files::{read_css_file, save_css_file};
 
-use backup::{get_backup_keep, list_backups, restore_backup, set_backup_keep};
+use backup::{delete_old_backups, get_backup_keep, list_backups, restore_backup, set_backup_keep};
 use commands::{
     apply_journal_filename_migrations, asset_trash_stats, block_ref_counts, block_referrers,
     capture_quick_switch, close_graph_window, copy_guide_into_graph, detect_media_editor,
@@ -91,12 +96,13 @@ use commands::{
     load_workspaces, merge_pages, open_asset, open_graph_file, open_page_file, open_pdf,
     page_alias_group, page_icons, page_inventory, page_modified, page_print_html, preview_block,
     publish_html, query_facets, quick_switch, read_asset, read_custom_css, read_highlights,
-    read_journal_file, read_local_image, read_text_file, rename_file_to_page, rename_page,
-    resolve_block, resolve_blocks, resolve_page, run_graph_search, save_asset, save_pdf_area_image,
-    save_workspaces, search, set_default_journal_template, set_doc_mode_enter_for_new_block,
-    set_guide_announced, set_journal_title_format, set_logical_outdenting, set_preferred_format,
-    set_preferred_workflow, set_show_brackets, set_start_of_week, set_timetracking_enabled,
-    stream_asset_path, tine_open_devtools, trash_asset, trash_journal_file, write_highlights,
+    read_journal_file, read_local_image, read_text_file, register_unlinked_reference,
+    rename_file_to_page, rename_page, resolve_block, resolve_blocks, resolve_page,
+    run_graph_search, save_asset, save_pdf_area_image, save_workspaces, search,
+    set_default_journal_template, set_doc_mode_enter_for_new_block, set_guide_announced,
+    set_journal_title_format, set_logical_outdenting, set_preferred_format, set_preferred_workflow,
+    set_show_brackets, set_start_of_week, set_timetracking_enabled, stream_asset_path,
+    tine_open_devtools, trash_asset, trash_journal_file, write_highlights,
 };
 use concord::{
     conflict_inventory, duplicate_journal_diff, list_sync_conflicts, live_conflict_diff,
@@ -123,7 +129,7 @@ use plugins::{
 use query_export::{publish_live, publish_query, publish_query_plan, sheet_export_inputs};
 use query_ir::{
     query_explain_empty, query_og_expressible, query_parse, query_print, query_registry, query_run,
-    tagged_pages,
+    register_query_subscription, tagged_pages,
 };
 use settings::{
     forget_known_graph, get_app_bool, get_app_string, get_capture_enter_files,
@@ -859,6 +865,10 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.manage(tray::TrayState::default());
 
+    // Bootstrap Android's process-wide platform verifier before the WebView can
+    // invoke any quick-share command. Linux/macOS/Windows/iOS need no JNI hook.
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_quick_share_tls::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_folder_picker::init());
     #[cfg(target_os = "android")]
@@ -888,6 +898,8 @@ pub fn run() {
     // env-scrubbed spawn and do not compile the plugin at all.
     #[cfg(any(mobile, target_os = "windows"))]
     let builder = builder.plugin(tauri_plugin_opener::init());
+
+    let builder = linux_inline_preedit::configure(builder);
 
     builder
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -937,6 +949,7 @@ pub fn run() {
         .manage(workspace_windows::Pending::default())
         .manage(workspace_windows::CloseRequests::default())
         .manage(graph::StartupGraph::default())
+        .manage(capture_receipts::CaptureReceipts::default())
         .manage(deep_links::PendingLinks::default())
         .manage(AppState {
             graphs: RwLock::new(state::GraphRegistry::default()),
@@ -1025,6 +1038,9 @@ pub fn run() {
             data_home::take_data_home_fallback_notice,
             migrate_identifier::take_identifier_migration_notice,
             load_graph,
+            root_identity::orphan_drafts,
+            root_identity::recover_orphan_drafts,
+            delete_old_backups,
             inspect_graph_access,
             approve_external_assets,
             deep_links::graph_link_identity,
@@ -1039,6 +1055,7 @@ pub fn run() {
             workspace_windows::workspace_window_destroy,
             startup_graph_path,
             capture_target,
+            capture_receipts::capture_receipt,
             capture_graph_binding,
             capture_frontend_ready,
             create_graph,
@@ -1072,6 +1089,8 @@ pub fn run() {
             get_backlink_filter_context,
             get_backlinks,
             get_unlinked_refs,
+            register_unlinked_reference,
+            register_query_subscription,
             warm_done,
             block_ref_counts,
             block_referrers,
@@ -1083,6 +1102,7 @@ pub fn run() {
             quick_share::quick_share_create,
             quick_share::quick_share_discard,
             quick_share::quick_share_list,
+            quick_share::quick_share_test_connection,
             quick_share::quick_share_check,
             quick_share::quick_share_find,
             quick_share::quick_share_delete,

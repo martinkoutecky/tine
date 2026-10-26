@@ -153,13 +153,49 @@ Code: `src-tauri/src/quick_share/` (`github.rs` transport, `records.rs`,
 
 ### Build gate
 
-Creating shares is off in shipped builds until the viewer is deployed
-(DESIGN §5 phase 3). On only in a debug build, or when Tine starts with
-`TINE_QUICK_SHARE=1` in its environment. Off: `quick_share_list` answers
+Creating shares is off until the deployed viewer passes the candidate's
+generation-1 fixture corpus in a headless browser. Run
+`node scripts/check-release-readiness.mjs --quick-share-only`; it fetches
+`https://tine.page/s/1/viewer.json`, verifies the hashes of deployed files
+used by the reader, and decrypts and renders every frozen fixture. Only a
+successful check writes `artifacts/quick-share-viewer/writer-ready.env` and
+the release job's `quick_share_viewer_g1_ready` output. The native build
+takes `TINE_QUICK_SHARE_VIEWER_G1_READY` from that check; the value must
+match a SHA-256 of this build's exact fixture files (names and bytes).
+A debug build and the old launch-time `TINE_QUICK_SHARE=1` switch cannot
+bypass this gate. Off: `quick_share_list` answers
 `enabled: false` (the share dialog's Link stays "coming soon", Settings has no
 Sharing tab) and every GitHub-touching command refuses with `disabled`.
 `quick_share_forget`, `quick_share_copy_link` and `quick_share_list` stay
 available, so records made while it was on remain manageable.
+
+### Hosted reader builds and retention
+
+`npm run build:quick-share-viewer` builds and checks the production reader,
+then writes `artifacts/quick-share-viewer/quick-share-viewer-g1.zip` and its
+SHA-256 sidecar. `viewer.json` carries `generation`, `link`, `envelope`,
+`document`, `snapshot_schema` (all 1), `built_from`, `fixture_sha256`, and a
+`files` map of relative names to SHA-256. The map covers every file except
+`viewer.json` itself; the pinned zip digest authenticates that manifest too.
+JavaScript, CSS and fonts have content-hashed names. The reader starts no
+plugins, applies the generation-1 CSP and no-referrer policy, and turns
+authored media into external links or not-included placeholders before
+mounting resource elements. The baked-in `src/quickShare/blocked-gists.json`
+refuses listed gist ids before any GitHub request. Abuse reports go to the
+published support address, support@tine.page; the contact never includes the
+share's fragment automatically.
+
+`website/s/generations.json` lists each generation's `current` and `retained`
+builds. A pin has a release `tag` or first-trial Actions `run_id`, plus the
+zip `sha256`. Current must be retained. Pages verifies zip and file hashes,
+then merges retained builds before current. Only `index.html` and
+`viewer.json` may change bytes under an existing name; any asset-name
+collision refuses. The deployed retention list may never lose a zip digest,
+including on rollback. A trial workflow artifact expires after 90 days:
+before then, archive its exact zip as a release asset and change that pin's
+source to the release tag, retaining its original SHA-256. Never rebuild a
+retained archive to replace its bytes. A null current means the first
+viewer has not been pinned; it deliberately deploys no generation yet.
 
 ### GitHub transport
 
@@ -230,6 +266,91 @@ create costs ≈ 2 × file size), 1 file; one gist create of the envelope (≈ 1
 `P`) plus the fixed README. Connect: one 149 B file. Transport per graph edit:
 none (shares are made on request).
 
+### Re-share in place
+
+The page marked `tine/exports:: true` offers **Update all** beside its title,
+including after renaming and in other panes. It finds definitions with the
+ordinary `(or (property export) (property tine.share))` query and parses their query macros with lsdoc.
+Each distinct hosted share with a device-local key uses `quickSharePrepare`
+with its existing record id. Pending definitions, missing keys, duplicate
+destinations, ambiguous queries and preparation failures are listed as skipped
+with a reason. An incomplete definitions query refuses the batch, rather than
+silently presenting a partial list as complete. Folder definitions join the same
+preview through the read-only query export plan, with their recorded leaf and
+Replace mode. They show page counts and left-out reasons and use the existing
+fingerprint-checked publisher on confirmation (see `export-definitions.md`).
+
+All preparations finish before confirmation is available. One combined preview
+shows every title, and for quick shares membership counts and collapsible changed page names. Confirm
+consumes each successful preview once through `quickShareCreate`, sequentially,
+with the same native locking, revision re-read, PATCH and unknown-outcome rules
+as single Re-share. A failure does not stop later shares, and every outcome is
+shown; there is no automatic retry. Closing or switching graphs discards unused
+previews and prevents further uploads; an upload already started may finish.
+No unchanged-content optimization is used: unchanged membership can still carry
+edited content, so every successfully prepared share is updated on confirmation.
+
+The shared preview pool is bounded by total payload bytes: four writer-limit
+payloads (24 MiB), plus a bookkeeping cap of 64 entries; entries expire after
+ten minutes. Overflow refuses the new preparation without evicting any
+reviewed payload. The batch shows that refusal for affected shares; closing
+discards the retained payloads, and individual Re-share can handle skipped
+definitions. This changes neither `quick-shares.json` nor in-graph properties.
+
+Share again from a query carrying a live `tine.share::` value, or choose
+Re-share beside Delete in the Exports overview. The local record is matched
+by gist id, regardless of login spelling. Without its device-local key the
+dialog explains why and offers **Re-share as a new link**, preserving the old
+definition and share. An unreadable records file refuses instead of pretending
+the key is absent.
+
+`quick_share_prepare(request, shareId?)` validates the new snapshot through
+the ordinary prepare path. With `shareId`, native code reads the owned Tine
+gist's current history revision and its revision-pinned raw envelope, decrypts
+with the local K, checks the authenticated share id, and reads the snapshot's
+real pages (nonempty path; the synthetic home is excluded). Comparing page
+identity keys against the new selection gives **+N new / −M gone**, including
+names in a collapsible list. The previous membership cannot come from the
+record's page count. This uses no record or in-graph format change.
+
+The reviewed revision and exact prepared bytes stay in memory under the
+existing 10-minute/4-preview/discard limits. Confirmation consumes the preview
+once. Re-share serializes per share id within the process (the record lock is
+process-wide only; there is no cross-process lock to reuse). It seals under
+the same K and share id with a fresh OS-random 96-bit nonce, then re-reads
+the current gist revision immediately before `PATCH /gists/{id}`. No
+undocumented conditional header is sent. Only `tine-share.bin` is replaced.
+Success updates the existing row's title/page count, preserves its key, login,
+creation date and gist id, and copies the unchanged link natively. No graph
+write or duplicate definition is needed for in-place Re-share.
+
+| Update result | Outcome and recovery |
+| --- | --- |
+| Valid 200 response for the same gist | Confirm updated; same link |
+| Gist gone (404) | `notFound`; keep key and graph definition; never silently create another gist |
+| 401 / other 403 / rate limit | Existing `reconnect` / sanitized `github` / `rateLimited`; keep record and graph |
+| Revision or local record changed since review | `shareChanged`; upload nothing; Refresh for a fresh preview |
+| Request known not sent (DNS/connect/TLS) | `network`; no automatic retry; Refresh before another attempt |
+| Timeout, dropped response, 5xx, malformed or unexpected success, local record-save failure after PATCH | `maybeUpdated`; never retry automatically or claim success; Review current share or Settings Check reads and decrypts GitHub again |
+
+**Residual race:** another writer can update between the final re-read and
+PATCH. GitHub's gist update has no documented compare-and-swap. Whichever
+PATCH wins leaves one complete valid snapshot; no graph data is changed or
+lost. Re-share again if needed. Check on a live record now reads and decrypts
+the current gist and refreshes its title/page count; the next Re-share derives
+its membership from the current snapshot and shows that copy's timestamp;
+Settings Check is available on live rows too and reports the current copy's
+timestamp and page names. This resolves an unknown outcome
+without a new record state. GitHub keeps earlier revisions, so Re-share does
+not remove previously shared text; only Delete removes the hosted gist.
+Readers may see raw-content cache delay (about five minutes).
+
+Cost per Re-share: preview one authenticated gist GET plus one bounded raw
+read/decrypt; confirm one gist GET and one complete-envelope PATCH, followed
+by at most one private atomic record rewrite (only if metadata changed).
+Zero graph saves, and no work on ordinary edits. Check uses one gist GET/raw
+read and at most one record rewrite. Membership and locks are memory-only.
+
 ### In the graph (D-20261017-QS3, D-20261018-Q1, D-20261018-QS3)
 
 A share is an export definition (`docs/contracts/export-definitions.md`): a
@@ -271,7 +392,13 @@ new write path):
 - **Delete** (204) and **Forget** remove the property from every block whose
   value names that gist, whatever login prefix it carries (an account rename
   keeps the gist id; gist ids are unique on GitHub), and the row's own pending
-  marker, loading pages that are not open. A pending marker is never read as a
+  marker, loading pages that are not open. A definition still exactly as Start
+  appended it to the Exports page (a root block with no children whose raw is
+  the one query macro plus `tine.share::`) is deleted whole instead, so no stale
+  bullet stays on Exports; any other block keeps everything but the property
+  (D-20261026-QSD). The same holds when a definite failure removes a marker.
+  Delete says the link stops working within about 5 minutes: GitHub's raw host
+  caches a file for 300 s, so a reload can still show the share until then. A pending marker is never read as a
   gist (a record id never has a gist id's shape). A share GitHub no longer has
   (`gone`) keeps it until Forget, like its key. A gist deleted from Find shares
   on GitHub is removed the same way.
@@ -284,6 +411,14 @@ new write path):
   tine.share))` lists them, pending markers included; Settings → Sharing keeps
   the account, Find shares on GitHub and this device's keys (Copy link, Check,
   Delete, Forget).
+- Share definitions render **Delete** in their query action bar, including
+  when listed by the Exports overview. The existing confirmation and native
+  delete command apply. With a local record, the connected account must match
+  its immutable account id; without a key, the native command verifies the
+  gist's Tine marker and owner before deleting it. A declined confirmation
+  sends nothing. A `gone` result keeps the marker and key, as in Settings.
+  Confirmed deletion removes graph markers through the same guarded save as
+  Settings; a cleanup failure is shown while the hosted deletion stands.
 - A failure to write or remove the property is shown; the share itself (created,
   deleted or forgotten) stands.
 
@@ -306,12 +441,12 @@ holds). Delete/Forget: the same line removed from each page that carries it.
 
 ### Commands
 
-`quick_share_prepare(request)`, `quick_share_create(prepareId)`,
+`quick_share_prepare(request, shareId?)`, `quick_share_create(prepareId)`,
 `quick_share_discard(prepareId)`, `quick_share_list()`,
 `quick_share_check(shareId)`, `quick_share_find()`,
 `quick_share_delete(shareId | gistId)`, `quick_share_forget(shareId)`,
 `quick_share_copy_link(shareId)`, `quick_share_connect_start()`,
 `quick_share_connect_status(attemptId)`, `quick_share_connect_cancel(attemptId)`,
 `quick_share_disconnect()`. Host commands, not plugin capabilities (ADR 0052).
-A prepared payload lives 10 minutes, at most 4 at a time, and goes when the
+A prepared payload lives 10 minutes, within a 24 MiB total (64 at most), and goes when the
 dialog closes.

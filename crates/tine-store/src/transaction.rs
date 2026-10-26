@@ -630,10 +630,8 @@ impl<'a> Transaction<'a> {
             None => RewriteEffect::Changes,
             Some(text) => {
                 let name_format = self.store.config().file_name_format;
-                let is_org = Path::new(file.as_str())
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    == Some("org");
+                let is_org = tine_core::model::Format::from_path(Path::new(file.as_str()))
+                    == tine_core::model::Format::Org;
                 let new = tine_core::refs::rename_rewrite(text, is_org, &renames.0, name_format);
                 if new == text {
                     RewriteEffect::Unchanged
@@ -1023,8 +1021,11 @@ impl<'a> Transaction<'a> {
     fn write_trash_copy(&self, id: &FileId, old: &[u8]) -> Result<PathBuf, Why> {
         let path = self.path(id)?;
         if let Some(parent) = path.parent() {
-            crate::directory_durability::create_dir_all_durable(parent)
-                .map_err(|error| failed_trash_dir(error, parent))?;
+            crate::directory_durability::create_dir_all_durable(
+                parent,
+                self.store.graph.creation_bound(parent),
+            )
+            .map_err(|error| failed_trash_dir(error, parent))?;
         }
         atomic_write_new(&path, old).map_err(failed)?;
         Ok(path)
@@ -1111,7 +1112,11 @@ impl<'a> Transaction<'a> {
                     });
                 }
                 if let Some(parent) = src.parent() {
-                    crate::directory_durability::create_dir_all_durable(parent).map_err(failed)?;
+                    crate::directory_durability::create_dir_all_durable(
+                        parent,
+                        self.store.graph.creation_bound(parent),
+                    )
+                    .map_err(failed)?;
                 }
                 if self.page(&plan.src) {
                     self.store.graph.transaction_note_page(&src, new);
@@ -1203,8 +1208,11 @@ impl<'a> Transaction<'a> {
                     }
                     let path = self.path(&file)?;
                     if let Some(parent) = path.parent() {
-                        crate::directory_durability::create_dir_all_durable(parent)
-                            .map_err(failed)?;
+                        crate::directory_durability::create_dir_all_durable(
+                            parent,
+                            self.store.graph.creation_bound(parent),
+                        )
+                        .map_err(failed)?;
                     }
                     let expected = match content {
                         Content::Bytes(bytes) => {
@@ -1287,8 +1295,11 @@ impl<'a> Transaction<'a> {
                     let trash_id = self.trash_id(&plan.src);
                     let trash = self.path(&trash_id)?;
                     if let Some(parent) = trash.parent() {
-                        crate::directory_durability::create_dir_all_durable(parent)
-                            .map_err(|error| failed_trash_dir(error, parent))?;
+                        crate::directory_durability::create_dir_all_durable(
+                            parent,
+                            self.store.graph.creation_bound(parent),
+                        )
+                        .map_err(|error| failed_trash_dir(error, parent))?;
                     }
                     undo.trash = Some(trash_id.clone());
                     undo.opaque_rev = Some(rev.clone());
@@ -1309,8 +1320,11 @@ impl<'a> Transaction<'a> {
                 let trash_id = self.trash_id(&plan.src);
                 let trash = self.path(&trash_id)?;
                 if let Some(parent) = trash.parent() {
-                    crate::directory_durability::create_dir_all_durable(parent)
-                        .map_err(|error| failed_trash_dir(error, parent))?;
+                    crate::directory_durability::create_dir_all_durable(
+                        parent,
+                        self.store.graph.creation_bound(parent),
+                    )
+                    .map_err(|error| failed_trash_dir(error, parent))?;
                 }
                 undo.trash = Some(trash_id.clone());
                 if self.page(&plan.src) {
@@ -1532,7 +1546,9 @@ impl<'a> Transaction<'a> {
         self.store.graph.ensure_write_target(&recovery)?;
         recovery
             .parent()
-            .map(crate::directory_durability::create_dir_all_durable)
+            .map(|parent| {
+                crate::directory_durability::create_dir_all_durable(parent, &self.store.graph.root)
+            })
             .unwrap_or(Ok(()))?;
         atomic_write_new(&recovery, bytes)?;
         Ok(copy)

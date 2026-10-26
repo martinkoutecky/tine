@@ -54,6 +54,9 @@
  * reports; `resolveConflict` sends Keep mine on the disk state the conflict
  * showed, or takes the host's text for Use disk. A block entering editing
  * opens its page in the host (`bindHost` binds the window after a graph load).
+ * After explicit draft adoption, `bindHost({ refreshLoaded: true })` also takes
+ * fresh host text for loaded view-only pages, including unpublished conflicts;
+ * one temporary Open/Close per loaded graph page, with input already frozen.
  * Multi-page intents that move blocks between pages run `persistTransfer`: the
  * pages freeze, their input drains, and one host move per source carries the
  * blocks; a crash between moves can leave a block in both pages, never in
@@ -93,7 +96,7 @@ export { replayDeferredExternalReloads, whenPageReplaceable } from "./deferredRe
 export { admitPageFile, appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, loadRoutedPage, pageLoadRefusalMessage, pinPageWhileDrafting, registerPaneRouteProvider, reloadHlsIfLoaded, reportPageLoadRefusal, resetStore, restoreTodayJournalInFeed, type PageLoadRefusal } from "./workingSet";
 export { installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
 export { graphRewriteFrozen, tryFreezeGraphRewrite } from "./graphRewriteState";
-export { emptyPage, captureEmptyPage, favoritesArrangementPage, favoritesArrangementBlocks, journalSectionsPage, exportsPage, resolveGuideBlockRef, resolveGuidePageDto, withToday, toLoadablePage, carryTodayPage, captureScratchPage, journalTemplatePage, demoJournalPage, switcherPage, queryWorkspacePage } from "./convert";
+export { emptyPage, captureEmptyPage, favoritesArrangementPage, favoritesArrangementBlocks, journalSectionsPage, exportsPage, queryBlockRaw, resolveGuideBlockRef, resolveGuidePageDto, withToday, toLoadablePage, carryTodayPage, captureScratchPage, journalTemplatePage, demoJournalPage, switcherPage, queryWorkspacePage } from "./convert";
 export { depthOf, nextVisible, pageVisibleOrder, prevVisible, visibleOrder } from "./tree";
 export type { OutlineScope } from "./tree";
 export { installHistoryRouteContextAdapter, redo, toggleUndoRedoMode, undo, undoTopTag, withUndoUnit } from "./history";
@@ -110,4 +113,5 @@ export { clearSelection, cycleSelectionTasks, deleteSelection, expandBlockSelect
 export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlocksRelative, moveBlockFeed, moveItem, moveSelectionItems, nextVisibleOrExtend, setFeedExtender, withBlockMoving } from "./edits/moves";
 export { installPageIdentityNavigation, rekeyPageIdentityByPath } from "./workingSet";
 export { pageInstanceGeneration } from "./instance";
+export { retireFeedPages } from "./workingSet";
 export { carryUnfinished } from "./edits/carry";

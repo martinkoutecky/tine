@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "./tests/editorDriver";
 // GH #208 / #338: the find panel's replace row, its keyboard-free door (the page
 // header's "⋯" menu), and replace-all over a block that is open in an editor.
 // UI-INPAGE-FIND-REPLACE-208, UI-INPAGE-FIND-MOBILE-ENTRY-338.
@@ -28,9 +29,14 @@ const journalsSnapshot = (): PaneSnapshot => ({ tabs: [{ history: [{ kind: "jour
 const raws = () => pageByName(NAME)!.roots.map((id) => doc.byId[id].raw);
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-function typeInto(input: HTMLInputElement | HTMLTextAreaElement, value: string) {
-  input.value = value;
-  input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+function typeInto(input: HTMLInputElement | EditorDriver, value: string) {
+  if ("kind" in input) {
+    input.replaceText(value);
+    input.reportInput({ bubbles: true });
+  } else {
+    input.value = value;
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  }
 }
 
 beforeEach(() => {
@@ -114,12 +120,12 @@ describe("GH #208 data safety: a block open in an editor", () => {
       </>
     ));
     try {
-      const editor = root.querySelector<HTMLTextAreaElement>("textarea")!;
+      const editor = maybeEditorIn(root)!;
       expect(editingId()).toBe("b");
       typeInto(editor, "foo beta typed");
       // Find takes focus: the editor stays open and commits what was typed.
       openInPageFind();
-      editor.dispatchEvent(new FocusEvent("blur"));
+      editor.reportBlur();
       setInPageFindQuery("foo");
       expect(inPageFindMatches()).toHaveLength(2);
 
@@ -129,10 +135,10 @@ describe("GH #208 data safety: a block open in an editor", () => {
       expect(raws()).toEqual(["bar alpha", "bar beta typed"]);
       // The still-open editor shows the replaced text, and a later commit from
       // it (blur, more typing) cannot put the old text back.
-      const live = root.querySelector<HTMLTextAreaElement>("textarea")!;
-      expect(live.value).toBe("bar beta typed");
+      const live = maybeEditorIn(root)!;
+      expect(live.value()).toBe("bar beta typed");
       closeInPageFind({ restoreFocus: false });
-      live.dispatchEvent(new FocusEvent("blur"));
+      live.reportBlur();
       expect(raws()).toEqual(["bar alpha", "bar beta typed"]);
 
       expect(undo()).toBe(true);

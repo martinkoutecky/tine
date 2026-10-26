@@ -661,8 +661,12 @@ try {
   }
   const headToasts = await browser.execute(() => [...document.querySelectorAll(".toast-error .toast-msg")].map((node) => node.textContent ?? ""));
   if (headToasts.length) throw new Error(`Enter at the start of the page properties raised an error toast: ${JSON.stringify(headToasts)}`);
-  if ((await browser.$$(".page-properties .prop-row")).length !== 2) {
-    throw new Error("the page properties no longer render as the page header after Enter at their start");
+  // `icon::` decorates the title and is not a header row (OG
+  // hidden-editable-page-properties, VT3), so the header is the tags row.
+  const headerKeys = await browser.execute(() => [...document.querySelectorAll(".page-properties .prop-row .prop-key")]
+    .map((key) => key.textContent));
+  if (JSON.stringify(headerKeys) !== JSON.stringify(["tags"])) {
+    throw new Error(`the page properties no longer render as the page header after Enter at their start: ${JSON.stringify(headerKeys)}`);
   }
   // GH #210 F1 follow-up (D-20261019-H210F2): Alt+Shift+Up on the first block
   // under the page properties is refused (it would put a block above them, which
@@ -720,8 +724,12 @@ try {
   if (whyToasts.length !== 1 || !whyToasts[0].kind.includes("toast-info") || moveToasts.some((toast) => toast.kind.includes("toast-error"))) {
     throw new Error(`moving a block above the page properties did not raise the plain info toast: ${JSON.stringify(moveToasts)}`);
   }
-  const moveProps = (await browser.$$(".page-properties .prop-row")).length;
-  if (moveProps !== 2) throw new Error(`the page properties are no longer the page header after the refused move (${moveProps} rows)`);
+  // The tags row only: `icon::` decorates the title (VT3, as above).
+  const moveProps = await browser.execute(() => [...document.querySelectorAll(".page-properties .prop-row .prop-key")]
+    .map((key) => key.textContent));
+  if (JSON.stringify(moveProps) !== JSON.stringify(["tags"])) {
+    throw new Error(`the page properties are no longer the page header after the refused move: ${JSON.stringify(moveProps)}`);
+  }
   await nativeTab();
   await browser.waitUntil(async () => browser.execute(() => [...document.querySelectorAll(".toast-info .toast-msg")]
     .some(node => node.textContent === "A block can't be indented under the page properties")), {

@@ -3,7 +3,6 @@ import {
   logbook_info_json,
 } from "./render/wasm/lsdoc_wasm.js";
 import { parserReady } from "./render/parse";
-import { leadingMarker } from "./editor/marker";
 import { reportUiFailure } from "./uiFailure";
 import type { Format } from "./types";
 
@@ -34,8 +33,7 @@ export function applyMarkerTransition(
     return logbook_apply_marker_transition(
       nextRaw,
       format === "org",
-      leadingMarker(oldRaw, format) ?? "",
-      leadingMarker(nextRaw, format) ?? "",
+      oldRaw,
       enabled,
       withSeconds,
     );

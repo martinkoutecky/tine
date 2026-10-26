@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 // GH #210 review r1 F1 (UI-GH210-HEAD-ENTER), in the rendered page: click the
 // page properties, put the caret at the start, press Enter. OG's
 // page-properties editor takes that as a newline in the field
@@ -46,29 +47,29 @@ for (const kind of ["page", "journal"] as const) {
       const dispose = render(() => <PageView />, root);
       try {
         await tick(); await tick();
-        expect(root.querySelectorAll(".page-properties .prop-row")).toHaveLength(2);
+        expect([...root.querySelectorAll(".page-properties .prop-key")].map(el => el.textContent)).toEqual(["tags"]);
         root.querySelector(".page-properties")!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
         await tick();
-        const editor = root.querySelector<HTMLTextAreaElement>("textarea")!;
-        expect(editor.value).toBe(HEADER);
+        const editor = editorIn(root);
+        expect(editor.value()).toBe(HEADER);
         const header = doc.pages.find((p) => p.name === name)!.roots[0];
-        editor.setSelectionRange(0, 0);
+        editor.select(0, 0);
         if (entry === "Enter key") {
-          editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+          editor.keydown({ key: "Enter", bubbles: true, cancelable: true });
         } else {
-          editor.value = `\n${HEADER}`;
-          editor.setSelectionRange(1, 1);
-          editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertLineBreak" }));
+          editor.replaceText(`\n${HEADER}`);
+          editor.select(1, 1);
+          editor.reportInput({ bubbles: true, inputType: "insertLineBreak" });
         }
         await tick(); await tick();
         const roots = doc.pages.find((p) => p.name === name)!.roots;
         expect(roots).toEqual([header, "o1"]); // no block above the header
         expect(doc.byId[header].raw).toBe(`\n${HEADER}`); // a newline in the field, as OG
-        editor.dispatchEvent(new FocusEvent("blur"));
+        editor.reportBlur();
         endEdit("blur");
         await tick(); await tick();
         expect(toasts()).toEqual([]);
-        expect(root.querySelectorAll(".page-properties .prop-row")).toHaveLength(2);
+        expect([...root.querySelectorAll(".page-properties .prop-key")].map(el => el.textContent)).toEqual(["tags"]);
         expect(await flushPage(name)).toBe(true);
         expect(isDirty(name)).toBe(false);
         for (const written of submittedPages(save)) {

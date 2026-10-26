@@ -1,3 +1,4 @@
+import { editorIn, maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { createMemo, createSignal, untrack, type ComponentProps, type JSX } from "solid-js";
@@ -19,6 +20,8 @@ import { installKeybindings } from "../keybindings";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { clearTransientLayersForTest, registerTransientLayer } from "../transientLayers";
 import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
+import { editingId, startEditing } from "../editorController";
+import { DRAG_SELECTION_CLASS } from "../dragSelectionGuard";
 
 const saveFixture = vi.hoisted(() => ({ actual: null as Record<string, unknown> | null, markDirty: vi.fn(), persistTransfer: vi.fn(async () => true) }));
 vi.mock("../document/host/wiring", () => new Proxy({}, {
@@ -215,7 +218,7 @@ describe("SheetBoard", () => {
 
     journalCard.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
     await tick();
-    expect(root.querySelector("textarea.block-editor")).toBeNull();
+    expect(maybeEditorIn(root)).toBeNull();
     journalCard.click();
     expect(handleCellSelectionKey(keydown("ArrowRight", { ctrlKey: true }))).toBe(true);
     expect(doc.byId[shared].raw).toBe("TODO Loaded page row");
@@ -681,6 +684,52 @@ describe("SheetBoard", () => {
 
     document.elementFromPoint = prevElementFromPoint;
     dispose();
+  });
+
+  it.each(["textarea", "block editor", "window"])("GH #756: handles %s blur during a card press", async (focusSource) => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    loadBoardDoc();
+    setDoc("byId", "outside", node("outside", "Outside editor", null));
+    setDoc("pages", 0, "roots", ["outside", "board"]);
+    const { root, dispose } = mount(() => <><textarea data-outside-editor /><Block id="outside" /><Block id="board" /></>);
+    const previous = document.elementFromPoint;
+    try {
+      if (focusSource === "block editor") {
+        startEditing("outside");
+        await tick();
+      }
+      const editor = focusSource === "block editor" ? editorIn(root).element : root.querySelector<HTMLTextAreaElement>("[data-outside-editor]")!;
+      editor.focus();
+      expect(document.activeElement).toBe(editor);
+      const card = root.querySelector<HTMLElement>('.sheet-board-card[data-block-id="todo"]')!;
+      const target = root.querySelector<HTMLElement>('[data-board-col="1"]')!;
+      document.elementFromPoint = () => target;
+      card.dispatchEvent(pointer("pointerdown", 0, 0));
+      expect(document.documentElement.classList.contains(DRAG_SELECTION_CLASS)).toBe(false);
+      // Browser default focus transfer happens after pointerdown. jsdom needs
+      // it explicitly; block blur also disposes its actual editing surface.
+      editor.blur();
+      if (focusSource === "block editor") {
+        await tick();
+        expect(editingId()).toBeNull();
+        expect(maybeEditorIn(root)).toBeNull();
+      }
+      const range = document.createRange();
+      range.selectNodeContents(card);
+      window.getSelection()!.addRange(range);
+      window.dispatchEvent(pointer("pointermove", 12, 0));
+      expect(document.body.querySelector(".sheet-board-drag-ghost")).not.toBeNull();
+      expect(document.documentElement.classList.contains(DRAG_SELECTION_CLASS)).toBe(true);
+      expect(window.getSelection()!.rangeCount).toBe(0);
+      if (focusSource === "window") window.dispatchEvent(new Event("blur"));
+      window.dispatchEvent(pointer("pointerup", 12, 0));
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe(focusSource === "window" ? "TODO Write tests" : "DOING Write tests");
+      expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
+      expect(document.documentElement.classList.contains(DRAG_SELECTION_CLASS)).toBe(false);
+    } finally {
+      document.elementFromPoint = previous;
+      dispose();
+    }
   });
 
   it("keeps only the latest pointer drag session active across Board instances", () => {

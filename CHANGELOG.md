@@ -8,8 +8,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
 ### Added
 
+- Guide: a new **Share pages** page covers the Share dialog, folder exports, quick-share links, Re-share, Update all, Delete and Settings → Sharing. The tips page explains margin comments more fully (every way to start one, how replies and authors are stored), and the git autocommit section describes its status lines and the messages for a folder without git or a phone.
+
+- **Re-export** reviews a saved folder export in Replace mode. **Update all** on the Exports page reviews folder exports and quick shares together before confirmation, then updates them in order and shows each outcome, including skipped definitions and failures.
+
+- Re-share from a query or the Exports page to update the same link after reviewing added and removed pages; Delete remains available with confirmation (it also removes the definition the share added to the Exports page, and says the link stops working within about 5 minutes), and devices without the key offer a new link.
+
+- Encrypted quick-share links open in the generation-1 browser reader on tine.page, with private navigation, readable errors and media loaded only when the reader follows a link.
+
+- **All graphs** (GH #758): press **g Shift+G** or run **All graphs** from the command palette, then use the arrow keys and Enter to switch graphs. Graph actions, including opening a new window on desktop, are available from the keyboard.
+- **YouTube timestamp shortcut** (GH #757): **Ctrl/Cmd+Shift+Y** inserts the current playback time into the block you are editing. Click the timestamp to jump the video there, just as with the slash command.
+
+- **Open another view** of a PDF (⋯ menu, desktop) shows two parts of it side by side, each with its own page and zoom. Views of the same PDF now share their highlights: one made, recolored or removed in either view appears in the other at once, including views opened by splitting a pane, a new window or a restored session, which before kept separate copies.
+- **The Linked/Unlinked References count says what it counts** (GH #755): hovering the number shows "N blocks on M pages". The number still counts referencing blocks, as in Logseq, and follows the active filter.
 - **Automatic git commits** (queue cards hBpCy4/hBpb2k, ADR 0078 slice 1): a graph in a git repository can commit its changes automatically (Settings → Graph → Commit changes to git; desktop, off by default). Tine commits after a minute without edits, at most once per interval, on quit, and around renames, merges, deletes and backup restores; it never pushes or pulls 
 - **A note for journal date patterns Tine does not support** (internal card g4czVA): when `:journal/file-name-format`, `:journal/page-title-format` or the older `:date-formatter` in `config.edn` uses pattern parts Tine does not interpret as Logseq does (quoted text such as `'w'`, week numbers `ww`, or other letters such as `YYYY`, `D` or `a`), today's journal shows a `config.edn` note above the configured queries naming the setting, the pattern, those parts and what Tine does with them (writes them as literal text, reads them as shorter date fields, or keeps the quote marks). Nothing is renamed or rewritten, and supported patterns, including every built-in format, behave exactly as before. See Journals, tasks, and scheduling in the Guide.
 - **Alias groups under the page title** (queue card hB9Zjw, D-20261019-AL1/AL2): a page that shares aliases with others now shows its whole alias group, also when it declares no alias itself. **Also called** lists the group's names that have no page of their own; a link to one opens the page declaring it. **Related pages in this alias group** lists the other names that have their own page; a link to one opens that page. So many names for one page and several pages under linked names no longer look alike. The rows replace the **aka** chips, appear in the right sidebar too, and nothing is shown on pages without aliases. A name that is an alias of several pages now opens the same page from every place (links, search, the sidebar): the one whose file path sorts first as plain text. Before, a page in a sub-folder could sort differently in search than in links.
@@ -36,6 +52,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Property keys link to their pages consistently in page headers, references, previews and query property lists, including after editing; Shift-click opens the key's page in the sidebar, and `:property-pages/enabled? false` keeps keys plain (GH #753).
+
+- **Hover previews are editable** (D-20261023-VQ, follow-up to GH #748): the blocks in a page or block-reference preview are now the page's own blocks, as in Logseq. Click a block's text to edit it in the preview; the change is saved to its page like any other edit. While you edit, the preview stays open when the pointer leaves it or the page scrolls, and the first Esc ends the edit (the next one closes the preview). A plain bullet click still opens that block in a new tab. Queries inside a preview still show as text and embeds stay read-only. Tested in the component suite; the app journey covers opening and folding previews.
+- **Deleting pages does less disk work** (internal, fsync investigation GH3, D-20261021-GQ3): after the first deletion in a session, a deletion syncs only the trash folder instead of it and every folder above it (three fewer directory syncs per deleted or moved page on Linux, macOS, Android and iOS), and on Windows a deletion no longer writes and removes a custody marker file, which protected nothing there (about a third of a deletion's time on hosted Windows runners).
 - `tine serve` skips its launch snapshot when the graph's newest backup zip is less than six hours old, so scripted edit/restart loops preserve the backup slots. A future-dated zip does not suppress backups; the app's launch snapshots are unchanged (D-20261020-CF4).
 - **Chinese IME: typing through `】`** (GH #53): after `【【` gives `[[]]`, typing `】` before the `]` it left steps over that `]` instead of leaving `[[name】]]`, so `【【name】】` ends as `[[name]]` with the caret after it. `）` steps over a `)` the same way when Settings → **Auto-pair brackets & quotes** is on (the ASCII `)` behaves so too). Both input paths of an IME character are covered.
 - **Touch screens: format selected text without opening the block** (GH #375): text you long-press in a block you are not editing stays selected where it is, with the system's own handles and menu, and a formatting row (Bold, Italic, page link, inline code, Strikethrough, Highlight) docked at the bottom of the screen changes it in place, through the normal edit and undo path. The block no longer opens its editor for this, so the handles no longer disappear and the page no longer jumps while the keyboard restarts. Selecting in another block ends the edit in progress (its text is saved). With the keyboard open, the editor is now also scrolled clear of its own formatting row, not just of the keyboard toolbar.
@@ -58,6 +78,133 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Linux release checks complete alias navigation despite WebDriver screenshot stalls and read the backlink count separately from tagged pages (GH #62, GH #179).
+- Quick share initializes Android's device certificate verifier before connecting to GitHub, and packages its matching Kotlin component (D-20261025-QV).
+- Journal feeds, Upcoming, calendar dots and slash templates now refresh from their relevant changes, avoiding unrelated reads while typing (GH #746).
+- Sidebar disclosure arrows now use the shared SVG triangle, including nested Favorites, Tabs and namespaces; graph and workspace switchers inherit the app font (GH #761).
+- Cmd+, on macOS and Ctrl+, elsewhere open Settings, including while editing a block; the existing `t s` shortcut remains available and both defaults appear in Keyboard shortcuts (GH #762).
+- Queries skip unrelated saves and graph-wide queries wait for a 1.5-second typing pause; collapsed reference sections keep their last count with a stale indicator until opened (GH #746).
+- Clock queries invalidate when an edit follows an expired instant, and Pages and blocks queries keep the typing pause even when subscription renewal finishes late (GH #746).
+- Linux: input methods can show composing text inside the editor. Verified with IBus Hangul; this may fix Fcitx5 input not appearing (GH #575), but Fcitx5/Hyprland remains unverified.
+- A brand-new page with no file yet now shows an editable first bullet when opened in the right sidebar, so you can type or drag blocks into it without first editing it in the main pane (GH #524).
+- Clicking a hidden `{{cloze}}` reveals the answer in place again (and hides it on a second click), instead of opening the block editor (GH #763).
+- Mobile: the help "?" button no longer covers the last buttons of the bottom-docked formatting toolbar while text is selected, with or without the keyboard (internal UI-HELP-FAB-ABOVE-DOCKED-TOOLBAR).
+- Windows: a save made while the previous save of the same page was still replacing the file is no longer refused as "write target escapes graph root" when Windows reports the replaced file's location for the page (internal REG-WIN-WRITE-TARGET-DISPLACED; completes the 0.8.0-beta.4 fix).
+- Block references keep resolving after a block moves between pages and after reopening the graph; dangling references no longer scan unrelated pages (GH #746, GH #623).
+- The exact block-owner index builds in bulk at cold launch and writes compact checkpoint rows without temporary page copies (GH #623).
+- The exact block-owner index keeps UUID keys in 16 bytes and shares one allocation per tree node, reducing its memory use on large graphs (GH #623).
+- **Opening and scrolling a large page right after typing is fast again** (development only, internal card hDSCuw): the typing-stall diagnostics added for GH #746 ran work on every frame for two seconds after each key, which made a page opened from search or the page switcher, and its first scroll, about a frame slower. They now do no per-frame work.
+
+- Quick Capture keeps refused text on Escape, so reopening the box files it into the current graph; a claim retired before insertion no longer reports previous-graph uncertainty (GH #254). Deleting a conflicted page now refuses an unanswered input drain after five seconds and restores editable text.
+- Reference and embed rows validate their source page before becoming editable, so a copied block identity cannot expose another page's live block or selection (follow-up to GH #748).
+- Moving a graph preserves access to device-local unsaved edits through **Recover into this graph** and stops saves when an open folder moves or disconnects. Recovery excludes hosts still saving; open graphs permit drive eject, and recovery/backup notices explain that a graph may be moved or unavailable, including on a disconnected drive (L9-01, L9-02).
+- Windows now holds the same account-wide graph owner lock as Linux and macOS, so concurrent Tine apps cannot host one graph or adopt its live drafts (L9-01, L9-02).
+
+- An asset stays in place if sync replaces a set-aside duplicate journal while Tine checks whether the asset is unused; the check refuses stale bytes even when the replacement keeps the same length and modification time (GH #623).
+
+## [0.8.0-beta.12] - 2026-10-24
+
+Fixes for the 0.8.0 stable candidate: pasting a copied link keeps its URL (GH #759), opening a PDF no longer pulls the reader back to the top of the page (GH #672), a backlink to a highlight of a PDF that was not open scrolls to it, multiline Org blocks no longer add blank lines at the end of the file (GH #741), and hidden id:: and collapsed:: lines stay in the block's property group. Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
+
+### Fixed
+
+- A restore that clears an earlier read failure refreshes page names and icons even when the restored bytes are unchanged (GH #543).
+- Removing a duplicate journal's winning file keeps other pages usable when the promoted file cannot be parsed, reporting that file as unreadable (GH #644).
+- A duplicate journal file delivered or edited by sync contributes the same references and query results while Tine runs as after a restart; the existing duplicate-day resolver still lists both files (internal card PVTI_lAHOAAbLVc4BhPsyzhCJePk).
+- A name claimed by two page files keeps the winning file's icon after a configuration reload, including while that page is open (internal card PVTI_lAHOAAbLVc4BhPsyzhCJePk).
+- A file made readable by a permissions-only repair reappears on a regular check or focus refresh; unchanged invalid content is not repeatedly read or parsed (GH #543; existing fix now covered by the formerly ignored stamps-refresh repro).
+- Deleting a conflicted page preserves the latest typing in its recovery copy. Quick Capture keeps a title with an empty body, offers a plain retry when saving takes too long, and reports previous-graph uncertainty only after a graph window accepted the capture (GH #254 capture family; L9 review FU1/FU2/H4).
+- Quick Capture removes the saved portion before filing later additions, preserves an unconfirmed capture on Escape, and prevents retries from inserting it again after a graph-window reload (GH #254 capture family; L9 review F1–F3).
+- A block move that rolls back because of unfinished page-header input now explains why and keeps that input and the blocks (L9 review F4, card PVTI_lAHOAAbLVc4BhPsyzhC1syQ).
+- Pasting a copied link keeps its URL and inserts it at the caret, preserving surrounding text. Inline HTML formatting is retained, with links in the page's Markdown or Org format (GH #759).
+- Following a backlink or block reference to a highlight of a PDF that was not open yet now scrolls to that highlight, as Logseq does, instead of opening the PDF with the highlight marked but off-screen. The scroll waits for the page to finish drawing, happens once, and is dropped if you scroll yourself first (card hCAoxs).
+- Opening a PDF no longer pulls the reader back to the top of the page about a tenth of a second later: following a backlink to a highlight of a PDF that was not open yet, or scrolling right after opening one, could be undone by a leftover zoom adjustment from opening (GH #672).
+- Editing a multiline Org block no longer adds permanent blank lines at the end of the file when autosave runs just after Shift+Enter (GH #741).
+- Editing a Markdown block that has its own properties keeps the hidden `id::` and `collapsed::` lines in the same property group, as Logseq writes them. Before, they moved below the body text, where Logseq ignores them, so references to the block could break in Logseq (internal: REG-HIDDEN-PROPS-STAY-IN-THE-GROUP).
+
+## [0.8.0-beta.11] - 2026-10-24
+
+Fixes for the 0.8.0 stable candidate: restoring a session keeps every tab on its last page, changing outline levels on long pages with images no longer makes the view jump (GH #745), the mobile editing toolbar works above the sidebar drawers (GH #751), page-property rows in Linked References keep their look after an edit (GH #753), switching table cells saves the previous edit (GH #754), and board cards drag even when another editor had focus (GH #756). Fixes described elsewhere as "fixed for Tine 0.9 (development)" are not in this Beta; they arrive with the first 0.9 Beta.
+
+### Fixed
+
+- Restoring a saved session keeps every tab on its last page, with its order, pins and active tab, instead of replacing the active page with the graph's configured home (internal card PVTI_lAHOAAbLVc4BhPsyzhDC3x4).
+- A stopped graph owner releases its lock at once, even while a process spawned at that moment still holds an inherited copy of the lock file's handle; before, the next owner could briefly find the graph still locked (internal: REG-OWNER-LOCK-INHERITED-DESCRIPTOR).
+- Switching table cells by double-click saves the previous edit; invalid numbers keep their editor open (GH #754).
+- Editing a multiline Org block, including a handwritten LOGBOOK, no longer adds permanent blank lines at the end of the file when autosave runs just after Shift+Enter (GH #741).
+- Files still arriving from another editor or sync service retry quietly; settled read failures avoid repeating full-graph checks, permission repairs recover without a content change, and unreadable files keep their last readable page. Saves racing an external append still report a conflict (GH #543).
+- Typing a property after body text keeps the editor text and caret in place while saving one property group; CLI identity checks accept the same UUID in either letter case and ignore body lookalikes (GH #684; GH #721).
+- Appending or pasting property text keeps hidden metadata in the group Logseq reads, and editing repairs earlier split groups; CLI edits refuse a supplied id that differs from the block's existing id (GH #684, GH #721).
+- Hidden properties keep their order during text edits, stay on a cleared first block, and avoid duplicate keys during sheet transfers and CLI read-then-edit; in-page replace handles these blocks again (GH #208; GH #338; internal card PVTI_lAHOAAbLVc4BhPsyzhDKQyY).
+- Editing a Markdown block that has its own properties keeps the hidden `id::` and `collapsed::` lines in the same property group, as Logseq writes them. Before, they moved below the body text, where Logseq ignores them, so references to the block could break in Logseq (internal: REG-HIDDEN-PROPS-STAY-IN-THE-GROUP).
+- Owner-lock regression checks now require immediate release even while a duplicate descriptor remains open, catching the Unix child-inheritance race without a retry that could hide it (internal REG-OWNER-LOCK-INHERITED-DESCRIPTOR).
+- Board cards drag between columns even when an editor outside the board has focus, without selecting text during the drag (GH #756).
+- Hover previews stay clear of the page link or block reference that opened them, scrolling within the available space above or below it (GH #750).
+- The title and Open source actions stay visible while scrolling a hover preview (GH #752).
+- Switching table cells by double-click saves the previous edit; invalid numbers keep their editor open (GH #754).
+- **Hidden Logseq metadata** (internal card PVTI_lAHOAAbLVc4BhPsyzhDCwFo): built-in and configured hidden properties stay out of the editor and rendered property lists, following Logseq's block/page rules; editing preserves the hidden lines, and Properties still lets you change or remove them.
+- Hover previews stay clear of the page link or block reference that opened them, scrolling within the available space above or below it (GH #750).
+- The title and Open source actions stay visible while scrolling a hover preview (GH #752).
+- GH #741: accept case-equivalent properties when restoring clock history; keep a refused edit open with its typed text and a persistent error offering Copy recovery.
+- GH #741: keep LOGBOOK drawers out of the task editor, preserve clocks when pressing Enter or merging blocks, and retain clock history during CLI edits (Tine 0.9 development).
+- GH #741: retain opaque clocks during rich copy/cut and sheet transfers, protect clock-only paste targets, keep restored Org identities parser-owned, and let handwritten drawers finish in the active editor.
+- **Margin comments** (internal UI-MARGIN-POLISH): select words and click **Comment** in the toolbar; cards and replies now offer **Reply** and **×** (delete with replies, restored together by Undo). Blocks with their own `quote` property hide quote context and author metadata while editing and retain their saved bytes; ordinary blocks keep those properties editable. Quoted replies stay readable inside their thread.
+- Page-property rows in Linked References keep the same appearance after editing, including other groups showing the same page (GH #753).
+
+- **Margin comments** (internal UI-MARGIN-POLISH): select words and click **Comment** in the toolbar; cards and replies now offer **Reply** and **×** (delete with replies, restored together by Undo). Blocks with their own `quote` property hide quote context and author metadata while editing and retain their saved bytes; ordinary blocks keep those properties editable. Quoted replies stay readable inside their thread.
+- **Hover previews share the source's fold** (GH #748): folding or unfolding a block in a page-link or block-reference preview now saves the source block's `collapsed::` property, with Undo. An open page and its preview follow each other's folds, and expanded blocks' arrows work too. A source that cannot be written keeps a local preview fold.
+- Changing a block between outline levels one and two on long pages with images above no longer makes the view jump; structural edits preserve loaded image and measured window geometry (GH #745).
+- **Margin comments** (internal UI-MARGIN-POLISH, UI-MARGIN-R3-CARD, UI-MARGIN-R4-CARD, UI-MARGIN-R3-DRAFT, UI-MARGIN-R3-TOOLBAR): select words and click the rightmost **Comment** speech bubble in the desktop or touch toolbar. Cards and replies have **×** at the top right on their first content line, beside the author chip, without an empty action row (delete with replies, restored together by Undo). Threads offer an expanding **Reply…** draft at the bottom; abandoned empty drafts create no block or save. Blocks with their own `quote` property hide quote context and author metadata while editing and retain their saved bytes; ordinary blocks keep those properties editable. Quoted replies stay readable inside their thread.
+
+- On mobile, the bottom editing toolbar stays usable above either sidebar drawer, acts on its focused editor, and reveals the editor above the keyboard while popups remain accessible (GH #751).
+- After a restore from backup, a page that was being edited when the restore began closes normally once editing ends, instead of staying open for the rest of the session. A component draft open across the restore (for example a table cell) no longer keeps holding back newer file content from that page after it closes (internal: REG-HOST-REBIND-ACQUISITION-RELEASE).
+- **Reference rows show code blocks and dates before their page loads** (UI-M19-REFERENCE-BODY): while a linked reference or block-reference row waits for its source page, it is now drawn by the same renderer as the page itself, so a code block appears as code instead of raw ``` lines, and SCHEDULED and DEADLINE dates show as on the page. Before, those rows only looked right once the source page had loaded.
+
+- Editing a sheet row reuses other rows' formula results and table/board filter answers, reducing pauses in large sheets (audit L10-05; development only).
+- Saving a page with many reference targets avoids quadratic candidate-index diff work while preserving the same reference owners (audit L10-07; development only).
+- Restoring a saved session keeps every tab on its last page, with its order, pins and active tab, instead of replacing the active page with the graph's configured home (internal card PVTI_lAHOAAbLVc4BhPsyzhDC3x4).
+- Wide tables in query results sit inside the page again instead of being shifted to the right and cut off (GH #749).
+- The macOS app icon keeps Apple's icon-grid margin, so the Dock no longer shows Tine larger than other apps (GH #747).
+- Cycling selected task blocks with Ctrl/Cmd+Enter now opens clocks on DOING/NOW and closes them on DONE when time tracking is enabled, in one Undo step (internal UI-TASK-CYCLE-TIMETRACKING).
+- A save no longer stalls, and renames or moves no longer report Busy, when another writer releases a page at the moment Tine's page host goes to sleep: the host's path-lock retry could be dropped, leaving it waiting for an unrelated wake (internal: page-host driver lost wakeup).
+- A page file replaced by something larger than 64 MiB while open is now refused like every other read instead of being loaded whole into memory; unsaved typing stays (audit L6-02).
+- CLI run edits refuse pages with Git content filters or encoding conversion before saving or creating raw Git objects, including in nested graph roots (L7s5-01). A concurrent branch checkout now leaves both branches and the checked-out index untouched by the commit, with an explicit saved-but-uncommitted warning (L7s5-02).
+- **Logseq query answers and export notices** (audits L7s1-02, L7s1-03, L7s2-03): advanced property-map queries and self-page joins now visibly refuse instead of answering a guessed page relationship; quoted operands decode EDN escapes as Logseq does. Printed and published queries retain refusal explanations, including legacy scheduled/deadline conversion guidance, rather than claiming there are no matches.
+- **EDN characters in graph settings** (audit L7s1-01): character literals such as `\}` and `\]` no longer hide later `:hidden` exclusions or corrupt config.edn when Favorites are saved. Unrelated settings and comments keep their bytes.
+- Retrying Quick Capture after a save delay or acknowledgement timeout saves the same insertion instead of appending it twice (audit L9-08).
+- Moving blocks between pages refuses invalid page-header drafts and retains the blocks at their source instead of saving only one endpoint (audit L9-07).
+- Live conflict resolutions retain the reviewed external file in conflict trash before publication. Omitted merge choices keep both sides, and an unsuccessful conflicted-page delete retains local input (audits L9-04, L9-03, L2-04).
+- Slow asset, local-image, CSV, journal and conflict-diff reads now run off the UI thread (audit L7s4-03). Oversized iOS and Android share envelopes are refused before publication instead of reporting a share that cannot be ingested (L7s4-02). Macro rendering and Copy/Export check cumulative substitution size before allocating output (L7s8-02, macro half). Closing a PDF during loading now retires its loading worker, also on owner cancellation or failure (L7s6-01).
+
+- Renaming a page preserves longer tags such as `#foo+bar`, `#c++`, `#R&D` and `#foo🎉` when only their prefix matches, and updates complete tags before trailing punctuation such as `#foo.`. Renaming `c++` also updates `#c++` (audit L3-02).
+- A page being deleted stops accepting typing, paste, property and sheet edits until the delete answers. If deletion fails or is not confirmed, the page becomes editable again with its text intact; input can no longer slip past unsaved-text tracking during deletion (audit L9-06).
+- A draft whose name is an alias is added to its owner only once even when the owner's save is not confirmed. A later edit replaces the landed copy instead of appending a second copy, and a refused landing keeps the draft recoverable (audit L9-05).
+- Org body text such as `Note:: see [[Foo]]` remains visible in references, breadcrumbs and export (audit L3-04, RN-C). Renaming pages recognizes `.ORG` and `.Org` referrers as Org, preserving inline code and updating Org file links (audit L7s4-01).
+- CLI edits of an already running bare task use the editor's previous-marker rule, avoiding duplicate open clocks and closing the existing clock on completion when the replacement buffer retains its logbook (audit L3-07, RN-F).
+- **Long journal feeds retain fewer documents** (L10-03, development): offscreen days retire behind measured-height placeholders and reload when approached. Editing, unsaved and selected content stays loaded. Find searches loaded days and offers “search all journals” with the same query for older retired days.
+- Settings → unused assets now keeps images referenced only by a duplicate journal file for the same day, including references in its page properties. Moving an asset to trash checks those files too, and refuses if one cannot be read or analyzed (audit L8-03).
+- Refuse page-host I/O through a folder moved outside the graph and replaced by
+  a symlink, retaining queued and recovered text (audit L8-01).
+- Refuse a creating save when a new title claimant or possible unreadable owner
+  arrives while the absent page is open; retain the text and name the claimant
+  (audit L8-02).
+- Changing favorites, the journal template or display settings no longer re-reads and re-parses every graph page (audit L1-04).
+- In-page find stays responsive when a large block contains thousands of matches, using constant-time span deduplication per hit (audit L2-13).
+
+- Long sessions release unloaded block facets and obsolete block-reference answers, bound historical parse and inactive answer memory by bytes, and clear retained graph text on reset (audit L10-01, L10-02, L10-04 / L7-01).
+- Reference sections, tagged pages and block referrers refresh after related edits without refetching on unrelated saves, including while collapsed (GH #746; development 0.9).
+- References, embeds, favorite blocks, journal sections and page icons stay live after target edits without fetching unrelated targets again on every save (GH #746).
+
+- **Soft Settings hierarchy** (GH #649, thanks @EllisMorrow): labels, descriptions and author/version/build details have distinct emphasis in light and dark mode, with quieter dividers and hover/selection borders; every text role keeps at least 4.5:1 contrast.
+- **Touchscreen pinch zooms the PDF around the midpoint between your fingers**, keeping the drawn pages visible while you pinch and sharpening them after release. One-finger scrolling and text selection remain available (GH #742).
+- Block and page embeds keep their own bullet; Copy, Cut, Delete and drag on it act on the embed block, while every bullet inside acts on its source block. Cutting and pasting a source really moves it, and Undo restores it. This retires GH #514's source-root drag redirection to the host (GH #726).
+- Diagnostic reports now include bounded, memory-only renderer stalls while typing, with bundled script attribution where the WebView supports it (GH #746).
+
+- **Holding a key on a large graph no longer makes typing stall more and more.** While you type, Tine saves the page about once a second, and after each save it refreshes the linked and unlinked references, page icons, block references and queries. When one refresh took longer than a second, the next one started before it finished, the refreshes piled up and competed with your typing. Now a refresh waits for the previous one to finish, and the saves made meanwhile are covered by one refresh afterwards, so the views still end up showing your latest text. Related to GH #746 (UI-GH746-REFRESH-ROUNDS-DO-NOT-PILE-UP).
+- **Typing no longer freezes for a moment every second or two on a page with many unlinked or linked references.** After each save, the references at the bottom of the page reload. With every reload, Tine also rebuilt the index behind the references filter, over every reference and all of its child blocks. It did that even with the section collapsed and the filter closed, which could take most of a second. Now the index is built only while you use the filter or its search. A reload also keeps the references on screen instead of showing "Loading…", and leaves unchanged rows alone instead of drawing them again. GH #746 (UI-GH746-REFERENCE-REFRESH-COST).
+
+- **On a long page with images, pressing Enter, Backspace or another structural key no longer throws the view back down or loses the block you were editing (most visible on Windows)**: the edit briefly re-lays out the blocks around it, and the editor no longer lets the webview scroll to that interim position; the view now moves only as far as showing the caret needs, and not at all while it is already visible, below any pinned parent rows. Not new in 0.8 (GH #745).
+- **Typing `DOING` no longer sends the rest of your text to the end of the block, and a stray `CLOCK:` line no longer blanks the page.** The clock-in that Tine writes under a task (the `:LOGBOOK:` lines) moved the caret to the end of the block, so the next characters you typed landed after `:END:`; the caret now stays on the task line. Typing on after `DOING` also no longer adds a second clock-in line. A `CLOCK:` line that is not inside a complete `:LOGBOOK:` drawer (for example `:END:  test`) used to make the page show "This page could not be displayed" (`TypeError: Cannot read properties of undefined (reading 'year')`); it now renders as a time stamp, and any other time stamp shape Tine does not know renders as nothing instead of failing (GH #741, UI-GH741-DOING-CLOCK-IN). This happened on stable 0.7.x too.
 - **Page changes refuse while the graph is not open, instead of writing unguarded** (internal REG-HOST-OFF-PAGE-WRITERS-REFUSE, card g_-lnA): if Tine could not start, or restart after a backup restore, the part that guards a graph's pages (for example on a disk error), merging or rescuing pages, moving a journal to trash, renaming journal files, saving PDF highlights, resolving a sync conflict, duplicate journal day or merge conflict, and copying the Guide used to write the files anyway, beside any unsaved edits. They now say "The graph isn't open right now. Reopen it, then try again." and change nothing.
 
 - A PDF in the dark reader theme no longer turns light when zoomed past 300% (internal UI-PDF-DARK-TILES): the sharper tiles drawn at high zoom are now darkened like the rest of the page.

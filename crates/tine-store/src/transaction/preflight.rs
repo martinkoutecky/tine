@@ -259,7 +259,7 @@ impl<'a> Transaction<'a> {
                 let new = if *rebind_title {
                     rewrite_move(&old, &path, renames, name_format)?
                 } else if let Some(new) = reused {
-                    let is_org = path.extension().and_then(|ext| ext.to_str()) == Some("org");
+                    let is_org = Format::from_path(&path) == Format::Org;
                     refuse_read_only_org(&old, &new, is_org)?;
                     new
                 } else {
@@ -407,6 +407,36 @@ impl Transaction<'_> {
         self.unreadable_owner(file, &[name])
     }
 
+    /// The creating host save's logical slot, after its physical absence/twin
+    /// guard. Only creation pays: published lookup and bounded unreadable probes.
+    /// A running move's source may still claim the receiver's name.
+    pub(crate) fn creating_save_owner(
+        &self,
+        file: &FileId,
+        name: Option<&str>,
+        source: Option<&FileId>,
+    ) -> Result<(), Why> {
+        let path = self.path(file)?;
+        let graph = &self.store.graph;
+        let filename = graph.entry_for_path_in(&path, Some(""));
+        for entry in filename.iter() {
+            if let Some(existing) = self.store.move_claimant(&entry.name, entry.kind) {
+                if existing.path != path
+                    && source.is_none_or(|source| graph.root.join(source.as_str()) != existing.path)
+                {
+                    return Err(Why::Refused(Refusal::Twin {
+                        existing: PageId::from(graph.rel_path(&existing.path)),
+                    }));
+                }
+            }
+        }
+        if source.is_none() {
+            let names: Vec<_> = name.into_iter().collect();
+            self.unreadable_owner(file, &names)?;
+        }
+        Ok(())
+    }
+
     /// The page host's open of `file` (STEP3 §2): an eligible page target;
     /// with no file there, the page is being created, so the create-only
     /// checks run, as they run for a `CreateNew` save. A file that appears
@@ -437,11 +467,45 @@ impl Transaction<'_> {
         old: Option<&[u8]>,
         resolving: bool,
     ) -> Result<(Vec<u8>, Document), Why> {
+        self.serialize_page_at(&self.path(file)?, doc, old, resolving)
+    }
+
+    /// Admission must retain input typed after a root detaches. Serialization
+    /// uses only the validated page id and the host's comparison bytes; the
+    /// later graph save still crosses every physical target/root guard. Keep
+    /// normal admission refusals (including child symlinks) while bound. Probe
+    /// the root only after a failed target lookup, adding no successful-edit I/O.
+    pub(crate) fn serialize_host_input(
+        &self,
+        file: &FileId,
+        doc: &PageDto,
+        old: Option<&[u8]>,
+    ) -> Result<(Vec<u8>, Document), Why> {
+        self.page_save_target(file, doc)?;
+        let path = self.path(file).or_else(|why| {
+            if self.store.graph.root_binding.check().is_err_and(|error| {
+                error
+                    .get_ref()
+                    .is_some_and(|inner| inner.is::<crate::root_binding::GraphRootMoved>())
+            }) {
+                Ok(self.store.graph.root.join(file.as_str()))
+            } else {
+                Err(why)
+            }
+        })?;
+        self.serialize_page_at(&path, doc, old, false)
+    }
+
+    fn serialize_page_at(
+        &self,
+        path: &Path,
+        doc: &PageDto,
+        old: Option<&[u8]>,
+        resolving: bool,
+    ) -> Result<(Vec<u8>, Document), Why> {
         if let Some(old) = old {
-            crate::model::validate_parse_bytes_for_path(old, &self.path(file)?)
-                .map_err(content_refusal)?;
+            crate::model::validate_parse_bytes_for_path(old, path).map_err(content_refusal)?;
         }
-        let path = self.path(file)?;
         let text = match old {
             Some(bytes) => Some(std::str::from_utf8(bytes).map_err(|error| {
                 content_refusal(io::Error::new(io::ErrorKind::InvalidData, error))

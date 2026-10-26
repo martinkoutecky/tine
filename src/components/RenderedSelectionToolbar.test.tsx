@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, createRoot, createSignal, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -141,10 +142,10 @@ describe("rendered-selection toolbar: exact, owned mapping (GH #375 review r1)",
     const page = mountPage();
     const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
     try {
-      const editor = page.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      editor.focus();
-      editor.value = "first block edited";
-      editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      const editor = maybeEditorIn(page.root)!;
+      editor.element.focus();
+      editor.replaceText("first block edited");
+      editor.reportInput({ bubbles: true });
       selectText(row(page.root, "second"), "answer");
       expect(selectedText()).toBe("answer");
       expect(editingId()).toBeNull();
@@ -159,11 +160,11 @@ describe("rendered-selection toolbar: exact, owned mapping (GH #375 review r1)",
     const page = mountPage();
     const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
     try {
-      const editor = page.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      editor.focus();
-      editor.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
-      editor.value = "draft still composing";
-      editor.dispatchEvent(new InputEvent("input", { bubbles: true, isComposing: true }));
+      const editor = maybeEditorIn(page.root)!;
+      editor.element.focus();
+      editor.compositionStart(new CompositionEvent("compositionstart", { bubbles: true }));
+      editor.replaceText("draft still composing");
+      editor.reportInput({ bubbles: true, isComposing: true });
       expect(docNode("first").raw).toBe("first block");
       selectText(row(page.root, "second"), "selected");
       expect(docNode("first").raw).toBe("draft still composing");
@@ -173,7 +174,7 @@ describe("rendered-selection toolbar: exact, owned mapping (GH #375 review r1)",
   });
 
   it.each([
-    ["md", "title\nid:: 6500a1b2-0000-4000-8000-000000000001\nnext selected words", "title\nnext **selected** words\nid:: 6500a1b2-0000-4000-8000-000000000001"],
+    ["md", "title\nid:: 6500a1b2-0000-4000-8000-000000000001\nnext selected words", "title\nid:: 6500a1b2-0000-4000-8000-000000000001\nnext **selected** words"],
     ["org", "title\n:PROPERTIES:\n:ID: 6500a1b2-0000-4000-8000-000000000001\n:END:\nnext selected words", "title\n:PROPERTIES:\n:ID: 6500a1b2-0000-4000-8000-000000000001\n:END:\nnext *selected* words"],
     ["md", "title\nsecond selected words\nthird line", "title\nsecond **selected** words\nthird line"],
     ["md", "title\n| a | b |\n|---|---|\n| x | selected |", "title\n| a | b |\n|---|---|\n| x | **selected** |"],
@@ -268,16 +269,16 @@ describe("rendered-selection toolbar (GH #375)", () => {
     const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
     try {
       // Block A is being edited, with typed text not yet saved to disk.
-      const editor = page.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      editor.focus();
-      editor.value = "first block edited";
-      editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      const editor = maybeEditorIn(page.root)!;
+      editor.element.focus();
+      editor.replaceText("first block edited");
+      editor.reportInput({ bubbles: true });
 
       selectText(row(page.root, "second"), "selected");
 
       // (b) A's edit ends through its normal exit, with its text kept.
       expect(editingId()).toBeNull();
-      expect(page.root.querySelector("textarea")).toBeNull();
+      expect(maybeEditorIn(page.root)).toBeNull();
       expect(docNode("first").raw).toBe("first block edited");
       expect(isDirty("Sel")).toBe(true);
       // The selection stays native, in the rendered block.
@@ -286,7 +287,7 @@ describe("rendered-selection toolbar (GH #375)", () => {
 
       press("bold");
       expect(docNode("second").raw).toBe(bolded);
-      expect(page.root.querySelector("textarea")).toBeNull();
+      expect(maybeEditorIn(page.root)).toBeNull();
       expect(editingId()).toBeNull();
       // Re-selected in the re-rendered block, so a second tap toggles it back.
       expect(selectedText()).toBe("selected");
@@ -334,7 +335,7 @@ describe("rendered-selection toolbar (GH #375)", () => {
       press("strikethrough");
       expect(docNode("second").raw).toBe("alpha ~~selected~~ omega");
       expect(row(page.root, "second", 1).contains(document.getSelection()!.anchorNode)).toBe(true);
-      expect(page.root.querySelector("textarea")).toBeNull();
+      expect(maybeEditorIn(page.root)).toBeNull();
     } finally { page.dispose(); }
   });
 
@@ -346,7 +347,7 @@ describe("rendered-selection toolbar (GH #375)", () => {
       press("page-link");
       expect(docNode("second").raw).toBe("alpha [[selected]] omega");
       expect(toolbar()).toBeNull();
-      expect(page.root.querySelector("textarea")).toBeNull();
+      expect(maybeEditorIn(page.root)).toBeNull();
     } finally { page.dispose(); }
   });
 
@@ -386,7 +387,7 @@ describe("rendered-selection toolbar (GH #375)", () => {
       selectText(row(page.root, "second"), "answer");
       expect(selectedText()).toBe("answer");
       expect(toolbar()).toBeNull();
-      expect(page.root.querySelector("textarea")).toBeNull();
+      expect(maybeEditorIn(page.root)).toBeNull();
     } finally { page.dispose(); }
   });
 

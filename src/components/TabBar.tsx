@@ -511,7 +511,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
       ownerWindow.removeEventListener("pointermove", onMove);
       ownerWindow.removeEventListener("pointerup", onUp);
       ownerWindow.removeEventListener("pointercancel", onCancel);
-      ownerWindow.removeEventListener("blur", onBlur, true);
+      ownerWindow.removeEventListener("blur", onBlur);
       card.removeEventListener("lostpointercapture", onLostPointerCapture, true);
       try {
         if (typeof card.hasPointerCapture === "function" &&
@@ -583,7 +583,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     ownerWindow.addEventListener("pointermove", onMove);
     ownerWindow.addEventListener("pointerup", onUp);
     ownerWindow.addEventListener("pointercancel", onCancel);
-    ownerWindow.addEventListener("blur", onBlur, true);
+    // Editor-to-tab focus transfer must not cancel the armed drag.
+    ownerWindow.addEventListener("blur", onBlur);
     card.addEventListener("lostpointercapture", onLostPointerCapture, true);
   }
 

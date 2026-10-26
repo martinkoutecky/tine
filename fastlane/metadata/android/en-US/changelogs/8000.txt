@@ -1,0 +1,1 @@
+Tine 0.8.0 makes the 0.8 Beta line stable. New: a command line on Linux and macOS, the interface in Simplified Chinese, the Android share sheet, launcher shortcuts and a Quick capture tile, a Journal sections page for what today's journal shows, page icons, and saving in one background page host per graph, so every edit is saved as you type. Your settings and graphs carry over.
