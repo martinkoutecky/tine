@@ -37,6 +37,17 @@ export function retireGraphCssEditor(): void {
 }
 clearOnBindingInvalidated(retireGraphCssEditor);
 
+/** Desktop handoff for the two fixed CSS paths. Native code owns creation and
+ * path selection; opener errors always reach the existing error toast. */
+export async function openCssInDefaultApp(global: boolean): Promise<void> {
+  const owner = ownedWhen(global ? () => true : bindingOwner());
+  try {
+    await writeOwned(owner, global ? backend().editGlobalCss() : backend().editCustomCss());
+  } catch (error) {
+    pushToast(t("css-open-failed", { error: String(error) }), "error");
+  }
+}
+
 /** One editor for the two fixed files. Opening another file first saves the
  * current buffer; a conflict retains the current editor and its user's text. */
 export async function openCssEditor(global: boolean): Promise<void> {

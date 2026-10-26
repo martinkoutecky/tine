@@ -1164,6 +1164,26 @@ note = "Global CSS app-data parent directory setup; graph CSS delegates to Trans
 mutations = "fs::create_dir_all=1"
 
 [[site]]
+file = "src-tauri/src/css_files.rs"
+fn = "edit_global_css"
+domain = "app"
+guard = ""
+test = ""
+oracle = false
+note = "GH #778: create the app-config parent directory for global.css handoff; file creation delegates to the existing global_save/device_io::atomic_update guarded writer. Rust owns the path."
+mutations = "fs::create_dir_all=1"
+
+[[site]]
+file = "src-tauri/src/css_files.rs"
+fn = "install_global_css_watcher"
+domain = "app"
+guard = ""
+test = ""
+oracle = false
+note = "GH #778: ensure the app-config directory exists before installing its non-recursive global.css watch. No CSS file or graph content is written."
+mutations = "fs::create_dir_all=1"
+
+[[site]]
 file = "src-tauri/src/data_home.rs"
 fn = "probe_writable"
 domain = "app"

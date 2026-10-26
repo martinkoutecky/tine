@@ -1756,6 +1756,10 @@ mod customize_look_guide_tests {
         for needed in [
             "logseq/custom.css",
             "**Edit global CSS**",
+            "**Open in default app**",
+            "**Open custom.css in default app**",
+            "**Open global CSS (global.css) in default app**",
+            "Saves from your external editor apply live",
             "per-user config directory",
             "**Reload**",
             "**Ctrl+K**",

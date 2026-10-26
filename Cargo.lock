@@ -5094,6 +5094,7 @@ dependencies = [
  "jni 0.22.4",
  "libc",
  "libgit2-sys",
+ "notify",
  "reqwest",
  "rustls",
  "rustls-platform-verifier",

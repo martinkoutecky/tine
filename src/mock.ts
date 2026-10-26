@@ -1513,6 +1513,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async onAssetChanged(): Promise<() => void> { return () => {}; },
     async onGraphConfigChanged(): Promise<() => void> { return () => {}; },
     async onCustomCssChanged(): Promise<() => void> { return () => {}; },
+    async editGlobalCss(): Promise<void> {},
     async editCustomCss(): Promise<void> {
       // no OS editor in the browser mock
     },
