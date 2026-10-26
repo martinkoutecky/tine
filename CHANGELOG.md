@@ -15,9 +15,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Shift-click a calendar day, **Today**, or the calendar button to open that journal in the right sidebar, as in Logseq (GH #740).
 - A page embed's icon aligns with the first line of a title that wraps (GH #770).
 - Backspace removes an empty bullet inside a block embed when its source ancestor is folded (GH #766).
+- Expand and Collapse (one level) now follow a block embed's own folds and open or close child page embeds, while keeping embedded source folds separate (GH #768, GH #769).
+- Refused renames of pages with duplicate identities now name the conflicting graph-relative files and explain that they must be merged or removed (GH #774).
 - macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
 ### Added
 
+- Tags and page references expose Logseq-compatible `data-ref` names so custom CSS can style individual tags and links, including static exports (GH #773).
 - Guide: a new **Share pages** page covers the Share dialog, folder exports, quick-share links, Re-share, Update all, Delete and Settings → Sharing. The tips page explains margin comments more fully (every way to start one, how replies and authors are stored), and the git autocommit section describes its status lines and the messages for a folder without git or a phone.
 - Command line: `page create`, `page rename` with reference rewriting, and confirmed `page delete` through the app's page operations; `ref` and `embed` print reusable syntax after ensuring a durable block id. Page deletion reports broken references.
 

@@ -1781,6 +1781,11 @@ mod customize_look_guide_tests {
             "**Typographic replacements**",
             "It is **Off** by default",
             "**On (while reading)**",
+            // GH #773: individual tags and page links can be themed by name.
+            "a.tag[data-ref=\"ai-note\"]",
+            "lowercased page name",
+            "namespace",
+            "alias",
         ] {
             assert!(page.contains(needed), "the page must mention {needed}");
         }

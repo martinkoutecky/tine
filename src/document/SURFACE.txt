@@ -163,6 +163,7 @@ selectBlock
 selectBlockSubtree  # why: Ctrl/Cmd+A escalation from the editor (GH #262); batch17a
 selectedIds
 selectionMarkdown
+selectionScope  # why: one-level fold commands resolve the selected occurrence's collapse surface instead of its source (GH #768); batch-fix-gh768
 setBlockProperty
 setCollapsed
 setCollapsedDeep

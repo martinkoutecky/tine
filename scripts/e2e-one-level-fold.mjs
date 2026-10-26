@@ -23,6 +23,16 @@ fs.writeFileSync(path.join(graph, "logseq/config.edn"),
 const PARENT = "6960a000-0000-4000-8000-000000000696";
 const file = path.join(graph, "pages", "Fold Demo.md");
 fs.writeFileSync(file, `- Parent\n  id:: ${PARENT}\n  - Child\n    collapsed:: true\n    - Grand\n`);
+// GH #768/#769: routed transclusions, kept separate from the original GH #696
+// journey so a host fold cannot accidentally be mistaken for a source fold.
+const embedSource = `- Embedded parent\n  id:: ${PARENT}\n  - Embedded child\n    - Embedded grandchild\n`;
+const embedSourceFile = path.join(graph, "pages", "Embed Source.md");
+// Use a distinct authored id from Fold Demo.
+const EMBED = "7680a000-0000-4000-8000-000000000768";
+fs.writeFileSync(embedSourceFile, embedSource.replace(PARENT, EMBED));
+const embedHostFile = path.join(graph, "pages", "Embed Host.md");
+fs.writeFileSync(embedHostFile, `- {{embed ((${EMBED}))}}\n  collapsed:: true\n- Page embed parent\n  - {{embed [[Page Body]]}}\n    collapsed:: true\n- [[Embed Host]]\n`);
+fs.writeFileSync(path.join(graph, "pages", "Page Body.md"), "- Embedded page body\n");
 const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(out, "data"),
   XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
@@ -85,14 +95,65 @@ try {
     ![...document.querySelectorAll(".block-content-wrapper")].some(el => el.textContent.trim() === "Grand" && el.offsetParent)),
     { timeout: 10000, timeoutMsg: "Expected Child visible and Grand hidden after expanding the block" });
   try { execFileSync("rtk", ["proxy", "import", "-window", "root", path.join(out, "opened.png")], { env }); } catch {}
-  proof.outcome = "PASS"; proof.folded = folded; proof.opened = opened;
+  proof.folded = folded; proof.opened = opened;
+  stage = "GH #768 routed block embed";
+  await openPageByName(browser, "Embed Host");
+  const editRow = async (scope, text) => {
+    await browser.waitUntil(() => browser.execute((scope, text) => [...document.querySelectorAll(`${scope} .block-content:not(.macro-host)`)]
+      .some(el => el.textContent.trim() === text), scope, text), { timeout: 10000 });
+    await browser.execute((scope, text) => {
+      const el = [...document.querySelectorAll(`${scope} .block-content:not(.macro-host)`)].find(el => el.textContent.trim() === text);
+      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+    }, scope, text);
+    await browser.$(`${scope} textarea.block-editor`).waitForExist();
+  };
+  const visibleText = async (scope, text, expected) => browser.waitUntil(() => browser.execute((scope, text, expected) =>
+    [...document.querySelectorAll(`${scope} .block-content`)].some(el => el.textContent.trim() === text && el.offsetParent) === expected,
+    scope, text, expected), { timeout: 10000, timeoutMsg: `${text}: expected visible=${expected} in ${scope}` });
+  const chord = async key => browser.keys(["Control", "Alt", key, "NULL"]);
+  for (const scope of [".main-content", ".right-sidebar"]) {
+    if (scope === ".right-sidebar") {
+      await browser.execute(() => {
+        const link = [...document.querySelectorAll(".main-content .page-ref")].find(el => el.textContent.includes("Embed Host"));
+        link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, shiftKey: true }));
+      });
+      await browser.$(".right-sidebar .embed-block").waitForExist({ timeout: 10000 });
+    }
+    await editRow(scope, "Embedded parent");
+    await chord("j");
+    await visibleText(scope, "Embedded child", true);
+    await waitForFileText(embedHostFile, text => text.includes("collapsed:: false"));
+    await chord("k");
+    await visibleText(scope, "Embedded grandchild", false);
+    await browser.keys(["Escape"]); // retain the occurrence in selection mode
+    await chord("j");
+    await visibleText(scope, "Embedded grandchild", true);
+    await chord("k"); await chord("k");
+    await visibleText(scope, "Embedded child", false);
+    await waitForFileText(embedHostFile, text => text.includes("collapsed:: true"));
+    if (fs.readFileSync(embedSourceFile, "utf8") !== embedSource.replace(PARENT, EMBED)) throw Error("Embedded source was changed by occurrence folds");
+    stage = `GH #769 child page embed in ${scope}`;
+    await editRow(scope, "Page embed parent");
+    await chord("j");
+    await visibleText(scope, "Embedded page body", true);
+    await chord("k");
+    await visibleText(scope, "Embedded page body", false);
+    await browser.keys(["Escape"]);
+    // WebKit's WebDriver screenshot can stall with this software compositor;
+    // use the same X11 capture as the original one-level journey above.
+    execFileSync("rtk", ["proxy", "import", "-window", "root", path.join(out, scope === ".main-content" ? "embeds-main.png" : "embeds-sidebar.png")], { env });
+  }
+  proof.embedSourceUnchanged = true;
+  proof.outcome = "PASS";
+  proof.journey += "; GH #768 block embed opens its own root then children; GH #769 child page embeds open and close, main pane and right sidebar";
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));
   console.log(`PASS GH #696: ${out}`);
 } catch (error) {
   try { execFileSync("rtk", ["proxy", "import", "-window", "root", path.join(out, "failure.png")], { env }); } catch {}
   try { fs.writeFileSync(path.join(out, "failure-dom.html"), await browser.getPageSource()); } catch {}
   fs.writeFileSync(path.join(out, "failure.json"), JSON.stringify({ ...proof, stage, file: fs.readFileSync(file, "utf8"),
-    expected: "Block folds on Collapse (one level), then opens alone on Expand (one level)", observed: String(error.stack),
+    expected: "One-level folds follow displayed block/page embed state in main/sidebar and preserve embedded source folds", observed: String(error.stack),
     classification: "ambiguous; inspect driver log and DOM" }, null, 2));
   throw error;
 } finally {
