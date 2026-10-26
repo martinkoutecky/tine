@@ -13,6 +13,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
 ### Added
 
+- Command line: `page create`, `page rename` with reference rewriting, and confirmed `page delete` through the app's page operations; `ref` and `embed` print reusable syntax after ensuring a durable block id. Page deletion reports broken references.
+
 - **Re-export** reviews a saved folder export in Replace mode. **Update all** on the Exports page reviews folder exports and quick shares together before confirmation, then updates them in order and shows each outcome, including skipped definitions and failures.
 
 - Re-share from a query or the Exports page to update the same link after reviewing added and removed pages; Delete remains available with confirmation (it also removes the definition the share added to the Exports page, and says the link stops working within about 5 minutes), and devices without the key offer a new link.

@@ -59,13 +59,21 @@ impl WindowLink {
     /// Ask the window to save the text typed on page `name`, and wait for
     /// its answer. Called on the owner's request thread, never the main one.
     pub(crate) fn flush_page(&self, name: &str) -> Flushed {
+        self.request_flush(name, false)
+    }
+
+    pub(crate) fn flush_all(&self) -> Flushed {
+        self.request_flush("", true)
+    }
+
+    fn request_flush(&self, name: &str, all: bool) -> Flushed {
         let id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
         let (answer, answered) = mpsc::sync_channel(1);
         self.waiting.lock().unwrap().insert(id, answer);
         let sent = self.app.emit_to(
             self.label.as_str(),
             "owner-flush-request",
-            json!({ "id": id, "page": name, "binding_generation": self.binding_generation }),
+            json!({ "id": id, "page": name, "all": all, "binding_generation": self.binding_generation }),
         );
         let outcome = match sent {
             Err(_) => Flushed::NoAnswer,
@@ -104,6 +112,35 @@ impl WindowLink {
                 "removed": false,
                 "binding_generation": self.binding_generation,
                 "answers": null,
+            }),
+        );
+    }
+
+    pub(crate) fn removed(&self, path: &str, name: &str, kind: PageKind) {
+        let _ = self.app.emit_to(
+            self.label.as_str(),
+            "graph-changed",
+            json!({
+                "path":path,"name":name,"kind":kind,"created":false,"removed":true,
+                "binding_generation":self.binding_generation,"answers":null,
+            }),
+        );
+    }
+
+    pub(crate) fn renamed(
+        &self,
+        old: &str,
+        new: &str,
+        path: Option<&str>,
+        kind: PageKind,
+        report: &tine_graph_features::pages::RenameReport,
+    ) {
+        let _ = self.app.emit_to(
+            self.label.as_str(),
+            "owner-page-renamed",
+            json!({
+                "old":old,"name":new,"path":path,"kind":kind,"report":report,
+                "binding_generation":self.binding_generation,
             }),
         );
     }

@@ -15,7 +15,24 @@ impl PageHost {
     /// or a persistent save error; it completes once it can); `Superseded`
     /// or `Uncertain` otherwise. `checked: None` means the caller's check
     /// found the file absent: see [`Self::delete_absent`].
-    pub fn delete(&self, session: u64, page: &PageId, checked: Option<&[u8]>) -> PageOperation {
+    /// Owner-side callers pass `None` to capture the current binding session
+    /// at entry, after their flush/read. A reload after capture and before
+    /// admission refuses; a reload before the call does not by itself refuse.
+    /// No window request id is used.
+    /// A window passes its explicit session as before.
+    pub fn delete(
+        &self,
+        session: impl Into<Option<u64>>,
+        page: &PageId,
+        checked: Option<&[u8]>,
+    ) -> PageOperation {
+        let session = match session.into() {
+            Some(session) => session,
+            None => match self.driver.shared.read(|state| state.book.session) {
+                Ok(session) => session,
+                Err(_) => return PageOperation::Refused,
+            },
+        };
         let Some(checked) = checked else {
             return self.delete_absent(session, page);
         };

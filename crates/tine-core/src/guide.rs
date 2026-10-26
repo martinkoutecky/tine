@@ -2019,6 +2019,11 @@ mod og_20d_guide_tests {
             "tine prop remove",
             "tine move",
             "tine delete",
+            "tine page create",
+            "tine page rename",
+            "tine page delete",
+            "tine ref BLOCK",
+            "tine embed BLOCK",
             "--rev",
         ] {
             assert!(cli.contains(command), "Guide must teach {command}");
