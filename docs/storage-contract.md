@@ -222,9 +222,11 @@ Linux and macOS use the existing account owner namespace; Windows now uses
 SHGetKnownFolderPath(FOLDERID_LocalAppData)/tine/owners, independent of the
 environment and app identifier, with the existing exclusive LockFileEx lock.
 Its owners directory and tine parent are created with current-user protected
-DACLs and checked on every use: current-user ownership, no reparse attributes,
-no foreign write/delete grants (SYSTEM and Administrators are trusted). Existing
-unsafe directories refuse `owner-unsafe`; their ACLs are never repaired in place.
+DACLs. Existing inherited or unprotected DACLs also pass when safe. Every use
+checks current-user/SYSTEM/Administrators ownership, no reparse attributes, a
+non-null DACL, and no explicit or inherited grants of write, delete, delete-child,
+WRITE_DAC or WRITE_OWNER outside those principals. Unknown ACE types and unsafe
+directories refuse `owner-unsafe`; their ACLs are never repaired in place.
 Windows exposes a local-only, current-user pipe named by account SID and graph
 hash, with first-instance squatting refusal and a client-side security check before
 sending graph data. Contention with serve follows the same custody-checked

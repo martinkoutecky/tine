@@ -568,9 +568,12 @@ Linux, macOS and Windows support all graph commands against the app or `tine ser
 including automatic serve startup, app handover and `serve --stop`. Windows uses
 the account-wide lock under Known Folder LocalAppData/tine/owners and the local-only
 pipe `\\.\pipe\tine-<user-sid>-<16-hex-graph-hash>`. The owners directory and its
-tine parent have explicit protected DACLs, belong to the current user, and reject
-reparse points or another account's write/delete rights (SYSTEM and Administrators
-are trusted). Existing directories are checked, never silently repaired. The pipe
+tine parent are created with explicit protected DACLs. Existing directories may
+have inherited or unprotected DACLs: both explicit and inherited ACEs are checked
+on every use. The owner must be the current user, SYSTEM or Administrators; reparse
+points, null DACLs, unknown ACE types, and grants of write, delete, delete-child,
+WRITE_DAC or WRITE_OWNER to anyone outside those principals refuse. Safe inherited
+directories keep their ACLs; no permissions are repaired. The pipe
 grants access only to the current user, rejects remote clients, and its first
 instance refuses an occupied name. Before sending a hello the client checks the
 connected pipe's owner and protected DACL. Unsafe permissions or pipe creation

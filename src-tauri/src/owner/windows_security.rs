@@ -1,5 +1,6 @@
-//! Windows account boundary (PROTOCOL §1): explicit protected DACLs, checked
-//! on every namespace use and on the connected pipe before sending a hello.
+//! Windows account boundary (PROTOCOL §1): protected DACLs on new objects,
+//! effective directory grants checked on every use (including inherited ACLs),
+//! and a private connected pipe checked before sending a hello.
 use std::ffi::c_void;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
@@ -216,19 +217,24 @@ pub(super) fn check_handle(handle: HANDLE, directory: bool) -> Result<(), OwnerE
     }
     let _descriptor = Descriptor(descriptor);
     let sid = user_sid()?;
-    if owner.is_null() || sid_text(owner)? != sid {
+    if owner.is_null() {
+        return Err(OwnerError::Unsafe("owner object has no owner".into()));
+    }
+    let owner = sid_text(owner)?;
+    if owner != sid && !(directory && matches!(owner.as_str(), "S-1-5-18" | "S-1-5-32-544")) {
         return Err(OwnerError::Unsafe(
-            "owner object must belong to the current account".into(),
+            "owner object must belong to the current account or a trusted directory administrator"
+                .into(),
         ));
     }
     let mut control = 0;
     let mut revision = 0;
     if unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0
-        || control & SE_DACL_PROTECTED == 0
+        || (!directory && control & SE_DACL_PROTECTED == 0)
         || dacl.is_null()
     {
         return Err(OwnerError::Unsafe(
-            "owner object must have a protected, explicit DACL".into(),
+            "owner object must have a non-null DACL (protected for pipes)".into(),
         ));
     }
     for index in 0..unsafe { (*dacl).AceCount } as u32 {
@@ -236,8 +242,9 @@ pub(super) fn check_handle(handle: HANDLE, directory: bool) -> Result<(), OwnerE
         if unsafe { GetAce(dacl, index, &mut raw) } == 0 {
             return Err(unsafe_io("cannot inspect owner access rule"));
         }
-        // Reject unfamiliar granting ACEs rather than overlooking object or
-        // callback ACEs. Denials cannot grant another account access.
+        // Evaluate inherited and explicit grants identically. Reject unfamiliar
+        // ACE types rather than overlooking object or callback ACEs. Ordinary
+        // denials cannot grant another account access.
         let header = unsafe { &*raw.cast::<ACE_HEADER>() };
         if header.AceType == 1 {
             continue;
@@ -270,15 +277,126 @@ pub(super) fn check_handle(handle: HANDLE, directory: bool) -> Result<(), OwnerE
 mod tests {
     use super::*;
 
+    fn create_with_dacl(path: &Path, dacl: &str) {
+        let sid = user_sid().unwrap();
+        let descriptor = Descriptor::from_sddl(&format!("O:{sid}{dacl}")).unwrap();
+        let name = wide(path.as_os_str());
+        assert_ne!(
+            unsafe { CreateDirectoryW(name.as_ptr(), &descriptor.attributes()) },
+            0,
+            "{}",
+            std::io::Error::last_os_error()
+        );
+    }
+
+    fn assert_inherited_dacl(path: &Path) {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Security::INHERITED_ACE;
+
+        let file = std::fs::OpenOptions::new()
+            .access_mode(READ_CONTROL)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)
+            .unwrap();
+        let mut dacl = null_mut();
+        let mut descriptor = null_mut();
+        assert_eq!(
+            unsafe {
+                GetSecurityInfo(
+                    file.as_raw_handle(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION,
+                    null_mut(),
+                    null_mut(),
+                    &mut dacl,
+                    null_mut(),
+                    &mut descriptor,
+                )
+            },
+            0
+        );
+        let _descriptor = Descriptor(descriptor);
+        let mut control = 0;
+        let mut revision = 0;
+        assert_ne!(
+            unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) },
+            0
+        );
+        assert_eq!(control & SE_DACL_PROTECTED, 0);
+        assert!(!dacl.is_null());
+        assert!(unsafe { (*dacl).AceCount } > 0);
+        for index in 0..unsafe { (*dacl).AceCount } as u32 {
+            let mut raw = null_mut();
+            assert_ne!(unsafe { GetAce(dacl, index, &mut raw) }, 0);
+            assert_ne!(
+                u32::from(unsafe { (*raw.cast::<ACE_HEADER>()).AceFlags }) & INHERITED_ACE,
+                0
+            );
+        }
+    }
+
     #[test]
-    fn directory_checks_reject_foreign_write_delete_and_unprotected_or_null_dacl() {
+    fn existing_inherited_owner_directories_keep_arbitration() {
+        let data = tempfile::tempdir().unwrap();
+        let sid = user_sid().unwrap();
+        let profile = data.path().join("private-profile");
+        create_with_dacl(
+            &profile,
+            &format!("D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"),
+        );
+        // Reproduce the older lock-only implementation's ordinary directory
+        // creation: neither tine nor owners receives an explicit private DACL.
+        let owners = profile.join("tine/owners");
+        std::fs::create_dir_all(&owners).unwrap();
+        assert_inherited_dacl(owners.parent().unwrap());
+        assert_inherited_dacl(&owners);
+        let namespace = crate::owner::namespace::Namespace::at(owners.clone()).unwrap();
+        let paths = namespace.graph(Path::new("graph")).unwrap();
+        let lock = crate::owner::lock::OwnerLock::try_take(&paths.lock, "app")
+            .unwrap()
+            .expect("an existing safe namespace must retain owner arbitration");
+        assert!(
+            crate::owner::lock::OwnerLock::try_take(&paths.lock, "serve")
+                .unwrap()
+                .is_none()
+        );
+        drop(lock);
+        // Checking a safe inherited directory does not rewrite its ACL.
+        assert_inherited_dacl(&owners);
+    }
+
+    #[test]
+    fn inherited_everyone_or_users_write_grants_refuse() {
+        let data = tempfile::tempdir().unwrap();
+        let sid = user_sid().unwrap();
+        for principal in ["WD", "BU"] {
+            let profile = data.path().join(principal);
+            create_with_dacl(
+                &profile,
+                &format!("D:P(A;OICI;FA;;;{sid})(A;OICI;FW;;;{principal})"),
+            );
+            let owners = profile.join("tine/owners");
+            std::fs::create_dir_all(&owners).unwrap();
+            assert_inherited_dacl(&owners);
+            assert!(matches!(
+                check_directory(&owners),
+                Err(OwnerError::Unsafe(_))
+            ));
+            assert!(matches!(
+                crate::owner::namespace::Namespace::at(owners),
+                Err(OwnerError::Unsafe(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn directory_checks_reject_foreign_write_delete_and_null_dacl() {
         let data = tempfile::tempdir().unwrap();
         let sid = user_sid().unwrap();
         for (index, acl) in [
             format!("D:P(A;OICI;FA;;;{sid})(A;OICI;FW;;;WD)"),
             format!("D:P(A;OICI;FA;;;{sid})(A;;0x40;;;WD)"), // delete-child
             format!("D:P(A;OICI;FA;;;{sid})(A;;WD;;;WD)"),   // WRITE_DAC
-            format!("D:(A;OICI;FA;;;{sid})"),                // not protected
             "D:NO_ACCESS_CONTROL".into(),                    // NULL DACL grants everyone access
         ]
         .iter()

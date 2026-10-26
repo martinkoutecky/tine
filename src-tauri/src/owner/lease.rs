@@ -205,7 +205,20 @@ pub(crate) fn claim_for_app(
     bound: std::time::Duration,
     waiting: impl FnMut(&str),
 ) -> Result<Option<Claimed>, String> {
-    match claim(root, "app") {
+    app_claim_result(claim(root, "app"), root, drafts, bound, waiting)
+}
+
+/// Keep the app's open policy separate from namespace discovery so refusals can
+/// be tested with disposable paths, without changing the account namespace.
+#[cfg(desktop)]
+fn app_claim_result(
+    claim: Claim,
+    root: &Path,
+    drafts: Drafts,
+    bound: std::time::Duration,
+    waiting: impl FnMut(&str),
+) -> Result<Option<Claimed>, String> {
+    match claim {
         Claim::Taken(claimed) => Ok(Some(claimed)),
         Claim::Failed(OwnerError::Unsupported) => Ok(None),
         Claim::Failed(error) => {
@@ -232,5 +245,35 @@ impl Claimed {
     #[cfg(desktop)]
     pub(crate) fn from_lock(lock: OwnerLock, paths: GraphPaths) -> Self {
         Self { lock, paths }
+    }
+}
+
+#[cfg(all(test, desktop))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn namespace_refusal_still_allows_the_app_to_open_without_a_lease() {
+        let data = tempfile::tempdir().unwrap();
+        let owners = data.path().join("owners-file");
+        std::fs::write(&owners, b"not a directory").unwrap();
+        let error = match Namespace::at(owners) {
+            Err(error @ OwnerError::Unsafe(_)) => error,
+            _ => panic!("a file cannot be an owner namespace"),
+        };
+        let result = app_claim_result(
+            Claim::Failed(error),
+            data.path(),
+            Drafts {
+                app_data: data.path().display().to_string(),
+                graph_id: "test-graph".into(),
+            },
+            std::time::Duration::ZERO,
+            |_| panic!("a namespace refusal must not enter handover"),
+        );
+        assert!(
+            matches!(result, Ok(None)),
+            "the app must still open the graph"
+        );
     }
 }
