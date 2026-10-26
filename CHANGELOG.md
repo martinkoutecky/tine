@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Links inside query-result ancestor breadcrumbs are clickable again (GH #743).
+- The “Pages tagged with” section stays folded when you return to a tab (GH #739).
+- Shift-click a calendar day, **Today**, or the calendar button to open that journal in the right sidebar, as in Logseq (GH #740).
+- A page embed's icon aligns with the first line of a title that wraps (GH #770).
+- Backspace removes an empty bullet inside a block embed when its source ancestor is folded (GH #766).
 - macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
 ### Added
 

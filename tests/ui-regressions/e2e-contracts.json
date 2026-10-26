@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-parity-09.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A tagged-page section stays folded after returning to its tab; Shift-clicking a calendar day opens a sidebar journal; a query ancestor link navigates; Backspace removes an emptied embedded child of a folded source and Undo restores it.","blocking":false,"authority":"GH #739, #740, #743, #766; UI-PARITY09-TAGGED-FOLD, UI-PARITY09-CALENDAR-SIDEBAR, UI-PARITY09-EMBED-BACKSPACE"}],
+      "acceptableVariations": ["Layout, tab order, journal title format and save latency may vary."],
+      "nonRequirements": ["No exact pixels, external PDF support or certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-folder-exports.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Re-export from the Exports overview reviews the recorded folder in Replace mode, changes nothing before confirmation, updates its durable snapshot and retains the old leaf in recovery. Update all can update that folder with quick share unavailable.","blocking":true,"authority":"UI-FOLDER-EXPORT-UPDATE; folder exports lane manager decisions 2026-10-26; docs/contracts/export-definitions.md"}],
       "acceptableVariations": ["Dialog layout, save latency, recovery folder name and styling may vary."],

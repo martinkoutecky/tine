@@ -7859,7 +7859,7 @@ html.tine-embed-shading-accent .embed-block {
 }
 .embed-page-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   min-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
 }
@@ -7867,6 +7867,8 @@ html.tine-embed-shading-accent .embed-block {
   flex: none;
   width: 14px;
   height: 14px;
+  /* GH #770: center on the first line, including when the page link wraps. */
+  margin-top: calc((var(--ls-block-line-height) - 14px) / 2);
   fill: currentColor;
   color: var(--text-muted);
 }
