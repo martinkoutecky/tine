@@ -1333,6 +1333,8 @@ mod rename_guide_tests {
             "The key is in the link, after `#`",
             "GitHub keeps old revisions",
             "**Delete** removes the hosted gist",
+            "Delete from a share's query on the **Exports page**",
+            "even when its key is on another device",
             "properties hidden from display",
             "Images and other files are not included",
             "it does not delete the gist",

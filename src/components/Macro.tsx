@@ -979,7 +979,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
               </Show>{" "}
               <Show when={!reading()?.og_hint?.date_windows}><span class="query-count">{total()}</span></Show>
               <Show when={!props.builtIn && !isPublishedExport() && runnable()}>
-                <QueryMacroActions current={runnable} groups={groups} pages={() => pageRows() ?? []}
+                <QueryMacroActions current={runnable} hostBlockId={props.blockId} groups={groups} pages={() => pageRows() ?? []}
                   editable={!!props.blockId && blockWritable(props.blockId)} results={!!displayed() && total() > 0}
                   edit={requestEdit} both={bothKinds}
                   fold={blockFace() === "list" ? (collapsed) => {

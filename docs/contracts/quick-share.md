@@ -320,6 +320,14 @@ new write path):
   tine.share))` lists them, pending markers included; Settings → Sharing keeps
   the account, Find shares on GitHub and this device's keys (Copy link, Check,
   Delete, Forget).
+- Share definitions render **Delete** in their query action bar, including
+  when listed by the Exports overview. The existing confirmation and native
+  delete command apply. With a local record, the connected account must match
+  its immutable account id; without a key, the native command verifies the
+  gist's Tine marker and owner before deleting it. A declined confirmation
+  sends nothing. A `gone` result keeps the marker and key, as in Settings.
+  Confirmed deletion removes graph markers through the same guarded save as
+  Settings; a cleanup failure is shown while the hosted deletion stands.
 - A failure to write or remove the property is shown; the share itself (created,
   deleted or forgotten) stands.
 
