@@ -472,7 +472,7 @@ fn rename_page_after_inventory(
     if new.is_empty() {
         return Err(error(io::ErrorKind::InvalidInput, "empty name"));
     }
-    if old.is_empty() {
+    if old.is_empty() || old == new {
         return Ok(RenameReport::unchanged());
     }
     let plan = || {

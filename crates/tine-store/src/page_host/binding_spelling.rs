@@ -1,5 +1,5 @@
 //! Case-only moves on folding volumes (host-only-writer S3). Content is a
-//! normal drafted HostOp, followed by a byte-preserving driver command.
+//! normal drafted HostOp, preceded by a byte-preserving driver command.
 use super::driver::{Deadline, Unanswered, Wait};
 use super::retained::OPERATION_WAIT;
 use super::*;
@@ -11,7 +11,6 @@ impl PageHost {
         mut op: HostOp,
         spellings: Vec<(PageId, PageId, PageKey, PageId)>,
     ) -> Result<(), ApplyRefusal> {
-        let config = op.view.as_ref().map(|(_, config)| config.clone());
         let mut moves = Vec::new();
         let mut copies = Vec::new();
         let mut seen = BTreeSet::new();
@@ -24,12 +23,22 @@ impl PageHost {
                 return Err(ApplyRefusal::Refused);
             }
         }
+        let mut in_a_move = BTreeSet::new();
+        for (dst, src) in &op.moves {
+            if !matches!(planned.get(src), Some((Effect::Delete, Expected::Bytes(_))))
+                || !matches!(planned.get(dst), Some((Effect::Write(_), _)))
+                || !in_a_move.insert(src.clone())
+                || !in_a_move.insert(dst.clone())
+            {
+                return Err(ApplyRefusal::Refused);
+            }
+        }
         let mut destinations = BTreeSet::new();
         let tx = self.store.transaction(None);
         // Collapse each folded move onto its single existing key. A
         // case-only namespace rename needs the same primitive per entry.
-        // Duplicate pages and unrelated malformed effects still refuse in
-        // the ordinary apply path, before either content or entry changes.
+        // Duplicate pages and malformed move shapes refuse before either
+        // content or entry changes. Content repeats its full admission later.
         for (dst, src, key, spelling) in spellings {
             if src != spelling || src == dst || !seen.insert(key.clone()) {
                 return Err(ApplyRefusal::Changed);
@@ -51,11 +60,11 @@ impl PageHost {
                 .map_err(|_| ApplyRefusal::Changed)?;
             planned.insert(
                 src.clone(),
-                (Effect::Write(new.clone()), Expected::Bytes(old)),
+                (Effect::Write(new.clone()), Expected::Bytes(old.clone())),
             );
             planned.remove(&dst);
             destinations.insert(dst.clone());
-            moves.push((src, dst, key, new));
+            moves.push((src, dst, key, old));
         }
         op.pages = planned
             .into_iter()
@@ -65,19 +74,28 @@ impl PageHost {
         op.creation_checks
             .retain(|(p, ..)| !destinations.contains(p));
         // Keep the transaction rename's old-byte recovery copy before the
-        // ordinary content operation can overwrite and retire its draft.
+        // entry move or ordinary content operation can change live state.
+        // This also checks clean input and every expected page, even when
+        // no recovery copy is needed. Content still gets full admission.
         self.retain_spelling_bytes(&op, copies)?;
-        self.apply(op).map_err(|why| match why {
-            ApplyRefusal::Unwritten(_) | ApplyRefusal::Superseded(_) | ApplyRefusal::Uncertain => {
-                ApplyRefusal::SpellingIncomplete
-            }
-            why => why,
-        })?;
+        let mut moved_pages = BTreeMap::new();
         for (src, dst, key, bytes) in moves {
-            self.move_spelling(src, dst, key, bytes, config.clone())
+            let rev = self
+                .move_spelling(src.clone(), dst.clone(), key, bytes, op.view.clone())
                 .map_err(|_| ApplyRefusal::SpellingIncomplete)?;
+            // Only our own publication advances this view. A delivery
+            // between commands still refuses at the next full view check.
+            if let Some((view, _)) = &mut op.view {
+                *view = rev;
+            }
+            moved_pages.insert(src, dst);
         }
-        Ok(())
+        for (page, ..) in &mut op.pages {
+            if let Some(dst) = moved_pages.get(page) {
+                *page = dst.clone();
+            }
+        }
+        self.apply(op).map_err(|_| ApplyRefusal::SpellingIncomplete)
     }
 
     fn retain_spelling_bytes(
@@ -85,15 +103,28 @@ impl PageHost {
         op: &HostOp,
         copies: Vec<(PageId, Arc<[u8]>)>,
     ) -> Result<(), ApplyRefusal> {
-        if copies.is_empty() {
-            return Ok(());
-        }
         let pages: Vec<_> = op.pages.iter().map(|(p, ..)| p.clone()).collect();
         if op.policy == Input::Flush {
             self.flush_input(&pages)?;
         }
-        let keys = self.register_all(pages).ok_or(ApplyRefusal::Refused)?;
+        let mut keys = BTreeSet::new();
+        for page in pages {
+            let (key, spelling, _, proved) =
+                self.try_identify(&page).ok_or(ApplyRefusal::Refused)?;
+            if self.store.page_spot(&spelling).is_err() {
+                return Err(ApplyRefusal::Refused);
+            }
+            if !proved {
+                return Err(ApplyRefusal::Changed);
+            }
+            self.try_register(&key, &spelling)
+                .ok_or(ApplyRefusal::Refused)?;
+            if !keys.insert(key) {
+                return Err(ApplyRefusal::Refused);
+            }
+        }
         let view = op.view.clone();
+        let expected = op.pages.clone();
         let store = self.store.clone();
         let deadline = std::time::Instant::now() + OPERATION_WAIT;
         let retain = move |state: &mut State<ProductionIo, SystemClock>| {
@@ -119,6 +150,15 @@ impl PageHost {
                 return Wait::Until(Some(std::time::Instant::now() + Duration::from_millis(10)));
             }
             let tx = store.transaction(None);
+            for (page, _, expected) in &expected {
+                let bytes = match expected {
+                    Expected::Bytes(bytes) => Some(bytes.as_ref()),
+                    Expected::Absent => None,
+                };
+                if tx.verify_spelling_input(&page.file(), bytes).is_err() {
+                    return Wait::Ready(Err(ApplyRefusal::Changed));
+                }
+            }
             // Retain only verified source bytes, using the existing durable
             // no-replace trash-copy recipe. Refusal later may leave a harmless
             // recovery copy, but never changes live content.
@@ -139,7 +179,7 @@ impl PageHost {
         {
             Ok(result) => result,
             Err(Unanswered::Withdrawn) => Err(ApplyRefusal::Busy),
-            Err(Unanswered::Late | Unanswered::Ended) => Err(ApplyRefusal::Refused),
+            Err(Unanswered::Late | Unanswered::Ended) => Err(ApplyRefusal::Uncertain),
         }
     }
 
@@ -148,9 +188,9 @@ impl PageHost {
         src: PageId,
         dst: PageId,
         key: PageKey,
-        new: Arc<[u8]>,
-        config: Option<Arc<tine_core::config::Config>>,
-    ) -> Result<(), ApplyRefusal> {
+        bytes: Arc<[u8]>,
+        view: Option<(crate::GraphRev, Arc<tine_core::config::Config>)>,
+    ) -> Result<crate::GraphRev, ApplyRefusal> {
         // No buffer/lock handover to a caller: the driver checks clean and
         // expected bytes again under the key's path lock. A later window
         // edit, external editor or sync delivery is never overwritten.
@@ -167,10 +207,9 @@ impl PageHost {
             if !host.alive || !host.admission_open {
                 return Wait::Ready(Err(ApplyRefusal::Uncertain));
             }
-            if config
-                .as_ref()
-                .is_some_and(|config| !Arc::ptr_eq(config, &store.config().config))
-                || host.fs.spelling(&key) != src.as_str()
+            if view.as_ref().is_some_and(|(rev, config)| {
+                store.changes.rev() != *rev || !Arc::ptr_eq(config, &store.config().config)
+            }) || host.fs.spelling(&key) != src.as_str()
             {
                 return Wait::Ready(Err(ApplyRefusal::Changed));
             }
@@ -186,15 +225,15 @@ impl PageHost {
             let (moved, mut result) =
                 store
                     .transaction(None)
-                    .respell_entry(&src.file(), &dst.file(), &new);
+                    .respell_entry(&src.file(), &dst.file(), &bytes);
             if moved {
                 host.fs.spell(&key, dst.as_str());
                 host.locks.insert(key.clone(), lock.clone());
                 store
                     .graph
                     .respelled(&key, &store.graph.root.join(src.as_str()));
-                // A clean, unopened page can have returned to the watcher
-                // after its content operation. Publish that entry's new path
+                // A clean, unopened page can belong to the watcher.
+                // Publish that entry's new path with its original bytes
                 // synchronously too, through the same final-file observation
                 // as transaction moves, before answering the caller.
                 if store
@@ -204,7 +243,7 @@ impl PageHost {
                     let published = store.transaction(None).publish_respelled_entry(
                         &src.file(),
                         &dst.file(),
-                        &new,
+                        &bytes,
                     );
                     if result.is_ok() {
                         result = published;
@@ -212,10 +251,14 @@ impl PageHost {
                 }
                 store.publish_retired();
             }
-            Wait::Ready(result.map_err(|why| match why {
-                Why::Conflict { .. } => ApplyRefusal::Changed,
-                _ => ApplyRefusal::Uncertain,
-            }))
+            Wait::Ready(
+                result
+                    .map(|()| store.changes.rev())
+                    .map_err(|why| match why {
+                        Why::Conflict { .. } => ApplyRefusal::Changed,
+                        _ => ApplyRefusal::Uncertain,
+                    }),
+            )
         };
         match self
             .driver
@@ -223,7 +266,7 @@ impl PageHost {
             .locked_wait(Deadline::At(deadline), moved)
         {
             Ok(result) => result,
-            // Content already published: an expired/ended spelling command
+            // An entry move may be live: an expired/ended spelling command
             // cannot promise that nothing changed.
             Err(Unanswered::Withdrawn | Unanswered::Late | Unanswered::Ended) => {
                 Err(ApplyRefusal::Uncertain)

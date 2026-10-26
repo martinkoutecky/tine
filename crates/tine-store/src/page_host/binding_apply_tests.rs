@@ -181,13 +181,15 @@ fn a_folded_entry_move_publishes_an_unheld_page_before_reply() {
     live.host.try_register(&key, &spelling).unwrap();
     assert!(live.store.graph.disk_sourced(&live.root.join(src.as_str())));
     assert_eq!(
-        live.host.move_spelling(
-            src.clone(),
-            dst.clone(),
-            key,
-            bytes("title:: Old\n- [[Old]]\n"),
-            None
-        ),
+        live.host
+            .move_spelling(
+                src.clone(),
+                dst.clone(),
+                key,
+                bytes("title:: Old\n- [[Old]]\n"),
+                None
+            )
+            .map(|_| ()),
         Ok(())
     );
     assert!(live
@@ -200,7 +202,7 @@ fn a_folded_entry_move_publishes_an_unheld_page_before_reply() {
 }
 
 #[test]
-fn a_failed_folded_entry_move_keeps_applied_text_and_can_be_retried() {
+fn a_failed_folded_entry_move_keeps_old_text_and_can_be_retried() {
     let live = Live::new(&[
         ("pages/old.md", "title:: old\n- [[old]]\n"),
         ("pages/Ref.md", "- [[old]]\n"),
@@ -217,8 +219,8 @@ fn a_failed_folded_entry_move_keeps_applied_text_and_can_be_retried() {
         live.host.apply(folded_op("title:: old\n- [[old]]\n")),
         Err(ApplyRefusal::SpellingIncomplete)
     );
-    assert_eq!(live.disk("pages/old.md"), "title:: Old\n- [[Old]]\n");
-    assert_eq!(live.disk("pages/Ref.md"), "- [[Old]]\n");
+    assert_eq!(live.disk("pages/old.md"), "title:: old\n- [[old]]\n");
+    assert_eq!(live.disk("pages/Ref.md"), "- [[old]]\n");
     // A provider accepted the syscall but still lists old.md. The driver
     // must keep the key, path lock and index at that observed spelling.
     let (_, spelling, ..) = live
@@ -226,13 +228,7 @@ fn a_failed_folded_entry_move_keeps_applied_text_and_can_be_retried() {
         .try_identify(&PageId::from("pages/old.md"))
         .unwrap();
     assert_eq!(spelling.as_str(), "pages/old.md");
-    let mut retry = folded_op("title:: Old\n- [[Old]]\n");
-    retry
-        .pages
-        .iter_mut()
-        .find(|(p, ..)| p.as_str() == "pages/Ref.md")
-        .unwrap()
-        .2 = Expected::Bytes(bytes("- [[Old]]\n"));
+    let retry = folded_op("title:: old\n- [[old]]\n");
     assert_eq!(live.host.apply(retry), Ok(()));
     let listed: Vec<_> = fs::read_dir(live.root.join("pages"))
         .unwrap()
@@ -255,7 +251,7 @@ fn a_folded_entry_sync_error_keeps_the_key_at_the_new_spelling() {
     }
     let (key, _) = live.open("pages/old.md");
     // This transaction fault affects only the entry command's existing
-    // directory-sync recipe, after the ordinary content HostOp publishes.
+    // directory-sync recipe, before the ordinary content HostOp starts.
     live.store.inject_fault(crate::FaultPoint::DirectorySyncIo);
     assert_eq!(
         live.host.apply(folded_op("title:: old\n- [[old]]\n")),
@@ -267,7 +263,8 @@ fn a_folded_entry_sync_error_keeps_the_key_at_the_new_spelling() {
         .unwrap();
     assert_eq!(same, key);
     assert_eq!(spelling.as_str(), "pages/Old.md");
-    live.until_indexed("pages/Old.md", "title:: Old\n- [[Old]]\n");
+    live.until_indexed("pages/Old.md", "title:: old\n- [[old]]\n");
+    assert_eq!(live.disk("pages/Ref.md"), "- [[old]]\n");
     let (_, page) = live.open("pages/Old.md");
     live.submit(&key, "title:: Old\n- after error\n", page.version, None)
         .unwrap();

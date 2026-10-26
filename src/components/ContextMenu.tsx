@@ -1067,8 +1067,7 @@ function RenamePage(props: {
     // The rename's refresh retires this owner; it hands back its successor.
     let current = graphOwner(live);
     props.close(false);
-    // Confirming the title can finish an interrupted filename case change.
-    if (!next) return;
+    if (!next || next === from) return;
     try {
       const target = { name: from, pageKind: kind, ...(path ? { path } : {}) };
       const renamed = await renameOrMergePage(from, next, target, (refreshed) => { current = ownedWhen(refreshed, live); });

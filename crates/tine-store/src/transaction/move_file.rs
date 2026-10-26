@@ -3,6 +3,15 @@ use super::*;
 use unicode_normalization::UnicodeNormalization;
 
 impl Transaction<'_> {
+    /// The spelling preflight holds the write set's path locks and writer.
+    pub(crate) fn verify_spelling_input(
+        &self,
+        file: &FileId,
+        bytes: Option<&[u8]>,
+    ) -> Result<(), Why> {
+        self.verify(file, bytes, 0)
+    }
+
     /// The host driver holds the page's path lock and store writer. Keep the
     /// same old-byte recovery copy as a rewritten transaction rename.
     pub(crate) fn retain_spelling_bytes(&self, from: &FileId, bytes: &[u8]) -> Result<(), Why> {
@@ -249,6 +258,10 @@ impl Transaction<'_> {
                     "case rename did not publish the destination spelling",
                 ));
             }
+        }
+        #[cfg(feature = "test-faults")]
+        if fault(self.store, FaultPoint::AbortBeforeMoveSync) {
+            std::process::abort();
         }
         sync_move_dirs(self.store, src, dst)?;
         #[cfg(feature = "test-faults")]

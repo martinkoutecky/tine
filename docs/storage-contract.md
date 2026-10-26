@@ -1089,7 +1089,7 @@ by I-9's typed failure paths.
 | `tine-store::page_host` operations (step 3b P2b, `RenameRefusal`, `PageOperation`) | An operation's draft cannot be written (a full disk or an app-data disk error): the rename, merge move or deletion answers `DraftFailed`, nothing changed on disk or in memory, no order is installed and no reply slot is left (proof `binding_order_tests.rs` `a_rename_whose_draft_fails_changes_nothing`). An operation over a running rename's pages is `Waiting` or `Busy` (above, "Rename order"). A page the rename would rewrite has unsaved input (`Unsaved`; an honest edit in this window races it) or cannot be rewritten (`Unwritable`; malformed imported Org or non-UTF-8 bytes): refuse before anything changes. |
 | `tine-store::page_host` trash custody (A4, `HostIo::trash_sync`) | A deleted page's trash name cannot be made durable: the payload's stat or a trash-chain directory sync fails (a disk error, R-STORAGE-ERROR). The next saves of that page fail while its custody is owed, so a recreation never lands before the deletion's trash name is durable. The third consecutive failure escapes: the save goes ahead with a sticky error, and the unfinished custody stays as debt that launch retries. Discard never waits for custody (proof `crates/tine-store/src/page_host/production_tests.rs` `unsyncable_trash_escapes_after_three_failures_and_never_blocks_discard`, `scheduler.rs` `failing_custody_fails_saves_until_the_three_failure_escape`). |
 | `tine-store::page_host::delete` target (step 3b, `page_host/binding.rs`) | Web content, a plugin or a frontend defect passes `page_delete` a path that is not a page file of this graph (outside the root, not a graph text file): refuse before the deletion is registered or anything is written, as `page_open_checks::InvalidTarget` does for an open (proof `crates/tine-graph-features/tests/page_delete_missing.rs` `a_delete_outside_the_graph_refuses_without_writes`). |
-| `tine-store::page_host::apply` (host-only-writer P2, `HostOp`, `ApplyRefusal`) | A feature's planned write runs as one host operation, admitted only if every page still holds the bytes the feature planned from (`Expected`). A page that no longer does, or that the host cannot read (`Changed`; the window, an external editor or a sync service changed the file since the plan): refuse whole, change nothing, and the feature replans (`retry_on_conflict`). A publication or config delivery after the planner's bound view also refuses Changed before admission (B2), even if the planned page bytes are unchanged. An absent destination's name slot is rechecked on the driver under the operation's path locks, using the transaction's claimant/twin and unreadable-owner rules (raw create checks the filename, CreateNew save also checks the DTO name, move exempts its own source). An arriving claim refuses `Changed` before the inner `Host::apply`; no operation or draft is recorded. This binding refusal is an s33 pre-admission stutter: the one-path-per-page model, its `opApply` conformance and pins are unchanged. C3 is proven by the real Guide API regressions for an arriving twin and an unreadable owner. Unsaved input on a page (`Unsaved`; an honest edit in this window races the writer): a `Refuse` writer refuses naming the page; a `Flush` writer saves it first and refuses only when that save cannot complete (a conflict or a persistent disk error). Store reads answer saved bytes, so a `Flush` feature saves its pages' input before it plans (`PageHost::flush_input`, `tine-graph-features::retained::operation`): a page that exists only as typed input would otherwise plan as absent. The save-first wait is a reservation's flush wait: past `OPERATION_WAIT` only a page a rename holds refuses `Busy`. A path that is not a page of this graph or reaches outside it through a symlink, a page named twice, or a move that is not one (`Refused`; a plugin or frontend defect, or an imported graph holding a symlinked folder): refuse before the operation is admitted or anything is written (pages named earlier in the operation may already be registered; registration writes nothing). A path that only collides with a registered entry, unproved, is `Changed` (an external rename or case-variant twin since the plan). Not admitted within `OPERATION_WAIT` (`Busy`; another operation, reservation, rename or path lock holds its pages, as above); after a flush the admission gets a whole `OPERATION_WAIT` again. A draft that cannot be written (`DraftFailed`; a full disk or an app-data disk error): nothing changed. After admission it answers as a rename does (`Unwritten`, `Superseded`, `Uncertain`). Exception for folded case moves (S3): before content admission the driver retains verified old bytes in trash using the existing no-replace copy recipe; a later refusal may leave a harmless recovery copy. After content may have applied, a failed or unanswered content operation or entry command reports `SpellingIncomplete`, never a before-write refusal. Text may already be renamed while filename casing remains unconfirmed; save or discard pending edits, then enter the intended name again in Rename, even if it matches the displayed name. No automatic entry completion is promised. A deleted page keeps its bytes in the graph trash, as every host deletion does (proof `crates/tine-store/src/page_host/binding_apply_tests.rs`; physical random lockstep for current/stale plans, absent/present effects and claimed creates: `crates/tine-store/src/page_host/scheduler_random_tests.rs` `scheduler_random_walks_with_faults_and_disabled_actions`). |
+| `tine-store::page_host::apply` (host-only-writer P2, `HostOp`, `ApplyRefusal`) | A feature's planned write runs as one host operation, admitted only if every page still holds the bytes the feature planned from (`Expected`). A page that no longer does, or that the host cannot read (`Changed`; the window, an external editor or a sync service changed the file since the plan): refuse whole, change nothing, and the feature replans (`retry_on_conflict`). A publication or config delivery after the planner's bound view also refuses Changed before admission (B2), even if the planned page bytes are unchanged. An absent destination's name slot is rechecked on the driver under the operation's path locks, using the transaction's claimant/twin and unreadable-owner rules (raw create checks the filename, CreateNew save also checks the DTO name, move exempts its own source). An arriving claim refuses `Changed` before the inner `Host::apply`; no operation or draft is recorded. This binding refusal is an s33 pre-admission stutter: the one-path-per-page model, its `opApply` conformance and pins are unchanged. C3 is proven by the real Guide API regressions for an arriving twin and an unreadable owner. Unsaved input on a page (`Unsaved`; an honest edit in this window races the writer): a `Refuse` writer refuses naming the page; a `Flush` writer saves it first and refuses only when that save cannot complete (a conflict or a persistent disk error). Store reads answer saved bytes, so a `Flush` feature saves its pages' input before it plans (`PageHost::flush_input`, `tine-graph-features::retained::operation`): a page that exists only as typed input would otherwise plan as absent. The save-first wait is a reservation's flush wait: past `OPERATION_WAIT` only a page a rename holds refuses `Busy`. A path that is not a page of this graph or reaches outside it through a symlink, a page named twice, or a move that is not one (`Refused`; a plugin or frontend defect, or an imported graph holding a symlinked folder): refuse before the operation is admitted or anything is written (pages named earlier in the operation may already be registered; registration writes nothing). A path that only collides with a registered entry, unproved, is `Changed` (an external rename or case-variant twin since the plan). Not admitted within `OPERATION_WAIT` (`Busy`; another operation, reservation, rename or path lock holds its pages, as above); after a flush the admission gets a whole `OPERATION_WAIT` again. A draft that cannot be written (`DraftFailed`; a full disk or an app-data disk error): nothing changed. After admission it answers as a rename does (`Unwritten`, `Superseded`, `Uncertain`). Exception for folded case moves (S3): before any entry move the driver checks the write set's clean input, expected bytes and bound view/config and retains verified old bytes in trash using the existing no-replace copy recipe; a refusal can leave a harmless recovery copy. A withdrawn copy wait reports Busy; a late/ended copy wait reports Uncertain. Each guarded byte-preserving entry move runs first, under its path lock, rechecking clean input, old bytes and view/config; only a fresh listing can advance host spelling. The content HostOp then repeats full admission at the new spelling. Once entry work starts, every failed or unanswered move or content operation reports SpellingIncomplete, including a later Changed, Unsaved, Busy or DraftFailed. The file name may already be changed; the text change is not confirmed. Save or discard pending edits, then rename again to the intended name; if already displayed, check the text. No automatic entry completion is promised; unchanged names are always no-ops. A deleted page keeps its bytes in the graph trash, as every host deletion does (proof `crates/tine-store/src/page_host/binding_apply_tests.rs`; physical random lockstep for current/stale plans, absent/present effects and claimed creates: `crates/tine-store/src/page_host/scheduler_random_tests.rs` `scheduler_random_walks_with_faults_and_disabled_actions`). |
 | `tine-store::watch` reconcile | A graph closes, its root disappears, or an external config edit changes directory layout; stop reconciliation rather than publishing a false view. |
 | `tine-store::watch` OS watch setup (og 22a) | The OS refuses live file notifications for the graph (inotify's per-user watch limit is spent by other apps, a network or FUSE mount without events, a root replaced while open); degrade to a 3-second poll that runs the same reconcile, retry the live watch every cycle, and report the refusal and its restoration (`Subscription::observe_watch_status`, `graph-watch-refused` / `graph-watch-restored`, flight event `watcher.refused`). The graph is never silently stale (I-9). |
 | `tine-store::transaction` undo of a replaced file | Disk full, a disk error, or a crash while rolling back a failed multi-file save (C3 L07): undo stages the file's pre-transaction bytes as a `tx-old` conflict-trash copy before it withdraws the transaction's bytes, and removes that copy once the old bytes are back live. If the copy cannot be written it withdraws nothing, leaves the transaction's bytes live and reports the file in `undo_failed` (proof `c3s_content_loss.rs`). |
@@ -1374,17 +1374,20 @@ is a hard link to the same inode (external-editor/sync-delivery collision).
 The feature layer plans a RenamePage host operation for title, references
 and namespace descendants; config home spelling is its guarded post step.
 Identity stays normalized; there is no second page entity for a casing change.
-On a folding volume each same-key move collapses to a content Write over
-its source's expected bytes. Before content admission the driver keeps a
+On a folding volume each same-key move first changes the entry, then runs
+a content Write at the destination over the source's expected bytes.
+Before moving any entry the driver checks clean input and expected bytes
+for the write set, its bound view/config, and keeps a
 verified old-byte copy in graph trash when the text changes, under the page
 path locks and store writer, using the existing durable no-replace recipe.
-A later refusal can leave a harmless recovery copy. Once that ordinary HostOp publishes, a
+A later refusal can leave a harmless recovery copy. A
 non-drafted driver command moves the entry under its key's path lock,
 rechecking clean input, bytes, config and the folded alias. It keeps the
 key, held page and queued requests, and moves the spelling and lock handle.
 The single-page alias branch refuses unsaved input; namespace renames keep
 their existing flush policy. Several folded entries use this same command
-in turn after the shared content operation. The model has no spelling
+in turn before the shared content operation, which repeats full admission
+at the observed destination spellings. The model has no spelling
 concept; these commands add no draft kind or model claim.
 
 Case-only moves first try the existing atomic no-replace primitive on Linux,
@@ -1397,7 +1400,7 @@ alias, one plain `std::fs::rename` uses the atomic-write path's platform rename
 including a hardlinked twin, stays an ordinary collision. After a case move,
 a fresh directory listing must contain the destination spelling and omit the
 source spelling (NFC/NFD normalization is accepted). The transaction helper
-uses undo; the host command retains applied content and reports uncertainty
+uses undo; the host command retains old content and reports uncertainty
 on a move/sync failure, following the new spelling if the entry moved.
 The host decides whether it moved from a fresh listing containing the
 destination and omitting the source, including when the syscall returned
@@ -1419,23 +1422,34 @@ the folded-alias fallback uses the same replacement/durability policy as
 atomic writes. The existing check-to-rename race with honest external writers
 and flag-refusal fallback policy remain.
 
-For the host path the order is content first, then entry. A crash between
-them leaves the new title/references under the old filename casing, still
-the same identity on the folding volume. Relaunch completes any recorded
-content draft and loads the existing spelling. The ordinary Rename action
-accepts the name the UI currently displays, including an unchanged name,
-and completes pending case differences for the page and its namespace.
-Already-correct and unrelated custom filenames are left alone on that
-same-name retry. There is no persisted spelling intent or automatic spelling
-completion. Home stays on its old spelling unless both steps succeed.
+For the host path the order is entry first, then content. Before the move,
+the source holds all original bytes. After the atomic move but before its
+directory sync, a process crash leaves whole original bytes at the new
+spelling; a power loss may retain either spelling under the existing sync
+policy. After sync but before content admission, the new filename holds
+the old text. Relaunch indexes whichever spelling survived: the page key
+is case-insensitive on a folding volume, so the page stays reachable.
+An explicit old title still displays the old name: an ordinary rename from
+that name to the intended name completes title and referrers in place via
+the existing interrupted-title rebind path. During content, ordinary durable
+drafts own recovery; relaunch completes recorded content. After content,
+the new filename and text agree. A titleless page already displays its new
+filename-derived name after the move; old-case references still reach that
+same identity. An unchanged title is always a silent no-op and never
+normalizes legitimate case or Unicode spelling, including namespace children.
+There is no persisted spelling intent or automatic entry completion. Home
+stays on its old spelling unless both steps succeed; a crash before the
+separate guarded config post step can retain old home casing.
 Pure entry moves lose no bytes at either name and use the existing sync
 recipe. Content pays the normal HostOp draft/publication cost and retains
 the same old-byte trash copy as the transaction rename. No new draft record
-or transport is needed. Any failure after content may have applied reports
-`SpellingIncomplete`: text may have changed, casing is unconfirmed, and
-the user can save or discard pending edits and enter the intended name
-again in Rename, even when it matches the displayed name. A titleless page
-may still display the old filename-derived name. Case-sensitive moves keep their ordinary drafted completion
+or transport is needed. Every failure once an entry command starts, including
+a later content admission refusal, reports `SpellingIncomplete`: the file
+name may already be changed; the text change is not confirmed. Save or discard
+pending edits, then rename again to the intended name; if already displayed,
+check the text. No user text is lost: the entry move preserves all bytes,
+old bytes have trash custody before replacement, and content uses the normal
+draft and guarded save path. Case-sensitive moves keep their ordinary drafted completion
 message, including when their names differ only by case.
 
 Transaction-helper unit cost: one namespace rename instead of two for case-only moves; no staging

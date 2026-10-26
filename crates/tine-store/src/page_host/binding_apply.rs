@@ -81,8 +81,8 @@ pub enum ApplyRefusal {
     /// No answer or no publication within `OPERATION_WAIT`, or the host
     /// stopped: the operation may still complete.
     Uncertain,
-    /// Folded spelling work may have published text, but its unrecorded
-    /// entry step did not confirm completion. Retry using the displayed name.
+    /// A folded entry move may be live, but the whole rename did not
+    /// confirm completion. Retry an ordinary rename to the intended name.
     SpellingIncomplete,
 }
 
@@ -106,9 +106,14 @@ impl PageHost {
     /// for the operation's answer and every page's publication, as
     /// `rename` does.
     pub fn apply(&self, op: HostOp) -> Result<(), ApplyRefusal> {
+        // Validate kinds at their admission owner, including before a
+        // folded wrapper can move an entry. The wrapper forwards them intact.
+        if op.kinds.is_empty() {
+            return Err(ApplyRefusal::Refused);
+        }
         // A folding volume has one key for both spellings. Its content is
         // an ordinary operation; the byte-preserving entry move runs on the
-        // driver after that operation publishes (S3, no new draft record).
+        // driver before that operation is admitted (S3, no new draft record).
         let mut spellings = Vec::new();
         for (dst, src) in &op.moves {
             let source = self.try_identify(src).ok_or(ApplyRefusal::Refused)?;

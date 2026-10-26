@@ -173,15 +173,6 @@ pub(super) fn plan_rename(
             ext
         );
         let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;
-        if old == new {
-            // Confirming the displayed title also finishes a case move left
-            // after content publication. Preserve unrelated custom filenames
-            // and leave already-correct entries alone.
-            primary_is_file |= primary;
-            if to == id.file() || !refs::same_page(to.as_str(), id.as_str()) {
-                continue;
-            }
-        }
         if !destinations.insert(to.as_str().to_owned())
             || !identities.insert(refs::normalize(&new_name))
         {

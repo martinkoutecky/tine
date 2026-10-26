@@ -50,12 +50,12 @@ it("renames without asking when the name is free or is the page's own", async ()
 
 // Rule 2 B1: an alias reaches its owner's page, and a reference-only `from`
 // repoints its references there, so both ask before merging.
-it("submits the displayed name unchanged to finish pending filename casing", async () => {
-  vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "existing", id: "pages/old.md", others: [] });
+it("retries an entry-first interrupted rename from its still-old displayed title", async () => {
+  vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "existing", id: "pages/Old.md", others: [] });
   const confirm = vi.spyOn(backend(), "confirm");
-  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [{ path: "pages/old.md", moved: true }] });
-  expect(await renameOrMergePage("Old", "Old", { name: "Old", pageKind: "page", path: "pages/old.md" })).toBe("renamed");
-  expect(rename).toHaveBeenCalledWith("Old", "Old", "rename-page", "pages/old.md", undefined, []);
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [{ path: "pages/Old.md", moved: false }] });
+  expect(await renameOrMergePage("old", "Old", { name: "old", pageKind: "page", path: "pages/Old.md" })).toBe("renamed");
+  expect(rename).toHaveBeenCalledWith("old", "Old", "rename-page", "pages/Old.md", undefined, []);
   expect(confirm).not.toHaveBeenCalled();
 });
 

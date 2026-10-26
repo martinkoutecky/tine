@@ -201,7 +201,7 @@ fn refusal_error(
         ),
         ApplyRefusal::SpellingIncomplete => error(
             io::ErrorKind::TimedOut,
-            "The page text may already have been renamed, but its filename casing could not be confirmed. Save or discard any pending edits, then open Rename and enter the intended name again, even if it matches the displayed name.".into(),
+            "The file name may already be changed; the text change is not confirmed. Save or discard any pending edits, then open Rename and rename again to the intended name. If the page already shows that name, check its text before retrying.".into(),
         ),
     }
 }
@@ -219,16 +219,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn incomplete_spelling_reports_possible_text_changes_and_an_ordinary_retry() {
+    fn incomplete_spelling_reports_entry_first_changes_and_an_ordinary_retry() {
         let err = refusal_error(
             ApplyRefusal::SpellingIncomplete,
             "the rename",
             &|_| unreachable!(),
         );
         let message = err.to_string();
-        assert!(message.contains("text may already have been renamed"));
-        assert!(message.contains("enter the intended name again"));
-        assert!(message.contains("even if it matches the displayed name"));
+        assert!(message.contains("file name may already be changed"));
+        assert!(message.contains("text change is not confirmed"));
+        assert!(message.contains("rename again to the intended name"));
         assert!(!message.contains("nothing changed"));
         assert!(!message.contains("keeps trying"));
         // A case-sensitive rename still has a drafted entry operation.

@@ -351,7 +351,7 @@ pub(super) fn apply_refused(refusal: ApplyRefusal, page: &PageId) -> ErrorBody {
         ),
         ApplyRefusal::SpellingIncomplete => with_page(
             "uncertain",
-            "text may already be renamed, but filename casing is unconfirmed; save or discard pending edits, then enter the intended name again in Rename, even if it matches the displayed name",
+            "the file name may already be changed; the text change is not confirmed. Save or discard pending edits, then rename again to the intended name. If the page already shows that name, check its text before retrying",
             Value::Null,
         ),
         ApplyRefusal::Uncertain => {
