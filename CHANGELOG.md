@@ -13,6 +13,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
 ### Added
 
+- Guide: a new **Share pages** page covers the Share dialog, folder exports, quick-share links, Re-share, Update all, Delete and Settings → Sharing. The tips page explains margin comments more fully (every way to start one, how replies and authors are stored), and the git autocommit section describes its status lines and the messages for a folder without git or a phone.
+
 - **Re-export** reviews a saved folder export in Replace mode. **Update all** on the Exports page reviews folder exports and quick shares together before confirmation, then updates them in order and shows each outcome, including skipped definitions and failures.
 
 - Re-share from a query or the Exports page to update the same link after reviewing added and removed pages; Delete remains available with confirmation (it also removes the definition the share added to the Exports page, and says the link stops working within about 5 minutes), and devices without the key offer a new link.

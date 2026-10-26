@@ -85,6 +85,10 @@ pub const GUIDE_TEMPLATES: &[GuideTemplate] = &[
         markdown: include_str!("templates/pdf.md"),
     },
     GuideTemplate {
+        title: "Features/Share pages",
+        markdown: include_str!("templates/share-pages.md"),
+    },
+    GuideTemplate {
         title: "Features/Plugins",
         markdown: include_str!("templates/plugins.md"),
     },
@@ -927,10 +931,35 @@ mod rename_guide_tests {
             "Tine never pushes or pulls",
             "changes you staged elsewhere stay staged",
             "`index.lock`",
+            "from 1 to 1440 minutes",
+            "run `git init` in the graph folder",
+            "Git is not available on this device yet",
+            "the branch Tine commits to and the last commit",
+            "Last attempt failed",
         ] {
             assert!(
                 files.contains(behavior),
                 "missing git Guide text: {behavior}"
+            );
+        }
+    }
+
+    #[test]
+    fn margin_comments_are_documented() {
+        let tips = include_str!("templates/tips.md");
+        for behavior in [
+            "- ## Comment on a passage — Ctrl+R",
+            "**Comment on selection**",
+            "**Comment on selected text**",
+            "**Settings > Editor > Your name**",
+            "**quoted text changed**",
+            "**Reply…**",
+            "`author:: <your name>`",
+            "**Ctrl/Cmd+Z** restores them together",
+        ] {
+            assert!(
+                tips.contains(behavior),
+                "missing margin-comment Guide text: {behavior}"
             );
         }
     }
@@ -1316,9 +1345,9 @@ mod rename_guide_tests {
     #[test]
     fn share_guide_explains_the_dialog_the_review_and_the_exports_page() {
         // Share step 1 (docs/contracts/export-definitions.md): the Guide moves with the product.
-        let files = include_str!("templates/files-external-edits-backups.md");
+        let share = include_str!("templates/share-pages.md");
         for outcome in [
-            "- ## Share pages",
+            "- # Share pages",
             "the share icon in the top bar",
             "**Share…** in a page's **⋯** menu",
             "**This page**",
@@ -1348,15 +1377,26 @@ mod rename_guide_tests {
             "properties hidden from display",
             "Images and other files are not included",
             "it does not delete the gist",
+            "**Share this page** in the **···** menu",
+            "**Find shares on GitHub**",
+            "**Pending in this graph**",
+            "**Remove marker**",
+            "**Report abuse**",
+            "**Forget**",
         ] {
             assert!(
-                files.contains(outcome),
+                share.contains(outcome),
                 "share onboarding must explain {outcome}"
             );
         }
+        let files = include_str!("templates/files-external-edits-backups.md");
+        assert!(files.contains("- ## Share pages"));
+        assert!(files.contains("[[Features/Share pages]]"));
         let queries = include_str!("templates/queries.md");
         assert!(queries.contains("**Share…** in a query's **⋯** menu"));
-        assert!(queries.contains("**Share pages**"));
+        assert!(queries.contains("[[Features/Share pages]]"));
+        let index = include_str!("templates/guide.md");
+        assert!(index.contains("[[Features/Share pages]]"));
     }
 
     #[test]
