@@ -109,7 +109,10 @@ jni = { version = "0.22.4", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "5.4.1"
-windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console", "Win32_Storage_Packaging_Appx", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_Com"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console", "Win32_Storage_Packaging_Appx", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_Com", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_IO", "Win32_System_Pipes"] }
+# Already enabled by the desktop dependency graph; make the pipe adapter's
+# runtime and networking requirements explicit on Windows.
+tokio = { version = "1", default-features = false, features = ["net", "rt-multi-thread", "time"] }
 # Windows uses Schannel through native-tls: the default rustls transport does
 # not inherit every Windows network/certificate policy and failed before
 # fetching latest.json on an otherwise-online Windows 11 system (GH #241).
@@ -180,6 +183,10 @@ x11 = { version = "2.21.0", features = ["xlib"] }
 # SIGKILL WebKitGTK's helper subprocesses at quit so they don't run their GL/EGL
 # driver atexit teardown (which double-frees → SIGABRT coredump on many Mesa/driver
 # combos). See platform::kill_webkit_children and GH #28.
+
+[target.'cfg(windows)'.dev-dependencies]
+# Keep auto-started serve descendants inside the integration test's cleanup guard.
+windows-sys = { version = "0.61.2", features = ["Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp"] }
 
 # Keep all integration cases in one linked executable.
 [[test]]

@@ -43,14 +43,16 @@ import { rangeInLiteral } from "../editor/inlineLiteral";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
+import { navigateJournalDown } from "../editor/journalNavigation";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
   clearFocusSurface,
   editingId,
   editingOwner,
+  captureEditIntent,
   editingSurface,
   endEdit,
   focusSurfaceFor,
@@ -2166,18 +2168,19 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     commit(ref.value);
     void withBlockMoving(docNode(props.id)?.page ?? "", async () => {
       startEditing(props.id, selection, null, editSurface());
+      const intentIsCurrent = captureEditIntent();
       // A sibling reorder happens synchronously (a feed move's own sync part)
       // and keeps this textarea. Restore it in the same gesture: waiting a
       // frame lets Android dismiss the IME despite the later focus.
       const move = outlineScope && !outlineScope.navOnly ? moveItem(props.id, dir) : moveBlockFeed(props.id, dir);
-      if (ref === movedEditor && movedEditor.isConnected && editingId() === props.id
+      if (intentIsCurrent() && ref === movedEditor && movedEditor.isConnected && editingId() === props.id
         && (documentOf(movedEditor).activeElement === movedEditor
           || documentOf(movedEditor).activeElement === documentOf(movedEditor).body)) restore();
       const moved = await move;
       // GH #641: a move this surface cannot show says where the block went.
       if (moved !== false && moved !== "none") noticeMoveOutOfView(props.id, outlineScope);
       await nextFrame(ref);
-      if (documentOf(ref).activeElement !== ref) restore();
+      if (intentIsCurrent() && documentOf(ref).activeElement !== ref) restore();
     }).catch(() => console.error("Block move failed"));
     return true;
   };
@@ -2987,9 +2990,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           if (!outlineScope) {
             e.preventDefault();
             commit(raw);
-            void nextVisibleOrExtend(props.id).then((n) =>
-              n && startEditing(n, { col, edge: "first" }, null, navigationSurface())
-            );
+            void navigateJournalDown({
+              id: props.id, col, surface: navigationSurface(), editor: ref,
+              current: origin => editorMounted && ref === origin && docNode(props.id) === shownNode,
+            });
           }
         }
       }

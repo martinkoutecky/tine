@@ -48,7 +48,9 @@ export function currentFiles(root) {
 // Inline Rust test modules can occur near the start of a very large file.
 // Remove each complete top-level module, preserving production code after it.
 export function productionSource(source) {
-  return source.replace(/#\[cfg\(test\)\]\s*mod\s+\w+\s*\{[\s\S]*?^\}/gm, "");
+  // `#[cfg(test)]` and `#[cfg(all(test, …))]` modules, nested ones included:
+  // the block ends at the closing brace with the module's own indentation.
+  return source.replace(/^([ \t]*)#\[cfg\((?:test|all\(test\b[^\]]*)\)\]\s*mod\s+\w+\s*\{[\s\S]*?^\1\}/gm, "");
 }
 
 /** Production lines: inline `#[cfg(test)] mod` blocks do not count. */

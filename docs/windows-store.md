@@ -67,6 +67,8 @@ refuses it, the fallback keeps virtualization and moves backups to a user folder
 when packaged, which is a new decision for Martin. Change the single
 `unvirtualized` constant in `scripts/stage-msix.mjs` to flip both properties and
 the capability together; reconsider data safety before shipping that alternative.
+The account owner namespace `%LOCALAPPDATA%\tine-owners` must never be virtualized:
+Store and unpackaged CLI processes must share the same locks and endpoints.
 
 With the opt-out, Store and GitHub stable installs share the same
 `%APPDATA%\page.tine.Tine` and `%LOCALAPPDATA%\page.tine.Tine` data. Settings,

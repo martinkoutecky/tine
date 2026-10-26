@@ -4,7 +4,9 @@
 //! stale owner. The file is never unlinked or recreated (a contender may
 //! hold an open handle to it); its content is diagnostic only.
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
+#[cfg(not(windows))]
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -29,6 +31,9 @@ impl OwnerLock {
     /// failure is not contention (`owner-lock`, §3.5).
     pub(crate) fn try_take(path: &Path, owner: &str) -> Result<Option<Self>, OwnerError> {
         for _ in 0..2 {
+            #[cfg(windows)]
+            let file = super::windows_security::open_lock_file(path)?;
+            #[cfg(not(windows))]
             let file = OpenOptions::new()
                 .read(true)
                 .write(true)

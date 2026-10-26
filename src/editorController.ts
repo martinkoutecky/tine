@@ -44,6 +44,20 @@ const [editingOwner, setEditingOwner] = createSignal<string | null>(null);
 // bind the editor to the current stable SurfaceContext key.
 const [editingSurface, setEditingSurface] = createSignal<string | null>(null);
 const [caretTarget, setCaretTarget] = createSignal<{ id: string; offset: CaretPos } | null>(null);
+let editIntentRevision = 0;
+
+/** Async navigation may complete only until the next edit intent, even when
+ * that intent targets the very same block and occurrence. */
+export function captureEditIntent(): () => boolean {
+  const revision = editIntentRevision;
+  const id = editingId();
+  const owner = editingOwner();
+  const surface = editingSurface();
+  const focusedSurface = activeSurface();
+  return () => editIntentRevision === revision
+    && editingId() === id && editingOwner() === owner
+    && editingSurface() === surface && activeSurface() === focusedSurface;
+}
 
 // Surface-aware edit focus. A block uuid can render in SEVERAL surfaces at once
 // (the main pane and each right-sidebar item). `activeSurface` tracks which
@@ -233,6 +247,8 @@ export function startEditing(
   surface: string | null = null,
   preserveHistoryRestore = false,
 ) {
+  // Even a refused newer request supersedes pending async navigation.
+  editIntentRevision++;
   // Resolve a refused commit first, then commit a property input's draft.
   if (!canExitEdit() || !prepareEditEntry()) return;
   revealOutlineBlock(id);
@@ -274,6 +290,7 @@ export function startEditing(
 }
 
 export function endEdit(_reason: EndEditReason) {
+  editIntentRevision++;
   if (!canExitEdit()) return;
   batch(() => {
     setPendingHistoryEditorRestore(null);
