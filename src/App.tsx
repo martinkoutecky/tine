@@ -66,6 +66,7 @@ import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { openPublishedPermalink, publishedPermalinkForWorkspace, replacePublishedPermalink } from "./publishedPermalink";
 import { maybeShowDefenderHint } from "./defenderHint";
+import { maybeShowSyncthingIgnoreNotice } from "./gitIgnoreNotice";
 import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owned, type Owner } from "./owned";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
@@ -783,6 +784,12 @@ export function App(): JSX.Element {
   // reason the cold load was slow. The backend answers false everywhere else.
   createEffect(on(() => graphMeta()?.root, (root) => {
     if (root) void maybeShowDefenderHint();
+  }));
+
+  // D-20261026-GI: once, tell the user that git autocommit added `.syncthing.*`
+  // to the graph's .gitignore (Settings → Git shows the same line).
+  createEffect(on(() => graphMeta()?.root, (root) => {
+    if (root) void maybeShowSyncthingIgnoreNotice(root);
   }));
 
   // The updater owns preference loading, automatic scheduling and cancellation.
