@@ -3,6 +3,93 @@ use super::*;
 use unicode_normalization::UnicodeNormalization;
 
 impl Transaction<'_> {
+    /// Host driver's byte-preserving spelling move. The caller holds the
+    /// store writer and the source key's path lock, and has refused unsaved
+    /// input. Reuse the transaction's target checks and durable move recipe;
+    /// no content is written and no transaction is committed here.
+    pub(crate) fn respell_entry(
+        &self,
+        from: &FileId,
+        to: &FileId,
+        bytes: &[u8],
+    ) -> (bool, Result<(), Why>) {
+        let mut undo = Undo {
+            kind: UndoKind::Rename,
+            src: from.clone(),
+            dst: Some(to.clone()),
+            trash: None,
+            old: None,
+            new: None,
+            new_rev: None,
+            opaque_rev: None,
+            created: false,
+            moved: false,
+        };
+        let result = (|| {
+            let src = self.path(from)?;
+            let dst = self.spelled_path(to)?;
+            // Same-file equality alone accepts symlinks and hard links;
+            // only an unlisted folded spelling is eligible.
+            if !self.destination_is_source_spelling(from, to)? {
+                return Err(Why::Conflict {
+                    file: to.clone(),
+                    disk: disk_rev(&dst),
+                });
+            }
+            self.verify(from, Some(bytes), 0)?;
+            self.publish_move(&mut undo, &src, &dst).map_err(failed)
+        })();
+        // A directory-sync failure follows the rename. The driver must
+        // follow the new spelling even when durability could not be confirmed.
+        (undo.created, result)
+    }
+
+    /// Publish an unheld entry's spelling change after the driver moved it.
+    /// Reuse final-file observation, including its exact listing checks:
+    /// on a folding volume reading the old spelling still opens the new
+    /// entry, and must not publish a ghost source row. No writes or undo.
+    pub(crate) fn publish_respelled_entry(
+        &self,
+        from: &FileId,
+        to: &FileId,
+        bytes: &[u8],
+    ) -> Result<(), Why> {
+        let plan = Prepared {
+            src: from.clone(),
+            dst: Some(to.clone()),
+            old: Some(bytes.to_vec()),
+            new: Some(bytes.to_vec()),
+            saved_page: None,
+            opaque_rev: None,
+        };
+        let before = BTreeMap::from([
+            (from.as_str().to_owned(), Some(bytes.to_vec())),
+            (to.as_str().to_owned(), None),
+        ]);
+        let starting = self.store.graph.cache_generation();
+        let publication = self.publish_final_files(
+            &[plan],
+            &[],
+            &before,
+            false,
+            &mut Rollback::default(),
+            &[],
+            &[],
+        );
+        if publication.changed_any && self.store.graph.cache_generation() == starting {
+            let root = &self.store.graph.root;
+            self.store
+                .graph
+                .transaction_bump_generation(&[&root.join(from.as_str()), &root.join(to.as_str())]);
+        }
+        self.store
+            .publish_own(publication.published_own, publication.observations);
+        match publication.publication_errors.into_iter().next() {
+            Some((_, error)) => Err(Why::Failed(error)),
+            None => Ok(()),
+        }
+    }
+
     // OS handoff canonicalizes an existing final component. A move must keep
     // the requested spelling while retaining that door's target validation.
     pub(super) fn spelled_path(&self, file: &FileId) -> Result<PathBuf, Why> {
@@ -334,6 +421,49 @@ fn spelling_key(name: &std::ffi::OsStr) -> std::ffi::OsString {
 #[cfg(test)]
 mod spelling_tests {
     use super::*;
+
+    /// The host spelling command may run after an unopened source returned
+    /// to disk ownership. Its final-file publication must update the paths
+    /// synchronously, without waiting for a watcher or a fresh metadata scan.
+    #[test]
+    fn spelling_entry_publication_updates_unheld_paths_before_reply() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        fs::write(dir.path().join("pages/old.md"), "title:: Old\n- body\n").unwrap();
+        let store = Store::open(
+            dir.path(),
+            crate::OpenOptions {
+                watch: crate::WatchMode::Poll,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0;
+        store.whole_graph().unwrap();
+        let root = &store.graph.root;
+        let src = root.join("pages/old.md");
+        let dst = root.join("pages/Old.md");
+        assert!(store.snapshot_knows(&src));
+        {
+            let _writer = store.writer.lock().unwrap();
+            let lock = store.graph.page_lock(&src);
+            let _guard = lock.lock().unwrap();
+            // Fixture for the byte-preserving entry syscall: on Linux the
+            // two spellings are distinct, so respell admission itself skips.
+            fs::rename(&src, &dst).unwrap();
+            store
+                .transaction(None)
+                .publish_respelled_entry(
+                    &FileId::from("pages/old.md".to_owned()),
+                    &FileId::from("pages/Old.md".to_owned()),
+                    b"title:: Old\n- body\n",
+                )
+                .unwrap();
+        }
+        assert!(store.snapshot_knows(&dst));
+        assert!(!store.snapshot_knows(&src));
+        store.close();
+    }
 
     #[cfg(unix)]
     #[test]

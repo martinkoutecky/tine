@@ -948,7 +948,14 @@ fn undeclared(functions: &BTreeMap<String, Function>, operations: &[String]) -> 
                     OWN_KINDS => function.body.contains("in & kinds"),
                     kind => function.body.contains(&format!("EditKind :: {kind}")),
                 };
-            if runs && !declares {
+            // This binding wrapper forwards the same op (including kinds)
+            // to PageHost::apply; it never calls inner Host::apply or changes
+            // the kinds. The inner admission remains the one kind owner.
+            let forwards = *op == "apply"
+                && key == "binding_spelling.rs::apply_spellings"
+                && function.body.contains("self . apply (op)")
+                && !function.body.contains(". kinds");
+            if runs && !declares && !forwards {
                 found.push(format!("{key} runs {op} without took(…, EditKind::{kind})"));
             }
         }

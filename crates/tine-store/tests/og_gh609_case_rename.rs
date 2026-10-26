@@ -110,8 +110,9 @@ fn until(what: &str, test: impl Fn() -> bool) {
 }
 
 /// A case rename that fails (GH #609). On a case-folding volume `Old.md` is
-/// the source's own entry: the rename is a retained transaction, and a
-/// failed step rolls back to exactly `old.md`. On a case-sensitive volume the
+/// the source's own entry: the low-level transaction helper still has its
+/// undo tests below; HostOp spelling failures are in binding_apply_tests.
+/// On a case-sensitive volume the
 /// two spellings are distinct pages and the rename is the page host's
 /// (custody plus forward completion, STEP3-DESIGN's restated rollback tests):
 /// a failure before application (its draft) changes nothing, and after
@@ -198,16 +199,22 @@ fn transaction_case_move_failures() {
         if alias {
             store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
         }
-        assert!(hosted(&store, |host| rename_or_merge_page(
-            &store,
-            host,
-            "old",
-            "Old",
-            None,
-            None,
-            &[]
-        ))
-        .is_err());
+        // This is the transaction helper's undo contract, independent of
+        // the feature's HostOp + non-drafted spelling command (S3).
+        let src = store.file_id(tine_store::Area::Pages, "old.md").unwrap();
+        let dst = store.file_id(tine_store::Area::Pages, "Old.md").unwrap();
+        let rev = store.read(&src, None).unwrap().1;
+        let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+        tx.move_file(
+            &src,
+            rev,
+            &dst,
+            Some(&tine_store::RenameMap(vec![("old".into(), "Old".into())])),
+        );
+        assert!(matches!(
+            tx.commit(),
+            tine_store::TxOutcome::NotCommitted { .. }
+        ));
         assert_eq!(
             fs::read_to_string(dir.path().join("pages/old.md")).unwrap(),
             "- [[old]]\n"
@@ -315,7 +322,8 @@ fn kill_case_rename(dir: &std::path::Path, app_data: &std::path::Path, point: &s
 /// destination published before the kill is whole, a transient second
 /// spelling (an accepted effect of write-before-delete). A relaunch on the
 /// same app data completes the rename from its drafts, leaving exactly
-/// `Old.md`. On a case-folding volume it is the retained transaction's move.
+/// `Old.md`. On a case-folding volume content completes from the draft and
+/// a retry finishes any unrecorded spelling step.
 #[test]
 fn case_rename_kill_reopen_preserves_bytes_and_relaunch_completes() {
     let _integration_guard = crate::integration_lock();
@@ -363,44 +371,36 @@ fn case_rename_kill_reopen_preserves_bytes_and_relaunch_completes() {
     }
 }
 
-/// The retained case move on a case-folding volume, killed at each step:
-/// whole bytes, and a retry finishes it.
+/// The folding host path, killed during content publication or its entry
+/// command: whole bytes, draft content completes, and retry finishes spelling.
 fn transaction_case_rename_kills() {
-    for point in ["before", "publish", "rewrite"] {
+    for point in ["host-dst", "host-sync", "before", "publish"] {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
         fs::write(dir.path().join("pages/old.md"), "title:: old\n- [[old]]\n").unwrap();
         let app_data = tempfile::tempdir().unwrap();
         kill_case_rename(dir.path(), app_data.path(), point);
         let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
-        store.whole_graph().unwrap();
-        if point == "before" {
-            assert_eq!(
-                fs::read_to_string(dir.path().join("pages/old.md")).unwrap(),
-                "title:: old\n- [[old]]\n"
-            );
-            assert_eq!(fs::read_dir(dir.path().join("pages")).unwrap().count(), 1);
-            assert!(!dir.path().join("logseq/.tine-trash").exists());
-        } else {
-            let expected = if point == "publish" {
-                "title:: old\n- [[old]]\n"
+        let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+        until("recorded content completes on relaunch", || {
+            fs::read_to_string(dir.path().join("pages/old.md")).unwrap()
+                == "title:: Old\n- [[Old]]\n"
+        });
+        assert_eq!(
+            pages(dir.path()),
+            [if point == "publish" {
+                "Old.md"
             } else {
-                "title:: Old\n- [[Old]]\n"
-            };
-            assert_eq!(
-                fs::read_to_string(dir.path().join("pages/Old.md")).unwrap(),
-                expected
-            );
-        }
-        hosted(&store, |host| {
-            rename_or_merge_page(&store, host, "old", "Old", None, None, &[])
-        })
-        .unwrap();
+                "old.md"
+            }]
+        );
+        rename_or_merge_page(&store, &host, "old", "Old", None, None, &[]).unwrap();
         assert_eq!(
             fs::read_to_string(dir.path().join("pages/Old.md")).unwrap(),
             "title:: Old\n- [[Old]]\n"
         );
-        assert_eq!(fs::read_dir(dir.path().join("pages")).unwrap().count(), 1);
+        assert_eq!(pages(dir.path()), ["Old.md"]);
+        drop(host);
         store.close();
     }
 }

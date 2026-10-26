@@ -499,6 +499,11 @@ fn multi_rename(
     unsaved_paths: &[String],
 ) -> io::Result<Option<RenameReport>> {
     let input = first.input();
+    let case_only = first
+        .map
+        .0
+        .iter()
+        .all(|(from, to)| refs::same_page(from, to));
     let expected = first.pages(store)?;
     let refused = |page: &str| unsaved_error(&first.graph, page);
     let built = std::cell::RefCell::new(None);
@@ -541,7 +546,15 @@ fn multi_rename(
                 }
             }
         },
-    )?;
+    )
+    .map_err(rename_operation_error)
+    .map_err(|err| {
+        if case_only {
+            case_rename_error(err)
+        } else {
+            err
+        }
+    })?;
     if replan.get() {
         return Ok(None);
     }
@@ -823,6 +836,7 @@ fn plan_rename(
 /// The rename as one store transaction (`unsaved_paths`: see
 /// [`rename_or_merge_page`]), `config.edn`'s home page its last step: a
 /// case-only respell of a single page (W1b). A stale plan is `Ok(None)`.
+#[cfg(test)]
 fn commit_rename(
     store: &Store,
     old: &str,
@@ -1040,8 +1054,8 @@ fn rename_transaction<'s>(
 /// under `pages.rs`'s policy, then the home page in `config.edn` as its own
 /// transaction once the operation completes. A target that is another
 /// spelling of the source's own entry (a case-folding volume, Q4) moves as
-/// a retained transaction instead, refusing unsaved input, and the host
-/// follows the new spelling. A replan is `Ok(None)`.
+/// a normal host operation refusing unsaved input, followed by a
+/// byte-preserving entry move on the driver. A replan is `Ok(None)`.
 fn host_rename(
     store: &Store,
     host: &PageHost,
@@ -1078,25 +1092,50 @@ fn host_rename(
     let (changed, mut skipped) = match renamed {
         Ok(done) => done,
         Err(RenameRefusal::Alias) => {
-            let last = std::cell::Cell::new(None);
-            let discover = || {
-                let mut plan = plan()?;
-                let pages = plan.pages(store)?;
-                last.set(Some(plan));
-                Ok(pages)
-            };
+            let expected = first.pages(store)?;
             let refused = |page: &str| unsaved_error(&first.graph, page);
-            return crate::retained::reserved(host, Input::Refuse, discover, refused, |_| {
-                let plan = last.take().expect("planned under the reservation");
-                if plan.single(store)?.as_ref() != Some(&(source.clone(), target.clone())) {
-                    return Ok(None);
-                }
-                let report = commit_rename(store, &first.map.0[0].0, plan, unsaved_paths)?;
-                if report.is_some() {
-                    host.respell(&source, &target);
-                }
-                Ok(report)
-            });
+            let built = std::cell::RefCell::new(None);
+            let replan = std::cell::Cell::new(false);
+            crate::retained::operation(
+                host,
+                Input::Refuse,
+                &expected,
+                "the rename",
+                "page changed repeatedly during rename",
+                refused,
+                || {
+                    built.replace(None);
+                    let mut plan = plan()?;
+                    if plan.single(store)?.as_ref() != Some(&(source.clone(), target.clone())) {
+                        replan.set(true);
+                        return Ok(None);
+                    }
+                    plan.pages(store)?;
+                    match rename_transaction(store, &first.map.0[0].0, plan, unsaved_paths)? {
+                        RenameTransaction::Unchanged(report) => {
+                            built.replace(Some((report, None)));
+                            Ok(None)
+                        }
+                        RenameTransaction::Writes {
+                            tx, report, home, ..
+                        } => {
+                            let op = crate::retained::plan(tx)?;
+                            built.replace(Some((report, Some(home))));
+                            Ok(Some(op))
+                        }
+                    }
+                },
+            )
+            .map_err(rename_operation_error)
+            .map_err(case_rename_error)?;
+            if replan.get() {
+                return Ok(None);
+            }
+            let (mut report, home) = built.into_inner().expect("planned before the operation");
+            if let Some((lookup, merged_old)) = home {
+                report.home_page = commit_home(store, &lookup, merged_old.as_ref())?;
+            }
+            return Ok(Some(report));
         }
         Err(RenameRefusal::Unsaved(page)) => {
             return Err(unsaved_error(&first.graph, page.as_str()))
@@ -1187,6 +1226,28 @@ fn commit_home(
         tx.replace(&id, rev, bytes);
         Ok(crate::commit_retry(tx.commit())?.then_some(Some(name)))
     })
+}
+
+pub(crate) fn rename_operation_error(err: io::Error) -> io::Error {
+    if err
+        .get_ref()
+        .is_some_and(|cause| cause.is::<crate::retained::Busy>())
+    {
+        rename_busy()
+    } else {
+        err
+    }
+}
+
+fn case_rename_error(err: io::Error) -> io::Error {
+    if err.kind() == io::ErrorKind::TimedOut {
+        error(
+            io::ErrorKind::TimedOut,
+            "Couldn't confirm the case-only rename. Reopen the graph and retry.",
+        )
+    } else {
+        err
+    }
 }
 
 /// OG `rename-page-aux` moves `:default-home` with a renamed page;
@@ -1549,3 +1610,7 @@ mod merge_payload;
 #[cfg(test)]
 #[path = "pages_snapshot_tests.rs"]
 mod snapshot_tests;
+
+#[cfg(test)]
+#[path = "pages_host_writer_tests.rs"]
+mod host_writer_tests;

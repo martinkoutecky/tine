@@ -103,6 +103,20 @@ impl PageHost {
     /// for the operation's answer and every page's publication, as
     /// `rename` does.
     pub fn apply(&self, op: HostOp) -> Result<(), ApplyRefusal> {
+        // A folding volume has one key for both spellings. Its content is
+        // an ordinary operation; the byte-preserving entry move runs on the
+        // driver after that operation publishes (S3, no new draft record).
+        let mut spellings = Vec::new();
+        for (dst, src) in &op.moves {
+            let source = self.try_identify(src).ok_or(ApplyRefusal::Refused)?;
+            let target = self.try_identify(dst).ok_or(ApplyRefusal::Refused)?;
+            if source.0 == target.0 {
+                spellings.push((dst.clone(), src.clone(), source.0, source.1));
+            }
+        }
+        if !spellings.is_empty() {
+            return self.apply_spellings(op, spellings);
+        }
         let ended = || ApplyRefusal::Refused;
         let mut effects = BTreeMap::new();
         let mut spellings = BTreeMap::new();

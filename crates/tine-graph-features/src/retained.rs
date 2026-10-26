@@ -1,11 +1,7 @@
 //! Retained writers (STEP3 §7, R6): graph-features writes to page files
-//! that run outside the binding's page host. A writer reserves every page it
-//! touches, so the host neither opens, saves nor drafts them meanwhile; the
-//! host checks unsaved input under that final reservation (Q3) with the
-//! writer's own policy, the writer's transaction runs, and the pages go back
-//! to the host, which observes each. Every writer needs a running host
-//! (host-only-writer S1); only the renames (W1, W1b) still reserve, the rest
-//! are host operations (`operation`).
+//! that now run as operations on the binding's page host (S1–S3). The
+//! reservation helper survives for its unwind fixtures until S4. Every
+//! production writer needs a running host and uses `operation`.
 //! Each refusal's in-scope scenario: `docs/storage-contract.md` I-8, row
 //! `tine-graph-features::retained`.
 
@@ -70,6 +66,17 @@ impl std::fmt::Display for Replan {
     }
 }
 impl std::error::Error for Replan {}
+
+/// Preserve the admission refusal's type through io::Error so a rename
+/// can retain its own busy wording without recognizing message text.
+#[derive(Debug)]
+pub(crate) struct Busy(String);
+impl std::fmt::Display for Busy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for Busy {}
 
 /// Preflight conflicts consume the same bounded retry as admission's Changed.
 /// Other Why values retain the transaction path's refusal mapping.
@@ -159,9 +166,9 @@ fn refusal_error(
         // Another operation, a reservation, a rename or a path lock held the
         // pages past OPERATION_WAIT, or a rename held them past a flush's
         // deadline: not only a rename (REVIEW P2 round 2, finding 3).
-        ApplyRefusal::Busy => error(
+        ApplyRefusal::Busy => io::Error::new(
             io::ErrorKind::WouldBlock,
-            format!("Tine is still finishing another change to these pages, so {what} did not start. Try again in a moment."),
+            Busy(format!("Tine is still finishing another change to these pages, so {what} did not start. Try again in a moment.")),
         ),
         ApplyRefusal::Refused => error(
             io::ErrorKind::Other,
@@ -206,6 +213,20 @@ fn capitalized(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn busy_host_rename_keeps_its_existing_refusal_wording() {
+        let refusal = || refusal_error(ApplyRefusal::Busy, "the rename", &|_| unreachable!());
+        let err = crate::pages::rename_operation_error(refusal());
+        assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(
+            err.to_string(),
+            "Another rename of these pages is still finishing; try again in a moment."
+        );
+        // Other operation writers keep their existing refusal wording.
+        assert_eq!(refusal_error(ApplyRefusal::Busy, "the merge", &|_| unreachable!()).to_string(),
+            "Tine is still finishing another change to these pages, so the merge did not start. Try again in a moment.");
+    }
 
     /// A-R1, REVIEW-3a2 R1 probe 1: a writer that panics releases its
     /// reservation on the unwind, so the next writer reserves the page.

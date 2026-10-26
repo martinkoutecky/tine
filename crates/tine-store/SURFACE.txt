@@ -384,6 +384,7 @@ struct page_host::PageHost
 fn page_host::PageHost::start
 fn page_host::PageHost::reserve
 fn page_host::PageHost::rename
+# test-oracle: retained spelling handover fixtures until S4; production uses the driver spelling command
 fn page_host::PageHost::respell
 fn page_host::PageHost::stop_saved
 fn page_host::PageHost::window_reloaded
