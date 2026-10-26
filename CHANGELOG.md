@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Windows: automatic CLI owner startup releases captured output pipes, disconnected owner pipes read as EOF, and stalled command replies time out without retrying admitted writes (REG-CLI-WINDOWS-R4).
 - Links inside query-result ancestor breadcrumbs are clickable again (GH #743).
 - The “Pages tagged with” section stays folded when you return to a tab (GH #739).
 - Shift-click a calendar day, **Today**, or the calendar button to open that journal in the right sidebar, as in Logseq (GH #740).

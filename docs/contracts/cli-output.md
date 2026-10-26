@@ -589,6 +589,11 @@ errors retain the diagnosed policy of opening without an endpoint. iOS/Android
 have no CLI and rely on one process per sandboxed app.
 See `docs/storage-contract.md` (L9-01/L9-02).
 
+The client bounds each reply frame at 60 s, including `serve --stop`; partial
+bytes do not restart that deadline. A timeout leaves admitted work and the owner
+lease with the owner. Reads may retry within their retry window; a write or stop
+whose reply is lost reports `uncertain` (exit 8) and is never resent automatically.
+
 **Refusal reasons** (`detail.reason`, and `refused:<reason>` in the text):
 
 | reason | when |

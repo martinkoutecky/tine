@@ -183,6 +183,10 @@ x11 = { version = "2.21.0", features = ["xlib"] }
 # driver atexit teardown (which double-frees → SIGABRT coredump on many Mesa/driver
 # combos). See platform::kill_webkit_children and GH #28.
 
+[target.'cfg(windows)'.dev-dependencies]
+# Keep auto-started serve descendants inside the integration test's cleanup guard.
+windows-sys = { version = "0.61.2", features = ["Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp"] }
+
 # Keep all integration cases in one linked executable.
 [[test]]
 name = "integration"

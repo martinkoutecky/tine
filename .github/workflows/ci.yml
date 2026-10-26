@@ -305,6 +305,7 @@ jobs:
 
       - name: Windows CLI integration test (named-pipe round trip)
         if: ${{ !cancelled() }}
+        timeout-minutes: 5
         run: |
           $exe = cargo test -p tine --test integration --no-run --message-format=json |
             ForEach-Object { $_ | ConvertFrom-Json } |

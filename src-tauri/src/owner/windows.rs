@@ -14,7 +14,8 @@ use tokio::net::windows::named_pipe::{
 };
 use tokio::runtime::{Builder, Runtime};
 use windows_sys::Win32::Foundation::{
-    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_SEM_TIMEOUT,
+    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_NO_DATA, ERROR_PIPE_BUSY,
+    ERROR_PIPE_NOT_CONNECTED, ERROR_SEM_TIMEOUT,
 };
 use windows_sys::Win32::Storage::FileSystem::FlushFileBuffers;
 use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
@@ -372,8 +373,16 @@ impl Read for Stream {
                 if matches!(
                     e.kind(),
                     io::ErrorKind::BrokenPipe | io::ErrorKind::NotConnected
+                ) || matches!(
+                    e.raw_os_error().map(|code| code as u32),
+                    Some(ERROR_NO_DATA | ERROR_PIPE_NOT_CONNECTED)
                 ) =>
             {
+                // DisconnectNamedPipe forces the client off the pipe. Rust
+                // does not classify ERROR_PIPE_NOT_CONNECTED (233) as
+                // NotConnected. At this established-stream boundary both
+                // 232 (closing) and 233 mean EOF, including after a complete
+                // terminal reply. Writes must still report disconnection.
                 Ok(0)
             }
             result => result,
@@ -392,14 +401,13 @@ impl Write for Stream {
         })
     }
     fn flush(&mut self) -> io::Result<()> {
-        // Mio's try_write can enqueue an overlapped write and return before
-        // completion. A subsequent empty write waits for that write to finish
-        // (and surfaces its error) before a terminal reply closes the handle.
-        self.pipe_io(true, |pipe| match pipe {
-            Pipe::Server(p) => p.try_write(&[]),
-            Pipe::Client(p) => p.try_write(&[]),
-        })
-        .map(|_| ())?;
+        // Writes have already been submitted to Windows by Mio. These local
+        // byte pipes use PIPE_WAIT (not PIPE_NOWAIT), so Windows completes a
+        // write in full. The server's FlushFileBuffers below waits for those
+        // bytes to be read before disconnect. Client requests stay connected
+        // until their reply, as with Tokio's no-op client flush.
+        // Do not probe with try_write(&[]): that submits another WriteFile,
+        // whose zero-byte read at the peer can be mistaken for protocol EOF.
         let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let pipe = state.pipe.clone().ok_or(io::ErrorKind::BrokenPipe)?;
         let io_timeout = state.write_timeout.unwrap_or(super::endpoint::IO_TIMEOUT);
@@ -480,6 +488,31 @@ pub(super) fn truncate_start_log(log: &std::fs::File) -> io::Result<()> {
     }
     let writable = unsafe { std::fs::File::from_raw_handle(raw) };
     writable.set_len(0)
+}
+
+/// A CLI launched with captured output inherits inheritable stdout/stderr
+/// handles. Rust's Command on Windows inherits all such handles, even when
+/// the child's standard streams are redirected elsewhere. A detached serve
+/// must not retain the CLI's capture pipes: their reader would never get EOF.
+/// Clearing the flag keeps these handles usable; Command duplicates the
+/// explicitly selected log/NUL handles as inheritable when it spawns serve.
+pub(super) fn detach_stdio() -> io::Result<()> {
+    use windows_sys::Win32::Foundation::{
+        SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+    for standard in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        let handle = unsafe { GetStdHandle(standard) };
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            continue;
+        }
+        if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -691,6 +724,43 @@ mod tests {
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
         assert_eq!(client.read(&mut [0]).unwrap(), 0);
+    }
+
+    #[test]
+    fn flushing_frames_never_injects_a_false_eof_into_either_direction() {
+        let (mut server, mut client) = pair();
+        server
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        server
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        client
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let (done, finished) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            for _ in 0..4 {
+                let mut request = [0; 2];
+                server.read_exact(&mut request).unwrap();
+                assert_eq!(&request, b"q\n");
+                server.write_all(b"a\n").unwrap();
+                server.flush().unwrap();
+            }
+            done.send(()).unwrap();
+        });
+        for _ in 0..4 {
+            client.write_all(b"q\n").unwrap();
+            client.flush().unwrap();
+            let mut reply = [0; 2];
+            client.read_exact(&mut reply).unwrap();
+            assert_eq!(&reply, b"a\n");
+        }
+        finished.recv_timeout(Duration::from_secs(3)).unwrap();
+        worker.join().unwrap();
     }
 
     #[test]
