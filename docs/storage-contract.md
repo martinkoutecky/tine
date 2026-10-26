@@ -1440,6 +1440,18 @@ normalizes legitimate case or Unicode spelling, including namespace children.
 There is no persisted spelling intent or automatic entry completion. Home
 stays on its old spelling unless both steps succeed; a crash before the
 separate guarded config post step can retain old home casing.
+Recovery resolves a draft key's leaf to its current disk spelling before
+checking that leaf as a write target and acquiring its path lock. It first
+checks the original parent, so a folder retargeted while stopped cannot
+redirect recovery. Checking the old leaf first would reject a legitimate
+case alias and park the draft at an unwritable spelling.
+
+| Host crash boundary | Relaunch and ordinary recovery |
+| --- | --- |
+| After move sync, before content drafting | New filename and original bytes. An explicit old title permits old → intended to complete title/referrers in place. A titleless page already displays the new filename name; old-case links still resolve, and unchanged confirmation does nothing. No automatic reference-case repair is promised in this gap. |
+| During content after a durable draft | Draft keys retain their identity but resolve to the moved disk spelling; normal guarded saves complete the recorded content on relaunch. If an explicit title still displays old, old → intended is an ordinary retry; unchanged confirmation remains a no-op. |
+| Between namespace entry moves | Mixed entry spelling and original content until content begins. With an explicit old parent title, retry old → intended rebinds moved titles and moves remaining entries. With a titleless parent already moved, it displays the intended name and unchanged confirmation is a no-op; remaining children require individual renames. Move order follows sorted paths (the parent first with triple-lowbar; a child can precede it with legacy `%2F`). |
+
 Pure entry moves lose no bytes at either name and use the existing sync
 recipe. Content pays the normal HostOp draft/publication cost and retains
 the same old-byte trash copy as the transaction rename. No new draft record

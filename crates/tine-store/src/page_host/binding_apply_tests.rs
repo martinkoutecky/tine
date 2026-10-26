@@ -87,6 +87,136 @@ fn folded_op(old: &str) -> HostOp {
     planned
 }
 
+/// Drive the entry-first postcondition on every filesystem: retain the old
+/// key, move its real entry, then admit content through the new spelling.
+#[test]
+fn entry_first_retained_key_crash_worker() {
+    let Ok(root) = std::env::var("TINE_S3_RETAINED_KEY_ROOT") else {
+        return;
+    };
+    let app = std::env::var("TINE_S3_RETAINED_KEY_APP").unwrap();
+    let phase = match std::env::var("TINE_S3_RETAINED_KEY_PHASE")
+        .unwrap()
+        .as_str()
+    {
+        "rename" => Phase::PageRename,
+        "sync" => Phase::PageSync,
+        _ => unreachable!(),
+    };
+    super::super::faults::abort_before(phase, 0);
+    let store = Arc::new(Store::open(Path::new(&root), Default::default()).unwrap().0);
+    let host = PageHost::start_for_tests(&store, Path::new(&app)).unwrap();
+    let src = PageId::from("pages/old.md");
+    let dst = PageId::from("pages/Old.md");
+    let (key, spelling, ..) = host.try_identify(&src).unwrap();
+    host.try_register(&key, &spelling).unwrap();
+    let graph = store.graph.clone();
+    let lock = graph.page_lock(&graph.root.join(dst.as_str()));
+    host.driver
+        .shared
+        .call_writer(&store.writer, move |state| {
+            fs::rename(graph.root.join(src.as_str()), graph.root.join(dst.as_str())).unwrap();
+            let host = &mut state.progress.host;
+            host.fs.spell(&key, dst.as_str());
+            host.locks.insert(key, lock);
+        })
+        .unwrap();
+    let result = host.apply(op(
+        vec![(
+            "pages/Old.md",
+            Effect::Write(bytes("title:: Old\n- [[Old]]\n")),
+            Expected::Bytes(bytes("title:: old\n- [[old]]\n")),
+        )],
+        Input::Refuse,
+    ));
+    panic!("content did not reach {phase:?}: {result:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn entry_first_retained_key_draft_recovers_through_disk_alias() {
+    for phase in ["rename", "sync"] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("graph");
+        let app = dir.path().join("app");
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/old.md"), "title:: old\n- [[old]]\n").unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "page_host::binding::tests::apply_tests::entry_first_retained_key_crash_worker",
+                "--nocapture",
+            ])
+            .env("TINE_S3_RETAINED_KEY_ROOT", &root)
+            .env("TINE_S3_RETAINED_KEY_APP", &app)
+            .env("TINE_S3_RETAINED_KEY_PHASE", phase)
+            .output()
+            .unwrap();
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(output.status.signal(), Some(6), "{output:?}");
+        let records = super::super::drafts::scan(
+            fs::read_dir(app.join("drafts-v2/test-graph"))
+                .unwrap()
+                .filter_map(|entry| {
+                    let path = entry.unwrap().path();
+                    Some((
+                        path.file_name()?.to_str()?.to_owned(),
+                        fs::read(&path).ok()?,
+                    ))
+                })
+                .collect(),
+        );
+        assert_eq!(
+            records.logical["pages/old.md"].bytes,
+            Some(bytes("title:: Old\n- [[Old]]\n"))
+        );
+        // As in page_title_identity's alias fixture, a same-directory link
+        // supplies Linux with the folding volume's old-path lookup. A native
+        // folding volume already provides it, without a link.
+        let alias = !root.join("pages/old.md").exists();
+        if alias {
+            std::os::unix::fs::symlink("Old.md", root.join("pages/old.md")).unwrap();
+        }
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        assert_eq!(
+            store.disk_spelling(&PageId::from("pages/old.md")),
+            Some(PageId::from("pages/Old.md"))
+        );
+        assert!(store
+            .graph
+            .ensure_write_target(&store.graph.root.join("pages/old.md"))
+            .is_err());
+        let host = PageHost::start_for_tests(&store, &app).unwrap();
+        assert_eq!(host.spelling("pages/old.md"), PageId::from("pages/Old.md"));
+        if alias {
+            // All recovery I/O must now use the resolved entry, even when
+            // the old-path lookup disappears immediately after launch.
+            fs::remove_file(root.join("pages/old.md")).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while fs::read_to_string(root.join("pages/Old.md")).unwrap() != "title:: Old\n- [[Old]]\n" {
+            assert!(
+                Instant::now() < deadline,
+                "{phase}: {:?}",
+                host.draft_status()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let listed: Vec<_> = fs::read_dir(root.join("pages"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            // The killed temp is crash debris, never a live graph page.
+            .filter(|name| {
+                let name = name.to_string_lossy();
+                !(name.starts_with('.') && name.ends_with(".tmp"))
+            })
+            .collect();
+        assert_eq!(listed, ["Old.md"]);
+        host.stop();
+        store.close();
+    }
+}
+
 fn folding(live: &Live) -> bool {
     let folding = super::rename::folds_case(&live.root);
     if !folding {

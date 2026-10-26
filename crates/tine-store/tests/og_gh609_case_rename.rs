@@ -310,6 +310,10 @@ fn kill_case_rename(dir: &std::path::Path, app_data: &std::path::Path, point: &s
         .output()
         .unwrap();
     assert!(!output.status.success());
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("panicked at"),
+        "must reach the injected abort, not panic before it ({point}): {output:?}"
+    );
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
@@ -392,9 +396,21 @@ fn transaction_case_rename_kills() {
         fs::write(dir.path().join("pages/old.md"), "title:: old\n- [[old]]\n").unwrap();
         let app_data = tempfile::tempdir().unwrap();
         kill_case_rename(dir.path(), app_data.path(), point);
+        let drafted = matches!(point, "host-dst" | "host-sync");
+        if drafted {
+            assert!(
+                fs::read_dir(app_data.path().join("drafts-v2/test-graph"))
+                    .unwrap()
+                    .any(|entry| entry
+                        .unwrap()
+                        .path()
+                        .extension()
+                        .is_some_and(|ext| ext == "draft")),
+                "{point}: the killed content operation must leave its recorded draft"
+            );
+        }
         let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
         let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
-        let drafted = matches!(point, "host-dst" | "host-sync");
         if drafted {
             until("recorded content completes on relaunch", || {
                 fs::read_to_string(dir.path().join("pages/Old.md")).unwrap()
