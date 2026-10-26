@@ -21,7 +21,7 @@ jobs:
           - label: before
             ref: f57dde043faf516a49bbc7830f6dbff17c3826d6
           - label: after
-            ref: d2a54229d
+            ref: d2a54229d69e913151e39e76b67936b6805d86e9
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
