@@ -3,6 +3,132 @@ use super::*;
 use unicode_normalization::UnicodeNormalization;
 
 impl Transaction<'_> {
+    /// The spelling preflight holds the write set's path locks and writer.
+    pub(crate) fn verify_spelling_input(
+        &self,
+        file: &FileId,
+        bytes: Option<&[u8]>,
+    ) -> Result<(), Why> {
+        self.verify(file, bytes, 0)
+    }
+
+    /// The host driver holds the page's path lock and store writer. Keep the
+    /// same old-byte recovery copy as a rewritten transaction rename.
+    pub(crate) fn retain_spelling_bytes(&self, from: &FileId, bytes: &[u8]) -> Result<(), Why> {
+        self.verify(from, Some(bytes), 0)?;
+        self.write_trash_copy(&self.trash_id(from), bytes)?;
+        Ok(())
+    }
+
+    /// Host driver's byte-preserving spelling move. The caller holds the
+    /// store writer and the source key's path lock, and has refused unsaved
+    /// input. Reuse the transaction's target checks and durable move recipe;
+    /// no content is written and no transaction is committed here.
+    pub(crate) fn respell_entry(
+        &self,
+        from: &FileId,
+        to: &FileId,
+        bytes: &[u8],
+    ) -> (bool, Result<(), Why>) {
+        let mut undo = Undo {
+            kind: UndoKind::Rename,
+            src: from.clone(),
+            dst: Some(to.clone()),
+            trash: None,
+            old: None,
+            new: None,
+            new_rev: None,
+            opaque_rev: None,
+            created: false,
+            moved: false,
+        };
+        let result = (|| {
+            let src = self.path(from)?;
+            let dst = self.spelled_path(to)?;
+            // Same-file equality alone accepts symlinks and hard links;
+            // only an unlisted folded spelling is eligible.
+            if !self.destination_is_source_spelling(from, to)? {
+                return Err(Why::Conflict {
+                    file: to.clone(),
+                    disk: disk_rev(&dst),
+                });
+            }
+            self.verify(from, Some(bytes), 0)?;
+            self.publish_move(&mut undo, &src, &dst).map_err(failed)
+        })();
+        // The provider may accept rename while retaining the source casing.
+        // Only a fresh directory listing can justify following the target;
+        // a sync failure can still leave that observed move live.
+        let moved = self.spelling_moved(from, to);
+        let result = result.and_then(|()| {
+            if moved {
+                Ok(())
+            } else {
+                Err(failed(io::Error::other(
+                    "could not confirm the destination spelling",
+                )))
+            }
+        });
+        (moved, result)
+    }
+
+    fn spelling_moved(&self, from: &FileId, to: &FileId) -> bool {
+        self.spelled_path(to).ok().is_some_and(|dst| {
+            let src = self.store.graph.root.join(from.as_str());
+            self.spelling_entries
+                .borrow_mut()
+                .remove(dst.parent().unwrap());
+            matches!(self.listed_path(&dst), Ok(Some(_)))
+                && matches!(self.listed_path(&src), Ok(None))
+        })
+    }
+
+    /// Publish an unheld entry's spelling change after the driver moved it.
+    /// Reuse final-file observation, including its exact listing checks:
+    /// on a folding volume reading the old spelling still opens the new
+    /// entry, and must not publish a ghost source row. No writes or undo.
+    pub(crate) fn publish_respelled_entry(
+        &self,
+        from: &FileId,
+        to: &FileId,
+        bytes: &[u8],
+    ) -> Result<(), Why> {
+        let plan = Prepared {
+            src: from.clone(),
+            dst: Some(to.clone()),
+            old: Some(bytes.to_vec()),
+            new: Some(bytes.to_vec()),
+            saved_page: None,
+            opaque_rev: None,
+        };
+        let before = BTreeMap::from([
+            (from.as_str().to_owned(), Some(bytes.to_vec())),
+            (to.as_str().to_owned(), None),
+        ]);
+        let starting = self.store.graph.cache_generation();
+        let publication = self.publish_final_files(
+            &[plan],
+            &[],
+            &before,
+            false,
+            &mut Rollback::default(),
+            &[],
+            &[],
+        );
+        if publication.changed_any && self.store.graph.cache_generation() == starting {
+            let root = &self.store.graph.root;
+            self.store
+                .graph
+                .transaction_bump_generation(&[&root.join(from.as_str()), &root.join(to.as_str())]);
+        }
+        self.store
+            .publish_own(publication.published_own, publication.observations);
+        match publication.publication_errors.into_iter().next() {
+            Some((_, error)) => Err(Why::Failed(error)),
+            None => Ok(()),
+        }
+    }
+
     // OS handoff canonicalizes an existing final component. A move must keep
     // the requested spelling while retaining that door's target validation.
     pub(super) fn spelled_path(&self, file: &FileId) -> Result<PathBuf, Why> {
@@ -116,8 +242,10 @@ impl Transaction<'_> {
                 crate::atomic_file::rename_replace(src, dst).map_err(crate::platform_step::at(
                     "rename source over its folded alias",
                 ))?;
-                undo.created = true;
             }
+            // The fault models a provider returning Ok from rename_replace
+            // while silently keeping the old directory spelling.
+            undo.created = true;
         } else {
             undo.created = true;
         }
@@ -130,6 +258,10 @@ impl Transaction<'_> {
                     "case rename did not publish the destination spelling",
                 ));
             }
+        }
+        #[cfg(feature = "test-faults")]
+        if fault(self.store, FaultPoint::AbortBeforeMoveSync) {
+            std::process::abort();
         }
         sync_move_dirs(self.store, src, dst)?;
         #[cfg(feature = "test-faults")]
@@ -334,6 +466,109 @@ fn spelling_key(name: &std::ffi::OsStr) -> std::ffi::OsString {
 #[cfg(test)]
 mod spelling_tests {
     use super::*;
+
+    #[test]
+    fn a_provider_accepting_rename_without_changing_case_does_not_move_the_host() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        fs::write(dir.path().join("pages/old.md"), "- body\n").unwrap();
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let from = FileId::from("pages/old.md".to_owned());
+        let to = FileId::from("pages/Old.md".to_owned());
+        let tx = store.transaction(None);
+        let mut undo = Undo {
+            kind: UndoKind::Rename,
+            src: from.clone(),
+            dst: Some(to.clone()),
+            trash: None,
+            old: None,
+            new: None,
+            new_rev: None,
+            opaque_rev: None,
+            created: false,
+            moved: false,
+        };
+        store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
+        store.inject_fault(FaultPoint::CaseMoveAliasNoop);
+        let src = dir.path().join(from.as_str());
+        let dst = dir.path().join(to.as_str());
+        assert!(tx.publish_move(&mut undo, &src, &dst).is_err());
+        assert!(
+            undo.created,
+            "the provider returned success from rename_replace"
+        );
+        // Exercise the same post-call observation used by respell_entry.
+        assert!(!tx.spelling_moved(&from, &to));
+        assert!(tx.listed_path(&src).unwrap().is_some());
+        assert!(tx.listed_path(&dst).unwrap().is_none());
+        store.close();
+    }
+
+    #[test]
+    fn spelling_retains_verified_old_bytes_before_any_rewrite() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        fs::write(dir.path().join("pages/old.md"), "- original\n").unwrap();
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let from = FileId::from("pages/old.md".to_owned());
+        let tx = store.transaction(None);
+        assert!(tx.retain_spelling_bytes(&from, b"- stale\n").is_err());
+        assert!(!dir.path().join("logseq/.tine-trash").exists());
+        tx.retain_spelling_bytes(&from, b"- original\n").unwrap();
+        assert_eq!(
+            fs::read(dir.path().join("pages/old.md")).unwrap(),
+            b"- original\n"
+        );
+        let copies: Vec<_> = fs::read_dir(dir.path().join("logseq/.tine-trash/pages"))
+            .unwrap()
+            .map(|e| fs::read(e.unwrap().path()).unwrap())
+            .collect();
+        assert_eq!(copies, [b"- original\n"]);
+        store.close();
+    }
+
+    /// The host spelling command may run after an unopened source returned
+    /// to disk ownership. Its final-file publication must update the paths
+    /// synchronously, without waiting for a watcher or a fresh metadata scan.
+    #[test]
+    fn spelling_entry_publication_updates_unheld_paths_before_reply() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        fs::write(dir.path().join("pages/old.md"), "title:: Old\n- body\n").unwrap();
+        let store = Store::open(
+            dir.path(),
+            crate::OpenOptions {
+                watch: crate::WatchMode::Poll,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0;
+        store.whole_graph().unwrap();
+        let root = &store.graph.root;
+        let src = root.join("pages/old.md");
+        let dst = root.join("pages/Old.md");
+        assert!(store.snapshot_knows(&src));
+        {
+            let _writer = store.writer.lock().unwrap();
+            let lock = store.graph.page_lock(&src);
+            let _guard = lock.lock().unwrap();
+            // Fixture for the byte-preserving entry syscall: on Linux the
+            // two spellings are distinct, so respell admission itself skips.
+            fs::rename(&src, &dst).unwrap();
+            store
+                .transaction(None)
+                .publish_respelled_entry(
+                    &FileId::from("pages/old.md".to_owned()),
+                    &FileId::from("pages/Old.md".to_owned()),
+                    b"title:: Old\n- body\n",
+                )
+                .unwrap();
+        }
+        assert!(store.snapshot_knows(&dst));
+        assert!(!store.snapshot_knows(&src));
+        store.close();
+    }
 
     #[cfg(unix)]
     #[test]

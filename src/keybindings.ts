@@ -2,7 +2,8 @@ import { shortcutKey } from "./shortcutKey";
 import { changeCodeWrapping, codeWrapping } from "./codeDisplay";
 import { openWorkspaceCreation } from "./workspaceCreation";
 import { adjustSidebarWidth } from "./sidebarSizing";
-import { openCssEditor } from "./cssEditor";
+import { openCssEditor, openCssInDefaultApp } from "./cssEditor";
+import { isMobilePlatform } from "./nativeChrome";
 import { openWorkspaceWindow, workspaceWindowsSupported } from "./workspaceWindows";
 import { browserPlatform } from "./browserPlatform";
 // Configurable keyboard shortcuts. Defaults mirror OG Logseq command ids and
@@ -393,7 +394,9 @@ const COMMANDS: CommandDef[] = [
   { id: "ui/toggle-right-sidebar", binding: "t r", label: msg("command-ui-toggle-right-sidebar"), scope: "global", run: toggleRightSidebar },
   { id: "ui/open-settings", binding: "t s", alias: "mod+,", label: msg("command-ui-open-settings"), scope: "global", run: openSettings },
   { id: "appearance/edit-custom-css", binding: "", label: msg("command-appearance-edit-custom-css"), scope: "global", run: () => void openCssEditor(false) },
+  { id: "appearance/open-custom-css-default-app", binding: "", label: msg("command-appearance-open-custom-css-default-app"), scope: "global", available: () => !isMobilePlatform, run: () => { if (!isMobilePlatform) void openCssInDefaultApp(false); } },
   { id: "appearance/edit-global-css", binding: "", label: msg("command-appearance-edit-global-css"), scope: "global", run: () => void openCssEditor(true) },
+  { id: "appearance/open-global-css-default-app", binding: "", label: msg("command-appearance-open-global-css-default-app"), scope: "global", available: () => !isMobilePlatform, run: () => { if (!isMobilePlatform) void openCssInDefaultApp(true); } },
   { id: "graph/export-html", binding: "", label: msg("command-graph-export-html"), scope: "global", run: () => openSettings("graph") },
   {
     id: "page/export-pdf",

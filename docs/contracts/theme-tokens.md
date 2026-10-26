@@ -102,6 +102,12 @@ without a CHANGELOG entry; a custom.css that sets them is unsupported.
   editor's original base revision and uses temp-file, fsync and rename; an external
   edit refuses the save and retains the buffer. Reload from disk explicitly
   discards the buffer after confirmation. Opening alone never creates a file.
+- **Open in default app** (GH #778, desktop only). Beside each in-app Edit
+  button, and in the command palette, this opens the fixed graph or global CSS
+  path with the OS default app for `.css`. Native code owns the paths. Missing
+  files are created through the existing guarded graph/device writers; existing
+  content is preserved. Creation and opener failures show an error toast with
+  the reason. Android and iOS keep the in-app editor without these actions.
 - **Draft persistence.** Background visibilitychange, pagehide and freeze flush
   CSS alongside pages. Before saving, Tine keeps a recovery capsule in device app
   settings, scoped to the graph's root or the device global file, with the original
@@ -117,8 +123,12 @@ without a CHANGELOG entry; a custom.css that sets them is unsupported.
   events naming the file, on a full diff, and on the poll-mode cycle that
   already walks the graph. Saves paint immediately, then reconcile with disk:
   a newer external revision arriving before the save reply must win on screen.
-  Reads from before a successful save are retired. Device CSS is also refreshed
-  after saves, cross-window notifications and focus.
+  Reads from before a successful save are retired. A non-recursive native watch
+  on the config directory publishes device CSS changes to every window for
+  external in-place saves, temp-file + rename saves, deletion and recreation.
+  Access events are ignored; no file polling or graph traversal is added.
+  Device CSS is also refreshed after in-app saves and graph binding. A failed
+  live read keeps the previous stylesheet and shows the read error.
 - **Disable custom CSS** (Settings > Appearance, every platform). A
   session-only safe mode held in memory: both CSS layers and Fine-tuning are blanked, the latest
   text is remembered, and it is never persisted, so restarting Tine always

@@ -159,8 +159,8 @@ fn source_scan_guard_clients_touch_no_path() {
             ".join(",
             "tine_store::model",
         ] {
-            if matches!(name, "config" | "render") && forbidden == ".join(" {
-                continue; // EDN, rendered text and embedded JavaScript join strings.
+            if matches!(name, "config" | "render" | "pages") && forbidden == ".join(" {
+                continue; // EDN, rendered text, page error messages and embedded JavaScript join strings.
             }
             if name == "guide" && forbidden == "std::path" {
                 continue; // Public API accepts the device parent folder for graph creation.

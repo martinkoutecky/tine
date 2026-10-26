@@ -1142,6 +1142,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "openPageFile",
   "openGraphFile",
   "editCustomCss",
+  "editGlobalCss",
   "editAssetExternal",
   "trashAsset",
   "emptyAssetTrash",

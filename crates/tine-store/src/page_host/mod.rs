@@ -1,10 +1,9 @@
 //! The page host (storage s3), started per graph binding by
 //! `src-tauri/src/graph.rs` `start_host`: it owns open pages and writes their
-//! saves, renames and deletions. Retained feature transactions
-//! (`tine-graph-features` `pages.rs` and the other reserving writers) still
-//! write page files themselves under a `Reservation` (`binding_retained.rs`)
-//! until the host-only-writer campaign moves them onto the host. Runtime code
-//! is independent of the page_state oracle.
+//! saves, renames and deletions. Feature writers plan HostOps, including
+//! multi-page renames; folded spelling moves finish on the driver. The
+//! retained reservation API survives until the campaign's S4 cleanup.
+//! Runtime code is independent of the page_state oracle.
 
 mod binding;
 pub use binding::{

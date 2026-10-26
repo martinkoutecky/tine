@@ -19,6 +19,10 @@ css-graph-file = logseq/custom.css
 css-edit-graph = 编辑 custom.css
 
 css-edit-global = 编辑全局 CSS
+css-open-default-app = 在默认应用中打开
+css-open-failed = 无法在默认应用中打开 CSS：{ $error }
+command-appearance-open-custom-css-default-app = 在默认应用中打开 custom.css
+command-appearance-open-global-css-default-app = 在默认应用中打开全局 CSS（global.css）
 
 css-graph-hint = 在 Tine 中编辑 logseq/custom.css，保存后立即生效。支持的样式变量和示例请参阅指南页面“Customize Tine's look”。
 

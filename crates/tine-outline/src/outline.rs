@@ -100,6 +100,9 @@ pub enum Reason {
     Frozen,
     /// Merge refuses blocks on two pages.
     CrossPageMerge,
+    /// A page-local merge cannot preserve both durable identities by rewriting
+    /// graph-wide referrers as OG does. Leave both blocks untouched.
+    ReferencedIdentity,
     /// The page-header root is never an outline parent.
     HeaderRoot,
     /// No outline step exists (first sibling for indent, a root for outdent).
@@ -241,7 +244,7 @@ pub enum Verb {
         keep_start_in_scope: bool,
     },
     /// Append `absorbed` to `survivor` (Backspace at start, Delete at end).
-    /// `absorbed_referenced` is reserved for the OG parity call (DESIGN §4.3).
+    /// `absorbed_referenced` comes from the host's existing reference index.
     Merge {
         survivor: Key,
         absorbed: Key,
@@ -913,8 +916,16 @@ fn split(
 /// (`handler/editor.cljs:825`, `:790`). The absorbed block's editor text is
 /// appended to the survivor's, its children follow the survivor's, and it is
 /// removed. The survivor keeps its key and hidden properties; the absorbed
-/// `id::` moves only when the survivor has none (OG parity candidate, §4.3).
-fn merge(cx: &mut Cx, survivor: &str, absorbed: &str) -> Result<(), Reason> {
+/// hidden rows and clocks are dropped. A referenced `id::` transfers only if
+/// the survivor has none. Unlike OG at 6e7afa8eb (`update-block-refs`), this
+/// page-local verb cannot rewrite graph-wide references when both have IDs;
+/// it refuses that case so both identities stay resolvable (F2).
+fn merge(
+    cx: &mut Cx,
+    survivor: &str,
+    absorbed: &str,
+    absorbed_referenced: bool,
+) -> Result<(), Reason> {
     let t = cx.tx_of(absorbed)?;
     let s = cx.tx_of(survivor)?;
     if s != t {
@@ -939,23 +950,15 @@ fn merge(cx: &mut Cx, survivor: &str, absorbed: &str) -> Result<(), Reason> {
         .is_some_and(|p| !p.value.trim().is_empty());
     let absorbed_id = block_regions::parse(&gone.raw, format.is_org())
         .id
+        .filter(|p| !p.value.trim().is_empty())
         .map(|p| js_trim(p.line.slice(&gone.raw)).to_string());
+    if absorbed_referenced && absorbed_id.is_some() && survivor_has_id {
+        return Err(Reason::ReferencedIdentity);
+    }
     let mut hidden = keep.hidden.clone();
-    let retained = apply::retained_hidden_properties(&gone.raw, format.is_org(), cx.hide);
-    if !retained.is_empty() {
-        if !hidden.is_empty() {
-            hidden.push('\n');
-        }
-        hidden.push_str(&retained);
-    }
-    let clocks = editor_text::logbook_hidden(&gone.raw, format.is_org());
-    if !clocks.is_empty() {
-        if !hidden.is_empty() {
-            hidden.push('\n');
-        }
-        hidden.push_str(&clocks);
-    }
-    if let (false, Some(id)) = (survivor_has_id, &absorbed_id) {
+    // OG move-to-prev-block strips properties and the absorbed logbook. Keep
+    // the same rule for Delete, whose OG unreferenced path differs (F2).
+    if let (true, Some(id)) = (absorbed_referenced, &absorbed_id) {
         hidden = if hidden.is_empty() {
             id.clone()
         } else {
@@ -1979,7 +1982,7 @@ mod tests {
     }
 
     #[test]
-    fn gh741_logbook_merge_keeps_both_histories_in_survivor() {
+    fn gh741_logbook_merge_keeps_only_survivor_history_per_f2() {
         for format in [Format::Md, Format::Org] {
             let first = ":LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\n:END:";
             let second = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 09:00:00]  \n:END:";
@@ -2008,9 +2011,9 @@ mod tests {
                     .unwrap()
                     .raw;
                 let expected = if keep_drawer {
-                    "onetwo\n:LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\nCLOCK: [2026-10-21 Wed 09:00:00]  \n:END:".to_string()
+                    format!("onetwo\n{first}")
                 } else {
-                    format!("onetwo\n{second}")
+                    "onetwo".to_string()
                 };
                 assert_eq!(raw, &expected);
             }

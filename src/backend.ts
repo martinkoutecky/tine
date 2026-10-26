@@ -872,6 +872,7 @@ class TauriBackend implements Backend {
   onGraphConfigChanged(cb: (change: GraphConfigChange) => void) { return this.on("graph-config-changed", cb); }
   onCustomCssChanged(cb: (change: CustomCssChange) => void) { return this.on("graph-custom-css-changed", cb); }
   editCustomCss() { return this.call<void>("edit_custom_css"); }
+  editGlobalCss() { return this.call<void>("edit_global_css"); }
   gitAutocommitStatus() {
     return this.call<GitAutocommitStatus>("git_autocommit_status");
   }

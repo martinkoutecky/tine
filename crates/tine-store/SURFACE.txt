@@ -384,6 +384,7 @@ struct page_host::PageHost
 fn page_host::PageHost::start
 fn page_host::PageHost::reserve
 fn page_host::PageHost::rename
+# test-oracle: retained spelling handover fixtures until S4; production uses the driver spelling command
 fn page_host::PageHost::respell
 fn page_host::PageHost::stop_saved
 fn page_host::PageHost::window_reloaded
@@ -425,7 +426,7 @@ fn page_host::Stopped::relaunch
 # pages for the caller to write itself, `rename` is one fixed move. `reserve` goes in P4.
 struct page_host::HostOp
 field page_host::HostOp.pages
-field page_host::HostOp.moved
+field page_host::HostOp.moves
 field page_host::HostOp.policy
 field page_host::HostOp.kinds
 fn page_host::PageHost::apply

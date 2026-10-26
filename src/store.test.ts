@@ -1343,17 +1343,16 @@ describe("merge (Backspace at 0)", () => {
     expect(shape()).toEqual([["ab", [["b1"]]]]);
   });
 
-  it("merges visible content, keeps prev's id::, drops the absorbed block's", () => {
+  it("keeps both blocks when both have IDs and the reference count is unknown (F2)", () => {
     const dto = load([
       blk("foo\nid:: 11111111-1111-4111-8111-111111111111"),
       blk("bar\nid:: 22222222-2222-4222-8222-222222222222"),
     ]);
     const bar = dto.blocks[1].id;
-    mergeWithPrev(bar);
+    expect(mergeWithPrev(bar)).toBe(false);
     const foo = doc.pages[0].roots[0];
-    // Visible content joined; only the previous block's id:: survives.
-    expect(doc.byId[foo].raw).toBe("foobar\nid:: 11111111-1111-4111-8111-111111111111");
-    expect(takeCaretFor(foo)).toBe(3); // join at end of "foo" (visible space)
+    expect(doc.byId[foo].raw).toBe("foo\nid:: 11111111-1111-4111-8111-111111111111");
+    expect(doc.byId[bar].raw).toBe("bar\nid:: 22222222-2222-4222-8222-222222222222");
   });
 
   it("first block can't merge backwards", () => {
@@ -1459,14 +1458,15 @@ describe("merge forward (Delete at end)", () => {
     expect(shape()).toEqual([["ab", [["b1"]]]]);
   });
 
-  it("keeps the survivor's id:: and drops the absorbed next block's", () => {
+  it("keeps both IDs when the forward merge's reference count is unknown (F2)", () => {
     const dto = load([
       blk("foo\nid:: 11111111-1111-4111-8111-111111111111"),
       blk("bar\nid:: 22222222-2222-4222-8222-222222222222"),
     ]);
     const foo = dto.blocks[0].id;
-    mergeWithNext(foo);
-    expect(doc.byId[foo].raw).toBe("foobar\nid:: 11111111-1111-4111-8111-111111111111");
+    expect(mergeWithNext(foo)).toBe(false);
+    expect(doc.byId[foo].raw).toBe("foo\nid:: 11111111-1111-4111-8111-111111111111");
+    expect(doc.byId[dto.blocks[1].id].raw).toBe("bar\nid:: 22222222-2222-4222-8222-222222222222");
   });
 
   it("adopts the absorbed next block's id:: when the survivor has none", () => {

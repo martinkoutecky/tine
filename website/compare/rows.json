@@ -1,0 +1,1266 @@
+{
+  "schemaVersion": 1,
+  "columns": [
+    {
+      "id": "tine",
+      "label": "Tine"
+    },
+    {
+      "id": "logseq",
+      "label": "Logseq (file)"
+    },
+    {
+      "id": "db",
+      "label": "Logseq DB"
+    },
+    {
+      "id": "obsidian",
+      "label": "Obsidian"
+    }
+  ],
+  "rows": [
+    {
+      "id": "formatting",
+      "section": "Editing & rendering",
+      "feature": "Bold / italic / strikethrough / highlight / inline code",
+      "tine": {
+        "text": "Supported",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b2",
+          "contains": "strikethrough"
+        }
+      },
+      "obsidian": {
+        "text": "Supported",
+        "source": "https://help.obsidian.md/syntax",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Bold, italic, strike, highlight and inline code",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Markdown.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Bold, italic, strike, highlight and inline code",
+        "source": "https://github.com/logseq/logseq/blob/a37eff1d36aa7d0802b0b526f70aab0113191d53/src/main/frontend/components/block.cljs#L2023-L2140",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "html",
+      "section": "Editing & rendering",
+      "feature": "Raw inline HTML",
+      "tine": {
+        "text": "Sanitized to a safe allowlist",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b5",
+          "contains": "sanitized"
+        }
+      },
+      "obsidian": {
+        "text": "Sanitized HTML",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Editing%20and%20formatting/HTML%20content.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Sanitized inline HTML",
+        "source": "https://github.com/logseq/logseq/blob/6efedb75588763af256bc7dfd0ed5526dc91fe7c/src/main/frontend/components/block.cljs#L1623-L1626",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Sanitized inline HTML",
+        "source": "https://github.com/logseq/logseq/blob/a37eff1d36aa7d0802b0b526f70aab0113191d53/src/main/frontend/components/block.cljs#L2125-L2128",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "references",
+      "section": "Editing & rendering",
+      "feature": "Block references & embeds",
+      "tine": {
+        "text": "References and embeds",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b59",
+          "contains": "Block embed"
+        }
+      },
+      "db": {
+        "text": "Nodes use [[]]; node embeds",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md",
+        "checked": "2026-10-26"
+      },
+      "obsidian": {
+        "text": "Block links and embeds",
+        "source": "https://help.obsidian.md/embeds",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "References and editable embeds",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/The%20difference%20between%20block%20embeds%20and%20block%20references.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "properties",
+      "section": "Editing & rendering",
+      "feature": "Page & block properties",
+      "tine": {
+        "text": "key:: value properties",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b55",
+          "contains": "properties"
+        }
+      },
+      "logseq": {
+        "text": "Page and block properties",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Properties.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Typed node properties",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md",
+        "checked": "2026-10-26"
+      },
+      "obsidian": {
+        "text": "Typed properties on notes (YAML frontmatter)",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Editing%20and%20formatting/Properties.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "headings",
+      "section": "Editing & rendering",
+      "feature": "Headings, lists, blockquotes, HR",
+      "tine": {
+        "text": "Supported",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b29",
+          "contains": "blockquote"
+        }
+      },
+      "obsidian": {
+        "text": "Supported",
+        "source": "https://help.obsidian.md/syntax",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Headings, lists, blockquotes and horizontal rules",
+        "source": "https://github.com/logseq/logseq/blob/6efedb75588763af256bc7dfd0ed5526dc91fe7c/src/main/frontend/components/block.cljs#L3228-L3260",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Headings, lists, blockquotes and horizontal rules",
+        "source": "https://github.com/logseq/logseq/blob/a37eff1d36aa7d0802b0b526f70aab0113191d53/src/main/frontend/components/block.cljs#L4859-L4890",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "code",
+      "section": "Editing & rendering",
+      "feature": "Code blocks + syntax highlighting",
+      "tine": {
+        "text": "Supported",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b30",
+          "contains": "highlighting"
+        }
+      },
+      "obsidian": {
+        "text": "Supported",
+        "source": "https://help.obsidian.md/syntax",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Fenced code blocks with language highlighting",
+        "source": "https://github.com/logseq/logseq/blob/6efedb75588763af256bc7dfd0ed5526dc91fe7c/src/main/frontend/components/block.cljs#L3124-L3174",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Code nodes with language highlighting",
+        "source": "https://github.com/logseq/logseq/blob/a37eff1d36aa7d0802b0b526f70aab0113191d53/src/main/frontend/components/block.cljs#L4752-L4792",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "tables",
+      "section": "Editing & rendering",
+      "feature": "Tables (with column alignment)",
+      "tine": {
+        "text": "Supported",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b32",
+          "contains": "Markdown table"
+        }
+      },
+      "obsidian": {
+        "text": "Tables with alignment",
+        "source": "https://help.obsidian.md/advanced-syntax",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Markdown and query tables",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Tables.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Editable property tables replace file-version tables",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#tables",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "math",
+      "section": "Editing & rendering",
+      "feature": "LaTeX math (inline + display)",
+      "tine": {
+        "text": "Supported",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b36",
+          "contains": "Inline math"
+        }
+      },
+      "logseq": {
+        "text": "Inline and display math with KaTeX",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Math%20Block.md",
+        "checked": "2026-10-26"
+      },
+      "obsidian": {
+        "text": "Inline and display math with MathJax",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Editing%20and%20formatting/Advanced%20formatting%20syntax.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Inline and display LaTeX rendering",
+        "source": "https://github.com/logseq/logseq/blob/a37eff1d36aa7d0802b0b526f70aab0113191d53/src/main/frontend/components/block.cljs#L2090-L2093",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "media",
+      "section": "Editing & rendering",
+      "feature": "Images (inline, sized) & media",
+      "tine": {
+        "text": "Sized images; video embeds",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b38",
+          "contains": "image"
+        }
+      },
+      "obsidian": {
+        "text": "Sized images, audio and PDF embeds",
+        "source": "https://help.obsidian.md/embeds",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Images, audio and video embeds",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Embed%20Media%20-%20Audio%2C%20Photos%2C%20Videos.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Image links and asset files",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#assets",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "callouts",
+      "section": "Editing & rendering",
+      "feature": "Callouts / admonitions",
+      "tine": {
+        "text": "NOTE callouts",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b73",
+          "contains": "NOTE"
+        }
+      },
+      "obsidian": {
+        "text": "Typed, collapsible callouts",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Editing%20and%20formatting/Callouts.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Note, tip, important, caution and warning admonitions",
+        "source": "https://github.com/logseq/logseq/blob/6efedb75588763af256bc7dfd0ed5526dc91fe7c/src/main/frontend/components/block.cljs#L3286-L3302",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Note, tip, important, caution and warning admonitions",
+        "source": "https://github.com/logseq/logseq/blob/a37eff1d36aa7d0802b0b526f70aab0113191d53/src/main/frontend/components/block.cljs#L4916-L4930",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "tasks",
+      "section": "Tasks & journals",
+      "feature": "Task markers + checkboxes",
+      "tine": {
+        "text": "Task markers and toggles",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b40",
+          "contains": "task"
+        }
+      },
+      "logseq": {
+        "text": "Workflow markers and clickable checkboxes",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Tasks.md",
+        "checked": "2026-10-26"
+      },
+      "obsidian": {
+        "text": "Markdown task lists and checkboxes",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Editing%20and%20formatting/Basic%20formatting%20syntax.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Task status and checkbox properties",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#tasks",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "priorities",
+      "section": "Tasks & journals",
+      "feature": "Priorities [#A]",
+      "tine": {
+        "text": "A / B / C",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b47",
+          "contains": "High-priority"
+        }
+      },
+      "logseq": {
+        "text": "A / B / C",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Tasks.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Priority property and slash commands",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#task-shortcuts",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "schedule",
+      "section": "Tasks & journals",
+      "feature": "SCHEDULED / DEADLINE + repeaters",
+      "tine": {
+        "text": "Scheduled and repeating tasks",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b52",
+          "contains": "repeating"
+        }
+      },
+      "logseq": {
+        "text": "Scheduled dates, deadlines and repeaters",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Tasks.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Scheduled / Deadline properties with repetition",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#repeated-tasks-and-nodes",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "logbook",
+      "section": "Tasks & journals",
+      "feature": "Logbook / time tracking",
+      "tine": {
+        "text": "LOGBOOK drawers",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b53",
+          "contains": "logbook"
+        }
+      },
+      "logseq": {
+        "text": "Optional task time tracking with LOGBOOK drawers",
+        "source": "https://github.com/logseq/logseq/blob/6efedb75588763af256bc7dfd0ed5526dc91fe7c/src/main/frontend/handler/editor.cljs#L253-L313",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Task status history and elapsed time",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#task-status",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "footnotes",
+      "section": "Editing & rendering",
+      "feature": "Footnotes",
+      "tine": {
+        "text": "Supported",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b75",
+          "contains": "footnote"
+        }
+      },
+      "obsidian": {
+        "text": "Named and inline footnotes",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Editing%20and%20formatting/Basic%20formatting%20syntax.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Footnote references and definitions",
+        "source": "https://github.com/logseq/logseq/blob/6efedb75588763af256bc7dfd0ed5526dc91fe7c/src/main/frontend/components/block.cljs#L3330-L3340",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Footnote references and definitions",
+        "source": "https://github.com/logseq/logseq/blob/a37eff1d36aa7d0802b0b526f70aab0113191d53/src/main/frontend/components/block.cljs#L4960-L4972",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "journals",
+      "section": "Tasks & journals",
+      "feature": "Journals / daily notes",
+      "tine": {
+        "text": "One journal page per day",
+        "evidence": {
+          "path": "website/guide/reference-journals-tasks-and-scheduling.html",
+          "anchor": "b1",
+          "contains": "journal page per day"
+        }
+      },
+      "obsidian": {
+        "text": "Daily notes core plugin",
+        "source": "https://help.obsidian.md/plugins/daily-notes",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Journal nodes",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Daily journal pages",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Getting%20started%20with%20the%20Journals%20page.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "queries",
+      "section": "Queries & structured views",
+      "feature": "Simple & compound queries (DSL)",
+      "tine": {
+        "text": "Task / priority / compound queries",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b68",
+          "contains": "Compound query"
+        }
+      },
+      "logseq": {
+        "text": "Simple queries with and / or / not",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Queries.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Simple queries; changed filters",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md",
+        "checked": "2026-10-26"
+      },
+      "obsidian": {
+        "text": "Search operators, including AND / OR / negation",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Plugins/Search.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "pdf",
+      "section": "Files & workspace",
+      "feature": "PDF viewer + annotation / highlights",
+      "tine": {
+        "text": "PDF viewer and annotation",
+        "evidence": {
+          "path": "website/guide/features-pdf-annotation.html",
+          "anchor": "b1",
+          "contains": "PDF"
+        }
+      },
+      "logseq": {
+        "text": "Desktop PDF highlights",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/PDF%20highlights.md",
+        "checked": "2026-10-26"
+      },
+      "obsidian": {
+        "text": "PDF viewer and passage links; adding annotations is unsupported",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Linking%20notes%20and%20files/PDFs.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "PDF annotation nodes",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#more-tags",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "sheets",
+      "section": "Queries & structured views",
+      "feature": "Sheets — grids, field tables & boards",
+      "tine": {
+        "text": "Outline branches as tables, boards and grids",
+        "evidence": {
+          "path": "website/guide/features-sheets.html",
+          "anchor": "b1",
+          "contains": "tables, boards, and grids"
+        }
+      },
+      "obsidian": {
+        "text": "Bases: file tables, cards and Kanban views (Kanban: 1.14)",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Bases/Views.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Query result tables",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Query%20table.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Editable node tables, list and gallery views",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#views",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "css",
+      "section": "Files & workspace",
+      "feature": "Custom CSS and themes",
+      "tine": {
+        "text": "Customize colors, fonts, widths and bullets with CSS",
+        "evidence": {
+          "path": "website/guide/workflows-customize-tine-s-look.html",
+          "anchor": "b1",
+          "contains": "CSS"
+        }
+      },
+      "obsidian": {
+        "text": "Themes and CSS snippets",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/User%20interface/Appearance.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Custom CSS and Marketplace themes",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Custom%20theme.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "custom.css edited within Logseq Settings",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version-changes.md#user-config",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "outline",
+      "section": "Editing & rendering",
+      "feature": "Outlining — nest, fold, zoom, move blocks",
+      "tine": {
+        "text": "Fold outlines",
+        "evidence": {
+          "path": "scripts/e2e-outline-guide.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Fold headings and indented lists",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Editing%20and%20formatting/Folding.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Indent, outdent and move blocks with shortcuts",
+        "source": "https://github.com/logseq/logseq/blob/6efedb75588763af256bc7dfd0ed5526dc91fe7c/src/main/frontend/modules/shortcut/config.cljs#L280-L325",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Collapsible nodes and block zoom",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#nodes",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "slash",
+      "section": "Editing & rendering",
+      "feature": "Slash command menu",
+      "tine": {
+        "text": "Insert templates through the slash menu",
+        "evidence": {
+          "path": "scripts/e2e-template-collapse.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Slash commands core plugin",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Plugins/Slash%20commands.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Slash commands for queries, code and more",
+        "source": "https://github.com/logseq/logseq/blob/6efedb75588763af256bc7dfd0ed5526dc91fe7c/src/main/frontend/commands.cljs#L278-L310",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Slash commands on nodes",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#nodes",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "pairing",
+      "section": "Editing & rendering",
+      "feature": "Auto-pair brackets / [[ ]]",
+      "tine": {
+        "text": "Wrap selections with paired delimiters",
+        "evidence": {
+          "path": "scripts/e2e-selectwrap.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Auto-pair brackets and Markdown syntax settings",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/User%20interface/Settings.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Auto-complete paired page-reference brackets",
+        "source": "https://github.com/logseq/logseq/blob/6efedb75588763af256bc7dfd0ed5526dc91fe7c/src/main/frontend/handler/editor.cljs#L2953-L2996",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Auto-pair page-reference brackets",
+        "source": "https://github.com/logseq/logseq/blob/a37eff1d36aa7d0802b0b526f70aab0113191d53/src/main/frontend/handler/editor/autopair.cljs#L1-L160",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "links",
+      "section": "Pages & links",
+      "feature": "Page links, tags, namespaces (a/b/c)",
+      "tine": {
+        "text": "Page and tag autocomplete",
+        "evidence": {
+          "path": "scripts/e2e-tag-autocomplete.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Internal links to notes, headings and blocks",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Linking%20notes%20and%20files/Internal%20links.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Group pages with hierarchical namespaces",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Namespaces.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Node links, tags and Library hierarchy",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#library",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "aliases",
+      "section": "Pages & links",
+      "feature": "Aliases",
+      "tine": {
+        "text": "Page aliases",
+        "evidence": {
+          "path": "scripts/e2e-alias.mjs"
+        }
+      },
+      "logseq": {
+        "text": "Page aliases via alias::",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Aliases%20and%20external%20links.md",
+        "checked": "2026-10-26"
+      },
+      "obsidian": {
+        "text": "Note aliases in properties",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Linking%20notes%20and%20files/Aliases.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Page aliases through the alias property",
+        "source": "https://github.com/logseq/logseq/blob/a37eff1d36aa7d0802b0b526f70aab0113191d53/src/main/frontend/components/property/value.cljs#L1338-L1402",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "backlinks",
+      "section": "Pages & links",
+      "feature": "Linked & unlinked references",
+      "tine": {
+        "text": "Reference panels",
+        "evidence": {
+          "path": "scripts/e2e-og-parity-references.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Linked and unlinked mentions",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Plugins/Backlinks.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Unlinked page-name mentions",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Unlinked%20References.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Linked and unlinked references on nodes",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#nodes",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "favorites",
+      "section": "Pages & links",
+      "feature": "Favorites",
+      "tine": {
+        "text": "Sidebar favorites",
+        "evidence": {
+          "path": "scripts/e2e-sidebar-sections.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Bookmarks for files, searches and more",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Plugins/Bookmarks.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Favorite pages and zoomed-in blocks",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#nodes",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Favorite pages",
+        "source": "https://github.com/logseq/logseq/blob/6efedb75588763af256bc7dfd0ed5526dc91fe7c/src/main/frontend/handler/page.cljs#L313-L351",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "advanced",
+      "section": "Queries & structured views",
+      "feature": "Advanced Datalog ([:find …])",
+      "tine": {
+        "text": "Supported subset; unsupported clauses refuse the whole query",
+        "evidence": {
+          "path": "website/guide/features-queries.html",
+          "anchor": "b60",
+          "contains": "whole query is refused"
+        }
+      },
+      "logseq": {
+        "text": "Datascript Datalog queries, custom views and transforms",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Advanced%20Queries.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Advanced queries via /Advanced Query",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#queries",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "views",
+      "section": "Queries & structured views",
+      "feature": "Query result tables / views",
+      "tine": {
+        "text": "Search, list, table and board views",
+        "evidence": {
+          "path": "scripts/e2e-query-workspace.mjs"
+        }
+      },
+      "logseq": {
+        "text": "Table and list views",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Query%20table.md",
+        "checked": "2026-10-26"
+      },
+      "obsidian": {
+        "text": "Bases: filtered file tables, lists, cards and Kanban",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Bases/Views.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Table, list and gallery query views",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#views",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "aggregate",
+      "section": "Queries & structured views",
+      "feature": "Math / aggregation on results",
+      "tine": {
+        "text": "Count, sum and average without code",
+        "evidence": {
+          "path": "website/guide/features-queries.html",
+          "anchor": "b39",
+          "contains": "count/sum/average"
+        }
+      },
+      "obsidian": {
+        "text": "Bases table summaries: totals, averages and counts",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Bases/Layouts/Table%20view.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Query functions: sum, average, min, max and count",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Query%20function.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "search",
+      "section": "Files & workspace",
+      "feature": "Global search / quick switcher (Ctrl+K)",
+      "tine": {
+        "text": "Global search",
+        "evidence": {
+          "path": "scripts/e2e-search-parity.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Search core plugin",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Plugins/Search.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Search pages, blocks, files and commands (Ctrl/Cmd+K)",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Search.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Search modal and commands",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#search-commands",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "assets",
+      "section": "Files & workspace",
+      "feature": "Asset handling (images, files)",
+      "tine": {
+        "text": "Graph assets",
+        "evidence": {
+          "path": "scripts/e2e-external-assets.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Attachments stored in the vault",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Editing%20and%20formatting/Attachments.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Images, audio and video stored or linked in blocks",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Embed%20Media%20-%20Audio%2C%20Photos%2C%20Videos.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Upload, drop and manage files as asset nodes",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#assets",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "publish",
+      "section": "Files & workspace",
+      "feature": "HTML publish / export",
+      "tine": {
+        "text": "HTML export",
+        "evidence": {
+          "path": "scripts/e2e-publish-security.mjs"
+        }
+      },
+      "logseq": {
+        "text": "HTML export",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Export.md",
+        "checked": "2026-10-26"
+      },
+      "obsidian": {
+        "text": "Obsidian Publish hosting service",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Obsidian%20Publish/Introduction%20to%20Obsidian%20Publish.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Export public pages; hosted Publish",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#graph-export",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "live",
+      "section": "Files & workspace",
+      "feature": "Live export (a read-only Tine app)",
+      "tine": {
+        "text": "Read-only published Guide",
+        "evidence": {
+          "path": "scripts/e2e-og-published-guide.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Hosted notes as a wiki or knowledge base",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Obsidian%20Publish/Introduction%20to%20Obsidian%20Publish.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Read-only graph as a single-page web app",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Publishing.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Read-only published outliner",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#publish",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "print",
+      "section": "Files & workspace",
+      "feature": "PDF export",
+      "tine": {
+        "text": "Print / PDF export",
+        "evidence": {
+          "path": "scripts/e2e-print-security.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Export notes to PDF on desktop",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Linking%20notes%20and%20files/PDFs.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "copy",
+      "section": "Editing & rendering",
+      "feature": "Copy as Markdown / Rendered",
+      "tine": {
+        "text": "Clipboard round trips",
+        "evidence": {
+          "path": "scripts/e2e-clipboard-roundtrip.mjs"
+        }
+      },
+      "logseq": {
+        "text": "Copy blocks as Markdown and HTML",
+        "source": "https://github.com/logseq/logseq/blob/6efedb75588763af256bc7dfd0ed5526dc91fe7c/src/main/frontend/handler/editor.cljs#L1200-L1231",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Export text or HTML to the clipboard",
+        "source": "https://github.com/logseq/logseq/blob/a37eff1d36aa7d0802b0b526f70aab0113191d53/src/main/frontend/components/export.cljs#L450-L473",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "org",
+      "section": "Files & workspace",
+      "feature": "Org-mode graphs",
+      "tine": {
+        "text": "Org headline references",
+        "evidence": {
+          "path": "scripts/e2e-org-headline-refs.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Built-in file-format list covers Markdown; other formats via plugins",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Files%20and%20folders/Accepted%20file%20formats.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Markdown and Org-mode file formats",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/setting___preferred%20file%20format.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Org-mode files no longer supported",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version-changes.md#high-level-changes",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "plugins",
+      "section": "Files & workspace",
+      "feature": "Plugin platform",
+      "tine": {
+        "text": "Tine plugin platform",
+        "evidence": {
+          "path": "scripts/e2e-plugins.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Community plugins",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Extending%20Obsidian/Community%20plugins.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Desktop plugins and Marketplace",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Plugins.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Plugin SDK and DB-compatible Marketplace plugins",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#plugins",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "conflicts",
+      "section": "Files & workspace",
+      "feature": "Sync conflicts (Syncthing / Dropbox copies, git markers)",
+      "tine": {
+        "text": "Guarded saves and conflict handling",
+        "evidence": {
+          "path": "scripts/e2e-host-saves.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Obsidian Sync: merge or create conflict files",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Obsidian%20Sync/Troubleshoot%20Obsidian%20Sync.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Logseq Sync: experimental diff-merge conflict handling",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/OG%20version%20changelog.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "external",
+      "section": "Files & workspace",
+      "feature": "External edits while the app is open",
+      "tine": {
+        "text": "External file change refresh",
+        "evidence": {
+          "path": "scripts/e2e-file-poll.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Vault automatically refreshes after external changes",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Files%20and%20folders/How%20Obsidian%20stores%20data.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Watch current graph directory for changes",
+        "source": "https://github.com/logseq/logseq/blob/6efedb75588763af256bc7dfd0ed5526dc91fe7c/src/main/frontend/handler/file.cljs#L253-L260",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Script edits to db.sqlite require explicit graph replacement",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#modify-a-db-graph",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "cli",
+      "section": "Files & workspace",
+      "feature": "Command line",
+      "tine": {
+        "text": "CLI page operations",
+        "evidence": {
+          "path": "scripts/cli-page-acceptance.mjs"
+        }
+      },
+      "logseq": {
+        "text": "publish-spa CLI for publishing file graphs",
+        "source": "https://github.com/logseq/publish-spa#cli",
+        "checked": "2026-10-26"
+      },
+      "obsidian": {
+        "text": "Obsidian CLI (desktop app must be running)",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Extending%20Obsidian/Obsidian%20CLI.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Independent CLI installed with nightly app",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#cli",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "split",
+      "section": "Files & workspace",
+      "feature": "Split view",
+      "tine": {
+        "text": "Independent panes",
+        "evidence": {
+          "path": "scripts/e2e-panes-keys.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Split tab groups horizontally or vertically",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/User%20interface/Tabs.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Pages and block branches in the right sidebar",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/How%20to%20work%20with%20the%20right-hand%20sidebar.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Resizable right sidebar with multiple blocks",
+        "source": "https://github.com/logseq/logseq/blob/a37eff1d36aa7d0802b0b526f70aab0113191d53/src/main/frontend/components/right_sidebar.cljs#L375-L476",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "tabs",
+      "section": "Files & workspace",
+      "feature": "Editor tabs",
+      "tine": {
+        "text": "Tabs restored on launch",
+        "evidence": {
+          "path": "scripts/e2e-tab-restore.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Tabs, tab groups and saved workspace layouts",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/User%20interface/Tabs.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "searchquery",
+      "section": "Queries & structured views",
+      "feature": "Search that becomes a query",
+      "tine": {
+        "text": "Persistent query workspace",
+        "evidence": {
+          "path": "scripts/e2e-query-workspace.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "Embed search results with a query code block",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Plugins/Search.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "capture",
+      "section": "Files & workspace",
+      "feature": "Global quick capture",
+      "tine": {
+        "text": "Capture window",
+        "evidence": {
+          "path": "scripts/e2e-capture.mjs"
+        }
+      },
+      "obsidian": {
+        "text": "URI actions create notes or append content from other apps",
+        "source": "https://github.com/obsidianmd/obsidian-help/blob/f333c95d23fc1e30594fa7acb9181f67ab71861c/en/Extending%20Obsidian/Obsidian%20URI.md",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Quick capture from other apps via logseq://",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/pages/Logseq%20Protocol.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Quick add modal; mobile share capture",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#search-commands",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "typography",
+      "section": "Editing & rendering",
+      "feature": "Typographic replacements (-> → →)",
+      "tine": {
+        "text": "Optional while reading or while typing; off by default",
+        "evidence": {
+          "path": "website/guide/workflows-customize-tine-s-look.html",
+          "anchor": "b7",
+          "contains": "Typographic replacements"
+        }
+      }
+    },
+    {
+      "id": "desktop",
+      "section": "Platforms",
+      "feature": "Desktop: Linux, macOS, Windows",
+      "tine": {
+        "text": "Linux packages, macOS bundles and Windows installer / portable zip",
+        "evidence": {
+          "path": "website/index.html",
+          "contains": "<strong>Desktop</strong> — Linux (AppImage, .deb, .rpm)"
+        }
+      },
+      "logseq": {
+        "text": "Desktop installers for Linux, macOS and Windows",
+        "source": "https://github.com/logseq/logseq/releases/tag/0.10.15",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Linux, macOS and Windows desktop downloads",
+        "source": "https://logseq.com/downloads",
+        "checked": "2026-10-26"
+      },
+      "obsidian": {
+        "text": "Windows, macOS and Linux downloads",
+        "source": "https://obsidian.md/download",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "android",
+      "section": "Platforms",
+      "feature": "Android",
+      "tine": {
+        "text": "F-Droid or signed APK; Google Play closed test",
+        "evidence": {
+          "path": "website/index.html",
+          "contains": "https://f-droid.org/packages/page.tine.app/"
+        }
+      },
+      "logseq": {
+        "text": "Android APK",
+        "source": "https://github.com/logseq/logseq/releases/tag/0.10.15",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Native Android app not yet open for alpha testing",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#android-app",
+        "checked": "2026-10-26"
+      },
+      "obsidian": {
+        "text": "Android: Google Play or APK",
+        "source": "https://obsidian.md/download",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "ios",
+      "section": "Platforms",
+      "feature": "iPhone / iPad",
+      "tine": {
+        "text": "Public beta via TestFlight",
+        "evidence": {
+          "path": "website/index.html",
+          "contains": "https://testflight.apple.com/join/rpGGpTVW"
+        }
+      },
+      "logseq": {
+        "text": "iOS app via App Store link",
+        "source": "https://logseq.com/downloads",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Native iPhone / iPad app: invite only",
+        "source": "https://github.com/logseq/docs/blob/628cdde0b6f1d90c4722e2bfebb2fd00a5186825/db-version.md#ios-app",
+        "checked": "2026-10-26"
+      },
+      "obsidian": {
+        "text": "iPhone / iPad: App Store",
+        "source": "https://obsidian.md/download",
+        "checked": "2026-10-26"
+      }
+    }
+  ]
+}

@@ -83,7 +83,7 @@ mod tray;
 mod watcher;
 mod workspace_windows;
 mod youtube_identity;
-use css_files::{read_css_file, save_css_file};
+use css_files::{edit_global_css, read_css_file, save_css_file};
 
 use backup::{delete_old_backups, get_backup_keep, list_backups, restore_backup, set_backup_keep};
 use commands::{
@@ -967,6 +967,9 @@ pub fn run() {
                 flight::persist_init(dir.join("diagnostics"));
             }
             diag("setup() begin");
+            if let Err(error) = css_files::install_global_css_watcher(app.handle()) {
+                debug::diag_private("global-css-watch", error);
+            }
             // The persisted Spotlight index may hold a graph this launch never binds.
             spotlight::launched(app.handle());
             #[cfg(target_os = "linux")]
@@ -1141,6 +1144,7 @@ pub fn run() {
             set_start_of_week,
             read_custom_css,
             read_css_file,
+            edit_global_css,
             save_css_file,
             commands::reveal_export,
             edit_custom_css,

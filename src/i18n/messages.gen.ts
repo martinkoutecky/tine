@@ -99,6 +99,7 @@ export interface MessageArgs {
   "block-parts-type": {};
   "block-ref-actions-select-blocks-or-edit-one-to-copy-their": {};
   "block-ref-actions-too-much-selected-to-duplicate": {};
+  "blocks-merge-would-break-a-reference": {};
   "blocks-outline-is-too-deep-to-insert-a-child": {};
   "blocks-outline-is-too-deep-to-merge": {};
   "blocks-outline-is-too-deep-to-move": {};
@@ -125,6 +126,8 @@ export interface MessageArgs {
   "code-display-could-not-remember-code-wrapping": { "error": string | number };
   "command-appearance-edit-custom-css": {};
   "command-appearance-edit-global-css": {};
+  "command-appearance-open-custom-css-default-app": {};
+  "command-appearance-open-global-css-default-app": {};
   "command-builtin-editor-ac-accept": {};
   "command-builtin-editor-ac-close": {};
   "command-builtin-editor-ac-nav": {};
@@ -519,6 +522,8 @@ export interface MessageArgs {
   "css-global-hint": {};
   "css-graph-file": {};
   "css-graph-hint": {};
+  "css-open-default-app": {};
+  "css-open-failed": { "error": string | number };
   "css-read-failed": { "error": string | number };
   "css-reload": {};
   "css-reload-confirm": {};
@@ -940,6 +945,8 @@ export interface MessageArgs {
   "git-settings-policy-off": {};
   "git-settings-save-failed": { "error": string | number };
   "git-settings-stale-lock": { "path": string | number };
+  "git-settings-syncthing-ignore-added": { "path": string | number };
+  "git-settings-syncthing-ignore-failed": {};
   "git-settings-unusable": { "message": string | number };
   "gpu-software-rendering-is-on-tine-gpu-0-webkit": {};
   "gpu-this-app-image-is-rendering-on-the-cpu": {};

@@ -221,7 +221,7 @@ fn textarea_normalization_of_an_org_terminal_cr_keeps_the_source_layout() {
 }
 
 #[test]
-fn merge_keeps_its_existing_absorbed_metadata_policy() {
+fn merge_keeps_survivor_heading_and_drops_absorbed_heading_per_f2() {
     use tine_outline::outline::{self, Format, KeySource, OutlinePage, Verb};
     let page: OutlinePage = serde_json::from_value(serde_json::json!({
         "name": "P", "format": Format::Md, "roots": ["a", "b"],
@@ -249,7 +249,7 @@ fn merge_keeps_its_existing_absorbed_metadata_policy() {
         .unwrap()
         .raw;
     assert!(raw.contains("heading:: 2"));
-    assert!(raw.contains("heading:: true"));
+    assert!(!raw.contains("heading:: true"));
 }
 
 #[test]
@@ -335,7 +335,7 @@ fn org_hidden_crlf_bytes_survive_lf_textarea_edits() {
 }
 
 #[test]
-fn configured_projection_keeps_metadata_on_enter_and_merge() {
+fn configured_projection_keeps_metadata_on_enter_and_drops_it_on_merge_per_f2() {
     use tine_outline::outline::{self, Format, KeySource, OutlinePage, Verb};
     let hide = HidePolicy::Configured {
         keys: vec!["secret".into()],
@@ -374,10 +374,7 @@ fn configured_projection_keeps_metadata_on_enter_and_merge() {
             editor_text::split(&survivor.raw, org, &hide).visible,
             "FirstBody"
         );
-        assert_eq!(
-            editor_text::split(&survivor.raw, org, &hide).hidden,
-            editor_text::split(&raw, org, &hide).hidden
-        );
+        assert_eq!(editor_text::split(&survivor.raw, org, &hide).hidden, "");
         let split = outline::apply_with_policy(
             &[page],
             &Verb::Split {

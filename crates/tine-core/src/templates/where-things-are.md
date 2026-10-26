@@ -18,7 +18,7 @@ icon:: 🗺️
   - The **+ New page** button at the bottom opens the same Ctrl+K box; a name that matches nothing becomes a page you can create. When Syncthing, Dropbox or a merge leaves pages that need a decision, an **N conflicts** badge appears beside it — see [[Reference/Files, external edits, and backups]]. Press **t l** to fold the whole sidebar away, and **t l** again to bring it back.
 - ## The tab strip: what's open
   - Every open page or PDF keeps a tab along the top, browser-style: click to switch, **Ctrl+W** to close. Middle-click anything that opens a page — a link, a search result, a bullet's dot — to park it in a background tab without leaving this one. PDF links open in a companion pane by default, and their tabs can be dragged between panes like page tabs. Tabs come back after a restart.
-  - The strip needs room: in a window narrower than 640 px (a phone held upright, a small desktop window) it gives way to the **Tabs** list in the left sidebar, which shows your open tabs, switches to one with a tap, and closes one with its ✕; drag its rows to reorder them or nest one tab under another ([[Workflows/Keep context visible]]). It appears once a second tab is open, on every platform.
+  - The strip needs room: in a window narrower than 640 px (a phone held upright, a small desktop window) it gives way to the **Open tabs** list in the left sidebar, which shows your open tabs, switches to one with a tap, and closes one with its ✕; drag its rows to reorder them or nest one tab under another ([[Workflows/Keep context visible]]). It appears once a second tab is open, on every platform.
 - ## The right sidebar: parked context
   - Anything you want **beside** the current page rather than instead of it — another page, or zoomed into one bullet — goes to the right sidebar: **Shift-click** a link or a bullet's dot. Items there are live editors, not previews. Press **t r** to show or hide the whole sidebar.
 - ## Settings and Help
@@ -27,7 +27,7 @@ icon:: 🗺️
   - Settings opens as a small dialog. The button beside its search box makes it fill the window, which is easier to read through; Tine remembers which size you left it at and opens it that way next time.
   - The **?** button at the bottom right (or press **Shift+?**) opens Help: this Guide, the shortcut reference, the features documentation, the bug-report and release-notes links, and the Welcome screen.
 - ## On a phone
-  - Below a 640 px window width, either sidebar opens as an overlay on top of the current route instead of shrinking it — tap the shaded outside edge, press Esc, or use Android Back to dismiss. Split panes are off on a phone-sized touch screen; open tabs are listed under **Tabs** in the left sidebar.
+  - Below a 640 px window width, either sidebar opens as an overlay on top of the current route instead of shrinking it — tap the shaded outside edge, press Esc, or use Android Back to dismiss. Split panes are off on a phone-sized touch screen; open tabs are listed under **Open tabs** in the left sidebar.
   - [[Reference/Platforms and mobile]] separates narrow-window behavior from native-app behavior and maps each platform's shipping surface.
 - ## Where next
   - New here? [[Welcome to Tine]] walks the first hands-on minutes. To put these places to work — parking, pinning, splitting, and saving the layout — continue with [[Workflows/Keep context visible]]; [[Features/Tips & shortcuts]] is the compact shortcut map.

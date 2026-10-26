@@ -38,6 +38,7 @@ serde_json = { workspace = true }
 base64 = "0.22"
 cap-std = "4.0.2"
 same-file = "1.0.6"
+notify = "6"
 sha2 = "0.10"
 # Zip launch backups (backup/archive.rs): raw Deflate through the pure-Rust
 # miniz_oxide backend only, no C codec on any target.
@@ -61,7 +62,7 @@ tine-graph-features = { path = "../crates/tine-graph-features" }
 tempfile = "3"
 # Quick share's device-flow poll waits (DESIGN §3.4); tokio is already in the
 # lock through tauri and reqwest.
-tokio = { version = "1", default-features = false, features = ["time"] }
+tokio = { version = "1", default-features = false, features = ["time", "sync"] }
 
 [dev-dependencies]
 clap_mangen = "0.2"

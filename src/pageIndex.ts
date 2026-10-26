@@ -4,6 +4,7 @@ import { backend } from "./backend";
 import { graphOwner, latestOwner, readOwned } from "./owned";
 import { graphEpoch, pageInventoryRev } from "./graphSession";
 import { pageIdentityKey } from "./ui";
+import { journalTitle, parseJournalTitle } from "./journal";
 import type { PageEntry, PageInventory, PageInventoryEntry, PageKind, ResolvedPage } from "./types";
 
 // The frontend's ONE name answerer: the latest `page_inventory` result, keyed by
@@ -174,6 +175,16 @@ export function resolvedTarget(name: string, kind: PageKind = "page"): ResolvedP
   ensureInstalled();
   const current = held();
   return (kind === "journal" ? current?.journals : current?.pages)?.get(pageIdentityKey(name))?.target;
+}
+
+/** Date-shaped links prefer a journal file for the day, then a real ordinary
+ *  page of this name. This is navigation only: file identity stays unchanged.
+ *  Before inventory arrives the backend applies the same fallback. O(1), no IPC. */
+export function linkPageKind(name: string): PageKind {
+  const date = parseJournalTitle(name);
+  if (!date) return "page";
+  if (resolvedTarget(journalTitle(date), "journal")?.kind === "existing") return "journal";
+  return resolvedTarget(name, "page")?.kind === "existing" ? "page" : "journal";
 }
 
 /** The page name navigation opens for `name`: the file's own name for

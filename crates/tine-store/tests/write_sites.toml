@@ -3,6 +3,16 @@
 # Strings use the JSON-compatible TOML basic-string subset enforced by i01.
 
 [[site]]
+file = "src-tauri/src/owner/git_autocommit.rs"
+fn = "append_syncthing_ignore"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#root_gitignore_keeps_the_non_page_revision_and_target_guards"
+oracle = false
+note = "D-20261026-GI: fixed root .gitignore only, through Store's non-page revision-guarded replace or no-replace create; no raw filesystem mutation or page write. Durable device-local attempt precedes the write; ordinary transaction crash scope applies."
+mutations = ".create=1"
+
+[[site]]
 file = "crates/tine-store/src/publish.rs"
 fn = "query_publication_snapshot"
 domain = "primitive"
@@ -1151,6 +1161,26 @@ guard = ""
 test = ""
 oracle = false
 note = "Global CSS app-data parent directory setup; graph CSS delegates to Transaction."
+mutations = "fs::create_dir_all=1"
+
+[[site]]
+file = "src-tauri/src/css_files.rs"
+fn = "edit_global_css"
+domain = "app"
+guard = ""
+test = ""
+oracle = false
+note = "GH #778: create the app-config parent directory for global.css handoff; file creation delegates to the existing global_save/device_io::atomic_update guarded writer. Rust owns the path."
+mutations = "fs::create_dir_all=1"
+
+[[site]]
+file = "src-tauri/src/css_files.rs"
+fn = "install_global_css_watcher"
+domain = "app"
+guard = ""
+test = ""
+oracle = false
+note = "GH #778: ensure the app-config directory exists before installing its non-recursive global.css watch. No CSS file or graph content is written."
 mutations = "fs::create_dir_all=1"
 
 [[site]]
