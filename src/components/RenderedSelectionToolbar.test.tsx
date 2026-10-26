@@ -144,8 +144,7 @@ describe("rendered-selection toolbar: exact, owned mapping (GH #375 review r1)",
     try {
       const editor = maybeEditorIn(page.root)!;
       editor.element.focus();
-      editor.replaceText("first block edited");
-      editor.reportInput({ bubbles: true });
+      editor.input("first block edited", undefined, { inputType: "", data: null });
       selectText(row(page.root, "second"), "answer");
       expect(selectedText()).toBe("answer");
       expect(editingId()).toBeNull();
@@ -163,8 +162,7 @@ describe("rendered-selection toolbar: exact, owned mapping (GH #375 review r1)",
       const editor = maybeEditorIn(page.root)!;
       editor.element.focus();
       editor.compositionStart(new CompositionEvent("compositionstart", { bubbles: true }));
-      editor.replaceText("draft still composing");
-      editor.reportInput({ bubbles: true, isComposing: true });
+      editor.input("draft still composing", undefined, { inputType: "", data: null, isComposing: true });
       expect(docNode("first").raw).toBe("first block");
       selectText(row(page.root, "second"), "selected");
       expect(docNode("first").raw).toBe("draft still composing");
@@ -271,8 +269,7 @@ describe("rendered-selection toolbar (GH #375)", () => {
       // Block A is being edited, with typed text not yet saved to disk.
       const editor = maybeEditorIn(page.root)!;
       editor.element.focus();
-      editor.replaceText("first block edited");
-      editor.reportInput({ bubbles: true });
+      editor.input("first block edited", undefined, { inputType: "", data: null });
 
       selectText(row(page.root, "second"), "selected");
 

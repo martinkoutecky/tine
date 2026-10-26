@@ -23,6 +23,8 @@ export type EditorKind = "textarea" | "cm6";
 export type SelectionDirection = "forward" | "backward" | "none";
 
 export interface EditorInput {
+  /** Preserve platforms that report a plain Event rather than an InputEvent. */
+  eventKind?: "input" | "plain";
   /** `InputEvent.inputType`; defaults to "insertText". */
   inputType?: string;
   /** `InputEvent.data`; defaults to the character before the caret for text insertion. */
@@ -118,7 +120,8 @@ function textareaDriver(ta: HTMLTextAreaElement): EditorDriver {
     ta.setSelectionRange(caret, caret);
     const inputType = init.inputType ?? "insertText";
     const data = init.data !== undefined ? init.data : inputType.startsWith("insert") ? value[caret - 1] ?? null : null;
-    const event = new InputEvent("input", { bubbles: true, inputType, data });
+    const event = init.eventKind === "plain" ? new Event("input", { bubbles: true })
+      : new InputEvent("input", { bubbles: true, inputType, data });
     ta.dispatchEvent(init.isComposing ? withProps(event, { isComposing: true }) : event);
   };
   return {
@@ -212,6 +215,9 @@ function cm6Driver(root: Element): EditorDriver {
     // One minimal replacement preserves mapped ranges/history, including IME edits.
     view.dispatch({ changes: { from, to: oldEnd, insert: value.slice(from, newEnd) },
       selection: { anchor: Math.max(0, Math.min(caret, value.length)) }, userEvent: cm6UserEvent(init) });
+    // CM owns the buffer in state; retain the platform signal after reporting
+    // the edit through its transaction, without inventing a detached draft.
+    if (init.eventKind === "plain") element.dispatchEvent(new Event("input", { bubbles: true }));
   };
   return {
     kind: "cm6", element,

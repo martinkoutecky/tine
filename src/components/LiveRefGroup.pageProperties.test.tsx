@@ -54,8 +54,7 @@ const propertyRow = (raw = HEADER): BlockDto => ({
 });
 
 const replaceValue = (textarea: EditorDriver, value: string) => {
-  textarea.replaceText(value);
-  textarea.reportInput({ bubbles: true, inputType: "insertText", data: value });
+  textarea.input(value, undefined, { inputType: "insertText", data: value });
 };
 
 describe("page properties in Linked References (GH #486)", () => {

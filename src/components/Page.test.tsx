@@ -194,8 +194,7 @@ describe("Journals feed generation lifecycle", () => {
       const editor = maybeEditorIn(mounted.root)!;
       expect(editor).not.toBeNull();
       if (dirty) {
-        editor.replaceText("Existing notes with unsaved overnight text");
-        editor.reportInput({ bubbles: true, inputType: "insertText", data: "text" });
+        editor.input("Existing notes with unsaved overnight text", undefined, { inputType: "insertText", data: "text" });
       }
       editor.element.focus();
       editor.select(3, 12, "backward");
@@ -1111,11 +1110,9 @@ describe("trailing page block target", () => {
       expect(document.activeElement).toBe(textarea?.element);
       expect(textarea?.selection()[0]).toBe(0);
       expect(textarea?.selection()[1]).toBe(0);
-      textarea!.replaceText("typed immediately");
-      textarea!.reportInput({ bubbles: true }, "plain");
+      textarea!.input("typed immediately", undefined, { eventKind: "plain" });
       expect(doc.byId[created].raw).toBe("typed immediately");
-      textarea!.replaceText("");
-      textarea!.reportInput({ bubbles: true }, "plain");
+      textarea!.input("", undefined, { eventKind: "plain" });
       endEdit("blur");
       target.click();
       await tick();
@@ -2298,8 +2295,7 @@ describe("Markdown preamble content", () => {
       expect(isDirty(dto.name)).toBe(false);
       expect(pageToDto(dto.name)?.pre_block).toBe(dto.pre_block);
 
-      editor.replaceText("klíč:: změněno\n\nalias:: Book");
-      editor.reportInput({ bubbles: true }, "plain");
+      editor.input("klíč:: změněno\n\nalias:: Book", undefined, { eventKind: "plain" });
       expect(isDirty(dto.name)).toBe(true);
       expect(pageToDto(dto.name)?.pre_block).toBe("klíč:: změněno\n\nalias:: Book");
       expect(pageToDto(dto.name)?.blocks.map((block) => block.raw)).toEqual(["First body"]);

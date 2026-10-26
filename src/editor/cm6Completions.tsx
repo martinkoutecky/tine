@@ -16,7 +16,6 @@ import { pluginManager } from "../plugins/manager";
 import { bindPluginBlockSnapshot, isPluginGraphOwnerCurrent } from "../plugins/ownership";
 import { linkAutocompletePolicy } from "./linkDefault";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { isAnnotationBlock } from "./annotation";
 import { calcSource } from "./calc";
 import { codeFences } from "./fences";
 import { setMarker } from "./marker";
@@ -44,7 +43,7 @@ export function cm6Completions(props: {
   id: string; surface: string; format: "md" | "org"; sheet: boolean;
   current: () => boolean; view: () => EditorView | undefined;
   visible: () => string; rawBeforeCommit: () => string;
-  literal(): boolean; languagePicker(active: boolean): void;
+  literal(): boolean; annotation(): boolean; languagePicker(active: boolean): void;
   completeRegion(text: string, caret: number): void;
   assets: ReturnType<typeof editorAssets>;
 }) {
@@ -84,7 +83,7 @@ export function cm6Completions(props: {
     && left.end === right.end && left.property === right.property
     && (left.propertyValues ?? []).join("\0") === (right.propertyValues ?? []).join("\0");
   const detectEditorTrigger = () => {
-    if (props.literal() || props.sheet || isAnnotationBlock(node(props.id).raw, props.format) || calcSource(text()) !== null) return null;
+    if (props.literal() || props.sheet || props.annotation() || calcSource(text()) !== null) return null;
     const trigger = detectTrigger(text(), caret(), propertyValueKey(), props.format);
     if (trigger) return trigger;
     // The explicit scaffold picker also accepts an empty query on its opener.

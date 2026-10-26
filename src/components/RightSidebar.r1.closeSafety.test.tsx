@@ -99,9 +99,7 @@ async function beginEdit(root: HTMLElement, text: string) {
     return found!;
   });
   editor.element.focus();
-  editor.replaceText(text);
-  editor.select(text.length, text.length);
-  editor.reportInput({ bubbles: true, inputType: "insertText" });
+  editor.input(text, text.length, { inputType: "insertText", data: null });
   expect(editingId()).toBe(BLOCK_ID);
   expect(doc.byId[BLOCK_ID].raw).toBe(text);
   return editor;

@@ -364,9 +364,7 @@ describe("measurement cost", () => {
       flushFrames();
       const ta = editor(outline(pane))!;
       const before = marginMeasurePasses();
-      ta.replaceText("x" + ta.value());
-      ta.select(1, 1);
-      ta.reportInput({ bubbles: true, inputType: "insertText", data: "x" });
+      ta.input("x" + ta.value(), 1, { inputType: "insertText", data: "x" });
       expect(docNode("b7")!.raw).toBe("xblock text 7 here");
       // The typed line rewrapped: the browser reports the outline resized.
       resized(outline(pane));
@@ -380,9 +378,7 @@ describe("measurement cost", () => {
       flushFrames();
       const parent = editor(outline(pane))!;
       const again = marginMeasurePasses();
-      parent.replaceText("y" + parent.value());
-      parent.select(1, 1);
-      parent.reportInput({ bubbles: true, inputType: "insertText", data: "y" });
+      parent.input("y" + parent.value(), 1, { inputType: "insertText", data: "y" });
       resized(outline(pane));
       flushFrames();
       expect(marginMeasurePasses() - again).toBe(1);

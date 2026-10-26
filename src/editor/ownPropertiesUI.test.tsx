@@ -37,9 +37,7 @@ it.each([
   w.__tineParseStats = { calls: 0, hits: 0, misses: 0 };
   try {
     for (let i = 0; i < 200; i++) {
-      ta.replaceText(`x${ta.value()}`);
-      ta.select(1, 1);
-      ta.reportInput({ bubbles: true, inputType: "insertText", data: "x" });
+      ta.input(`x${ta.value()}`, 1, { inputType: "insertText", data: "x" });
     }
     console.info(`OG-R4B ${format} hidden metadata typing: ${JSON.stringify(w.__tineParseStats)}`);
     expect(w.__tineParseStats.misses).toBe(misses);

@@ -34,10 +34,9 @@ it.each([
     ta.select(expected.length, expected.length);
     for (const char of "\nowner:: Ada") {
       const caret = ta.selection()[0];
-      ta.replaceText(ta.value().slice(0, caret) + char + ta.value().slice(ta.selection()[1]));
-      ta.select(caret + 1, caret + 1);
       expected += char;
-      ta.reportInput({ bubbles: true, inputType: "insertText", data: char });
+      ta.input(ta.value().slice(0, caret) + char + ta.value().slice(ta.selection()[1]), caret + 1,
+        { inputType: "insertText", data: char });
       expect(ta.value()).toBe(expected);
       expect([ta.selection()[0], ta.selection()[1]]).toEqual([expected.length, expected.length]);
     }
@@ -47,9 +46,8 @@ it.each([
     expect(blockRegions(saved).property_regions).toHaveLength(1);
     // A user can place the caret back in the body while the saved layout differs.
     const caret = expected.indexOf("body") + 2;
-    ta.replaceText(expected.slice(0, caret) + "!" + expected.slice(caret));
-    ta.select(caret + 1, caret + 1);
-    ta.reportInput({ bubbles: true, inputType: "insertText", data: "!" });
+    ta.input(expected.slice(0, caret) + "!" + expected.slice(caret), caret + 1,
+      { inputType: "insertText", data: "!" });
     expect(ta.value()).toBe(expected.replace("body", "bo!dy"));
     expect([ta.selection()[0], ta.selection()[1]]).toEqual([caret + 1, caret + 1]);
     expect(doc.byId.target.raw).toBe(saved.replace("body", "bo!dy"));
@@ -72,8 +70,7 @@ it.each([
   const dispose = render(() => <Block id="target" />, root);
   try {
     const ta = maybeEditorIn(root) as EditorDriver;
-    ta.replaceText(text);
-    ta.reportInput({ bubbles: true, inputType: "insertFromPaste" });
+    ta.input(text, undefined, { inputType: "insertFromPaste", data: null });
     const regions = blockRegions(doc.byId.target.raw);
     expect(regions.property_regions).toHaveLength(1);
     expect(regions.properties.filter(p => p.region === 0).map(p => p.key).sort()).toEqual(["id", "owner"]);
@@ -90,8 +87,7 @@ it("explicitly typed id text takes precedence in the window editor, as in OG", (
   const dispose = render(() => <Block id="target" />, root);
   try {
     const ta = maybeEditorIn(root) as EditorDriver;
-    ta.replaceText("Title\nid:: supplied");
-    ta.reportInput({ bubbles: true, inputType: "insertFromPaste" });
+    ta.input("Title\nid:: supplied", undefined, { inputType: "insertFromPaste", data: null });
     expect(blockRegions(doc.byId.target.raw).properties.filter(p => p.key === "id").map(p => p.value)).toEqual(["supplied"]);
   } finally { dispose(); }
 });
@@ -106,8 +102,7 @@ it("clearing the first editor keeps its flashcard metadata on an outline block",
   try {
     const ta = maybeEditorIn(root) as EditorDriver;
     expect(ta.value()).toBe("Question");
-    ta.replaceText("");
-    ta.reportInput({ bubbles: true, inputType: "deleteContentBackward" });
+    ta.input("", undefined, { inputType: "deleteContentBackward" });
     expect(ta.value()).toBe("");
     endEdit("page-navigation");
     expect(root.querySelector(".ls-block")).not.toBeNull();
@@ -126,8 +121,7 @@ it("Org typing reattaches the ID to the accepted mixed drawer after CLOSED", () 
   const dispose = render(() => <Block id="target" />, root);
   try {
     const ta = maybeEditorIn(root) as EditorDriver;
-    ta.replaceText(ta.value() + "!");
-    ta.reportInput({ bubbles: true, inputType: "insertText", data: "!" });
+    ta.input(ta.value() + "!", undefined, { inputType: "insertText", data: "!" });
     expect(doc.byId.target.raw).toBe(raw + "!");
     expect(ta.value()).not.toContain(":id: own-id");
     expect(ta.value()).toContain(":id: body-id");
@@ -155,9 +149,7 @@ it("Org mixed-drawer typing on a 2,000-block page adds no ownership parse", () =
   try {
     const ta = maybeEditorIn(root) as EditorDriver;
     for (let i = 0; i < 200; i++) {
-      ta.replaceText(`x${ta.value()}`);
-      ta.select(1, 1);
-      ta.reportInput({ bubbles: true, inputType: "insertText", data: "x" });
+      ta.input(`x${ta.value()}`, 1, { inputType: "insertText", data: "x" });
     }
     console.info(`OG-R4C Org mixed drawer at 2k: ${JSON.stringify(w.__tineParseStats)}`);
     expect(w.__tineParseStats.misses).toBe(200);
@@ -189,8 +181,7 @@ it("Markdown typing keeps a hidden id in the block's own property group", () => 
   try {
     const ta = maybeEditorIn(root) as EditorDriver;
     expect(ta.value()).toBe("Title\nowner:: Ada\nbody line");
-    ta.replaceText(ta.value() + "!");
-    ta.reportInput({ bubbles: true, inputType: "insertText", data: "!" });
+    ta.input(ta.value() + "!", undefined, { inputType: "insertText", data: "!" });
     // The id stays exactly where it was in the group, never below the body.
     expect(doc.byId.target.raw).toBe(raw + "!");
     // The same holds before a final quote, which otherwise takes the hidden rows above it.

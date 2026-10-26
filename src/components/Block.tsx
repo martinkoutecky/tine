@@ -621,7 +621,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
   onCleanup(releaseCompletionLease);
   let rawBeforeLastCommit = node().raw;
-  const commitRecovery = editorCommitRecovery(() => ref, () => node() === shownNode);
+  const commitRecovery = editorCommitRecovery(() => ref, () => node() === shownNode, () => ref.value);
   const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => {
     // A disposed editor whose block was replaced never writes (see shownNode).
     if (replacedUnderEditor()) return;

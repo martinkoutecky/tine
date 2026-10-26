@@ -31,8 +31,7 @@ const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => r
 
 function typeInto(input: HTMLInputElement | EditorDriver, value: string) {
   if ("kind" in input) {
-    input.replaceText(value);
-    input.reportInput({ bubbles: true });
+    input.input(value, undefined, { inputType: "", data: null });
   } else {
     input.value = value;
     input.dispatchEvent(new InputEvent("input", { bubbles: true }));

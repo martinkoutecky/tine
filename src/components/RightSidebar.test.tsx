@@ -329,8 +329,7 @@ describe("right sidebar collection disclosures", () => {
         expect(found).not.toBeNull();
         return found!;
       });
-      editor.replaceText("Committed before collapse");
-      editor.reportInput({ bubbles: true, inputType: "insertText" });
+      editor.input("Committed before collapse", undefined, { inputType: "insertText", data: null });
       expect(editingId()).toBe("sidebar-root");
 
       root.querySelector<HTMLButtonElement>("[data-right-sidebar-item-toggle]")!.click();

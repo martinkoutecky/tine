@@ -7,8 +7,9 @@ import { dismissToast, pushToast } from "../toasts";
  * recovery if its whole surface closes. Never save a projection that could
  * drop hidden history. State ends with this editor; no new persisted draft. */
 export function editorCommitRecovery(
-  editor: () => HTMLTextAreaElement | undefined,
+  editor: () => HTMLElement | undefined,
   current: () => boolean,
+  text: () => string,
 ) {
   let release: (() => void) | undefined;
   let toast: number | undefined;
@@ -26,11 +27,12 @@ export function editorCommitRecovery(
     // Routing/reload can remove the whole surface despite an edit-mode hold.
     // Retain the final buffer even if the earlier error was dismissed.
     const ref = editor();
-    if (release && ref) report(ref.value);
+    if (release && ref) report(text());
     applied();
   });
   const recovery = {
     applied,
+    held: () => release !== undefined,
     /** Runs a commit's join: success releases a held edit, a throw is refused. */
     join<T>(run: () => T, text: string): T {
       let value: T;

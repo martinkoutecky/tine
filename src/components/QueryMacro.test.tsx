@@ -1585,9 +1585,7 @@ it("choosing the Query slash command opens its sheet on the condition list, choo
   try {
     const editor = maybeEditorIn(root)!;
     editor.element.focus();
-    editor.replaceText("/query");
-    editor.select(6, 6);
-    editor.reportInput({ bubbles: true, inputType: "insertText", data: "y" });
+    editor.input("/query", 6, { inputType: "insertText", data: "y" });
     const command = await vi.waitFor(() => {
       const found = [...document.querySelectorAll<HTMLElement>(".autocomplete .ac-item")]
         .filter(item => item.querySelector(".ac-label")?.textContent === "Query");

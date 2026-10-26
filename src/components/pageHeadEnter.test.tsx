@@ -57,9 +57,7 @@ for (const kind of ["page", "journal"] as const) {
         if (entry === "Enter key") {
           editor.keydown({ key: "Enter", bubbles: true, cancelable: true });
         } else {
-          editor.replaceText(`\n${HEADER}`);
-          editor.select(1, 1);
-          editor.reportInput({ bubbles: true, inputType: "insertLineBreak" });
+          editor.input(`\n${HEADER}`, 1, { inputType: "insertLineBreak", data: null });
         }
         await tick(); await tick();
         const roots = doc.pages.find((p) => p.name === name)!.roots;

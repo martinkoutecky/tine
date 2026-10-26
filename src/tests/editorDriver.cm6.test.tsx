@@ -72,6 +72,27 @@ describe("CM6 editor-driver public boundary", () => {
     expect(calls).toEqual([[1, 2, "handled"], [8, 8, "!"]]);
   });
 
+  it.each(["textarea", "cm6"])("reports an edit before its plain platform input signal (%s)", kind => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    if (kind === "textarea") {
+      const control = document.createElement("textarea");
+      control.className = "block-editor";
+      host.append(control);
+    }
+    const mounted = kind === "cm6" ? mount() : { driver: editorIn(host), transactions: [] };
+    const { driver, transactions } = mounted;
+    const seen: unknown[] = [];
+    driver.element.addEventListener("input", event => {
+      seen.push([event instanceof InputEvent, event.bubbles, driver.value(), driver.selection()]);
+    });
+    try {
+      driver.input("a😀b", 3, { eventKind: "plain" });
+      expect(seen).toEqual([[false, true, "a😀b", [3, 3]]]);
+      if (kind === "cm6") expect(transactions.filter(tr => tr.docChanged)).toHaveLength(1);
+    } finally { host.remove(); }
+  });
+
   it("runs DOM keymaps and preserves supplied key and clipboard events", () => {
     let runs = 0;
     const { driver } = mount("abc", [keymap.of([{ key: "Enter", run: () => { runs++; return true; } }])]);

@@ -70,8 +70,7 @@ it('review r2 refused Org edit survives switching blocks', () => {
   try {
     setToasts([]);
     const typed = 'plain\n:PROPERTIES:\n:COLLAPSED: true\n:END:\nmy newly typed text';
-    textarea!.replaceText(typed);
-    textarea!.reportInput({bubbles:true,inputType:'insertFromPaste'});
+    textarea!.input(typed, undefined, {inputType:'insertFromPaste',data:null});
     textarea!.reportInput({bubbles:true,inputType:'insertText'});
     const next = root.querySelector(`[data-block-id="next-${seq}"] .block-content-wrapper`)!;
     next.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0,cancelable:true}));
@@ -97,8 +96,7 @@ it.each(['md', 'org'] as const)('review r2 refused genuine join keeps the buffer
   try {
     setToasts([]);
     const typed = 'my newly typed text';
-    textarea!.replaceText(typed);
-    textarea!.reportInput({ bubbles: true, inputType: 'insertFromPaste' });
+    textarea!.input(typed, undefined, { inputType: 'insertFromPaste', data: null });
     expect(doc.byId[blockId].raw).toBe(raw);
     expect(toasts()).toHaveLength(1);
     expect(toasts()[0]).toMatchObject({ kind: 'error', sticky: true, copyText: typed });
@@ -129,8 +127,7 @@ it.each(['md', 'org'] as const)('review r2 refused genuine join keeps the buffer
     try {
       const reopened = maybeEditorIn(root)!;
       const finalText = typed + ' before closing';
-      reopened.replaceText(finalText);
-      reopened.reportInput({ bubbles: true, inputType: 'insertFromPaste' });
+      reopened.input(finalText, undefined, { inputType: 'insertFromPaste', data: null });
       for (const toast of toasts()) dismissToast(toast.id);
       dispose();
       disposed = true;
@@ -141,8 +138,7 @@ it.each(['md', 'org'] as const)('review r2 refused genuine join keeps the buffer
       // Identical errors in another editor must retain both recovery copies.
       const other = mountPage(raw, true, format);
       try {
-        other.textarea!.replaceText('another refused draft');
-        other.textarea!.reportInput({ bubbles: true, inputType: 'insertFromPaste' });
+        other.textarea!.input('another refused draft', undefined, { inputType: 'insertFromPaste', data: null });
       } finally { other.dispose(); }
       expect(toasts().map(toast => toast.copyText)).toEqual([finalText, 'another refused draft']);
     } finally { refusedAgain.mockRestore(); }

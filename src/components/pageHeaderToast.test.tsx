@@ -34,8 +34,7 @@ function mount(node: () => JSX.Element) {
   return { root, dispose: render(node, root) };
 }
 function type(editor: EditorDriver, value: string) {
-  editor.replaceText(value);
-  editor.reportInput({ bubbles: true }, "plain");
+  editor.input(value, undefined, { eventKind: "plain" });
 }
 
 it("typing the title of a table block that is a page's first bullet toasts nothing and keeps saving (GH #210)", async () => {

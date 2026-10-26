@@ -7,6 +7,10 @@ import { blockWritable, depthOf, isBlockMoving, node, pageByName, setRaw, type O
 import { clearFocusSurface, editingId, editingOwner, endEdit, focusSurfaceFor, noteSurfaceFocused, registerHistoryEditorTarget, takeCaretFor, takeHistoryEditorSelectionFor } from "../editorController";
 import { BUILTIN_HIDE, SHEET_CELL_HIDE } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
+import { editorCommitRecovery } from "../editor/commitRecovery";
+import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
+import { annotationInfo } from "../editor/annotation";
+import { inPageFindPreservesEditorBlur } from "../inpageFind";
 import { previewSpans } from "../editor/cm6Preview";
 import { registerFocusedEditorCommandBridge } from "../editorCommandBridge";
 import { cm6Formatting } from "../editor/cm6Formatting";
@@ -96,12 +100,28 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const refreshPreview = StateEffect.define<null>();
   let updating = false;
   let rawBeforeCommit = shownNode.raw;
+  const commitRecovery = editorCommitRecovery(() => view?.contentDOM, () => node(props.id) === shownNode,
+    () => view?.state.doc.toString() ?? "");
+  let pendingScrollAnchor: ReturnType<typeof captureEditorScrollAnchor> | undefined;
+  let anchorFrame: number | undefined;
   const commit = (text: string) => {
-    if (!current() || text === shown()) return;
+    if (!current()) return;
+    if (text === shown()) { commitRecovery.applied(); return; }
     const raw = node(props.id).raw;
     rawBeforeCommit = raw;
-    const next = isCalc() ? null : codeView.join(text);
-    setRaw(props.id, next ?? propertySession.join(isCalc() ? serializeCalcExitCommit(text, visible()) : text, parts().hidden, raw, hiddenProperties, format));
+    const next = commitRecovery.join(() => (isCalc() ? null : codeView.join(text))
+      ?? propertySession.join(isCalc() ? serializeCalcExitCommit(text, visible()) : text, parts().hidden, raw, hiddenProperties, format), text);
+    if (next === raw) return;
+    // Capture before live mirrors react; one restoration per frame, with the
+    // same focus/scroll/gesture ownership as the textarea autosize path.
+    if (view && pendingScrollAnchor === undefined) {
+      pendingScrollAnchor = captureEditorScrollAnchor(view.contentDOM, nearestScrollableY(view.contentDOM));
+      anchorFrame = host.ownerDocument.defaultView!.requestAnimationFrame(() => {
+        pendingScrollAnchor?.restore(view?.contentDOM ?? null);
+        pendingScrollAnchor = undefined; anchorFrame = undefined;
+      });
+    }
+    setRaw(props.id, next);
   };
   // Projection transactions change the local coordinate space only. Never
   // publish those replacements as edits or run completion/typing transforms.
@@ -111,7 +131,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       selection: { anchor: limit(anchor), head: limit(head) }, annotations: projection.of(true) });
   };
   const syncView = () => {
-    if (!view || updating || !current() || typing.active()) return;
+    if (!view || updating || !current() || typing.active() || commitRecovery.held()) return;
     const text = shown(), before = view.state.doc.toString(), s = view.state.selection.main;
     if (text !== before) showText(view, text, offsetThroughRewrite(before, text, s.anchor), offsetThroughRewrite(before, text, s.head));
     view.contentDOM.classList.toggle("code-edit", codeEditing());
@@ -150,6 +170,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   });
   const clipboard = cm6Clipboard({ id: props.id, format, current, commit, literal, assets, sheet: !!cell, hiddenProperties });
   const completion = cm6Completions({ ...props, format, current, literal, sheet: !!cell, view: () => view, visible, rawBeforeCommit: () => rawBeforeCommit,
+    annotation: () => annotationInfo(propertySession.facets(source(), format).properties) !== null,
     assets,
     languagePicker: setPickingLanguage,
     completeRegion: (text, caret) => {
@@ -218,10 +239,17 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
           blur: (event, v) => {
             // Reorders can blur a retained editor; the structural gesture owns
             // its focus restoration. Palette actions still need embed context.
-            if (assets.holdsBlur() || isBlockMoving() || (event.relatedTarget as HTMLElement | null)?.closest?.(".date-picker")
-              || embedExit && (event.relatedTarget as HTMLElement | null)?.closest?.(".switcher")) return false;
-            const leave = () => { if (current() && editingId() === props.id && !v.hasFocus) endEdit("blur"); };
-            if (typing.active()) queueMicrotask(leave);
+            const leave = () => {
+              if (!current() || editingId() !== props.id) return;
+              commit(v.state.doc.toString());
+              if (assets.holdsBlur() || isBlockMoving() || (event.relatedTarget as HTMLElement | null)?.closest?.(".date-picker")
+                || inPageFindPreservesEditorBlur()
+                || embedExit && (event.relatedTarget as HTMLElement | null)?.closest?.(".switcher")) return;
+              if (!v.hasFocus) endEdit("blur");
+            };
+            // compositionend's pending DOM reconciliation owns its last flush.
+            // A blur during preedit still commits the live buffer before exit.
+            if (typing.settling()) queueMicrotask(leave);
             else leave();
             return false;
           },
@@ -365,7 +393,11 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   createEffect(() => {
     if (parserReady()) view?.dispatch({ effects: refreshPreview.of(null) });
   });
-  onCleanup(() => { alive = false; typing.dispose(); clipboard.clearRaw(); removeCommandBridge?.(); removeKeys?.(); view?.destroy(); });
+  onCleanup(() => {
+    pendingScrollAnchor?.cancel();
+    if (anchorFrame !== undefined) host.ownerDocument.defaultView!.cancelAnimationFrame(anchorFrame);
+    alive = false; typing.dispose(); clipboard.clearRaw(); removeCommandBridge?.(); removeKeys?.(); view?.destroy();
+  });
   return <div class="cm6-block-editor editor-wrap" classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }} ref={host}>
     <Show when={mixedContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><AstBody raw={before()} format={format} headingLevel={effectiveHeadingLevel(propertySession.facets(source(), format), depthOf(props.id))} /></div>}</Show>
     <div class="code-editor-region" classList={{ "mixed-code-region": !!mixedContext() }}>

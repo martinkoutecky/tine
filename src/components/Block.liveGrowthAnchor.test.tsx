@@ -37,9 +37,7 @@ describe("live growth above the active editor", () => {
       scroller.scrollTop = 50;
       let top = 300;
       editor.element.getBoundingClientRect = () => ({ top } as DOMRect);
-      editor.replaceText("typed!");
-      editor.select(6, 6);
-      editor.reportInput({ bubbles: true, inputType: "insertText", data: "!" });
+      editor.input("typed!", 6, { inputType: "insertText", data: "!" });
       top = 340; // the mirror above grew by 40px during this keystroke
       if (gesture) scroller.dispatchEvent(new Event(gesture));
       while (frames.length) frames.shift()!(0);

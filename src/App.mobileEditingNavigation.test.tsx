@@ -109,9 +109,7 @@ describe("navigation buttons in the editing toolbar (GH #598)", { timeout: 30_00
     const submit = vi.spyOn(backend(), "pageSubmit");
     const { host, dispose, textarea, toolbar, id } = await openTine(true);
     try {
-      textarea.replaceText("typed on the phone");
-      textarea.select(textarea.value().length, textarea.value().length);
-      textarea.reportInput({ bubbles: true }, "plain");
+      textarea.input("typed on the phone", undefined, { eventKind: "plain" });
       const back = toolbar.querySelector<HTMLButtonElement>('.mobile-keyboard-toolbar-nav button[title="Go back"]')!;
       expect(back.disabled).toBe(false);
       expect(route()).toMatchObject({ kind: "page", name: "Tine" });
@@ -132,8 +130,7 @@ describe("navigation buttons in the editing toolbar (GH #598)", { timeout: 30_00
     const submit = vi.spyOn(backend(), "pageSubmit");
     const { host, dispose, textarea, toolbar } = await openTine(true);
     try {
-      textarea.replaceText("search me");
-      textarea.reportInput({ bubbles: true }, "plain");
+      textarea.input("search me", undefined, { eventKind: "plain" });
       const search = toolbar.querySelector<HTMLButtonElement>(".mobile-keyboard-toolbar-nav [data-search-trigger]")!;
       search.dispatchEvent(pointer("pointerdown"));
       search.dispatchEvent(pointer("pointerup"));

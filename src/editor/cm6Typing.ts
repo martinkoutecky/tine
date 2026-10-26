@@ -118,11 +118,14 @@ export function cm6Typing(ctx: {
     if (composing || ending) return false;
     const duplicate = endValue === ctx.view()?.state.doc.toString();
     endValue = undefined;
+    // A platform notification can retry a refused commit without changing
+    // CM's state again. Unchanged successful commits remain no-ops.
+    if (!duplicate && ctx.view()) ctx.commit(ctx.view()!.state.doc.toString());
     return !duplicate;
   };
   // A plain key in the same event turn as compositionend still owns its normal
   // editor command (desktop WebKit). Native confirming/229 keys never call this.
   const beforeKey = () => { if (ending && !ctx.view()?.compositionStarted) finish(); };
   const dispose = () => { disposed = true; releaseHold?.(); releaseHold = undefined; };
-  return { filter, changed, begin, end, input, active, beforeKey, dispose };
+  return { filter, changed, begin, end, input, active, settling: () => ending, beforeKey, dispose };
 }
