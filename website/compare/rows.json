@@ -1,0 +1,695 @@
+{
+  "schemaVersion": 1,
+  "columns": [
+    {
+      "id": "tine",
+      "label": "Tine"
+    },
+    {
+      "id": "logseq",
+      "label": "Logseq (file)"
+    },
+    {
+      "id": "db",
+      "label": "Logseq DB"
+    },
+    {
+      "id": "obsidian",
+      "label": "Obsidian"
+    }
+  ],
+  "rows": [
+    {
+      "id": "formatting",
+      "section": "Editing & rendering",
+      "feature": "Bold / italic / strikethrough / highlight / inline code",
+      "tine": {
+        "text": "Supported",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b2",
+          "contains": "strikethrough"
+        }
+      },
+      "obsidian": {
+        "text": "Supported",
+        "source": "https://help.obsidian.md/syntax",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "html",
+      "section": "Editing & rendering",
+      "feature": "Raw inline HTML",
+      "tine": {
+        "text": "Sanitized to a safe allowlist",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b5",
+          "contains": "sanitized"
+        }
+      }
+    },
+    {
+      "id": "references",
+      "section": "Editing & rendering",
+      "feature": "Block references & embeds",
+      "tine": {
+        "text": "References and embeds",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b59",
+          "contains": "Block embed"
+        }
+      },
+      "db": {
+        "text": "Nodes use [[]]; node embeds",
+        "source": "https://github.com/logseq/docs/blob/master/db-version.md",
+        "checked": "2026-10-26"
+      },
+      "obsidian": {
+        "text": "Block links and embeds",
+        "source": "https://help.obsidian.md/embeds",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "References and editable embeds",
+        "source": "https://github.com/logseq/docs/blob/master/pages/The%20difference%20between%20block%20embeds%20and%20block%20references.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "properties",
+      "section": "Editing & rendering",
+      "feature": "Page & block properties",
+      "tine": {
+        "text": "key:: value properties",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b55",
+          "contains": "properties"
+        }
+      },
+      "logseq": {
+        "text": "Page and block properties",
+        "source": "https://github.com/logseq/docs/blob/master/pages/Properties.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Typed node properties",
+        "source": "https://github.com/logseq/docs/blob/master/db-version.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "headings",
+      "section": "Editing & rendering",
+      "feature": "Headings, lists, blockquotes, HR",
+      "tine": {
+        "text": "Supported",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b29",
+          "contains": "blockquote"
+        }
+      },
+      "obsidian": {
+        "text": "Supported",
+        "source": "https://help.obsidian.md/syntax",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "code",
+      "section": "Editing & rendering",
+      "feature": "Code blocks + syntax highlighting",
+      "tine": {
+        "text": "Supported",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b30",
+          "contains": "highlighting"
+        }
+      },
+      "obsidian": {
+        "text": "Supported",
+        "source": "https://help.obsidian.md/syntax",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "tables",
+      "section": "Editing & rendering",
+      "feature": "Tables (with column alignment)",
+      "tine": {
+        "text": "Supported",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b32",
+          "contains": "Markdown table"
+        }
+      },
+      "obsidian": {
+        "text": "Tables with alignment",
+        "source": "https://help.obsidian.md/advanced-syntax",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Markdown and query tables",
+        "source": "https://github.com/logseq/docs/blob/master/pages/Tables.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "math",
+      "section": "Editing & rendering",
+      "feature": "LaTeX math (inline + display)",
+      "tine": {
+        "text": "Supported",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b36",
+          "contains": "Inline math"
+        }
+      },
+      "logseq": {
+        "text": "Inline and display math with KaTeX",
+        "source": "https://github.com/logseq/docs/blob/master/pages/Math%20Block.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "media",
+      "section": "Editing & rendering",
+      "feature": "Images (inline, sized) & media",
+      "tine": {
+        "text": "Sized images; video embeds",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b38",
+          "contains": "image"
+        }
+      },
+      "obsidian": {
+        "text": "Sized images, audio and PDF embeds",
+        "source": "https://help.obsidian.md/embeds",
+        "checked": "2026-10-26"
+      },
+      "logseq": {
+        "text": "Images, audio and video embeds",
+        "source": "https://github.com/logseq/docs/blob/master/pages/Embed%20Media%20-%20Audio%2C%20Photos%2C%20Videos.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "callouts",
+      "section": "Editing & rendering",
+      "feature": "Callouts / admonitions",
+      "tine": {
+        "text": "NOTE callouts",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b73",
+          "contains": "NOTE"
+        }
+      }
+    },
+    {
+      "id": "tasks",
+      "section": "Tasks & journals",
+      "feature": "Task markers + checkboxes",
+      "tine": {
+        "text": "Task markers and toggles",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b40",
+          "contains": "task"
+        }
+      },
+      "logseq": {
+        "text": "Workflow markers and clickable checkboxes",
+        "source": "https://github.com/logseq/docs/blob/master/pages/Tasks.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "priorities",
+      "section": "Tasks & journals",
+      "feature": "Priorities [#A]",
+      "tine": {
+        "text": "A / B / C",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b47",
+          "contains": "High-priority"
+        }
+      },
+      "logseq": {
+        "text": "A / B / C",
+        "source": "https://github.com/logseq/docs/blob/master/pages/Tasks.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "schedule",
+      "section": "Tasks & journals",
+      "feature": "SCHEDULED / DEADLINE + repeaters",
+      "tine": {
+        "text": "Scheduled and repeating tasks",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b52",
+          "contains": "repeating"
+        }
+      },
+      "logseq": {
+        "text": "Scheduled dates, deadlines and repeaters",
+        "source": "https://github.com/logseq/docs/blob/master/pages/Tasks.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "logbook",
+      "section": "Tasks & journals",
+      "feature": "Logbook / time tracking",
+      "tine": {
+        "text": "LOGBOOK drawers",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b53",
+          "contains": "logbook"
+        }
+      }
+    },
+    {
+      "id": "footnotes",
+      "section": "Editing & rendering",
+      "feature": "Footnotes",
+      "tine": {
+        "text": "Supported",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b75",
+          "contains": "footnote"
+        }
+      }
+    },
+    {
+      "id": "journals",
+      "section": "Tasks & journals",
+      "feature": "Journals / daily notes",
+      "tine": {
+        "text": "One journal page per day",
+        "evidence": {
+          "path": "website/guide/reference-journals-tasks-and-scheduling.html",
+          "anchor": "b1",
+          "contains": "journal page per day"
+        }
+      },
+      "obsidian": {
+        "text": "Daily notes core plugin",
+        "source": "https://help.obsidian.md/plugins/daily-notes",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Journal nodes",
+        "source": "https://github.com/logseq/docs/blob/master/db-version.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "queries",
+      "section": "Queries & structured views",
+      "feature": "Simple & compound queries (DSL)",
+      "tine": {
+        "text": "Task / priority / compound queries",
+        "evidence": {
+          "path": "website/guide/feature-showcase.html",
+          "anchor": "b68",
+          "contains": "Compound query"
+        }
+      },
+      "logseq": {
+        "text": "Simple queries with and / or / not",
+        "source": "https://github.com/logseq/docs/blob/master/pages/Queries.md",
+        "checked": "2026-10-26"
+      },
+      "db": {
+        "text": "Simple queries; changed filters",
+        "source": "https://github.com/logseq/docs/blob/master/db-version.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "pdf",
+      "section": "Files & workspace",
+      "feature": "PDF viewer + annotation / highlights",
+      "tine": {
+        "text": "PDF viewer and annotation",
+        "evidence": {
+          "path": "website/guide/features-pdf-annotation.html",
+          "anchor": "b1",
+          "contains": "PDF"
+        }
+      },
+      "logseq": {
+        "text": "Desktop PDF highlights",
+        "source": "https://github.com/logseq/docs/blob/master/pages/PDF%20highlights.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "sheets",
+      "section": "Queries & structured views",
+      "feature": "Sheets — grids, field tables & boards",
+      "tine": {
+        "text": "Outline branches as tables, boards and grids",
+        "evidence": {
+          "path": "website/guide/features-sheets.html",
+          "anchor": "b1",
+          "contains": "tables, boards, and grids"
+        }
+      }
+    },
+    {
+      "id": "css",
+      "section": "Files & workspace",
+      "feature": "Custom CSS and themes",
+      "tine": {
+        "text": "Customize colors, fonts, widths and bullets with CSS",
+        "evidence": {
+          "path": "website/guide/workflows-customize-tine-s-look.html",
+          "anchor": "b1",
+          "contains": "CSS"
+        }
+      }
+    },
+    {
+      "id": "outline",
+      "section": "Editing & rendering",
+      "feature": "Outlining — nest, fold, zoom, move blocks",
+      "tine": {
+        "text": "Fold outlines",
+        "evidence": {
+          "path": "scripts/e2e-outline-guide.mjs"
+        }
+      }
+    },
+    {
+      "id": "slash",
+      "section": "Editing & rendering",
+      "feature": "Slash command menu",
+      "tine": {
+        "text": "Insert templates through the slash menu",
+        "evidence": {
+          "path": "scripts/e2e-template-collapse.mjs"
+        }
+      }
+    },
+    {
+      "id": "pairing",
+      "section": "Editing & rendering",
+      "feature": "Auto-pair brackets / [[ ]]",
+      "tine": {
+        "text": "Wrap selections with paired delimiters",
+        "evidence": {
+          "path": "scripts/e2e-selectwrap.mjs"
+        }
+      }
+    },
+    {
+      "id": "links",
+      "section": "Pages & links",
+      "feature": "Page links, tags, namespaces (a/b/c)",
+      "tine": {
+        "text": "Page and tag autocomplete",
+        "evidence": {
+          "path": "scripts/e2e-tag-autocomplete.mjs"
+        }
+      }
+    },
+    {
+      "id": "aliases",
+      "section": "Pages & links",
+      "feature": "Aliases",
+      "tine": {
+        "text": "Page aliases",
+        "evidence": {
+          "path": "scripts/e2e-alias.mjs"
+        }
+      },
+      "logseq": {
+        "text": "Page aliases via alias::",
+        "source": "https://github.com/logseq/docs/blob/master/pages/Aliases%20and%20external%20links.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "backlinks",
+      "section": "Pages & links",
+      "feature": "Linked & unlinked references",
+      "tine": {
+        "text": "Reference panels",
+        "evidence": {
+          "path": "scripts/e2e-og-parity-references.mjs"
+        }
+      }
+    },
+    {
+      "id": "favorites",
+      "section": "Pages & links",
+      "feature": "Favorites",
+      "tine": {
+        "text": "Sidebar favorites",
+        "evidence": {
+          "path": "scripts/e2e-sidebar-sections.mjs"
+        }
+      }
+    },
+    {
+      "id": "advanced",
+      "section": "Queries & structured views",
+      "feature": "Advanced Datalog ([:find …])",
+      "tine": {
+        "text": "Supported subset; unsupported clauses refuse the whole query",
+        "evidence": {
+          "path": "website/guide/features-queries.html",
+          "anchor": "b60",
+          "contains": "whole query is refused"
+        }
+      }
+    },
+    {
+      "id": "views",
+      "section": "Queries & structured views",
+      "feature": "Query result tables / views",
+      "tine": {
+        "text": "Search, list, table and board views",
+        "evidence": {
+          "path": "scripts/e2e-query-workspace.mjs"
+        }
+      },
+      "logseq": {
+        "text": "Table and list views",
+        "source": "https://github.com/logseq/docs/blob/master/pages/Query%20table.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "aggregate",
+      "section": "Queries & structured views",
+      "feature": "Math / aggregation on results",
+      "tine": {
+        "text": "Count, sum and average without code",
+        "evidence": {
+          "path": "website/guide/features-queries.html",
+          "anchor": "b39",
+          "contains": "count/sum/average"
+        }
+      }
+    },
+    {
+      "id": "search",
+      "section": "Files & workspace",
+      "feature": "Global search / quick switcher (Ctrl+K)",
+      "tine": {
+        "text": "Global search",
+        "evidence": {
+          "path": "scripts/e2e-search-parity.mjs"
+        }
+      }
+    },
+    {
+      "id": "assets",
+      "section": "Files & workspace",
+      "feature": "Asset handling (images, files)",
+      "tine": {
+        "text": "Graph assets",
+        "evidence": {
+          "path": "scripts/e2e-external-assets.mjs"
+        }
+      }
+    },
+    {
+      "id": "publish",
+      "section": "Files & workspace",
+      "feature": "HTML publish / export",
+      "tine": {
+        "text": "HTML export",
+        "evidence": {
+          "path": "scripts/e2e-publish-security.mjs"
+        }
+      },
+      "logseq": {
+        "text": "HTML export",
+        "source": "https://github.com/logseq/docs/blob/master/pages/Export.md",
+        "checked": "2026-10-26"
+      }
+    },
+    {
+      "id": "live",
+      "section": "Files & workspace",
+      "feature": "Live export (a read-only Tine app)",
+      "tine": {
+        "text": "Read-only published Guide",
+        "evidence": {
+          "path": "scripts/e2e-og-published-guide.mjs"
+        }
+      }
+    },
+    {
+      "id": "print",
+      "section": "Files & workspace",
+      "feature": "PDF export",
+      "tine": {
+        "text": "Print / PDF export",
+        "evidence": {
+          "path": "scripts/e2e-print-security.mjs"
+        }
+      }
+    },
+    {
+      "id": "copy",
+      "section": "Editing & rendering",
+      "feature": "Copy as Markdown / Rendered",
+      "tine": {
+        "text": "Clipboard round trips",
+        "evidence": {
+          "path": "scripts/e2e-clipboard-roundtrip.mjs"
+        }
+      }
+    },
+    {
+      "id": "org",
+      "section": "Files & workspace",
+      "feature": "Org-mode graphs",
+      "tine": {
+        "text": "Org headline references",
+        "evidence": {
+          "path": "scripts/e2e-org-headline-refs.mjs"
+        }
+      }
+    },
+    {
+      "id": "plugins",
+      "section": "Files & workspace",
+      "feature": "Plugin platform",
+      "tine": {
+        "text": "Tine plugin platform",
+        "evidence": {
+          "path": "scripts/e2e-plugins.mjs"
+        }
+      }
+    },
+    {
+      "id": "conflicts",
+      "section": "Files & workspace",
+      "feature": "Sync conflicts (Syncthing / Dropbox copies, git markers)",
+      "tine": {
+        "text": "Guarded saves and conflict handling",
+        "evidence": {
+          "path": "scripts/e2e-host-saves.mjs"
+        }
+      }
+    },
+    {
+      "id": "external",
+      "section": "Files & workspace",
+      "feature": "External edits while the app is open",
+      "tine": {
+        "text": "External file change refresh",
+        "evidence": {
+          "path": "scripts/e2e-file-poll.mjs"
+        }
+      }
+    },
+    {
+      "id": "cli",
+      "section": "Files & workspace",
+      "feature": "Command line",
+      "tine": {
+        "text": "CLI page operations",
+        "evidence": {
+          "path": "scripts/cli-page-acceptance.mjs"
+        }
+      }
+    },
+    {
+      "id": "split",
+      "section": "Files & workspace",
+      "feature": "Split view",
+      "tine": {
+        "text": "Independent panes",
+        "evidence": {
+          "path": "scripts/e2e-panes-keys.mjs"
+        }
+      }
+    },
+    {
+      "id": "tabs",
+      "section": "Files & workspace",
+      "feature": "Editor tabs",
+      "tine": {
+        "text": "Tabs restored on launch",
+        "evidence": {
+          "path": "scripts/e2e-tab-restore.mjs"
+        }
+      }
+    },
+    {
+      "id": "searchquery",
+      "section": "Queries & structured views",
+      "feature": "Search that becomes a query",
+      "tine": {
+        "text": "Persistent query workspace",
+        "evidence": {
+          "path": "scripts/e2e-query-workspace.mjs"
+        }
+      }
+    },
+    {
+      "id": "capture",
+      "section": "Files & workspace",
+      "feature": "Global quick capture",
+      "tine": {
+        "text": "Capture window",
+        "evidence": {
+          "path": "scripts/e2e-capture.mjs"
+        }
+      }
+    },
+    {
+      "id": "typography",
+      "section": "Editing & rendering",
+      "feature": "Typographic replacements (-> → →)",
+      "tine": {
+        "text": "Optional while reading or while typing; off by default",
+        "evidence": {
+          "path": "website/guide/workflows-customize-tine-s-look.html",
+          "anchor": "b7",
+          "contains": "Typographic replacements"
+        }
+      }
+    }
+  ]
+}
