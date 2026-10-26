@@ -79,6 +79,53 @@ fn reason(detail: &Value) -> &str {
 }
 
 #[test]
+fn page_creation_lazy_id_and_page_deletion_commit_their_run_changes() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let repo = repo(&graph);
+    let run = begin(&slot);
+    let created = verb(&slot, "page.create", json!({"name":"Created","run":run})).unwrap();
+    assert_eq!(created["git"]["committed"], true, "{created}");
+    let path = created["page"].as_str().unwrap();
+    assert_eq!(file_at(&repo, &head(&repo), path), disk(&graph, path));
+
+    let referenced = verb(
+        &slot,
+        "ref",
+        json!({"handle":handle(&slot, "a", 1),"run":run}),
+    )
+    .unwrap();
+    assert_eq!(referenced["git"]["committed"], true, "{referenced}");
+    let committed = file_at(&repo, &head(&repo), "pages/a.md");
+    assert!(committed.contains(referenced["uuid"].as_str().unwrap()));
+
+    let deleted = verb(
+        &slot,
+        "page.delete",
+        json!({"name":"Created","yes":true,"run":run}),
+    )
+    .unwrap();
+    assert_eq!(deleted["git"]["committed"], true, "{deleted}");
+    assert!(!graph.root.join(path).exists());
+    let tip = head(&repo);
+    assert!(tip
+        .tree()
+        .unwrap()
+        .get_path(std::path::Path::new(path))
+        .is_err());
+    assert!(tip.message().unwrap().contains(&format!("Tine-Run: {run}")));
+    assert!(repo
+        .status_file(std::path::Path::new("pages/a.md"))
+        .unwrap()
+        .is_empty());
+    assert!(repo
+        .index()
+        .unwrap()
+        .get_path(std::path::Path::new(path), 0)
+        .is_none());
+}
+
+#[test]
 fn a_run_needs_a_usable_repository_and_refuses_before_writing() {
     let graph = Graph::new();
     let slot = graph.slot();

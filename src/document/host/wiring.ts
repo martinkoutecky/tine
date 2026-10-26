@@ -32,6 +32,7 @@ import { graphRewriteFrozen } from "../graphRewriteState";
 import { pageInstanceGeneration, rekeyPageInstance } from "../instance";
 import { doc, pageByName, setPageId } from "../model";
 import { draftPinned, ensurePageLoaded, forgetPage, installPageContent, rekeyPageIdentityByPath, reportPageLoadRefusal } from "../workingSet";
+import { applyOwnerPageRename } from "../graphRewrite";
 import { HostClient, reviewedDiskToken, type BaselineRev, type DocumentPort, type HostCutSource } from "./client";
 import { runSequence } from "./planner";
 import { planSteps } from "./transferPlan";
@@ -1059,29 +1060,35 @@ async function landAliasDraft(c: HostClient, name: string, ownerPath: string): P
 export function subscribeOwnerFlush(): () => void {
   let alive = true;
   let unsub = () => {};
+  let unsubRename = () => {};
+  const subscribeRename = backend().onOwnerPageRenamed;
+  if (subscribeRename) void readOwnedResource(ownedWhen(() => alive), subscribeRename.call(backend(), (rename) => {
+    if (rename.binding_generation !== captureBinding().backendGeneration) return;
+    void applyOwnerPageRename(rename).catch((error) => pushToast(msg("graph-rewrite-rename-failed", { error: String(error) }), "error"));
+  }), (stop) => stop()).then((result) => { if (result.kind === "current") unsubRename = result.value; });
   const subscribe = backend().onOwnerFlushRequest;
-  if (!subscribe) return () => {};
+  if (!subscribe) return () => { alive = false; unsubRename(); };
   void readOwnedResource(
     ownedWhen(() => alive),
     subscribe.call(backend(), (request) => {
       if (request.binding_generation !== captureBinding().backendGeneration) return;
-      void answerOwnerFlush(request.id, request.page, request.binding_generation);
+      void answerOwnerFlush(request.id, request.page, request.binding_generation, request.all);
     }),
     (stop) => stop(),
   ).then((result) => { if (result.kind === "current") unsub = result.value; });
-  return () => { alive = false; unsub(); };
+  return () => { alive = false; unsub(); unsubRename(); };
 }
 
-async function answerOwnerFlush(id: number, page: string, generation: number): Promise<void> {
+async function answerOwnerFlush(id: number, page: string, generation: number, all = false): Promise<void> {
   let saved: boolean;
   try {
-    saved = await flushPage(page);
+    saved = all ? await flushAll() : await flushPage(page);
   } catch {
     saved = false; // a failed barrier is unsaved text, never success
   }
   // Text a component holds outside the document (an IME composition, a
   // title or sheet-cell edit) is not saved by the barrier (review 5 R2).
-  if (draftPinned(page)) saved = false;
+  if (all ? doc.pages.some((p) => draftPinned(p.name)) : draftPinned(page)) saved = false;
   // A rebinding during the barrier leaves the request with no answer: the
   // owner it came from refuses its write (review 5 R3).
   if (generation !== captureBinding().backendGeneration) return;

@@ -202,6 +202,20 @@ impl Fixture {
         ];
         all.extend(self.statuses().into_iter().map(|s| ("owner.status", s)));
         // Writes last: they change the fixture the reads above answered from.
+        all.push(("ref", self.ok("ref", json!({"handle":UUID}))));
+        all.push(("ref", self.ok("embed", json!({"handle":UUID}))));
+        all.push((
+            "block.edit",
+            self.ok("page.create", json!({"name":"Created"})),
+        ));
+        all.push((
+            "page.rename",
+            self.ok("page.rename", json!({"old":"Created","new":"Renamed"})),
+        ));
+        all.push((
+            "page.delete",
+            self.ok("page.delete", json!({"name":"Renamed","yes":true})),
+        ));
         all.push((
             "block.edit",
             self.ok("block.edit", json!({ "handle": UUID, "text": "edited" })),
@@ -410,6 +424,9 @@ fn every_payload_has_exactly_the_documented_fields() {
         "search",
         "query",
         "pages",
+        "ref",
+        "page.rename",
+        "page.delete",
     ] {
         assert!(seen.contains_key(needed), "no fixture payload for {needed}");
     }
@@ -724,6 +741,26 @@ fn query_ab(f: &Fixture) -> Value {
 
 const DISCLOSURES: &[Disclosure] = &[
     Disclosure {
+        section: "page.rename",
+        field: "report.skipped_conflicted_referrers",
+        base: |f| f.ok("page.rename", json!({"old":"a","new":"a"})),
+        on: |p| {
+            set(
+                p,
+                "report.skipped_conflicted_referrers",
+                json!(["pages/conflict-zq41.md"]),
+            )
+        },
+        words: &["pages/conflict-zq41.md"],
+    },
+    Disclosure {
+        section: "page.delete",
+        field: "broken_refs",
+        base: |f| f.ok("page.delete", json!({"name":"ns/child","yes":true})),
+        on: |p| set(p, "broken_refs", json!(1337)),
+        words: &["1337"],
+    },
+    Disclosure {
         section: "page.show",
         field: "read_only",
         base: page_a,
@@ -818,6 +855,9 @@ fn every_disclosure_field_the_contract_names_is_tested_and_shows_in_the_text() {
         "search",
         "query",
         "pages",
+        "page.rename",
+        "page.delete",
+        "ref",
     ]
     .iter()
     .flat_map(|section_name| {

@@ -382,6 +382,87 @@ branch. A same-branch concurrent commit still uses compare-and-swap retries.
 Only commits within 10 minutes before the run's begin time and at most 20,000 first-parent commits back are
 searched.
 
+### `page.create`
+
+`tine page create NAME` creates an empty page through the owner's guarded save,
+with EditKind `create-page`. It creates no blocks, so there is no `author::` to
+add. An existing page, alias or file refuses as `refused:page-exists`. Its payload
+and text are the `block.edit` / `written` fields above (`blocks: []`, `more: 0`).
+An absent page cannot match `--rev` (`stale`). `--run` uses the existing commits.
+
+### `page.rename`
+
+`tine page rename OLD NEW` calls the app's rename operation, including references,
+namespaces, titles and the home page. A sole alias resolves to its canonical page.
+A reference-only source or fileless namespace parent uses the same operation:
+references and physical descendants move without creating a placeholder page.
+A destination owned by a file or alias refuses as `refused:page-exists`; merging
+requires confirmation in the app. Duplicate source claimants return `ambiguous`.
+The window saves typed text first and receives the app's rename report to refresh
+navigation and rewritten pages. A graph-wide rename cannot use the existing
+single-file revision guard or run commits: `--rev` or `--run` (including `TINE_RUN`)
+refuses as `refused:rename-options` before any change. An error from the app's I/O
+adapter whose admission cannot be proved returns `uncertain` with
+`detail.admitted: null`; inspect disk and any rollback diagnostic before retrying.
+If page/referrer publication succeeded but the separate home-page config update
+failed, it returns `uncertain` with `detail.admitted: true` and `detail.report`
+containing the known applied page changes (`home_page: null`). The window receives
+that report too. This error is a partial outcome, never a no-change refusal;
+inspect the home-page configuration before retrying.
+
+| field | type | presence | disclosure | meaning |
+|---|---|---|---|---|
+| `schema` | string | always | no | `"tine.cli/1"` |
+| `kind` | string | always | no | `"page-renamed"` |
+| `old` | string | always | no | canonical file title, or trimmed source name for a fileless source |
+| `name` | string | always | no | requested destination title, trimmed |
+| `report` | `tine_graph_features::pages::RenameReport` | always | no | app operation report |
+| `report.outcome` | string | always | no | `renamed` or `unchanged` |
+| `report.touched` | array | always | no | old paths and whether they moved |
+| `report.skipped_conflicted_referrers` | array of string | always | yes | referrers carrying VCS markers left unchanged; text prints each path |
+| `report.home_page` | string | nullable | no | new home-page title when changed |
+
+### `page.delete`
+
+`tine page delete NAME --yes` (alias `--force`) uses the host's delete operation,
+including graph trash and its checked-byte guard. Without confirmation it refuses
+as `refused:confirmation`. A missing page is `not-found`, duplicate identities
+are `ambiguous`, a stale `--rev` is `stale`, and read-only pages refuse. A pending
+admitted deletion returns `unwritten`, `superseded` or `uncertain`, never success
+before publication. `--run` commits the deletion.
+
+| field | type | presence | disclosure | meaning |
+|---|---|---|---|---|
+| `schema` | string | always | no | `"tine.cli/1"` |
+| `kind` | string | always | no | `"page-deleted"` |
+| `page` | string | always | no | deleted graph-relative file path |
+| `name` | string | always | no | canonical page title |
+| `broken_refs` | integer | always | yes | indexed linked page referrers plus block references broken by removing the page; text always prints the count |
+| `git` | object | optional | no | run commit result, with the same disclosures as `written.git` |
+
+### `ref` / `embed`
+
+`tine ref BLOCK` prints `((uuid))`; `tine embed BLOCK` prints
+`{{embed ((uuid))}}`. They ensure a durable lazy block id with the same property
+editor as Copy block ref, through `save-block`. They insert no blocks and preserve
+attribution. Handles, `--rev`, `--run` and failures follow block writes. Duplicate
+ids within one page refuse as `stale` with candidate handles; ids claimed by
+multiple pages refuse as `ambiguous`. The text is the reusable syntax alone, plus any run
+commit disclosure; success means the id is written to disk.
+
+| field | type | presence | disclosure | meaning |
+|---|---|---|---|---|
+| `schema` | string | always | no | `"tine.cli/1"` |
+| `kind` | string | always | no | `"ref"` or `"embed"` |
+| `page` | string | always | no | target's graph-relative file path |
+| `name` | string | always | no | target's page title |
+| `rev` | string | always | no | written page revision |
+| `blocks` | array of string | always | no | target's full handle |
+| `more` | integer | always | no | `0` (one target) |
+| `uuid` | string | always | no | persisted block id |
+| `text` | string | always | no | reusable reference or embed syntax |
+| `git` | object | optional | no | run commit result, with the same disclosures as `written.git` |
+
 ## The text outline
 
 One block per line, indented two spaces per level:
@@ -505,6 +586,9 @@ app. See `docs/storage-contract.md` (L9-01/L9-02).
 | `store` | the store refused the save plan |
 | `cross-page` | `move` between two pages (not supported yet) |
 | `broken-ref` | `add` content names a `((uuid))` no block has (`detail.uuid`) |
+| `page-exists` | page creation or rename would replace an existing file or alias |
+| `confirmation` | `page delete` needs `--yes` or `--force` |
+| `rename-options` | graph-wide `page rename` cannot use the single-file `--rev` guard or run commits |
 | `git` | a run verb or `--run` write: the graph's git repository cannot take the run's commits (none, bare, a merge/rebase in progress, a detached HEAD, an ignored file, a libgit2 error) |
 | `git-busy` | a `--run` write while another git command holds the index (before any change), or inside a `git` object: the branch kept moving while a run write committed |
 | `merge` | `run.revert`: a page's Concord merge refused it (nothing changed); inside a page entry, the same for a page that changed between the check and its write |

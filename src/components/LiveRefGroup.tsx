@@ -505,7 +505,11 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
                             <span class="ref-crumb-sep">›</span>
                           </Show>
                           <Show when={c.id && props.surface !== "embed"} fallback={<span class="ref-crumb">{crumbLabel(c)}</span>}>
-                            <button type="button" class="ref-crumb" onClick={(event) => {
+                            <span role="button" tabIndex={0} class="ref-crumb" onKeyDown={(event) => {
+                              if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+                              event.preventDefault();
+                              event.currentTarget.click();
+                            }} onClick={(event) => {
                               event.stopPropagation();
                               if (!c.id || !docNode(c.id)) return;
                               if (event.shiftKey) openBlockInSidebar(blockRef(c.id));
@@ -513,7 +517,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
                                 const key = displayed().starts.get(id);
                                 if (key !== undefined) setContextRoots((roots) => ({ ...roots, [key]: c.id! }));
                               }
-                            }}>{crumbLabel(c)}</button>
+                            }}>{crumbLabel(c)}</span>
                           </Show>
                         </>
                       )}
