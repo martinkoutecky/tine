@@ -1,0 +1,46 @@
+name: quick-share-viewer
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit or ref to build for the first viewer trial (no tag or release created)
+        required: true
+        default: og
+        type: string
+permissions:
+  contents: read
+jobs:
+  viewer:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Require the candidate writer to match generation 1
+        run: cargo test -j 4 -p tine-graph-features --test integration quick_share_generation_1_fixtures_stay_readable
+      - name: Build and verify generation 1
+        env:
+          CARGO_BUILD_JOBS: 4
+        run: |
+          export VIEWER_BUILT_FROM=$(git rev-parse HEAD)
+          node scripts/build-quick-share-viewer.mjs
+          node --test scripts/quick-share-viewer.test.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quick-share-viewer-g1
+          path: |
+            artifacts/quick-share-viewer/quick-share-viewer-g1.zip
+            artifacts/quick-share-viewer/quick-share-viewer-g1.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

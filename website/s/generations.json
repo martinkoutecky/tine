@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "generations": {
+    "1": {
+      "current": {
+        "run_id": 40246255772,
+        "sha256": "87bafc2d91fc34ccda5b4475cdc09877cebd7977eaec98fdf560731aeb528efb"
+      },
+      "retained": [
+        {
+          "run_id": 40246255772,
+          "sha256": "87bafc2d91fc34ccda5b4475cdc09877cebd7977eaec98fdf560731aeb528efb"
+        }
+      ]
+    }
+  }
+}
