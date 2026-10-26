@@ -668,10 +668,7 @@ mod tests {
         ];
         // (file, the code on its line, why it cannot write the host when portable)
         const ALLOWED: &[(&str, &str, &str)] = &[
-            ("app_identity.rs", "dirs::data_dir().map(|base| base.join(identifier))", "app_data_dir_of: current_app_data_dir asks portable::dirs() first; its other caller is the seed below"),
-            ("experiment_config_seed.rs", "dirs::config_dir().map(|base|", "seed_from_release_once returns before this when portable"),
-            ("experiment_config_seed.rs", "dirs::data_local_dir().as_deref(),", "desktop_webview_dirs: only seed_from_release_once reaches it (no-op when portable)"),
-            ("experiment_config_seed.rs", "dirs::home_dir().as_deref(),", "desktop_webview_dirs: only seed_from_release_once reaches it (no-op when portable)"),
+            ("app_identity.rs", "dirs::data_dir().map(|base| base.join(identifier))", "app_data_dir_of: current_app_data_dir asks portable::dirs() first; its other caller was the Beta config seed, deleted for stable"),
             ("migrate_identifier.rs", "dirs::data_dir().map(|base| base.join(crate::app_identity::RELEASE_IDENTIFIER))", "only run_early calls it, after returning when portable"),
             ("debug.rs", "std::env::temp_dir().join(\"tine-debug.log\")", "installed builds only: a portable instance uses local\\logs"),
             ("commands.rs", "(\"LOCALAPPDATA\", Some(\"Programs\")),", "read only: draw.io install discovery"),

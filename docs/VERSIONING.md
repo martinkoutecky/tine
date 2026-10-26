@@ -48,8 +48,10 @@ After the cut, `master` differs from that Beta tag only in:
 - the channel identity: app name, identifier and update address, written by
   `node scripts/set-app-identity.mjs release` into `src-tauri/app-identity.json`,
   `src-tauri/tauri.conf.json`, `src-tauri/gen/android/app/build.gradle.kts` and
-  `src-tauri/gen/android/app/src/main/res/xml/shortcuts.xml`
-  ([app-identity.md](app-identity.md));
+  `src-tauri/gen/android/app/src/main/res/xml/shortcuts.xml`, plus the stable
+  updater endpoint and the deletion of the Beta config seed that
+  [app-identity.md](app-identity.md) prescribes for the flip (made on
+  `release/X.Y` in its release metadata, so the cut itself is a pure tree copy);
 - the version: version strings, the dated changelog heading and the release
   notes.
 
