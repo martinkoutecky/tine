@@ -35,6 +35,11 @@ it("opens a definition re-export in Replace without writing before confirmation"
   await vi.waitFor(() => expect(api).toHaveBeenCalled());
   expect(api.mock.calls[0][0]).toMatchObject({ folder: "tasks", replace: true });
 });
+it("counts a page spelled twice in a malformed prior snapshot once", async () => {
+  vi.spyOn(backend(), "publishQuery").mockResolvedValue({ path: "site", pages: 1, files: 12, retired: null, warnings: [] } as never);
+  const root = await dialog(true, { previousPages: ["Old", "old", "Public"] }, true);
+  expect(root.querySelector(".folder-export-membership")?.textContent).toContain("+0 new / −1 gone");
+});
 it("exports a reviewed query directly into its graph and reports recovery and missing assets", async () => {
   const api = vi.spyOn(backend(), "publishQuery").mockResolvedValue({ path: "/graph/published-queries/tasks", pages: 1,
     files: 12, retired: "/graph/logseq/.tine-trash/conflicts/old/previous", warnings: ["missing.png omitted"] } as never);
