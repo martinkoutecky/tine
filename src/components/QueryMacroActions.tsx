@@ -54,7 +54,7 @@ export function QueryMacroActions(props: {
     );
   };
   return <>
-    <Show when={props.hostBlockId}>{id => <QuickShareExportActions hostBlockId={id()} />}</Show>
+    <Show when={props.hostBlockId}>{id => <QuickShareExportActions hostBlockId={id()} reshare={props.share} />}</Show>
     <button type="button" class="qc-share" title={t("share-query-icon")} aria-label={t("share-query-icon")}
       onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); props.share(); }}>
       <ShareIcon class="share-icon" />

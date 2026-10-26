@@ -5,7 +5,7 @@ import { backend } from "../backend";
 import { bindingCurrent, captureBinding } from "../binding";
 import { appendQueryBlock, blockProperty, blockWritable, setBlockProperty } from "../document";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
-import { EXPORT_PROPERTY, ensureExportsPage, pageSelectorMacro, selectorPageName } from "../exportsPage";
+import { EXPORT_PROPERTY, SHARE_PROPERTY, ensureExportsPage, pageSelectorMacro, selectorPageName } from "../exportsPage";
 import { graphOwner, readOwned } from "../owned";
 import { readLatestOr, readOr } from "../resourceRead";
 import { dbg } from "../debug";
@@ -18,6 +18,7 @@ import { QueryLivePreview } from "./QueryLivePreview";
 import { trapTab } from "./focusableElements";
 import { queryWorkspaceDsl } from "./queryWorkspaceDsl";
 import { QUICK_SHARE_OFF } from "../quickShare/commands";
+import { pendingRecordId, shareGistId } from "../quickShare/definitions";
 
 /** Quiet time before a changed selection is reviewed again (the live preview's own window). */
 export const SHARE_REVIEW_DEBOUNCE_MS = 250;
@@ -44,7 +45,8 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
   const [mode, setMode] = createSignal<Mode>(block || !contextPage ? "query" : "page");
   const [edited, setEdited] = createSignal<string | undefined>(undefined);
   const [includeQueryText, setIncludeQueryText] = createSignal(false);
-  const [where, setWhere] = createSignal<Where>("folder");
+  const initialShare = hostBlockId ? blockProperty(hostBlockId, SHARE_PROPERTY) : null;
+  const [where, setWhere] = createSignal<Where>(initialShare && !pendingRecordId(initialShare) ? "link" : "folder");
   // Quick share is gated off in shipped builds until its viewer is deployed (DESIGN §5 phase 3).
   const [quickShare] = createResource(() => backend().quickShareList());
   const linkAvailable = () => readOr(quickShare, QUICK_SHARE_OFF, "quick share listing")?.enabled === true;
@@ -73,6 +75,10 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
   });
 
   const unchanged = () => !!block && macro()?.trim() === block.macro.trim();
+  const sharedGist = () => unchanged() && initialShare && !pendingRecordId(initialShare) ? shareGistId(initialShare) : null;
+  const linkAction = () => !sharedGist() ? t("share-dialog-create-link")
+    : readOr(quickShare, QUICK_SHARE_OFF, "quick share listing")?.shares.some(row => row.gistId === sharedGist())
+      ? t("quick-share-reshare") : t("quick-share-reshare-new");
   const request = createMemo<QueryPublicationRequest | undefined>(() => {
     const text = macro();
     if (!text) return undefined;
@@ -281,7 +287,7 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
           <DialogActions
             class="share-foot"
             cancel={<button type="button" class="export-btn-secondary" onClick={closeShareDialog}>{t("share-dialog-cancel")}</button>}
-            primary={<button type="button" class="export-btn-primary share-export" disabled={!canExport()} onClick={exportNow}>{where() === "link" ? t("share-dialog-create-link") : t("share-dialog-export")}</button>} />
+            primary={<button type="button" class="export-btn-primary share-export" disabled={!canExport()} onClick={exportNow}>{where() === "link" ? linkAction() : t("share-dialog-export")}</button>} />
         </div>
       </div>
     </div>

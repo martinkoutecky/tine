@@ -21,7 +21,7 @@ async function readListing(): Promise<QuickShareListing | undefined> {
 /** Actions on a share definition, including its occurrence in the Exports
  * overview. Keys and account authorization stay behind the existing commands;
  * graph cleanup uses the same guarded save as Settings → Sharing. */
-export function QuickShareExportActions(props: { hostBlockId: string }): JSX.Element {
+export function QuickShareExportActions(props: { hostBlockId: string; reshare: () => void }): JSX.Element {
   let alive = true;
   onCleanup(() => { alive = false; });
   const [busy, setBusy] = createSignal(false);
@@ -81,6 +81,8 @@ export function QuickShareExportActions(props: { hostBlockId: string }): JSX.Ele
   return <><Show when={gistId()}>
     <span class="quick-share-export-controls" onClick={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()}>
       <Show when={listed().enabled}>
+        <button type="button" class="export-btn-secondary quick-share-export-reshare" disabled={busy()}
+          onClick={props.reshare}>{row() ? t("quick-share-reshare") : t("quick-share-reshare-new")}</button>
         <button type="button" class="export-btn-secondary quick-share-export-delete" disabled={busy() || !canDelete()}
           onClick={() => void remove()}>{t("quick-share-settings-delete")}</button>
       </Show>

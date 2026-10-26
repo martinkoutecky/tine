@@ -62,7 +62,7 @@ it("lists this device's shares with the actions each state allows", async () => 
   const live = share(root, "s1"), pending = share(root, "s2"), theirs = share(root, "s3");
   expect(live.textContent).toContain("Project");
   expect(live.textContent).toContain("3 pages");
-  expect([has(live, "quick-share-row-copy"), has(live, "quick-share-row-delete"), has(live, "quick-share-row-check")]).toEqual([true, true, false]);
+  expect([has(live, "quick-share-row-copy"), has(live, "quick-share-row-delete"), has(live, "quick-share-row-check")]).toEqual([true, true, true]);
   expect([has(pending, "quick-share-row-check"), has(pending, "quick-share-row-forget"), has(pending, "quick-share-row-copy")]).toEqual([true, true, false]);
   expect(pending.textContent).toContain("Upload not confirmed");
   expect(has(theirs, "quick-share-row-delete"), "another account's share cannot be deleted from here").toBe(false);
@@ -81,6 +81,16 @@ it("Check keeps a share that is not found yet pending, and a found share is list
   await settle();
   expect(share(root, "s2").dataset.state).toBe("live");
   expect(has(share(root, "s2"), "quick-share-row-copy")).toBe(true);
+});
+
+it("Check on a live share identifies the snapshot on GitHub after an uncertain update", async () => {
+  api.check.mockResolvedValueOnce({current: {title: "Project", createdAt: "2026-10-26T12:00:00Z", pages: ["Project", "Notes"]}});
+  const root = await mount();
+  const check = share(root, "s1").querySelector<HTMLButtonElement>(".quick-share-row-check");
+  expect(check).not.toBeNull();
+  check!.click(); await settle();
+  expect(api.check).toHaveBeenCalledWith("s1");
+  expect(toasts().some(toast => toast.message.includes("2026-10-26T12:00:00Z") && toast.message.includes("Project, Notes"))).toBe(true);
 });
 
 it("Delete asks first, removes a deleted share, and marks one GitHub no longer has", async () => {

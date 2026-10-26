@@ -10,7 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
-- Delete a quick share from its query on the Exports page, with confirmation, including when its key is on another device.
+- Re-share from a query or the Exports page to update the same link after reviewing added and removed pages; Delete remains available with confirmation, and devices without the key offer a new link.
 
 - Encrypted quick-share links open in the generation-1 browser reader on tine.page, with private navigation, readable errors and media loaded only when the reader follows a link.
 

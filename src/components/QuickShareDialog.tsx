@@ -2,11 +2,13 @@ import { For, Show, createSignal, onCleanup, onMount, type Accessor, type JSX } 
 import { DialogActions } from "./DialogActions";
 import { msg, t } from "../i18n";
 import { backend } from "../backend";
+import { blockProperty } from "../document";
+import { SHARE_PROPERTY } from "../exportsPage";
 import { bindingOwner, graphOwner, latestOwner, readOwned, readOwnedResource, writeOwned, type WriteOwner } from "../owned";
 import { dbg } from "../debug";
 import { pushToast } from "../toasts";
 import { closeQuickShare, quickShareDefinition } from "../shareState";
-import { GRAPH_CHANGED, finishSharePending, markSharePending, shareValue } from "../quickShare/definitions";
+import { GRAPH_CHANGED, finishSharePending, markSharePending, shareValue, shareGistId, pendingRecordId } from "../quickShare/definitions";
 import { registerTransientLayer } from "../transientLayers";
 import type { QueryPublicationRequest } from "../types";
 import {
@@ -114,6 +116,10 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   const scope = {};
   const [listing, setListing] = createSignal<QuickShareListing | null>(null);
   const [preview, setPreview] = createSignal<QuickSharePrepared["preview"] | null>(null);
+  const [membership, setMembership] = createSignal<QuickSharePrepared["membership"]>(null);
+  const [updateId, setUpdateId] = createSignal<string | undefined>();
+  const [missingKey, setMissingKey] = createSignal(false);
+  const [updateUnknown, setUpdateUnknown] = createSignal(false);
   // The prepared payload that Create uploads; cleared the moment Create consumes it. `shareId` is the record id
   // that upload will use, which the query block carries as `tine.share:: pending/<shareId>` from the start.
   const [prepared, setPrepared] = createSignal<{ prepareId: string; shareId: string } | null>(null);
@@ -167,13 +173,14 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   const prepare = async () => {
     const previous = prepareId();
     if (previous) discard(previous);
-    setPrepared(null); setError(null); setBusy("prepare");
+    setPrepared(null); setPreview(null); setMembership(null); setUpdateUnknown(false); setError(null); setBusy("prepare");
     const owner = latestOwner(scope, "prepare", graphOwner(() => alive));
     try {
       // A preview nobody shows any more is discarded at once, not left to expire.
-      const answer = await readOwnedResource(owner, backend().quickSharePrepare(props.request), (stale) => discard(stale.prepareId));
+      const answer = await readOwnedResource(owner, backend().quickSharePrepare(props.request, updateId()), (stale) => discard(stale.prepareId));
       if (answer.kind === "stale") return;
       setPreview(answer.value.preview);
+      setMembership(answer.value.membership);
       setPrepared({ prepareId: answer.value.prepareId, shareId: answer.value.shareId });
     } catch (failure) {
       if (owner()) setError(quickShareErrorText(failure));
@@ -190,6 +197,14 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
       setListing(answer.value);
       setBusy(null);
       if (!answer.value.enabled) { setError(quickShareErrorText({ kind: "disabled" })); return; }
+      if (answer.value.error) { setError(answer.value.error); return; }
+      const definition = quickShareDefinition(props.request);
+      const host = definition ? definition.hostBlockId : props.request.hostBlockId;
+      const value = host ? blockProperty(host, SHARE_PROPERTY) : null;
+      const existing = value && !pendingRecordId(value) ? shareGistId(value) : null;
+      const row = existing ? answer.value.shares.find(share => share.gistId === existing) : undefined;
+      setUpdateId(row?.shareId);
+      setMissingKey(!!existing && !row);
       if (!answer.value.account) { setNeedsConnect(true); return; }
       await prepare();
     } catch (failure) {
@@ -211,7 +226,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     const definition = quickShareDefinition(props.request);
     const { prepareId: id, shareId } = current;
     markedOn = null;
-    if (definition) {
+    if (definition && !updateId()) {
       // The marker is saved before anything is uploaded (D-20261018-QS3): without it a share confirmed later could
       // not find its block. If it cannot be saved, nothing is uploaded and the preview stays for another try.
       try {
@@ -239,13 +254,14 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
         setCopied(answer.value.copied);
         if (!answer.value.copied) setError(t("quick-share-copy-failed"));
       }
-      await finish(shareId, shareValue(answer.value.login, answer.value.gistId), owner, markedOn);
+      if (!updateId()) await finish(shareId, shareValue(answer.value.login, answer.value.gistId), owner, markedOn);
     } catch (failure) {
       const kind = kindOf(failure);
       // An unknown outcome keeps the marker (a later Check finishes it); any other failure made no gist.
-      if (kind !== "maybeUploaded") await finish(shareId, null, owner, markedOn);
+      if (!updateId() && kind !== "maybeUploaded") await finish(shareId, null, owner, markedOn);
       if (!alive) { pushToast(msg("quick-share-toast-failed", { error: quickShareErrorText(failure) }), "error"); return; }
       if (kind === "maybeUploaded") setPending((failure as { shareId: string }).shareId);
+      if (kind === "maybeUpdated") setUpdateUnknown(true);
       if (kind === "notConnected" || kind === "reconnect") setNeedsConnect(true);
       setError(quickShareErrorText(failure));
     } finally {
@@ -261,7 +277,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     try {
       const answer = await writeOwned(owner, backend().quickShareCheck(shareId));
       if (answer.kind === "stale") return;
-      if (answer.value === "live") {
+      if (answer.value !== "notFoundYet") {
         if (alive) { setPending(null); setLive(shareId); setCheckNote(t("quick-share-check-found")); }
         // Check answers only the state; the gist it found is in the records.
         const listed = await readOwned(owner, backend().quickShareList());
@@ -306,7 +322,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
         onKeyDown={(event) => trapTab(event, dialog)}>
         <div class="settings-pane">
           <div class="settings-pane-head">
-            <span id="quick-share-title">{t("quick-share-title")}</span>
+            <span id="quick-share-title">{updateId() ? t("quick-share-reshare") : t("quick-share-title")}</span>
             <button type="button" class="icon-btn" aria-label={t("share-dialog-close")} onClick={closeQuickShare}>✕</button>
           </div>
           <div class="settings-pane-body">
@@ -320,6 +336,18 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
             }</Show>
 
             <Show when={busy() === "prepare"}><div class="query-export-note">{t("quick-share-preparing")}</div></Show>
+            <Show when={missingKey()}><p class="settings-hint quick-share-missing-key">{t("quick-share-missing-key")}</p></Show>
+            <Show when={updateId()}><p class="quick-share-revisions">{t("quick-share-revisions")}</p></Show>
+            <Show when={membership()}>{diff => <div class="quick-share-membership">
+              <Show when={diff().currentSnapshotAt}><p>{t("quick-share-current-snapshot", { date: diff().currentSnapshotAt! })}</p></Show>
+              <p>{t("quick-share-membership", { added: diff().added.length, removed: diff().removed.length })}</p>
+              <Show when={diff().added.length + diff().removed.length > 0}>
+                <details><summary>{t("quick-share-membership-pages")}</summary>
+                  <ul><For each={diff().added}>{name => <li>+ {name}</li>}</For>
+                    <For each={diff().removed}>{name => <li>− {name}</li>}</For></ul>
+                </details>
+              </Show>
+            </div>}</Show>
             <Show when={preview()}>{(shown) => <div class="share-review quick-share-preview" aria-live="polite">
               <div class="query-export-summary">{t("share-dialog-pages", { count: shown().pages.length })}</div>
               <ul class="query-export-pages share-pages"><For each={shown().pages}>{(page) =>
@@ -338,18 +366,23 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
               <Show when={!done()}>
                 <p class="settings-hint quick-share-as-shown">{t("quick-share-as-shown")}
                   <button type="button" class="export-btn-secondary quick-share-refresh" disabled={!!busy() || needsConnect()}
-                    onClick={() => void prepare()}>{t("quick-share-refresh")}</button></p>
+                    onClick={() => void prepare()}>{updateUnknown() ? t("quick-share-review-current") : t("quick-share-refresh")}</button></p>
               </Show>
             </div>}</Show>
 
             <Show when={created()}>{(share) => <div class="quick-share-created" role="status">
-              <p>{copied() ? t("quick-share-copied") : t("quick-share-created")}</p>
+              <p>{updateId() ? t("quick-share-reshared") : copied() ? t("quick-share-copied") : t("quick-share-created")}</p>
               <p class="settings-hint quick-share-link">{t("quick-share-link-masked", { login: share().login, gist: share().gistId })}</p>
               <p class="settings-hint">{t("quick-share-key-on-device")}</p>
             </div>}</Show>
             <Show when={recorded()}>{(page) => <p class="settings-hint quick-share-recorded" role="status">{t("quick-share-definition-saved", { page: page() })}</p>}</Show>
             <Show when={checkNote()}><p class="settings-hint quick-share-check-note" role="status">{checkNote()}</p></Show>
             <Show when={error()}><div role="alert" class="query-export-refused quick-share-error">{error()}</div></Show>
+            <Show when={!preview() && !prepareId() && updateId() && !done() && !busy()}>
+              <button type="button" class="export-btn-secondary quick-share-refresh" onClick={() => void prepare()}>
+                {updateUnknown() ? t("quick-share-review-current") : t("quick-share-refresh")}
+              </button>
+            </Show>
           </div>
           <DialogActions class="share-foot"
             cancel={<button type="button" class="export-btn-secondary" onClick={closeQuickShare}>{done() ? t("quick-share-done") : t("share-dialog-cancel")}</button>}
@@ -363,7 +396,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
             </Show>
             <Show when={!done() && !pending()}>
               <button type="button" class="export-btn-primary quick-share-create" disabled={!prepareId() || !!busy() || needsConnect()}
-                onClick={() => void create()}>{busy() === "create" ? t("quick-share-creating") : t("quick-share-create")}</button>
+                onClick={() => void create()}>{busy() === "create" ? t("quick-share-creating") : updateId() ? t("quick-share-reshare") : missingKey() ? t("quick-share-reshare-new") : t("quick-share-create")}</button>
             </Show>
             </>} />
         </div>

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "scenarios": {
     "scripts/e2e-quick-share-viewer.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"A native share dialog uploads its reviewed pages to mocked GitHub, records the share without its key in the graph, and the built browser viewer renders the uploaded copy and follows a shared page link while preserving the secret prefix. Delete from the Exports overview changes nothing when declined and removes the gist and graph marker when confirmed.","blocking":true,"authority":"UI-QUICK-SHARE-VIEWER-G1; UI-QUICK-SHARE-EXPORT-ACTIONS; generation 1 DESIGN sections 3.7, 3.8, 5 and 8"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"A native share dialog uploads its reviewed pages to mocked GitHub, records the share without its key in the graph, and the built browser viewer renders the uploaded copy and follows a shared page link while preserving the secret prefix. After a page edit, Re-share from Exports previews membership, waits for confirmation, updates one gist and shows the edit at the same link without a duplicate definition. Delete changes nothing when declined and removes the gist and graph marker when confirmed.","blocking":true,"authority":"UI-QUICK-SHARE-VIEWER-G1; UI-QUICK-SHARE-EXPORT-ACTIONS; UI-QUICK-SHARE-RESHARE; generation 1 DESIGN sections 3.7, 3.8, 5 and 8"}],
       "acceptableVariations": ["Dialog layout, connection timing and rendered styling may vary."],
       "nonRequirements": ["No live GitHub writes, real Pages deployment, mobile device HTTPS, exact pixels or complete enumeration of envelope boundary cases."],
       "stability":"burn-in"

@@ -318,6 +318,7 @@ pub(crate) struct ListedGist {
     pub description: Option<String>,
     pub files: Vec<String>,
     pub share_raw_url: Option<String>,
+    pub revision: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -331,6 +332,12 @@ struct RawGist {
     owner: Option<RawOwner>,
     #[serde(default)]
     files: std::collections::BTreeMap<String, RawFile>,
+    #[serde(default)]
+    history: Vec<RawRevision>,
+}
+#[derive(Deserialize)]
+struct RawRevision {
+    version: String,
 }
 #[derive(Deserialize)]
 struct RawOwner {
@@ -355,6 +362,7 @@ impl From<RawGist> for ListedGist {
             description: gist.description,
             files: gist.files.into_keys().collect(),
             share_raw_url,
+            revision: gist.history.first().map(|h| h.version.clone()),
         }
     }
 }
@@ -365,6 +373,37 @@ pub(crate) fn valid_gist_id(id: &str) -> bool {
 }
 
 impl GitHub {
+    /// Replace the complete envelope once. GitHub documents no conditional
+    /// PATCH for gists; the service re-reads the reviewed revision first.
+    pub(crate) async fn update_gist(
+        &self,
+        token: &Token,
+        id: &str,
+        envelope: &str,
+    ) -> Result<(), GhError> {
+        if !valid_gist_id(id) {
+            return Err(GhError::NotFound);
+        }
+        let body = serde_json::json!({"files": {super::SHARE_FILE: {"content": envelope}}});
+        let request = self
+            .api(reqwest::Method::PATCH, &format!("/gists/{id}"), token)
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_vec(&body).map_err(|_| GhError::NotSent)?);
+        let answer = Self::check(self.exchange(request, MAX_API_BYTES).await?, &[200], token)?;
+        let updated: RawGist =
+            serde_json::from_slice(&answer.body).map_err(|_| GhError::BadAnswer)?;
+        let updated = ListedGist::from(updated);
+        if updated.id != id
+            || !super::is_tine_share(&updated)
+            || updated.owner_id.is_none()
+            || !updated.revision.as_deref().is_some_and(|version| {
+                version.len() == 40 && version.bytes().all(|b| b.is_ascii_hexdigit())
+            })
+        {
+            return Err(GhError::BadAnswer);
+        }
+        Ok(())
+    }
     pub(crate) fn new(endpoints: Endpoints) -> Result<Self, GhError> {
         let builder = reqwest::Client::builder()
             .user_agent(format!("Tine/{}", env!("CARGO_PKG_VERSION")))

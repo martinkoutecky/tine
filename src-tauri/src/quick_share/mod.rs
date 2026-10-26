@@ -17,6 +17,7 @@ pub(crate) mod github;
 #[cfg(test)]
 mod quick_share_tests;
 pub(crate) mod records;
+mod reshare;
 
 use github::{Endpoints, GhError, GitHub, ListedGist, TokenPoll};
 use records::{Account, Records, ShareRow, ShareState};
@@ -154,6 +155,8 @@ pub(crate) enum QsError {
         #[serde(rename = "shareId")]
         share_id: String,
     },
+    MaybeUpdated,
+    ShareChanged,
     /// The prepared payload expired, was discarded, or was already used.
     PreviewExpired,
     /// The share belongs to another account (DESIGN §3.6).
@@ -242,6 +245,7 @@ struct Prepared {
     title: String,
     pages: usize,
     expires: Instant,
+    update: Option<reshare::UpdateReview>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -252,6 +256,7 @@ pub(crate) struct PrepareResult {
     /// header). The webview marks the query block with it before Create.
     pub share_id: String,
     pub preview: SharePreview,
+    pub membership: Option<reshare::Membership>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -300,6 +305,12 @@ pub(crate) struct Listing {
 pub(crate) enum CheckOutcome {
     Live,
     NotFoundYet,
+    Current {
+        title: String,
+        #[serde(rename = "createdAt")]
+        created_at: String,
+        pages: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -325,6 +336,8 @@ pub(crate) struct Service {
     poll_unit: Duration,
     flow: Mutex<Flow>,
     prepared: Mutex<Vec<Prepared>>,
+    update_locks:
+        Mutex<std::collections::BTreeMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>,
 }
 
 fn random_id() -> String {
@@ -381,6 +394,7 @@ impl Service {
             poll_unit,
             flow: Mutex::new(Flow::default()),
             prepared: Mutex::new(Vec::new()),
+            update_locks: Mutex::new(std::collections::BTreeMap::new()),
         })
     }
 
@@ -689,11 +703,13 @@ impl Service {
             title: prepared.preview.title.clone(),
             pages: prepared.preview.pages.len(),
             expires: now + PREPARED_TTL,
+            update: None,
         });
         Ok(PrepareResult {
             prepare_id: id,
             share_id: share::b64u(&share_id),
             preview: prepared.preview,
+            membership: None,
         })
     }
 
@@ -720,6 +736,9 @@ impl Service {
         let prepared = self
             .take_prepared(prepare_id)
             .ok_or(QsError::PreviewExpired)?;
+        if prepared.update.is_some() {
+            return self.update_share(prepared, copy).await;
+        }
         let account = self.connected()?;
         let sealed = share::seal_fresh_as(&prepared.payload, prepared.share_id).map_err(|_| {
             QsError::Refused {
@@ -851,7 +870,17 @@ impl Service {
     pub(crate) async fn check_share(&self, share_id: &str) -> Result<CheckOutcome, QsError> {
         let (account, row) = self.owned_row(share_id)?;
         if row.state == ShareState::Live {
-            return Ok(CheckOutcome::Live);
+            // Check also resolves an unknown PATCH: authenticate the current
+            // snapshot rather than treating a local live row as proof.
+            let lock = self.update_lock(share_id);
+            let _guard = lock.lock().await;
+            let (_, document) = self.read_update_snapshot(&account, &row).await?;
+            self.refresh_update_record(&row, &document)?;
+            return Ok(CheckOutcome::Current {
+                title: document["title"].as_str().unwrap_or(&row.title).to_owned(),
+                created_at: document["created_at"].as_str().unwrap_or("").to_owned(),
+                pages: reshare::snapshot_pages(&document).into_values().collect(),
+            });
         }
         let key =
             decode_key(&row).ok_or_else(|| records_error("a share's key is damaged".into()))?;
@@ -1059,6 +1088,7 @@ fn clipboard(app: &tauri::AppHandle) -> impl FnOnce(&str) -> bool + '_ {
 #[tauri::command]
 pub(crate) async fn quick_share_prepare(
     request: QueryExportRequest,
+    share_id: Option<String>,
     state: crate::state::GraphContext<'_>,
 ) -> Result<PrepareResult, QsError> {
     use tauri::Manager;
@@ -1071,13 +1101,18 @@ pub(crate) async fn quick_share_prepare(
         .path()
         .app_cache_dir()
         .map_err(|_| records_error("Tine has no cache folder".into()))?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let builder = Arc::clone(&service);
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
         std::fs::create_dir_all(&scratch)
             .map_err(|_| records_error("Tine could not create its cache folder".into()))?;
-        service.prepare_share(&slot.store, &request, &scratch)
+        builder.prepare_share(&slot.store, &request, &scratch)
     })
     .await
-    .map_err(|_| QsError::Unavailable)?
+    .map_err(|_| QsError::Unavailable)??;
+    match share_id {
+        Some(id) => service.review_update(prepared, &id).await,
+        None => Ok(prepared),
+    }
 }
 
 #[tauri::command]

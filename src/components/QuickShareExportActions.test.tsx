@@ -120,3 +120,10 @@ it("two clicks while confirmation is pending open one confirmation and send no d
   expect(confirm).toHaveBeenCalledTimes(1);
   expect(remove).not.toHaveBeenCalled();
 });
+
+it.each([true, false])("Exports offers the appropriate Re-share action (key here: %s)", async keyHere => {
+  const root = await mount(keyHere);
+  const action = root.querySelector<HTMLButtonElement>(".quick-share-export-reshare");
+  expect(action).not.toBeNull();
+  expect(action!.textContent).toBe(keyHere ? "Re-share" : "Re-share as a new link");
+});
