@@ -39,7 +39,7 @@ jobs:
           workspaces: ". -> target"
       - run: npm ci
       - run: npm run build
-      - run: cargo build -p tine
+      - run: cargo build --features custom-protocol --manifest-path src-tauri/Cargo.toml
       - name: CLI smoke
         shell: bash
         run: |
