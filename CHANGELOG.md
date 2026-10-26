@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
 ### Added
 
 - **Re-export** reviews a saved folder export in Replace mode. **Update all** on the Exports page reviews folder exports and quick shares together before confirmation, then updates them in order and shows each outcome, including skipped definitions and failures.

@@ -222,6 +222,29 @@ fn the_read_verbs_answer_over_the_socket() {
     assert_eq!(code(conn.call("page.edit", Value::Null)), "unknown-verb");
 }
 
+/// GH #771: on macOS an accepted socket inherits the listener's O_NONBLOCK.
+#[test]
+fn an_accepted_connection_is_made_blocking() {
+    use std::os::unix::io::AsRawFd;
+    use std::os::unix::net::UnixStream;
+    let (stream, _peer) = UnixStream::pair().unwrap();
+    stream.set_nonblocking(true).unwrap();
+    super::endpoint::blocking_connection(&stream).unwrap();
+    let flags = unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_GETFL) };
+    assert_eq!(flags & libc::O_NONBLOCK, 0);
+}
+
+/// GH #771: a client that pauses between the hello and its first request is
+/// still served (the macOS owner closed it at once and the CLI saw EINVAL).
+#[test]
+fn a_client_that_waits_before_its_first_request_is_served() {
+    let graph = Graph::new();
+    let (_endpoint, _gate) = endpoint(&graph, Arc::new(graph.slot()));
+    let mut conn = graph.connect();
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(conn.call("owner.status", Value::Null).is_ok());
+}
+
 #[test]
 fn a_paused_owner_answers_busy_and_still_reports_status() {
     let graph = Graph::new();
