@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 const token = (graphRoot: string | undefined): AssetEditorToken => ({
-  binding: captureBinding(), graphRoot, textarea: {} as HTMLTextAreaElement,
+  binding: captureBinding(), graphRoot, editor: {} as HTMLTextAreaElement,
   editingBlockId: null, editingBlockOwner: null, editingBlockSurface: null,
 });
 

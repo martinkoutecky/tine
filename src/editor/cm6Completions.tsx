@@ -30,6 +30,7 @@ import { applySheetViewSlashAction } from "../components/block/sheetViewSlash";
 import { CaptureCtx } from "../components/Block";
 import { registerTransientLayer } from "../transientLayers";
 import { EditorAutocomplete } from "../components/EditorAutocomplete";
+import { editorAssets } from "./editorAssets";
 import { editorCommandFor, isPermittedTabGesture } from "../keybindings";
 import { msg, t as translate } from "../i18n";
 import { dbg } from "../debug";
@@ -45,6 +46,7 @@ export function cm6Completions(props: {
   visible: () => string; rawBeforeCommit: () => string;
   literal(): boolean; languagePicker(active: boolean): void;
   completeRegion(text: string, caret: number): void;
+  assets: ReturnType<typeof editorAssets>;
 }) {
   const cap = useContext(CaptureCtx);
   const inResults = useContext(ResultWriteTargetContext);
@@ -430,8 +432,9 @@ export function cm6Completions(props: {
       case "date-picker": replaceTrigger(""); openJournal(); return;
       case "tomorrow": case "yesterday": case "today": case "thatday":
         runJournalSlash(item.action, node(props.id).page, replaceTrigger); return;
-      // Native asset actions remain owned by the later assets/native slice.
-      case "upload-asset": case "record": case "drawio": return;
+      case "upload-asset": replaceTrigger(""); void props.assets.uploadAsset(); return;
+      case "record": replaceTrigger(""); void props.assets.desktopVoiceMemoToggle(); return;
+      case "drawio": replaceTrigger(""); void props.assets.createDrawioDiagram(); return;
       case "priority-a": case "priority-b": case "priority-c": {
         const lines = (text().slice(0, t.start) + text().slice(t.end)).split("\n");
         lines[0] = setPriority(lines[0], item.action === "priority-a" ? "A" : item.action === "priority-b" ? "B" : "C") + " ";

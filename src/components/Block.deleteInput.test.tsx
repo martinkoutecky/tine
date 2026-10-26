@@ -46,8 +46,7 @@ it("makes an open editor read-only during deletion and resumes editing after ref
     answer("refused");
     expect(await deleting).toBe(false);
     expect(textarea.isReadOnly()).toBe(false);
-    textarea.replaceText("after refusal");
-    textarea.reportInput({ bubbles: true, inputType: "insertText", data: "l" });
+    textarea.input("after refusal", undefined, { data: "l" });
     expect(doc.byId.d1.raw).toBe("after refusal");
   } finally { view.dispose(); }
 });

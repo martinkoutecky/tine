@@ -12,8 +12,8 @@ function productionSources(dir: string): string[] {
 
 // Named rule exemptions are pinned to exact backend method counts below.
 const EXEMPT: Record<string, string> = {
-  "src/components/Block.tsx#Editor.capturePhotoCmd": "asset editor token checks binding before insertion; an import failure is always reported",
-  "src/components/Block.tsx#Editor.voiceMemoToggle": "native recorder must be cancelled from a stale start result; the app-wide start token guards insertion; a stop or import failure is always reported",
+  "src/editor/editorAssets.ts#editorAssets.capturePhotoCmd": "asset editor token checks binding before insertion; an import failure is always reported",
+  "src/editor/editorAssets.ts#editorAssets.voiceMemoToggle": "native recorder must be cancelled from a stale start result; the app-wide start token guards insertion; a stop or import failure is always reported",
   "src/debug.ts#initDebug": "one-time device debug probe has no graph or route landing",
   "src/graph.ts#loadGraphPath": "the graph transition changes its own binding; its transition lock owns publication; the open-waiting subscription lives only inside its try/finally around loadGraph",
   "src/plugins/manager.ts#uninstall": "device-local plugin removal completes in the process-wide manager across graph navigation",
@@ -59,8 +59,8 @@ const EXEMPT: Record<string, string> = {
 // Exact backend methods and occurrence counts inside each exempt function.
 // A new call to the same method or any new method must fail the guard.
 const EXEMPT_CALLS: Record<string, string[]> = {
-  "src/components/Block.tsx#Editor.capturePhotoCmd": ["capturePhoto"],
-  "src/components/Block.tsx#Editor.voiceMemoToggle": ["stopRecording", "startRecording"],
+  "src/editor/editorAssets.ts#editorAssets.capturePhotoCmd": ["capturePhoto"],
+  "src/editor/editorAssets.ts#editorAssets.voiceMemoToggle": ["stopRecording", "startRecording"],
   "src/debug.ts#initDebug": ["debugInfo"],
   "src/graph.ts#loadGraphPath": ["loadGraph", "onGraphOpenWaiting", "onGraphOpenOwnerWaiting"],
   "src/plugins/manager.ts#uninstall": ["uninstallPlugin", "setAppString"],

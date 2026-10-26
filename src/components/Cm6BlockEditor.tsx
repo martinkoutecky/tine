@@ -1,6 +1,6 @@
 // Experimental editor. No CM syntax parser is configured: lsdoc supplies all spans.
 import { createEffect, createMemo, createSignal, For, Show, onCleanup, onMount, useContext, type JSX } from "solid-js";
-import { Annotation, Compartment, EditorSelection, EditorState, StateField } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, keymap, WidgetType, type DecorationSet } from "@codemirror/view";
 import { defaultKeymap } from "@codemirror/commands";
 import { blockWritable, depthOf, isBlockMoving, node, pageByName, setRaw, type OutlineScope } from "../document";
@@ -16,6 +16,7 @@ import { marginNavigation } from "./blockComments";
 import { SheetCellContext } from "../sheet/context";
 import { cm6SheetKeys } from "../editor/cm6SheetKeys";
 import { cm6Clipboard } from "../editor/cm6Clipboard";
+import { editorAssets } from "../editor/editorAssets";
 import { cm6Completions } from "../editor/cm6Completions";
 import { cm6Typing } from "../editor/cm6Typing";
 import { offsetThroughRewrite } from "../editor/caretThroughRewrite";
@@ -36,6 +37,7 @@ import { openContextMenu } from "../ui";
 import { renderedClickOffset } from "./blockGestures";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { effectiveHeadingLevel } from "../render/facets";
+import { parserReady } from "../render/parse";
 import "./cm6-editor.css";
 
 class Chip extends WidgetType {
@@ -90,6 +92,8 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   });
   const projection = Annotation.define<boolean>();
   const wrapping = new Compartment();
+  const editability = new Compartment();
+  const refreshPreview = StateEffect.define<null>();
   let updating = false;
   let rawBeforeCommit = shownNode.raw;
   const commit = (text: string) => {
@@ -137,8 +141,16 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     ...marginNavigation(props.id, props.scope, props.surface, () => format),
   });
   const sheet = cell ? cm6SheetKeys(props.id, cell, commit) : null;
-  const clipboard = cm6Clipboard({ id: props.id, format, current, commit, literal, sheet: !!cell, hiddenProperties });
+  const assets = editorAssets({ id: props.id, element: () => view!.contentDOM, mounted: current,
+    insert: markup => {
+      if (!view) return;
+      view.dispatch(view.state.replaceSelection(markup), { userEvent: "input.paste", scrollIntoView: true });
+      view.focus();
+    },
+  });
+  const clipboard = cm6Clipboard({ id: props.id, format, current, commit, literal, assets, sheet: !!cell, hiddenProperties });
   const completion = cm6Completions({ ...props, format, current, literal, sheet: !!cell, view: () => view, visible, rawBeforeCommit: () => rawBeforeCommit,
+    assets,
     languagePicker: setPickingLanguage,
     completeRegion: (text, caret) => {
       if (!view) return;
@@ -153,7 +165,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const formatting = cm6Formatting({ ...props, format, current, commit, view: () => view,
     closeCompletion: completion.close, refreshCompletion: completion.refresh });
   const buildDecorations = (state: EditorState): DecorationSet => {
-    if (literal()) return Decoration.none;
+    if (!parserReady() || literal()) return Decoration.none;
     const ranges = previewSpans(state.doc.toString(), format).flatMap(span => {
       // Reveal at either boundary and whenever any selection intersects source.
       const reveal = state.selection.ranges.some(r => r.from <= span.to && r.to >= span.from);
@@ -174,7 +186,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   };
   const decorations = StateField.define<DecorationSet>({
     create: buildDecorations,
-    update: (value, tr) => tr.docChanged || tr.selection ? buildDecorations(tr.state) : value,
+    update: (value, tr) => tr.docChanged || tr.selection || tr.effects.some(effect => effect.is(refreshPreview)) ? buildDecorations(tr.state) : value,
     provide: field => EditorView.decorations.from(field),
   });
   onMount(() => {
@@ -196,7 +208,8 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         if (transactions.some(tr => tr.isUserEvent("select"))) enterBody();
       },
       state: EditorState.create({ doc: shown(), extensions: [
-        decorations, wrapping.of(!isCalc() && (!codeEditing() || codeWrapping()) ? EditorView.lineWrapping : []), completion.inputSelection, typing.filter,
+        decorations, wrapping.of(!isCalc() && (!codeEditing() || codeWrapping()) ? EditorView.lineWrapping : []),
+        editability.of([EditorState.readOnly.of(!current()), EditorView.editable.of(current())]), completion.inputSelection, typing.filter,
         EditorView.editorAttributes.of({ "data-block-editor": "cm6" }),
         EditorView.contentAttributes.of({ "data-cm6-editor": props.id, "aria-label": "" }),
         keymap.of(defaultKeymap),
@@ -205,7 +218,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
           blur: (event, v) => {
             // Reorders can blur a retained editor; the structural gesture owns
             // its focus restoration. Palette actions still need embed context.
-            if (isBlockMoving() || (event.relatedTarget as HTMLElement | null)?.closest?.(".date-picker")
+            if (assets.holdsBlur() || isBlockMoving() || (event.relatedTarget as HTMLElement | null)?.closest?.(".date-picker")
               || embedExit && (event.relatedTarget as HTMLElement | null)?.closest?.(".switcher")) return false;
             const leave = () => { if (current() && editingId() === props.id && !v.hasFocus) endEdit("blur"); };
             if (typing.active()) queueMicrotask(leave);
@@ -329,7 +342,9 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         if (clipboard.command(view, command)) return true;
         if (formatting.command(command)) return true;
         if (structure.command(view, command)) return true;
-        // Media parity remains a later port.
+        if (command === "editor/upload-asset") { void assets.uploadAsset(); return true; }
+        if (command === "editor/capture-photo") { void assets.capturePhotoCmd(); return true; }
+        if (command === "editor/voice-memo") { void assets.voiceMemoToggle(); return true; }
         return false;
       },
     });
@@ -342,6 +357,13 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   createEffect(() => {
     const wrap = !isCalc() && (!codeEditing() || codeWrapping());
     view?.dispatch({ effects: wrapping.reconfigure(wrap ? EditorView.lineWrapping : []) });
+  });
+  createEffect(() => {
+    const writable = current();
+    view?.dispatch({ effects: editability.reconfigure([EditorState.readOnly.of(!writable), EditorView.editable.of(writable)]) });
+  });
+  createEffect(() => {
+    if (parserReady()) view?.dispatch({ effects: refreshPreview.of(null) });
   });
   onCleanup(() => { alive = false; typing.dispose(); clipboard.clearRaw(); removeCommandBridge?.(); removeKeys?.(); view?.destroy(); });
   return <div class="cm6-block-editor editor-wrap" classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }} ref={host}>

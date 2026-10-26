@@ -201,9 +201,7 @@ describe("asset paste durability", () => {
     try {
       const textarea = maybeEditorIn(root)! as EditorDriver;
       textarea.element.focus();
-      textarea.replaceText("/drawio");
-      textarea.select(7, 7);
-      textarea.reportInput({ bubbles: true, inputType: "insertText", data: "o" });
+      textarea.input("/drawio", 7, { data: "o" });
       await vi.waitFor(() => expect([...document.querySelectorAll(".autocomplete .ac-label")].map((x) => x.textContent)).toContain("Draw.io diagram"));
       const item = [...document.querySelectorAll<HTMLElement>(".autocomplete .ac-item")]
         .find((x) => x.querySelector(".ac-label")?.textContent === "Draw.io diagram")!;

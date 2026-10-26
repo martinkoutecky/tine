@@ -30,8 +30,8 @@ describe("Android voice-recording bounds", () => {
       bridge.indexOf("#[cfg(target_os = \"android\")]", bridge.indexOf("struct MediaCaptureResult"))
     );
     expect(result).toMatch(/path:\s*Option<String>/);
-    const block = readFileSync("src/components/Block.tsx", "utf8");
-    expect(block).toMatch(/voiceMemoToggle[\s\S]*importCaptureToOrigin\(editorToken, res\.path, candidate\)/);
+    const assets = readFileSync("src/editor/editorAssets.ts", "utf8");
+    expect(assets).toMatch(/voiceMemoToggle[\s\S]*importCaptureToOrigin\(editorToken, res\.path, candidate\)/);
     // og H1b: the capture names the graph it was started in.
     expect(readFileSync("src/assetLanding.ts", "utf8")).toMatch(/backend\(\)\.importNativeCapture\(path, candidate, generation, origin\)/);
   });
@@ -53,7 +53,7 @@ describe("Android voice-recording bounds", () => {
     const commands = readFileSync("src-tauri/src/commands.rs", "utf8");
     expect(commands).toMatch(/tine_photo_/);
     expect(commands).toMatch(/MAX_PHOTO_BYTES/);
-    const block = readFileSync("src/components/Block.tsx", "utf8");
-    expect(block).toMatch(/capturePhoto[\s\S]*importCaptureToOrigin\(editorToken, res\.path, candidate\)/);
+    const assets = readFileSync("src/editor/editorAssets.ts", "utf8");
+    expect(assets).toMatch(/capturePhoto[\s\S]*importCaptureToOrigin\(editorToken, res\.path, candidate\)/);
   });
 });

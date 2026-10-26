@@ -18,12 +18,14 @@ import { isEditorEmpty, type HidePolicy } from "./properties";
 import { OUTLINE_MAX_SOURCE_CHARS, pastedPlainBlocks, type OutlineNode } from "./outline";
 import { structuredHtmlPaste } from "./htmlPaste";
 import { isPasteableUrl, videoPasteMacro, wrapLink } from "./format";
+import { editorAssets } from "./editorAssets";
 
 interface ClipboardContext {
   id: string;
   format: "md" | "org";
   sheet: boolean;
   hiddenProperties: HidePolicy;
+  assets: ReturnType<typeof editorAssets>;
   current(): boolean;
   commit(text: string): void;
   literal(): boolean;
@@ -120,11 +122,13 @@ export function cm6Clipboard(ctx: ClipboardContext) {
     if (!available(v)) return true;
     const text = e.clipboardData?.getData("text/plain") ?? "";
     if (raw) { if (text) literal(v, text); return true; }
-    // File payloads belong to the later native-assets port. Do not interpret
-    // their companion path text as an outline or a private block payload.
+    // Claim companion path text synchronously; accept paths only from native ingress.
     const types = Array.from(e.clipboardData?.types ?? []);
-    if (Array.from(e.clipboardData?.items ?? []).some(item => item.kind === "file")
-      || types.some(type => type === "Files" || type === "text/uri-list" || type === "x-special/gnome-copied-files")) return false;
+    const files = Array.from(e.clipboardData?.items ?? []).filter(item => item.kind === "file")
+      .map(item => item.getAsFile()).filter((file): file is File => file !== null);
+    if (files.length || types.some(type => type === "Files" || type === "text/uri-list" || type === "x-special/gnome-copied-files")) {
+      void ctx.assets.pasteClipboardFiles(files); return true;
+    }
     const source = v.state.doc.toString(), s = v.state.selection.main;
     const code = codeFenceOnly(source, ctx.format) !== null;
     const syntaxSensitive = ctx.literal() || ctx.sheet || calcSource(source) !== null || code
@@ -163,6 +167,7 @@ export function cm6Clipboard(ctx: ClipboardContext) {
     }
     const video = videoPasteMacro(text);
     if (video && s.empty) { literal(v, video); return true; }
+    ctx.assets.pasteImage(e);
     return false;
   };
   return { paste, keydown, command, clearRaw };

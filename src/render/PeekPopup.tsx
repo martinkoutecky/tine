@@ -233,7 +233,7 @@ export function PeekPopup(props: {
           if (editingInside()) leftWhileEditing = true;
           else if (!ownsMenu()) props.onPointerLeave();
         }}
-        onFocusIn={(e) => { if (isHTMLElementNode(e.target) && e.target.tagName === "TEXTAREA") { setEditorFocused(true); props.onPointerEnter(); } }}
+        onFocusIn={(e) => { if (isHTMLElementNode(e.target) && (e.target.tagName === "TEXTAREA" || e.target.closest('[data-block-editor="cm6"]'))) { setEditorFocused(true); props.onPointerEnter(); } }}
         onFocusOut={(e) => {
           const next = e.relatedTarget;
           if (!(isNodeValue(next) && popupEl?.contains(next))) setEditorFocused(false);

@@ -36,14 +36,13 @@ import { navigationName } from "../pageIndex";
 import { pluginManager } from "../plugins/manager";
 import { bindPluginBlockSnapshot, isPluginGraphOwnerCurrent } from "../plugins/ownership";
 import { autoPairInsertOnInput, wrapSelectionEdit, doubleRefKind, backspacePairEdit, SELECTION_WRAP } from "../editor/autopair";
-import { holdExternalActivity } from "../externalActivity";
 import { typoTypeReplace } from "../render/typography";
 import { rangeInLiteral } from "../editor/inlineLiteral";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
@@ -85,15 +84,6 @@ import {
 import { selectionActionLabel } from "./SelectionActionLabel";
 import { effectiveHeadingLevel, facetsOf, EMPTY_FACETS, type Facets } from "../render/facets";
 import { CopyButton } from "../render/inline";
-import {
-  assetMarkdown,
-  assetFileName,
-  captureAssetFileName,
-  recordingExt,
-} from "../media";
-import { MEDIA_EDITORS } from "../mediaEditors";
-import { resolveMediaEditorCommand } from "../mediaEditorSettings";
-import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
 import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
@@ -104,12 +94,11 @@ import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecoration
 import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
 import { ResultWriteTargetContext, liveWriteTarget } from "./queryResultIdentity";
-import { pushToast, dismissToast } from "../toasts";
+import { pushToast } from "../toasts";
 import { copyBlockLink } from "./blockLinkCopy";
-import { seedAssetBlob } from "../assetCache";
-import { assetEditorIsCurrent, captureAssetEditor, importCaptureToOrigin, reportStaleAsset, type AssetEditorToken } from "../assetLanding";
+import { editorAssets } from "../editor/editorAssets";
 import { captureBinding, bindingCurrent } from "../binding";
-import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, writeOwned } from "../owned";
+import { graphOwner, latestOwner, ownedWhen, readOwned } from "../owned";
 import { EditorAutocomplete } from "./EditorAutocomplete";
 import { getTemplates, templateToOutline, type AcItem } from "../editor/completionItems";
 import { parserReady } from "../render/parse";
@@ -136,14 +125,6 @@ import { codeBodyExitTrim, codeBodyProjection, codeFenceOnly } from "../editor/c
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
 import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
-import {
-  isRecordingAudio,
-  setRecordingAudio,
-  cancelDesktopVoiceRecording,
-  desktopVoiceRecordingActive,
-  startDesktopVoiceRecording,
-  stopDesktopVoiceRecording,
-} from "../mediaCapture";
 import { blockListProps } from "./BlockList";
 import { childrenSheetConfig } from "../sheet/childrenSheet";
 import { SheetCellContext } from "../sheet/context";
@@ -158,7 +139,6 @@ import { SheetContainer } from "./SheetContainer";
 import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { followBlockSwipe } from "./blockSwipeWiring";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, renderedClickOffset } from "./blockGestures";
-import { clipboardSizeAllowed } from "../clipboardImage";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
@@ -519,8 +499,6 @@ const SHEET_CELL_BLOCKED_EDITOR_COMMANDS = new Set([
 ]);
 
 
-// One recorder app-wide: the starting editor's token outlives that editor, so Stop anywhere still stores it.
-let mobileRecordingEditorToken: AssetEditorToken | null = null;
 // Block editor for `props.id`. Inside quick capture, CaptureCtx repurposes
 // Enter/Escape when autocomplete is closed to commit or dismiss the capture.
 /** A host whose whole body is `{{embed ((uuid))}}`: the block-embed shape whose
@@ -1130,60 +1108,24 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     });
   };
 
-  const captureAssetEditorToken = () => captureAssetEditor(ref);
-  const assetEditorCurrent = (token: AssetEditorToken) => assetEditorIsCurrent(token, ref, editorMounted);
+  const assets = editorAssets({
+    id: props.id, element: () => ref, mounted: () => editorMounted,
+    insert: (markdown, current) => {
+      const start = ref.selectionStart, end = ref.selectionEnd;
+      const newRaw = ref.value.slice(0, start) + markdown + ref.value.slice(end);
+      commit(newRaw);
+      const pos = start + markdown.length;
+      queueMicrotask(() => {
+        if (!current() || ref.value !== newRaw) return;
+        ref.value = newRaw;
+        ref.setSelectionRange(pos, pos);
+        ref.focus();
+        autosize();
+      });
+    },
+  });
+  const { uploadAsset, capturePhotoCmd, voiceMemoToggle, desktopVoiceMemoToggle, createDrawioDiagram, pasteClipboardFiles } = assets;
 
-  // Seed the preview cache, persist the bytes to assets/ (awaited: data before reference), then
-  // insert a link to the STORED name at the caret (the backend may de-dup the candidate name).
-  // Shared by clipboard-image paste and mobile capture (camera / voice memo).
-  const insertAssetBytes = async (token: AssetEditorToken, bytes: Uint8Array, origName?: string, captureExt?: string) => {
-    const owner = bindingOwner(() => assetEditorCurrent(token));
-    const candidate = captureExt !== undefined ? captureAssetFileName(captureExt) : assetFileName(origName);
-    // Cache key is the bare filename — assetRelPath() strips the `assets/` prefix
-    // before loadAssetBlob() (see render/inline.tsx). Seed it so the asset renders
-    // instantly, before the disk write lands.
-    seedAssetBlob(candidate, bytes);
-    let stored: string;
-    try {
-      // Data before reference: a crash may leave an orphan asset, but can never
-      // persist a note that points at bytes which existed only in WebView memory.
-      const result = await writeOwned(owner, trackAssetWrite(backend().saveAsset(candidate, bytes, token.binding.backendGeneration)));
-      if (result.kind === "stale") { reportStaleAsset(); return; }
-      stored = result.value;
-    } catch (error) { pushToast(msg("editor-block-couldn-t-save-to-assets", { detail: String(error) }), "error"); return; }
-    if (stored !== candidate) seedAssetBlob(stored, bytes);
-    insertStoredAssets(token, [{ stored, label: origName }]);
-  };
-
-  const insertStoredAssets = (token: AssetEditorToken, assets: { stored: string; label?: string }[]): boolean => {
-    if (!assets.length) return false;
-    if (!assetEditorCurrent(token)) {
-      reportStaleAsset();
-      return false;
-    }
-    const page = pageByName(docNode(props.id)?.page ?? "");
-    const markdown = assets.map(({ stored, label }) => assetMarkdown(stored, {
-      label,
-      pagePath: page?.id,
-      format: formatForBlock(props.id),
-    })).join("\n");
-    const start = ref.selectionStart;
-    const end = ref.selectionEnd;
-    const newRaw = ref.value.slice(0, start) + markdown + ref.value.slice(end);
-    commit(newRaw);
-    const pos = start + markdown.length;
-    queueMicrotask(() => {
-      if (!assetEditorCurrent(token) || ref.value !== newRaw) return;
-      ref.value = newRaw;
-      ref.setSelectionRange(pos, pos);
-      ref.focus();
-      autosize();
-    });
-    return true;
-  };
-
-  const MAX_BYTE_CLIPBOARD_FILE = 64 * 1024 * 1024;
-  const MAX_CLIPBOARD_FILES = 32;
   let pasteRaw = false;
   let pasteRawToken = 0;
   let pasteRawTimer: number | undefined;
@@ -1206,265 +1148,6 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       syncTextareaToStore(ref, newRaw, textareaValue(), pos);
       autosize();
     });
-  };
-
-  /** Import file-manager paths without materializing their bytes in the WebView.
-   * If a platform exposes only browser File objects, save those sequentially so
-   * at most one bounded byte buffer/base64 IPC payload is live at a time. */
-  const pasteClipboardFiles = async (eventFiles: File[]) => {
-    const editorToken = captureAssetEditorToken();
-    const owner = bindingOwner();
-    const toastId = pushToast(msg("editor-block-pasting-files"), "info");
-    let skipped = 0;
-    let nativeUnavailable = false;
-    const stored: { stored: string; label?: string }[] = [];
-    let inserted = false;
-    try {
-      const nativeResult = await readOwned(ownedWhen(() => editorMounted), backend().clipboardFiles().catch(() => {
-        nativeUnavailable = true;
-        return { files: [], skipped: 0, truncated: false };
-      }));
-      if (nativeResult.kind === "stale") return; const native = nativeResult.value;
-      if (native.files.length) {
-        skipped += native.skipped;
-        for (const file of native.files) {
-          try {
-            const result = await writeOwned(owner, trackAssetWrite(backend().importAsset(file.path, assetFileName(file.name), editorToken.binding.backendGeneration)));
-            if (result.kind === "stale") return; stored.push({ stored: result.value, label: file.name });
-          } catch (error) {
-            pushToast(msg("editor-block-couldn-t-import-pasted-file", { detail: String(error) }), "error");
-            skipped += 1;
-          }
-        }
-      } else {
-        const files = eventFiles.slice(0, MAX_CLIPBOARD_FILES);
-        skipped += Math.max(0, eventFiles.length - files.length);
-        // A content-URI File can omit MIME as well as size/bytes. Let the
-        // native image reader identify it; non-image files keep generic ingress.
-        if (files.length === 1 && !files[0].type && clipboardSizeAllowed(files[0].size)) {
-          const result = await readOwned(bindingOwner(() => assetEditorCurrent(editorToken)), backend().readClipboardImage());
-          if (result.kind === "stale") return;
-          const bytes = result.value;
-          if (bytes?.length && bytes.length <= MAX_BYTE_CLIPBOARD_FILE) {
-            await insertAssetBytes(editorToken, bytes);
-            return;
-          }
-        }
-        // Keep the screenshot/image behavior: image-only clipboard payloads use
-        // timestamp names and optimistic rendering rather than synthetic names
-        // such as Chromium's generic "image.png".
-        if (files.length === 1 && files[0].type.startsWith("image/")) {
-          const image = files[0];
-          if (!clipboardSizeAllowed(image.size)) skipped += Math.max(1, native.skipped);
-          else {
-            try {
-              let bytes: Uint8Array | null;
-              try { bytes = new Uint8Array(await image.arrayBuffer()); }
-              catch { bytes = null; }
-              // Android content-URI clips can expose an empty/unreadable File
-              // in the WebView. Read through ContentResolver instead of treating
-              // that failure as evidence that the image exceeds the budget.
-              if (!bytes?.length) {
-                const result = await readOwned(bindingOwner(() => assetEditorCurrent(editorToken)), backend().readClipboardImage());
-                if (result.kind === "stale") return;
-                bytes = result.value;
-              }
-              if (bytes?.length && bytes.length <= MAX_BYTE_CLIPBOARD_FILE) {
-                // A Windows bitmap clipboard can appear as one invalid native
-                // path plus one valid WebView2 image File. Once the bytes win,
-                // suppress that native pseudo-entry's skipped count (GH #78).
-                await insertAssetBytes(editorToken, bytes);
-              } else skipped += Math.max(1, native.skipped);
-            } catch {
-              skipped += Math.max(1, native.skipped);
-            }
-          }
-          return;
-        }
-        skipped += native.skipped;
-        for (const file of files) {
-          if (!clipboardSizeAllowed(file.size)) {
-            skipped += 1;
-            continue;
-          }
-          try {
-            const bytes = new Uint8Array(await file.arrayBuffer());
-            if (!bytes.length || bytes.length > MAX_BYTE_CLIPBOARD_FILE) {
-              skipped += 1;
-              continue;
-            }
-            const candidate = assetFileName(file.name || undefined);
-            const result = await writeOwned(owner, trackAssetWrite(backend().saveAsset(candidate, bytes, editorToken.binding.backendGeneration)));
-            if (result.kind === "stale") return; const saved = result.value;
-            stored.push({ stored: saved, label: file.name || undefined });
-            try {
-              seedAssetBlob(saved, bytes);
-            } catch {
-              // The durable asset + link are authoritative; cache warming is optional.
-            }
-          } catch (error) {
-            pushToast(msg("editor-block-couldn-t-save-pasted-file", { detail: String(error) }), "error");
-            skipped += 1;
-          }
-        }
-      }
-      inserted = insertStoredAssets(editorToken, stored);
-    } finally {
-      dismissToast(toastId);
-      if (!bindingCurrent(editorToken.binding)) return;
-      if (inserted) {
-        pushToast(msg("editor-block-inserted-file", { count: stored.length }), "success");
-      }
-      if (skipped) {
-        pushToast(
-          msg("editor-block-skipped-item-folders-and-byte-only-files-over-64-mib-aren-t-pasted", { count: skipped }),
-          "error"
-        );
-      } else if (nativeUnavailable && !eventFiles.length) {
-        pushToast(msg("editor-block-couldn-t-read-copied-files-use-upload-or-drag-and-drop-instead"), "error");
-      }
-    }
-  };
-  // I-21 / GH #622: the native operation owns blur through durable import and
-  // reference landing, not just while the chooser promise is pending. Count
-  // overlapping operations so one completion cannot retire another's ownership.
-  let nativeAssetPickers = 0;
-  const withNativeAssetPicker = async (work: (token: AssetEditorToken) => Promise<void>) => {
-    const token = captureAssetEditorToken();
-    nativeAssetPickers++;
-    const release = holdExternalActivity();
-    try { await work(token); } finally { nativeAssetPickers--; release(); }
-  };
-  // Mobile: take/pick a photo (Android camera plugin) → insert at the caret.
-  const capturePhotoCmd = () => withNativeAssetPicker(async (editorToken) => {
-    let res;
-    try {
-      res = await backend().capturePhoto();
-    } catch (err) {
-      if (bindingCurrent(editorToken.binding)) pushToast(msg("editor-block-couldn-t-capture-a-photo", { detail: String(err) }), "error");
-      return;
-    }
-    if (res.status === "ok" && res.path) {
-      const candidate = captureAssetFileName(res.ext || "jpg");
-      try {
-        const stored = await trackAssetWrite(importCaptureToOrigin(editorToken, res.path, candidate));
-        if (stored) insertStoredAssets(editorToken, [{ stored }]);
-      } catch (err) {
-        pushToast(msg("editor-block-couldn-t-import-the-photo", { detail: String(err) }), "error");
-      }
-    }
-  });
-
-  // Mobile: toggle voice-memo recording. First tap starts (prompts for mic
-  // permission); second tap stops and inserts the recorded audio at the caret.
-  const voiceMemoToggle = async () => {
-    if (isRecordingAudio()) {
-      const editorToken = mobileRecordingEditorToken ?? captureAssetEditorToken();
-      mobileRecordingEditorToken = null;
-      setRecordingAudio(false);
-      let res;
-      try {
-        res = await backend().stopRecording();
-      } catch (err) {
-        pushToast(msg("editor-block-couldn-t-save-the-recording", { detail: String(err) }), "error");
-        return;
-      }
-      if (res.status === "ok" && res.path) {
-        const candidate = captureAssetFileName(res.ext || "m4a");
-        try {
-          const stored = await trackAssetWrite(importCaptureToOrigin(editorToken, res.path, candidate));
-          if (stored) insertStoredAssets(editorToken, [{ stored }]);
-        } catch (err) {
-          pushToast(msg("editor-block-couldn-t-import-the-recording", { detail: String(err) }), "error");
-        }
-      }
-      return;
-    }
-    const editorToken = captureAssetEditorToken();
-    let res;
-    try {
-      res = await backend().startRecording();
-    } catch (err) {
-      if (bindingCurrent(editorToken.binding)) pushToast(msg("editor-block-couldn-t-start-recording", { detail: String(err) }), "error");
-      return;
-    }
-    if (!bindingCurrent(editorToken.binding)) { if (res.status === "recording") void backend().cancelRecording(); return; }
-    if (res.status === "recording") {
-      mobileRecordingEditorToken = editorToken;
-      setRecordingAudio(true);
-      pushToast(msg("editor-block-recording-tap-the-mic-again-to-stop"), "info");
-    }
-  };
-
-  // Desktop voice memo (/record): one process-wide owner reserves the physical
-  // recorder before permission, bounds time/bytes, and is cancelled if this editor
-  // unmounts. This keeps the microphone reachable and prevents concurrent sessions.
-  const desktopRecordingOwner = Symbol(`voice-recording:${props.id}`);
-  onCleanup(() => cancelDesktopVoiceRecording(desktopRecordingOwner));
-  const desktopVoiceMemoToggle = async () => {
-    if (desktopVoiceRecordingActive()) {
-      stopDesktopVoiceRecording();
-      return;
-    }
-    const editorToken = captureAssetEditorToken();
-    try {
-      const status = await startDesktopVoiceRecording(desktopRecordingOwner, {
-        complete: async (bytes, mime, limited) => {
-          if (limited) pushToast(msg("editor-block-recording-limit-reached-saving-the-captured-audio"), "info");
-          await insertAssetBytes(editorToken, bytes, undefined, recordingExt(mime));
-        },
-        error: (message) => pushToast(msg("editor-block-desktop-recording-save-error", { error: String(message) }), "error"),
-      });
-      if (status === "busy") {
-        pushToast(msg("editor-block-another-voice-recording-is-already-active"), "error");
-        return;
-      }
-      pushToast(msg("editor-block-recording-run-record-again-to-stop"), "info");
-    } catch (err) {
-      pushToast(msg("editor-block-couldn-t-access-the-microphone", { detail: String(err) }), "error");
-    }
-  };
-  const uploadAsset = () => withNativeAssetPicker(async (editorToken) => {
-    const owner = bindingOwner();
-    const picked = await readOwned(ownedWhen(() => editorMounted), backend().pickFile());
-    if (picked.kind === "stale" || !picked.value) return; const path = picked.value;
-    try {
-      // Store with a timestamped name (keeps the original + a sortable insert time).
-      const orig = path.split(/[\\/]/).pop() || undefined;
-      const saved = await writeOwned(owner, trackAssetWrite(backend().importAsset(path, assetFileName(orig), editorToken.binding.backendGeneration)));
-      if (saved.kind === "current") insertStoredAssets(editorToken, [{ stored: saved.value, label: orig }]);
-    } catch (error) {
-      pushToast(msg("editor-block-couldn-t-import-asset", { detail: String(error) }), "error");
-    }
-  });
-
-  // `/drawio` creates an editable asset, inserts its reference, then opens the
-  // editor. assetRefresh updates the image when Tine regains focus.
-  const createDrawioDiagram = async () => {
-    const editorToken = captureAssetEditorToken();
-    const owner = bindingOwner(() => assetEditorCurrent(editorToken));
-    const ed = MEDIA_EDITORS.find((e) => e.id === "drawio");
-    if (!ed?.blank) return;
-    try {
-      const bytes = new TextEncoder().encode(ed.blank.contents());
-      // Use the unique-stem asset convention (like a camera/mic capture), NOT a
-      // fixed `diagram.drawio.svg`: the backend de-dup splits on the LAST dot, so a
-      // colliding `diagram.drawio.svg` would become `diagram.drawio_1.svg` — which
-      // no longer ends in `.drawio.svg`, dropping the "Edit in draw.io" affordance
-      // (GH #38). A unique stem never collides, so the double extension survives.
-      const savedResult = await writeOwned(owner, trackAssetWrite(
-        backend().saveAsset(captureAssetFileName(ed.blank.ext), bytes, editorToken.binding.backendGeneration)
-      ));
-      if (savedResult.kind === "stale") return; const saved = savedResult.value;
-      insertStoredAssets(editorToken, [{ stored: saved }]);
-      const cmd = await resolveMediaEditorCommand(ed);
-      if (!owner()) return;
-      void writeOwned(owner, backend().editAssetExternal(saved, cmd, editorToken.binding.backendGeneration))
-        .catch(() => pushToast(msg("editor-block-couldn-t-open-draw-io"), "error"));
-      refreshAssetOnReturn(saved);
-    } catch (error) {
-      pushToast(msg("editor-block-couldn-t-create-the-diagram", { detail: String(error) }), "error");
-    }
   };
 
   const selectAc = (item: AcItem) => {
@@ -2972,7 +2655,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // same edit transaction: keep its identity and caret until durable import
     // and insertion finish (GH #493/#622), including a delayed return blur.
     // Graph/block changes stay guarded by assetEditorIsCurrent after the await.
-    if (nativeAssetPickers > 0) {
+    if (assets.holdsBlur()) {
       commit(ref.value);
       savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
       return;
@@ -3179,23 +2862,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // immediate "Pasting image…" hint when the clipboard clearly holds one (so
     // there's no dead 1–2s), then render it instantly from the in-memory bytes
     // and write to disk in the background.
-    const looksImage = (e.clipboardData?.types ?? []).some(
-      (t) => t.startsWith("image/") || t === "Files"
-    );
-    const toastId = looksImage ? pushToast(msg("editor-block-pasting-image"), "info") : 0;
-    const editorToken = captureAssetEditorToken();
-    const owner = bindingOwner(() => assetEditorCurrent(editorToken));
-    void (async () => {
-      let bytes: Uint8Array | null = null;
-      try {
-        const result = await readOwned(owner, backend().readClipboardImage());
-        if (result.kind === "stale") return; bytes = result.value;
-      } finally {
-        if (toastId) dismissToast(toastId);
-      }
-      if (!bytes) return;
-      await insertAssetBytes(editorToken, bytes);
-    })();
+    assets.pasteImage(e);
   };
   function insertPastedOutline(nodes: OutlineNode[], tag: string, asChildren = false) {
     const current = docNode(props.id);

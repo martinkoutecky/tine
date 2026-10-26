@@ -23,11 +23,11 @@ afterEach(() => {
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setTimeout(r, 0)); };
 const surfaces = ["main", "pane:split", "sidebar:item"];
 
-function setup(surface: string, method: "photo" | "upload", launch = true) {
+function setup(surface: string, method: "photo" | "upload", launch = true, raw = "before after", at = 7) {
   setGraphMeta({ root: "/graphs/A" } as never);
   loadSingle({ name: "Assets", title: "Assets", kind: "page", pre_block: null,
-    blocks: [{ id: "asset-host", raw: "before after", collapsed: false, children: [] }] });
-  startEditing("asset-host", 7, null, surface);
+    blocks: [{ id: "asset-host", raw, collapsed: false, children: [] }] });
+  startEditing("asset-host", at, null, surface);
   let pick!: (value: any) => void;
   let save!: (name: string) => void;
   const picked = new Promise<any>(r => { pick = r; });
@@ -51,7 +51,7 @@ it.each(surfaces.flatMap(surface => (["photo", "upload"] as const).map(method =>
   try {
     op.pick(); await settle(); expect(op.writer).toHaveBeenCalledOnce();
     // The user can keep editing while import is in flight; don't replay an old base.
-    op.ta.replaceText("before new after"); op.ta.reportInput({ bubbles: true }, "plain");
+    op.ta.input("before new after");
     op.ta.select(7, 10);
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
     op.ta.element.blur(); // delayed native lifecycle event, after the picker already returned
@@ -89,8 +89,7 @@ it.each(["graph", "surface"])("does not insert or reclaim focus after an explici
 it("the literal Upload slash command keeps the editor during the picker and import", async () => {
   const op = setup("pane:split", "upload", false);
   try {
-    op.ta.replaceText("/upload"); op.ta.select(7, 7);
-    op.ta.reportInput({ bubbles: true }, "plain");
+    op.ta.input("/upload", 7, { data: "d" });
     await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Upload an asset"));
     op.ta.keydown(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await settle(); expect(backend().pickFile).toHaveBeenCalledOnce();
@@ -110,7 +109,7 @@ it.each(surfaces)("%s file paste uses the current selection after durable import
     const paste = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(paste, "clipboardData", { value: { getData: () => "", types: ["Files"], items: [{ kind: "file", getAsFile: () => new File(["bytes"], "photo.jpg") }] } });
     op.ta.paste(paste); await settle(); expect(op.writer).toHaveBeenCalledOnce();
-    op.ta.replaceText("before new after"); op.ta.reportInput({ bubbles: true }, "plain");
+    op.ta.input("before new after");
     op.ta.select(7, 10); op.save("saved.jpg"); await settle();
     expect(doc.byId["asset-host"].raw).toBe("before ![](../assets/saved.jpg) after");
     expect(op.ta.value()).toBe(doc.byId["asset-host"].raw);
@@ -140,7 +139,7 @@ it("clipboard image bytes share the landing path and use text edited during save
     Object.defineProperty(paste, "clipboardData", { value: { getData: () => "", types: ["Files"], items: [{ kind: "file", type: "image/png", getAsFile: () => file }] } });
     op.ta.paste(paste); await settle(); expect(backend().saveAsset).toHaveBeenCalledOnce();
     expect(doc.byId["asset-host"].raw).toBe("before after"); // no reference before bytes
-    op.ta.replaceText("before new after"); op.ta.reportInput({ bubbles: true }, "plain");
+    op.ta.input("before new after");
     op.ta.select(7, 10); op.save("saved.jpg"); await settle();
     expect(doc.byId["asset-host"].raw).toBe("before ![](../assets/saved.jpg) after");
   } finally { op.dispose(); }
@@ -158,5 +157,23 @@ it("finishing one native operation does not release another pending operation", 
     expect(editingId()).toBe("asset-host");
     cancelSecond({ status: "cancelled" }); await settle();
     op.ta.element.focus(); op.ta.element.blur(); await settle(); expect(editingId()).toBe(null);
+  } finally { op.dispose(); }
+});
+
+it.each([
+  "````js\nbefore after\n````\nid:: own-id",
+  "intro\n```js\nbefore after\n```\noutro\nid:: own-id",
+])("asset landing preserves projected wrappers and hidden metadata: %s", async raw => {
+  const op = setup("main", "upload", true, raw, raw.indexOf("before") + 7);
+  try {
+    expect(op.ta.value()).toBe("before after");
+    op.pick(); await settle(); expect(op.writer).toHaveBeenCalledOnce();
+    op.ta.input("before new after"); op.ta.select(7, 10);
+    expect(doc.byId["asset-host"].raw).toBe(raw.replace("before after", "before new after"));
+    op.save("saved.jpg"); await settle();
+    const body = "before ![](../assets/saved.jpg) after";
+    expect(op.ta.value()).toBe(body);
+    expect(doc.byId["asset-host"].raw).toBe(raw.replace("before after", body));
+    expect(op.ta.selection()).toEqual([body.indexOf(" after"), body.indexOf(" after")]);
   } finally { op.dispose(); }
 });

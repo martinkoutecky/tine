@@ -15,29 +15,29 @@ import { pushToast } from "./toasts";
 export interface AssetEditorToken {
   readonly binding: Binding;
   readonly graphRoot: string | undefined;
-  readonly textarea: HTMLTextAreaElement;
+  readonly editor: HTMLElement;
   readonly editingBlockId: string | null;
   readonly editingBlockOwner: string | null;
   readonly editingBlockSurface: string | null;
 }
 
-export function captureAssetEditor(textarea: HTMLTextAreaElement): AssetEditorToken {
+export function captureAssetEditor(editor: HTMLElement): AssetEditorToken {
   return {
     binding: captureBinding(),
     graphRoot: graphMeta()?.root,
-    textarea,
+    editor,
     editingBlockId: editingId(),
     editingBlockOwner: editingOwner(),
     editingBlockSurface: editingSurface(),
   };
 }
 
-export function assetEditorIsCurrent(token: AssetEditorToken, textarea: HTMLTextAreaElement, mounted: boolean): boolean {
+export function assetEditorIsCurrent(token: AssetEditorToken, editor: HTMLElement, mounted: boolean): boolean {
   return bindingCurrent(token.binding)
     && token.graphRoot === graphMeta()?.root
     && mounted
-    && textarea === token.textarea
-    && token.textarea.isConnected
+    && editor === token.editor
+    && token.editor.isConnected
     && editingId() === token.editingBlockId
     && editingOwner() === token.editingBlockOwner
     && editingSurface() === token.editingBlockSurface;

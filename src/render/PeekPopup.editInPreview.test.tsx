@@ -80,8 +80,7 @@ describe("D-20261023-VQ: editable hover preview", () => {
       expect(card.querySelector(".ls-block:not(.ref-block)")).not.toBeNull();
       await editInPopup(card);
       const textarea = editor()!;
-      textarea.replaceText("Edited in preview");
-      textarea.reportInput({ bubbles: true });
+      textarea.input("Edited in preview");
       await advance(0);
       expect(node("e1")!.raw).toBe("Edited in preview");
     } finally {

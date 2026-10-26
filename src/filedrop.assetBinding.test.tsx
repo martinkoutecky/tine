@@ -63,8 +63,7 @@ it.each(["main", "pane:split", "sidebar:item"])("%s drops land beside the target
   const uninstall = await installFileDrop();
   try {
     const dropped = drag.listener!({ payload: { type: "drop", paths: ["/tmp/photo.jpg"], position: { x: 1, y: 1 } } });
-    const ta = maybeEditorIn(root)!; ta.replaceText("host edited");
-    ta.reportInput({ bubbles: true }, "plain");
+    const ta = maybeEditorIn(root)!; ta.input("host edited");
     expect(pageByName("Drop")!.roots).toHaveLength(1); // data precedes reference
     finish("saved.jpg"); await dropped;
     expect(doc.byId["drop-host"].raw).toBe("host edited");
