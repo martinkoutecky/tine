@@ -1,5 +1,7 @@
-# PROBE ONLY (branch probe/gh771-macos, never merged): GH #771 owner endpoint
-# tests on macOS, where accepted sockets inherit the listener's O_NONBLOCK.
+# PROBE ONLY (branch probe/gh771-macos, never merged): GH #771 command line on
+# macOS, before (release/0.8 f57dde043) and after (fix d2a54229d) the fix. The
+# tine lib tests do not compile on macOS (tauri _EMBED_INFO_PLIST), so this
+# drives the built binary the way the reporter did.
 name: probe-gh771-macos
 
 on:
@@ -10,16 +12,23 @@ permissions:
   contents: read
 
 jobs:
-  owner:
-    name: owner tests / ${{ matrix.os }}
+  cli:
+    name: cli smoke / ${{ matrix.label }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - label: before
+            ref: f57dde043faf516a49bbc7830f6dbff17c3826d6
+          - label: after
+            ref: d2a54229d
+    runs-on: macos-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -30,12 +39,26 @@ jobs:
           workspaces: ". -> target"
       - run: npm ci
       - run: npm run build
-      - name: Owner endpoint tests
-        run: |
-          cargo test --no-fail-fast -p tine --lib owner:: 2>&1 | tee owner-tests.txt
+      - run: cargo build -p tine
+      - name: CLI smoke
         shell: bash
+        run: |
+          set +e
+          G="$RUNNER_TEMP/graph"; mkdir -p "$G/pages" "$G/journals"
+          printf -- '- hello from the probe\n' > "$G/pages/hello.md"
+          T=./target/debug/tine
+          {
+            echo "## ref ${{ matrix.ref }}"
+            for cmd in "pages" "status" "pages"; do
+              echo "### tine $cmd"
+              $T $cmd "$G"; echo "exit=$?"
+            done
+            echo "### tine serve --stop"
+            $T serve --stop "$G"; echo "exit=$?"
+          } 2>&1 | tee cli-smoke.txt
+          if grep -q 'Invalid argument' cli-smoke.txt; then echo "RESULT: EINVAL reproduced"; else echo "RESULT: no EINVAL"; fi | tee -a cli-smoke.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: owner-tests-${{ matrix.os }}
-          path: owner-tests.txt
+          name: cli-smoke-${{ matrix.label }}
+          path: cli-smoke.txt
