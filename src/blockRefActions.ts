@@ -1,4 +1,5 @@
 import { msg } from "./i18n";
+import { collapseCommandSurface } from "./collapseCommandSurface";
 /** Block navigation for sidebar, tab and pane actions. Opening a block never
  * writes the graph: OG stamps an `id::` only when a reference is created (copy
  * ref/embed, `((` autocomplete), so these actions hand the live ref straight to
@@ -6,6 +7,7 @@ import { msg } from "./i18n";
  * (blockPositionRef, GH #623, I-2). */
 import {
   blockRef,
+  blockHasFoldableBody,
   buildClipboardPayload,
   hasSelection,
   insertEmptyChildBlock,
@@ -163,9 +165,14 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
     if (!pageRoots) return false;
     parents = [];
   }
+  const surface = parents.length ? collapseCommandSurface(parents[0]) : undefined;
+  const isCollapsed = (id: string) => {
+    const stored = docNode(id)?.collapsed ?? false;
+    return surface?.collapsed(id, stored) ?? stored;
+  };
   const folded = (id: string) => {
     const n = docNode(id);
-    return !!n?.children.length && n.collapsed;
+    return !!n && blockHasFoldableBody(id) && isCollapsed(id);
   };
   const children = (ids: string[]) => ids.flatMap((id) => docNode(id)?.children ?? []);
   // GH #696: one level includes the targets themselves. Collapse folds the
@@ -175,9 +182,9 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
   let level: string[];
   if (pageRoots) level = pageRoots;
   else if (collapsed) {
-    const open = parents.filter((id) => docNode(id)?.children.length && !docNode(id)?.collapsed);
+    const open = parents.filter((id) => blockHasFoldableBody(id) && !isCollapsed(id));
     const kids = children(open);
-    level = kids.some((id) => docNode(id)?.children.length && !docNode(id)?.collapsed) ? kids : open;
+    level = kids.some((id) => blockHasFoldableBody(id) && !isCollapsed(id)) ? kids : open;
   } else {
     opened = parents.filter(folded);
     level = opened.length ? [] : children(parents);
@@ -189,10 +196,20 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
   }
   const pages = [...new Set([...opened, ...level].map((id) => docNode(id)?.page).filter((p): p is string => !!p))];
   if (!pages.length) return false;
-  withUndoUnit(collapsed ? "collapse-children" : "expand-children", pages, () => {
-    for (const id of opened) setCollapsed(id, false);
-    for (const id of level) setCollapsed(id, collapsed);
-  });
+  const apply = () => {
+    const setFold = (id: string, value: boolean) => {
+      if (!blockHasFoldableBody(id) || isCollapsed(id) === value) return;
+      if (surface) surface.toggle(id, isCollapsed(id));
+      else setCollapsed(id, value);
+    };
+    for (const id of opened) setFold(id, false);
+    for (const id of level) setFold(id, collapsed);
+  };
+  // Occurrence toggles own their persistence: an embed root saves its HOST
+  // property (with its own undo), descendants only change local presentation.
+  // A source-page undo snapshot would suppress and then lose that host undo.
+  if (surface) apply();
+  else withUndoUnit(collapsed ? "collapse-children" : "expand-children", pages, apply);
   return true;
 }
 

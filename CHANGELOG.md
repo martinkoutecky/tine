@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Expand and Collapse (one level) now follow a block embed's own folds and open or close child page embeds, while keeping embedded source folds separate (GH #768, GH #769).
 - macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
 ### Added
 

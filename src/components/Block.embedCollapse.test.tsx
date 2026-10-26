@@ -1,14 +1,17 @@
 // Family 24 / master af835249f + 3b908751a (GH #360), ported to og's document module.
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { blockProperty, pageByName, resetStore, setCollapsed } from "../document";
-import { loadSingle } from "../document/workingSet";
+import { blockProperty, hasSelection, pageByName, resetStore, setCollapsed, undo } from "../document";
+import { ensurePageLoaded, loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import type { BlockDto, PageDto, RefGroup } from "../types";
-import { Block } from "./Block";
+import { Block, SurfaceContext } from "./Block";
+import { endEdit } from "../editorController";
+import { installKeybindings, runGlobalCommand } from "../keybindings";
 import { For } from "solid-js";
+import { bumpDataRev } from "../graphSession";
 
 // GH #360 (Martin-approved embed contract):
 //   1. Embedded content is live and source-authoritative: a source fold or
@@ -32,11 +35,15 @@ class AllNearObserver implements IntersectionObserver {
   }
 }
 
+let disposeKeys: () => void;
 beforeAll(async () => {
   await initParser();
+  disposeKeys = installKeybindings();
 });
+afterAll(() => disposeKeys());
 
 beforeEach(() => {
+  bumpDataRev();
   vi.stubGlobal("IntersectionObserver", AllNearObserver);
 });
 
@@ -112,6 +119,79 @@ async function tick(times = 3): Promise<void> {
 }
 
 describe("embed collapse contract (GH #360)", () => {
+  it.each(["main", "sidebar:test"].flatMap(surface => (["md", "org"] as const).map(format => ({ surface, format }))))("GH #768: one-level commands follow occurrence folds in $surface / $format", async ({ surface, format }) => {
+    const target: BlockDto = { id: "target", raw: "Target", collapsed: false, children: [
+      { id: "child", raw: "Child", collapsed: false, children: [
+        { id: "grand", raw: "Grand", collapsed: false, children: [] },
+      ] },
+    ] };
+    const source = { ...page("Source", [target]), format };
+    const pg = { ...page("Fixture", [{ id: "host-1", raw: "{{embed ((target))}}", collapsed: false, children: [] }]), format };
+    mockBlocks(source, [target]); loadSingle(pg); ensurePageLoaded(source);
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <SurfaceContext.Provider value={surface}><Block id="host-1" /></SurfaceContext.Provider>, root);
+    const run = runGlobalCommand;
+    try {
+      await tick();
+      const embed = occurrenceHosts(root)[0];
+      occurrenceToggle(embed).click();
+      const content = embed.querySelector<HTMLElement>('[data-block-id="target"] .block-content')!;
+      content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 })); await tick();
+      expect(embed.querySelector("textarea")).not.toBeNull();
+      run("editor/expand-children"); await tick();
+      expect(occurrenceChildrenVisible(embed)).toContain("Child");
+      expect(blockProperty("host-1", "collapsed")).toBe("false");
+      undo(); await tick();
+      expect(blockProperty("host-1", "collapsed")).toBe("true");
+      run("editor/expand-children"); await tick();
+      run("editor/collapse-children"); await tick();
+      expect(embed.textContent).not.toContain("Grand");
+      // Selection mode must retain the occurrence after Escape as well.
+      embed.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(hasSelection()).toBe(true);
+      run("editor/expand-children"); await tick();
+      expect(embed.textContent).toContain("Grand");
+      run("editor/collapse-children"); run("editor/collapse-children"); await tick();
+      expect(occurrenceChildrenVisible(embed)).not.toContain("Child");
+      expect(blockProperty("host-1", "collapsed")).toBe("true");
+      expect(doc.byId.target.collapsed).toBe(false);
+      expect(doc.byId.child.collapsed).toBe(false);
+    } finally { endEdit("page-navigation"); dispose(); }
+  });
+
+  it.each([false, true].flatMap(embedded => ["main", "sidebar:test"].flatMap(surface =>
+    (["md", "org"] as const).map(format => ({ embedded, surface, format })))))
+  ("GH #769: child page embeds open and close in $surface / $format / embedded=$embedded", async ({ embedded, surface, format }) => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue({ ...page("Source", [
+      { id: "source", raw: "Page body", collapsed: false, children: [] },
+    ]), id: "pages/Source.md", format });
+    const parent: BlockDto = { id: "parent", raw: "Parent", collapsed: false, children: [
+      { id: "page-host", raw: "{{embed [[Source]]}}\n" + (format === "org" ? ":PROPERTIES:\n:collapsed: true\n:END:" : "collapsed:: true"), collapsed: true, children: [] },
+    ] };
+    if (embedded) {
+      const source = { ...page("Container", [parent]), format };
+      mockBlocks(source, [parent]);
+      loadSingle({ ...page("Fixture", [{ id: "host-1", raw: "{{embed ((parent))}}", collapsed: false, children: [] }]), format });
+      ensurePageLoaded(source);
+    } else loadSingle({ ...page("Fixture", [parent]), format });
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <SurfaceContext.Provider value={surface}><Block id={embedded ? "host-1" : "parent"} /></SurfaceContext.Provider>, root);
+    try {
+      await tick();
+      const content = root.querySelector<HTMLElement>('[data-block-id="parent"] .block-content')!;
+      content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 })); await tick();
+      runGlobalCommand("editor/expand-children"); await tick();
+      expect(root.textContent).toContain("Page body");
+      expect(doc.byId["page-host"].collapsed).toBe(embedded);
+      runGlobalCommand("editor/collapse-children"); await tick();
+      expect(root.textContent).not.toContain("Page body");
+      expect(doc.byId["page-host"].collapsed).toBe(true);
+      expect(doc.byId.parent.collapsed).toBe(false);
+    } finally { endEdit("page-navigation"); dispose(); }
+  });
+
   it("source-authoritative: a source collapse/expand updates ALL visible embeds immediately", async () => {
     loadEmbedFixture();
     const { root, dispose } = mountPageBlocks();

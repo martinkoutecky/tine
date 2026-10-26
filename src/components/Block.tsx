@@ -1,4 +1,6 @@
 import { shortcutKey } from "../shortcutKey";
+import { registerCollapseCommandSurface } from "../collapseCommandSurface";
+import { hasSelection, selectionScope } from "../document";
 import { msg, t as translate } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
 import { stickyParents } from "../stickyParents";
@@ -271,6 +273,13 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     return !surfaceKey.startsWith("ref:") && !surfaceKey.startsWith("embed:");
   };
   const storedFolded = () => storedFold(props.id); // `collapsed::`, else a query's authored `:collapsed? true` (GH #619 Q8)
+  if (collapseSurface) onCleanup(registerCollapseCommandSurface({
+    id: props.id,
+    active: () => hasSelection()
+      ? !!outlineScope && selectionScope() === outlineScope
+      : editing(),
+    surface: collapseSurface,
+  }));
   const collapsed = () => collapseSurface?.collapsed(props.id, storedFolded()) ?? storedFolded();
   const fmt = createMemo(() => pageByName(node().page)?.format ?? "md");
   const blockFacets = createMemo<Facets>(() => {
