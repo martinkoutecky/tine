@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Date-shaped links open an existing ordinary page when no journal file exists for the day, avoiding an empty duplicate journal (UI-DATE-PAGE-LINK).
 - Links inside query-result ancestor breadcrumbs are clickable again (GH #743).
 - The “Pages tagged with” section stays folded when you return to a tab (GH #739).
 - Shift-click a calendar day, **Today**, or the calendar button to open that journal in the right sidebar, as in Logseq (GH #740).

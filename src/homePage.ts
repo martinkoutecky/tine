@@ -7,7 +7,7 @@ import { msg } from "./i18n";
 // for a missing page.
 import { backend } from "./backend";
 import { graphMeta } from "./graphSession";
-import { isJournalTitle } from "./journal";
+import { linkPageKind } from "./pageIndex";
 import { readOwned } from "./owned";
 import { focusedSurfaceOwner } from "./focusedSurface";
 import { focusedRouter } from "./panes";
@@ -52,7 +52,7 @@ export async function openConfiguredHomePage(): Promise<HomeOutcome> {
   try {
     // A journal-titled home (OG resolves any page entity) opens that journal;
     // the classifier is the one `[[links]]` and favorites use.
-    const kind = isJournalTitle(name) ? "journal" : "page";
+    const kind = linkPageKind(name);
     const read = await readOwned(owner, backend().getPage(name, kind));
     if (read.kind === "stale") return "stale";
     if (!read.value) return "unresolved";
