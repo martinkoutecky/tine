@@ -3,6 +3,16 @@
 # Strings use the JSON-compatible TOML basic-string subset enforced by i01.
 
 [[site]]
+file = "src-tauri/src/owner/git_autocommit.rs"
+fn = "append_syncthing_ignore"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#root_gitignore_keeps_the_non_page_revision_and_target_guards"
+oracle = false
+note = "D-20261026-GI: fixed root .gitignore only, through Store's non-page revision-guarded replace or no-replace create; no raw filesystem mutation or page write. Durable device-local attempt precedes the write; ordinary transaction crash scope applies."
+mutations = ".create=1"
+
+[[site]]
 file = "crates/tine-store/src/publish.rs"
 fn = "query_publication_snapshot"
 domain = "primitive"

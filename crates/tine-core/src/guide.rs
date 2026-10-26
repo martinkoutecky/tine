@@ -936,6 +936,9 @@ mod rename_guide_tests {
             "Git is not available on this device yet",
             "the branch Tine commits to and the last commit",
             "Last attempt failed",
+            "adds `.syncthing.*` to the graph folder's `.gitignore` once",
+            "You can remove the line; Tine will not add it again",
+            "conflict copies (`*.sync-conflict-*`) are still committed",
         ] {
             assert!(
                 files.contains(behavior),

@@ -69,3 +69,28 @@ it("keeps a failed change on screen and shows the device's actual choice", async
   expect(root.querySelector("[data-git-interval]")).toBeNull();
   dispose();
 });
+
+it("names the ignore file and rule, explains removal, and discloses a failed setup", async () => {
+  const status = vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo({
+    policy: "commit", last: {
+      committed_at: null, commit: null, refused: null, stale_lock: null,
+      syncthing_ignore_added: "/graph/.gitignore",
+    },
+  }));
+  let view = mount();
+  await vi.waitFor(() => expect(view.root.textContent).toContain("Tine added .syncthing.* to /graph/.gitignore"));
+  expect(view.root.textContent).toContain("You can remove the line; Tine won't add it again");
+  expect(view.root.textContent).toContain("Conflict copies are still committed");
+  view.dispose(); document.body.innerHTML = "";
+
+  status.mockResolvedValue(repo({
+    policy: "commit", last: {
+      committed_at: null, commit: null, refused: null, stale_lock: null,
+      syncthing_ignore_failed: true,
+    },
+  }));
+  view = mount();
+  await vi.waitFor(() => expect(view.root.textContent).toContain("couldn't confirm adding .syncthing.*"));
+  expect(view.root.textContent).toContain("Temporary files are still excluded from Tine's commits");
+  view.dispose();
+});

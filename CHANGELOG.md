@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Automatic git commits leave out Syncthing temporary files, add `.syncthing.*` to the graph's `.gitignore` once, and disclose the change in Settings. Removing the rule is respected; conflict copies remain committed (REG-AUTOCOMMIT-SYNCTHING-TEMP, D-20261026-GI).
 - macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
 ### Added
 

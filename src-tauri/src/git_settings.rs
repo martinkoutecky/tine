@@ -25,7 +25,21 @@ mod imp {
 
     /// At bind: start the graph's autocommit worker with its settings.
     pub(crate) fn bound(app: &tauri::AppHandle, slot: &Arc<GraphSlot>) {
-        autocommit::start_worker(slot, read(app, &slot.root_key));
+        let settings = read(app, &slot.root_key);
+        autocommit::start_worker(slot, settings);
+        prepare_ignore(app, slot, settings);
+    }
+
+    fn prepare_ignore(app: &tauri::AppHandle, slot: &GraphSlot, settings: GitSettings) {
+        if settings.policy != Policy::Commit {
+            return;
+        }
+        let result = crate::graph::checkpoint_app_data(app)
+            .ok_or_else(|| "no app-data directory for remembering the attempt".to_owned())
+            .and_then(|dir| {
+                autocommit::prepare_syncthing_ignore(&slot.store, &slot.root_key, &dir)
+            });
+        autocommit::report_ignore_setup(&slot.root_key, result);
     }
 
     pub(crate) fn autocommit_status(app: &tauri::AppHandle, slot: &GraphSlot) -> GitStatus {
@@ -48,6 +62,7 @@ mod imp {
             autocommit::settings_into_json(json, &slot.root_key, settings)
         })?;
         autocommit::set_settings(&slot.root_key, settings);
+        prepare_ignore(app, slot, settings);
         Ok(autocommit::git_status(&slot.root_key, settings))
     }
 

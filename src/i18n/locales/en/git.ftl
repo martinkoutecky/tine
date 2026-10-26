@@ -14,3 +14,5 @@ git-settings-last-refused = Last attempt failed: { $message }
 git-settings-stale-lock = { $path } has been held for over 30 minutes; a git program may have crashed. Remove it once no git command is running. Tine will not remove it.
 git-settings-load-failed = Couldn't load git settings: { $error }
 git-settings-save-failed = Couldn't change git settings: { $error }
+git-settings-syncthing-ignore-added = Tine added .syncthing.* to { $path } to keep Syncthing's temporary files out of git. You can remove the line; Tine won't add it again on this device. Conflict copies are still committed unless your own rules ignore them.
+git-settings-syncthing-ignore-failed = Tine couldn't confirm adding .syncthing.* to the graph's .gitignore. Temporary files are still excluded from Tine's commits. Check the file and add the line yourself if you want other git tools to ignore them too.

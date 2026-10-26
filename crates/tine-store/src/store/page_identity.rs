@@ -124,11 +124,14 @@ impl Store {
         {
             return Err(StoreError::InvalidTarget(path.to_owned()));
         }
+        // D-20261026-GI: only this fixed graph-root non-page file joins the
+        // existing areas, for autocommit's guarded ignore-rule append.
         if !in_directory(path, &config.pages_dir)
             && !in_directory(path, &config.journals_dir)
             && !path.starts_with("assets/")
             && !path.starts_with("logseq/")
             && !crate::model::graph_text_relative_eligible(path, config)
+            && path != ".gitignore"
         {
             return Err(StoreError::InvalidTarget(path.to_owned()));
         }
@@ -143,7 +146,8 @@ impl Store {
             config.pages_dir.as_str()
         } else if in_directory(path, &config.journals_dir) {
             config.journals_dir.as_str()
-        } else if crate::model::graph_text_relative_eligible(path, &config) {
+        } else if path == ".gitignore" || crate::model::graph_text_relative_eligible(path, &config)
+        {
             return Ok(self.graph.root.clone());
         } else {
             path.split('/').next().unwrap_or_default()

@@ -19,7 +19,7 @@ DESIGN (rev 0 + §8–§9) and the seen design (rev 1). Dossier with line number
 | D-20261018-G2 | Tine itself autocommits on git graphs | follow |
 | D-20261018-G3 | generic messages; a structural operation commits at its boundaries with its verb as message; no op log, no diff-derived messages | follow |
 | D-20261018-G4 | `author::` stays | untouched |
-| D-20261018-G5 | an autocommit includes every change git sees under the graph root, honouring `.gitignore`; Tine applies pulls itself through the audited writer; sync off under eol/filter conversion; Tine never writes `.gitignore` unasked | follow |
+| D-20261018-G5 | an autocommit includes every change git sees under the graph root, honouring `.gitignore`; Tine applies pulls itself through the audited writer; sync off under eol/filter conversion; Tine never writes `.gitignore` unasked | follow, with the scoped D-20261026-GI exception in §2 |
 | D-20261018-G6 | lands in whatever release the timing gives; no release waits for it | follow (card hBpb2k's "after model v0" is stale) |
 | D-20261018-G7 | libgit2 (git2-rs, `default-features = false`) on all five platforms; HTTPS through Tine's own Rust HTTP/TLS stack as a registered smart transport; no OpenSSL | follow |
 | D-20261019-G8 | Android TLS through the OS trust store (rustls-platform-verifier); Tine owns repack; batched cadence; libgit2 fsync on; SSH later, pure Rust, only when asked (supersedes G7's libssh2) | follow |
@@ -59,6 +59,34 @@ Sync additionally needs the graph root to be the work tree root: a fast-forward 
 files outside the graph, which Tine does not own.
 
 ### 2. What an autocommit is
+Follow-up D-20261026-GI: with autocommit enabled, at binding start and when enabling it,
+Tine checks git's ignore rules for a representative `.syncthing.*` name. If not ignored,
+it appends `.syncthing.*` to **the graph root's** `.gitignore`, including for a graph nested
+inside a larger repository. Existing bytes and line endings survive; the new line ends
+with a newline. This is the sole exception to autocommit never writing graph files: it
+uses Store's guarded non-page transaction (create-if-absent or revision-checked replace,
+lock, temp, fsync, rename). Store accepts only the fixed root `.gitignore` identity in
+addition to its existing file areas; this does not widen graph discovery or backups.
+
+The existing device-local graph notices record remembers `git-syncthing-ignore-checked`
+**before** the attempt, even if the rule was already covered or the write subsequently
+fails. One attempt per device and canonical graph path is the honest rule: removing the
+line, disabling/re-enabling, rebinding or restarting never causes another append. A crash
+after recording the attempt may leave no append; a failed write is not automatically
+retried. Without a durable marker Tine does not write the graph. Settings' existing git
+status surface reports the added file and rule (and that it may be removed), or a setup
+failure, for the current binding. Clearing device-local app data or moving the graph
+resets this memory, just like other graph notices.
+
+Staging independently removes `.syncthing.*` paths under the graph root from its private
+index copy, including pre-staged and previously tracked temps, and skips matching working
+files. This keeps temps out even when ignore setup fails or a narrower rule leaves some
+directories visible. It never deletes their working files. Conflict copies
+(`*.sync-conflict-*`) remain user data and are committed unless the user's rules ignore
+them. No new per-edit file or transport record: setup adds 13 bytes (`.syncthing.*\n`),
+or 14 with CRLF, plus a missing separator newline, and one device-local notice key once;
+one-block and 60-block page edits both add zero bytes/files/transport beyond §Unit cost.
+
 Every change git sees under the graph root, honouring `.gitignore`: Tine's saves, other programs' edits,
 deletions. The graph root is matched as a literal path prefix in the staging callback, never as a pathspec pattern
 (a folder named `Notes [work]` is a glob). Skipped: Tine's own in-flight temp files (`atomic_file::temp_path`'s

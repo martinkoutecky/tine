@@ -940,6 +940,8 @@ export interface MessageArgs {
   "git-settings-policy-off": {};
   "git-settings-save-failed": { "error": string | number };
   "git-settings-stale-lock": { "path": string | number };
+  "git-settings-syncthing-ignore-added": { "path": string | number };
+  "git-settings-syncthing-ignore-failed": {};
   "git-settings-unusable": { "message": string | number };
   "gpu-software-rendering-is-on-tine-gpu-0-webkit": {};
   "gpu-this-app-image-is-rendering-on-the-cpu": {};

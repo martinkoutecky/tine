@@ -113,6 +113,250 @@ fn an_autocommit_records_every_change_under_the_root_and_leaves_the_tree_clean()
 }
 
 #[test]
+fn syncthing_temps_are_never_committed_but_conflict_copies_are() {
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    write(&f.work, "pages/.syncthing.a.md.tmp", "half a page");
+    write(&f.work, ".syncthing.asset.tmp", "half an asset");
+    write(
+        &f.work,
+        "pages/a.sync-conflict-20261026-device.md",
+        "- other edits\n",
+    );
+    // Even a temp staged by another git program must not enter the commit.
+    let mut index = f.repo.index().unwrap();
+    index.add_path(Path::new(".syncthing.asset.tmp")).unwrap();
+    index.write().unwrap();
+    commit_now(&f.work, MESSAGE).unwrap();
+    assert_eq!(at_head(&f.repo, "pages/.syncthing.a.md.tmp"), None);
+    assert_eq!(at_head(&f.repo, ".syncthing.asset.tmp"), None);
+    assert_eq!(
+        at_head(&f.repo, "pages/a.sync-conflict-20261026-device.md").as_deref(),
+        Some("- other edits\n")
+    );
+}
+
+#[test]
+fn syncthing_filter_is_relative_to_the_graph_and_retires_old_tracked_temps() {
+    let f = fixture(&[
+        (".syncthing.graph/pages/a.md", "- original\n"),
+        (".syncthing.graph/pages/.syncthing.old.tmp", "old partial"),
+        (".syncthing.outside.tmp", "outside graph"),
+    ]);
+    let root = f.work.join(".syncthing.graph");
+    write(&root, "pages/a.md", "- edited\n");
+    commit_now(&root, MESSAGE).unwrap();
+    assert_eq!(
+        at_head(&f.repo, ".syncthing.graph/pages/a.md").as_deref(),
+        Some("- edited\n")
+    );
+    assert_eq!(
+        at_head(&f.repo, ".syncthing.graph/pages/.syncthing.old.tmp"),
+        None
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("pages/.syncthing.old.tmp")).unwrap(),
+        "old partial"
+    );
+    assert_eq!(
+        at_head(&f.repo, ".syncthing.outside.tmp").as_deref(),
+        Some("outside graph")
+    );
+}
+
+#[test]
+fn syncthing_ignore_is_appended_once_and_removal_survives_reopen() {
+    for original in [
+        None,
+        Some("# keep\r\nassets/private"),
+        Some("# keep\n"),
+        Some(""),
+    ] {
+        let f = fixture(&[("pages/a.md", "- a\n")]);
+        if let Some(text) = original {
+            write(&f.work, ".gitignore", text);
+        }
+        let app_data = f._dir.path().join("device");
+        let store = tine_store::Store::open(&f.work, Default::default())
+            .unwrap()
+            .0;
+        write(&f.work, "pages/.syncthing.a.md.tmp", "partial");
+        write(
+            &f.work,
+            "pages/a.sync-conflict-20261026-device.md",
+            "- conflict\n",
+        );
+        assert!(prepare_syncthing_ignore(&store, &f.work, &app_data).unwrap());
+        let newline = if original.is_some_and(|s| s.contains("\r\n")) {
+            "\r\n"
+        } else {
+            "\n"
+        };
+        let mut expected = original.unwrap_or_default().to_owned();
+        if !expected.is_empty() && !expected.ends_with('\n') {
+            expected.push_str(newline);
+        }
+        expected.push_str(".syncthing.*");
+        expected.push_str(newline);
+        assert_eq!(
+            fs::read_to_string(f.work.join(".gitignore")).unwrap(),
+            expected
+        );
+        commit_now(&f.work, MESSAGE).unwrap();
+        assert_eq!(at_head(&f.repo, ".gitignore"), Some(expected.clone()));
+        assert_eq!(at_head(&f.repo, "pages/.syncthing.a.md.tmp"), None);
+        assert_eq!(
+            at_head(&f.repo, "pages/a.sync-conflict-20261026-device.md").as_deref(),
+            Some("- conflict\n")
+        );
+        assert!(!prepare_syncthing_ignore(&store, &f.work, &app_data).unwrap());
+        assert_eq!(
+            fs::read_to_string(f.work.join(".gitignore")).unwrap(),
+            expected
+        );
+        assert_eq!(commit_now(&f.work, MESSAGE).unwrap(), Outcome::Clean);
+
+        write(&f.work, ".gitignore", "# user removed the rule\n");
+        drop(store);
+        let reopened = tine_store::Store::open(&f.work, Default::default())
+            .unwrap()
+            .0;
+        assert!(!prepare_syncthing_ignore(&reopened, &f.work, &app_data).unwrap());
+        assert_eq!(
+            fs::read_to_string(f.work.join(".gitignore")).unwrap(),
+            "# user removed the rule\n"
+        );
+    }
+}
+
+#[test]
+fn syncthing_ignore_uses_git_rules_and_only_writes_the_nested_graph() {
+    for rule in [Some(".syncthing.*\n"), Some(".*\n"), None] {
+        let f = fixture(&[("Notes [work]/pages/a.md", "- a\n")]);
+        let root = f.work.join("Notes [work]");
+        let original = rule.unwrap_or("# parent stays untouched\n");
+        write(&f.work, ".gitignore", original);
+        let store = tine_store::Store::open(&root, Default::default())
+            .unwrap()
+            .0;
+        let app_data = f._dir.path().join("device");
+        assert_eq!(
+            prepare_syncthing_ignore(&store, &root, &app_data).unwrap(),
+            rule.is_none()
+        );
+        assert_eq!(
+            fs::read_to_string(f.work.join(".gitignore")).unwrap(),
+            original
+        );
+        if rule.is_none() {
+            assert_eq!(
+                fs::read_to_string(root.join(".gitignore")).unwrap(),
+                ".syncthing.*\n"
+            );
+        } else {
+            assert!(
+                !root.join(".gitignore").exists(),
+                "parent pattern already covers temps"
+            );
+            write(&f.work, ".gitignore", "# removed broader user rule\n");
+            assert!(!prepare_syncthing_ignore(&store, &root, &app_data).unwrap());
+            assert!(!root.join(".gitignore").exists());
+        }
+    }
+}
+
+#[test]
+fn syncthing_ignore_failure_never_allows_a_temp_commit_or_retries_the_write() {
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    let store = tine_store::Store::open(&f.work, Default::default())
+        .unwrap()
+        .0;
+    let app_data = f._dir.path().join("device");
+    fs::create_dir(f.work.join(".gitignore")).unwrap();
+    assert!(prepare_syncthing_ignore(&store, &f.work, &app_data).is_err());
+    write(&f.work, "pages/.syncthing.a.md.tmp", "partial");
+    write(
+        &f.work,
+        "pages/a.sync-conflict-20261026-device.md",
+        "- conflict\n",
+    );
+    commit_now(&f.work, MESSAGE).unwrap();
+    assert_eq!(at_head(&f.repo, "pages/.syncthing.a.md.tmp"), None);
+    assert_eq!(
+        at_head(&f.repo, "pages/a.sync-conflict-20261026-device.md").as_deref(),
+        Some("- conflict\n")
+    );
+    fs::remove_dir(f.work.join(".gitignore")).unwrap();
+    assert!(!prepare_syncthing_ignore(&store, &f.work, &app_data).unwrap());
+    assert!(!f.work.join(".gitignore").exists());
+}
+
+#[test]
+fn syncthing_ignore_does_not_write_without_durable_attempt_memory() {
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    let store = tine_store::Store::open(&f.work, Default::default())
+        .unwrap()
+        .0;
+    let app_data = f._dir.path().join("not-a-directory");
+    fs::write(&app_data, "occupied").unwrap();
+    assert!(prepare_syncthing_ignore(&store, &f.work, &app_data).is_err());
+    assert!(!f.work.join(".gitignore").exists());
+}
+
+#[test]
+fn root_gitignore_keeps_the_non_page_revision_and_target_guards() {
+    use tine_store::{Content, FileId, TxOutcome, Why};
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    let store = tine_store::Store::open(&f.work, Default::default())
+        .unwrap()
+        .0;
+    let id = FileId::from(".gitignore".to_owned());
+    assert!(store.as_page(&id).is_none());
+    let mut tx = store.transaction(None);
+    tx.create(&id, Content::Bytes(b"# original\n".to_vec()));
+    assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
+    let (_, base) = store.read(&id, None).unwrap();
+    write(&f.work, ".gitignore", "# outside edit\n");
+    let mut tx = store.transaction(None);
+    tx.replace(&id, base, b"# stale append\n.syncthing.*\n".to_vec());
+    assert!(matches!(
+        tx.commit(),
+        TxOutcome::NotCommitted {
+            why: Why::Conflict { .. },
+            ..
+        }
+    ));
+    assert_eq!(
+        fs::read_to_string(f.work.join(".gitignore")).unwrap(),
+        "# outside edit\n"
+    );
+    let mut tx = store.transaction(None);
+    tx.create(&id, Content::Bytes(b"# overwrite\n".to_vec()));
+    assert!(matches!(tx.commit(), TxOutcome::NotCommitted { .. }));
+    for name in [
+        ".git/config",
+        ".other-root-file",
+        "../.gitignore",
+        "sub/.gitignore",
+    ] {
+        assert!(store.read(&FileId::from(name.to_owned()), None).is_err());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn syncthing_ignore_refuses_a_root_symlink_to_an_outside_file() {
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    let outside = f._dir.path().join("outside-ignore");
+    fs::write(&outside, "# outside\n").unwrap();
+    std::os::unix::fs::symlink(&outside, f.work.join(".gitignore")).unwrap();
+    let store = tine_store::Store::open(&f.work, Default::default())
+        .unwrap()
+        .0;
+    assert!(prepare_syncthing_ignore(&store, &f.work, &f._dir.path().join("device")).is_err());
+    assert_eq!(fs::read_to_string(outside).unwrap(), "# outside\n");
+}
+
+#[test]
 fn ignored_files_temps_and_nested_repositories_are_left_out() {
     let f = fixture(&[(".gitignore", "logseq/bak/\n"), ("pages/a.md", "- a\n")]);
     write(&f.work, "logseq/bak/pages/a.md", "backup");
