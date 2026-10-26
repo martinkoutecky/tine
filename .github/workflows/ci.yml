@@ -298,7 +298,7 @@ jobs:
           </assembly>
           '@
           Push-Location src-tauri
-          & $exe backup:: file_lock::
+          & $exe backup:: file_lock:: owner::git_autocommit
           $code = $LASTEXITCODE
           Pop-Location
           exit $code
@@ -327,7 +327,7 @@ jobs:
       # embeds Info.plist on macOS and the lib test fails to link
       # (`_EMBED_INFO_PLIST` already defined).
       - name: macOS backup and file-lock tests
-        run: "cargo test --no-fail-fast -p tine --lib --features custom-protocol -- backup:: file_lock:: --nocapture"
+        run: "cargo test --no-fail-fast -p tine --lib --features custom-protocol -- backup:: file_lock:: owner::git_autocommit --nocapture"
       - name: macOS restore destination-identity tests (Store owns case and Unicode folding)
         if: ${{ !cancelled() }}
         run: "cargo test --no-fail-fast -p tine-store --lib -- restore:: --nocapture"

@@ -62,6 +62,7 @@ export function GitAutocommitSetting(): JSX.Element {
       <Show when={s().last?.stale_lock}>{(path) => <div>{t("git-settings-stale-lock", { path: path() })}</div>}</Show>
       <Show when={s().last?.syncthing_ignore_added}>{(path) => <div role="status">{t("git-settings-syncthing-ignore-added", { path: path() })}</div>}</Show>
       <Show when={s().last?.syncthing_ignore_failed}><div role="status">{t("git-settings-syncthing-ignore-failed")}</div></Show>
+      <Show when={s().last?.repack_deferred}><div role="status">{t("git-settings-repack-deferred")}</div></Show>
     </>}</Show>
     <Show when={error()}>{(e) => <div role="alert">{e()}</div>}</Show>
   </>}>

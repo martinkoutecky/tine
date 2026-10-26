@@ -939,6 +939,7 @@ export interface MessageArgs {
   "git-settings-not-available": {};
   "git-settings-policy-commit": {};
   "git-settings-policy-off": {};
+  "git-settings-repack-deferred": {};
   "git-settings-save-failed": { "error": string | number };
   "git-settings-stale-lock": { "path": string | number };
   "git-settings-syncthing-ignore-added": { "path": string | number };

@@ -132,7 +132,13 @@ and then only the loose objects that pack holds are deleted (git's `prune-packed
 rewritten, so a repack costs what was added since the last one, not the history (review N1). Unreachable loose
 objects are packed, never dropped: they may be the user's `git add`, stash or reflog history, or a concurrent
 `git commit`'s objects before its ref moves; the user's own `git gc` prunes them as usual. Skipped while
-`gc.pid` exists (a `git gc` is running).
+`gc.pid` exists (a `git gc` is running). Pack and index fsyncs use libgit2's writable
+creation handles before close/rename; reopening the final read-only files for fsync
+fails on Windows (`FlushFileBuffers` requires write access). A failed repack keeps
+its loose objects and remains pending, including when the loose-object threshold
+triggered it. Commits continue; Settings shows deferred cleanup separately from a
+commit refusal, without a toast. Retry on a successful commit cycle after at least
+10 minutes; clear the status when cleanup succeeds.
 
 ### 4. Applying a pull (the one-way door)
 Sync = fetch, then fast-forward, then push. The fast-forward never runs git's checkout. Let `H` be `HEAD` and `U`

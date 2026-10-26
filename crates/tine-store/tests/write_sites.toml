@@ -1468,10 +1468,10 @@ file = "src-tauri/src/owner/git_autocommit.rs"
 fn = "repack"
 domain = "dotgit"
 guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = ""
+test = "src-tauri/src/owner/git_autocommit_tests.rs#repack_deletes_only_packed_loose_objects"
 oracle = false
-note = "Repository-derived .git path/index/object/pack operation, protected by git's lock/publication protocol but no qualifying graph containment or bound-root guard. No page-data write; outside oracle."
-mutations = ".sync_all=1, .write=1, fs::create_dir_all=1, fs::remove_dir=1"
+note = "Repository-derived .git pack operation; no page-data write, outside oracle. Libgit2 fsyncs pack/index on writable creation handles before publishing; Tine syncs the pack directory and deletes only loose objects listed in that pack's index. Redundant read-only final-file sync removed for Windows (REG-AUTOCOMMIT-WINDOWS-REPACK)."
+mutations = ".write=1, fs::create_dir_all=1, fs::remove_dir=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_autocommit.rs"

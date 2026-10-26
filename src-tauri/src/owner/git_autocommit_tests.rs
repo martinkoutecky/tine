@@ -641,7 +641,8 @@ fn repack_deletes_only_packed_loose_objects() {
     let before = loose_object_count(&objects);
     let removed = repack(&f.repo).unwrap();
     assert_eq!(
-        removed, before,
+        removed,
+        Some(before),
         "every loose object is packed, then deleted"
     );
     // Every object, reachable or not, is still readable.
@@ -656,7 +657,7 @@ fn repack_deletes_only_packed_loose_objects() {
     walk.push_head().unwrap();
     assert_eq!(walk.count(), 6);
     // A second repack with nothing new loose deletes nothing more.
-    assert_eq!(repack(&reopened).unwrap(), 0);
+    assert_eq!(repack(&reopened).unwrap(), Some(0));
 }
 
 /// Review N1: a repack packs only what was added since the last one; the
@@ -689,7 +690,7 @@ fn a_repack_packs_only_new_objects() {
     write(&f.work, "pages/b.md", "- b changed\n");
     commit_now(&f.work, MESSAGE).unwrap();
     let loose = loose_object_count(&f.repo.path().join("objects"));
-    assert_eq!(repack(&f.repo).unwrap(), loose);
+    assert_eq!(repack(&f.repo).unwrap(), Some(loose));
     let second = packs();
     assert_eq!(second.len(), 2);
     assert!(second.contains(&first[0]), "the first pack is untouched");
@@ -701,8 +702,76 @@ fn a_repack_packs_only_new_objects() {
 fn repack_waits_for_a_running_git_gc() {
     let f = fixture(&[("pages/a.md", "- a\n")]);
     fs::write(f.repo.path().join("gc.pid"), "1 host").unwrap();
-    assert_eq!(repack(&f.repo).unwrap(), 0);
+    assert_eq!(repack(&f.repo).unwrap(), None);
     assert!(loose_object_count(&f.repo.path().join("objects")) > 0);
+}
+
+#[test]
+fn failed_repack_preserves_loose_objects_and_commits_continue() {
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    let objects = f.repo.path().join("objects");
+    let before = loose_objects(&objects);
+    // An interrupted/external writer left an unreadable loose object. Fail
+    // packing through real libgit2 I/O, without depending on OS permissions.
+    let broken = objects.join("ab").join("c".repeat(38));
+    fs::create_dir_all(broken.parent().unwrap()).unwrap();
+    fs::write(&broken, b"not a compressed git object").unwrap();
+    let (worker, _) = registry::get_or_insert(&f.work);
+    maybe_repack(&worker, &f.work, true);
+    for oid in &before {
+        let hex = oid.to_string();
+        assert!(objects.join(&hex[..2]).join(&hex[2..]).is_file());
+    }
+    let last = git_status(&f.work, GitSettings::default()).last;
+    assert!(
+        last.refused.is_none(),
+        "cleanup must not claim commits failed"
+    );
+    assert_eq!(serde_json::to_value(last).unwrap()["repack_deferred"], true);
+    write(&f.work, "pages/a.md", "- saved while cleanup waits\n");
+    assert!(matches!(
+        commit_now(&f.work, MESSAGE),
+        Ok(Outcome::Committed(_))
+    ));
+    assert_eq!(
+        at_head(&f.repo, "pages/a.md").as_deref(),
+        Some("- saved while cleanup waits\n")
+    );
+    fs::remove_file(broken).unwrap();
+    // Even the loose-object-triggered failure (no 50-commit counter) must
+    // remain pending. A successful commit must not cause immediate retry.
+    assert_eq!(worker.state.lock().unwrap().commits_since_repack, 0);
+    maybe_repack(&worker, &f.work, true);
+    assert!(!loose_objects(&objects).is_empty(), "retry is delayed");
+    {
+        let mut state = worker.state.lock().unwrap();
+        assert!(state.last.repack_deferred);
+        state.repack_not_before = Some(Instant::now());
+    }
+    // Waiting for another git process is a deferral, not recovery.
+    let gc_pid = f.repo.path().join("gc.pid");
+    fs::write(&gc_pid, "1 host").unwrap();
+    maybe_repack(&worker, &f.work, true);
+    assert!(worker.state.lock().unwrap().last.repack_deferred);
+    assert!(!loose_objects(&objects).is_empty());
+    fs::remove_file(gc_pid).unwrap();
+    worker.state.lock().unwrap().repack_not_before = Some(Instant::now());
+    maybe_repack(&worker, &f.work, true);
+    assert!(
+        !git_status(&f.work, GitSettings::default())
+            .last
+            .repack_deferred
+    );
+    assert!(
+        loose_objects(&objects).is_empty(),
+        "a later cycle retries cleanup"
+    );
+    let reopened = Repository::open(&f.work).unwrap();
+    assert_eq!(
+        at_head(&reopened, "pages/a.md").as_deref(),
+        Some("- saved while cleanup waits\n")
+    );
+    registry::unregister(&worker);
 }
 
 #[test]
