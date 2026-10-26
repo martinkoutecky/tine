@@ -270,9 +270,16 @@ fn physical(target: &Resolved) -> Vec<PageId> {
 
 fn validate_target(ids: &[PageId], expected_path: Option<&str>) -> io::Result<()> {
     if ids.len() > 1 {
+        let mut paths: Vec<_> = ids.iter().map(|id| id.as_str()).collect();
+        paths.sort_unstable();
+        let paths = paths
+            .iter()
+            .map(|path| format!("“{path}”"))
+            .collect::<Vec<_>>()
+            .join("\n");
         return Err(error(
             io::ErrorKind::AlreadyExists,
-            "multiple files share this page identity; mutation is ambiguous",
+            &format!("Multiple files share this page identity:\n\n{paths}\n\nTo resolve this, merge one file into the other or remove one, then try again."),
         ));
     }
     if let Some(expected) = expected_path.filter(|path| !path.trim().is_empty()) {
@@ -650,12 +657,7 @@ fn plan_rename(
         } else {
             format!("{new}{}", namespace_suffix(&entry.name, &old_key))
         };
-        if ids.len() > 1 {
-            return Err(error(
-                io::ErrorKind::AlreadyExists,
-                "multiple files share this page identity; mutation is ambiguous",
-            ));
-        }
+        validate_target(&ids, None)?;
         let id = ids[0].clone();
         // An alias names its owner's page, so it is taken like a file name.
         let mut taken = claimants(graph.resolve(&new_name, false));
