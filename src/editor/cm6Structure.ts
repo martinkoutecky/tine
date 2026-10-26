@@ -5,13 +5,15 @@ import {
   mergeWithNext, mergeWithPrev, moveBlockFeed, moveItem, moveSelection, nextVisible,
   nextVisibleOrExtend, node, outdentBlock, pageByName, prevVisible, selectBlock,
   selectBlockSubtree, setCollapsed, splitBlock, withBlockMoving, withUndoUnit, type OutlineScope,
+  removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter,
 } from "../document";
 import { editingId, startEditing, type EditorSelection as CaretSelection } from "../editorController";
 import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { pushToast } from "../toasts";
 import { msg } from "../i18n";
-import { documentMode, docModeEnterForNewBlock } from "../ui";
+import { autoPairing, documentMode, docModeEnterForNewBlock } from "../ui";
+import { backspacePairEdit } from "./autopair";
 import { replyOnEnter } from "../commentActions";
 import { detectMacro } from "../components/Rendered";
 import { listLineAt } from "../components/blockParts";
@@ -157,6 +159,19 @@ export function cm6Structure(ctx: StructureContext) {
       }
     }
     if (properties && caretOnPropertyLine(raw, s.from)) return softNewline(v);
+    if (!isAnnotationBlock(raw, ctx.format)) {
+      if (stopOwnNumberedListOnEmptyEnter(ctx.id, raw)) {
+        v.dispatch({ selection: { anchor: 0 } });
+        return true;
+      }
+      const ll = calcSource(raw) === null ? listLineAt(raw, s.from, ctx.format) : null;
+      if (ll) {
+        const nextMarker = /\d/.test(ll.marker) ? parseInt(ll.marker) + 1 + ll.marker.replace(/\d+/, "") : ll.marker;
+        const insert = "\n" + ll.indent + nextMarker + " " + (ll.hasCheckbox ? "[ ] " : "");
+        v.dispatch({ changes: { from: s.from, insert }, selection: { anchor: s.from + insert.length }, userEvent: "input" });
+        return true;
+      }
+    }
     if (!s.empty) v.dispatch({ changes: { from: s.from, to: s.to } });
     ctx.commit(v.state.doc.toString());
     if (s.empty && replyOnEnter(ctx.id, raw, s.from, editSurface())) return true;
@@ -193,8 +208,24 @@ export function cm6Structure(ctx: StructureContext) {
     }
     const s = v.state.selection.main, raw = v.state.doc.toString();
     if (plain && e.key === "Escape") { selectBlock(ctx.id, ctx.scope); return true; }
+    if (plain && s.empty && e.key === "Backspace") {
+      const pair = backspacePairEdit(raw, s.head);
+      if (pair && (autoPairing() || raw[s.head - 1] === "[" && raw[s.head] === "]")) {
+        v.dispatch({ changes: { from: 0, to: raw.length, insert: pair.text }, selection: { anchor: pair.start }, userEvent: "delete.backward" });
+        return true;
+      }
+      const ll = calcSource(raw) === null ? listLineAt(raw, s.head, ctx.format) : null;
+      if (ll && s.head === ll.lineStart + ll.prefixLen) {
+        v.dispatch({ changes: { from: ll.lineStart, to: s.head }, selection: { anchor: ll.lineStart }, userEvent: "delete.backward" });
+        return true;
+      }
+    }
     if (plain && s.empty && e.key === "Backspace" && s.head === 0) {
       if (isAnnotationBlock(raw, ctx.format) || calcSource(raw) !== null) return false;
+      if (removeOwnNumberedList(ctx.id)) {
+        v.dispatch({ selection: { anchor: 0 } });
+        return true;
+      }
       if (mergeWithPrev(ctx.id, structuralScope, editSurface())) return true;
       const n = node(ctx.id), next = nextVisible(ctx.id, structuralScope);
       if (isEditorEmpty(n.raw, BUILTIN_HIDE, ctx.format) && !n.children.length && next && node(next)?.page === n.page) {

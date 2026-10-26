@@ -10,6 +10,7 @@ import { endEdit, startEditing } from "../editorController";
 import { pageByName, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
+import { focusedEditorCommandBridge } from "../editorCommandBridge";
 
 afterEach(() => {
   endEdit("page-navigation");
@@ -70,5 +71,23 @@ it("preserves legacy 229 protection even when compositionend arrives before keyd
     expect(enter(view, { keyCode: 229 }).defaultPrevented).toBe(false);
     expect(pageByName("IME Enter")!.roots).toEqual(["ime-enter"]);
     expect(view.state.doc.toString()).toBe("enter 한 tail");
+  } finally { dispose(); }
+});
+
+it("normalizes a delayed final composition flush and releases command ownership", async () => {
+  const { view, dispose } = mount();
+  try {
+    view.contentDOM.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "【" }, selection: { anchor: 1 }, userEvent: "input.type.compose" });
+    expect(doc.byId["ime-enter"].raw).toBe("enter 한 tail");
+    view.contentDOM.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    await Promise.resolve();
+    expect(doc.byId["ime-enter"].raw).toBe("【");
+    // CM's Android observer can flush after compositionend on its own timer.
+    view.dispatch({ changes: { from: 1, insert: "【" }, selection: { anchor: 2 }, userEvent: "input.type.compose" });
+    await Promise.resolve();
+    expect(doc.byId["ime-enter"].raw).toBe("[[]]");
+    expect(focusedEditorCommandBridge()!.dispatch("editor/soft-newline")).toBe(true);
+    expect(doc.byId["ime-enter"].raw).toBe("[[\n]]");
   } finally { dispose(); }
 });

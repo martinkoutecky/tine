@@ -17,6 +17,8 @@ import { SheetCellContext } from "../sheet/context";
 import { cm6SheetKeys } from "../editor/cm6SheetKeys";
 import { cm6Clipboard } from "../editor/cm6Clipboard";
 import { cm6Completions } from "../editor/cm6Completions";
+import { cm6Typing } from "../editor/cm6Typing";
+import { offsetThroughRewrite } from "../editor/caretThroughRewrite";
 import { isPermittedTabGesture } from "../keybindings";
 import { isNodeValue } from "../windowRealm";
 import { nearestScrollableY } from "./blockParts";
@@ -70,6 +72,8 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const sheet = cell ? cm6SheetKeys(props.id, cell, commit) : null;
   const clipboard = cm6Clipboard({ id: props.id, format, current, commit, sheet: !!cell, hiddenProperties });
   const completion = cm6Completions({ ...props, format, current, sheet: !!cell, view: () => view, visible, rawBeforeCommit: () => rawBeforeCommit });
+  const typing = cm6Typing({ id: props.id, format, current, view: () => view, commit,
+    refresh: completion.refresh, pauseCompletion: completion.pause });
   const formatting = cm6Formatting({ ...props, format, current, commit, view: () => view,
     closeCompletion: completion.close, refreshCompletion: completion.refresh });
   const buildDecorations = (state: EditorState): DecorationSet => {
@@ -100,7 +104,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     view = new EditorView({
       parent: editorHost,
       state: EditorState.create({ doc: visible(), extensions: [
-        decorations, EditorView.lineWrapping, completion.inputSelection,
+        decorations, EditorView.lineWrapping, completion.inputSelection, typing.filter,
         EditorView.editorAttributes.of({ "data-block-editor": "cm6" }),
         EditorView.contentAttributes.of({ "data-cm6-editor": props.id, "aria-label": "" }),
         keymap.of(defaultKeymap),
@@ -111,13 +115,15 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
             // its focus restoration. Palette actions still need embed context.
             if (isBlockMoving() || (event.relatedTarget as HTMLElement | null)?.closest?.(".date-picker")
               || embedExit && (event.relatedTarget as HTMLElement | null)?.closest?.(".switcher")) return false;
-            if (current() && editingId() === props.id && !v.hasFocus) endEdit("blur");
+            const leave = () => { if (current() && editingId() === props.id && !v.hasFocus) endEdit("blur"); };
+            if (typing.active()) queueMicrotask(leave);
+            else leave();
             return false;
           },
-          beforeinput: () => !current(),
-          input: event => { completion.input(event as InputEvent); return false; },
-          compositionstart: () => { completion.close(); return false; },
-          compositionend: () => { queueMicrotask(completion.refresh); return false; },
+          beforeinput: event => { if ((event as InputEvent).isComposing) typing.begin(); return !current(); },
+          input: event => { if (typing.input(event as InputEvent) && !typing.active()) completion.input(event as InputEvent); return false; },
+          compositionstart: () => { typing.begin(); return false; },
+          compositionend: () => { typing.end(); return false; },
           paste: (event, v) => clipboard.paste(event, v),
           // CM defaults to copying/cutting a whole line without a selection.
           // Tine's empty-selection Mod+C is the durable block-ref command;
@@ -128,8 +134,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         }),
         EditorView.updateListener.of(update => {
           formatting.changed(update);
-          if (update.docChanged) commit(update.state.doc.toString());
-          completion.changed(update);
+          if (typing.changed(update) && !typing.active()) completion.changed(update);
         }),
       ] }),
     });
@@ -142,18 +147,19 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     // belongs to the document, just like the mobile toolbar and textarea.
     const compositionKeys = (event: KeyboardEvent) => {
       if (!isNodeValue(event.target) || !view?.contentDOM.contains(event.target)) return;
+      if (!event.isComposing && event.keyCode !== 229) typing.beforeKey();
       // composing becomes true only after the first DOM change; the public
       // compositionStarted also covers preedit before that first change.
       // Leave the native IME default action intact, but keep application and
       // CM keymaps out of both modern and legacy-229 composition key events.
-      if (event.isComposing || event.keyCode === 229 || view.compositionStarted) {
+      if (event.isComposing || event.keyCode === 229 || typing.active()) {
         event.stopImmediatePropagation();
         return;
       }
     };
     const structuralKeys = (event: KeyboardEvent) => {
       if (!view || !view.contentDOM.contains(event.target as Node) || !current()
-        || event.isComposing || event.keyCode === 229 || view.compositionStarted) return;
+        || event.isComposing || event.keyCode === 229 || typing.active()) return;
       // Global capture (including transient/suspension ownership) runs first.
       // Tab is pre-cancelled there specifically for the editor to own.
       if (event.defaultPrevented && !isPermittedTabGesture(event)) return;
@@ -204,7 +210,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       blockId: props.id,
       blur: () => view?.contentDOM.blur(),
       replaceText: (text, container) => {
-        if (!view || !current() || view.compositionStarted || !container.contains(view.contentDOM)) return false;
+        if (!view || !current() || typing.active() || !container.contains(view.contentDOM)) return false;
         view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, selection: { anchor: text.length }, userEvent: "input" });
         return true;
       },
@@ -213,7 +219,8 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         return view && s && !s.empty ? { text: view.state.doc.toString(), start: s.from, end: s.to } : null;
       },
       dispatch: command => {
-        if (!view || !current() || view.compositionStarted) return false;
+        typing.beforeKey();
+        if (!view || !current() || typing.active()) return false;
         if (sheet?.blocks(command)) return true;
         if (completion.command(command)) return true;
         if (clipboard.command(view, command)) return true;
@@ -227,11 +234,13 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   createEffect(() => {
     if (!current()) return;
     const text = visible();
-    if (view && text !== view.state.doc.toString() && !view.compositionStarted) {
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+    if (view && text !== view.state.doc.toString() && !typing.active()) {
+      const before = view.state.doc.toString(), s = view.state.selection.main;
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text },
+        selection: { anchor: offsetThroughRewrite(before, text, s.anchor), head: offsetThroughRewrite(before, text, s.head) } });
     }
   });
-  onCleanup(() => { alive = false; clipboard.clearRaw(); removeCommandBridge?.(); removeKeys?.(); view?.destroy(); });
+  onCleanup(() => { alive = false; typing.dispose(); clipboard.clearRaw(); removeCommandBridge?.(); removeKeys?.(); view?.destroy(); });
   return <div class="cm6-block-editor" ref={host}>
     <div ref={editorHost} />
     <completion.Popup />

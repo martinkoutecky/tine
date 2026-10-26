@@ -32,25 +32,34 @@ function typeChar(ta: EditorDriver, ch: string) {
   const caret = ta.selection()[0];
   ta.input(ta.value().slice(0, caret) + ch + ta.value().slice(caret), caret + 1, { inputType: "insertText", data: ch });
 }
+function backspace(ta: EditorDriver) {
+  const at = ta.selection()[0], before = ta.value();
+  const event = key(ta, "Backspace");
+  // Synthetic textarea keys have no browser default; CM's keymap performs it.
+  if (ta.kind === "textarea" && !event.defaultPrevented)
+    ta.input(before.slice(0, at - 1) + before.slice(at), at - 1, { inputType: "deleteContentBackward", data: null });
+}
 
 describe("L10-S1: in-block list editing ignores code text", () => {
   it("Backspace after `+ ` in a code body removes one character, not the list prefix", () => {
     const { ta, dispose } = mount("```text\n+ keep\n```");
     try {
-      expect(ta.value()).toBe("+ keep");
-      ta.select(2, 2); key(ta, "Backspace");
-      expect(ta.value()).toBe("+ keep"); // the Backspace is the browser default (not intercepted)
-      expect(node("b")!.raw).toBe("```text\n+ keep\n```");
+      // Body projection is a later CM port; either buffer uses the same source offset.
+      expect(ta.value()).toBe(ta.kind === "textarea" ? "+ keep" : "```text\n+ keep\n```");
+      const at = ta.value().indexOf("+ keep") + 2;
+      ta.select(at, at); backspace(ta);
+      expect(ta.value()).toBe(ta.kind === "textarea" ? "+keep" : "```text\n+keep\n```");
+      expect(node("b")!.raw).toBe("```text\n+keep\n```");
     } finally { dispose(); }
   });
   it("Backspace after `+ ` on a fenced line of the raw view is not list editing either", () => {
     const raw = "intro\n```text\n+ keep\n```\n+ real";
     const { ta, dispose } = mount(raw);
     try {
-      ta.replaceText(raw); // raw (not body) view
+      expect(ta.value()).toBe(raw); // mixed prose/fence stays in the raw view
       const at = raw.indexOf("+ keep") + 2;
-      ta.select(at, at); key(ta, "Backspace");
-      expect(node("b")!.raw).toBe(raw);
+      ta.select(at, at); backspace(ta);
+      expect(node("b")!.raw).toBe(raw.replace("+ keep", "+keep"));
     } finally { dispose(); }
   });
   it("a real list line keeps its Backspace behaviour", () => {

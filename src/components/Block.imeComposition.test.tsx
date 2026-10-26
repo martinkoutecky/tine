@@ -48,22 +48,15 @@ function page(raw: string): PageDto {
 }
 
 function composingInput(textarea: EditorDriver, value: string, caret = value.length) {
-  textarea.replaceText(value);
-  textarea.select(caret, caret);
-  const event = new InputEvent("input", {
-    bubbles: true,
+  textarea.input(value, caret, {
     inputType: "insertCompositionText",
     data: value[caret - 1] ?? null,
+    isComposing: true,
   });
-  Object.defineProperty(event, "isComposing", { value: true });
-  textarea.reportInput(event);
 }
 
 function input(textarea: EditorDriver, value: string, caret = value.length) {
-  textarea.replaceText(value);
-  textarea.select(caret, caret);
-  textarea.reportInput({
-    bubbles: true,
+  textarea.input(value, caret, {
     inputType: "insertText",
     data: value[caret - 1] ?? null,
   });
@@ -73,8 +66,10 @@ function compositionStart(textarea: EditorDriver) {
   textarea.compositionStart(new CompositionEvent("compositionstart", { bubbles: true }));
 }
 
-function compositionEnd(textarea: EditorDriver) {
+async function compositionEnd(textarea: EditorDriver) {
   textarea.compositionEnd(new CompositionEvent("compositionend", { bubbles: true }));
+  // CM first reconciles the final native composition mutation, then commits.
+  await Promise.resolve();
 }
 
 function pageEntry(name: string): PageEntry {
@@ -116,7 +111,7 @@ describe("IME composition", () => {
               composingInput(textarea, opener);
               expect(textarea.value()).toBe(opener);
               expect(setRawSpy).not.toHaveBeenCalled();
-              compositionEnd(textarea);
+              await compositionEnd(textarea);
             } else {
               input(textarea, opener[0]);
               input(textarea, opener);
@@ -165,7 +160,7 @@ describe("IME composition", () => {
     });
   }
 
-  it("enters the composition transaction from a composing input when compositionstart never fired", () => {
+  it("enters the composition transaction from a composing input when compositionstart never fired", async () => {
     loadSingle(page(""));
     startEditing("ime-composition", 0);
     const { root, dispose } = mount(() => (
@@ -184,7 +179,7 @@ describe("IME composition", () => {
       expect(doc.byId["ime-composition"].raw).toBe("");
       expect(setRawSpy).not.toHaveBeenCalled();
 
-      compositionEnd(textarea);
+      await compositionEnd(textarea);
       expect(doc.byId["ime-composition"].raw).toBe("ni");
       expect(setRawSpy).toHaveBeenCalledTimes(1);
     } finally {
@@ -213,27 +208,27 @@ describe("IME composition", () => {
       expect(textarea.value()).toBe("[[Pa");
       expect(doc.byId["ime-composition"].raw).toBe("");
       expect(setRawSpy).not.toHaveBeenCalled();
-      expect(autosize).not.toHaveBeenCalled();
+      if (textarea.kind === "textarea") expect(autosize).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(100);
       expect(quickSwitch).not.toHaveBeenCalled();
 
-      compositionEnd(textarea);
+      await compositionEnd(textarea);
       expect(doc.byId["ime-composition"].raw).toBe("[[Pa");
       expect(setRawSpy).toHaveBeenCalledTimes(1);
-      expect(autosize).toHaveBeenCalledTimes(1);
+      if (textarea.kind === "textarea") expect(autosize).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(100);
       expect(quickSwitch).toHaveBeenLastCalledWith("Pa", 100, { pageName: "IME composition", blockId: "ime-composition", originalRaw: "" }, false);
 
       input(textarea, "[[Pa");
       expect(setRawSpy).toHaveBeenCalledTimes(1);
-      expect(autosize).toHaveBeenCalledTimes(1);
+      if (textarea.kind === "textarea") expect(autosize).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(100);
       expect(quickSwitch).toHaveBeenCalledTimes(1);
 
       input(textarea, "[[Par");
       expect(doc.byId["ime-composition"].raw).toBe("[[Par");
       expect(setRawSpy).toHaveBeenCalledTimes(2);
-      expect(autosize).toHaveBeenCalledTimes(2);
+      if (textarea.kind === "textarea") expect(autosize).toHaveBeenCalledTimes(2);
       await vi.advanceTimersByTimeAsync(100);
       expect(quickSwitch).toHaveBeenLastCalledWith("Par", 100, { pageName: "IME composition", blockId: "ime-composition", originalRaw: "" }, false);
     } finally {
@@ -241,7 +236,7 @@ describe("IME composition", () => {
     }
   });
 
-  it("normalizes a full-width reference once at composition end and retains it through immediate blur", () => {
+  it("normalizes a full-width reference once at composition end and retains it through immediate blur", async () => {
     loadSingle(page(""));
     startEditing("ime-composition", 0);
     const { root, dispose } = mount(() => (
@@ -258,8 +253,9 @@ describe("IME composition", () => {
       expect(setRawSpy).not.toHaveBeenCalled();
       expect(doc.byId["ime-composition"].raw).toBe("");
 
-      compositionEnd(textarea);
+      const finished = compositionEnd(textarea);
       textarea.element.blur();
+      await finished;
 
       expect(textarea.value()).toBe("[[]]");
       expect(textarea.selection()[0]).toBe(2);
@@ -300,7 +296,7 @@ describe("IME composition", () => {
       expect(isDirty("IME composition")).toBe(false);
       expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity Target");
 
-      compositionEnd(textarea);
+      await compositionEnd(textarea);
 
       expect(doc.byId["ime-composition"].raw).toBe("[[Pa]]");
       expect(pageByName("IME composition")?.roots).toEqual(["ime-composition"]);
@@ -340,7 +336,7 @@ describe("IME composition", () => {
       expect(isDirty("IME composition")).toBe(false);
       expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity Target");
 
-      compositionEnd(textarea);
+      await compositionEnd(textarea);
 
       expect(doc.byId["ime-composition"].raw).toBe("[[Pa]]");
       expect(pageByName("IME composition")?.roots).toEqual(["ime-composition"]);

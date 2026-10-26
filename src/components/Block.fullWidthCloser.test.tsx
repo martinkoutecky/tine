@@ -60,26 +60,26 @@ describe("typing through full-width closers (GH #53)", () => {
           const { root, dispose } = mount(() => <Block id="fw" />);
           try {
             const t = editorIn(root);
-            const type = (ch: string) => {
+            const type = async (ch: string) => {
               const at = t.selection()[0];
               const value = t.value().slice(0, at) + ch + t.value().slice(at);
-              if (composition) { compositionStart(t); composing(t, value, at + ch.length); compositionEnd(t); }
+              if (composition) { compositionStart(t); composing(t, value, at + ch.length); compositionEnd(t); await Promise.resolve(); }
               else input(t, value, at + ch.length);
             };
-            if (composition) { compositionStart(t); composing(t, open, 2); compositionEnd(t); }
+            if (composition) { compositionStart(t); composing(t, open, 2); compositionEnd(t); await Promise.resolve(); }
             else { input(t, open[0], 1); input(t, open, 2); }
             expect(t.value()).toBe(`${ascii}${closer}${closer}`);
-            for (const ch of "name") type(ch);
+            for (const ch of "name") await type(ch);
             expect(t.value()).toBe(`${ascii}name${closer}${closer}`);
-            type(close);
+            await type(close);
             expect(t.value()).toBe(`${ascii}name${closer}${closer}`);
             expect(t.selection()[0]).toBe(ascii.length + 4 + 1);
-            type(close);
+            await type(close);
             expect(t.value()).toBe(`${ascii}name${closer}${closer}`);
             expect(t.selection()[0]).toBe(ascii.length + 4 + 2);
             expect(doc.byId.fw.raw).toBe(`${ascii}name${closer}${closer}`);
             // The text after the finished reference is ordinary again.
-            type(close);
+            await type(close);
             expect(t.value()).toBe(`${ascii}name${closer}${closer}${close}`);
           } finally {
             dispose();

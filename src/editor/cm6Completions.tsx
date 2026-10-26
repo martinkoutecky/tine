@@ -544,6 +544,7 @@ export function cm6Completions(props: {
   const Popup = () => <Show when={acVisible()}><EditorAutocomplete items={acItems()} index={acIndex()} style={style()}
     listRef={element => { acListRef = element; }} select={selectAc}
     blockState={acBlockState()} retry={() => void updateAutocomplete()} /></Show>;
-  return { mount, inputSelection, changed, input, keydown, command, selectionChanged, close: closeAc, refresh, Popup };
+  return { mount, inputSelection, changed, input, keydown, command, selectionChanged, close: closeAc,
+    pause: () => clearTimeout(timer), refresh, Popup };
 }
 

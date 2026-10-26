@@ -47,13 +47,8 @@ function mountEditor(id: string): { textarea: EditorDriver; dispose: () => void 
 
 function typeValue(textarea: EditorDriver, value: string): void {
   textarea.focus();
-  textarea.replaceText(value);
-  textarea.select(value.length, value.length);
-  textarea.reportInput({
-    bubbles: true,
-    inputType: "insertText",
-    data: value.at(-1) ?? null,
-  });
+  textarea.input(value.slice(0, -1), value.length - 1, { inputType: "insertReplacementText", data: null });
+  textarea.type(value.at(-1) ?? "");
 }
 
 function keydown(textarea: EditorDriver, key: "Enter" | "Backspace", caret: number): KeyboardEvent {
@@ -177,8 +172,7 @@ describe("own numbered-list editor invariant", () => {
       expect(doc.byId.item.raw).toBe(":PROPERTIES:\n:logseq.order-list-type: number\n:END:");
       expect(textarea.value()).toBe("");
 
-      textarea.replaceText("org text");
-      textarea.reportInput({ bubbles: true, inputType: "insertText", data: "t" });
+      textarea.input("org text", 8, { inputType: "insertText", data: "t" });
       keydown(textarea, "Backspace", 0);
       expect(doc.byId.item.raw).toBe("org text");
       expect(doc.byId.untouched.raw).toBe("untouched bytes");

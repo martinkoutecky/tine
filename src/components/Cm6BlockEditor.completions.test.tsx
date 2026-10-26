@@ -92,8 +92,11 @@ it("keeps composition keys out of popup acceptance and opens CJK completion afte
   editor.compositionStart(); editor.input("[[中", 3, { isComposing: true });
   editor.keydown({ key: "Enter" }, { isComposing: true });
   expect(document.querySelector(".autocomplete")).toBeNull();
-  expect(node("completion").raw).toBe("[[中");
+  expect(editor.value()).toBe("[[中");
+  expect(node("completion").raw).toBe("");
   editor.compositionEnd("中");
+  await Promise.resolve();
+  expect(node("completion").raw).toBe("[[中");
   await vi.waitFor(() => expect(labels()).toContain("中文"));
   await pick("中文");
   expect(node("completion").raw).toBe("[[中文]] ");

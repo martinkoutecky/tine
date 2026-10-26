@@ -56,10 +56,7 @@ function mountPage(raw: string, editing: boolean, format: "md" | "org" = "md", n
 }
 
 function typeChar(ta: EditorDriver, ch: string) {
-  const caret = ta.selection()[0];
-  ta.replaceText(ta.value().slice(0, caret) + ch + ta.value().slice(ta.selection()[1]));
-  ta.select(caret + ch.length, caret + ch.length);
-  ta.reportInput({ bubbles: true, inputType: "insertText", data: ch });
+  ta.type(ch);
 }
 
 const CLOCK = "CLOCK: [2026-10-21 Wed 08:54:45]";
