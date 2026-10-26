@@ -21,6 +21,24 @@ upload, writes `<login>/<gist_id>` in its place once the gist exists, and remove
 it when the share fails, is deleted or forgotten (`docs/contracts/quick-share.md`,
 "In the graph"). A pending marker is a definition too: the overview lists it.
 
+## Repeating exports
+
+Folder definitions offer **Re-export**, opening the existing review dialog with
+the recorded leaf under `<graph>/published-queries/` and Replace selected.
+Confirmation uses the reviewed fingerprint, sheet evaluator and guarded publisher;
+the previous leaf is retained in recovery. No folder Delete action is offered.
+
+**Update all** on the marked Exports page prepares both destination kinds before
+one confirmation. Folder previews list whole pages and left-out reasons; block
+queries require the whole-page acknowledgement. Folder membership diffs come from
+the prior leaf's `app/snapshot.json` (excluding the synthetic home), read through
+a graph-confined capability with the existing 128 MiB export ceiling. Missing,
+invalid, oversized or inaccessible snapshots show the count only. No new record is stored.
+Quick shares retain their membership diff. Folder exports remain available when
+quick share is disabled or disconnected. Updates run sequentially and show each
+outcome, continuing after failures. Closing or switching graphs prevents further
+updates; a write already started may finish. No definition or output format changes.
+
 ## What every export leaves out
 
 `render::export_left_out` is the one rule set, applied by the query export, the

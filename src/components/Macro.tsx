@@ -988,6 +988,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                     });
                   } : undefined}
                   export={() => openQueryExport(exportRequest())}
+                  exportRequest={exportRequest}
                   share={() => openShareDialog({ query: exportRequest(), macro: `{{${macroName()} ${arg()}}}` })} />
               </Show>
             </div>

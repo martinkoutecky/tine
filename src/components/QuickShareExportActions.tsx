@@ -1,7 +1,7 @@
 import { Show, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { blockProperty } from "../document";
-import { SHARE_PROPERTY } from "../exportsPage";
+import { EXPORT_PROPERTY, SHARE_PROPERTY } from "../exportsPage";
 import { msg, t } from "../i18n";
 import { bindingOwner, graphOwner, ownedWhen, readOwned, writeOwned, type Owned } from "../owned";
 import { pendingRecordId, removeShareProperty, finishSharePending, shareGistId } from "../quickShare/definitions";
@@ -18,10 +18,10 @@ async function readListing(): Promise<QuickShareListing | undefined> {
   return answer.kind === "current" ? answer.value : undefined;
 }
 
-/** Actions on a share definition, including its occurrence in the Exports
- * overview. Keys and account authorization stay behind the existing commands;
- * graph cleanup uses the same guarded save as Settings → Sharing. */
-export function QuickShareExportActions(props: { hostBlockId: string; reshare: () => void }): JSX.Element {
+/** Actions on export definitions, including their occurrence in the Exports
+ * overview. Folder replacement opens the existing review. Share authorization
+ * stays behind native commands; graph cleanup uses the existing guarded save. */
+export function QuickShareExportActions(props: { hostBlockId: string; reshare: () => void; reexport?: (folder: string) => void }): JSX.Element {
   let alive = true;
   onCleanup(() => { alive = false; });
   const [busy, setBusy] = createSignal(false);
@@ -78,7 +78,11 @@ export function QuickShareExportActions(props: { hostBlockId: string; reshare: (
       if (alive) setBusy(false);
     }
   };
-  return <><Show when={gistId()}>
+  return <><Show when={blockProperty(props.hostBlockId, EXPORT_PROPERTY)}>{folder =>
+    <button type="button" class="export-btn-secondary folder-export-update"
+      onMouseDown={event => event.stopPropagation()}
+      onClick={event => { event.stopPropagation(); props.reexport?.(folder()); }}>{t("folder-export-update")}</button>
+  }</Show><Show when={gistId()}>
     <span class="quick-share-export-controls" onClick={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()}>
       <Show when={listed().enabled}>
         <button type="button" class="export-btn-secondary quick-share-export-reshare" disabled={busy()}

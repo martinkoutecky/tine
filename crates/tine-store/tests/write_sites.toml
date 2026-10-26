@@ -3,6 +3,16 @@
 # Strings use the JSON-compatible TOML basic-string subset enforced by i01.
 
 [[site]]
+file = "crates/tine-store/src/publish.rs"
+fn = "query_publication_snapshot"
+domain = "primitive"
+guard = ""
+test = "crates/tine-graph-features/tests/query_publication.rs#folder_membership_review_is_read_only_and_ignores_unavailable_snapshots"
+oracle = false
+note = "Read-only, bounded snapshot evidence for the existing destination review. The census counts OpenOptions without write/create; a graph-confined capability and Unix nonblocking read refuse escaped or nonregular snapshots. No content mutation or stored record."
+mutations = "OpenOptions::new=1"
+
+[[site]]
 file = "src-tauri/src/root_identity.rs"
 fn = "relocate_namespaces"
 domain = "app"

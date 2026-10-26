@@ -1510,7 +1510,7 @@ describe("page actions entry point", () => {
       const button = root.querySelector<HTMLButtonElement>(".page-title-actions .page-share-btn")!;
       expect(button).not.toBeNull();
       expect(button.getAttribute("aria-label")).toBe("Share this page");
-      expect(root.querySelector(".quick-share-all")?.textContent).toBe("Re-share all");
+      expect(root.querySelector(".quick-share-all")?.textContent).toBe("Update all");
       button.click();
       expect(shareTarget()).toEqual({ page: name });
       // The marker is machinery, not a property to edit; an ordinary property still shows.

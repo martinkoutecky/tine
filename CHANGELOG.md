@@ -10,7 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
-- **Re-share all** on the Exports page reviews quick shares together before confirmation, then updates them in order and shows each outcome, including skipped definitions and failures.
+- **Re-export** reviews a saved folder export in Replace mode. **Update all** on the Exports page reviews folder exports and quick shares together before confirmation, then updates them in order and shows each outcome, including skipped definitions and failures.
 
 - Re-share from a query or the Exports page to update the same link after reviewing added and removed pages; Delete remains available with confirmation, and devices without the key offer a new link.
 

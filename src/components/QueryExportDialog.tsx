@@ -13,6 +13,7 @@ import { readOr } from "../resourceRead";
 import { initQueryExportBudget, queryExportBudgetBytes } from "../queryExportBudget";
 import { activeWindow, listen } from "../windowRealm";
 import { registerTransientLayer } from "../transientLayers";
+import { FolderExportMembership } from "./FolderExportMembership";
 
 /** Review complete owner pages, then publish a graph query leaf as a static
  * site and read-only browser app, preserving/reporting replaced output. The backend rechecks the fingerprint
@@ -24,7 +25,7 @@ export function QueryExportDialog(props: { request: Accessor<QueryPublicationReq
 function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   const [name, setName] = createSignal(props.request.name);
   const [plannedName, setPlannedName] = createSignal(props.request.name);
-  const [destination, setDestination] = createSignal<"create" | "replace" | "separate">("create");
+  const [destination, setDestination] = createSignal<"create" | "replace" | "separate">(props.request.replace ? "replace" : "create");
   const [acknowledged, setAcknowledged] = createSignal(false);
   // PK3: the query itself ships only when asked for; the default export is the page list.
   const [includeQueryText, setIncludeQueryText] = createSignal(props.request.includeQueryText ?? false);
@@ -101,6 +102,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
           <Show when={plan.error}><div role="alert" class="query-export-refused">{String(plan.error)}</div></Show>
           <Show when={reviewed()}>{(selection) => <>
             <div class="query-export-summary">{t("query-export-dialog-summary", { results: String(selection().rowCount), pages: String(selection().pages.length) })}</div>
+            <FolderExportMembership plan={selection()} />
             <ul class="query-export-pages"><For each={selection().pages}>{(page) =>
               <li>{page.name} <small>{page.path}</small>{page.journal ? t("query-export-dialog-journal") : ""}</li>
             }</For></ul>

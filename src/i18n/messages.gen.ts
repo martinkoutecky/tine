@@ -840,6 +840,8 @@ export interface MessageArgs {
   "export-remember-failed": { "error": string | number };
   "export-reveal-failed": { "error": string | number };
   "export-show-folder": {};
+  "exports-all-preparing": {};
+  "exports-all-updating": {};
   "external-change-bar-this-page-changed-on-disk-you-asked-to": {};
   "external-link-couldn-t-open": { "dest": string | number; "error": string | number };
   "failure-boundary-copy-details": {};
@@ -856,6 +858,10 @@ export interface MessageArgs {
   "filedrop-dropped-files-could-not-be-inserted-at-this": {};
   "filedrop-has-cells-csv-tsv-drops-are-limited-to": { "cellLimit": string | number; "cells": string | number; "fileName": string | number };
   "filedrop-inserted": { "count": number };
+  "folder-export-duplicate": {};
+  "folder-export-empty": {};
+  "folder-export-replace-review": {};
+  "folder-export-update": {};
   "follow-link-couldn-t-find-the-referenced-block": {};
   "formula-absolute": {};
   "formula-and": {};

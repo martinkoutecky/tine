@@ -85,6 +85,8 @@ export interface QueryPublicationPlan {
   exists: boolean;
   suggestedFolder: string | null;
   fingerprint: string;
+  /** Names in the existing leaf snapshot, excluding its synthetic home; absent when unavailable. */
+  previousPages?: string[] | null;
 }
 
 export interface PublicationReceipt {

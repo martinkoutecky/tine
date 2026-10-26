@@ -8,7 +8,7 @@ import { QueryMacroActions } from "./QueryMacroActions";
 import * as definitions from "../quickShare/definitions";
 import { invalidateBinding } from "../binding";
 import { setToasts, toasts } from "../toasts";
-import { setSettingsOpen } from "../ui";
+import { setSettingsOpen, queryExportRequest, closeQueryExport } from "../ui";
 
 const GIST = "1234567890abcdef1234567890abcdef";
 const MACRO = "{{tine-query @page and name = 'Project'}}";
@@ -28,6 +28,25 @@ async function mount(keyHere = true, value = `octo/${GIST}`, matches = true) {
   await new Promise(resolve => setTimeout(resolve, 0));
   return root;
 }
+
+it.each([true, false])("offers Re-export only for folder definitions and opens review with the recorded leaf (folder: %s)", async folder => {
+  loadSingle({ name: "Exports", title: "Exports", kind: "page", pre_block: null,
+    blocks: [{ id: "folder-definition", raw: MACRO, properties: folder ? [["export", "original-leaf"]] : [], collapsed: false, children: [] }] });
+  const request = { argument: "@page", dialect: "tql" as const, properties: [], name: "Renamed title" };
+  const publish = vi.spyOn(backend(), "publishQuery");
+  const root = document.createElement("div"); document.body.append(root);
+  dispose = render(() => <QueryMacroActions hostBlockId="folder-definition" current={() => undefined} groups={() => []} pages={() => []}
+    editable results edit={() => {}} export={() => {}} exportRequest={() => request} share={() => {}} />, root);
+  const button = root.querySelector<HTMLButtonElement>(".folder-export-update");
+  expect(!!button).toBe(folder);
+  if (folder) {
+    expect(button!.textContent).toBe("Re-export"); button!.click();
+    expect(queryExportRequest()).toMatchObject({ folder: "original-leaf", replace: true, name: "Renamed title" });
+    closeQueryExport();
+  }
+  expect(publish).not.toHaveBeenCalled();
+  expect(root.querySelector(".quick-share-export-delete")).toBeNull();
+});
 
 it.each([true, false])("an export definition offers Delete and confirms before using the existing native delete (key here: %s)", async keyHere => {
   const confirm = vi.spyOn(backend(), "confirm").mockResolvedValue(false);

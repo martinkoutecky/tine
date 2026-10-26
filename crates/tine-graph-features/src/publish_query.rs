@@ -117,6 +117,8 @@ pub struct QueryExportPlan {
     pub exists: bool,
     pub suggested_folder: Option<String>,
     pub fingerprint: String,
+    /// Read-only membership evidence from the previous leaf; no new stored record.
+    pub previous_pages: Option<Vec<String>>,
 }
 
 /// Published destination and number of selected source pages.
@@ -237,6 +239,15 @@ pub(crate) fn resolve_plan(
     store: &Store,
     graph: &WholeGraph,
     request: &QueryExportRequest,
+) -> io::Result<Planned> {
+    resolve_plan_review(store, graph, request, None)
+}
+
+fn resolve_plan_review(
+    store: &Store,
+    graph: &WholeGraph,
+    request: &QueryExportRequest,
+    snapshot_byte_limit: Option<u64>,
 ) -> io::Result<Planned> {
     if request.name.trim().is_empty() {
         return Err(refusal("give the export a name"));
@@ -377,8 +388,8 @@ pub(crate) fn resolve_plan(
         .folder
         .clone()
         .unwrap_or_else(|| slug(&request.name));
-    let (path, exists, suggested_folder) =
-        tine_store::publish::query_publication_destination(store, &folder)?;
+    let (path, exists, suggested_folder, previous_snapshot) =
+        tine_store::publish::query_publication_destination(store, &folder, snapshot_byte_limit)?;
     Ok(Planned {
         plan: QueryExportPlan {
             anchor: anchor.into(),
@@ -391,6 +402,7 @@ pub(crate) fn resolve_plan(
             exists,
             suggested_folder,
             fingerprint,
+            previous_pages: previous_membership(previous_snapshot),
         },
         parsed,
         result,
@@ -404,7 +416,31 @@ pub fn plan_query(store: &Store, request: &QueryExportRequest) -> io::Result<Que
     let graph = store
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
-    Ok(resolve_plan(store, &graph, request)?.plan)
+    // Match the existing export byte ceiling. Only the read-only review asks
+    // for membership evidence; confirmation and quick-share preparation do not.
+    Ok(resolve_plan_review(store, &graph, request, Some(MAX_EXPORT_BYTES as u64))?.plan)
+}
+
+fn previous_membership(bytes: Option<Vec<u8>>) -> Option<Vec<String>> {
+    #[derive(Deserialize)]
+    struct MembershipPage {
+        name: String,
+        path: String,
+    }
+    #[derive(Deserialize)]
+    struct MembershipSnapshot {
+        pages: Vec<MembershipPage>,
+    }
+    let snapshot: MembershipSnapshot = serde_json::from_slice(&bytes?).ok()?;
+    // A query export's generated home has an empty path; it is not an owner page.
+    Some(
+        snapshot
+            .pages
+            .into_iter()
+            .filter(|page| !page.path.is_empty())
+            .map(|page| page.name)
+            .collect(),
+    )
 }
 
 fn collect_static(

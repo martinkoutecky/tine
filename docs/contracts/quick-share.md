@@ -268,17 +268,20 @@ none (shares are made on request).
 
 ### Re-share in place
 
-The page marked `tine/exports:: true` offers **Re-share all** beside its title,
+The page marked `tine/exports:: true` offers **Update all** beside its title,
 including after renaming and in other panes. It finds definitions with the
-ordinary `(property tine.share)` query and parses their query macros with lsdoc.
+ordinary `(or (property export) (property tine.share))` query and parses their query macros with lsdoc.
 Each distinct hosted share with a device-local key uses `quickSharePrepare`
 with its existing record id. Pending definitions, missing keys, duplicate
 destinations, ambiguous queries and preparation failures are listed as skipped
 with a reason. An incomplete definitions query refuses the batch, rather than
-silently presenting a partial list as complete. Folder destinations are excluded.
+silently presenting a partial list as complete. Folder definitions join the same
+preview through the read-only query export plan, with their recorded leaf and
+Replace mode. They show page counts and left-out reasons and use the existing
+fingerprint-checked publisher on confirmation (see `export-definitions.md`).
 
 All preparations finish before confirmation is available. One combined preview
-shows every title, membership counts and collapsible changed page names. Confirm
+shows every title, and for quick shares membership counts and collapsible changed page names. Confirm
 consumes each successful preview once through `quickShareCreate`, sequentially,
 with the same native locking, revision re-read, PATCH and unknown-outcome rules
 as single Re-share. A failure does not stop later shares, and every outcome is

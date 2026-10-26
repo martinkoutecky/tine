@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-folder-exports.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Re-export from the Exports overview reviews the recorded folder in Replace mode, changes nothing before confirmation, updates its durable snapshot and retains the old leaf in recovery. Update all can update that folder with quick share unavailable.","blocking":true,"authority":"UI-FOLDER-EXPORT-UPDATE; folder exports lane manager decisions 2026-10-26; docs/contracts/export-definitions.md"}],
+      "acceptableVariations": ["Dialog layout, save latency, recovery folder name and styling may vary."],
+      "nonRequirements": ["No external folder destinations, folder Delete, CLI, live GitHub writes, exact pixels or mobile certification."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-quick-share-viewer.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A native share dialog uploads its reviewed pages to mocked GitHub, records the share without its key in the graph, and the built browser viewer renders the uploaded copy and follows a shared page link while preserving the secret prefix. After a page edit, Re-share from Exports previews membership, waits for confirmation, updates one gist and shows the edit at the same link without a duplicate definition. Delete changes nothing when declined and removes the gist and graph marker when confirmed.","blocking":true,"authority":"UI-QUICK-SHARE-VIEWER-G1; UI-QUICK-SHARE-EXPORT-ACTIONS; UI-QUICK-SHARE-RESHARE; generation 1 DESIGN sections 3.7, 3.8, 5 and 8"}],
       "acceptableVariations": ["Dialog layout, connection timing and rendered styling may vary."],
