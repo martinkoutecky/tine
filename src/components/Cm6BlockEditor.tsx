@@ -1,5 +1,5 @@
 // Experimental editor. No CM syntax parser is configured: lsdoc supplies all spans.
-import { createEffect, createMemo, createSignal, For, Show, getOwner, onCleanup, onMount, useContext, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show, getOwner, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { Annotation, Compartment, EditorSelection, EditorState, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, keymap, type DecorationSet } from "@codemirror/view";
 import { defaultKeymap } from "@codemirror/commands";
@@ -378,16 +378,21 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     shown(); codeEditing();
     syncView();
   });
+  // Raw text invalidates these policies, but usually leaves their values
+  // unchanged. Reconfigure only when the policy changes, and keep reads made
+  // by CM's synchronous listeners outside the reactive subscription.
+  const wrapPolicy = createMemo(() => !isCalc() && (!codeEditing() || codeWrapping()));
+  const writablePolicy = createMemo(current);
   createEffect(() => {
-    const wrap = !isCalc() && (!codeEditing() || codeWrapping());
-    view?.dispatch({ effects: wrapping.reconfigure(wrap ? EditorView.lineWrapping : []) });
+    const wrap = wrapPolicy();
+    untrack(() => view?.dispatch({ effects: wrapping.reconfigure(wrap ? EditorView.lineWrapping : []) }));
   });
   createEffect(() => {
-    const writable = current();
-    view?.dispatch({ effects: editability.reconfigure([EditorState.readOnly.of(!writable), EditorView.editable.of(writable)]) });
+    const writable = writablePolicy();
+    untrack(() => view?.dispatch({ effects: editability.reconfigure([EditorState.readOnly.of(!writable), EditorView.editable.of(writable)]) }));
   });
   createEffect(() => {
-    if (parserReady()) view?.dispatch({ effects: refreshPreview.of(null) });
+    if (parserReady()) untrack(() => view?.dispatch({ effects: refreshPreview.of(null) }));
   });
   onCleanup(() => {
     pendingScrollAnchor?.cancel();

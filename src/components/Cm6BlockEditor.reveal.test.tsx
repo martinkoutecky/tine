@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { EditorView } from "@codemirror/view";
 import { Cm6BlockEditor } from "./Cm6BlockEditor";
 import { initParser } from "../render/parse";
 import { node, resetStore } from "../document";
@@ -25,6 +26,16 @@ function mount(raw: string, format: "md" | "org" = "md") {
   dispose = render(() => <Cm6BlockEditor id="reveal" surface="main" scope={null} />, root);
   return { root, editor: editorIn(root) };
 }
+
+it("plain typing preserves editor configuration while publishing the draft", () => {
+  const { editor } = mount("Typing target");
+  const updates = vi.spyOn(EditorView.prototype, "update");
+  try {
+    editor.type("x");
+    expect(node("reveal").raw).toBe("Typing targetx");
+    expect(updates.mock.calls.flatMap(([transactions]) => transactions).filter(tr => tr.reconfigured)).toHaveLength(0);
+  } finally { updates.mockRestore(); }
+});
 
 it.each(cm6PreviewCases)("$name renders outside, reveals inside/spanning, and preserves boundary bytes", async fixture => {
   const raw = fixture.raw ?? `before ${fixture.source} after`;

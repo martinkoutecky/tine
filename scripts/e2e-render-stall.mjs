@@ -7,6 +7,7 @@ import { remote } from "webdriverio";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import { editorKind, editorSelector, summary, scratchProfile, startTyping, stopTyping, nativeCalibration, startNativeProfile, stopNativeProfile } from "./lib/native-editor-bench.mjs";
 
 const out = path.resolve(process.env.STALL_OUT || "artifacts/render-stall/run");
 const app = path.resolve(process.env.TINE_APP || "target/release/tine");
@@ -28,7 +29,7 @@ for (let i = 0; i < 196; i++) {
   fs.writeFileSync(path.join(graph, "pages", `Source ${i}.md`), `- Mention ${i} of ${mention}\n`);
 }
 const port = Number(process.env.E2E_DRIVER_PORT || 4720);
-const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(out, "data"), XDG_CONFIG_HOME: path.join(out, "config"),
+const env = { ...process.env, ...scratchProfile(out), TINE_GRAPH: graph, XDG_DATA_HOME: path.join(out, "data"), XDG_CONFIG_HOME: path.join(out, "config"),
   XDG_CACHE_HOME: path.join(out, "cache"), APPDATA: path.join(out, "appdata"), LOCALAPPDATA: path.join(out, "localappdata"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const target = await startWebdriverApplication(app, env, port + 2, "render-stall");
@@ -51,7 +52,9 @@ try {
   await browser.waitUntil(async () => (await browser.getWindowHandles()).length >= 1, { timeout: 30000 });
   await ensureMainWindow(browser, { what: "the Tine main window" });
   await browser.$(".page-title").waitForExist({ timeout: 60000 });
-  await openPageByName(browser, "Render stall");
+  // Cold indexing of the 13 MB fixture precedes measurement (especially in
+  // the debug native build). Keep route readiness separate from typing cost.
+  await openPageByName(browser, "Render stall", { timeout: 120000 });
   for (const section of ["linked", "unlinked"]) {
     await browser.$(`.${section}-references .references-header`).waitForExist({ timeout: 60000 });
     await browser.execute(kind => {
@@ -66,33 +69,29 @@ try {
     scroller.scrollTop = 0;
     document.querySelector(".main-content .ls-block .block-content-wrapper").dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
   });
-  await browser.$("textarea.block-editor").waitForExist();
+  report.editor = editorKind;
+  await browser.$(editorSelector).waitForExist();
+  if (process.env.BENCH_CALIBRATE === "1") report.calibration = await nativeCalibration(browser);
   const seconds = Number(process.env.STALL_SECONDS || 15);
   for (let run = 0; run < Number(process.env.STALL_RUNS || 3); run++) {
-    await browser.execute(() => {
-      const p = window.__renderBench = { start: performance.now(), previous: 0, frames: [], inputs: [], active: true };
-      p.input = e => { if (e.target.matches("textarea.block-editor")) p.inputs.push(performance.now()); };
-      document.addEventListener("input", p.input, true);
-      const tick = t => { if (!p.active) return; if (p.previous) p.frames.push(t - p.previous); p.previous = t; requestAnimationFrame(tick); };
-      requestAnimationFrame(tick);
-    });
+    if (process.env.BENCH_PROFILE === "1") await startNativeProfile(browser);
+    await startTyping(browser);
     // One native action sequence: no WebDriver round trip between keystrokes.
     const actions = [];
     for (let i = 0; i < Math.ceil(seconds * 1000 / 33); i++) actions.push({ type: "keyDown", value: "x" }, { type: "keyUp", value: "x" }, { type: "pause", duration: 33 });
     await browser.performActions([{ type: "key", id: "held-key", actions }]);
     await browser.releaseActions();
-    const raw = await browser.execute(() => {
-      const p = window.__renderBench; p.active = false;
-      document.removeEventListener("input", p.input, true);
-      return { elapsed: performance.now() - p.start, frames: p.frames, inputs: p.inputs, focused: document.activeElement?.matches("textarea.block-editor") };
-    });
+    const raw = await stopTyping(browser);
+    const profile = process.env.BENCH_PROFILE === "1" ? await stopNativeProfile(browser) : undefined;
     const gaps = raw.inputs.slice(1).map((at, i) => at - raw.inputs[i]);
     const metrics = { elapsedMs: raw.elapsed, inputs: raw.inputs.length, blockingMsPerSecond: raw.frames.reduce((sum, gap) => sum + (gap > 50 ? gap - 1000 / 60 : 0), 0) / (raw.elapsed / 1000),
-      maxInputGapMs: Math.max(0, ...gaps), framesOver100Ms: raw.frames.filter(gap => gap > 100).length, maxFrameMs: Math.max(0, ...raw.frames) };
-    report.runs.push(metrics);
+      maxInputGapMs: Math.max(0, ...gaps), framesOver50Ms: raw.frames.filter(gap => gap > 50).length, framesOver100Ms: raw.frames.filter(gap => gap > 100).length,
+      keyToPaintMs: summary(raw.paint), maxFrameMs: Math.max(0, ...raw.frames) };
+    report.runs.push({ ...metrics, profile });
     fs.writeFileSync(path.join(out, `raw-${run}.json`), JSON.stringify(raw));
     console.log(JSON.stringify(metrics));
-    if (!raw.focused || raw.inputs.length < seconds * 10) throw new Error("Typing journey lost focus or did not deliver enough native input");
+    if (!raw.focused || raw.keys.length !== actions.length / 3 || raw.inputs.length !== raw.keys.length || raw.paint.length !== raw.keys.length)
+      throw new Error("Typing journey lost focus or native key/input/paint samples");
   }
   await browser.saveScreenshot(path.join(out, "expanded.png"));
   if (process.env.STALL_VERIFY_EXPORT === "1") {
