@@ -241,8 +241,8 @@ fn guide_creation_writes_the_bundled_templates_and_chooses_a_folder() {
     let tree = expected_demo_tree();
     assert_eq!(
         tree.len(),
-        27 + 2,
-        "27 Guide pages, config.edn and the screenshot"
+        28 + 2,
+        "28 Guide pages, config.edn and the screenshot"
     );
     for name in [
         "pages/Welcome to Tine.md",

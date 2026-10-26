@@ -141,7 +141,7 @@ jobs:
       - name: Committed lsdoc WASM contract is current
         run: node scripts/check-wasm-pin.mjs
 
-      # og: website/demo is master's and is not checked here
+      # develop: website/demo is master's and is not checked here
       # (scripts/build-guide-demo.mjs header).
 
       - name: F-Droid clean-source WASM rebuild succeeds

@@ -44,7 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # og carries an identity switch (docs/app-identity.md). TestFlight ships
+      # develop carries an identity switch (docs/app-identity.md). TestFlight ships
       # only the stable identity whose App Store record, provisioning profile
       # and iCloud container are page.tine.Tine; a Beta-identity checkout must
       # not reach signing.

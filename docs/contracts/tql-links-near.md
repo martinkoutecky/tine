@@ -2,7 +2,7 @@
 
 Status: **decided syntax, Beta** (M3, vision §4.3 revision, D-20261004-V2d;
 syntax decided by Martin 2026-10-18, D-20261018-T1). The spelling below is
-persisted in users' pages, so it is the one-way door; the rest can move. On og
+persisted in users' pages, so it is the one-way door; the rest can move. On develop
 (Beta) only; stable takes it after conceptual model v0 defines links on nodes.
 
 TQL is Tine's own query text (`{{tine-query …}}`). These conditions are

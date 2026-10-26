@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "version": "0.8.0",
+  "baseTag": "v0.8.0-beta.12",
+  "focusedAudit": {
+    "required": false,
+    "reason": "0.8.0 is Tine Beta 0.8.0-beta.12 plus the GH #771 macOS owner-connection fix (D-20261026-771) (tested by Beta users since 2026-10-24, the 0.8 line since 2026-10-13), plus version metadata and the website files stable already served. Martin authorized the cut on 2026-10-26 (D-20261026-CUT) on the basis that the reports since beta.10 are of decreasing severity; no exact-tree release audit was run, which is a deferral, not an audit certification."
+  },
+  "items": [
+    {
+      "section": "Changed",
+      "text": "Stable Tine now carries the 0.8 Beta line. Beta keeps its separate app and update channel, and continues with the next development line.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "not-applicable",
+        "reason": "No code change beyond 0.8.0-beta.12: every behaviour change is listed, with its catalog row, in that Beta's sections and impact files.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "website/guide is regenerated from this candidate's Guide templates in the release metadata commit.",
+        "refs": []
+      },
+      "website": {
+        "status": "current",
+        "reason": "The website, its Guide and the quick share viewer wiring are served from master after the cut; the master-only website commits were carried into release/0.8 first.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog post is generated from this candidate; any 0.8.0 announcement is written separately for Martin's review.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with \"the owner's endpoint failed: Invalid argument\" (GH #771).",
+      "userVisible": true,
+      "regressions": [
+        "REG-CLI-MACOS-OWNER-NONBLOCKING"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "REG-CLI-MACOS-OWNER-NONBLOCKING: owner tests an_accepted_connection_is_made_blocking and a_client_that_waits_before_its_first_request_is_served on Linux; macOS fail-before/pass-after CLI smoke on macos-latest run 40282562020.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A crash fix: the documented commands now work on macOS as the Guide describes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website content describes this failure.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog post is generated from this candidate.",
+        "refs": []
+      }
+    }
+  ]
+}
