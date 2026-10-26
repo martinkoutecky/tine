@@ -184,6 +184,7 @@ blocks-outline-is-too-deep-to-insert-a-child = 大纲层级过深，无法插入
 blocks-outline-is-too-deep-to-move = 大纲层级过深，无法移动
 
 blocks-outline-is-too-deep-to-merge = 大纲层级过深，无法合并
+blocks-merge-would-break-a-reference = 无法合并这两个块：两者都有块 ID，合并可能会使指向其中一个块的引用失效
 
 moves-outline-is-too-deep-to-move = 大纲层级过深，无法移动
 

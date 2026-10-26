@@ -99,6 +99,7 @@ export interface MessageArgs {
   "block-parts-type": {};
   "block-ref-actions-select-blocks-or-edit-one-to-copy-their": {};
   "block-ref-actions-too-much-selected-to-duplicate": {};
+  "blocks-merge-would-break-a-reference": {};
   "blocks-outline-is-too-deep-to-insert-a-child": {};
   "blocks-outline-is-too-deep-to-merge": {};
   "blocks-outline-is-too-deep-to-move": {};
