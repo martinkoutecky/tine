@@ -68,7 +68,7 @@ try {
   problems.push(error.message);
 }
 
-// Between cuts og already carries the next version (PROCEDURES channel model,
+// Between cuts develop already carries the next version (PROCEDURES channel model,
 // D-20261020-BZ7), which has no dated heading yet. A development check
 // (TINE_PREFLIGHT_DEVELOPMENT=1, never on a tag) accepts that while the
 // changelog still has its [Unreleased] section; the release workflow does not

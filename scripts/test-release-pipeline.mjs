@@ -125,7 +125,7 @@ assert.doesNotMatch(releaseWorkflow, /check-flatpak-/,
   "release.yml still does not run the manifest-source drift checks (they stay in ci)");
 assert.ok(!Object.keys(layout.updaterPlatforms).some((platform) => /flatpak/i.test(platform)),
   "the updater must not reference the Flatpak");
-// The Flatpak lane builds the identity this tree ships (Beta on og and release/X.Y
+// The Flatpak lane builds the identity this tree ships (Beta on develop and release/X.Y
 // before the stable flip, the released identity after it).
 assert.ok(releaseWorkflow.includes(
   `\n  flatpak:\n    needs: preflight\n    uses: ./.github/workflows/flatpak.yml\n    with:\n      identity: ${SHIP}\n`),

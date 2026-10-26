@@ -1,9 +1,9 @@
-# Contract — live `logseq/config.edn` (og)
+# Contract — live `logseq/config.edn` (develop)
 
 What happens when `logseq/config.edn` changes while Tine is running, and how
 Tine writes it. Kept true by same-commit updates and by the tests listed at the
 end, which a doc-code test checks exist. Master's contract of the same name is
-the oracle for behaviour; the mechanism here is og's.
+the oracle for behaviour; the mechanism here is develop's.
 
 ## 1. One answer, one door
 

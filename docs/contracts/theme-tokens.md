@@ -1,4 +1,4 @@
-# Contract — public theme tokens and `logseq/custom.css` (og)
+# Contract — public theme tokens and `logseq/custom.css` (develop)
 
 What a user's `logseq/custom.css` may rely on across Tine updates, and how Tine
 treats that file (GH #610). Kept true by same-commit updates and by the tests
