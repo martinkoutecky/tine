@@ -95,63 +95,6 @@ impl Live {
         }
     }
 }
-
-/// Plan v3 §3, S2 (`windowCrash`, `storage-s3.qnt:588-590`): a host no
-/// window owns ends the window's session once, keeps applying the request
-/// it admitted (here queued behind a retained writer), mails no answer to
-/// the gone window, and stops only once that input is saved.
-#[test]
-fn an_orphan_stop_saves_the_admitted_queue_before_it_is_ready() {
-    let live = Live::new(&[("pages/a.md", "- one\n")]);
-    let (key, page) = live.open("pages/a.md");
-    let reservation = live
-        .host
-        .reserve(|| vec![PageId::from("pages/a.md")], Input::Refuse)
-        .unwrap();
-    let window = live.host.session();
-    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
-    assert_eq!(live.host.orphan_stop(), StopState::Waiting);
-    let orphaned = live.host.session();
-    assert_ne!(orphaned, window, "S2: the gone window's session ends");
-    assert_eq!(live.host.orphan_stop(), StopState::Waiting);
-    assert_eq!(
-        live.host.session(),
-        orphaned,
-        "the window crash runs once per owner"
-    );
-    let dto = live.dto(&key, "- late\n");
-    let late = live
-        .host
-        .submit(window, live.id(), &key, &dto, page.version, None, &[]);
-    assert_eq!(
-        late,
-        Err(PageRefusal::NotAdmitted),
-        "a stale session is not admitted"
-    );
-    settle();
-    assert_eq!(live.host.orphan_stop(), StopState::Waiting);
-    assert_eq!(
-        live.disk(&key),
-        "- one\n",
-        "the submit is queued behind the reservation"
-    );
-    drop(reservation);
-    assert_eq!(live.until_orphan_stop(), StopState::Ready);
-    assert_eq!(
-        live.disk(&key),
-        "- two\n",
-        "the admitted input is saved first"
-    );
-    let answered = live
-        .mail
-        .try_iter()
-        .any(|mail| mail.session == window && mail.answer.as_ref().is_some_and(|a| a.id == id));
-    assert!(!answered, "no answer is owed to the gone window");
-    let Ok(_stopped) = live.host.stop_finish() else {
-        panic!("a ready orphan stop finishes");
-    };
-}
-
 /// Plan v3 §3 (B2) and §6: a host no window owns, holding conflicted input
 /// whose draft cannot be written, aborts its stop with that page and keeps
 /// the input live; a window reload then owns it again.

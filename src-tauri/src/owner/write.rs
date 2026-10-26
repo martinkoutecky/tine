@@ -577,7 +577,7 @@ pub(super) fn write_page_from_bytes(
             }
         }
         let planned = compute(&current.doc, &read.page, &bytes)?;
-        let mut tx = slot.store.transaction(Some(kind));
+        let mut tx = slot.store.page_plan(Some(kind));
         tx.save_page(
             &[kind],
             &read.page,

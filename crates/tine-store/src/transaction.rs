@@ -70,7 +70,7 @@ pub enum Content {
     },
 }
 
-/// Whether a [`Transaction::rewrite_refs`] step also rebinds the file's own
+/// Whether a [`PagePlan::rewrite_refs`] step also rebinds the file's own
 /// explicit title.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TitleRebind {
@@ -84,7 +84,7 @@ pub enum TitleRebind {
     Own,
 }
 
-/// What a [`Transaction::rewrite_refs`] call learned from the caller's read.
+/// What a [`PagePlan::rewrite_refs`] call learned from the caller's read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RewriteEffect {
     /// The rename map changes nothing in the text the caller read.
@@ -410,10 +410,32 @@ struct Undo {
     moved: bool,
 }
 
-/// Builder for guarded file changes, applied by [`Self::commit`]. Dropping
-/// without commit performs no disk I/O.
-pub struct Transaction<'a> {
+/// Read-only builder for page changes admitted by [`crate::PageHost`].
+/// Its only public consuming operation is [`Self::plan`].
+///
+/// A feature crate can plan a page change, but cannot commit it:
+/// ```compile_fail,E0599
+/// use tine_store::{Area, Content, Store};
+/// fn feature_write(store: &Store) {
+///     let page = store.file_id(Area::Pages, "example.md").unwrap();
+///     let mut plan = store.page_plan(Some(tine_store::EditKind::ReplacePage));
+///     plan.create(&page, Content::Bytes(b"- example\n".to_vec()));
+///     plan.commit();
+/// }
+/// ```
+/// The commit builder cannot acquire page-save capability either:
+/// ```compile_fail,E0599
+/// use tine_store::{EditKind, PageId, SaveBase, Store};
+/// use tine_core::model::PageDto;
+/// fn feature_write(store: &Store, page: &PageId, doc: &PageDto) {
+///     let mut tx = store.transaction(Some(EditKind::ReplacePage));
+///     tx.save_page(&[EditKind::ReplacePage], page, SaveBase::CreateNew, doc);
+///     tx.commit();
+/// }
+/// ```
+pub struct PagePlan<'a> {
     store: &'a Store,
+    non_page: bool,
     steps: Vec<Step>,
     /// Declared intent for page-file steps other than `save_page` (which
     /// carries its own). Debug builds assert at commit that a page-file step
@@ -425,6 +447,83 @@ pub struct Transaction<'a> {
         std::cell::RefCell<BTreeMap<PathBuf, BTreeMap<std::ffi::OsString, std::ffi::OsString>>>,
     /// The planning context [`Self::expect_view`] requires at commit.
     view: Option<(crate::GraphRev, std::sync::Arc<tine_core::config::Config>)>,
+}
+
+/// Guarded non-page file changes. Page saves and reference rewrites belong
+/// on [`PagePlan`]; file steps whose target is determined at runtime refuse
+/// page targets before any mutation.
+pub struct Transaction<'a> {
+    inner: PagePlan<'a>,
+}
+
+impl Store {
+    /// Begin a guarded non-page transaction. Page changes use [`Self::page_plan`].
+    pub fn transaction(&self, kind: Option<crate::EditKind>) -> Transaction<'_> {
+        let mut inner = self.page_plan(kind);
+        inner.non_page = true;
+        Transaction { inner }
+    }
+}
+
+impl Transaction<'_> {
+    /// Queue a no-replace non-page creation.
+    pub fn create(&mut self, file: &FileId, content: Content) -> &mut Self {
+        self.inner.create(file, content);
+        self
+    }
+
+    /// Queue a uniquely named non-page creation.
+    pub fn create_unique(
+        &mut self,
+        area: Area,
+        stem: &str,
+        ext: &str,
+        content: Content,
+    ) -> &mut Self {
+        self.inner.create_unique(area, stem, ext, content);
+        self
+    }
+
+    /// Queue a guarded non-page replacement, including graph config.
+    pub fn replace(&mut self, file: &FileId, expected: FileRev, bytes: Vec<u8>) -> &mut Self {
+        self.inner.replace(file, expected, bytes);
+        self
+    }
+
+    /// Queue a read-only revision guard; this may inspect a page.
+    pub fn expect(&mut self, file: &FileId, expected: FileRev) -> &mut Self {
+        self.inner.expect(file, expected);
+        self
+    }
+
+    /// Require the planning graph and config to remain current.
+    pub fn expect_view(&mut self, view: &crate::WholeGraph) -> &mut Self {
+        self.inner.expect_view(view);
+        self
+    }
+
+    /// Queue a move between non-page files.
+    pub fn move_file(
+        &mut self,
+        file: &FileId,
+        expected: FileRev,
+        to: &FileId,
+        renames: Option<&RenameMap>,
+    ) -> &mut Self {
+        self.inner.move_file(file, expected, to, renames);
+        self
+    }
+
+    /// Queue guarded non-page trash.
+    pub fn trash(&mut self, file: &FileId, expected: FileRev, when: TrashIf) -> &mut Self {
+        self.inner.trash(file, expected, when);
+        self
+    }
+
+    /// Apply the non-page steps through the guarded save and undo path.
+    pub fn commit(self) -> TxOutcome {
+        self.inner.commit_internal()
+    }
 }
 
 /// A page file's alternate-extension twin (`.md` ↔ `.org`) on disk, from one
@@ -444,13 +543,14 @@ pub(crate) fn alternate_extension_twin(path: &Path) -> io::Result<Option<PathBuf
 }
 
 impl Store {
-    /// Begin a transaction. Commit serializes writes through this Store; it
+    /// Begin a read-only page plan using the transaction preflight. This Store
     /// does not lock other Store instances or external processes. Two stores
     /// on one graph have separate `GraphRev` sequences and can observe one
     /// another's writes as external changes; both still use revision guards.
-    pub fn transaction(&self, kind: Option<crate::EditKind>) -> Transaction<'_> {
-        Transaction {
+    pub fn page_plan(&self, kind: Option<crate::EditKind>) -> PagePlan<'_> {
+        PagePlan {
             store: self,
+            non_page: false,
             steps: Vec::new(),
             kinds: kind.into_iter().collect(),
             spelling_entries: Default::default(),
@@ -459,7 +559,7 @@ impl Store {
     }
 }
 
-impl<'a> Transaction<'a> {
+impl<'a> PagePlan<'a> {
     /// Queue a guarded page save. `CreateNew` requires absence; `Existing`
     /// compares the current raw-byte revision. A Guide DTO is refused as
     /// ephemeral before disk access. `CreateNew` checks both the exact target
@@ -525,7 +625,7 @@ impl<'a> Transaction<'a> {
     /// target-safety and indexed twin checks as `create`, not `PageDto`
     /// serialization. An exact occupied candidate tries the next suffix;
     /// an alternate name or journal-day claimant refuses creation.
-    pub fn create_unique(
+    pub(crate) fn create_unique(
         &mut self,
         area: Area,
         stem: &str,
@@ -552,7 +652,12 @@ impl<'a> Transaction<'a> {
     // Reload invalidates parsed graph caches before publication.
     /// Page text must instead use [`Self::save_page`]; passing a page target
     /// is refused as `Refusal::InvalidTarget`.
-    pub fn replace(&mut self, file: &FileId, expected: FileRev, bytes: Vec<u8>) -> &mut Self {
+    pub(crate) fn replace(
+        &mut self,
+        file: &FileId,
+        expected: FileRev,
+        bytes: Vec<u8>,
+    ) -> &mut Self {
         self.steps.push(Step::Replace {
             file: file.clone(),
             expected,
@@ -569,7 +674,7 @@ impl<'a> Transaction<'a> {
     /// external process can still change the file between this final check
     /// and a later step's write. Cost is two full reads and hashes of this
     /// file, including parse validation when it is a page.
-    pub fn expect(&mut self, file: &FileId, expected: FileRev) -> &mut Self {
+    pub(crate) fn expect(&mut self, file: &FileId, expected: FileRev) -> &mut Self {
         self.steps.push(Step::Expect {
             file: file.clone(),
             expected,
@@ -1067,7 +1172,7 @@ impl<'a> Transaction<'a> {
         } else {
             path.with_extension("org")
         };
-        let _ = atomic_write_new(&other, b"external twin");
+        let _ = crate::atomic_file::atomic_write_new(&other, b"external twin");
     }
 
     fn apply(
@@ -1134,6 +1239,7 @@ impl<'a> Transaction<'a> {
                 ) = (&*step, old)
                 {
                     undo.trash = Some(self.stage_marker_file(&plan.src, old)?);
+                    self.check_write_target(&src).map_err(failed)?;
                 }
                 self.arm_directory_sync_fault();
                 let result = if let Some(old) = old {
@@ -1228,6 +1334,7 @@ impl<'a> Transaction<'a> {
                             source.seek(SeekFrom::Start(0)).map_err(failed)?;
                             let stage =
                                 path.with_file_name(format!(".tine-tx-{}.tmp", trash_stamp()));
+                            self.check_write_target(&stage).map_err(failed)?;
                             if let Err(error) = atomic_copy_file_new(source, &stage, *max_bytes) {
                                 if crate::directory_durability::is_directory_sync_failure(&error) {
                                     let _ = fs::remove_file(&stage);
@@ -1239,6 +1346,7 @@ impl<'a> Transaction<'a> {
                                 return Err(Why::Refused(Refusal::Undecodable));
                             }
                             temps.push(stage.clone());
+                            self.check_write_target(&path).map_err(failed)?;
                             Expected::File(stage)
                         }
                     };
@@ -1459,7 +1567,7 @@ impl<'a> Transaction<'a> {
                     exact_copies.push((staged, record.new.as_ref().expect("undo expected")));
                     if matches!(record.kind, UndoKind::Replace) {
                         if let Some(old) = &record.old {
-                            if let Err(error) = atomic_write_new(&path, old) {
+                            if let Err(error) = self.restore_old_bytes(&path, old) {
                                 rollback.undo_failed.push((id.clone(), error.into()));
                             }
                         }
@@ -1468,7 +1576,7 @@ impl<'a> Transaction<'a> {
                 Ok(Withdrawal::Missing) => {
                     if matches!(record.kind, UndoKind::Replace) {
                         if let Some(old) = &record.old {
-                            if let Err(error) = atomic_write_new(&path, old) {
+                            if let Err(error) = self.restore_old_bytes(&path, old) {
                                 rollback.undo_failed.push((id.clone(), error.into()));
                             }
                         }
@@ -1492,7 +1600,7 @@ impl<'a> Transaction<'a> {
             // `commit` preserves the baseline in recovery.
             if withdrawn && matches!(record.kind, UndoKind::Rename) {
                 if let Some(old) = &record.old {
-                    if let Err(error) = atomic_write_new(&live, old) {
+                    if let Err(error) = self.restore_old_bytes(&live, old) {
                         rollback
                             .undo_failed
                             .push((record.src.clone(), error.into()));
@@ -1511,7 +1619,10 @@ impl<'a> Transaction<'a> {
                     return;
                 }
             };
-            if let Err(error) = move_file_noreplace(&trash, &live) {
+            if let Err(error) = self
+                .check_write_target(&live)
+                .and_then(|()| move_file_noreplace(&trash, &live))
+            {
                 rollback
                     .undo_failed
                     .push((record.src.clone(), error.into()));
@@ -1523,6 +1634,19 @@ impl<'a> Transaction<'a> {
                 }
             }
         }
+    }
+
+    fn check_write_target(&self, path: &Path) -> io::Result<()> {
+        if self.store.graph.creation_bound(path) != self.store.graph.root.as_path() {
+            self.store.graph.ensure_asset_write_target(path)
+        } else {
+            self.store.graph.ensure_write_target(path)
+        }
+    }
+
+    fn restore_old_bytes(&self, path: &Path, old: &[u8]) -> io::Result<()> {
+        self.check_write_target(path)?;
+        atomic_write_new(path, old)
     }
 
     fn preserve_old(&self, id: &FileId, bytes: &[u8], rollback: &mut Rollback) {
@@ -1569,7 +1693,7 @@ impl<'a> Transaction<'a> {
     /// Prior page bytes stay in memory through commit, so undo can require
     /// O(changed bytes) memory and extra file reads/writes. A clean undo publishes
     /// no change and leaves the graph revision unchanged.
-    pub fn commit(self) -> TxOutcome {
+    pub(crate) fn commit_internal(self) -> TxOutcome {
         let store = self.store;
         let mut timing = crate::launch_diag::SaveTiming::start(self.steps.len());
         let outcome = self.commit_timed(&mut timing);
@@ -1588,7 +1712,7 @@ impl<'a> Transaction<'a> {
         // A missing kind is a caller bug, not an in-scope storage threat, so it
         // is a debug assertion, never a production refusal.
         #[cfg(debug_assertions)]
-        if self.kinds.is_empty() {
+        if !self.non_page && self.kinds.is_empty() {
             for step in &self.steps {
                 let touches_page = match step {
                     Step::Save { .. } => false,

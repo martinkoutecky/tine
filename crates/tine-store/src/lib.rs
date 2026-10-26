@@ -9,7 +9,7 @@
 //! Page edits go through the [`PageHost`]; use [`Transaction`] for a set
 //! of guarded file changes, including a read-only revision expectation that
 //! can precede a dependent write. Structured page saves require an [`EditKind`]; raw
-//! page-file changes use [`Store::transaction`] with `Some(kind)`, while
+//! page-file plans use [`Store::page_plan`] with `Some(kind)`, while
 //! asset/config changes pass `None`. Restore also declares
 //! `replace-page`. The kinds remain in memory and add no disk bytes. A
 //! structured save without a kind panics before writing (OG-RULES Rule 8). A [`FileRev`] identifies the bytes an edit was
@@ -106,7 +106,7 @@ pub use page_host::faults as host_faults;
 pub use page_host::{
     ApplyRefusal, DiskToken, DraftStatus, Effect as HostEffect, Expected as HostExpected, HostOp,
     HostRead, HostReadError, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal,
-    Reloaded, RenameRefusal, Reservation, ReserveRefusal, StopMode, StopState, Stopped,
+    Reloaded, RenameRefusal, StopMode, StopState, Stopped,
 };
 #[cfg(test)]
 mod page_state;
@@ -147,8 +147,11 @@ pub use store::{QueryDialect, QueryResult};
 #[cfg(any(test, feature = "test-faults"))]
 pub use transaction::FaultPoint;
 pub use transaction::{
-    Content, IoError, Refusal, RenameMap, RewriteEffect, Rollback, StepResult, TitleRebind,
-    Transaction, TrashIf, TxOutcome, Why,
+    Content, IoError, PagePlan, Refusal, RenameMap, RewriteEffect, Rollback, StepResult,
+    TitleRebind, Transaction, TrashIf, TxOutcome, Why,
 };
 #[cfg(test)]
 mod resolve_blocks_work_tests;
+
+#[cfg(test)]
+mod test_transactions;

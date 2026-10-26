@@ -747,7 +747,7 @@ fn fold_pair(
         )
     };
     let transaction = |fold: &Folded, include_source: bool| {
-        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(tine_store::EditKind::ReplacePage));
         tx.save_page(
             &[
                 tine_store::EditKind::ReplacePage,
@@ -1097,7 +1097,7 @@ pub fn resolve_vcs_marker_conflict(
         Ok((content, rev, merged))
     };
     let transaction = |rev, merged: &PageDto| {
-        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(tine_store::EditKind::ReplacePage));
         tx.save_page(
             &[tine_store::EditKind::ReplacePage],
             &page,

@@ -508,7 +508,7 @@ fn a_rename_planned_before_a_config_change_commits_nothing() {
         b2_deliver(&store, &root, B2_LOWBAR);
         let before = b2_tree(&root);
         assert!(
-            commit_rename(&store, old, plan, &[]).unwrap().is_none(),
+            preflight_rename(&store, old, plan, &[]).unwrap().is_none(),
             "{case}: a stale plan replans"
         );
         assert_eq!(b2_tree(&root), before, "{case}: nothing written");
@@ -536,7 +536,7 @@ fn a_config_change_between_targets_and_write_set_replans() {
         "the stale plan spells the old format: {pages:?}"
     );
     let before = b2_tree(&root);
-    assert!(commit_rename(&store, "Ns", plan, &[]).unwrap().is_none());
+    assert!(preflight_rename(&store, "Ns", plan, &[]).unwrap().is_none());
     assert_eq!(b2_tree(&root), before);
     hosted(&store, |host| {
         rename_page_expected(&store, host, "Ns", "Space", None)

@@ -64,10 +64,6 @@ impl Driver {
                 "whole retirement lost custody of {page}"
             );
             assert_eq!(self.host.observe(&page), Disposition::Waiting);
-            assert_eq!(
-                self.host.reserve(&BTreeSet::from([page])),
-                Disposition::Waiting
-            );
         }
         self.assert_untouched(&before, "whole retirement busy probes");
     }

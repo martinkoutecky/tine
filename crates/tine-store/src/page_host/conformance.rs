@@ -231,7 +231,6 @@ impl<F: ConformanceIo> Driver<F> {
                 events: h.events.clone(),
                 job: h.job.clone(),
                 worker: h.worker.clone(),
-                retained: h.retained.clone(),
                 order: h.order.clone(),
                 version: h.version,
                 wseq: h.wseq,
@@ -244,6 +243,7 @@ impl<F: ConformanceIo> Driver<F> {
                 alive: h.alive,
                 #[cfg(test)]
                 test: Default::default(),
+                paused_for_tests: BTreeSet::new(),
             },
             oracle: self.oracle.clone(),
             windows: self.windows.clone(),

@@ -641,7 +641,7 @@ const PAGE_CHANGED: &str = "highlight annotation page changed repeatedly during 
 const PAGE_UPDATE: &str = "the annotation page update";
 
 fn annotation_steps(
-    tx: &mut tine_store::Transaction<'_>,
+    tx: &mut tine_store::PagePlan<'_>,
     annotation: &Annotation,
     doc: &PageDto,
     include_legacy: bool,
@@ -749,7 +749,7 @@ pub fn write_highlights(
         // Validate the page before writing the highlight data.
         let initial = annotation(store, &name, &old_name, migrate)?;
         let doc = annotation_dto(&initial, &name, pdf_name, label, &merged);
-        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(tine_store::EditKind::ReplacePage));
         annotation_steps(&mut tx, &initial, &doc, true);
         match tx.plan() {
             Err(tine_store::Why::Conflict { .. }) => return Ok(None),
@@ -779,7 +779,7 @@ pub fn write_highlights(
                 return Ok(None);
             }
             let doc = annotation_dto(&annotation, &name, pdf_name, label, &merged);
-            let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+            let mut tx = store.page_plan(Some(tine_store::EditKind::ReplacePage));
             annotation_steps(&mut tx, &annotation, &doc, true);
             let mut op = crate::retained::plan(tx)?;
             if let Some((source, ..)) = &annotation.legacy {
@@ -800,6 +800,11 @@ pub fn write_highlights(
             unsaved,
             plan,
         )
+        .inspect_err(|_| {
+            if old.is_some() {
+                tine_core::diag_line::diagnostic_line(LEGACY_SIDECAR_LEFT);
+            }
+        })
         .map_err(|error| crate::after_partial("The highlights were saved", error))?;
         Ok((!remerge).then_some((merged, old)))
     })?;

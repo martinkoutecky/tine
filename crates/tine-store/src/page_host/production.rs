@@ -242,6 +242,8 @@ impl ProductionIo {
     fn graph_directory(&mut self, dir: &Path) -> IoResult<()> {
         self.check_path(dir)?;
         if !self.directories.contains_key(dir) {
+            #[cfg(test)]
+            crate::model::assert_checked_target(dir);
             let creation = durability::DirectoryCreation::new(dir, &self.graph).map_err(failure)?;
             self.directories.insert(dir.to_path_buf(), creation);
         }
@@ -602,6 +604,8 @@ impl HostIo for ProductionIo {
         if let Some(graph) = &self.marks {
             graph.transaction_note_page(&target, bytes);
         }
+        #[cfg(test)]
+        crate::model::assert_checked_target(&target);
         let prepared = temp(&target, bytes).map_err(failure)?;
         self.page_temps.insert(page.into(), prepared);
         Ok(())
@@ -616,6 +620,8 @@ impl HostIo for ProductionIo {
             operation: None,
             os_error: None,
         })?;
+        #[cfg(test)]
+        crate::model::assert_checked_target(&self.page_path(page));
         prepared
             .publish(self.creates.get(page).copied().unwrap_or(false))
             .map_err(failure)?;
@@ -685,6 +691,8 @@ impl HostIo for ProductionIo {
             let target = self.trash.join(payload);
             self.check_path(&source)?;
             self.check_path(&target)?;
+            #[cfg(test)]
+            crate::model::assert_checked_target(&target);
             crate::no_replace::move_file_noreplace(&source, &target).map_err(|error| {
                 let collision = error.kind() == io::ErrorKind::AlreadyExists;
                 IoFailure {

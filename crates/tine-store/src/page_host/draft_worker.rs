@@ -61,7 +61,7 @@ impl<F: HostIo> Host<F> {
     /// whole when it can (RENAME-COST L1): each of its pages' removal steps
     /// at one terminal.
     pub(super) fn begin_draft_retiring(&mut self, key: &str) -> Disposition {
-        if !self.alive || self.worker.is_some() || self.retained.contains(key) {
+        if !self.alive || self.worker.is_some() {
             return Disposition::Waiting;
         }
         let keys = BTreeSet::from([key.into()]);
@@ -162,8 +162,7 @@ impl<F: HostIo> Host<F> {
         let records = &self.drafts[op];
         let whole = live.owed.is_empty()
             && records.iter().all(|r| {
-                !self.retained.contains(&r.page)
-                    && !self.pages.get(&r.page).is_some_and(|p| p.risk)
+                !self.pages.get(&r.page).is_some_and(|p| p.risk)
                     && self.durable.get(&r.page).is_some_and(|w| w.wseq == r.wseq)
             });
         if !whole {
@@ -272,6 +271,10 @@ impl<F: HostIo> Host<F> {
         let Some(worker) = &self.worker else {
             return Disposition::Disabled;
         };
+        #[cfg(any(test, feature = "test-faults"))]
+        if !self.paused_for_tests.is_disjoint(&worker.pages) {
+            return Disposition::Waiting;
+        }
         #[cfg(test)]
         if self.test.paused {
             return Disposition::Waiting;

@@ -14,7 +14,7 @@ use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use tine_graph_features::{journals, pages};
-use tine_store::{Input, PageHost, PageId, Store};
+use tine_store::{PageHost, PageId, Store};
 
 const CONFIG: &str = "{:file/name-format :triple-lowbar}\n";
 
@@ -71,10 +71,7 @@ fn edited_between_plan_and_admission(
     edited: &str,
     write: impl Fn(&Store, &PageHost) -> io::Result<()> + Sync,
 ) -> io::Result<()> {
-    let reservation = f
-        .host
-        .reserve(|| vec![PageId::from(held)], Input::Refuse)
-        .expect("nothing unsaved");
+    let reservation = f.host.pause_for_tests(&[PageId::from(held)]);
     std::thread::scope(|scope| {
         let (done, finished) = mpsc::channel();
         let (store, host, write) = (&*f.store, &f.host, &write);

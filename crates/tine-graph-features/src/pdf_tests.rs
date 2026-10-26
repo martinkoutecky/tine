@@ -670,6 +670,8 @@ fn a_leftover_that_cannot_be_retired_after_a_save_is_reported() {
 /// stay in place, unchanged, until the operation can finish.
 #[test]
 fn a_legacy_page_that_cannot_be_trashed_is_reported_as_the_saves_error() {
+    let seen = diagnostics();
+    let before = seen.lock().unwrap().len();
     let root = legacy_graph_with_unusable_trash("legacy-page-kept", ".tine-trash");
     let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let host = crate::test_host(&store);
@@ -707,6 +709,9 @@ fn a_legacy_page_that_cannot_be_trashed_is_reported_as_the_saves_error() {
         legacy_sidecar,
         "the legacy sidecar stays"
     );
+    assert!(seen.lock().unwrap()[before..]
+        .iter()
+        .any(|line| line == LEGACY_SIDECAR_LEFT));
     drop(host);
     drop(store);
     std::fs::remove_dir_all(root).unwrap();

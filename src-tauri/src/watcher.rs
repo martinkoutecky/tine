@@ -669,23 +669,22 @@ mod tests {
             .unwrap()
             .0;
         store.whole_graph().unwrap();
+        let store = std::sync::Arc::new(store);
+        let app = tempfile::tempdir().unwrap();
+        let host = tine_store::PageHost::start_for_tests(&store, app.path()).unwrap();
+        let subscription = store.subscribe();
         let id = tine_store::PageId::from("pages/A.md");
         let mut read = store.page(&id).unwrap();
         read.doc.blocks[0].raw = "after".into();
-        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(tine_store::EditKind::ReplacePage));
         tx.save_page(
             &[tine_store::EditKind::ReplacePage],
             &id,
             tine_store::SaveBase::Existing(read.rev),
             &read.doc,
         );
-        let tine_store::TxOutcome::Committed {
-            change: Some(change),
-            ..
-        } = tx.commit()
-        else {
-            panic!("text save")
-        };
+        host.apply(tx.plan().unwrap()).unwrap();
+        let change = subscription.try_recv().unwrap().expect("host publication");
         assert_eq!(change.origin, Origin::Own);
         let (events, _) = window_events(&change);
         let payloads = publication_event_payloads(events, 7, &change);
@@ -931,9 +930,7 @@ mod tests {
     }
 
     #[test]
-    fn rollback_external_bytes_dispatch_graph_changed() {
-        use tine_store::{FaultPoint, PageId, SaveBase, TxOutcome};
-
+    fn external_bytes_dispatch_graph_changed() {
         let root = std::env::temp_dir().join(format!(
             "tine-watch-rollback-{}-{:?}",
             std::process::id(),
@@ -954,30 +951,8 @@ mod tests {
         .0;
         store.whole_graph().unwrap();
         let subscription = store.subscribe();
-        let a = PageId::from("pages/A.md");
-        let b = PageId::from("pages/B.md");
-        let read_a = store.page(&a).unwrap();
-        let read_b = store.page(&b).unwrap();
-        let mut doc_a = read_a.doc;
-        let mut doc_b = read_b.doc;
-        doc_a.blocks[0].raw = "new A".into();
-        doc_b.blocks[0].raw = "new B".into();
-        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-        tx.save_page(
-            &[tine_store::EditKind::ReplacePage],
-            &a,
-            SaveBase::Existing(read_a.rev),
-            &doc_a,
-        );
-        tx.save_page(
-            &[tine_store::EditKind::ReplacePage],
-            &b,
-            SaveBase::Existing(read_b.rev),
-            &doc_b,
-        );
-        store.inject_fault(FaultPoint::MidStepIoAt(1));
-        store.inject_fault(FaultPoint::UndoLiveWrite);
-        assert!(matches!(tx.commit(), TxOutcome::NotCommitted { .. }));
+        std::fs::write(root.join("pages/B.md"), "- external\n").unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         let events: Vec<_> = std::iter::from_fn(|| subscription.try_recv().unwrap())
             .flat_map(|change| window_events(&change).0)
             .collect();

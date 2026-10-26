@@ -452,7 +452,6 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             .is_some_and(|s| !s.failed.contains(key))
             && !page.clean()
             && !page.conflict
-            && !self.host.retained.contains(key)
             // R3: a page a running rename gates is carried by its draft.
             && !self.host.order.gated(key)
     }

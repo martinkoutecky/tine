@@ -579,29 +579,24 @@ fn multi_rename(
     Ok(Some(report))
 }
 
-/// The rename as one store transaction (`unsaved_paths`: see
-/// [`rename_or_merge_page`]), `config.edn`'s home page its last step: a
-/// case-only respell of a single page (W1b). A stale plan is `Ok(None)`.
+/// The stale-plan regression probe. Preflight is read-only; a stale context
+/// is `Ok(None)`, so no feature test needs a direct page commit.
 #[cfg(test)]
-fn commit_rename(
+fn preflight_rename(
     store: &Store,
     old: &str,
     plan: RenamePlan,
     unsaved_paths: &[String],
-) -> io::Result<Option<RenameReport>> {
-    let (mut tx, mut report, (lookup, merged_old)) =
-        match rename_transaction(store, old, plan, unsaved_paths)? {
-            RenameTransaction::Unchanged(report) => return Ok(Some(report)),
-            RenameTransaction::Writes {
-                tx, report, home, ..
-            } => (tx, report, home),
-        };
-    let home = home_after(store, &lookup, merged_old.as_ref());
-    if let Some((id, rev, bytes, _)) = &home {
-        tx.replace(id, rev.clone(), bytes.clone());
+) -> io::Result<Option<()>> {
+    let tx = match rename_transaction(store, old, plan, unsaved_paths)? {
+        RenameTransaction::Unchanged(_) => return Ok(Some(())),
+        RenameTransaction::Writes { tx, .. } => tx,
+    };
+    match tx.plan() {
+        Ok(_) => Ok(Some(())),
+        Err(tine_store::Why::Conflict { .. }) => Ok(None),
+        Err(why) => Err(crate::why_error(why)),
     }
-    report.home_page = home.map(|(_, _, _, name)| name);
-    Ok(crate::commit_retry(tx.commit())?.then_some(report))
 }
 
 /// What a rename writes, as a store transaction of its page steps.
@@ -610,7 +605,7 @@ enum RenameTransaction<'s> {
     /// carries VCS conflict markers).
     Unchanged(RenameReport),
     Writes {
-        tx: tine_store::Transaction<'s>,
+        tx: tine_store::PagePlan<'s>,
         /// Without the home page: `config.edn` is written after the pages.
         report: RenameReport,
         /// A merge's `(source, survivor)`.
@@ -644,7 +639,7 @@ fn rename_transaction<'s>(
         skipped: _,
         rewritten: _,
     } = plan;
-    let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+    let mut tx = store.page_plan(Some(tine_store::EditKind::RenamePage));
     // Every step, rewrite or not, commits only in the planning context.
     tx.expect_view(&graph);
     // Crash order (I-2): survivor, then referrer rewrites, then namespace
@@ -1197,7 +1192,7 @@ pub fn rename_file_to_page(
     };
     let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
     let transaction = |rev| {
-        let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+        let mut tx = store.page_plan(Some(tine_store::EditKind::RenamePage));
         tx.move_file(&src, rev, &to, None);
         tx
     };
@@ -1259,7 +1254,7 @@ pub fn merge_pages(store: &Store, host: &PageHost, src_rel: &str, dst_rel: &str)
         .as_page(&dst)
         .ok_or_else(|| error(io::ErrorKind::InvalidInput, "invalid file path"))?;
     let transaction = |survivor: &Survivor| {
-        let mut tx = store.transaction(Some(tine_store::EditKind::InsertBlocks));
+        let mut tx = store.page_plan(Some(tine_store::EditKind::InsertBlocks));
         tx.save_page(
             &[
                 tine_store::EditKind::InsertBlocks,
@@ -1398,7 +1393,3 @@ mod merge_payload;
 #[cfg(test)]
 #[path = "pages_snapshot_tests.rs"]
 mod snapshot_tests;
-
-#[cfg(test)]
-#[path = "pages_host_writer_tests.rs"]
-mod host_writer_tests;

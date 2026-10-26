@@ -331,14 +331,14 @@ fn a_title_read_panic_refuses_one_rename_and_keeps_the_writer() {
     let before = fs::read(root.join("pages/Bad.md")).unwrap();
     let map = crate::RenameMap(vec![("Bad".into(), "Renamed".into())]);
     let committed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut tx = store.transaction(Some(crate::EditKind::RenamePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::RenamePage));
         tx.move_file(
             &FileId::from("pages/Bad.md".to_string()),
             crate::FileRev::from_file(&root.join("pages/Bad.md")).unwrap(),
             &FileId::from("pages/Renamed.md".to_string()),
             Some(&map),
         );
-        tx.commit()
+        tx.commit_internal()
     }));
     assert!(
         matches!(

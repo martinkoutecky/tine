@@ -2,7 +2,7 @@
 use super::*;
 use crate::{HostEffect, HostExpected, HostOp, Input};
 
-impl Transaction<'_> {
+impl PagePlan<'_> {
     /// Prepare this transaction as a page-host operation without publishing
     /// or writing anything. Runs commit's preflight and stages its guarded old
     /// bytes and serialized effects. Non-page effects belong in a separate,

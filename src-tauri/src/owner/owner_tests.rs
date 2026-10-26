@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tine_store::{Input, PageHost, PageId, Store};
+use tine_store::{PageHost, PageId, Store};
 
 use super::client::{dial, Conn, Failure};
 use super::endpoint::{After, Endpoint, Gate, Handler, YieldRequest};
@@ -360,9 +360,9 @@ fn the_app_lease_follows_the_host_through_retirement_and_adoption() {
 
     // A reservation keeps the host from stopping until it is adopted.
     let reservation = match &*old.host.read().unwrap() {
-        PageHostSlot::Running(host) => host
-            .reserve(|| vec![PageId::from("pages/a.md")], Input::Refuse)
-            .unwrap(),
+        PageHostSlot::Running(host) => {
+            Box::new(host.pause_for_tests(&[PageId::from("pages/a.md")]))
+        }
         _ => panic!("no host"),
     };
     assert!(registry.remove("graph-1").is_none(), "retiring");

@@ -1042,6 +1042,8 @@ impl Store {
         let config_bytes = supplied_config
             .map(|(_, _, bytes)| bytes.as_slice())
             .unwrap_or(tine_core::guide::CONFIG_EDN.as_bytes());
+        crate::model::checked_write_target(&root, &config, "new graph root", None)
+            .map_err(|error| failed(&config, error))?;
         crate::model::atomic_write_new(&config, config_bytes)
             .map_err(|error| failed(&config, error))?;
         let mut used_config_seed = false;
@@ -1073,6 +1075,8 @@ impl Store {
                 }
             };
             let path = base.join(rel);
+            crate::model::checked_write_target(&root, &path, "new graph root", None)
+                .map_err(|error| failed(&path, error))?;
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).map_err(|error| failed(parent, error))?;
             }
@@ -3663,7 +3667,7 @@ mod rev5_tests {
         let mut doc = read.doc;
         doc.blocks[0].raw = "committed while failed".into();
         *store.load.status.lock().unwrap() = LoadStatus::Failed("injected".into());
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.save_page(
             &[crate::EditKind::ReplacePage],
             &id,
@@ -3671,7 +3675,7 @@ mod rev5_tests {
             &doc,
         );
         assert!(
-            matches!(tx.commit(), crate::TxOutcome::Committed { graph_rev, .. } if graph_rev == prior)
+            matches!(tx.commit_internal(), crate::TxOutcome::Committed { graph_rev, .. } if graph_rev == prior)
         );
         assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
         store.refresh(crate::Depth::Stamps).unwrap();
@@ -4041,13 +4045,13 @@ mod rev5_tests {
             store.whole_graph().unwrap();
 
             let a = PageId::from("pages/A.md");
-            let mut create = store.transaction(Some(crate::EditKind::ReplacePage));
+            let mut create = store.page_plan(Some(crate::EditKind::ReplacePage));
             create.create(
                 &a.file(),
                 crate::Content::Bytes(b"- initial word\n".to_vec()),
             );
             assert!(matches!(
-                create.commit(),
+                create.commit_internal(),
                 crate::TxOutcome::Committed { .. }
             ));
             assert!(matches!(
@@ -4078,7 +4082,7 @@ mod rev5_tests {
                 }));
 
             let b = PageId::from("pages/B.md");
-            let mut moving = store.transaction(Some(crate::EditKind::ReplacePage));
+            let mut moving = store.page_plan(Some(crate::EditKind::ReplacePage));
             moving.move_file(
                 &a.file(),
                 FileRev::from_file(&root.join("pages/A.md")).unwrap(),
@@ -4086,7 +4090,7 @@ mod rev5_tests {
                 None,
             );
             assert!(matches!(
-                moving.commit(),
+                moving.commit_internal(),
                 crate::TxOutcome::Committed { .. }
             ));
             let moved = store.whole_graph().unwrap();
@@ -4474,9 +4478,12 @@ mod rev5_tests {
             .files
             .iter()
             .any(|(id, kind, _)| { id == &a.file() && *kind == ChangeKind::Removed }));
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.trash(&b.file(), read_b.rev, crate::TrashIf::Any);
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
         let trashed = changes.try_recv().unwrap().expect("own trash change");
         assert_eq!(trashed.origin, Origin::Own);
         assert!(trashed
@@ -4505,7 +4512,7 @@ mod rev5_tests {
         let stream_id = store.file_id(Area::Assets, "stream.bin").unwrap();
         let bytes_id = store.file_id(Area::Assets, "bytes.bin").unwrap();
         store.inject_fault(crate::FaultPoint::RemoveStreamStageAfterWrite);
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.create(
             &stream_id,
             crate::Content::Stream {
@@ -4513,7 +4520,10 @@ mod rev5_tests {
                 max_bytes: 1024,
             },
         );
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
         let stream_change = changes.try_recv().unwrap().unwrap();
         assert_eq!(stream_change.origin, Origin::Own);
         assert!(stream_change
@@ -4526,22 +4536,28 @@ mod rev5_tests {
             "present streamed asset was removed by a full watcher scan"
         );
         store.set_watch_mode(WatchMode::Poll);
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.create(&bytes_id, crate::Content::Bytes(b"byte content".to_vec()));
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present byte asset was removed by a full watcher scan"
         );
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.replace(
             &bytes_id,
             FileRev::from_file(&root.join("assets/bytes.bin")).unwrap(),
             b"replaced content".to_vec(),
         );
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
@@ -4549,27 +4565,33 @@ mod rev5_tests {
             "present replaced asset was removed by a full watcher scan"
         );
         let moved_id = store.file_id(Area::Assets, "moved.bin").unwrap();
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.move_file(
             &bytes_id,
             FileRev::from_file(&root.join("assets/bytes.bin")).unwrap(),
             &moved_id,
             None,
         );
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present moved asset was removed by a full watcher scan"
         );
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.trash(
             &moved_id,
             FileRev::from_file(&root.join("assets/moved.bin")).unwrap(),
             crate::TrashIf::Any,
         );
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
@@ -4664,13 +4686,16 @@ mod rev5_tests {
         store.whole_graph().unwrap();
         let changes = store.subscribe();
         let id = store.file_id(Area::Meta, "config.edn").unwrap();
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.replace(
             &id,
             FileRev::from_file(&path).unwrap(),
             b"{:foo 2}\n".to_vec(),
         );
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
@@ -4714,9 +4739,9 @@ mod rev5_tests {
         let id = store.file_id(Area::Assets, "raced.bin").unwrap();
         let writing = Arc::clone(&store);
         let tx = std::thread::spawn(move || {
-            let mut tx = writing.transaction(Some(crate::EditKind::ReplacePage));
+            let mut tx = writing.page_plan(Some(crate::EditKind::ReplacePage));
             tx.create(&id, crate::Content::Bytes(b"own".to_vec()));
-            tx.commit()
+            tx.commit_internal()
         });
         wait_hook(&pause);
         fs::write(outside.join("raced.bin"), b"external").unwrap();
@@ -4810,11 +4835,11 @@ mod rev5_tests {
             ),
             SaveOutcome::InvalidTarget(_)
         ));
-        let mut move_tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut move_tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         let moved = FileId::from("pages/Moved.md".to_string());
         move_tx.move_file(&a.file(), a_rev, &moved, None);
         assert!(matches!(
-            move_tx.commit(),
+            move_tx.commit_internal(),
             crate::TxOutcome::Committed { .. }
         ));
         assert_eq!(
@@ -4833,11 +4858,11 @@ mod rev5_tests {
             .unreadable_files()
             .iter()
             .any(|(id, _)| id == &a.file()));
-        let mut trash_tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut trash_tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         let b = PageId::from("pages/B.md");
         trash_tx.trash(&b.file(), b_rev, crate::TrashIf::Any);
         assert!(matches!(
-            trash_tx.commit(),
+            trash_tx.commit_internal(),
             crate::TxOutcome::Committed { .. }
         ));
         assert!(!b_path.exists());
@@ -4853,7 +4878,7 @@ mod rev5_tests {
         file.set_len(crate::PARSE_INPUT_MAX_BYTES + 1).unwrap();
         let d_rev = FileRev::from_file(&d_path).unwrap();
         store.inject_fault(crate::FaultPoint::MidStepIo);
-        let mut rollback_tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut rollback_tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         rollback_tx.move_file(
             &FileId::from("pages/D.md".to_string()),
             d_rev,
@@ -4861,7 +4886,7 @@ mod rev5_tests {
             None,
         );
         assert!(matches!(
-            rollback_tx.commit(),
+            rollback_tx.commit_internal(),
             crate::TxOutcome::NotCommitted { .. }
         ));
         assert!(d_path.exists());
@@ -4892,7 +4917,7 @@ mod rev5_tests {
         let mut doc_b = read_b.doc;
         doc_a.blocks[0].raw = "new A".into();
         doc_b.blocks[0].raw = "new B".into();
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.save_page(
             &[crate::EditKind::ReplacePage],
             &a,
@@ -4907,7 +4932,10 @@ mod rev5_tests {
         );
         store.inject_fault(crate::FaultPoint::MidStepIoAt(1));
         store.inject_fault(crate::FaultPoint::UndoLiveWrite);
-        assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::NotCommitted { .. }
+        ));
         let found: Vec<_> = std::iter::from_fn(|| changes.try_recv().unwrap()).collect();
         assert!(
             found.iter().any(|change| {
@@ -5395,13 +5423,13 @@ mod rev5_tests {
         let fresh_after_save = store.whole_graph().unwrap();
         assert_ne!(view_answers(&fresh_after_save), original_answers);
 
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.create(
             &FileId::from("logseq/config.edn".to_owned()),
             crate::transaction::Content::Bytes(b"{:file/name-format :triple-lowbar}\n".to_vec()),
         );
         assert!(matches!(
-            tx.commit(),
+            tx.commit_internal(),
             crate::transaction::TxOutcome::Committed { .. }
         ));
         assert_eq!(view_answers(&old), original_answers);

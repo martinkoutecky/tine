@@ -272,7 +272,10 @@ impl Store {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(failed(error)),
         }
-        crate::model::move_file_noreplace(&path, &out).map_err(failed)?;
+        // This explicitly selected destination is outside the graph. Its
+        // parent capability and stage identity are the guards, rather than
+        // the graph-root mutation wrapper's containment witness.
+        crate::no_replace::move_file_noreplace(&path, &out).map_err(failed)?;
         if !identity_from_path(&out).is_ok_and(|current| current == identity) {
             return Err(failed(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -782,6 +785,9 @@ fn commit_publish_stage_report(
         .map(|recovery| recovery.path.join("previous"));
 
     publication_pause("before-install");
+    graph
+        .ensure_write_target(out)
+        .map_err(|error| (error, previous_kept.clone()))?;
     if let Err(error) = crate::model::move_file_noreplace(&path, out) {
         // The previous site stays complete in conflict recovery. Avoid a
         // compare-then-replace restoration that could clobber a late winner.

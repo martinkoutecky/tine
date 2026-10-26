@@ -2,7 +2,7 @@
 use super::*;
 use unicode_normalization::UnicodeNormalization;
 
-impl Transaction<'_> {
+impl PagePlan<'_> {
     /// The spelling preflight holds the write set's path locks and writer.
     pub(crate) fn verify_spelling_input(
         &self,
@@ -222,6 +222,7 @@ impl Transaction<'_> {
         // resolution while still executing the real plain rename and listing.
         let alias_refusal =
             case_only(src, dst) && fault(self.store, FaultPoint::CaseMoveAliasRefusal);
+        self.check_write_target(dst)?;
         let result = if alias_refusal {
             Err(io::Error::from(io::ErrorKind::AlreadyExists))
         } else {
@@ -406,6 +407,7 @@ impl Transaction<'_> {
             )));
         }
         self.arm_directory_sync_fault();
+        self.check_write_target(&dst).map_err(failed)?;
         if let Err(error) = atomic_write_with_check(&dst, new, || {
             if fs::read(&dst)? == old {
                 Ok(())
@@ -475,7 +477,7 @@ mod spelling_tests {
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
         let from = FileId::from("pages/old.md".to_owned());
         let to = FileId::from("pages/Old.md".to_owned());
-        let tx = store.transaction(None);
+        let tx = store.page_plan(None);
         let mut undo = Undo {
             kind: UndoKind::Rename,
             src: from.clone(),
@@ -511,7 +513,7 @@ mod spelling_tests {
         fs::write(dir.path().join("pages/old.md"), "- original\n").unwrap();
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
         let from = FileId::from("pages/old.md".to_owned());
-        let tx = store.transaction(None);
+        let tx = store.page_plan(None);
         assert!(tx.retain_spelling_bytes(&from, b"- stale\n").is_err());
         assert!(!dir.path().join("logseq/.tine-trash").exists());
         tx.retain_spelling_bytes(&from, b"- original\n").unwrap();
@@ -557,7 +559,7 @@ mod spelling_tests {
             // two spellings are distinct, so respell admission itself skips.
             fs::rename(&src, &dst).unwrap();
             store
-                .transaction(None)
+                .page_plan(None)
                 .publish_respelled_entry(
                     &FileId::from("pages/old.md".to_owned()),
                     &FileId::from("pages/Old.md".to_owned()),
@@ -578,7 +580,7 @@ mod spelling_tests {
         fs::write(dir.path().join("pages/sub/old.md"), "- body\n").unwrap();
         std::os::unix::fs::symlink("sub/old.md", dir.path().join("pages/Old.md")).unwrap();
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
-        let tx = store.transaction(None);
+        let tx = store.page_plan(None);
         let dest = store.file_id(Area::Pages, "Old.md").unwrap();
         assert_eq!(
             tx.spelled_path(&dest).unwrap(),
@@ -595,7 +597,7 @@ mod spelling_tests {
         fs::create_dir(dir.path().join("pages")).unwrap();
         fs::write(dir.path().join("pages/CAFE\u{301}.md"), "- body\n").unwrap();
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
-        let tx = store.transaction(None);
+        let tx = store.page_plan(None);
         let desired = dir.path().join("pages/CAFÉ.md");
         assert_eq!(
             tx.listed_path(&desired).unwrap(),

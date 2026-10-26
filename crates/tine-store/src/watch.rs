@@ -2009,14 +2009,17 @@ mod tests {
             let read = store.page(&id).unwrap();
             let mut doc = read.doc;
             doc.blocks[0].raw = format!("edit {round}");
-            let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+            let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
             tx.save_page(
                 &[crate::EditKind::ReplacePage],
                 &id,
                 crate::SaveBase::Existing(read.rev),
                 &doc,
             );
-            assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+            assert!(matches!(
+                tx.commit_internal(),
+                crate::TxOutcome::Committed { .. }
+            ));
             std::thread::sleep(Duration::from_millis(600));
         }
         assert_eq!(

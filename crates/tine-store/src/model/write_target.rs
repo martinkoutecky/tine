@@ -1,6 +1,28 @@
 //! Bounded containment checks shared by transactions and actual host I/O.
 use super::*;
 
+#[cfg(test)]
+thread_local! {
+    static LAST_CHECKED_TARGET: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+/// RG7: graph mutation primitives must follow a successful containment check
+/// on this thread. Private app-data I/O uses the lower-level primitives.
+#[cfg(test)]
+pub(crate) fn assert_checked_target(target: &Path) {
+    LAST_CHECKED_TARGET.with(|checked| {
+        assert!(
+            checked
+                .borrow()
+                .as_ref()
+                .is_some_and(|path| target.starts_with(path)),
+            "RG7: graph mutation target {} has no matching containment check (last: {:?})",
+            target.display(),
+            checked.borrow(),
+        );
+    });
+}
+
 /// `Graph::ensure_write_target`'s answer for `root` (named `label`).
 pub(crate) fn checked_write_target(
     root: &Path,
@@ -8,11 +30,17 @@ pub(crate) fn checked_write_target(
     label: &str,
     binding: Option<&crate::root_binding::RootBinding>,
 ) -> io::Result<()> {
+    #[cfg(test)]
+    LAST_CHECKED_TARGET.with(|checked| *checked.borrow_mut() = None);
     if let Some(binding) = binding {
         binding.check()?;
     }
     match write_target_contained(root, target) {
-        Ok(true) => Ok(()),
+        Ok(true) => {
+            #[cfg(test)]
+            LAST_CHECKED_TARGET.with(|checked| *checked.borrow_mut() = Some(target.to_path_buf()));
+            Ok(())
+        }
         Ok(false) => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("write target escapes {label}: {}", target.display()),
@@ -246,6 +274,43 @@ pub(super) fn path_uses_managed_alias(root: &Path, target: &Path) -> bool {
 #[cfg(test)]
 mod write_target_probe_tests {
     use super::*;
+
+    #[test]
+    fn rg7_unchecked_graph_primitives_panic_before_writing() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.bin");
+        fs::write(&source, b"kept").unwrap();
+        for primitive in 0..4 {
+            LAST_CHECKED_TARGET.with(|checked| *checked.borrow_mut() = None);
+            let target = root.path().join(format!("unchecked-{primitive}"));
+            let result = std::panic::catch_unwind(|| match primitive {
+                0 => atomic_write_new(&target, b"new"),
+                1 => atomic_write(&target, b"new"),
+                2 => atomic_copy_new(&source, &target),
+                _ => move_file_noreplace(&source, &target),
+            });
+            assert!(result.is_err(), "primitive {primitive} bypassed RG7");
+            assert!(!target.exists(), "the assertion must precede I/O");
+            assert_eq!(fs::read(&source).unwrap(), b"kept");
+        }
+    }
+
+    #[test]
+    fn rg7_checked_target_and_descendant_can_be_written() {
+        let root = tempfile::tempdir().unwrap();
+        checked_write_target(root.path(), root.path(), "fixture", None).unwrap();
+        let target = root.path().join("checked.bin");
+        atomic_write_new(&target, b"new").unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+        checked_write_target(root.path(), &target, "fixture", None).unwrap();
+        atomic_write(&target, b"updated").unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"updated");
+        assert!(
+            checked_write_target(root.path(), &root.path().join("../escape"), "fixture", None)
+                .is_err()
+        );
+        assert!(std::panic::catch_unwind(|| assert_checked_target(&target)).is_err());
+    }
 
     fn graph(tag: &str) -> (PathBuf, Graph) {
         let dir = std::env::temp_dir().join(format!("tine-probe-{tag}-{}", std::process::id()));

@@ -27,6 +27,8 @@ mod page_identity;
 mod page_parse;
 mod parse_depth;
 pub(crate) mod write_target;
+#[cfg(test)]
+pub(crate) use write_target::assert_checked_target;
 use write_target::path_uses_managed_alias;
 pub(crate) use write_target::{canonical_existing_ancestor, checked_write_target};
 pub(crate) mod shape_stats;
@@ -4205,7 +4207,17 @@ impl Graph {
             }
             Err(error) => return Err(error),
         }
-        let equal = matches(&staged).map_err(|error| match move_file_noreplace(&staged, path) {
+        // A comparison can run arbitrary I/O; recheck the original target
+        // before restoring displaced bytes through it.
+        let restore = || {
+            if path.starts_with(&self.assets_root) {
+                self.ensure_asset_write_target(path)?;
+            } else {
+                self.ensure_write_target(path)?;
+            }
+            move_file_noreplace(&staged, path)
+        };
+        let equal = matches(&staged).map_err(|error| match restore() {
             Ok(()) => error,
             Err(restore) => io::Error::new(
                 error.kind(),
@@ -4218,7 +4230,7 @@ impl Graph {
         if equal {
             return Ok(Withdrawal::Exact(staged));
         }
-        match move_file_noreplace(&staged, path) {
+        match restore() {
             Ok(()) => Ok(Withdrawal::ExternalLive),
             Err(_) if path.exists() => Ok(Withdrawal::ExternalRecovery(staged)),
             Err(error) => Err(io::Error::new(
@@ -5161,6 +5173,8 @@ pub(crate) fn trash_stamp() -> String {
 /// Platform-native no-replace rename semantics ensure the source name and inode
 /// cannot be swapped between a check and an unlink.
 pub(crate) fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(dest);
     crate::no_replace::move_file_noreplace(src, dest)
 }
 
@@ -5168,6 +5182,8 @@ pub(crate) fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
 /// appeared after the caller's collision check. The payload is fsynced in a
 /// same-directory temp, then atomically renamed into the final name only if absent.
 pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(path);
     crate::atomic_file::atomic_write_new(path, bytes)
 }
 
@@ -5186,6 +5202,8 @@ pub(crate) fn atomic_write_with_check(
     bytes: &[u8],
     check: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(path);
     crate::atomic_file::atomic_write_with_check(
         path,
         bytes,
@@ -5210,6 +5228,8 @@ pub(crate) fn atomic_write_with_check(
 /// recovery: a sync writer that recreates the live name wins and the restore
 /// aborts instead of clobbering it.
 pub(crate) fn atomic_copy_new(src: &Path, dst: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(dst);
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     let dir = dst.parent().unwrap_or_else(|| Path::new("."));
@@ -5244,6 +5264,8 @@ pub(crate) fn atomic_copy_file_new(
     dst: &Path,
     max_bytes: u64,
 ) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(dst);
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     let dir = dst.parent().unwrap_or_else(|| Path::new("."));
@@ -7670,9 +7692,12 @@ mod tests {
         let rev = store.read(&from, None).unwrap().1;
         store.inject_fault(crate::FaultPoint::MidStepIo);
         store.inject_fault(crate::FaultPoint::UndoLiveWrite);
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.move_file(&from, rev, &to, None);
-        assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::NotCommitted { .. }
+        ));
         assert_eq!(
             fs::read_to_string(dir.join("pages/Alpha.md")).unwrap(),
             original
@@ -10508,12 +10533,15 @@ mod tests {
         let store = loaded_store(&dir);
         store.inject_fault(crate::FaultPoint::TwinAfterPublish);
         store.inject_fault(crate::FaultPoint::UndoLiveWrite);
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.create(
             &crate::FileId::from("pages/Guide.md".to_owned()),
             crate::Content::Bytes(b"- bundled guide\n".to_vec()),
         );
-        assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::NotCommitted { .. }
+        ));
         assert_eq!(
             fs::read_to_string(dir.join("pages/Guide.md")).unwrap(),
             "external during undo"

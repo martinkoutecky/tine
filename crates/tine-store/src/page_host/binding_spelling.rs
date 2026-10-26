@@ -34,7 +34,7 @@ impl PageHost {
             }
         }
         let mut destinations = BTreeSet::new();
-        let tx = self.store.transaction(None);
+        let tx = self.store.page_plan(None);
         // Collapse each folded move onto its single existing key. A
         // case-only namespace rename needs the same primitive per entry.
         // Duplicate pages and malformed move shapes refuse before either
@@ -149,7 +149,7 @@ impl PageHost {
             {
                 return Wait::Until(Some(std::time::Instant::now() + Duration::from_millis(10)));
             }
-            let tx = store.transaction(None);
+            let tx = store.page_plan(None);
             for (page, _, expected) in &expected {
                 let bytes = match expected {
                     Expected::Bytes(bytes) => Some(bytes.as_ref()),
@@ -224,7 +224,7 @@ impl PageHost {
             // alias rename plus directory sync. It never rewrites bytes.
             let (moved, mut result) =
                 store
-                    .transaction(None)
+                    .page_plan(None)
                     .respell_entry(&src.file(), &dst.file(), &bytes);
             if moved {
                 host.fs.spell(&key, dst.as_str());
@@ -240,7 +240,7 @@ impl PageHost {
                     .graph
                     .disk_sourced(&store.graph.root.join(dst.as_str()))
                 {
-                    let published = store.transaction(None).publish_respelled_entry(
+                    let published = store.page_plan(None).publish_respelled_entry(
                         &src.file(),
                         &dst.file(),
                         &bytes,

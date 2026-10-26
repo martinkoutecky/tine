@@ -129,12 +129,10 @@ impl From<Why> for PageRefusal {
     }
 }
 
-/// A retained writer's contract for unsaved input on the pages it touches
-/// (§7 step 1). Each writer keeps today's rule.
+/// A host operation's policy for unsaved input on its pages.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Input {
-    /// Flush then write: input found under the reservation is saved first,
-    /// with the reservation released meanwhile, and reserving starts over.
+    /// Save input before planning, then recheck it at admission.
     /// A page whose save cannot complete (conflict, persistent save error)
     /// is returned, as today's stuck pages are.
     Flush,
@@ -382,13 +380,10 @@ pub(super) struct Publication {
 pub(super) enum Indexing {
     Indexed,
     Failed,
-    /// A reservation holds the key: its retained transaction publishes
-    /// meanwhile, and this waits for the release (Q6).
-    Reserved,
 }
 
 /// A publication awaiting retry. A newer publication of its key, or the
-/// observation that ends a reservation, supersedes it.
+/// observation of newer disk bytes, supersedes it.
 struct Retry {
     publication: Publication,
     failures: u32,
@@ -451,10 +446,6 @@ pub(super) struct Book {
     pub observe_errors: BTreeSet<PageKey>,
     /// Each key's last twin: (existing file, save version, after the rename).
     twins: BTreeMap<PageKey, (String, u64, bool)>,
-    /// Released keys whose release observation has not yet succeeded
-    /// (V2, REVIEW-3a): the retained transaction's index stands until the
-    /// host has read its bytes, so older publications keep waiting.
-    pub handover: BTreeSet<PageKey>,
     /// A collected delivery's publications are with the sink and their
     /// results not yet recorded (V5, REVIEW-3a).
     delivering: bool,
@@ -611,12 +602,11 @@ impl Book {
         }
         // Due retries go first: each is older than any event of its key,
         // and an event of its key has superseded it above.
-        let host = &progress.host;
         let due = self
             .retry
             .iter()
             .inspect(|_| work(Work::Book, 1))
-            .filter(|(key, retry)| retry.due <= now && !self.reserved(key, host))
+            .filter(|(_, retry)| retry.due <= now)
             .map(|(_, retry)| retry.publication.clone());
         delivery.publications.splice(0..0, due.collect::<Vec<_>>());
         for key in self.evictable(&progress.host, &delivery.publications) {
@@ -735,7 +725,7 @@ impl Book {
     }
 
     /// Owned keys the host no longer holds, with nothing left to publish:
-    /// no page, job, reservation or unobserved release, queued or applying
+    /// no page, job, queued or applying
     /// request (an Open waiting for its lock: its admission owned the key),
     /// vehicle debt (R2), retry or `pending` publication (Q6: a dirty page closed by the window stays held until
     /// its save and cleanup finish).
@@ -750,7 +740,6 @@ impl Book {
                     && !(host.applying.iter().chain(&host.queue))
                         .any(|request| &request.page == *key)
                     && !self.retry.contains_key(*key)
-                    && !self.handover.contains(*key)
                     && !pending.iter().any(|p| &p.key == *key)
             })
             .cloned()
@@ -758,8 +747,7 @@ impl Book {
     }
 
     /// Record a delivery's index results in order (§5): success advances
-    /// the key's watermark; a failure retries with the save backoff; a
-    /// reserved key waits for its release.
+    /// the key's watermark; a failure retries with the save backoff.
     pub fn record(&mut self, results: Vec<(Publication, Indexing)>, now: u64) {
         self.delivering = false;
         for (publication, indexing) in results {
@@ -785,38 +773,18 @@ impl Book {
                         },
                     );
                 }
-                Indexing::Reserved => {
-                    let retry = Retry {
-                        publication,
-                        failures,
-                        due: now,
-                    };
-                    self.retry.insert(key, retry);
-                }
             }
         }
     }
 
     /// The earliest retry due, for the driver's sleep (§5).
-    pub fn next_retry<F: HostIo>(&self, host: &Host<F>) -> Option<u64> {
-        self.retry
-            .iter()
-            .filter(|(key, _)| !self.reserved(key, host))
-            .map(|(_, retry)| retry.due)
-            .min()
-    }
-
-    /// A retained writer publishes `key`'s index: its reservation holds,
-    /// or its release has not yet been observed (Q6, V2).
-    fn reserved<F: HostIo>(&self, key: &str, host: &Host<F>) -> bool {
-        host.retained.contains(key) || self.handover.contains(key)
+    pub fn next_retry<F: HostIo>(&self, _host: &Host<F>) -> Option<u64> {
+        self.retry.iter().map(|(_, retry)| retry.due).min()
     }
 
     /// Who publishes `key`'s index now (§5, Q6).
-    pub fn owner<F: HostIo>(&self, key: &str, host: &Host<F>) -> Owner {
-        if self.reserved(key, host) {
-            Owner::Reservation
-        } else if self.owned.contains(key) {
+    pub fn owner<F: HostIo>(&self, key: &str, _host: &Host<F>) -> Owner {
+        if self.owned.contains(key) {
             Owner::Consumer
         } else {
             Owner::Watcher
@@ -979,7 +947,7 @@ impl PageHost {
         };
         if !held {
             self.store
-                .transaction(None)
+                .page_plan(None)
                 .page_open_checks(&spelling.file(), name)?;
         }
         self.try_register(&key, &spelling)
@@ -1064,7 +1032,7 @@ impl PageHost {
         kinds: &[EditKind],
     ) -> Result<(Text, Handoff), PageRefusal> {
         let file = PageId::from(spelling).file();
-        let tx = self.store.transaction(None);
+        let tx = self.store.page_plan(None);
         let old = source.and_then(|text| text.as_deref());
         let (bytes, document) = tx.serialize_host_input(&file, dto, old)?;
         let bytes: Text = Some(Arc::from(bytes));
@@ -1263,9 +1231,10 @@ pub(super) use apply::creation_refusal;
 pub use apply::{ApplyRefusal, Effect, Expected, HostOp};
 #[cfg(test)]
 pub(super) use retained::unsaved;
+pub(super) use retained::FlushRefusal;
+pub use retained::RenameRefusal;
 #[cfg(feature = "test-faults")]
 pub use retained::OPERATION_WAIT;
-pub use retained::{RenameRefusal, Reservation, ReserveRefusal};
 #[cfg(test)]
 #[path = "binding_tests.rs"]
 mod tests;

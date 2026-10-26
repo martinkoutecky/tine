@@ -53,8 +53,6 @@ pub(super) enum Owner {
     Watcher,
     /// The driver's publication consumer, in host event order.
     Consumer,
-    /// A retained writer's reservation: its transaction publishes.
-    Reservation,
 }
 
 /// A watcher read or a released reservation the driver must observe (§5, §7).
@@ -177,7 +175,6 @@ impl<F: HostIo, C: Clock> State<F, C> {
                 Disposition::Waiting => {}
                 _ => {
                     self.observe.remove(&key);
-                    self.book.handover.remove(&key);
                     self.book.observe_errors.remove(&key);
                     return Disposition::Applied;
                 }

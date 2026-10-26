@@ -75,23 +75,22 @@ fn pump(slot: &GraphSlot, subscription: &tine_store::Subscription) -> bool {
 
 /// An own (Tine) save setting the identified block of page `rel` to `text`.
 fn save(slot: &GraphSlot, rel: &str, text: &str) {
+    let app = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(&slot.store, app.path()).unwrap();
     let id = PageId::from(rel);
     let read = slot.store.page(&id).unwrap();
     let mut doc = read.doc;
     doc.blocks[1].raw = format!("{text}\nid:: {ID}");
     let mut tx = slot
         .store
-        .transaction(Some(tine_store::EditKind::ReplacePage));
+        .page_plan(Some(tine_store::EditKind::ReplacePage));
     tx.save_page(
         &[tine_store::EditKind::ReplacePage],
         &id,
         SaveBase::Existing(read.rev),
         &doc,
     );
-    assert!(matches!(
-        tx.commit(),
-        tine_store::TxOutcome::Committed { .. }
-    ));
+    assert!(matches!(host.apply(tx.plan().unwrap()), Ok(())));
     assert_eq!(
         std::fs::read_to_string(slot.root_key.join(rel)).unwrap(),
         body(text)
@@ -826,7 +825,7 @@ fn a_live_draft_conflict_reviews_three_way_against_the_editors_ledger_base() {
         // guarded write over the transaction.
         let mut tx = slot
             .store
-            .transaction(Some(tine_store::EditKind::ReplacePage));
+            .page_plan(Some(tine_store::EditKind::ReplacePage));
         tx.save_page(
             &[tine_store::EditKind::ReplacePage],
             &PageId::from("pages/Desk.md"),
@@ -834,8 +833,12 @@ fn a_live_draft_conflict_reviews_three_way_against_the_editors_ledger_base() {
             &merged,
         );
         assert!(matches!(
-            tx.commit(),
-            tine_store::TxOutcome::Committed { .. }
+            {
+                let app = tempfile::tempdir().unwrap();
+                let host = tine_store::PageHost::start_for_tests(&slot.store, app.path()).unwrap();
+                host.apply(tx.plan().unwrap())
+            },
+            Ok(())
         ));
         let written = std::fs::read_to_string(dir.join("graph/pages/Desk.md")).unwrap();
         if usable {

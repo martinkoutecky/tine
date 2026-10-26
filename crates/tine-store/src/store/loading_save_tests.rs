@@ -271,7 +271,7 @@ fn a_page_created_then_edited_before_loading_ends_holds_the_edit() {
         "each deferred save is its own change, in save order"
     );
     // After loading, an edit publishes as for any page.
-    let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
     tx.save_page(
         &[crate::EditKind::ReplacePage],
         &PageId::from("pages/New.md"),
@@ -279,7 +279,7 @@ fn a_page_created_then_edited_before_loading_ends_holds_the_edit() {
         &doc("New", "third"),
     );
     assert!(matches!(
-        tx.commit(),
+        tx.commit_internal(),
         crate::TxOutcome::Committed {
             change: Some(_),
             ..
@@ -444,13 +444,16 @@ fn a_config_write_during_loading_keeps_own_changes_in_save_order() {
     let first = edit(&store, "C", read.rev, "own C");
     let cfg = FileId::from("logseq/config.edn".to_owned());
     let (_, config_rev) = store.read(&cfg, None).unwrap();
-    let mut tx = store.transaction(None);
+    let mut tx = store.page_plan(None);
     tx.replace(
         &cfg,
         config_rev,
         b"{:preferred-format :markdown :x 1}\n".to_vec(),
     );
-    assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+    assert!(matches!(
+        tx.commit_internal(),
+        crate::TxOutcome::Committed { .. }
+    ));
     let second = edit(&store, "C", first.clone(), "own C two");
     release_hook(&listed);
     assert_once(&store, "C", "own C two");
@@ -486,13 +489,16 @@ fn a_trash_after_the_parse_read_the_page_is_gone_from_the_first_view() {
         let read = store
             .page(&PageId::from(format!("pages/{name}.md").as_str()))
             .unwrap();
-        let mut tx = store.transaction(Some(crate::EditKind::DeletePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::DeletePage));
         tx.trash(
             &FileId::from(format!("pages/{name}.md")),
             read.rev,
             crate::TrashIf::Any,
         );
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
     }
     release_hook(&listed);
     let view = store.whole_graph().unwrap();
@@ -527,14 +533,17 @@ fn a_rename_after_the_parse_read_the_page_holds_the_new_name_once() {
         let read = store
             .page(&PageId::from(format!("pages/{name}.md").as_str()))
             .unwrap();
-        let mut tx = store.transaction(Some(crate::EditKind::RenamePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::RenamePage));
         tx.move_file(
             &FileId::from(format!("pages/{name}.md")),
             read.rev,
             &FileId::from(format!("pages/{name}2.md")),
             None,
         );
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
     }
     release_hook(&listed);
     let view = store.whole_graph().unwrap();

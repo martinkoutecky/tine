@@ -306,11 +306,11 @@ impl PageHost {
                             deadline = std::time::Instant::now() + OPERATION_WAIT;
                             continue;
                         }
-                        Err(ReserveRefusal::Unsaved(pages)) => {
+                        Err(FlushRefusal::Unsaved(pages)) => {
                             let page = pages.into_iter().next().expect("unsaved");
                             return Err(ApplyRefusal::Unsaved(page));
                         }
-                        Err(ReserveRefusal::Busy) => return Err(ApplyRefusal::Busy),
+                        Err(FlushRefusal::Busy) => return Err(ApplyRefusal::Busy),
                     }
                 }
                 Ok(Err(refusal)) => return Err(refusal),
@@ -348,10 +348,10 @@ impl PageHost {
         let deadline = std::time::Instant::now() + OPERATION_WAIT;
         self.flush(&keys, &keys, deadline)
             .map_err(|refusal| match refusal {
-                ReserveRefusal::Unsaved(pages) => {
+                FlushRefusal::Unsaved(pages) => {
                     ApplyRefusal::Unsaved(pages.into_iter().next().expect("unsaved"))
                 }
-                ReserveRefusal::Busy => ApplyRefusal::Busy,
+                FlushRefusal::Busy => ApplyRefusal::Busy,
             })
     }
 }
@@ -363,7 +363,7 @@ pub(in crate::page_host) fn creation_refusal(
     store: &crate::Store,
     creations: &[(crate::FileId, Option<String>, Option<crate::FileId>)],
 ) -> Option<ApplyRefusal> {
-    let tx = store.transaction(None);
+    let tx = store.page_plan(None);
     creations
         .iter()
         .any(|(file, name, source)| {

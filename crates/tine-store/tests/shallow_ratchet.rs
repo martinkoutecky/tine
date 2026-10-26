@@ -125,7 +125,7 @@ fn takes_store(sig: &syn::Signature) -> bool {
     sig.inputs.iter().any(|input| match input {
         syn::FnArg::Typed(t) => idents(&t.ty)
             .iter()
-            .any(|t| t == "Store" || t == "Transaction"),
+            .any(|t| t == "Store" || t == "Transaction" || t == "PagePlan"),
         syn::FnArg::Receiver(_) => false,
     })
 }
@@ -406,7 +406,11 @@ fn surface(src: &Path) -> Surface {
                         match it {
                             ImplItem::Fn(f) if is_pub(&f.vis) && !is_cfg_test(&f.attrs) => {
                                 let key = format!("{module}::{ty}::{}", f.sig.ident);
-                                if ty == "Store" || ty == "Transaction" || takes_store(&f.sig) {
+                                if ty == "Store"
+                                    || ty == "Transaction"
+                                    || ty == "PagePlan"
+                                    || takes_store(&f.sig)
+                                {
                                     s.ops.insert(key.clone());
                                 }
                                 if carries_path(&f.sig) {
@@ -1261,10 +1265,6 @@ const RULE5_DOCS: &[(&str, &str)] = &[
     (
         "struct page_host::PageHost",
         "names the window generation every command carries, a protocol field; nothing answers it",
-    ),
-    (
-        "struct page_host::Reservation",
-        "lists the host steps a reservation fences (open, load, save, draft); no state is returned",
     ),
     (
         "fn store::Store::diagnostics",

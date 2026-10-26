@@ -13,9 +13,35 @@ use std::time::Duration;
 
 use tine_core::pdf::{self, Highlight};
 use tine_graph_features::{conflicts, guide, journals, pages, pdf as features_pdf};
-use tine_store::{Input, PageHost, PageId, Store};
+use tine_store::{PageHost, PageId, Store};
 
 const CONFIG: &str = "{:file/name-format :triple-lowbar\n :default-home {:page \"Start\"}}\n";
+
+#[test]
+fn an_unusable_journal_trash_names_the_recovery_location() {
+    let _guard = crate::integration_lock();
+    let root = graph(
+        "journal-trash-location",
+        &[("journals/2026_06_20.md", "- keep\n")],
+    );
+    fs::write(root.join("logseq/.tine-trash"), "not a directory").unwrap();
+    let app = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    let host = PageHost::start_for_tests(&store, app.path()).unwrap();
+    let error = journals::trash_journal_file(&store, &host, "2026_06_20.md").unwrap_err();
+    assert!(
+        error.to_string().contains("logseq/.tine-trash/pages"),
+        "{error}"
+    );
+    assert_eq!(
+        fs::read(root.join("journals/2026_06_20.md")).unwrap(),
+        b"- keep\n"
+    );
+    drop(host);
+    store.close();
+    fs::remove_dir_all(root).unwrap();
+}
 
 fn scratch(label: &str) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -445,9 +471,7 @@ fn waits_for_a_reservation(
     let store = Arc::new(Store::open(&dir, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     let host = PageHost::start_for_tests(&store, &app_data).unwrap();
-    let held = host
-        .reserve(|| vec![PageId::from(page)], Input::Refuse)
-        .expect("nothing unsaved");
+    let held = host.pause_for_tests(&[PageId::from(page)]);
     let before = tree(&dir);
     std::thread::scope(|scope| {
         let (done, finished) = mpsc::channel();
@@ -528,9 +552,7 @@ fn finishes_while_held<T: Send>(
     held: &str,
     write: impl FnOnce() -> T + Send,
 ) -> T {
-    let reservation = host
-        .reserve(|| vec![PageId::from(held)], Input::Refuse)
-        .expect("nothing unsaved");
+    let reservation = host.pause_for_tests(&[PageId::from(held)]);
     std::thread::scope(|scope| {
         let (done, finished) = mpsc::channel();
         scope.spawn(move || {

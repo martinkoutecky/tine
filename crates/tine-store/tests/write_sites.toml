@@ -6,7 +6,7 @@
 file = "src-tauri/src/owner/git_autocommit.rs"
 fn = "append_syncthing_ignore"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "src-tauri/src/owner/git_autocommit_tests.rs#root_gitignore_keeps_the_non_page_revision_and_target_guards"
 oracle = false
 note = "D-20261026-GI: fixed root .gitignore only, through Store's non-page revision-guarded replace or no-replace create; no raw filesystem mutation or page write. Durable device-local attempt precedes the write; ordinary transaction crash scope applies."
@@ -97,60 +97,60 @@ mutations = ".graph_sync=1"
 file = "crates/tine-graph-features/src/config.rs"
 fn = "update"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Store/host transaction API; no raw graph filesystem access. Transaction::path is the delegated containment guard; outside HostIo refinement."
+note = "Store/host transaction API; no raw graph filesystem access. PagePlan::path is the delegated containment guard; outside HostIo refinement."
 mutations = ".create=1"
 
 [[site]]
 file = "crates/tine-graph-features/src/custom_css.rs"
 fn = "ensure_custom_css"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Store/host transaction API; no raw graph filesystem access. Transaction::path is the delegated containment guard; outside HostIo refinement."
+note = "Store/host transaction API; no raw graph filesystem access. PagePlan::path is the delegated containment guard; outside HostIo refinement."
 mutations = ".create=1"
 
 [[site]]
 file = "crates/tine-graph-features/src/guide.rs"
 fn = "create_if_absent"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Store/host transaction API; no raw graph filesystem access. Transaction::path is the delegated containment guard; outside HostIo refinement."
-mutations = ".create=1"
+note = "Store/host transaction API; no raw graph filesystem access. PagePlan::path is the delegated containment guard; outside HostIo refinement."
+mutations = ".create=2"
 
 [[site]]
 file = "crates/tine-graph-features/src/pages.rs"
 fn = "host_rename"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Store/host transaction API; no raw graph filesystem access. Transaction::path is the delegated containment guard; outside HostIo refinement."
+note = "Store/host transaction API; no raw graph filesystem access. PagePlan::path is the delegated containment guard; outside HostIo refinement."
 mutations = ".rename=1"
 
 [[site]]
 file = "crates/tine-graph-features/src/pdf.rs"
 fn = "sidecar_steps"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Store/host transaction API; no raw graph filesystem access. Transaction::path is the delegated containment guard; outside HostIo refinement."
+note = "Store/host transaction API; no raw graph filesystem access. PagePlan::path is the delegated containment guard; outside HostIo refinement."
 mutations = ".create=1"
 
 [[site]]
 file = "crates/tine-graph-features/src/pdf.rs"
 fn = "write_pdf_area_image"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Store/host transaction API; no raw graph filesystem access. Transaction::path is the delegated containment guard; outside HostIo refinement."
+note = "Store/host transaction API; no raw graph filesystem access. PagePlan::path is the delegated containment guard; outside HostIo refinement."
 mutations = ".create=1"
 
 [[site]]
@@ -367,7 +367,7 @@ mutations = ".sync_all=1"
 file = "crates/tine-store/src/link_identity.rs"
 fn = "Store::ensure_link_identity"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
 note = "37-byte link UUID is created through the guarded transaction path; no direct filesystem publication."
@@ -391,7 +391,7 @@ guard = "crates/tine-store/src/model.rs#Graph::withdraw_file_to_conflict_if"
 test = "crates/tine-store/tests/f8_vcs_markers.rs#resolving_markers_stages_the_preresolution_file_in_recoverable_trash"
 oracle = false
 note = "Withdraw conflict copy uses ensure_write_target with the root witness and bounded durable parent creation. Outside oracle; full A-ROOT-BOUND/A-DIRSYNC environment proof remains pending."
-mutations = "directory_durability::create_dir_all_durable=1, move_file_noreplace=3"
+mutations = "directory_durability::create_dir_all_durable=1, move_file_noreplace=2"
 
 [[site]]
 file = "crates/tine-store/src/model.rs"
@@ -701,7 +701,7 @@ guard = ""
 test = "crates/tine-store/tests/publish_external_kill.rs#a_killed_external_export_reopens_without_a_partial_site"
 oracle = false
 note = "Generated site output in a user-selected existing parent outside the graph; this entry point refuses an in-graph destination. Private stage then no-replace publication; outside HostIo oracle. Shared stage primitives also serve graph publication and have graph rows."
-mutations = "directory_durability::sync_directory_entry=2, model::move_file_noreplace=1"
+mutations = "directory_durability::sync_directory_entry=2, no_replace::move_file_noreplace=1"
 
 [[site]]
 file = "crates/tine-store/src/publish.rs"
@@ -865,27 +865,27 @@ mutations = ".publish=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
-fn = "Transaction::apply"
+fn = "PagePlan::apply"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_copy_file_new=1, atomic_copy_new=1, atomic_file::sync_existing=1, atomic_write=1, atomic_write_new=2, atomic_write_with_check=1, directory_durability::create_dir_all_durable=4, fs::remove_file=3, move_file_noreplace=2, sync_move_dirs=2"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
-fn = "Transaction::commit_timed"
+fn = "PagePlan::commit_timed"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "directory_durability::sync_directory_entry=1, fs::remove_file=3"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
-fn = "Transaction::fault_collision"
+fn = "PagePlan::fault_collision"
 domain = "graph"
 guard = "unguarded:A-MUTATION-CONTAINMENT"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
@@ -895,42 +895,42 @@ mutations = "atomic_write_new=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
-fn = "Transaction::fault_twin"
+fn = "PagePlan::fault_twin"
 domain = "graph"
 guard = "unguarded:A-MUTATION-CONTAINMENT"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
 note = "Syntactically shipped fault helper has no containment check of its own; fault() is false outside test-faults. It simulates an external writer; recorded conservatively, not a reachable user write claim."
-mutations = "atomic_write_new=1"
+mutations = "atomic_file::atomic_write_new=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
-fn = "Transaction::undo"
+fn = "PagePlan::undo"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
-mutations = "atomic_write=1, atomic_write_new=3, move_file_noreplace=1, sync_move_dirs=1"
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+mutations = "atomic_write=1, move_file_noreplace=1, sync_move_dirs=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
-fn = "Transaction::write_old_copy"
+fn = "PagePlan::write_old_copy"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_write_new=1, directory_durability::create_dir_all_durable=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
-fn = "Transaction::write_trash_copy"
+fn = "PagePlan::write_trash_copy"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_write_new=1, directory_durability::create_dir_all_durable=1"
 
 [[site]]
@@ -945,32 +945,32 @@ mutations = "directory_durability::sync_directory_entry=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction/move_file.rs"
-fn = "Transaction::apply_move"
+fn = "PagePlan::apply_move"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_write_with_check=1, directory_durability::create_dir_all_durable=2"
 
 [[site]]
 file = "crates/tine-store/src/transaction/move_file.rs"
-fn = "Transaction::publish_move"
+fn = "PagePlan::publish_move"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_file::rename_replace=1, move_file_noreplace=1, sync_move_dirs=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction/read_checks.rs"
-fn = "Transaction::stage2_faults"
+fn = "PagePlan::stage2_faults"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_write=3, atomic_write_new=2"
 
 [[site]]
@@ -1147,10 +1147,10 @@ mutations = "device_io::atomic_write=1, fs::create_dir_all=1"
 file = "src-tauri/src/css_files.rs"
 fn = "graph_save"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "src-tauri/src/css_files.rs#css_edits_refuse_external_replacement_and_concurrent_creation"
 oracle = false
-note = "Graph CSS uses Store transaction create/replace; delegated Transaction::path containment. Global CSS writes app data."
+note = "Graph CSS uses Store transaction create/replace; delegated PagePlan::path containment. Global CSS writes app data."
 mutations = ".create=1"
 
 [[site]]
@@ -1773,3 +1773,23 @@ oracle = false
 note = "Generated browser extension in app data, no graph path."
 mutations = "device_io::atomic_write=1"
 
+
+[[site]]
+file = "crates/tine-store/src/transaction.rs"
+fn = "PagePlan::restore_old_bytes"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::check_write_target"
+test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
+oracle = false
+note = "Undo rechecks the live graph/approved-assets target after withdrawal before no-replace restoration. No healthy edit I/O changes."
+mutations = "atomic_write_new=1"
+
+[[site]]
+file = "crates/tine-store/src/transaction.rs"
+fn = "Transaction::create"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
+test = "crates/tine-store/tests/host_only_writer.rs#public_transactions_refuse_dynamic_page_effects_before_any_write"
+oracle = false
+note = "Public non-page wrapper queues a shared guarded create; preflight rejects a dynamically resolved page before any mutation."
+mutations = ".create=1"

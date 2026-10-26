@@ -22,39 +22,8 @@ impl<F: HostIo> Host<F> {
         self.with_locks(&keys, |host| host.load_locked(key))
     }
 
-    pub(super) fn release(&mut self, keys: &BTreeSet<PageKey>) -> Disposition {
-        if !keys.is_subset(&self.retained) {
-            return Disposition::Refused;
-        }
-        if self.allocator_busy() || self.lacks_locks(keys) {
-            return Disposition::Waiting;
-        }
-        // Reconcile even an undone transaction; failed reads retain custody.
-        let result = self.with_locks(keys, |host| {
-            let mut observed = BTreeMap::new();
-            for key in keys {
-                let Ok(bytes) = host.fs.read_page(key) else {
-                    return Disposition::Waiting;
-                };
-                observed.insert(key.clone(), bytes);
-            }
-            for (key, bytes) in observed {
-                if host.pages.contains_key(&key) {
-                    host.adopt_read(&key, bytes);
-                }
-            }
-            Disposition::Applied
-        });
-        if result == Disposition::Applied {
-            for key in keys {
-                self.retained.remove(key);
-            }
-        }
-        result
-    }
-
     pub(super) fn switch_request(&mut self) -> Disposition {
-        if self.worker.is_some() || !self.retained.is_empty() {
+        if self.worker.is_some() {
             return Disposition::Waiting;
         }
         let keys = self.pages.keys().cloned().collect();

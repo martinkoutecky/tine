@@ -21,10 +21,10 @@ fn config_failure_opens_but_never_creates_in_default_directories() {
     let existing = store.file_id(Area::Pages, "Existing.md").unwrap();
     assert!(store.page(&existing.as_str().into()).unwrap().doc.read_only);
     let id = store.file_id(Area::Pages, "Wrong.md").unwrap();
-    let mut tx = store.transaction(Some(EditKind::CreatePage));
+    let mut tx = store.page_plan(Some(EditKind::CreatePage));
     tx.create(&id, Content::Bytes(b"- wrong\n".to_vec()));
     assert!(
-        matches!(tx.commit(), TxOutcome::NotCommitted { .. }),
+        tx.plan().is_err(),
         "unknown configured directories must block writes"
     );
     assert!(!root.join("pages/Wrong.md").exists());
@@ -36,10 +36,13 @@ fn config_failure_opens_but_never_creates_in_default_directories() {
     .unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(store.config().problem.is_none());
+    let store = std::sync::Arc::new(store);
+    let app = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(&store, app.path()).unwrap();
     let id = store.file_id(Area::Pages, "Recovered.md").unwrap();
-    let mut tx = store.transaction(Some(EditKind::CreatePage));
+    let mut tx = store.page_plan(Some(EditKind::CreatePage));
     tx.create(&id, Content::Bytes(b"- recovered\n".to_vec()));
-    assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
+    host.apply(tx.plan().unwrap()).unwrap();
     assert!(root.join("notes/Recovered.md").exists());
     assert!(!root.join("pages/Recovered.md").exists());
     store.close();

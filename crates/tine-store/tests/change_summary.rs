@@ -1,12 +1,12 @@
 //! GX4 S1 soundness oracle: compare real immutable host answers, then require
 //! an invalidation key for every changed answer. The oracle does no writes
 //! outside its temporary graph; ordinary edits use the guarded transaction.
+use crate::{Area, Cancel, EditKind, IrAnswer, IrRequest, PageId, SaveBase, Store, TxOutcome};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use tine_core::model::{BlockDto, PageDto, RefGroup};
 use tine_core::refs::page_key;
-use tine_store::{Area, Cancel, EditKind, IrAnswer, IrRequest, PageId, SaveBase, Store, TxOutcome};
 
 const PERSISTED: &str = "00000000-0000-4000-8000-000000000001";
 const TARGETS: &[&str] = &[
@@ -118,7 +118,7 @@ fn fixture(blocks: usize) -> (tempfile::TempDir, Store) {
         store
             .register_query_subscription(
                 id.into(),
-                Some(tine_store::QuerySubscription::Query {
+                Some(crate::QuerySubscription::Query {
                     query,
                     context: Default::default(),
                 }),
@@ -129,7 +129,7 @@ fn fixture(blocks: usize) -> (tempfile::TempDir, Store) {
     store
         .register_query_subscription(
             "registry".into(),
-            Some(tine_store::QuerySubscription::Registry),
+            Some(crate::QuerySubscription::Registry),
             None,
         )
         .unwrap();
@@ -137,7 +137,7 @@ fn fixture(blocks: usize) -> (tempfile::TempDir, Store) {
 }
 
 fn commit(store: &Store, pages: &[(&str, PageDto, SaveBase)]) -> Value {
-    let mut tx = store.transaction(Some(EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(EditKind::ReplacePage));
     for (path, doc, base) in pages {
         tx.save_page(
             &[EditKind::ReplacePage, EditKind::CreatePage],
@@ -146,7 +146,7 @@ fn commit(store: &Store, pages: &[(&str, PageDto, SaveBase)]) -> Value {
             doc,
         );
     }
-    let outcome = tx.commit();
+    let outcome = tx.commit_internal();
     let TxOutcome::Committed {
         change: Some(change),
         ..
@@ -209,7 +209,7 @@ fn answers(store: &Store, root: &std::path::Path) -> Answers {
     let view = store.whole_graph().unwrap();
     let mut out = Answers::default();
     out.days = json!(view
-        .inventory(tine_store::InventoryScope::ReferencedJournals)
+        .inventory(crate::InventoryScope::ReferencedJournals)
         .0
         .iter()
         .filter_map(|entry| entry.day.map(|day| day.0))
@@ -467,7 +467,7 @@ fn check(before: &Answers, after: &Answers, summary: &Value) -> Result<[usize; 8
 
 #[test]
 fn day_and_template_hints_are_edit_scoped_and_cover_removal() {
-    let _guard = crate::integration_lock();
+    let _guard = crate::test_transactions::integration_lock();
     let (dir, store) = fixture(3);
     let mut previous = answers(&store, dir.path());
     for (raw, days, templates) in [
@@ -510,7 +510,7 @@ fn day_and_template_hints_are_edit_scoped_and_cover_removal() {
 
 #[test]
 fn change_summary_random_reader_oracle() {
-    let _guard = crate::integration_lock();
+    let _guard = crate::test_transactions::integration_lock();
     let (mut total, mut full, mut readers, mut precise_readers) = (0, 0, [0; 8], [0; 8]);
     let mut omitted = [0; 8];
     let mut query_omissions = 0;
@@ -538,7 +538,7 @@ fn change_summary_random_reader_oracle() {
                         format!("tags:: Target\n\n- External Target {seed}\n"),
                     )
                     .unwrap();
-                    store.refresh(tine_store::Depth::Stamps).unwrap();
+                    store.refresh(crate::Depth::Stamps).unwrap();
                     serde_json::to_value(sub.try_recv().unwrap().expect("external publication"))
                         .unwrap()
                 }
@@ -561,7 +561,7 @@ fn change_summary_random_reader_oracle() {
                     commit(&store, &[("pages/Life.md", doc, SaveBase::CreateNew)])
                 }
                 61 | 62 => {
-                    let mut tx = store.transaction(Some(EditKind::RenamePage));
+                    let mut tx = store.page_plan(Some(EditKind::RenamePage));
                     if step == 61 {
                         let from = PageId::from("pages/Life.md");
                         tx.move_file(
@@ -575,13 +575,13 @@ fn change_summary_random_reader_oracle() {
                         tx.trash(
                             &from.file(),
                             store.page(&from).unwrap().rev,
-                            tine_store::TrashIf::Any,
+                            crate::TrashIf::Any,
                         );
                     }
                     let TxOutcome::Committed {
                         change: Some(change),
                         ..
-                    } = tx.commit()
+                    } = tx.commit_internal()
                     else {
                         panic!("lifecycle commit")
                     };
@@ -727,7 +727,7 @@ fn change_summary_random_reader_oracle() {
 
 #[test]
 fn change_summary_instant_clock_query_fires_after_its_displayed_row_expires() {
-    let _guard = crate::integration_lock();
+    let _guard = crate::test_transactions::integration_lock();
     let (_dir, store) = fixture(1);
     let timestamp = || {
         std::time::SystemTime::now()
@@ -748,7 +748,7 @@ fn change_summary_instant_clock_query_fires_after_its_displayed_row_expires() {
     store
         .register_query_subscription(
             "instant".into(),
-            Some(tine_store::QuerySubscription::Query {
+            Some(crate::QuerySubscription::Query {
                 query: parsed.query.clone(),
                 context: Default::default(),
             }),
@@ -788,9 +788,9 @@ fn change_summary_instant_clock_query_fires_after_its_displayed_row_expires() {
 
 #[test]
 fn change_summary_registered_query_kinds_and_precise_global_inputs() {
-    let _guard = crate::integration_lock();
+    let _guard = crate::test_transactions::integration_lock();
     let (_dir, store) = fixture(1);
-    let source = tine_store::QuerySubscription::Source {
+    let source = crate::QuerySubscription::Source {
         source: "@page and name = 'A'".into(),
         dialect: tine_core::query::wire_parse::QueryTextDialect::MacroTql,
     };
@@ -802,11 +802,7 @@ fn change_summary_registered_query_kinds_and_precise_global_inputs() {
         "narrow"
     );
     store
-        .register_query_subscription(
-            "unknown".into(),
-            Some(tine_store::QuerySubscription::Full),
-            None,
-        )
+        .register_query_subscription("unknown".into(), Some(crate::QuerySubscription::Full), None)
         .unwrap();
     let wire = edit(&store, "pages/B.md", |doc| {
         doc.blocks[0].raw = format!("Unrelated plain body\nid:: {PERSISTED}")
@@ -847,7 +843,7 @@ fn change_summary_registered_query_kinds_and_precise_global_inputs() {
             store
                 .register_query_subscription(
                     id.into(),
-                    Some(tine_store::QuerySubscription::Query {
+                    Some(crate::QuerySubscription::Query {
                         query,
                         context: Default::default(),
                     }),
@@ -859,7 +855,7 @@ fn change_summary_registered_query_kinds_and_precise_global_inputs() {
     store
         .register_query_subscription(
             "registry".into(),
-            Some(tine_store::QuerySubscription::Registry),
+            Some(crate::QuerySubscription::Registry),
             None,
         )
         .unwrap();
@@ -880,7 +876,7 @@ fn change_summary_registered_query_kinds_and_precise_global_inputs() {
 
 #[test]
 fn change_summary_wire_cost_is_the_changed_block_not_page_size() {
-    let _guard = crate::integration_lock();
+    let _guard = crate::test_transactions::integration_lock();
     let mut sizes = Vec::new();
     for blocks in [1, 60] {
         let (_dir, store) = fixture(blocks);
@@ -909,7 +905,7 @@ fn change_summary_wire_cost_is_the_changed_block_not_page_size() {
 
 #[test]
 fn change_summary_registered_mentions_and_incoming_targets() {
-    let _guard = crate::integration_lock();
+    let _guard = crate::test_transactions::integration_lock();
     let (dir, store) = fixture(3);
     // Compare actual answers on add, retained-text edit and removal, including
     // alias, namespace and journal spellings. Code is not a plain occurrence.
@@ -987,7 +983,7 @@ fn change_summary_registered_mentions_and_incoming_targets() {
     store
         .register_reader_while_live(
             "binding".into(),
-            Some(tine_store::QuerySubscription::Unlinked {
+            Some(crate::QuerySubscription::Unlinked {
                 name: "Target".into(),
             }),
             &revoked,
@@ -996,7 +992,7 @@ fn change_summary_registered_mentions_and_incoming_targets() {
     store
         .register_reader_while_live(
             "query-binding".into(),
-            Some(tine_store::QuerySubscription::Full),
+            Some(crate::QuerySubscription::Full),
             &revoked,
         )
         .unwrap();
@@ -1009,7 +1005,7 @@ fn change_summary_registered_mentions_and_incoming_targets() {
     store
         .register_reader_while_live(
             "late".into(),
-            Some(tine_store::QuerySubscription::Unlinked {
+            Some(crate::QuerySubscription::Unlinked {
                 name: "Target".into(),
             }),
             &revoked,
@@ -1018,7 +1014,7 @@ fn change_summary_registered_mentions_and_incoming_targets() {
     store
         .register_reader_while_live(
             "query-late".into(),
-            Some(tine_store::QuerySubscription::Full),
+            Some(crate::QuerySubscription::Full),
             &revoked,
         )
         .unwrap();
@@ -1031,7 +1027,7 @@ fn change_summary_registered_mentions_and_incoming_targets() {
     store
         .register_reader_while_live(
             "dropped".into(),
-            Some(tine_store::QuerySubscription::Unlinked {
+            Some(crate::QuerySubscription::Unlinked {
                 name: "Target".into(),
             }),
             &dropped,
@@ -1040,7 +1036,7 @@ fn change_summary_registered_mentions_and_incoming_targets() {
     store
         .register_reader_while_live(
             "query-dropped".into(),
-            Some(tine_store::QuerySubscription::Full),
+            Some(crate::QuerySubscription::Full),
             &dropped,
         )
         .unwrap();
@@ -1055,7 +1051,7 @@ fn change_summary_registered_mentions_and_incoming_targets() {
 
 #[test]
 fn change_summary_date_named_page_does_not_hide_mentions_of_a_real_journal() {
-    let _guard = crate::integration_lock();
+    let _guard = crate::test_transactions::integration_lock();
     let (dir, store) = fixture(1);
     let mut doc = store.page(&PageId::from("pages/A.md")).unwrap().doc;
     doc.pre_block = None;
@@ -1073,7 +1069,7 @@ fn change_summary_date_named_page_does_not_hide_mentions_of_a_real_journal() {
 
 #[test]
 fn change_summary_bulk_rebuild_and_config_fallbacks() {
-    let _guard = crate::integration_lock();
+    let _guard = crate::test_transactions::integration_lock();
     let (dir, store) = fixture(1);
     let template = store.page(&PageId::from("pages/A.md")).unwrap().doc;
     let paths: Vec<_> = (0..33).map(|i| format!("pages/Bulk{i}.md")).collect();
@@ -1097,7 +1093,7 @@ fn change_summary_bulk_rebuild_and_config_fallbacks() {
         assert_eq!(wire["inventoryChanged"], false);
     }
     let sub = store.subscribe();
-    store.refresh(tine_store::Depth::Rebuild).unwrap();
+    store.refresh(crate::Depth::Rebuild).unwrap();
     let rebuilt = serde_json::to_value(sub.try_recv().unwrap().unwrap()).unwrap();
     assert_eq!(rebuilt["summary"]["full"], true);
     fs::create_dir_all(dir.path().join("logseq")).unwrap();
@@ -1106,7 +1102,7 @@ fn change_summary_bulk_rebuild_and_config_fallbacks() {
         "{:preferred-format :markdown}\n",
     )
     .unwrap();
-    store.refresh(tine_store::Depth::Stamps).unwrap();
+    store.refresh(crate::Depth::Stamps).unwrap();
     let config = serde_json::to_value(sub.try_recv().unwrap().unwrap()).unwrap();
     assert_eq!(config["summary"]["full"], true);
     assert!(

@@ -45,6 +45,38 @@ impl PageHost {
         Self::start(store, app_data, "test-graph", |_, _| {}, |_| {})
     }
 
+    /// Pause work on selected pages while still accepting requests.
+    /// This test scheduler guard never grants permission to write pages.
+    /// Dropping it resumes progress; retirement also waits for the guard.
+    #[cfg(any(test, feature = "test-faults"))]
+    pub fn pause_for_tests(&self, pages: &[PageId]) -> impl Send {
+        struct Pause {
+            shared: std::sync::Weak<driver::Shared<ProductionIo, SystemClock>>,
+            keys: BTreeSet<PageKey>,
+        }
+        impl Drop for Pause {
+            fn drop(&mut self) {
+                if let Some(shared) = self.shared.upgrade() {
+                    let keys = std::mem::take(&mut self.keys);
+                    shared.notify(move |state| {
+                        for key in keys {
+                            state.progress.host.paused_for_tests.remove(&key);
+                        }
+                    });
+                }
+            }
+        }
+        let keys = self.register_all(pages.to_vec()).expect("live test host");
+        let paused = keys.clone();
+        let _ = self.driver.shared.call(move |state| {
+            state.progress.host.paused_for_tests.extend(paused);
+        });
+        Pause {
+            shared: Arc::downgrade(&self.driver.shared),
+            keys,
+        }
+    }
+
     /// The host holds nothing and owes nothing: no page, job, draft worker,
     /// durable draft, queued request, owed observation or index ownership. A cost test waits
     /// for it so it measures an operation through its cleanup (M4).

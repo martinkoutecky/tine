@@ -959,13 +959,15 @@ mod tests {
             .store
             .file_id(tine_store::Area::Pages, "DuringRefresh.md")
             .unwrap();
-        let mut tx = old
-            .store
-            .transaction(Some(tine_store::EditKind::CreatePage));
+        let mut tx = old.store.page_plan(Some(tine_store::EditKind::CreatePage));
         tx.create(&id, tine_store::Content::Bytes(b"- retained\n".to_vec()));
         assert!(matches!(
-            tx.commit(),
-            tine_store::TxOutcome::Committed { .. }
+            {
+                let app = tempfile::tempdir().unwrap();
+                let host = tine_store::PageHost::start_for_tests(&old.store, app.path()).unwrap();
+                host.apply(tx.plan().unwrap())
+            },
+            Ok(())
         ));
         assert_eq!(
             std::fs::read(base.join("pages/DuringRefresh.md")).unwrap(),

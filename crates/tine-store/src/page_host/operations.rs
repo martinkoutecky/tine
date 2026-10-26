@@ -139,9 +139,6 @@ impl<F: HostIo> Host<F> {
         // Acquire the possible operation paths before the first load. An
         // absent source may make source/target unchanged; no path read for the
         // unused target is required in that branch.
-        if self.retained.contains(source) {
-            return Disposition::Waiting;
-        }
         let mut locks = refs.clone();
         locks.extend([source.into(), target.into()]);
         // D4 with no chaining: a running rename's pages wait for its end.
@@ -261,7 +258,7 @@ impl<F: HostIo> Host<F> {
         }
         // D4 with no chaining: a running order's or reservation's pages wait
         // for its end.
-        if keys.iter().any(|key| self.retained.contains(key)) || self.order.touches(&keys) {
+        if self.order.touches(&keys) {
             return Disposition::Waiting;
         }
         if self.lacks_locks(&keys) {

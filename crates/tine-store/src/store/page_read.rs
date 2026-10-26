@@ -121,7 +121,7 @@ impl Store {
     pub fn stage_marker_copy(&self, file: &FileId, old: &[u8]) -> Result<FileId, crate::Why> {
         #[cfg(test)]
         super::pause_at_hook(&self.marker_copy_pause);
-        self.transaction(None).stage_marker_file(file, old)
+        self.page_plan(None).stage_marker_file(file, old)
     }
 
     /// Hold page `id` as a page host does, with no host running: its index

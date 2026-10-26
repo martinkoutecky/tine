@@ -1,6 +1,4 @@
-//! Retained writers' reservations, the single-page rename, and the
-//! switch/restore stop (STEP3 §6–§7): the binding commands that fence
-//! pages away from the host or run a page operation for a writer.
+//! Save-first input handling, single-page rename and switch/restore stop.
 use super::driver::{Deadline, Shared, State, Unanswered, Wait};
 use super::*;
 use crate::model::entry_identity::Identity;
@@ -41,14 +39,14 @@ pub enum RenameRefusal {
     Busy,
 }
 
-/// Why a retained writer was given no reservation (§7).
+/// Why a host operation's input could not be saved.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ReserveRefusal {
+pub(in crate::page_host) enum FlushRefusal {
     /// These pages have unsaved input (`Input::Refuse`), or their save
     /// cannot complete (`Input::Flush`), named by current spelling.
     Unsaved(BTreeSet<PageId>),
     /// A rename still finishing held one of the pages for `OPERATION_WAIT`
-    /// from the writer's start (M6); nothing is reserved.
+    /// from the caller's start (M6); nothing was admitted.
     Busy,
 }
 
@@ -102,68 +100,7 @@ impl Drop for ReplySlot {
     }
 }
 
-/// The pages a retained writer holds (§7 step 3): none of them can be
-/// opened, loaded, saved or drafted until it is dropped. Dropping it ends
-/// the retained transaction (§7 step 5), on every exit, a panic's unwind
-/// included (A-R1): the driver unreserves the keys and observes each,
-/// retrying a failed read with the save backoff. A save before that
-/// observation is safe: its guard check reads the writer's change. The
-/// transaction's index stands until that observation succeeds (V2).
-#[must_use = "dropping a reservation releases its pages"]
-pub struct Reservation {
-    keys: BTreeSet<PageKey>,
-    shared: Arc<HostShared>,
-    /// Whether the writer may have written: false while `reserve` still
-    /// checks the set, when a withdrawal hands nothing over.
-    handover: bool,
-}
-
-impl Reservation {
-    /// The reserved keys.
-    pub(crate) fn keys(&self) -> &BTreeSet<PageKey> {
-        &self.keys
-    }
-}
-
-impl std::fmt::Debug for Reservation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Reservation")
-            .field("keys", &self.keys)
-            .finish()
-    }
-}
-
-// Runs in `Reservation::drop` just before it takes the state lock (E90's
-// test plants a poison there).
-#[cfg(test)]
-thread_local! {
-    pub(super) static BEFORE_RELEASE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-impl Drop for Reservation {
-    fn drop(&mut self) {
-        let keys = std::mem::take(&mut self.keys);
-        #[cfg(test)]
-        if let Some(hook) = BEFORE_RELEASE.with(|hook| hook.borrow_mut().take()) {
-            hook();
-        }
-        // A notice, so it never waits or panics, an unwind included (E90):
-        // a driver that ended drops it with every page it held.
-        let handover = self.handover;
-        self.shared.notify(move |state| {
-            for key in keys {
-                state.progress.host.retained.remove(&key);
-                if handover {
-                    state.book.handover.insert(key.clone());
-                    state.observe.entry(key).or_default();
-                }
-            }
-        });
-    }
-}
-
-/// One step of a retained writer's reservation, decided on the driver
+/// One step of save-first input handling, decided on the driver
 /// ([`PageHost::bounded`]).
 enum Step<R> {
     Done(R),
@@ -171,8 +108,6 @@ enum Step<R> {
     Wait {
         renaming: bool,
     },
-    /// The host cannot serve the writer.
-    Failed,
 }
 
 /// The pages among `keys` with unsaved input (Q3), including an admitted
@@ -201,72 +136,6 @@ struct Rewrites {
 }
 
 impl PageHost {
-    /// Reserve the complete page set `discover` names for a retained
-    /// writer (§7 steps 2–3, R6). Waiting reservations hold no lock. Under
-    /// the reservation discovery runs again; a set it does not cover starts
-    /// over with the union fenced, never shrinking (Q-P2b-1): each restart
-    /// strictly grows a set bounded by the pages discovery can name, so a
-    /// discovery that alternates (a config flipping between plans) ends,
-    /// with a superset reserved. Then,
-    /// under that final reservation, the writer's input contract is checked
-    /// on every page in it (Q3): unsaved input is a buffer that is not
-    /// clean (typed, at risk or on an unknown base) or a submit or move the
-    /// host admitted but has not applied. `Refuse` returns those pages;
-    /// `Flush` releases, waits for their saves holding nothing, and retries,
-    /// returning the pages whose save cannot complete. A returned page is
-    /// named by its current spelling, never by its opaque key. The reservation
-    /// exists from the fence on, so an unwind out of the rediscovery or the
-    /// check withdraws it (A-R1). Every step, the fence, the check and the
-    /// flush, goes through [`Self::bounded`] with one deadline,
-    /// `OPERATION_WAIT` from entry (M6, REVIEW-3b-P2b-2 N1).
-    pub fn reserve(
-        &self,
-        mut discover: impl FnMut() -> Vec<PageId>,
-        input: Input,
-    ) -> Result<Reservation, ReserveRefusal> {
-        let deadline = std::time::Instant::now() + OPERATION_WAIT;
-        let mut keys = self.register_all(discover()).ok_or(ReserveRefusal::Busy)?;
-        loop {
-            let fence = keys.clone();
-            self.bounded(deadline, move |state| {
-                match state.progress.host.reserve(&fence) {
-                    Disposition::Applied => Step::Done(()),
-                    Disposition::Waiting => Step::Wait {
-                        renaming: state.progress.host.renaming(&fence),
-                    },
-                    // `Refused`, unreachable: every key was registered first.
-                    // Were it not, nothing would be reserved, so it refuses as a
-                    // host that stopped answering does.
-                    _ => Step::Failed,
-                }
-            })?;
-            let mut reservation = Reservation {
-                keys: keys.clone(),
-                shared: Arc::clone(&self.driver.shared),
-                handover: false,
-            };
-            let found = self.register_all(discover()).ok_or(ReserveRefusal::Busy)?;
-            if !found.is_subset(reservation.keys()) {
-                drop(reservation);
-                keys.extend(found);
-                continue;
-            }
-            let held = reservation.keys().clone();
-            let unsaved = self.bounded(deadline, move |state| {
-                Step::Done(unsaved(&state.progress.host, &held))
-            })?;
-            if unsaved.is_empty() {
-                reservation.handover = true;
-                return Ok(reservation);
-            }
-            drop(reservation);
-            if input == Input::Refuse {
-                return Err(ReserveRefusal::Unsaved(unsaved.into_values().collect()));
-            }
-            self.flush(&unsaved.into_keys().collect(), &keys, deadline)?;
-        }
-    }
-
     /// `pages`' keys, each registered; None when the host state is
     /// poisoned.
     pub(super) fn register_all(&self, pages: Vec<PageId>) -> Option<BTreeSet<PageKey>> {
@@ -280,7 +149,7 @@ impl PageHost {
             .collect()
     }
 
-    /// Every wait and check of a retained writer's reservation (M6,
+    /// Every save-first input wait and check (M6,
     /// REVIEW-3b-P2b-2 N1): the driver runs `step` until it is done, again
     /// after each of its steps. With each step: a host that cannot answer
     /// refuses `Busy` (the driver ended, or the host is down; in-scope
@@ -293,25 +162,24 @@ impl PageHost {
         &self,
         deadline: std::time::Instant,
         mut step: impl FnMut(&mut HostState) -> Step<R> + Send + 'static,
-    ) -> Result<R, ReserveRefusal> {
+    ) -> Result<R, FlushRefusal> {
         let wait = move |state: &mut HostState| {
             if !state.progress.host.alive {
-                return Wait::Ready(Err(ReserveRefusal::Busy));
+                return Wait::Ready(Err(FlushRefusal::Busy));
             }
             match step(state) {
                 Step::Done(done) => Wait::Ready(Ok(done)),
-                Step::Failed => Wait::Ready(Err(ReserveRefusal::Busy)),
                 Step::Wait { renaming } => {
                     let now = std::time::Instant::now();
                     if now >= deadline && renaming {
-                        return Wait::Ready(Err(ReserveRefusal::Busy));
+                        return Wait::Ready(Err(FlushRefusal::Busy));
                     }
                     Wait::Until((now < deadline).then_some(deadline))
                 }
             }
         };
         let answer = self.driver.shared.wait(Deadline::Never, wait);
-        answer.unwrap_or(Err(ReserveRefusal::Busy))
+        answer.unwrap_or(Err(FlushRefusal::Busy))
     }
 
     /// `page_rename` (§7, F10): rename `source`'s page to the absent
@@ -591,33 +459,6 @@ impl PageHost {
         settled.unwrap_or(Settled::Uncertain)
     }
 
-    /// The alias spelling move (§2, Q4): under its reservation the caller
-    /// moved `page`'s directory entry to `to`, another spelling of the same
-    /// entry. The page keeps its key, buffer, drafts and queued requests;
-    /// its I/O, path lock and held index follow `to`.
-    #[cfg(any(test, feature = "test-faults"))]
-    pub fn respell(&self, page: &PageId, to: &PageId) {
-        let graph = &self.store.graph;
-        let lock = graph.page_lock(&graph.root.join(to.as_str()));
-        let (store, page, to) = (self.store.clone(), page.clone(), to.clone());
-        // Holds change under the writer, which the driver takes first (lock
-        // order writer → state). The held index names the key, so it
-        // follows the host's spelling table; its installed rows move with
-        // it (A-H2).
-        let respell = move |state: &mut HostState| {
-            let host = &mut state.progress.host;
-            let Some(key) = host.key_spelled(page.as_str()) else {
-                return;
-            };
-            host.respell(&key, to.as_str(), lock);
-            let graph = &store.graph;
-            graph.respelled(&key, &graph.root.join(page.as_str()));
-            store.publish_retired();
-        };
-        // A host that ended holds nothing to respell.
-        let _ = self.driver.shared.call_writer(&self.store.writer, respell);
-    }
-
     /// The key naming `page`'s directory entry (§2), by the one identity
     /// rule (B1, [`crate::model::Graph::identify`]): a registered key the
     /// path names, or whose entry it reaches as an alias (Q4's test: the
@@ -721,7 +562,7 @@ impl PageHost {
         pages: &BTreeSet<PageKey>,
         reserving: &BTreeSet<PageKey>,
         deadline: std::time::Instant,
-    ) -> Result<(), ReserveRefusal> {
+    ) -> Result<(), FlushRefusal> {
         #[cfg(test)]
         crate::store::pause_at_hook(&self.driver.shared.flush_pause);
         let (pages, reserving) = (pages.clone(), reserving.clone());
@@ -734,7 +575,7 @@ impl PageHost {
                 .map(|key| PageId::from(host.fs.spelling(key)))
                 .collect();
             if !stuck.is_empty() {
-                return Step::Done(Err(ReserveRefusal::Unsaved(stuck)));
+                return Step::Done(Err(FlushRefusal::Unsaved(stuck)));
             }
             if unsaved(host, &pages).is_empty() {
                 return Step::Done(Ok(()));

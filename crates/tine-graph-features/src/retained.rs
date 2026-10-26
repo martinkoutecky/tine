@@ -1,43 +1,10 @@
-//! Retained writers (STEP3 §7, R6): graph-features writes to page files
-//! that now run as operations on the binding's page host (S1–S3). The
-//! reservation helper survives for its unwind fixtures until S4. Every
-//! production writer needs a running host and uses `operation`.
+//! Feature page writes run as operations on the binding's page host.
+//! Every writer needs a running host and uses `operation`.
 //! Each refusal's in-scope scenario: `docs/storage-contract.md` I-8, row
 //! `tine-graph-features::retained`.
 
 use std::io;
-use tine_store::{ApplyRefusal, HostOp, Input, PageHost, PageId, ReserveRefusal};
-
-/// Run `write` as a retained writer of the pages `discover` names.
-/// `discover` runs again under the reservation (a grown set starts over);
-/// `write` gets the pages discovered under the final reservation. A page whose unsaved input refuses the write (`Refuse`),
-/// or whose save cannot complete (`Flush`), becomes `refused(page)`.
-pub(crate) fn reserved<T>(
-    host: &PageHost,
-    input: Input,
-    mut discover: impl FnMut() -> io::Result<Vec<PageId>>,
-    refused: impl FnOnce(&str) -> io::Error,
-    write: impl FnOnce(&[PageId]) -> io::Result<T>,
-) -> io::Result<T> {
-    let mut found = Ok(Vec::new());
-    let reservation = host
-        .reserve(
-            || {
-                found = discover();
-                found.as_ref().cloned().unwrap_or_default()
-            },
-            input,
-        )
-        .map_err(|refusal| match refusal {
-            ReserveRefusal::Unsaved(pages) => {
-                refused(pages.iter().next().map_or("", PageId::as_str))
-            }
-            ReserveRefusal::Busy => crate::pages::rename_busy(),
-        })?;
-    // Released when it drops, on a panic's unwind too (A-R1).
-    let _reservation = reservation;
-    found.and_then(|pages| write(&pages))
-}
+use tine_store::{ApplyRefusal, HostOp, Input, PageHost, PageId};
 
 /// The pages among `files`, for a writer whose key set is its arguments.
 pub(crate) fn pages<'a>(
@@ -80,7 +47,7 @@ impl std::error::Error for Busy {}
 
 /// Preflight conflicts consume the same bounded retry as admission's Changed.
 /// Other Why values retain the transaction path's refusal mapping.
-pub(crate) fn plan(tx: tine_store::Transaction<'_>) -> io::Result<HostOp> {
+pub(crate) fn plan(tx: tine_store::PagePlan<'_>) -> io::Result<HostOp> {
     tx.plan().map_err(|why| match why {
         tine_store::Why::Conflict { .. } => io::Error::new(io::ErrorKind::WouldBlock, Replan),
         why => crate::why_error(why),
@@ -163,7 +130,7 @@ fn refusal_error(
             ),
         ),
         ApplyRefusal::Unsaved(page) => refused(page.as_str()),
-        // Another operation, a reservation, a rename or a path lock held the
+        // Another operation, a rename or a path lock held the
         // pages past OPERATION_WAIT, or a rename held them past a flush's
         // deadline: not only a rename (REVIEW P2 round 2, finding 3).
         ApplyRefusal::Busy => io::Error::new(
@@ -250,46 +217,5 @@ mod tests {
         // Other operation writers keep their existing refusal wording.
         assert_eq!(refusal_error(ApplyRefusal::Busy, "the merge", &|_| unreachable!()).to_string(),
             "Tine is still finishing another change to these pages, so the merge did not start. Try again in a moment.");
-    }
-
-    /// A-R1, REVIEW-3a2 R1 probe 1: a writer that panics releases its
-    /// reservation on the unwind, so the next writer reserves the page.
-    #[test]
-    fn a_panicking_writer_releases_its_reservation() {
-        let dir = tempfile::tempdir().unwrap();
-        let graph = dir.path().join("graph");
-        std::fs::create_dir_all(graph.join("pages")).unwrap();
-        std::fs::write(graph.join("pages/a.md"), "- a\n").unwrap();
-        let app = dir.path().join("app");
-        std::fs::create_dir_all(&app).unwrap();
-        let store = std::sync::Arc::new(
-            tine_store::Store::open(&graph, Default::default())
-                .unwrap()
-                .0,
-        );
-        store.whole_graph().unwrap();
-        let host = std::sync::Arc::new(PageHost::start_for_tests(&store, &app).unwrap());
-        let page = PageId::from("pages/a.md");
-        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            reserved(
-                &host,
-                Input::Flush,
-                || Ok(vec![page.clone()]),
-                |_| unreachable!("nothing unsaved"),
-                |_| -> io::Result<()> { panic!("the writer panics") },
-            )
-        }));
-        assert!(unwound.is_err());
-        let (done, next) = std::sync::mpsc::channel();
-        let (other, page) = (std::sync::Arc::clone(&host), page.clone());
-        std::thread::spawn(move || {
-            let reservation = other.reserve(|| vec![page.clone()], Input::Refuse);
-            let _ = done.send(reservation.is_ok());
-        });
-        assert_eq!(
-            next.recv_timeout(std::time::Duration::from_millis(750)),
-            Ok(true),
-            "A-R1: a panicking writer leaked its reservation; the next writer cannot reserve"
-        );
     }
 }

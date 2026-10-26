@@ -1797,43 +1797,6 @@ fn a_case_only_rename_to_a_distinct_entry_is_a_two_key_host_rename() {
     assert_eq!(spelled(&f.graph, "foo.md"), ["foo.md"]);
     assert!(trash_holds(&f, b"edited"));
 }
-
-/// STEP3 §2: a request queued before the alias spelling move applies to the
-/// same page after it, and the page's I/O follows the new spelling. The
-/// move is case-only, so on a folding volume it is the alias respell; on
-/// every volume the listed spelling must actually change.
-#[test]
-fn a_request_queued_before_a_spelling_move_applies_to_the_same_page_after_it() {
-    let mut f = Fixture::new();
-    f.send("a.md", RequestKind::Open);
-    let version = f.host.pages["a.md"].version;
-    let request = Request {
-        id: f.host.last_admitted + 1,
-        generation: f.host.generation,
-        page: "a.md".into(),
-        kind: RequestKind::Submit {
-            bytes: text("typed"),
-            version,
-            resolve: None,
-        },
-    };
-    assert_eq!(f.host.admit(request), Disposition::Applied);
-    // The retained writer: reserve, move the entry, respell, release.
-    let keys = BTreeSet::from(["a.md".to_string()]);
-    assert_eq!(f.host.reserve(&keys), Disposition::Applied);
-    fs::rename(f.graph.join("a.md"), f.graph.join("A.md")).unwrap();
-    f.host.respell("a.md", "A.md", Arc::new(Mutex::new(())));
-    assert_eq!(f.host.release(&keys), Disposition::Applied);
-    let page = &f.host.pages["a.md"];
-    assert!(!page.conflict && page.buf == text("A"), "{page:?}");
-    assert_eq!(f.host.dequeue(), Disposition::Pending);
-    assert_eq!(f.host.apply_request(), Disposition::Applied);
-    assert_eq!(f.host.pages["a.md"].buf, text("typed"));
-    assert_eq!(f.save("a.md"), Outcome::Published);
-    assert_eq!(fs::read(f.graph.join("A.md")).unwrap(), b"typed");
-    assert_eq!(spelled(&f.graph, "a.md"), ["A.md"]);
-}
-
 fn twin_events(f: &Fixture) -> Vec<String> {
     f.host
         .events
