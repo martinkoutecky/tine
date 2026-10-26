@@ -13,6 +13,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Clicking another block while journal days load keeps its editor and focus when the earlier Down navigation finishes (UI-EDITOR-C2).
 - Date-shaped links open an existing ordinary page when no journal file exists for the day, avoiding an empty duplicate journal (UI-DATE-PAGE-LINK).
 - Backspace and Delete merges drop the absorbed block's hidden heading, flashcard state and clocks; referenced IDs transfer when possible, and merges that would lose a referenced ID leave both blocks in place (REG-F2-MERGE-HIDDEN-ROWS, hDI40A).
+- Windows: automatic CLI owner startup releases captured output pipes, disconnected owner pipes read as EOF, and stalled command replies time out without retrying admitted writes (REG-CLI-WINDOWS-R4).
 - Links inside query-result ancestor breadcrumbs are clickable again (GH #743).
 - The “Pages tagged with” section stays folded when you return to a tab (GH #739).
 - Shift-click a calendar day, **Today**, or the calendar button to open that journal in the right sidebar, as in Logseq (GH #740).
@@ -26,6 +27,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Desktop: **Open in default app** beside the graph and global CSS editors in Settings, with matching command-palette actions. External global CSS edits now apply live across graph windows (GH #778).
 - Tags and page references expose Logseq-compatible `data-ref` names so custom CSS can style individual tags and links, including static exports (GH #773).
+- Windows: graph read/write commands and git runs now use a private named pipe to the app or `tine serve`, including automatic startup, app handover and `serve --stop` (REG-CLI-WINDOWS).
+- Windows: wait for busy command pipes and draining predecessor handles, and keep owner locks in `%LOCALAPPDATA%\tine-owners` outside the installer directory (REG-CLI-WINDOWS-R3).
 - Guide: a new **Share pages** page covers the Share dialog, folder exports, quick-share links, Re-share, Update all, Delete and Settings → Sharing. The tips page explains margin comments more fully (every way to start one, how replies and authors are stored), and the git autocommit section describes its status lines and the messages for a folder without git or a phone.
 - Command line: `page create`, `page rename` with reference rewriting, and confirmed `page delete` through the app's page operations; `ref` and `embed` print reusable syntax after ensuring a durable block id. Page deletion reports broken references.
 

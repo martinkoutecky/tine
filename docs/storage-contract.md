@@ -219,14 +219,25 @@ sync reports “moved, durability not witnessed”, rebinds the relaunched host 
 warns the user to keep it open; it is distinct from a rename that did not happen.
 
 Linux and macOS use the existing account owner namespace; Windows now uses
-SHGetKnownFolderPath(FOLDERID_LocalAppData)/tine/owners, independent of the
+SHGetKnownFolderPath(FOLDERID_LocalAppData)/tine-owners, independent of the
 environment and app identifier, with the existing exclusive LockFileEx lock.
-Its directories inherit the account Known Folder ACL; the owners directory and
-its tine parent must be real directories without reparse attributes. This cheap
-check supplies honest-instance exclusion; it is not a new checked-DACL endpoint.
-The Windows endpoint remains unsupported. Contention refuses open through the
-same translated app-owner error as Unix; lock errors still diagnose and open without a
-lease. Single-instance forwarding is not exclusion. iOS and Android retain
+Its owners directory is created with a current-user protected
+DACL. New lock files also have an explicit private protected DACL; existing files
+keep theirs. Existing inherited or unprotected directory DACLs also pass when safe.
+Every use checks current-user/SYSTEM/Administrators ownership, no reparse attributes, a
+non-null DACL, and no explicit or inherited grants of write, delete, delete-child,
+WRITE_DAC or WRITE_OWNER outside those principals (an inherit-only CREATOR OWNER
+ACE is also safe). Unknown ACE types and unsafe
+directories refuse `owner-unsafe`; their ACLs are never repaired in place.
+Windows exposes a local-only, current-user pipe named by account SID and graph
+hash, with first-instance squatting refusal after a 3 s retry under the owner lock
+for draining predecessor handles, and a client-side security check before sending
+graph data. Busy pipes wait within the caller's I/O deadline rather than reporting
+no owner. Contention with serve follows the same custody-checked
+handover, seal-before-unlock order and 60 s app-open bound as Unix; contention
+with an app refuses through the translated app-owner error. Namespace/lock/bind
+errors still diagnose and open without an endpoint. Single-instance forwarding
+is not exclusion. iOS and Android retain
 Unsupported: one process per app with per-app sandboxed app data. A five-target
 guard pins desktop locks versus mobile sandbox exclusion, supplemented by the
 in-process registry/retirement guard on every target. Stable and Beta
@@ -1079,6 +1090,7 @@ by I-9's typed failure paths.
 
 | Owner / operation family | In-scope scenario and required response |
 |---|---|
+| `src-tauri::owner` Windows namespace and pipe (`owner-unsafe`, L9-01/L9-02) | On a shared machine another account pre-created or loosened the directory, or occupied the pipe name, and could replace the lock or answer graph requests. Refuse CLI ownership with `owner-unsafe`; the app may open with a diagnostic and no endpoint. A lingering predecessor pipe name is retried for 3 s while holding the owner lock before refusal; a busy pipe waits within the caller's I/O deadline and never means no owner. Proof: `owner/windows_security.rs` directory and connected-pipe checks, `owner/windows.rs` busy-client, predecessor-release and persistent-squatter tests (Windows CI). |
 | `tine-store::model` path and graph acquisition | A configured graph or asset directory is retargeted, malformed, or resolves outside the approved root after sync or external editing; refuse reads and writes through that path. |
 | `tine-store::root_binding::RootBinding::check` (R-ROOT-MOVED, L9-02) | The user, file manager, sync/cloud client or unmounted volume moves, removes or replaces the directory bound at open. Linux/macOS/iOS use stat identity (Linux adds birth time when both sides supply it; SMB/FUSE filesystems compare device and birth time only, since their inode numbers change after eviction); Windows uses file id. Android deliberately uses vanish-only until FUSE identity is device-verified, so same-path directory replacement is not caught there. Fail detected detachment as `GraphRootMoved`, keep input in host/device-draft custody, show the sticky moved/kept/reopen notice. Shared write-target guards and restore's capability path check the binding. Proof: `production_guard_tests.rs` root cases, `root_binding.rs::l9_platform_policy_pins_android_vanish_only_and_stat_identity`, `root_binding.rs::l9_stat_identity_ignores_unstable_inode_numbers_and_one_sided_birth`, `tests/transaction.rs::l9_all_transaction_entry_paths_refuse_a_detached_graph`, `restore.rs::l9_restore_refuses_a_replaced_root_before_reserving_recovery`, ModelFs root schedules and native replay. Device acceptance limits remain above. |
 | `root_identity::is_container_rebase` (L9-01) | Plugin or web content nominates another graph's old namespace. Only iOS may authorize relocation, and only absolute paths with identical prefix and Documents-relative suffix, different valid container UUIDs, and no traversal qualify. Desktop/Android ignore the argument with a diagnostic. Proof: `only_the_container_uuid_can_change`, frontend `graph.test.tsx` rebase forwarding. |

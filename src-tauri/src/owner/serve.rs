@@ -36,6 +36,13 @@ fn bound_start_log() {
         };
         bound_log(&std::fs::File::from(owned), START_LOG_CAP);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsHandle;
+        if let Ok(owned) = std::io::stderr().as_handle().try_clone_to_owned() {
+            bound_log(&std::fs::File::from(owned), START_LOG_CAP);
+        }
+    }
 }
 
 /// Empty `log` if it is a regular file longer than `cap`.
@@ -44,7 +51,10 @@ pub(super) fn bound_log(log: &std::fs::File, cap: u64) {
         .metadata()
         .is_ok_and(|meta| meta.is_file() && meta.len() > cap)
     {
+        #[cfg(unix)]
         let _ = log.set_len(0);
+        #[cfg(windows)]
+        let _ = super::windows::truncate_start_log(log);
     }
 }
 
@@ -80,11 +90,6 @@ impl std::fmt::Display for ServeFailure {
 }
 
 pub(crate) fn serve_graph(graph: &Path) -> Result<(), ServeFailure> {
-    // Windows now has graph owner locks for the app, but no CLI endpoint.
-    // Refuse before claiming a lock or opening any headless page host.
-    #[cfg(target_os = "windows")]
-    return Err(ServeFailure::Claim(OwnerError::Unsupported));
-
     // Before anything reads settings, as the app's startup does (§3.5).
     crate::data_home::ensure_usable(crate::app_identity::APP_IDENTIFIER);
     let root = crate::state::canonical_graph_root(&graph.display().to_string())?;
@@ -131,6 +136,9 @@ pub(crate) fn serve_graph(graph: &Path) -> Result<(), ServeFailure> {
     if !lease.has_endpoint() {
         stop_host(&slot, &gate);
         slot.store.close();
+        if let Some(error) = lease.endpoint_error() {
+            return Err(ServeFailure::Claim(error.clone()));
+        }
         return Err("cannot open the command endpoint".into());
     }
     eprintln!("tine serve: owning {}", root.display());
