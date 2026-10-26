@@ -6,12 +6,12 @@
 .cm6-block-editor .cm-editor .cm-content { caret-color: currentColor; }
 .cm6-block-editor .cm-line { padding: 0; }
 .cm6-block-editor .cm-scroller { font: inherit; overflow: visible; }
-.cm6-bold { font-weight: bold; }
-.cm6-italic { font-style: italic; }
-.cm6-code { font-family: monospace; background: #8882; }
-.cm6-page { color: var(--link-color, #589bdd); }
-.cm6-task, .cm6-chip { color: var(--link-color, #589bdd); border-radius: 4px; background: #8882; }
-.cm6-chip { padding: 0 3px; cursor: text; }
+.cm6-preview { cursor: text; }
+/* The read renderer can show decorative page brackets by graph preference.
+   Live preview reserves those source delimiters for the revealed editor text. */
+.cm6-preview .bracket { display: none; }
+.cm6-projected-source { margin: 0; white-space: pre-wrap; font: inherit; }
+.cm6-block-editor.calc-wrap > .cm6-projected-source { grid-column: 1 / -1; }
 .cm6-block-editor .code-editor-region > div:has(> .cm-editor) { min-width: 0; }
 .cm6-block-editor:has(.code-edit) { padding: var(--ls-block-content-pad-y) 0; }
 .cm6-block-editor:has(.code-edit) .cm-editor {
