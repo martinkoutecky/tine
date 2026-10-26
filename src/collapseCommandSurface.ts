@@ -22,7 +22,7 @@ export function collapseCommandSurface(id: string): CommandCollapseSurface | und
 
 /** A mounted row is the command target while a selection lives in its outline
  * scope, otherwise while it is being edited. */
-export function bindCollapseCommandSurface(id: string, surface: CommandCollapseSurface | undefined, scope: unknown, editing: () => boolean): void {
+export function bindCollapseCommandSurface(id: string, surface: CommandCollapseSurface | null | undefined, scope: unknown, editing: () => boolean): void {
   if (surface) onCleanup(registerCollapseCommandSurface({
     id,
     active: () => hasSelection() ? !!scope && selectionScope() === scope : editing(),
