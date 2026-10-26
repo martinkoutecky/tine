@@ -10,9 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [0.8.0] - 2026-10-26
 
-Tine 0.8.0 makes Tine Beta 0.8.0-beta.12 stable. The twelve Beta sections
-below list everything it changed since 0.7.0; the 0.7.1 to 0.7.4 fixes are
-included. Your settings, graphs and sessions carry over from 0.7.x. The
+Tine 0.8.0 makes the Tine Beta line stable. It is Tine Beta 0.8.0-beta.12
+(the twelve Beta sections below list everything it changed since 0.7.0; the
+0.7.1 to 0.7.4 fixes are included) plus the macOS command-line fix in this
+section. Your settings, graphs and sessions carry over from 0.7.x. The
 highlights: a command line on Linux and macOS for reading pages, journals,
 search and queries; the interface in Simplified Chinese; the Android share
 sheet, launcher shortcuts and a Quick capture tile, and an iOS share
@@ -22,6 +23,10 @@ every edit is saved as you type, from any window.
 
 ### Changed
 - Stable Tine now carries the 0.8 Beta line. Beta keeps its separate app and update channel, and continues with the next development line.
+
+### Fixed
+
+- macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
 
 ## [0.8.0-beta.12] - 2026-10-24
 
