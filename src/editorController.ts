@@ -92,7 +92,7 @@ export interface HistoryEditorTarget {
   surface: string;
   selection: () => { start: number; end: number };
   focused?: () => boolean;
-  viewport?: () => { editor: HTMLTextAreaElement; scroller: HTMLElement | null };
+  viewport?: () => { editor: HTMLElement; scroller: HTMLElement | null };
 }
 
 const historyEditorTargets = new Set<HistoryEditorTarget>();

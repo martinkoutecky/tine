@@ -264,7 +264,7 @@ describe("selection toolbar overflow transient ownership", () => {
     const mounted = mount(() => <><Editor id="selection-a" /><Editor id="selection-b" /></>);
     try {
       const editors = editorsIn(mounted.root);
-      const wraps = Array.from(mounted.root.querySelectorAll<HTMLElement>(".editor-wrap"));
+      const wraps = editors.map(editor => editor.element.closest<HTMLElement>(".editor-wrap, .cm6-block-editor")!);
       openSelectionOverflow(wraps[0], editors[0], 0, 5);
       openSelectionOverflow(wraps[1], editors[1], 0, 4);
       expect(mounted.root.querySelectorAll('.sel-toolbar-overflow')).toHaveLength(2);

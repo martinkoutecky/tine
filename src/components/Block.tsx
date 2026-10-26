@@ -530,7 +530,7 @@ export function isBlockEmbedMacro(m: ReturnType<typeof detectMacro>): boolean {
 }
 
 export function Editor(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
-  if (cm6EditorEnabled()) return <Cm6BlockEditor id={props.id} surface={useContext(SurfaceContext)} scope={useContext(OutlineScopeContext)} />;
+  if (cm6EditorEnabled()) return <Cm6BlockEditor id={props.id} surface={useContext(SurfaceContext)} scope={useContext(OutlineScopeContext)} propertySession={props.propertySession} />;
   const propertySession = props.propertySession ?? propertyEditorSession();
   propertySession.begin();
   // Non-null only inside the quick-capture window (see CaptureCtx).

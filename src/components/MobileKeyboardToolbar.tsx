@@ -5,6 +5,7 @@ import { dispatchFocusedEditorCommand, blurFocusedEditor, focusedEditorCommandBr
 import { runGlobalCommand } from "../keybindings";
 import { touchPrimary } from "../inputCapability";
 import { isRecordingAudio } from "../mediaCapture";
+import { isElementNode } from "../windowRealm";
 
 type ToolbarIcon =
   | "outdent"
@@ -51,8 +52,11 @@ export const NATIVE_IME_EVENT = "tine-ime";
 const EDITOR_TOOLBAR_MARGIN = 8;
 
 function activeEditorHasFocus(): boolean {
-  const el = document.activeElement;
-  return el instanceof HTMLTextAreaElement && el.classList.contains("block-editor");
+  return isBlockEditor(document.activeElement);
+}
+
+function isBlockEditor(value: unknown): value is HTMLElement {
+  return isElementNode(value) && value.matches('textarea.block-editor, [data-cm6-editor]');
 }
 
 function viewportKeyboardTop(): number {
@@ -68,7 +72,7 @@ function viewportKeyboardTop(): number {
  *  already-visible editor is a no-op returning false. O(1) layout reads. */
 export function revealFocusedEditorAboveToolbar(toolbarTop: number): boolean {
   const editor = document.activeElement;
-  if (!(editor instanceof HTMLTextAreaElement) || !editor.classList.contains("block-editor")) {
+  if (!isBlockEditor(editor)) {
     return false;
   }
   const formatting = document.querySelector<HTMLElement>("[data-mobile-selection-toolbar]")?.getBoundingClientRect();
@@ -176,7 +180,7 @@ export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): J
     };
     const updateAfterFocusChange = () => setTimeout(updateViewport, 0);
     const revealAfterEditorInput = (event: Event) => {
-      if (event.target instanceof HTMLTextAreaElement && event.target.classList.contains("block-editor")) {
+      if (isBlockEditor(event.target)) {
         scheduleEditorReveal();
       }
     };

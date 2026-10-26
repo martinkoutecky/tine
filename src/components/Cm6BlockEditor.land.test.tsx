@@ -60,12 +60,15 @@ function mount(raw = "visible\nid:: retained") {
 }
 
 it("edits through the document path while retaining hidden properties, including undo", () => {
-  const { editor } = mount();
-  expect(editor.value()).toBe("visible");
-  editor.select(7); editor.type(" 中文😀");
-  expect(node("land").raw).toBe("visible 中文😀\nid:: retained");
-  editor.keydown({ key: "z", ctrlKey: true });
-  expect(node("land").raw).toBe("visible\nid:: retained");
+  const uninstall = installKeybindings();
+  try {
+    const { editor } = mount();
+    expect(editor.value()).toBe("visible");
+    editor.select(7); editor.type(" 中文😀");
+    expect(node("land").raw).toBe("visible 中文😀\nid:: retained");
+    editor.keydown({ key: "z", ctrlKey: true });
+    expect(node("land").raw).toBe("visible\nid:: retained");
+  } finally { uninstall(); }
 });
 
 it("refuses document mutations when the page becomes read-only", () => {

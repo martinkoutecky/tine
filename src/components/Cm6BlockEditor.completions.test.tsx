@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { Cm6BlockEditor } from "./Cm6BlockEditor";
 import { DatePicker } from "./DatePicker";
 import { backend } from "../backend";
-import { initParser } from "../render/parse";
+import { blockRegions, initParser } from "../render/parse";
 import { node, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { setDoc } from "../document/model";
@@ -14,6 +14,7 @@ import { closeDatePicker, datePicker } from "../ui";
 import { clearTransientLayersForTest } from "../transientLayers";
 import { setGraphMeta } from "../graphSession";
 import type { PageEntry } from "../types";
+import { isAnnotationBlock } from "../editor/annotation";
 
 let dispose: (() => void) | undefined;
 beforeAll(() => initParser());
@@ -29,7 +30,10 @@ afterEach(() => {
   clearTransientLayersForTest(); setGraphMeta(null); vi.restoreAllMocks(); document.body.innerHTML = "";
 });
 const page = (raw: string) => ({ name: "Completion", title: "Completion", kind: "page" as const, pre_block: null,
-  blocks: [{ id: "completion", raw, collapsed: false, children: [] }] });
+  // Loaded DTO facets are authoritative: supply the properties a real host
+  // sends, including generated annotation metadata.
+  blocks: [{ id: "completion", raw, collapsed: false, children: [],
+    properties: blockRegions(raw, "md").properties.filter(p => p.primary).map((p): [string, string] => [p.key, p.value]) }] });
 function mount(raw = "") {
   loadSingle(page(raw)); startEditing("completion", raw.length);
   const root = document.createElement("div"); document.body.append(root);
@@ -108,7 +112,10 @@ it("does not insert a captured journal date into a same-id replacement graph", a
 it("keeps generated annotation metadata out of the completion lifecycle", async () => {
   const templates = vi.spyOn(backend(), "listTemplates");
   const editor = mount("/today\nls-type:: annotation\nhl-page:: 2");
+  expect(isAnnotationBlock(node("completion").raw, "md")).toBe(true);
   editor.input("/today\nls-type:: annotation\nhl-page:: 2", 6);
+  expect(node("completion").raw).toBe("/today\nls-type:: annotation\nhl-page:: 2");
+  expect(isAnnotationBlock(node("completion").raw, "md")).toBe(true);
   await new Promise(resolve => setTimeout(resolve, 120));
   expect(templates).not.toHaveBeenCalled();
   expect(document.querySelector(".autocomplete")).toBeNull();

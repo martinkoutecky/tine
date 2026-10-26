@@ -91,9 +91,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
     try {
       const ta = editor(root);
       for (const character of metadata) {
-        ta.replaceText(ta.value() + character);
-        ta.select(ta.value().length, ta.value().length);
-        ta.reportInput({ bubbles: true, inputType: "insertText", data: character });
+        ta.input(ta.value() + character, undefined, { inputType: "insertText", data: character });
       }
       endEdit("page-navigation");
       expect(docNode("c")!.raw).toBe(`My view${metadata}`);
@@ -127,8 +125,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
     try {
       const ta = editor(root);
       expect(ta.value()).toBe("My view");
-      ta.replaceText("My revised view");
-      ta.reportInput({ bubbles: true, inputType: "insertText" });
+      ta.input("My revised view", undefined, { inputType: "insertText" });
       endEdit("page-navigation");
       expect(docNode("c")!.raw).toBe(`My revised view\n${hidden}`);
     } finally { dispose(); }

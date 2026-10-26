@@ -47,7 +47,7 @@ export function commentAndEdit(parentId: string, editorText: string, start: numb
 
 /** Ctrl/Cmd+R in the block editor `ref`: commit its text, then comment on the
  * selection (the whole block when nothing is selected). */
-export function commentFromEditor(id: string, ref: HTMLTextAreaElement, commit: (text: string) => void, surface: string | null): void {
+export function commentFromEditor(id: string, ref: Pick<HTMLTextAreaElement, "value" | "selectionStart" | "selectionEnd">, commit: (text: string) => void, surface: string | null): void {
   const { value, selectionStart, selectionEnd } = ref;
   commit(value);
   if (!commentAndEdit(id, value, selectionStart, selectionEnd, surface)) pushToast(msg("comment-block-cannot-take"), "warn");

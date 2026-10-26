@@ -1,4 +1,4 @@
-.cm6-block-editor { min-width: 0; width: 100%; }
+.cm6-block-editor { min-width: 0; width: 100%; position: relative; container: editor / inline-size; }
 .cm6-block-editor .cm-editor { font: inherit; background: transparent; }
 .cm6-block-editor .cm-editor.cm-focused { outline: none; }
 .cm6-block-editor .cm-content { padding: 0; font: inherit; line-height: inherit; }

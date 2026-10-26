@@ -156,7 +156,7 @@ function isFocusCandidate(candidate: HTMLElement): boolean {
     if (element.hidden || element.getAttribute("aria-hidden") === "true" || element.inert || element.hasAttribute("inert")) return false;
   }
   if (candidate.matches(":disabled") || candidate.hasAttribute("disabled")) return false;
-  return candidate.matches("button, input, select, textarea, a[href], [tabindex]");
+  return candidate.matches('button, input, select, textarea, a[href], [tabindex], [contenteditable="true"]');
 }
 
 /** Attempt only candidates that can own focus, and never mistake an ignored
@@ -173,7 +173,7 @@ function tryFocus(candidate: HTMLElement | null | undefined): boolean {
 
 function tryFocusRoot(root: HTMLElement | null | undefined): boolean {
   if (!root?.isConnected) return false;
-  for (const candidate of root.querySelectorAll<HTMLElement>("button, input, select, textarea, a[href], [tabindex]")) {
+  for (const candidate of root.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], [tabindex], [contenteditable="true"]')) {
     if (tryFocus(candidate)) return true;
   }
   return tryFocus(root);

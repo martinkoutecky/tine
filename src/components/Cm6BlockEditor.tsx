@@ -1,15 +1,15 @@
 // Experimental editor. No CM syntax parser is configured: lsdoc supplies all spans.
-import { createEffect, createSignal, For, Show, onCleanup, onMount, useContext, type JSX } from "solid-js";
-import { EditorSelection, EditorState, Prec, StateField } from "@codemirror/state";
+import { createEffect, onCleanup, onMount, useContext, type JSX } from "solid-js";
+import { EditorSelection, EditorState, StateField } from "@codemirror/state";
 import { Decoration, EditorView, keymap, WidgetType, type DecorationSet } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, redo, undo } from "@codemirror/commands";
+import { defaultKeymap } from "@codemirror/commands";
 import { blockWritable, isBlockMoving, node, pageByName, setRaw, type OutlineScope } from "../document";
-import { clearFocusSurface, editingId, endEdit, focusSurfaceFor, noteSurfaceFocused, takeCaretFor } from "../editorController";
-import { BUILTIN_HIDE, SHEET_CELL_HIDE, joinProps, splitProps } from "../editor/properties";
+import { clearFocusSurface, editingId, editingOwner, endEdit, focusSurfaceFor, noteSurfaceFocused, registerHistoryEditorTarget, takeCaretFor, takeHistoryEditorSelectionFor } from "../editorController";
+import { BUILTIN_HIDE, SHEET_CELL_HIDE } from "../editor/properties";
+import { propertyEditorSession } from "../editor/propertySession";
 import { previewSpans } from "../editor/cm6Preview";
 import { registerFocusedEditorCommandBridge } from "../editorCommandBridge";
-import { SELECTION_ACTIONS, type SelectionAction } from "../editor/selectionActions";
-import { touchPrimary } from "../inputCapability";
+import { cm6Formatting } from "../editor/cm6Formatting";
 import { cm6Structure } from "../editor/cm6Structure";
 import { CollapseSurfaceContext, EmbedNavExitContext } from "./Block";
 import { marginNavigation } from "./blockComments";
@@ -17,8 +17,9 @@ import { SheetCellContext } from "../sheet/context";
 import { cm6SheetKeys } from "../editor/cm6SheetKeys";
 import { cm6Clipboard } from "../editor/cm6Clipboard";
 import { cm6Completions } from "../editor/cm6Completions";
-import { editorCommandFor, isPermittedTabGesture } from "../keybindings";
+import { isPermittedTabGesture } from "../keybindings";
 import { isNodeValue } from "../windowRealm";
+import { nearestScrollableY } from "./blockParts";
 import "./cm6-editor.css";
 
 class Chip extends WidgetType {
@@ -38,26 +39,28 @@ class Chip extends WidgetType {
   ignoreEvent() { return true; }
 }
 
-export function Cm6BlockEditor(props: { id: string; surface: string; scope: OutlineScope | null }): JSX.Element {
+export function Cm6BlockEditor(props: { id: string; surface: string; scope: OutlineScope | null; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
   let host!: HTMLDivElement;
   let editorHost!: HTMLDivElement;
   let view: EditorView | undefined;
-  let removeHistoryKeys: (() => void) | undefined;
+  let removeKeys: (() => void) | undefined;
   let removeCommandBridge: (() => void) | undefined;
   let alive = true;
-  const [hasSelection, setHasSelection] = createSignal(false);
+  const propertySession = props.propertySession ?? propertyEditorSession();
+  propertySession.begin();
   const shownNode = node(props.id);
   const format = pageByName(shownNode.page)?.format === "org" ? "org" : "md";
   const current = () => alive && node(props.id) === shownNode && blockWritable(props.id);
   const cell = useContext(SheetCellContext);
   const hiddenProperties = cell ? SHEET_CELL_HIDE : BUILTIN_HIDE;
-  const visible = () => splitProps(node(props.id).raw, hiddenProperties, format).visible;
+  const parts = () => propertySession.split(node(props.id).raw, hiddenProperties, format);
+  const visible = () => parts().visible;
   let rawBeforeCommit = shownNode.raw;
   const commit = (text: string) => {
     if (!current() || text === visible()) return;
     const raw = node(props.id).raw;
     rawBeforeCommit = raw;
-    setRaw(props.id, joinProps(text, splitProps(raw, hiddenProperties, format).hidden, format, raw));
+    setRaw(props.id, propertySession.join(text, parts().hidden, raw, hiddenProperties, format));
   };
   const embedExit = useContext(EmbedNavExitContext);
   const structure = cm6Structure({ ...props, format, current, commit, embedExit,
@@ -67,6 +70,8 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const sheet = cell ? cm6SheetKeys(props.id, cell, commit) : null;
   const clipboard = cm6Clipboard({ id: props.id, format, current, commit, sheet: !!cell, hiddenProperties });
   const completion = cm6Completions({ ...props, format, current, sheet: !!cell, view: () => view, visible, rawBeforeCommit: () => rawBeforeCommit });
+  const formatting = cm6Formatting({ ...props, format, current, commit, view: () => view,
+    closeCompletion: completion.close, refreshCompletion: completion.refresh });
   const buildDecorations = (state: EditorState): DecorationSet => {
     const ranges = previewSpans(state.doc.toString(), format).flatMap(span => {
       // Reveal at either boundary and whenever any selection intersects source.
@@ -95,13 +100,10 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     view = new EditorView({
       parent: editorHost,
       state: EditorState.create({ doc: visible(), extensions: [
-        history(), decorations, EditorView.lineWrapping, completion.inputSelection,
+        decorations, EditorView.lineWrapping, completion.inputSelection,
         EditorView.editorAttributes.of({ "data-block-editor": "cm6" }),
         EditorView.contentAttributes.of({ "data-cm6-editor": props.id, "aria-label": "" }),
-        Prec.highest(keymap.of([
-          { key: "Mod-Shift-z", run: redo },
-        ])),
-        keymap.of([...historyKeymap, ...defaultKeymap]),
+        keymap.of(defaultKeymap),
         EditorView.domEventHandlers({
           focus: () => { noteSurfaceFocused(props.surface); return false; },
           blur: (event, v) => {
@@ -125,16 +127,20 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
           keyup: event => { if (event.key.toLowerCase() === "v") clipboard.clearRaw(); return false; },
         }),
         EditorView.updateListener.of(update => {
-          setHasSelection(!update.state.selection.main.empty);
+          formatting.changed(update);
           if (update.docChanged) commit(update.state.doc.toString());
           completion.changed(update);
         }),
       ] }),
     });
     completion.mount();
-    // Tine's global document-history capture precedes target keymaps. Own
-    // default in-block history chords at the window boundary while the experimental editor is active.
-    const historyKeys = (event: KeyboardEvent) => {
+    onCleanup(registerHistoryEditorTarget({ blockId: props.id, owner: editingOwner(), surface: props.surface,
+      selection: () => { const s = view!.state.selection.main; return { start: s.from, end: s.to }; },
+      viewport: () => ({ editor: view!.contentDOM, scroller: nearestScrollableY(view!.contentDOM) }),
+      focused: () => !!view?.hasFocus }));
+    // Keep application/CM commands out of native IME preedit. Ordinary history
+    // belongs to the document, just like the mobile toolbar and textarea.
+    const compositionKeys = (event: KeyboardEvent) => {
       if (!isNodeValue(event.target) || !view?.contentDOM.contains(event.target)) return;
       // composing becomes true only after the first DOM change; the public
       // compositionStarted also covers preedit before that first change.
@@ -144,14 +150,6 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         event.stopImmediatePropagation();
         return;
       }
-      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
-      // Configured editor actions (e.g. Mod+Shift+Y timestamp) own their chords.
-      if (editorCommandFor(event)) return;
-      const key = event.key.toLowerCase();
-      if (key !== "z" && key !== "y") return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (current()) (key === "y" || event.shiftKey ? redo : undo)(view);
     };
     const structuralKeys = (event: KeyboardEvent) => {
       if (!view || !view.contentDOM.contains(event.target as Node) || !current()
@@ -161,20 +159,22 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       if (event.defaultPrevented && !isPermittedTabGesture(event)) return;
       // Run before CM's target handler: desktop WebKit suppresses its keymaps
       // just after compositionend, including an already committed plain Enter.
-      if (completion.keydown(event) || clipboard.keydown(event, view) || sheet?.keydown(event, view) || structure.keydown(event, view)) {
+      if (completion.keydown(event) || clipboard.keydown(event, view) || sheet?.keydown(event, view) || formatting.keydown(event) || structure.keydown(event, view)) {
         event.preventDefault();
         event.stopImmediatePropagation();
       }
     };
-    host.ownerDocument.defaultView!.addEventListener("keydown", historyKeys, true);
+    host.ownerDocument.defaultView!.addEventListener("keydown", compositionKeys, true);
     host.addEventListener("keydown", structuralKeys, true);
-    removeHistoryKeys = () => {
-      host.ownerDocument.defaultView!.removeEventListener("keydown", historyKeys, true);
+    removeKeys = () => {
+      host.ownerDocument.defaultView!.removeEventListener("keydown", compositionKeys, true);
       host.removeEventListener("keydown", structuralKeys, true);
     };
     const want = takeCaretFor(props.id);
+    const historySelection = takeHistoryEditorSelectionFor(props.id, props.surface);
     let anchor = view.state.doc.length, head = anchor;
-    if (typeof want === "number") anchor = head = want;
+    if (historySelection) { anchor = historySelection.start; head = historySelection.end; }
+    else if (typeof want === "number") anchor = head = want;
     else if (want && "start" in want) {
       anchor = want.direction === "backward" ? want.end : want.start;
       head = want.direction === "backward" ? want.start : want.end;
@@ -217,14 +217,10 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         if (sheet?.blocks(command)) return true;
         if (completion.command(command)) return true;
         if (clipboard.command(view, command)) return true;
+        if (formatting.command(command)) return true;
         if (structure.command(view, command)) return true;
-        // Media and global-history parity are later ports.
-        if (command !== "editor/soft-newline") return false;
-        completion.close();
-        const s = view.state.selection.main;
-        view.dispatch({ changes: { from: s.from, to: s.to, insert: "\n" }, selection: { anchor: s.from + 1 }, scrollIntoView: true });
-        view.focus();
-        return true;
+        // Media parity remains a later port.
+        return false;
       },
     });
   });
@@ -235,21 +231,10 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
     }
   });
-  onCleanup(() => { alive = false; clipboard.clearRaw(); removeCommandBridge?.(); removeHistoryKeys?.(); view?.destroy(); });
-  const formatSelection = (action: SelectionAction) => {
-    if (!view || !current() || view.compositionStarted) return;
-    const s = view.state.selection.main;
-    const edit = action.apply(view.state.doc.toString(), s.from, s.to, format);
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: edit.text }, selection: { anchor: edit.start, head: edit.end }, scrollIntoView: true });
-    view.focus();
-  };
+  onCleanup(() => { alive = false; clipboard.clearRaw(); removeCommandBridge?.(); removeKeys?.(); view?.destroy(); });
   return <div class="cm6-block-editor" ref={host}>
     <div ref={editorHost} />
     <completion.Popup />
-    <Show when={hasSelection()}>
-      <div class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined} onPointerDown={event => event.preventDefault()}>
-        <For each={SELECTION_ACTIONS}>{action => <button type="button" classList={{ "sel-action-page-link": action.id === "page-link" }} title={action.title} aria-label={action.title} data-selection-action={action.id} onClick={() => formatSelection(action)}>{action.label}</button>}</For>
-      </div>
-    </Show>
+    <formatting.Toolbar />
   </div>;
 }
