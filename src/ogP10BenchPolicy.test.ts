@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 // The immutable anchor is pinned at v0.7.2 (Martin 2026-10-13); the previous
-// one follows GitHub's latest published release (v0.8.0 since 2026-10-26).
+// one follows GitHub's latest published release (v0.8.1 since 2026-10-27).
 it("the benchmark policy pins v0.7.2 and follows the latest published release", () => {
-  const result = spawnSync(process.execPath, ["scripts/check-bench-policy.mjs", "--expected-previous", "v0.8.0"], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, ["scripts/check-bench-policy.mjs", "--expected-previous", "v0.8.1"], { encoding: "utf8" });
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toContain("immutable v0.7.2, previous v0.8.0");
+  expect(result.stdout).toContain("immutable v0.7.2, previous v0.8.1");
 });
 
 it("the policy checker refuses a stale previous anchor, a moved immutable anchor, and unbounded reruns", () => {
@@ -20,13 +20,13 @@ it("the policy checker refuses a stale previous anchor, a moved immutable anchor
     writeFileSync(join(root, "scripts/check-bench-policy.mjs"), readFileSync("scripts/check-bench-policy.mjs"));
     writeFileSync(join(root, "src-tauri/tauri.conf.json"), readFileSync("src-tauri/tauri.conf.json"));
     const policy = JSON.parse(readFileSync("scripts/bench-policy.json", "utf8"));
-    const run = (latest = "v0.8.0") => {
+    const run = (latest = "v0.8.1") => {
       writeFileSync(join(root, "scripts/bench-policy.json"), JSON.stringify(policy));
       return spawnSync(process.execPath, [join(root, "scripts/check-bench-policy.mjs"), "--expected-previous", latest], { encoding: "utf8" });
     };
     expect(run().status).toBe(0);
     // A newer stable release makes the previous anchor stale.
-    expect(run("v0.8.1").status).toBe(1);
+    expect(run("v0.8.2").status).toBe(1);
     policy.immutableBaseline.ref = "v0.4.7";
     expect(run().status).toBe(1);
     policy.immutableBaseline.ref = "v0.7.2";
