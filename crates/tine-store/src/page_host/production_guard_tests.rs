@@ -42,6 +42,16 @@ fn dircreate_swap_during_save_keeps_input_in_durable_device_draft() {
             drafts::scan(f.host.fs.draft_files(true)).logical["c.md"].bytes,
             text(input)
         );
+        // F-DC-2: discard the entire host and its durable census. Launch a
+        // fresh adapter/host against the still-swapped graph and same app data.
+        let f = f.cold_reopen();
+        assert_eq!(f.host.pages["c.md"].buf, text(input));
+        assert!(f.host.pages["c.md"].risk);
+        assert_eq!(
+            drafts::scan(draft_dir(&f).into_iter().collect()).logical["c.md"].bytes,
+            text(input),
+            "cold recovery must retain a physical draft survivor (swap_root={swap_root})"
+        );
         assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
         if swap_root {
             assert_eq!(fs::read_dir(&f.graph).unwrap().count(), 0);

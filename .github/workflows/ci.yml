@@ -262,6 +262,12 @@ jobs:
         run: cargo test --locked --manifest-path vendor/cap-primitives-4.0.2/Cargo.toml --lib removing_extended_prefix_keeps_unc_paths_absolute -- --nocapture
       - name: Windows core and graph-feature tests (including junction filesystem behavior)
         run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
+      # F-M3S-1: ordinary saves, finite metadata interference and cold draft recovery on NTFS.
+      - name: Windows storage volume acceptance (F-M3S-1)
+        if: ${{ !cancelled() }}
+        env:
+          TINE_STORAGE_ACCEPT_ROOT: ${{ runner.temp }}
+        run: cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
       # M4 availability measurement (REVIEW-3b-P2b-2 G1): the release rename of 250 and of
       # 1000 referrers must reach its caller inside OPERATION_WAIT; the timings print here.
       - name: Windows release rename availability (250 and 1000 referrers)
@@ -356,6 +362,15 @@ jobs:
       - name: macOS restore destination-identity tests (Store owns case and Unicode folding)
         if: ${{ !cancelled() }}
         run: "cargo test --no-fail-fast -p tine-store --lib -- restore:: --nocapture"
+      # A-CASE-DISTINCT: the native C8 witness on default case-insensitive APFS, and
+      # F-M3S-1 volume acceptance on the same volume.
+      - name: macOS case-folding witness and storage volume acceptance (C8, F-M3S-1)
+        if: ${{ !cancelled() }}
+        env:
+          TINE_STORAGE_ACCEPT_ROOT: ${{ runner.temp }}
+        run: |
+          cargo test -p tine-store --lib m4_c8_native -- --nocapture
+          cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
 
   android-core-compile:
     name: Full CI / Android core compile
