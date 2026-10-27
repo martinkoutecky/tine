@@ -285,6 +285,8 @@ jobs:
       # test exe fails to load (0xc0000139, TaskDialogIndirect). A side-by-side
       # `<exe>.manifest` supplies it to the test exe alone; the shipped binary
       # is untouched.
+      # owner:: and owner_protection:: are A-ONE-HOST's Windows runtime acceptance
+      # (account lock, fallback retry); data_home:: is A-DRAFT-DURABLE's classification.
       - name: Windows backup, file-lock and owner tests (Expand-Archive opens a backup)
         if: ${{ !cancelled() }}
         run: |
@@ -304,7 +306,7 @@ jobs:
           </assembly>
           '@
           Push-Location src-tauri
-          & $exe backup:: file_lock:: owner::git_autocommit
+          & $exe backup:: file_lock:: owner:: owner_protection:: data_home::
           $code = $LASTEXITCODE
           Pop-Location
           exit $code
@@ -341,7 +343,7 @@ jobs:
     name: Focused / macOS backup tests
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'macos'
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -357,8 +359,8 @@ jobs:
       # custom-protocol: without it every `generate_context!` in the crate
       # embeds Info.plist on macOS and the lib test fails to link
       # (`_EMBED_INFO_PLIST` already defined).
-      - name: macOS backup and file-lock tests
-        run: "cargo test --no-fail-fast -p tine --lib --features custom-protocol -- backup:: file_lock:: owner::git_autocommit --nocapture"
+      - name: macOS backup, file-lock and owner tests (A-ONE-HOST, A-DRAFT-DURABLE)
+        run: "cargo test --no-fail-fast -p tine --lib --features custom-protocol -- backup:: file_lock:: owner:: owner_protection:: data_home:: --nocapture"
       - name: macOS restore destination-identity tests (Store owns case and Unicode folding)
         if: ${{ !cancelled() }}
         run: "cargo test --no-fail-fast -p tine-store --lib -- restore:: --nocapture"
@@ -371,6 +373,12 @@ jobs:
         run: |
           cargo test -p tine-store --lib m4_c8_native -- --nocapture
           cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
+      # The storage claim's macOS runtime acceptance (M4 environment families, s3.6
+      # replay, Unicode case aliases, write-site census): the whole store suite, as
+      # the Windows scope runs it.
+      - name: macOS store suite (storage-model acceptance)
+        if: ${{ !cancelled() }}
+        run: cargo test --no-fail-fast -p tine-store
 
   android-core-compile:
     name: Full CI / Android core compile
