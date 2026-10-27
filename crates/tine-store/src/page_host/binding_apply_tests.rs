@@ -96,6 +96,146 @@ fn op(pages: Vec<(&str, Effect, Expected)>, policy: Input) -> HostOp {
     }
 }
 
+/// A save's directory sync precedes its index delivery. A merge cannot
+/// report success while that delivery is failing (or waiting for the writer).
+#[test]
+fn a_merge_waits_for_its_deleted_sources_index_publication() {
+    let source = "pages/MiXeD1.md";
+    let destination = "pages/Next Space1.md";
+    let live = Live::new(&[(source, "- source\n"), (destination, "- kept\n")]);
+    live.store.watch.stop_background_for_test();
+    let mut planned = op(
+        vec![
+            (source, Effect::Delete, Expected::Bytes(bytes("- source\n"))),
+            (
+                destination,
+                Effect::Write(bytes("- kept\n- source\n")),
+                Expected::Bytes(bytes("- kept\n")),
+            ),
+        ],
+        Input::Refuse,
+    );
+    planned.moves = vec![(PageId::from(destination), PageId::from(source))];
+    live.index_faults(10_000);
+    std::thread::scope(|scope| {
+        let host = &live.host;
+        let (sent, received) = mpsc::channel();
+        scope.spawn(move || sent.send(host.apply(planned)).unwrap());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let synced = live
+                .host
+                .driver
+                .shared
+                .read(|state| {
+                    state
+                        .book
+                        .retry
+                        .get("pages/MiXeD1.md")
+                        .is_some_and(|retry| {
+                            retry.publication.bytes.is_none() && retry.publication.own.is_some()
+                        })
+                })
+                .unwrap();
+            if synced {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the merge never synced its files"
+            );
+            std::thread::yield_now();
+        }
+        assert!(!live.root.join(source).exists(), "the bytes already merged");
+        assert!(
+            live.store
+                .whole_graph()
+                .unwrap()
+                .corpus()
+                .pages
+                .iter()
+                .any(|p| p.name == "MiXeD1"),
+            "the index delivery is still pending"
+        );
+        let early = received.recv_timeout(Duration::from_millis(300));
+        // Release the fault before asserting, so a failed test can join its caller.
+        live.index_faults(0);
+        assert!(
+            matches!(early, Err(mpsc::RecvTimeoutError::Timeout)),
+            "merge returned before its index publication: {early:?}"
+        );
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Ok(())
+        );
+    });
+    let view = live.store.whole_graph().unwrap();
+    let corpus = view.corpus();
+    assert!(!corpus.pages.iter().any(|p| p.name == "MiXeD1"));
+    assert_eq!(
+        corpus
+            .pages
+            .iter()
+            .find(|p| p.name == "Next Space1")
+            .unwrap()
+            .document
+            .roots
+            .len(),
+        2
+    );
+    live.host.stop();
+}
+
+/// The ordinary writer-contention branch needs no index error: the driver
+/// revisits the caller while the completed save's delivery is deferred.
+#[test]
+fn a_delete_waits_for_its_index_while_the_store_writer_is_busy() {
+    let source = "pages/MiXeD1.md";
+    let live = Live::new(&[(source, "- source\n")]);
+    live.store.watch.stop_background_for_test();
+    let (key, page) = live.open(source);
+    live.until_published(&[(key, page.version, None)]);
+    let (ready, at_delivery) = mpsc::channel();
+    let (resume, resumed) = mpsc::channel();
+    *live.host.launch.kinds.lock().unwrap() = Box::new(move |_, _| {
+        ready.send(()).unwrap();
+        resumed.recv_timeout(Duration::from_secs(5)).unwrap();
+    });
+    std::thread::scope(|scope| {
+        let host = &live.host;
+        let (sent, received) = mpsc::channel();
+        scope.spawn(move || {
+            sent.send(host.delete(None, &PageId::from(source), Some(b"- source\n")))
+                .unwrap();
+        });
+        at_delivery.recv_timeout(Duration::from_secs(5)).unwrap();
+        // The kinds sink runs after the disk witness, before taking the
+        // store writer: hold it so that this exact publication is deferred.
+        let writer = live.store.writer.lock().unwrap();
+        resume.send(()).unwrap();
+        assert!(live
+            .host
+            .driver
+            .shared
+            .read(|state| state.book.delivering)
+            .unwrap());
+        assert!(!live.root.join(source).exists());
+        assert_eq!(live.indexed(source), Some(content_rev("- source\n")));
+        let early = received.recv_timeout(Duration::from_millis(300));
+        drop(writer);
+        assert!(
+            matches!(early, Err(mpsc::RecvTimeoutError::Timeout)),
+            "delete returned before its deferred index publication: {early:?}"
+        );
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(5)).unwrap(),
+            PageOperation::Applied
+        );
+    });
+    assert!(live.store.whole_graph().unwrap().corpus().pages.is_empty());
+    live.host.stop();
+}
+
 fn folded_op(old: &str) -> HostOp {
     let mut planned = op(
         vec![

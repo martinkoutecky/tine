@@ -1061,6 +1061,17 @@ fn deliver<F: HostIo, C: Clock>(
         // Collect again: an eviction or a notice may now be due.
         let mut state = shared.state.lock().unwrap();
         let now = state.progress.clock.now_ms();
+        for (publication, indexing) in &results {
+            if matches!(indexing, Indexing::Indexed) {
+                if let Some((version, _)) = &publication.own {
+                    state
+                        .progress
+                        .host
+                        .order
+                        .indexed(&publication.key, *version);
+                }
+            }
+        }
         state.book.record(results, now);
         state.wake();
     }
