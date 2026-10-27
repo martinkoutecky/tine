@@ -553,6 +553,45 @@ fn m3_finding_c4_model_retained_directory_sync_must_not_acknowledge_a_new_inode(
 }
 
 #[test]
+fn m3_model_partial_directory_creation_recovers() {
+    for replanned in [false, true] {
+        let mut fs = ModelFs::default();
+        fs.spell(PAGE, "pages/new/deep/a.md");
+        fs.env.seed_dirs("pages");
+        if replanned {
+            fs.inject(
+                Phase::PageTemp,
+                [Fault::Errno(stdio::ErrorKind::Other, Some(2))],
+            );
+            assert!(fs.page_temp(PAGE, &bytes(INPUT)).is_err());
+            fs.apply_env(EnvStep::InodeChange("pages/new".into()));
+            assert!(fs.page_temp(PAGE, &bytes(INPUT)).is_err());
+            assert!(fs.replan_directories);
+            // Leave the current chain with deep missing before its next mkdir.
+            fs.apply_env(EnvStep::DirRename(
+                "pages/new/deep".into(),
+                "pages/old-deep".into(),
+            ));
+        }
+        fs.inject_env(
+            Phase::PageTemp,
+            if replanned { 1 } else { 2 },
+            EnvStep::DirRename("pages/new".into(), "pages/moved-new".into()),
+        );
+        assert!(fs.page_temp(PAGE, &bytes(INPUT)).is_err());
+        fs.assert_no_escapes();
+        assert!(!fs.owed.is_empty(), "partial creation keeps unpaid debt");
+        assert!(!fs.env.dirs.contains_key("pages/new/deep"));
+        // ModelFs rescans missing components on every page_temp. Its single
+        // modeled mkdir step does not split the native check-to-mkdir window.
+        fs.page_temp(PAGE, &bytes(INPUT)).unwrap();
+        assert!(fs.owed.is_empty());
+        assert!(fs.env.dirs.contains_key("pages/new/deep"));
+        fs.assert_no_escapes();
+    }
+}
+
+#[test]
 fn m3_parent_loss_keeps_cold_draft_and_can_publish_after_restoration() {
     for replace in [false, true] {
         let mut n = Native::new(false);

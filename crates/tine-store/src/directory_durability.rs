@@ -99,6 +99,7 @@ pub(crate) fn sync_private_directory(dir: &Path) -> io::Result<()> {
 thread_local! {
     pub(crate) static SYNC_ERROR: std::cell::Cell<Option<io::ErrorKind>> = const { std::cell::Cell::new(None) };
     pub(crate) static BEFORE_CREATE_CHECK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+    static BEFORE_MKDIR: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
 }
 
 fn sync_directory(dir: &Path, private: bool) -> io::Result<DirectoryWitness> {
@@ -301,6 +302,28 @@ impl DirectoryCreation {
         binding: &crate::root_binding::RootBinding,
         sync: impl Fn(&Path) -> io::Result<()>,
     ) -> io::Result<()> {
+        let result = self.finish_current_chain(binding, sync);
+        if let Err(error) = &result {
+            // An ancestor can disappear at the pre-mkdir check, mkdir itself,
+            // or sync, including during a current-chain retry. Keep the queues
+            // and unpaid debt on this failure; the next attempt explicitly
+            // replaces them through the same re-plan policy as stale identities.
+            // Root detachment and outside substitutions still fail their guards.
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ) {
+                self.replan = true;
+            }
+        }
+        result
+    }
+
+    fn finish_current_chain(
+        &mut self,
+        binding: &crate::root_binding::RootBinding,
+        sync: impl Fn(&Path) -> io::Result<()>,
+    ) -> io::Result<()> {
         if self.replan {
             // The previous attempt reported non-durable creation, not payment
             // of the detached epoch's debt. Retry owes the entire current
@@ -334,6 +357,13 @@ impl DirectoryCreation {
             // the final check-to-create race remains (see A-PATH-IDENTITY).
             self.check_directory(parent, binding)?;
             let parent_identity = crate::root_binding::RootBinding::new(parent);
+            #[cfg(test)]
+            {
+                let step = BEFORE_MKDIR.with(|step| step.borrow_mut().take());
+                if let Some(step) = step {
+                    step();
+                }
+            }
             match std::fs::create_dir(path) {
                 Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => {
@@ -349,17 +379,7 @@ impl DirectoryCreation {
             self.missing.pop_front();
         }
         while let Some(debt) = self.parents.front() {
-            if let Err(error) = self.check_directory(&debt.path, binding) {
-                // A disappeared chain needs re-creation on the next attempt.
-                // Outside substitutions retain the old debt for restoration.
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
-                ) {
-                    self.replan = true;
-                }
-                return Err(error);
-            }
+            self.check_directory(&debt.path, binding)?;
             if let Err(error) = debt.check() {
                 self.replan = true;
                 return Err(error);
@@ -598,6 +618,91 @@ mod tests {
             .unwrap();
         assert!(target.is_dir());
         assert!(!creation.has_sync_debt());
+    }
+
+    fn interrupt_mkdir(after_check: bool, step: impl FnOnce() + 'static) {
+        let hook = if after_check {
+            &super::BEFORE_MKDIR
+        } else {
+            &super::BEFORE_CREATE_CHECK
+        };
+        hook.with(|hook| *hook.borrow_mut() = Some(Box::new(step)));
+    }
+
+    fn partial_missing_ancestor_recovers(replanned: bool, after_check: bool) {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("graph");
+        std::fs::create_dir(&root).unwrap();
+        let binding = crate::root_binding::RootBinding::new(&root);
+        let target = root.join("new/deep");
+        let mut creation = super::DirectoryCreation::new(&target, &root).unwrap();
+        if replanned {
+            assert!(creation
+                .finish(&binding, |_| Err(io::Error::other("first sync failed")))
+                .is_err());
+            std::fs::rename(root.join("new"), root.join("old-new")).unwrap();
+            // Disappearance detects stale debt even on Android's vanish-only policy.
+            assert!(creation
+                .finish(&binding, |_| panic!("detached debt must not sync"))
+                .is_err());
+            std::fs::create_dir(root.join("new")).unwrap();
+        }
+        let move_root = root.clone();
+        let move_ancestor = move || {
+            std::fs::rename(move_root.join("new"), move_root.join("moved-new")).unwrap();
+        };
+        if replanned {
+            // Re-planning owes the replacement's entry and still needs deep.
+            interrupt_mkdir(after_check, move_ancestor);
+        } else {
+            // Let mkdir new complete; interrupt the following mkdir deep.
+            interrupt_mkdir(after_check, move || {
+                interrupt_mkdir(after_check, move_ancestor)
+            });
+        }
+        let error = creation
+            .finish(&binding, |_| {
+                panic!("missing ancestor must fail before sync")
+            })
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert_eq!(creation.missing.len(), 1, "deep still needs creation");
+        assert_eq!(creation.parents.len(), 1, "new still owes parent sync");
+        assert!(creation.has_sync_debt());
+        assert!(!target.exists());
+        assert!(root.join("moved-new").is_dir());
+
+        // No external repair, fresh plan, binding or graph reopen: one stable retry.
+        let synced = std::cell::RefCell::new(Vec::new());
+        creation
+            .finish(&binding, |parent| {
+                synced.borrow_mut().push(parent.to_path_buf());
+                super::sync_directory_entry(parent)
+            })
+            .unwrap();
+        assert_eq!(*synced.borrow(), [root.clone(), root.join("new")]);
+        assert!(target.is_dir());
+        assert!(!creation.has_sync_debt());
+    }
+
+    #[test]
+    fn dircreate_partial_missing_ancestor_recovers() {
+        partial_missing_ancestor_recovers(false, false);
+    }
+
+    #[test]
+    fn dircreate_partial_missing_ancestor_recovers_at_mkdir() {
+        partial_missing_ancestor_recovers(false, true);
+    }
+
+    #[test]
+    fn dircreate_interrupted_replan_recovers() {
+        partial_missing_ancestor_recovers(true, false);
+    }
+
+    #[test]
+    fn dircreate_interrupted_replan_recovers_at_mkdir() {
+        partial_missing_ancestor_recovers(true, true);
     }
 
     #[test]

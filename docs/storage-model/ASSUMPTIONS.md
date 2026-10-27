@@ -152,7 +152,17 @@ publication identity takes Uncertain and preserves input risk, including after
 Unsupported sync and Windows's no-op sync. NotFound is no longer Unsupported.
 M3-2 binds retained debt to the entry and its parent using the existing directory
 identity policy; retry after detected replacement syncs the current chain rather
-than acknowledging the detached epoch. Both findings are active passing
+than acknowledging the detached epoch. Missing ancestors at the pre-mkdir check
+or mkdir request the same re-plan with unpaid debt retained, including partial
+creation and an interrupted re-plan. The native
+`directory_durability.rs#dircreate_partial_missing_ancestor_recovers` and
+`directory_durability.rs#dircreate_interrupted_replan_recovers` regressions (and
+their `_at_mkdir` counterparts) require one stable retry without external repair
+or graph reopen. The ModelFs twin
+`page_host/native_environment_tests.rs#m3_model_partial_directory_creation_recovers`
+covers its combined parent-check/mkdir step; it rescans missing components on
+each attempt rather than retaining a native missing queue. The original binding,
+containment and input-custody refusals remain. Both findings are active passing
 regressions with unchanged outcome assertions on identity-checking test storage;
 the native M3-2 replacement case excludes Android's approved vanish-only policy.
 Windows publication stamps use creation time, while directory witnesses use full

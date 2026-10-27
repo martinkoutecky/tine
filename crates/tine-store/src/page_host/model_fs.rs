@@ -513,6 +513,22 @@ impl ModelFs {
         self.owed.push(dir);
     }
 
+    fn check_creation_parent(&mut self, dir: &str) -> IoResult<()> {
+        self.check_parent(dir)?;
+        // Unlike containment, mkdir needs an existing immediate parent. The
+        // model combines the native parent check and mkdir into one step.
+        if !self.env.contains(&self.env.parent(dir), true) {
+            self.replan_directories = true;
+            return Err(IoFailure {
+                kind: ErrorKind::Io,
+                completed: false,
+                operation: None,
+                os_error: None,
+            });
+        }
+        Ok(())
+    }
+
     fn retry_directories(&mut self) {
         if !self.replan_directories {
             return;
@@ -639,7 +655,7 @@ impl HostIo for ModelFs {
                 }
                 fs.call()?;
                 let dir = format!("dir/{current}");
-                fs.check_parent(&dir)?;
+                fs.check_creation_parent(&dir)?;
                 if !fs.env.contains(&current, false) {
                     return Err(IoFailure {
                         kind: ErrorKind::Io,
@@ -775,7 +791,7 @@ impl HostIo for ModelFs {
                     continue;
                 }
                 fs.call()?;
-                fs.check_parent(dir)?;
+                fs.check_creation_parent(dir)?;
                 fs.record_mutation(dir);
                 fs.env.dirs.insert(
                     dir.strip_prefix("dir/").unwrap().into(),

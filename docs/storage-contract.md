@@ -190,8 +190,13 @@ or requires read access to ancestors merely to create a folder. A stable,
 contained replacement parent first reports the old creation non-durable. The
 next attempt re-plans the target and syncs the entire current directory chain,
 including existing replacement entries. It does not acknowledge detached debt
-or loop forever on its stale witness; restoring the original identity also
-allows a retry after a containment refusal.
+or loop forever on its stale witness. A missing ancestor detected at the
+pre-mkdir check or mkdir also requests this re-plan, even while descendants
+remain to be created or a previous re-plan is interrupted. The failed attempt
+retains its queues and unpaid obligations; a stable retry replaces them with
+the current-chain obligations before creating and syncing that chain. Re-planning
+still uses the original root binding and checks containment; restoring the
+original identity also allows a retry after a containment refusal.
 Detected root detachment fails as `GraphRootMoved`; an outside parent or an
 inspection/filesystem error fails as I/O. Input stays in host/device-draft
 custody. The two M2 plan-to-finish schedules leave the replacement root/outside
