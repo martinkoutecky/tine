@@ -33,6 +33,7 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Secur
 
 [dev-dependencies]
 tempfile = "3"
+unicode-casefold = "0.2"
 tine-graph-features = { path = "../tine-graph-features", features = ["test-faults"] }
 syn = { version = "2", features = ["full", "visit"] }
 quote = "1"

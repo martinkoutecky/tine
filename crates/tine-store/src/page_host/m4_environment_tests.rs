@@ -365,10 +365,60 @@ fn m4_c7_native_in_place_writer_during_read_conflicts_and_keeps_input() {
 
 #[test]
 fn m4_c8_model_case_alias_is_seen_by_admission_and_never_overwritten() {
-    for (existing, proposed) in [
+    assert_model_aliases_refused(&[
         ("pages/foo.md", "pages/Foo.md"),
         ("pages/FOO.md", "pages/foo.md"),
-    ] {
+    ]);
+    // Negative control: on a distinct-case filesystem there is no alias.
+    let mut fs = ModelFs::default();
+    fs.external("pages/foo.md", bytes(OLD), true);
+    assert_eq!(
+        fs.page_owner("pages/Foo.md", &bytes(INPUT), None).unwrap(),
+        None
+    );
+    assert_eq!(fs.read_page("pages/Foo.md").unwrap(), None);
+}
+
+#[test]
+fn sb1_c8_model_unicode_case_aliases_refuse_collision() {
+    assert_model_aliases_refused(&[
+        ("pages/Kůň.md", "pages/kůň.md"),
+        ("pages/KŮŇ.md", "pages/kůň.md"),
+        ("pages/Σ.md", "pages/ς.md"),
+    ]);
+}
+
+#[test]
+fn sb1_c8_model_normalization_aliases_refuse_collision() {
+    assert_model_aliases_refused(&[
+        ("pages/Kůň.md", "pages/Ku\u{30a}n\u{30c}.md"),
+        ("pages/Ku\u{30a}n\u{30c}.md", "pages/Kůň.md"),
+    ]);
+}
+
+#[test]
+fn sb1_c8_model_full_fold_aliases_refuse_collision() {
+    assert_model_aliases_refused(&[
+        ("pages/ß.md", "pages/SS.md"),
+        ("pages/ﬃ.md", "pages/FFI.md"),
+    ]);
+}
+
+#[test]
+fn sb1_c8_model_turkish_i_uses_default_non_turkic_fold() {
+    assert_model_aliases_refused(&[("pages/İ.md", "pages/i\u{307}.md")]);
+    // Case models Unicode default full folding, not locale-specific Turkish
+    // casing or NTFS's upcase table. Native tests probe each pair separately.
+    for (existing, proposed) in [("I", "ı"), ("İ", "i")] {
+        let mut fs = ModelFs::default();
+        fs.env.fold = Fold::Case;
+        fs.external(existing, bytes(OLD), true);
+        assert_eq!(fs.case_alias(proposed), None);
+    }
+}
+
+fn assert_model_aliases_refused(pairs: &[(&str, &str)]) {
+    for &(existing, proposed) in pairs {
         let mut fs = ModelFs::default();
         fs.env.fold = Fold::Case;
         fs.external(existing, bytes(OLD), true);
@@ -403,15 +453,259 @@ fn m4_c8_model_case_alias_is_seen_by_admission_and_never_overwritten() {
         assert!(!h.fs.calls.contains(&Phase::PageRename));
         draft(&mut h, "creating-key");
         h.fs.assert_no_escapes();
+
+        let mut fs = ModelFs::default();
+        fs.external(existing, bytes(OLD), true);
+        assert_eq!(fs.case_alias(proposed), None);
+        fs.page_temp(proposed, &bytes(INPUT)).unwrap();
+        fs.page_rename(proposed).unwrap();
+        fs.page_sync(proposed).unwrap();
+        assert_eq!(fs.alpha(existing, true), bytes(OLD));
+        assert_eq!(fs.alpha(proposed, true), bytes(INPUT));
     }
-    // Negative control: on a distinct-case filesystem there is no alias.
-    let mut fs = ModelFs::default();
-    fs.external("pages/foo.md", bytes(OLD), true);
-    assert_eq!(
-        fs.page_owner("pages/Foo.md", &bytes(INPUT), None).unwrap(),
-        None
+}
+
+#[test]
+fn sb1_c8_model_respelled_key_can_still_save_its_own_file() {
+    for (before, after) in [
+        ("Kůň", "kůň"),
+        ("Kůň", "Ku\u{30a}n\u{30c}"),
+        ("ß", "SS"),
+        ("İ", "i\u{307}"),
+    ] {
+        let mut fs = ModelFs::default();
+        fs.env.fold = Fold::Case;
+        fs.spell("same-key", before);
+        fs.external("same-key", bytes(OLD), true);
+        fs.spell("same-key", after);
+        assert_eq!(
+            fs.page_owner("same-key", &bytes(INPUT), None).unwrap(),
+            None
+        );
+        assert_eq!(fs.read_page("same-key").unwrap(), bytes(OLD));
+        fs.page_temp("same-key", &bytes(INPUT)).unwrap();
+        fs.page_rename("same-key").unwrap();
+        fs.page_sync("same-key").unwrap();
+        assert_eq!(fs.alpha("same-key", true), bytes(INPUT));
+    }
+}
+
+/// These are probes of individual names in the directory being tested, not
+/// an OS-wide guess about its collation table. In particular NTFS upcasing
+/// cannot expand one UTF-16 character to `SS`; APFS default full folding can.
+const SB1_C8_UNICODE_PAIRS: &[(&str, &str)] = &[
+    ("Kůň", "kůň"),
+    ("KŮŇ", "kůň"),
+    ("Kůň", "Ku\u{30a}n\u{30c}"),
+    ("ß", "SS"),
+    ("İ", "i\u{307}"),
+    ("I", "ı"),
+    ("İ", "i"),
+];
+
+#[test]
+fn sb1_c8_native_unicode_admission_and_noreplace_follow_volume() {
+    for &(incumbent, proposed) in SB1_C8_UNICODE_PAIRS {
+        let dir = native_tempdir();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        let from = format!("pages/{incumbent}.md");
+        let to = format!("pages/{proposed}.md");
+        let old = dir.path().join(&from);
+        let new = dir.path().join(&to);
+        // Give the incumbent a different logical title: on a sensitive
+        // volume this tests physical admission independently of name twins.
+        let incumbent_bytes = b"title:: Incumbent\n- original\n";
+        fs::write(&old, incumbent_bytes).unwrap();
+        let aliases = match same_file::is_same_file(&old, &new) {
+            Ok(same) => same,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => panic!("volume probe {incumbent:?}/{proposed:?}: {error}"),
+        };
+        eprintln!("SB1_C8_VOLUME {incumbent:?}/{proposed:?}: alias={aliases}");
+        if cfg!(any(windows, target_os = "macos")) && proposed == "kůň" {
+            assert!(
+                aliases,
+                "hosted NTFS/default APFS must execute Unicode case collision coverage"
+            );
+        }
+        if cfg!(target_os = "macos") && incumbent == "Kůň" && proposed != "kůň" {
+            assert!(
+                aliases,
+                "hosted APFS must execute normalization collision coverage"
+            );
+        }
+        if cfg!(windows) && incumbent == "ß" {
+            assert!(
+                !aliases,
+                "NTFS upcasing does not perform the full ß/SS fold"
+            );
+        }
+        if cfg!(target_os = "macos") && incumbent == "ß" {
+            assert!(
+                aliases,
+                "hosted default APFS must execute full-fold collision coverage"
+            );
+        }
+        let store = crate::Store::open(dir.path(), Default::default())
+            .unwrap()
+            .0;
+        store.whole_graph_reconciled().unwrap();
+        let id = crate::FileId::from(to.clone());
+        let admission = store.page_plan(None).page_create_checks(&id, proposed);
+        if aliases {
+            assert!(
+                matches!(
+                    admission,
+                    Err(crate::Why::Conflict { .. })
+                        | Err(crate::Why::Refused(crate::Refusal::Twin { .. }))
+                ),
+                "{incumbent:?}/{proposed:?}: {admission:?}"
+            );
+            assert_eq!(
+                crate::atomic_file::atomic_write_new(&new, INPUT)
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::AlreadyExists
+            );
+            let incoming = dir.path().join("pages/incoming.md");
+            fs::write(&incoming, INPUT).unwrap();
+            let rename_admission = store.page_plan(None).admission_slot(
+                &id,
+                None,
+                Some(&crate::FileId::from("pages/incoming.md".to_owned())),
+            );
+            assert!(
+                matches!(
+                    rename_admission,
+                    Err(crate::Why::Conflict { .. })
+                        | Err(crate::Why::Refused(crate::Refusal::Twin { .. }))
+                ),
+                "rename onto {incumbent:?}/{proposed:?}: {rename_admission:?}"
+            );
+            assert_eq!(
+                crate::no_replace::move_file_noreplace(&incoming, &new)
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::AlreadyExists
+            );
+            assert_eq!(fs::read(&incoming).unwrap(), INPUT);
+            // Android/NFS flag-refusal policy: even on an unknown volume,
+            // fstatat of the actual target must see its own Unicode aliases.
+            #[cfg(unix)]
+            {
+                struct Reset;
+                impl Drop for Reset {
+                    fn drop(&mut self) {
+                        crate::no_replace::REFUSE_NOREPLACE_FLAG.with(|flag| flag.set(false));
+                    }
+                }
+                crate::no_replace::REFUSE_NOREPLACE_FLAG.with(|flag| flag.set(true));
+                let _reset = Reset;
+                assert_eq!(
+                    crate::no_replace::move_file_noreplace(&incoming, &new)
+                        .unwrap_err()
+                        .kind(),
+                    std::io::ErrorKind::AlreadyExists
+                );
+                assert_eq!(fs::read(&incoming).unwrap(), INPUT);
+            }
+        } else {
+            assert!(
+                admission.is_ok(),
+                "distinct physical slot {incumbent:?}/{proposed:?}: {admission:?}"
+            );
+            crate::atomic_file::atomic_write_new(&new, INPUT).unwrap();
+            assert_eq!(fs::read(&new).unwrap(), INPUT);
+            // Files that coexist must retain separate identities and remain
+            // editable, even if their logical name folds happen to collide.
+            let first = store.page(&crate::PageId::from(from.clone())).unwrap();
+            let second = store.page(&crate::PageId::from(to.clone())).unwrap();
+            assert_ne!(first.id, second.id);
+            let mut first_doc = first.doc;
+            let mut second_doc = second.doc;
+            first_doc.blocks[0].raw = "first saved independently".into();
+            second_doc.blocks[0].raw = "second saved independently".into();
+            let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+            tx.save_page(
+                &[crate::EditKind::ReplacePage],
+                &first.id,
+                crate::SaveBase::Existing(first.rev),
+                &first_doc,
+            );
+            tx.save_page(
+                &[crate::EditKind::ReplacePage],
+                &second.id,
+                crate::SaveBase::Existing(second.rev),
+                &second_doc,
+            );
+            assert!(matches!(
+                tx.commit_internal(),
+                crate::TxOutcome::Committed { .. }
+            ));
+            let saved_first = fs::read_to_string(&old).unwrap();
+            let saved_second = fs::read_to_string(&new).unwrap();
+            assert!(saved_first.contains("first saved independently"));
+            assert!(!saved_first.contains("second saved independently"));
+            assert!(saved_second.contains("second saved independently"));
+            assert!(!saved_second.contains("first saved independently"));
+        }
+        if aliases {
+            assert_eq!(fs::read(&old).unwrap(), incumbent_bytes);
+        }
+        store.close();
+    }
+}
+
+#[test]
+fn sb1_c8_native_unicode_self_alias_rename_keeps_bytes() {
+    let mut executed = 0;
+    for &(before, after) in SB1_C8_UNICODE_PAIRS {
+        let dir = native_tempdir();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        let from = crate::FileId::from(format!("pages/{before}.md"));
+        let to = crate::FileId::from(format!("pages/{after}.md"));
+        let src = dir.path().join(from.as_str());
+        let dst = dir.path().join(to.as_str());
+        fs::write(&src, OLD).unwrap();
+        let aliases = match same_file::is_same_file(&src, &dst) {
+            Ok(same) => same,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => panic!("volume probe: {error}"),
+        };
+        if !aliases {
+            eprintln!("SB1_C8_SELF_ALIAS_NOT_PRESENT {before:?}/{after:?}");
+            continue;
+        }
+        executed += 1;
+        let store = crate::Store::open(dir.path(), Default::default())
+            .unwrap()
+            .0;
+        {
+            let _writer = store.writer.lock().unwrap();
+            let tx = store.page_plan(None);
+            tx.admission_slot(&to, None, Some(&from)).unwrap();
+            let (moved, result) = tx.respell_entry(&from, &to, OLD);
+            assert!(
+                result.is_ok() && moved,
+                "{before:?}/{after:?}: {result:?}, moved={moved}"
+            );
+        }
+        assert_eq!(fs::read(&dst).unwrap(), OLD);
+        let entries: Vec<_> = fs::read_dir(dir.path().join("pages"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(entries.contains(&std::ffi::OsString::from(format!("{after}.md"))));
+        assert!(!entries.contains(&std::ffi::OsString::from(format!("{before}.md"))));
+        store.close();
+    }
+    assert!(
+        executed > 0 || !cfg!(any(windows, target_os = "macos")),
+        "Windows/macOS must execute native Unicode self-alias renames"
     );
-    assert_eq!(fs.read_page("pages/Foo.md").unwrap(), None);
+    if executed == 0 {
+        eprintln!("NATIVE_MODELFS_ONLY SB1-C8 self-alias: actual volume is case- and normalization-sensitive");
+    }
 }
 
 const NATIVE_MODELFS_ONLY: &[(&str, &str)] = &[
