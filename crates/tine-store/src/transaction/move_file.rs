@@ -576,8 +576,10 @@ mod spelling_tests {
         };
         store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
         store.inject_fault(FaultPoint::CaseMoveAliasNoop);
-        let src = dir.path().join(from.as_str());
-        let dst = dir.path().join(to.as_str());
+        // The store's canonical root, as production passes it: on Windows the
+        // tempdir path can be an 8.3 short name (`RUNNER~1`) outside the binding.
+        let src = store.graph.root.join(from.as_str());
+        let dst = store.graph.root.join(to.as_str());
         let published = tx.publish_move(&mut undo, &src, &dst);
         assert!(published.is_err());
         assert!(
