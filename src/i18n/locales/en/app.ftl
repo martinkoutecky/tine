@@ -21,6 +21,7 @@ app-capture-couldn-t-be-saved-its-text = Capture couldn't be saved — its text 
 app-tine-was-renamed-under-the-hood-so = Tine was renamed under the hood, so we moved your settings and backups across. A few app-level preferences (e.g. keyboard shortcuts) might need setting again — sorry about that!
 # $fallbackDirectory is the temporary application-data directory, not a graph path.
 app-tine-could-not-write-its-usual-application-data = Tine could not write its usual application-data folder, so this session is keeping settings and backups in { $fallbackDirectory } instead. Fixing the permissions on that folder restores the normal location.
+app-drafts-on-volatile-storage = Tine is keeping application data in temporary or memory-backed storage. Unsaved drafts there may not survive a reboot. Save your edits to the graph before restarting this device.
 app-quick-capture-could-not-connect-to-this = Quick Capture could not connect to this graph window.
 app-the-block-renderer-failed-to-load = The block renderer failed to load — text is shown unformatted. Please reload Tine; if this persists, report it.
 app-finishing-graph-operation = Finishing graph operation…

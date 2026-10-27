@@ -88,9 +88,11 @@ pub fn sync_directory_witness(dir: &Path) -> io::Result<DirectoryWitness> {
 }
 
 /// App-data metadata must meet the design's platform witness. Unix never
-/// tolerates a directory-sync error here. Windows relies on write-through
-/// moves / successful DeleteFileW and NTFS's ordered metadata journal; there
-/// is no native directory flush and no native power-cut proof.
+/// tolerates a directory-sync error here. Windows performs no directory flush:
+/// write-through moves cover their documented move scope, not arbitrary mkdir,
+/// unlink, or the ordinary-rename fallback. A-DRAFT-DURABLE in the assumption
+/// ledger records the strong backing-store/namespace persistence precondition;
+/// NTFS journaling alone does not establish it. No native power-cut proof.
 pub(crate) fn sync_private_directory(dir: &Path) -> io::Result<()> {
     sync_directory(dir, true).map(|_| ())
 }

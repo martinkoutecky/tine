@@ -3,6 +3,43 @@ use super::*;
 use crate::owner::git_run::lock_test_hook;
 use std::path::Path;
 
+#[cfg(not(target_os = "android"))]
+#[test]
+fn sb1_run_refuses_the_root_replaced_since_store_open() {
+    let graph = Graph::new();
+    let original = repo(&graph);
+    let original_objects = objects(&original);
+    let slot = graph.slot();
+    let run = crate::owner::git_run::run_of(&json!({"run": begin(&slot)}))
+        .unwrap()
+        .unwrap();
+    let moved = graph.root.with_extension("moved");
+    std::fs::rename(&graph.root, &moved).unwrap();
+    std::fs::create_dir(&graph.root).unwrap();
+    Repository::init(&graph.root).unwrap();
+    let error = crate::owner::git_run::commit_write(
+        &slot,
+        &run,
+        &tine_store::PageId::from("pages/a.md"),
+        "Edit",
+        None,
+        Some(b"- retained input\n"),
+    )
+    .err()
+    .expect("detached run refuses before any repository mutation");
+    assert!(
+        error.message.contains("GraphRootMoved"),
+        "{}",
+        error.message
+    );
+    assert!(!graph.root.join(".git/index").exists());
+    assert!(objects(&Repository::open(&graph.root).unwrap()).is_empty());
+    assert_eq!(
+        objects(&Repository::open(&moved).unwrap()),
+        original_objects
+    );
+}
+
 fn objects(repo: &Repository) -> Vec<git2::Oid> {
     let mut ids = Vec::new();
     repo.odb()

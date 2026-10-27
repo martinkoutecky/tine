@@ -64,6 +64,7 @@ struct Owner {
 
 #[derive(Default)]
 struct Mutations {
+    git_metadata: bool,
     owner: String,
     implementation: String,
     host_impl: bool,
@@ -245,7 +246,18 @@ impl<'ast> Visit<'ast> for Mutations {
 
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
         let method = node.method.to_string();
-        if (method == "write" && !node.args.is_empty())
+        if (self.git_metadata
+            && matches!(
+                method.as_str(),
+                "blob"
+                    | "blob_writer"
+                    | "commit"
+                    | "write_tree_to"
+                    | "reference"
+                    | "reference_matching"
+                    | "write"
+            ))
+            || (method == "write" && !node.args.is_empty())
             || matches!(
                 method.as_str(),
                 "write_all"
@@ -463,7 +475,11 @@ fn inventory() -> BTreeMap<(String, String), Owner> {
             let source = fs::read_to_string(&file).unwrap();
             let syntax =
                 syn::parse_file(&source).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
-            let mut scan = Mutations::default();
+            let mut scan = Mutations {
+                git_metadata: file.ends_with("owner/git_run.rs")
+                    || file.ends_with("owner/git_autocommit.rs"),
+                ..Mutations::default()
+            };
             scan.visit_file(&syntax);
             for (name, owner) in scan.owners {
                 if !owner.operations.is_empty() {
