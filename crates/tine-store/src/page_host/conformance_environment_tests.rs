@@ -97,6 +97,119 @@ fn dirty(profile: &str, create: bool) -> Driver {
 }
 
 #[test]
+fn m3_c3_c4_model_parent_loss_refines_external_absence_and_conflict() {
+    let mut counts = [0, 0];
+    for profile in ["base", "R1", "weak", "all"] {
+        for (family, step) in [
+            EnvStep::DirRename("pages/sub".into(), "pages/moved".into()),
+            EnvStep::InodeChange("pages/sub".into()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for before_temp in [false, true] {
+                let mut d = dirty(profile, false);
+                if before_temp {
+                    d.stepped = true;
+                }
+                run(&mut d, &[("flush", json!([0]))]);
+                d.host.fs.apply_env(step.clone());
+                d.environment_projection();
+                if before_temp {
+                    assert_eq!(d.host.advance_save(), Disposition::Pending);
+                }
+                run(&mut d, &[("check", json!([]))]);
+                assert!(d.host.pages[&key(0)].conflict);
+                d.stepped = false;
+                run(&mut d, &[("draftSync", json!([0]))]);
+                assert_eq!(
+                    drafts::scan(d.host.fs.draft_files(true)).logical[&key(0)].bytes,
+                    text(3)
+                );
+                d.host.fs.assert_no_escapes();
+                counts[family] += 1;
+            }
+        }
+    }
+    assert_eq!(counts, [8, 8]);
+}
+
+#[test]
+fn m3_c3_moves_multiple_physical_pages_and_temps_without_aliasing_them() {
+    let mut fs = ModelFs::default();
+    for (page, spelling, value) in [("a.md", "pages/sub/a.md", 1), ("b.md", "pages/sub/b.md", 2)] {
+        fs.spell(page, spelling);
+        fs.external(page, text(value), true);
+        fs.page_temp(page, &text(value + 2)).unwrap();
+    }
+    fs.apply_env(EnvStep::DirRename("pages/sub".into(), "pages/moved".into()));
+    for (page, value) in [("a.md", 1), ("b.md", 2)] {
+        assert_eq!(fs.alpha(page, false), None);
+        assert_eq!(fs.alpha(&format!("pages/moved/{page}"), false), text(value));
+        assert_eq!(
+            fs.files[&format!("temp/page/pages/moved/{page}")],
+            text(value + 2).unwrap()
+        );
+    }
+    fs.assert_no_escapes();
+}
+
+#[test]
+fn m3_c6_classified_errors_refine_save_fail_and_failed_dirsync() {
+    let mut count = 0;
+    for profile in ["R1", "all"] {
+        for create in [false, true] {
+            for kind in [
+                std::io::ErrorKind::StorageFull,
+                std::io::ErrorKind::Other,
+                std::io::ErrorKind::PermissionDenied,
+                std::io::ErrorKind::ReadOnlyFilesystem,
+            ] {
+                for phase in [
+                    Phase::PageTemp,
+                    Phase::Read,
+                    Phase::PageRename,
+                    Phase::PageSync,
+                ] {
+                    let mut d = dirty(profile, create);
+                    let p = if create { 2 } else { 0 };
+                    if phase == Phase::PageTemp {
+                        d.stepped = true;
+                    }
+                    run(&mut d, &[("flush", json!([p]))]);
+                    if matches!(phase, Phase::PageRename | Phase::PageSync) {
+                        run(&mut d, &[("check", json!([]))]);
+                    }
+                    if phase == Phase::PageSync {
+                        run(&mut d, &[("rename", json!([]))]);
+                    }
+                    d.host.fs.inject(phase, [Fault::Errno(kind, None)]);
+                    let inc = d.host.incarnation;
+                    assert_eq!(d.host.advance_save(), Disposition::Applied);
+                    assert_eq!(d.host.fs.observed_errno, Some(kind));
+                    let (name, args) = if phase == Phase::PageSync {
+                        ("dirSync", vec![json!(false)])
+                    } else {
+                        ("saveFail", vec![])
+                    };
+                    d.register_versions(name, &args, inc);
+                    d.finish(name, &args);
+                    assert!(d.host.pages[&key(p)].risk);
+                    d.stepped = false;
+                    run(&mut d, &[("draftSync", json!([p]))]);
+                    assert_eq!(
+                        drafts::scan(d.host.fs.draft_files(true)).logical[&key(p)].bytes,
+                        text(3)
+                    );
+                    count += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(count, 64);
+}
+
+#[test]
 fn m2_c1_c2_save_schedules_refine_alpha_and_keep_durable_input() {
     let mut counts = [0, 0];
     // R1 is required for environment changes after check and before rename.

@@ -31,6 +31,8 @@ pub(super) enum Fault {
     /// The call's first `k` system calls complete and the next one fails, as
     /// an error there or a process or power cut between the two.
     Cut(usize),
+    /// A classified I/O error, before the phase or after k modeled calls.
+    Errno(std::io::ErrorKind, Option<usize>),
     RootGone(usize),
     RootReplaced(usize),
 }
@@ -67,6 +69,8 @@ pub(super) struct ModelFs {
     pub owed: Vec<String>,
     /// System calls left before an injected `Fault::Cut` fails the next one.
     pub budget: Option<usize>,
+    pub budget_kind: Option<std::io::ErrorKind>,
+    pub observed_errno: Option<std::io::ErrorKind>,
     /// Durable draft entries as last reported by `draft_changes`.
     pub reported: BTreeMap<String, Arc<[u8]>>,
     /// Adapter memory (STEP3 §2), lost at a crash. A model entry is named by
@@ -227,6 +231,7 @@ impl ModelFs {
         self.env_schedule.clear();
         self.env_fault = None;
         self.root_fault = None;
+        self.budget_kind = None;
         self.publications.clear();
         self.owed.clear();
         self.spellings.clear();
@@ -310,6 +315,26 @@ impl ModelFs {
         }
         let fault = self.faults.get_mut(&phase).and_then(VecDeque::pop_front);
         let result = match fault {
+            Some(Fault::Errno(kind, at)) => {
+                if let Some(calls) = at {
+                    self.budget = Some(calls);
+                    self.budget_kind = Some(kind);
+                    let result = effect(self);
+                    assert!(
+                        self.budget.take().is_none(),
+                        "errno fault did not land: {phase:?}/{calls}"
+                    );
+                    result
+                } else {
+                    self.observed_errno = Some(kind);
+                    Err(IoFailure {
+                        kind: ErrorKind::Io,
+                        completed: false,
+                        operation: None,
+                        os_error: None,
+                    })
+                }
+            }
             Some(Fault::RootGone(calls)) => {
                 self.root_fault = Some((calls, RootState::Gone));
                 let result = effect(self);
@@ -375,6 +400,8 @@ impl ModelFs {
         match &mut self.budget {
             Some(0) => {
                 self.budget = None;
+                self.observed_errno =
+                    Some(self.budget_kind.take().unwrap_or(std::io::ErrorKind::Other));
                 Err(IoFailure {
                     kind: ErrorKind::Io,
                     completed: false,
@@ -574,6 +601,16 @@ impl HostIo for ModelFs {
         self.run(Phase::PageRename, |fs| {
             fs.root_step()?;
             fs.check_parent(&format!("graph/{page}"))?;
+            // A directory replacement can remove a prepared temp's epoch.
+            // Native PreparedWrite cannot publish a missing temporary either.
+            if !fs.files.contains_key(&format!("temp/page/{page}")) {
+                return Err(IoFailure {
+                    kind: ErrorKind::Io,
+                    completed: false,
+                    operation: None,
+                    os_error: None,
+                });
+            }
             fs.publish_page(page);
             Ok(())
         })
@@ -583,6 +620,15 @@ impl HostIo for ModelFs {
         self.run(Phase::PageSync, |fs| {
             fs.root_step()?;
             fs.check_parent(&format!("graph/{page}"))?;
+            // A removed directory yields NotFound, which native graph sync
+            // classifies Unsupported (not an I/O failure). Preserve that
+            // behavior: the ignored M3-1 test exposes the host's stale report.
+            if !fs
+                .env
+                .contains(&fs.env.parent(&format!("graph/{page}")), true)
+            {
+                return Ok(Witness::Unsupported);
+            }
             if fs.weak_graph {
                 return Ok(Witness::Unsupported);
             }

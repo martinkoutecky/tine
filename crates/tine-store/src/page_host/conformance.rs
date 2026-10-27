@@ -11,6 +11,8 @@ use serde_json::{json, Value};
 mod creation;
 #[path = "native_conformance_tests.rs"]
 mod native_conformance;
+#[path = "native_environment_tests.rs"]
+mod native_environment_tests;
 
 /// Test physical environment; the native implementation independently checks
 /// the real paths after every production I/O phase. Power stays ModelFs-only.

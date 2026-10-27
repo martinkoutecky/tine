@@ -29,6 +29,8 @@ pub(crate) enum EnvStep {
     RootGone,
     RootReplaced,
     SymlinkSwap(DirKey),
+    DirRename(DirKey, DirKey),
+    InodeChange(DirKey),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -159,6 +161,8 @@ impl ModelFs {
                     },
                 );
             }
+            EnvStep::DirRename(from, to) => self.relocate_dir(&from, Some(&to)),
+            EnvStep::InodeChange(dir) => self.relocate_dir(&dir, None),
         }
         if self.env.root != RootState::Bound {
             let keys: Vec<_> = self
@@ -177,6 +181,80 @@ impl ModelFs {
             if before[&page] != self.alpha(&page, false) {
                 *self.epochs.entry(page).or_default() += 1;
             }
+        }
+    }
+
+    /// Move physical entries, independently of the registered page keys.
+    /// Recreating the old name never resurrects the old epoch's bytes. For C3
+    /// the destination is readable through its new spelling; C4 keeps the
+    /// removed epoch as detached evidence and installs an empty directory.
+    fn relocate_dir(&mut self, from: &str, to: Option<&str>) {
+        let under = |path: &str| path == from || path.starts_with(&format!("{from}/"));
+        let epoch = self.env.dirs.get(from).expect("existing directory").epoch + 1;
+        for durable in [false, true] {
+            let entries = if durable { &self.stable } else { &self.files };
+            let moves: Vec<_> = entries
+                .iter()
+                .filter(|(key, _)| graph_key(key))
+                .filter_map(|(key, bytes)| {
+                    let physical = if let Some(page) = key.strip_prefix("graph/") {
+                        self.spelling(page)
+                    } else if let Some(page) = key.strip_prefix("temp/page/") {
+                        self.spelling(page)
+                    } else if let Some(dir) = key.strip_prefix("dir/") {
+                        dir.into()
+                    } else {
+                        self.env.parent(key)
+                    };
+                    under(&physical).then(|| (key.clone(), physical, bytes.clone()))
+                })
+                .collect();
+            for (key, physical, bytes) in moves {
+                let entries = if durable {
+                    &mut self.stable
+                } else {
+                    &mut self.files
+                };
+                entries.remove(&key);
+                if let Some(to) = to {
+                    let physical = format!("{to}{}", &physical[from.len()..]);
+                    let prefix = if key.starts_with("graph/") {
+                        "graph/"
+                    } else if key.starts_with("dir/") {
+                        "dir/"
+                    } else {
+                        "temp/page/"
+                    };
+                    entries.insert(format!("{prefix}{physical}"), bytes);
+                } else if !durable {
+                    self.detached.insert(key, bytes);
+                }
+            }
+        }
+        let dirs: Vec<_> = self
+            .env
+            .dirs
+            .keys()
+            .filter(|dir| under(dir))
+            .cloned()
+            .collect();
+        for dir in dirs {
+            let mut entry = self.env.dirs.remove(&dir).unwrap();
+            entry.epoch += 1;
+            if let Some(to) = to {
+                self.env
+                    .dirs
+                    .insert(format!("{to}{}", &dir[from.len()..]), entry);
+            }
+        }
+        if to.is_none() {
+            self.env.dirs.insert(
+                from.into(),
+                Dir {
+                    epoch,
+                    kind: DirKind::Real,
+                },
+            );
         }
     }
 

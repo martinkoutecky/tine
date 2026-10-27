@@ -29,6 +29,9 @@ mod plan;
 mod preflight;
 mod prepared;
 use prepared::PreparedRewrite;
+#[cfg(test)]
+#[path = "transaction_environment_tests.rs"]
+mod environment_tests;
 mod publication;
 mod read_checks;
 pub(crate) mod validation;
