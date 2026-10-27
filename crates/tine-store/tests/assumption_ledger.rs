@@ -24,6 +24,25 @@ fn assumption_anchors_guards_tests_and_model_hash_exist() {
     .unwrap();
     assert_eq!(fixture["model_sha256"], hash);
 
+    // s3.6 is a separately hash-linked supplement, not a relabelled s3.5
+    // transcription or Lean proof. Check the actual ITF endpoint fixture.
+    let model = fs::read_to_string(root.join("docs/storage-model/quint/storage-s36.qnt")).unwrap();
+    let supplement: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("crates/tine-store/tests/fixtures/s2/s36-policy.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        supplement["model_sha256"],
+        format!("{:x}", Sha256::digest(model.as_bytes()))
+    );
+    let scenarios = fs::read(root.join("docs/storage-model/quint/scenarios-s36.inc")).unwrap();
+    assert_eq!(
+        supplement["scenarios_sha256"],
+        format!("{:x}", Sha256::digest(scenarios))
+    );
+    assert_eq!(supplement["cases"].as_array().unwrap().len(), 36);
+
     let source = fs::read_to_string(root.join("docs/storage-model/ASSUMPTIONS.md")).unwrap();
     let mut ids = BTreeSet::new();
     for line in source.lines().filter(|line| line.starts_with("| A-")) {

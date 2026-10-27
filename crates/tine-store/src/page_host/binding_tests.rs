@@ -19,6 +19,9 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+#[path = "s36_creation_tests.rs"]
+mod s36_creation_tests;
+
 struct Frozen;
 impl Clock for Frozen {
     fn now_ms(&self) -> u64 {
