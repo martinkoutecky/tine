@@ -1849,7 +1849,37 @@ impl Store {
                         ));
                     }
                 } else if ty.is_file() {
-                    match entry.metadata() {
+                    #[cfg(test)]
+                    SCAN_HOOKS.with(|hooks| {
+                        if let Some(hook) = hooks.borrow_mut().0.take() {
+                            hook(&path);
+                        }
+                    });
+                    // A name listed a moment ago and now absent was removed or
+                    // is being replaced (a sync tool that archives the old
+                    // version before moving the new one in): look once more,
+                    // then treat it as gone, never as unreadable. The watcher
+                    // delivers whatever arrives next.
+                    let meta = match entry.metadata() {
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            #[cfg(test)]
+                            SCAN_HOOKS.with(|hooks| {
+                                if let Some(hook) = hooks.borrow_mut().1.take() {
+                                    hook(&path);
+                                }
+                            });
+                            match fs::symlink_metadata(&path) {
+                                Ok(meta) if meta.is_file() => Ok(meta),
+                                Ok(_) => continue,
+                                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                                    continue
+                                }
+                                Err(error) => Err(error),
+                            }
+                        }
+                        other => other,
+                    };
+                    match meta {
                         Ok(meta) => {
                             if let Ok(id) = store.file_id(area, &rel) {
                                 out.files.push(FileEntry {
@@ -2183,6 +2213,13 @@ pub struct Listing {
 thread_local! {
     static SCAN_FAULTS: std::cell::RefCell<(Option<String>, Option<String>)> =
         const { std::cell::RefCell::new((None, None)) };
+    /// Run before a listed file's metadata read and before its NotFound
+    /// re-check: tests remove or restore the file inside that window.
+    #[allow(clippy::type_complexity)]
+    static SCAN_HOOKS: std::cell::RefCell<(
+        Option<Box<dyn FnOnce(&Path)>>,
+        Option<Box<dyn FnOnce(&Path)>>,
+    )> = const { std::cell::RefCell::new((None, None)) };
 }
 
 /// Journal day encoded as a `yyyymmdd` integer. Construct it from
@@ -5449,6 +5486,61 @@ mod rev5_tests {
                 .collect::<Vec<_>>(),
             vec!["Unreadable.md", "nested"]
         );
+        assert!(listing.files.is_empty());
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Martin 10/27: a journal a sync tool was replacing (old version moved
+    /// away, new one moved in) was reported "No such file or directory" while
+    /// it existed and loaded. A listed file that vanishes before its metadata
+    /// read is gone or being replaced, never unreadable.
+    #[test]
+    fn scan_treats_a_file_vanishing_mid_scan_as_gone_or_replaced() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-scan-vanish-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("journals")).unwrap();
+        fs::write(root.join("journals/2026_10_26.md"), b"- day\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+
+        // Replaced: gone at the first look, back at the second.
+        let parked = root.join("journals-parked.md");
+        let (away, back) = (parked.clone(), parked.clone());
+        SCAN_HOOKS.with(|hooks| {
+            *hooks.borrow_mut() = (
+                Some(Box::new(move |path: &Path| {
+                    fs::rename(path, &away).unwrap()
+                })),
+                Some(Box::new(move |path: &Path| {
+                    fs::rename(&back, path).unwrap()
+                })),
+            );
+        });
+        let listing = store.scan_area(Area::Journals, None).unwrap();
+        assert!(listing.unreadable.is_empty(), "{:?}", listing.unreadable);
+        assert_eq!(
+            listing
+                .files
+                .iter()
+                .map(|f| f.rel.as_str())
+                .collect::<Vec<_>>(),
+            ["2026_10_26.md"]
+        );
+
+        // Removed: gone at both looks.
+        SCAN_HOOKS.with(|hooks| {
+            *hooks.borrow_mut() = (
+                Some(Box::new(|path: &Path| fs::remove_file(path).unwrap())),
+                None,
+            );
+        });
+        let listing = store.scan_area(Area::Journals, None).unwrap();
+        SCAN_HOOKS.with(|hooks| *hooks.borrow_mut() = (None, None));
+        assert!(listing.unreadable.is_empty(), "{:?}", listing.unreadable);
         assert!(listing.files.is_empty());
         drop(store);
         fs::remove_dir_all(root).unwrap();
