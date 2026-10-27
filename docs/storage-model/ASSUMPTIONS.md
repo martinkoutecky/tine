@@ -1,6 +1,6 @@
 # Storage model assumptions and mutation scope
 
-This is the M0/M1 ledger for storage s3.5. It records the boundary of the
+This is the M0–M2 ledger for storage s3.5. It records the boundary of the
 existing evidence; it adds no formal claim. Model anchors are literal substrings
 of `quint/storage-s35.qnt`. Code references use repository-relative `file#owner`;
 test references name actual `#[test]` functions. The meta-test connects the
@@ -16,8 +16,8 @@ does not establish check ordering or root identity.
 
 | ID | Assumption | Model anchor | Guard (code) | Fault test | Platforms | Status |
 |---|---|---|---|---|---|---|
-| A-PATH-IDENTITY | A page path keeps its file identity; containment is rechecked, root replacement and check-then-act remain gaps | `disk: int -> int` | `crates/tine-store/src/page_host/production_guard.rs#ProductionIo::check_path` | `crates/tine-store/src/page_host/production_guard_tests.rs#l8_01_actual_io_rechecks_after_admission_and_after_temp` | All five; C2 and transaction schedules pending M3 | guarded-untested |
-| A-ROOT-BOUND | Application graph writes check the directory bound at open; Tine never creates the graph root or an ancestor | `disk: int -> int` | `crates/tine-store/src/root_binding.rs#RootBinding::check`<br>`crates/tine-store/src/directory_durability.rs#DirectoryCreation::new` | `crates/tine-store/src/page_host/production_guard_tests.rs#l9_replaced_root_refuses_creating_save_and_keeps_input`<br>`crates/tine-store/src/directory_durability.rs#l9_directory_creation_never_recreates_a_vanished_bound`<br>`crates/tine-store/src/restore.rs#l9_restore_refuses_a_replaced_root_before_reserving_recovery`<br>`crates/tine-store/src/page_host/native_conformance_tests.rs#l9_native_and_model_refuse_the_same_detached_root_phases`<br>`crates/tine-store/src/page_host/binding_root_tests.rs#l9_input_typed_after_root_moves_reaches_durable_custody`<br>`crates/tine-store/src/root_binding.rs#l9_root_binding_holds_no_directory_descriptor` | Linux/macOS/iOS stat identity (Linux birth time when both sides supply it); no held directory fd; SMB/CIFS and FUSE roots (statfs at open) compare device and birth time only, because their inode numbers change after the unpinned root inode is evicted. Inode reuse after delete/recreate at the same path (with reused/unavailable birth time) remains a window. Windows file id runtime/cost is unverified. Android uses vanish-only until FUSE identity is device-verified, so replacement is not detected there. ModelFs epochs/native phase replay and real post-detachment admission cover Linux; accepted final check-to-OS race remains. Developer export and git are outside this guard. | guarded-untested |
+| A-PATH-IDENTITY | A page path keeps its file identity; containment and the root binding are rechecked; check-then-act remains a gap | `disk: int -> int` | `crates/tine-store/src/page_host/production_guard.rs#ProductionIo::check_path` | `crates/tine-store/src/page_host/production_guard_tests.rs#l8_01_actual_io_rechecks_after_admission_and_after_temp`<br>`crates/tine-store/src/page_host/conformance_environment_tests.rs#m2_c1_c2_save_schedules_refine_alpha_and_keep_durable_input`<br>`crates/tine-store/src/page_host/conformance_environment_tests.rs#m2_c1_c2_syscall_cross_product_including_trash_and_app_data`<br>`crates/tine-store/src/page_host/conformance_environment_tests.rs#m2_finding_c2_symlink_between_directory_plan_and_finish` | ModelFs C2 parent/ancestor swaps now check executable α and escapes. Native phase-boundary guards exist; full NativeFs and transaction escape schedules remain M3. Ignored finding M2-2 demonstrates outside mkdir after a parent swap between directory planning and finish. | guarded-untested |
+| A-ROOT-BOUND | Application graph writes check the directory bound at open; Tine never creates the graph root or an ancestor | `disk: int -> int` | `crates/tine-store/src/root_binding.rs#RootBinding::check`<br>`crates/tine-store/src/directory_durability.rs#DirectoryCreation::new` | `crates/tine-store/src/page_host/production_guard_tests.rs#l9_replaced_root_refuses_creating_save_and_keeps_input`<br>`crates/tine-store/src/directory_durability.rs#l9_directory_creation_never_recreates_a_vanished_bound`<br>`crates/tine-store/src/restore.rs#l9_restore_refuses_a_replaced_root_before_reserving_recovery`<br>`crates/tine-store/src/page_host/native_conformance_tests.rs#l9_native_and_model_refuse_the_same_detached_root_phases`<br>`crates/tine-store/src/page_host/binding_root_tests.rs#l9_input_typed_after_root_moves_reaches_durable_custody`<br>`crates/tine-store/src/root_binding.rs#l9_root_binding_holds_no_directory_descriptor`<br>`crates/tine-store/src/page_host/conformance_environment_tests.rs#m2_c1_c2_save_schedules_refine_alpha_and_keep_durable_input`<br>`crates/tine-store/src/page_host/conformance_environment_tests.rs#m2_c1_c2_syscall_cross_product_including_trash_and_app_data`<br>`crates/tine-store/src/page_host/conformance_environment_tests.rs#m2_finding_c1_replaced_root_between_directory_plan_and_finish` | Linux/macOS/iOS stat identity (Linux birth time when both sides supply it); no held directory fd; SMB/CIFS and FUSE roots (statfs at open) compare device and birth time only, because their inode numbers change after the unpinned root inode is evicted. Inode reuse after delete/recreate at the same path (with reused/unavailable birth time) remains a window. Windows file id runtime/cost is unverified. Android uses vanish-only until FUSE identity is device-verified, so replacement is not detected there. ModelFs C1 syscall schedules now check α, escapes and draft retention; native phase replay and real post-detachment admission cover Linux. Ignored finding M2-1 demonstrates descendant creation in a replacement root between directory planning and finish; the accepted check-to-OS race remains. Developer export and git are outside this guard. | guarded-untested |
 | A-DRAFT-NAMESPACE | Relaunch finds pre-crash drafts after a root path change | `action launch` | `src-tauri/src/root_identity.rs#adopt_namespace` | `src-tauri/src/root_identity.rs#relocation_is_idempotent_and_preserves_sealed_bytes`<br>`src-tauri/src/root_identity.rs#adoption_requires_an_empty_target_and_moves_the_whole_census` | Existing formats; validated iOS auto-relocation, explicit orphan recovery elsewhere. iOS device rebase remains unverified. | guarded-untested |
 | A-ONE-HOST | One host owns a graph and its drafts | `alive: bool` | `src-tauri/src/owner/lease.rs#claim`<br>`src-tauri/src/state.rs#GraphRegistry::draft_namespace_held` | `src-tauri/src/root_identity.rs#old_graph_id_uses_the_same_owner_lock_as_the_host`<br>`src-tauri/src/host_retirement.rs#l9_retiring_source_refuses_draft_recovery`<br>`src-tauri/src/host_retirement.rs#l9_recovery_and_relocation_exclude_both_bound_and_retiring_namespaces` | Linux/macOS/Windows account locks; iOS/Android per-app sandbox cross-process exclusion. On all five targets registry/retirement entries exclude both draft namespaces, except the saved-stop recovery target. Lock errors retain diagnosed fail-open; recovery refuses without the current desktop lease. Windows runtime remains unverified. | guarded-untested |
 | A-DIRSYNC | Directory sync settles names; withdraw trash creation lacks the sync; root/parent identity is unbound | `action dirSync` | `crates/tine-store/src/directory_durability.rs#create_dir_all_durable` | `crates/tine-store/tests/directory_durability_guard.rs#directory_sync_has_one_owner_and_no_discarded_result` | All five; withdraw L9-13 and C6 power fault pending | unguarded |
@@ -94,11 +94,29 @@ body has its own row; its caller's domain supplies the target policy.
 
 Rows marked `unguarded:A-ID` are findings, not claims of containment. Each
 must point to an unguarded assumption here. Classification and syntactic guard
-presence remain reviewed evidence: no taint analysis, call graph, ordering
-proof or dynamic primitive hook is claimed. HostIo helpers have `oracle=false`;
+presence remain reviewed evidence: the census provides no taint analysis, call
+graph or ordering proof. S4's separate cfg(test) RG7 hook checks a matching
+lexical scope at mutation primitives, not root/parent freshness. HostIo helpers have `oracle=false`;
 only actual mutating seam methods have `oracle=true`. The oracle still does
 not cover transactions, restore, publish, purge or git (environment writes).
-M2–M4 obligations beyond the L9 root epoch schedules remain pending.
+M2 adds test-only directory epochs/kinds and graph-key parents beside ModelFs's
+byte maps. The driver observes disk/stable through executable α and rejects a
+nonempty escape history at every comparison and step entry. C1/C2 schedules
+cover the modeled syscall slots, nested-page mkdirs, and app-data independence;
+full save projections compare environment deletions and host failures against
+the unchanged s3.5 oracle. No directory behavior is formally proven.
+
+A-PATH-IDENTITY and A-ROOT-BOUND remain `guarded-untested`: M2 adds bounded
+fault evidence but does not complete their stated scope. Two ignored tests
+retain failing assertions against current DirectoryCreation: M2-1 (root
+replacement) and M2-2 (out-of-root parent symlink) after planning and before
+finish. ModelFs's guard-per-modeled-syscall abstraction is stronger at this
+boundary; its green schedules cannot clear those findings. The existing RG7
+test-only checked-target witness is reused by those probes, not replaced.
+NativeFs replay, transactions, and C3–C8 remain M3/M4 work. The s3.5 external
+write guard also cannot project a stable-only disappearance when disk is
+already ABSENT; trash-sync environment schedules currently check physical α
+and escapes, not full oracle refinement of that case.
 
 L9 per edit adds zero bytes/files/transport. Root checks add metadata calls at
 graph I/O boundaries (six checks for the ordinary measured native save), and

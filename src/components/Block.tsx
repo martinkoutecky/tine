@@ -44,18 +44,17 @@ import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
 import { navigateJournalDown } from "../editor/journalNavigation";
+import { focusMountedEditor } from "../editor/surfaceFocus";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
 import { pageByName, blockPageReadOnly, blockWritable, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
-  clearFocusSurface,
   editingId,
   editingOwner,
   captureEditIntent,
   editingSurface,
   endEdit,
-  focusSurfaceFor,
   noteSurfaceFocused,
   registerHistoryEditorTarget,
   startEditing,
@@ -1946,31 +1945,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       focused: () => !!ref && documentOf(ref).activeElement === ref,
     });
     onCleanup(unregisterHistoryTarget);
-    // If this block is rendered in several surfaces at once (main pane + sidebar),
-    // an unscoped edit (split / keyboard nav) mounts an editor in each. Only the
-    // surface that was stamped (the one that had the caret) focuses; the others
-    // must NOT steal it. `want === undefined` means "no constraint" → focus as
-    // usual (the normal single-surface case — unchanged behaviour).
-    const want = focusSurfaceFor(props.id);
-    if (want === undefined || want === surfaceKey) {
-      focusNow();
-      // Clear AFTER this synchronous render flush, so sibling instances mounting
-      // in the same flush still see the stamp and stand down.
-      queueMicrotask(() => clearFocusSurface(props.id));
-    } else {
-      // Another surface owns the caret. Safety net against a stale stamp pointing
-      // at a surface that doesn't actually render this block: if nothing has taken
-      // focus by the next microtask, take it ourselves so the caret never vanishes.
-      queueMicrotask(() => {
-        if (!ref.isConnected || editingId() !== props.id) return;
-        const ae = documentOf(ref).activeElement;
-        const taken = isElementTag(ae, "textarea") && ae.classList.contains("block-editor");
-        if (!taken) {
-          focusNow();
-          clearFocusSurface(props.id);
-        }
-      });
-    }
+    focusMountedEditor(props.id, surfaceKey, () => ref, focusNow);
     resizeNow();
     onCleanup(revealCaretSettled(ref, nearestScrollableY(ref)));
     // A split can change the editor's wrapping width after this mount-time
@@ -3049,19 +3024,32 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
       return;
     }
-    exitEditOnBlur();
+    const target = e.relatedTarget;
+    const sameBlockEditor = isElementTag(target, "textarea")
+      && target.classList.contains("block-editor")
+      && target.closest("[data-block-id]")?.getAttribute("data-block-id") === props.id;
+    exitEditOnBlur(sameBlockEditor ? target : undefined);
   };
 
   // A real exit (clicking elsewhere, Escape, Enter→new block, another Tine window
   // taking focus): move any SCHEDULED/DEADLINE planning line to its canonical
   // position (OG layout) as we commit — type-anywhere-while-editing,
   // normalize-on-exit (M1c). The editor is closing, so there is no caret to preserve.
-  const exitEditOnBlur = () => {
+  const exitEditOnBlur = (handoff?: HTMLTextAreaElement) => {
+    const intentIsCurrent = captureEditIntent();
     const calcExit = isCalc();
-    commit(calcExit || codeShown() ? ref.value : normalizePlanning(ref.value, pageFmt()), calcExit ? { calc: true } : undefined);
-    finishPageHeaderEdit(props.id);
-    // Only clear if no other block grabbed editing focus.
-    if (editingId() === props.id) endEdit("blur");
+    commit(calcExit || codeShown() || handoff ? ref.value : normalizePlanning(ref.value, pageFmt()), calcExit ? { calc: true } : undefined);
+    if (!handoff) finishPageHeaderEdit(props.id);
+    const endIfCurrent = () => {
+      // Blur precedes the destination's focus event. Let it record the active
+      // surface before deciding whether this occurrence still owns the exit.
+      if (!intentIsCurrent() || editingId() !== props.id) return;
+      if (handoff?.isConnected && documentOf(handoff).activeElement === handoff) return;
+      if (handoff) finishPageHeaderEdit(props.id);
+      endEdit("blur");
+    };
+    if (handoff) queueMicrotask(endIfCurrent);
+    else endIfCurrent();
   };
 
   // When the window regains focus, re-focus this block's editor and restore the

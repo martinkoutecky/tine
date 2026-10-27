@@ -18,6 +18,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { APP_ID } from "./lib/app-identity.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -40,6 +41,7 @@ fs.writeFileSync(path.join(GRAPH, "logseq", "config.edn"), "{}\n");
 fs.writeFileSync(file("Keystroke"), "- start\n");
 fs.writeFileSync(file("Conflict"), "- base\n");
 fs.writeFileSync(file("Crash"), "- before crash\n");
+const ownerFixture = installAccountHome(TMP, ARTIFACTS);
 
 const env = {
   ...process.env,
@@ -66,6 +68,7 @@ async function launch(session) {
   });
   await ensureMainWindow(browser);
   await browser.$(".page-title, .ls-block").waitForExist({ timeout: 20_000 });
+  await assertAppLease(ownerFixture);
 }
 
 /** The app processes of this run (its graph in their environment). */
