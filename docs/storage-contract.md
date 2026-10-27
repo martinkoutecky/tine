@@ -178,32 +178,57 @@ creates that bound, and creates missing descendants one level at a time.
 For a missing chain only (REG-M2-DIRCREATE-BOUND), every platform rechecks the
 graph's original open-time root binding and the actual parent's canonical
 containment immediately before each path-based `create_dir`. Each new entry
-queues its parent for sync; before each path-based sync the same checks run.
-Unpaid sync obligations survive errors, Discard and page Close in the graph
-adapter until paid by a retry or until the graph adapter closes. Failed attempts
-that created nothing are removed immediately. No plan holds directory handles
-or requires read access to ancestors merely to create a folder. A stable,
-contained replacement parent can be retried without a stale identity anchor.
+queues its parent for sync, with process-local identity witnesses for both the
+created entry and that parent. Before each path-based sync the same checks run,
+and both identities are checked before and after sync using RootBinding's
+existing platform policy (REG-M3-SYNC-AFTER-PARENT-LOSS).
+The graph adapter retains a failed plan across Discard, page Close and retries
+while it has recorded parent debt or missing components. Re-planning after an
+explicit non-durable result replaces stale witnesses with current-chain
+obligations: existing entries record parent debt; missing components owe it
+once created or encountered as AlreadyExists after restoration. A refusal
+before the first replacement mkdir cannot dispose of that plan. Only a
+successful finish or an empty pair of obligation queues permits removal;
+closing the adapter also ends this process-local custody. This is not a
+persistent debt journal or retention by the one-shot helpers.
+No plan holds directory handles or requires read access to ancestors merely
+to create a folder. A stable,
+contained replacement parent first reports the old creation non-durable. The
+next attempt re-plans the target and syncs the entire current directory chain,
+including existing replacement entries. It does not acknowledge detached debt
+or loop forever on its stale witness. A missing ancestor detected at the
+pre-mkdir check or mkdir also requests this re-plan, even while descendants
+remain to be created or a previous re-plan is interrupted. The failed attempt
+retains its current queues; a retry requesting re-planning constructs both
+replacement queues before installing them. Retaining a missing component
+ensures that restoration of an earlier ancestor still records and pays its
+parent sync. Once interference ends, a stable contained chain can complete
+through the original identity and containment guards. Re-planning
+still uses the original root binding and checks containment; restoring the
+original identity also allows a retry after a containment refusal.
 Detected root detachment fails as `GraphRootMoved`; an outside parent or an
 inspection/filesystem error fails as I/O. Input stays in host/device-draft
 custody. The two M2 plan-to-finish schedules leave the replacement root/outside
 target untouched on identity-checking test filesystems. Existing directories
-add zero binding/containment probes; the ordinary-save cost guard is unchanged.
+add zero creation binding/containment probes. An ordinary existing-page save
+adds one post-sync file metadata probe, independent of page size.
 Linux/macOS/iOS retain their existing stat/statfs identity policy, Windows its
 delete-sharing `FILE_ID_INFO` policy, and Android its vanish-only policy: no
-new inode comparison is imposed on shared storage. Android cannot detect a
+new directory inode comparison is imposed on shared storage. Android cannot detect a
 same-path replacement root; relaxed SMB/FUSE identities also retain the limits
-above. Unix directory-fsync tolerances, strict app-data sync and Windows's
+above. A directory-sync `NotFound` is a real error, never `Unsupported`.
+The other Unix directory-fsync tolerances, strict app-data sync and Windows's
 existing no-op directory sync are unchanged. App-data creation binds its chosen
 existing ancestor for that attempt; graph callers supply the binding from open.
 These boundaries are tested against the model, not proven for native directories.
 Residuals on Linux/macOS/iOS/Android and Windows: the identity and containment
 probes are sequential, so swaps between probes also remain possible. An ancestor
 replaced by an outside symlink/reparse redirect, or moved, after its last relevant check can redirect
-the path-based create outside the bound. A parent renamed between creation and
-sync can cause reopening to sync a replacement; pre-sync rechecks detect a
-currently outside path, but neither identity nor containment checking is atomic
-with creation or sync. Windows retains this check-then-`CreateDirectoryW`
+the path-based create outside the bound. Retained-debt checks detect a changed
+entry/parent under the platform identity policy; a swap and restoration between
+the sequential probes can still evade them. Entry-witness capture immediately
+after mkdir can itself race with substitution. Neither identity nor containment
+checking is atomic with creation or sync. Windows retains this check-then-`CreateDirectoryW`
 window as well. Initial open-time binding capture can itself race with root
 replacement, and weak identities may not distinguish it. There is no fresh
 creation-time root capture that substitutes for the original graph binding.
@@ -218,11 +243,27 @@ creation's platform limits are above. This is not handle-relative
 file publication or native power-cut proof. A normal existing-page host save adds six
 root metadata probes, independent of text size: before directory creation,
 temp creation, base read, publication, the publication stamp read and directory
-sync. Only the duplicate page-path check immediately before the directory-sync
+sync, plus one file metadata probe after sync (seven path metadata/identity
+probes versus six before M3, for both 1 and 60 blocks). The publication read
+already captures the file's handle stamp; the new probe compares time, size,
+identity and change time against it without reading or hashing bytes. A missing,
+unreadable or changed publication witness returns Uncertain, retaining input
+risk for drafting/retry and watcher reconciliation. This check also runs after
+Unsupported sync and Windows's no-op sync; it adds no Windows directory flush.
+Windows file stamps use creation time as their identity witness, not the full
+directory FILE_ID_INFO. Publication-stamp capture after rename can itself race
+with external substitution; weak/reused stamps and a substitution restored
+between sync and the final probe remain residuals. Android's directory debt remains
+vanish-only: same-path directory replacement with a surviving file stamp is not
+detected. These are bounded checks tested against the model, not a proof of
+original-parent flush or native power-loss durability.
+Only the duplicate page-path check immediately before the directory-sync
 guard was removed; the remaining boundaries can be separated by scheduling or
-I/O and do not reuse a stale witness. Linux uses one `std::fs::metadata`
-(statx, with std's stat fallback) per probe, Apple uses one stat; Windows uses one
-identity open/query. The ignored `l9_measure_per_save_root_checks` test measures
+I/O and do not reuse a stale witness. Each Linux root check uses one
+`std::fs::metadata` (statx, with std's stat fallback), Apple uses one stat;
+Windows uses one identity open/query per root check. The final file probe uses
+`symlink_metadata` and the existing per-platform watcher stamp producer.
+The ignored `l9_measure_per_save_root_checks` test measures
 the running platform: ~1.4 µs per check on Linux (statx); on hosted Windows
 (run 40145619007) 20.2 µs per check, 121 µs for the six checks of a save.
 
@@ -1140,6 +1181,26 @@ by I-9's typed failure paths.
 | `src::quickCaptureReceiver` retry (L9-08, F1–F3) | A save backoff, lost acknowledgement, graph-window reload or graph switch can follow an insertion. The sender retains the request id and original snapshot across transport and manual retries. A native process-memory claim precedes insertion; pending claims survive WebView reload and are not evicted by the 100 completed-id cap. A live receiver retries only its landed destination's guarded save. When reload/rebinding prevents proof of the old attempt, acknowledge a distinct uncertain/previous-graph state, keep scratch and retry identity (including on Escape), and tell the user to check that graph before capturing again; never silently reinsert. A proved refusal before insertion releases the claim and permits a new snapshot. After success, subtract matching submitted prefixes by node identity, retaining new nodes and additions. Rewritten non-prefix input stays with a reminder that the earlier capture is saved; IME subtraction waits for composition end. Scratch and claims last only for the running process. No new persisted record or graph write path. Proof `src/capture.followups.test.tsx`, `src/capture.keptText.test.tsx`, `src/App.capture.test.tsx`, `src-tauri/src/capture_receipts.rs`. |
 | `src::document::host` window writes (step 3b P2b: the page host is the only writer of page edits; the frontend save engine is gone) | An alias draft (a page with no file whose name became an alias, L13) lands in its owner only while the owner is open in the host, idle and not conflicted, and no editor is open on it (an IME composition is DOM-local input the store does not hold yet); otherwise it stays, unsaved and listed. The landing is recorded when the owner's live text receives the copy, before submission and publication are proved; if either fails, the draft stays recoverable. A retry after an unproved publication or a mid-save edit replaces the landed copy instead of appending the draft again; when the owner's text no longer holds that copy (an external editor or sync client changed the owner meanwhile) the landing refuses, says so, and keeps the draft (proof `src/document/save/aliasDraft.test.ts`, `src/document/save/aliasDraftRetry.test.ts`; audit L9-05). A watcher observation of a page with unsaved input conflicts in the host; the conflict lifts when the file provably returns to the baseline the editor loaded (an external editor's temp+rename or a mid-delivery sync gap), and the frozen edit is saved against it (og I1c, master c68c0b6e7; proof `src/document/conflictLift.test.ts`). |
 
+M3 fault evidence for the `tine-store::page_host::apply` I-8 row:
+`native_environment_tests.rs#m3_c6_draft_failed_matches_i8_host_apply_row`
+replays StorageFull, Other (EIO class), PermissionDenied and ReadOnlyFilesystem
+at draft temp/rename/sync on ModelFs and the native adapter. A refused operation
+answers DraftFailed, changes no held page or graph bytes and installs no order.
+Failed saves are I-9 error returns, not new counted I-8 refusal sites:
+`m3_c6_errno_classes_keep_sticky_failure_and_admitted_input` checks the failed
+outcome/cause, at-risk input, durable draft retention, reattach and repaired
+retry. `m3_c6_errno_notice_stays_sticky_until_publication_on_both_backends`
+also runs the actual notice policy through three failures, durable drafting,
+idle reconciliation and successful-publication clearing on both backends.
+C3/C4 parent loss before the base guard conflicts rather than publishing
+stale recreation. Directory behavior is tested against the model; M3-1/M3-2
+are active regressions for post-publication currentness and retained sync debt,
+with cold draft/repaired retry and current-chain re-planning checks. Android's
+vanish-only directory policy excludes the native M3-2 replacement case (see
+ASSUMPTIONS.md A-DIRSYNC). Transactions
+have only bounded C2/C3 escape checks and retain `oracle=false` in the mutation
+ledger. No native power-loss refinement is claimed.
+
 The CLI passes `None` as the session to `PageHost::delete`, capturing the current
 binding session when that method begins, after the owner's window flush and
 checked-byte read. A reload after this capture and before admission refuses;
@@ -1635,7 +1696,10 @@ can make the host's unchanged-observation publication stamp the absent
 source again (`Bridge::index` → `note_own_observed`): it has no successful
 whole-file read to bill as `observation_reads`, and its stamp is not made
 on the watcher thread, so `stamps_by_path` alone does not isolate publication.
-The one-stamp-per-written-referrer bound is unchanged. The separate live
+M3-1 adds one post-directory-sync identity probe per written referrer, so the
+publication bound is now two metadata stamps per referrer: that probe and the
+existing own-write check at its later boundary. Payload read/hash bounds are
+unchanged. The separate live
 echo check (`rename_io::rename_watcher_echo_cost_is_linear_in_written_files`)
 retains 60/600-page graphs and the same watcher read/stamp bounds.
 The live-watcher rename cost tests measure through an acknowledged drain

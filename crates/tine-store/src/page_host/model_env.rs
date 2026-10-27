@@ -29,11 +29,23 @@ pub(crate) enum EnvStep {
     RootGone,
     RootReplaced,
     SymlinkSwap(DirKey),
+    DirRename(DirKey, DirKey),
+    InodeChange(DirKey),
+    /// An in-place writer has exposed only this prefix when Read runs.
+    ExternalInPlace(String, Arc<[u8]>, usize),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Fold {
+    #[default]
+    None,
+    Case,
 }
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Env {
     pub root: RootState,
+    pub fold: Fold,
     pub dirs: BTreeMap<DirKey, Dir>,
     /// Physical parent for each graph/page-temp/trash/directory key. Root is
     /// ""; absence from this map preserves the old flat fixtures.
@@ -114,9 +126,30 @@ impl Env {
 }
 
 impl ModelFs {
+    /// Resolve physical spellings independently of logical page registration.
+    /// Case is deliberately ASCII here; Unicode normalization is outside C8.
+    pub fn case_alias(&self, page: &str) -> Option<String> {
+        self.case_alias_in(page, false)
+    }
+
+    fn case_alias_in(&self, page: &str, durable: bool) -> Option<String> {
+        if self.env.fold != Fold::Case {
+            return None;
+        }
+        let spelling = self.spelling(page);
+        (if durable { &self.stable } else { &self.files })
+            .keys()
+            .filter_map(|key| key.strip_prefix("graph/"))
+            .find(|key| *key != page && self.spelling(key).eq_ignore_ascii_case(&spelling))
+            .map(str::to_owned)
+    }
+
     /// Executable α from design §1. The byte maps are physical evidence;
     /// inaccessible entries stay there, rather than being silently deleted.
     pub fn alpha(&self, page: &str, durable: bool) -> Text {
+        let page = self
+            .case_alias_in(page, durable)
+            .unwrap_or_else(|| page.into());
         let key = format!("graph/{page}");
         self.env
             .contains(&self.env.parent(&key), true)
@@ -159,6 +192,15 @@ impl ModelFs {
                     },
                 );
             }
+            EnvStep::DirRename(from, to) => self.relocate_dir(&from, Some(&to)),
+            EnvStep::InodeChange(dir) => self.relocate_dir(&dir, None),
+            EnvStep::ExternalInPlace(page, bytes, prefix) => {
+                assert!(prefix < bytes.len(), "C7 must expose an incomplete version");
+                self.external(&page, Some(Arc::from(&bytes[..prefix])), false);
+                // external already advanced the ghost write epoch. C1–C4's
+                // namespace projection below must not count this write twice.
+                return;
+            }
         }
         if self.env.root != RootState::Bound {
             let keys: Vec<_> = self
@@ -177,6 +219,80 @@ impl ModelFs {
             if before[&page] != self.alpha(&page, false) {
                 *self.epochs.entry(page).or_default() += 1;
             }
+        }
+    }
+
+    /// Move physical entries, independently of the registered page keys.
+    /// Recreating the old name never resurrects the old epoch's bytes. For C3
+    /// the destination is readable through its new spelling; C4 keeps the
+    /// removed epoch as detached evidence and installs an empty directory.
+    fn relocate_dir(&mut self, from: &str, to: Option<&str>) {
+        let under = |path: &str| path == from || path.starts_with(&format!("{from}/"));
+        let epoch = self.env.dirs.get(from).expect("existing directory").epoch + 1;
+        for durable in [false, true] {
+            let entries = if durable { &self.stable } else { &self.files };
+            let moves: Vec<_> = entries
+                .iter()
+                .filter(|(key, _)| graph_key(key))
+                .filter_map(|(key, bytes)| {
+                    let physical = if let Some(page) = key.strip_prefix("graph/") {
+                        self.spelling(page)
+                    } else if let Some(page) = key.strip_prefix("temp/page/") {
+                        self.spelling(page)
+                    } else if let Some(dir) = key.strip_prefix("dir/") {
+                        dir.into()
+                    } else {
+                        self.env.parent(key)
+                    };
+                    under(&physical).then(|| (key.clone(), physical, bytes.clone()))
+                })
+                .collect();
+            for (key, physical, bytes) in moves {
+                let entries = if durable {
+                    &mut self.stable
+                } else {
+                    &mut self.files
+                };
+                entries.remove(&key);
+                if let Some(to) = to {
+                    let physical = format!("{to}{}", &physical[from.len()..]);
+                    let prefix = if key.starts_with("graph/") {
+                        "graph/"
+                    } else if key.starts_with("dir/") {
+                        "dir/"
+                    } else {
+                        "temp/page/"
+                    };
+                    entries.insert(format!("{prefix}{physical}"), bytes);
+                } else if !durable {
+                    self.detached.insert(key, bytes);
+                }
+            }
+        }
+        let dirs: Vec<_> = self
+            .env
+            .dirs
+            .keys()
+            .filter(|dir| under(dir))
+            .cloned()
+            .collect();
+        for dir in dirs {
+            let mut entry = self.env.dirs.remove(&dir).unwrap();
+            entry.epoch += 1;
+            if let Some(to) = to {
+                self.env
+                    .dirs
+                    .insert(format!("{to}{}", &dir[from.len()..]), entry);
+            }
+        }
+        if to.is_none() {
+            self.env.dirs.insert(
+                from.into(),
+                Dir {
+                    epoch,
+                    kind: DirKind::Real,
+                },
+            );
         }
     }
 

@@ -405,12 +405,12 @@ mutations = "fs::write=1"
 
 [[site]]
 file = "crates/tine-store/src/directory_durability.rs"
-fn = "DirectoryCreation::finish"
+fn = "DirectoryCreation::finish_current_chain"
 domain = "primitive"
 guard = ""
 test = ""
 oracle = false
-note = "Every path-based mkdir rechecks the original caller binding and actual parent containment; path-based sync debt is retained on errors. Final check-to-call and parent-rename windows remain in ASSUMPTIONS. No independent oracle claim."
+note = "Every path-based mkdir rechecks the original caller binding and actual parent containment; path-based sync debt is retained on errors. The finish wrapper requests current-chain re-planning after missing-ancestor failures. Final check-to-call and parent-rename windows remain in ASSUMPTIONS. No independent oracle claim."
 mutations = "fs::create_dir=1"
 
 [[site]]
@@ -948,7 +948,7 @@ file = "crates/tine-store/src/transaction.rs"
 fn = "PagePlan::apply"
 domain = "graph"
 guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
-test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
+test = "crates/tine-store/src/transaction_environment_tests.rs#m3_transaction_apply_and_apply_move_c2_c3_escape_only"
 oracle = false
 note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_copy_file_new=1, atomic_copy_new=1, atomic_file::sync_existing=1, atomic_write=1, atomic_write_new=2, atomic_write_with_check=1, directory_durability::create_dir_all_durable=4, fs::remove_file=3, move_file_noreplace=2, sync_move_dirs=2"
@@ -1028,7 +1028,7 @@ file = "crates/tine-store/src/transaction/move_file.rs"
 fn = "PagePlan::apply_move"
 domain = "graph"
 guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
-test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
+test = "crates/tine-store/src/transaction_environment_tests.rs#m3_transaction_apply_and_apply_move_c2_c3_escape_only"
 oracle = false
 note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_write_with_check=1, directory_durability::create_dir_all_durable=2"

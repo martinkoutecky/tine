@@ -427,6 +427,43 @@ fn directory_sync_does_not_make_external_unsynced_payload_durable() {
 }
 
 #[test]
+fn m3_identity_refinement_requires_the_adapter_to_refuse() {
+    let mut d = Driver::new("R1", 3);
+    run(
+        &mut d,
+        &[
+            ("wOpen", json!([0])),
+            ("deliverUp", json!([true])),
+            ("wRecv", json!([0])),
+            ("wEdit", json!([0, 2])),
+            ("wSend", json!([0])),
+            ("deliverUp", json!([true])),
+            ("wRecv", json!([0])),
+            ("flush", json!([0])),
+            ("check", json!([])),
+            ("rename", json!([])),
+            ("extWriteD", json!([0, 3, false])),
+        ],
+    );
+    // Negative control: make the adapter accept the external file as its
+    // publication. The independently held job epoch still requires Uncertain.
+    // If the driver injected the expected failure, this mutant would pass.
+    let page = key(0);
+    d.host
+        .fs
+        .publication_epochs
+        .insert(page.clone(), d.host.fs.epochs[&page]);
+    d.host.fs.publications.insert(
+        page.clone(),
+        d.host.fs.files.get(&format!("graph/{page}")).cloned(),
+    );
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        || d.step("dirSync", &[json!(true)])
+    ))
+    .is_err());
+}
+
+#[test]
 fn all_s3_scenarios_in_four_profiles() {
     let fixture: Value =
         serde_json::from_str(include_str!("../../tests/fixtures/s2/scenarios.json")).unwrap();

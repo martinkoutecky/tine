@@ -136,6 +136,77 @@ fn replace_and_create_publish_through_the_real_host() {
     assert!(f.host.fs.draft_files(true).is_empty());
 }
 
+#[cfg(unix)]
+#[test]
+fn m3_partial_replan_refusal_retains_root_sync_until_restoration() {
+    let mut f = Fixture::new();
+    f.host.fs.spell("c.md", "new/deep/c.md");
+    f.edit("c.md", "- retained input\n");
+    crate::directory_durability::take_synced_directories();
+
+    // Create new, then move it before deep's parent check: root sync is owed.
+    let root = f.graph.clone();
+    crate::directory_durability::BEFORE_CREATE_CHECK.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            crate::directory_durability::BEFORE_CREATE_CHECK.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move || {
+                    fs::rename(root.join("new"), root.join("old-new")).unwrap();
+                }));
+            });
+        }));
+    });
+    assert_ne!(f.save("c.md"), Outcome::Published);
+    assert!(f.host.pages["c.md"].risk);
+    assert!(crate::directory_durability::take_synced_directories().is_empty());
+
+    // The re-plan has only missing components. Refuse an outside substitution
+    // before its first mkdir can record parent debt; custody must still survive.
+    let outside = f.root.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    let root = f.graph.clone();
+    let link_to = outside.clone();
+    crate::directory_durability::BEFORE_CREATE_CHECK.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            std::os::unix::fs::symlink(link_to, root.join("new")).unwrap();
+        }));
+    });
+    assert_ne!(f.save("c.md"), Outcome::Published);
+    assert!(f.host.pages["c.md"].risk);
+    assert!(crate::directory_durability::take_synced_directories().is_empty());
+    assert!(!outside.join("deep").exists());
+
+    // End interference, restore the first created ancestor, and retry through
+    // the same host and original root binding, without reopening the graph.
+    fs::remove_file(f.graph.join("new")).unwrap();
+    fs::rename(f.graph.join("old-new"), f.graph.join("new")).unwrap();
+    let outcome = f.save("c.md");
+    let synced = crate::directory_durability::take_synced_directories();
+    eprintln!(
+        "restored host: outcome={outcome:?}; clean={}; risk={}; synced={synced:?}",
+        f.host.pages["c.md"].clean(),
+        f.host.pages["c.md"].risk
+    );
+    assert_eq!(outcome, Outcome::Published);
+    assert!(f.host.pages["c.md"].clean());
+    assert!(!f.host.pages["c.md"].risk);
+    assert_eq!(
+        fs::read(f.graph.join("new/deep/c.md")).unwrap(),
+        b"- retained input\n"
+    );
+    assert!(
+        synced.contains(&f.graph),
+        "published without ever paying original root debt"
+    );
+    assert_eq!(
+        synced,
+        [
+            f.graph.clone(),
+            f.graph.join("new"),
+            f.graph.join("new/deep")
+        ]
+    );
+}
+
 #[test]
 fn launch_sync_error_is_reported_best_effort_without_refusing_graph_saves() {
     let mut f = Fixture::new();
@@ -350,7 +421,6 @@ fn graph_unsupported_is_distinct_and_does_not_refuse_betas_tolerated_set() {
         io::ErrorKind::Unsupported,
         io::ErrorKind::InvalidInput,
         io::ErrorKind::PermissionDenied,
-        io::ErrorKind::NotFound,
     ] {
         let mut f = Fixture::new();
         crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(kind)));
@@ -365,6 +435,26 @@ fn graph_unsupported_is_distinct_and_does_not_refuse_betas_tolerated_set() {
         assert!(f.host.pages["a.md"].clean());
         assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), b"mine");
     }
+}
+
+#[test]
+fn missing_directory_sync_is_an_uncertain_save_not_unsupported() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
+    for _ in 0..3 {
+        f.host.advance_save();
+    }
+    crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::NotFound)));
+    f.host.advance_save();
+    assert!(f.host.pages["a.md"].risk);
+    assert!(f.host.events.iter().any(|event| matches!(
+        event,
+        Event::SaveOutcome {
+            outcome: Outcome::Uncertain,
+            ..
+        }
+    )));
 }
 
 #[test]

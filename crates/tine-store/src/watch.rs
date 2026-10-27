@@ -23,9 +23,11 @@ mod test_drain;
 use runtime::run;
 pub(crate) use runtime::RACY_FOLLOW_UP;
 mod stamp;
-pub(crate) use stamp::{stamp_from_metadata, stamp_metadata, RACY_WINDOW};
 #[cfg(test)]
-use stamp::{STAMPS_BY_PATH, STAMP_HASHES};
+pub(crate) use stamp::STAMPS_BY_PATH;
+#[cfg(test)]
+use stamp::STAMP_HASHES;
+pub(crate) use stamp::{stamp_from_metadata, stamp_metadata, RACY_WINDOW};
 
 pub(crate) use launch::{Baseline, Deferred};
 
