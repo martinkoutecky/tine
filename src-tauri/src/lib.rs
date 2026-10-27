@@ -46,9 +46,9 @@ mod host_slot_guard_tests;
 mod i18n_shell;
 #[cfg(target_os = "ios")]
 mod ios_folder_picker;
-mod linux_inline_preedit;
 #[cfg(target_os = "linux")]
 mod linux_gpu;
+mod linux_inline_preedit;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
 #[cfg(test)]
