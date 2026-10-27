@@ -6500,6 +6500,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/unicode-casefold/unicode-casefold-0.2.0.crate",
+        "sha256": "b7f66b1c8f8caa2ab31dc6d3f35386f16efdab89668f93411e565ac368908e8f",
+        "dest": "cargo/vendor/unicode-casefold-0.2.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"b7f66b1c8f8caa2ab31dc6d3f35386f16efdab89668f93411e565ac368908e8f\", \"files\": {}}",
+        "dest": "cargo/vendor/unicode-casefold-0.2.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/unicode-ident/unicode-ident-1.0.24.crate",
         "sha256": "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75",
         "dest": "cargo/vendor/unicode-ident-1.0.24"
