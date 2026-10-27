@@ -375,7 +375,11 @@ impl Store {
                     self.graph.ensure_write_target(&parent)?;
                     #[cfg(test)]
                     crate::model::assert_checked_target(&parent);
-                    crate::directory_durability::create_dir_all_durable(&parent, &self.graph.root)?;
+                    crate::directory_durability::create_dir_all_durable(
+                        &parent,
+                        &self.graph.root,
+                        &self.graph.root_binding,
+                    )?;
                     crate::directory_durability::sync_directory_entry(&self.graph.root)?;
                     parent.join(folder)
                 }

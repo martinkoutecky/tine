@@ -432,12 +432,11 @@ fn m2_driver_rejects_escape_even_on_disabled_step() {
     d.step("saveFail", &[]);
 }
 
-// Focused current-code probes, not M3's NativeFs schedule replay. They expose
-// where the inherited ModelFs "root check per syscall" abstraction is stronger
-// than DirectoryCreation's actual check-then-act implementation. Keep the
-// required assertions intact; production fixes belong to the manager.
+// Focused production regressions, not M3's NativeFs schedule replay.
+// Outcome assertions retain M2's untouched replacement/outside requirements.
+// Approved Android vanish-only binding cannot detect C1 replacement.
+#[cfg(not(target_os = "android"))]
 #[test]
-#[ignore = "finding M2-1: replacing the root after directory planning creates descendants in its replacement"]
 fn m2_finding_c1_replaced_root_between_directory_plan_and_finish() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("graph");
@@ -449,14 +448,13 @@ fn m2_finding_c1_replaced_root_between_directory_plan_and_finish() {
     let mut creation = crate::directory_durability::DirectoryCreation::new(&target, &root).unwrap();
     std::fs::rename(&root, temp.path().join("detached")).unwrap();
     std::fs::create_dir(&root).unwrap();
-    let result = creation.finish(crate::directory_durability::sync_directory_entry);
+    let result = creation.finish(&binding, crate::directory_durability::sync_directory_entry);
     assert!(result.is_err() && !root.join("pages").exists(),
         "C1/graph_directory/after plan: expected untouched replacement; result={result:?}, replacement pages exists={}", root.join("pages").exists());
 }
 
 #[cfg(unix)]
 #[test]
-#[ignore = "finding M2-2: swapping a parent after directory planning creates descendants outside the root"]
 fn m2_finding_c2_symlink_between_directory_plan_and_finish() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("graph");
@@ -470,7 +468,7 @@ fn m2_finding_c2_symlink_between_directory_plan_and_finish() {
     let mut creation = crate::directory_durability::DirectoryCreation::new(&target, &root).unwrap();
     std::fs::rename(root.join("pages"), temp.path().join("detached-pages")).unwrap();
     std::os::unix::fs::symlink(&outside, root.join("pages")).unwrap();
-    let result = creation.finish(crate::directory_durability::sync_directory_entry);
+    let result = creation.finish(&binding, crate::directory_durability::sync_directory_entry);
     assert!(result.is_err() && !outside.join("sub").exists(),
         "C2/graph_directory/after plan: expected untouched outside; result={result:?}, outside sub exists={}", outside.join("sub").exists());
 }

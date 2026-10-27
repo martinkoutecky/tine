@@ -98,6 +98,7 @@ pub(crate) fn sync_private_directory(dir: &Path) -> io::Result<()> {
 #[cfg(test)]
 thread_local! {
     pub(crate) static SYNC_ERROR: std::cell::Cell<Option<io::ErrorKind>> = const { std::cell::Cell::new(None) };
+    pub(crate) static BEFORE_CREATE_CHECK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
 }
 
 fn sync_directory(dir: &Path, private: bool) -> io::Result<DirectoryWitness> {
@@ -170,11 +171,15 @@ fn classify_sync(result: io::Result<()>, private: bool) -> io::Result<DirectoryW
 /// with its whole directory chain. Scenario: power loss after a move into a
 /// new trash/recovery or page subdirectory — the source parent's sync makes the
 /// removal durable while the new directory's own entry is not, losing the file.
-/// Cost: one `metadata` per missing ancestor plus the existing one, one bound
-/// check when creation is needed, and one sync per created directory. An
+/// Cost: one `metadata` per missing ancestor plus the existing one, a root
+/// binding/containment check before each mkdir and parent sync. An
 /// existing dir costs one `metadata` and no directory creation.
-pub(crate) fn create_dir_all_durable(dir: &Path, bound: &Path) -> io::Result<()> {
-    DirectoryCreation::new(dir, bound)?.finish(sync_directory_entry)
+pub(crate) fn create_dir_all_durable(
+    dir: &Path,
+    bound: &Path,
+    binding: &crate::root_binding::RootBinding,
+) -> io::Result<()> {
+    DirectoryCreation::new(dir, bound)?.finish(binding, sync_directory_entry)
 }
 
 pub(crate) fn create_dir_all_with_sync(
@@ -191,7 +196,14 @@ pub(crate) fn create_dir_all_with_sync(
                 io::Error::new(io::ErrorKind::NotFound, "no existing app-data ancestor")
             })?;
     }
-    DirectoryCreation::new(dir, bound)?.finish(sync)
+    // App data has no graph's open-time witness; bind its selected ancestor
+    // for this attempt only. Graph callers always supply the original binding.
+    let mut creation = DirectoryCreation::new(dir, bound)?;
+    if creation.missing.is_empty() {
+        return Ok(());
+    }
+    let binding = crate::root_binding::RootBinding::new(bound);
+    creation.finish(&binding, sync)
 }
 
 /// The same audited directory-chain creation with retained sync custody. A
@@ -205,6 +217,22 @@ pub(crate) struct DirectoryCreation {
 impl DirectoryCreation {
     pub(crate) fn new(dir: &Path, bound: &Path) -> io::Result<Self> {
         if !dir.starts_with(bound) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "directory escapes its creation bound",
+            ));
+        }
+        if dir
+            .strip_prefix(bound)
+            .unwrap()
+            .components()
+            .any(|component| {
+                !matches!(
+                    component,
+                    std::path::Component::Normal(_) | std::path::Component::CurDir
+                )
+            })
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "directory escapes its creation bound",
@@ -233,32 +261,64 @@ impl DirectoryCreation {
         }
         Ok(Self {
             bound: bound.to_path_buf(),
-            parents: missing
-                .iter()
-                .rev()
-                .map(|path| path.parent().unwrap().to_path_buf())
-                .collect(),
+            parents: Default::default(),
             missing: missing.into_iter().rev().collect(),
         })
     }
 
-    pub(crate) fn finish(&mut self, sync: impl Fn(&Path) -> io::Result<()>) -> io::Result<()> {
-        // Never create the bound, even if it vanished since new(). A vanished
-        // ancestor during this loop makes create_dir fail rather than recurse.
-        if !self.missing.is_empty() && !self.bound.is_dir() {
-            return Err(crate::root_binding::moved());
-        }
+    pub(crate) fn has_sync_debt(&self) -> bool {
+        !self.parents.is_empty()
+    }
+
+    pub(crate) fn finish(
+        &mut self,
+        binding: &crate::root_binding::RootBinding,
+        sync: impl Fn(&Path) -> io::Result<()>,
+    ) -> io::Result<()> {
         while let Some(path) = self.missing.front() {
+            #[cfg(test)]
+            {
+                let step = BEFORE_CREATE_CHECK.with(|step| step.borrow_mut().take());
+                if let Some(step) = step {
+                    step();
+                }
+            }
+            let parent = path.parent().unwrap();
+            // Reuse the original open-time binding, with its platform policy.
+            // Each actual parent is checked immediately before path-based mkdir;
+            // the final check-to-create race remains (see A-PATH-IDENTITY).
+            self.check_directory(parent, binding)?;
             match std::fs::create_dir(path) {
                 Ok(()) => {}
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => {}
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => {
+                    self.check_directory(path, binding)?;
+                }
                 Err(error) => return Err(error),
             }
+            self.parents.push_back(parent.to_path_buf());
             self.missing.pop_front();
         }
         while let Some(parent) = self.parents.front() {
+            // Never settle a debt by knowingly reopening an outside path.
+            // A rename after this check can still redirect the path-based sync.
+            self.check_directory(parent, binding)?;
             sync(parent)?;
             self.parents.pop_front();
+        }
+        Ok(())
+    }
+
+    fn check_directory(
+        &self,
+        directory: &Path,
+        binding: &crate::root_binding::RootBinding,
+    ) -> io::Result<()> {
+        binding.check()?;
+        let bound = std::fs::canonicalize(&self.bound)?;
+        if !std::fs::canonicalize(directory)?.starts_with(bound) {
+            return Err(io::Error::other(
+                "directory parent moved outside its bound; unsaved edits kept on this device",
+            ));
         }
         Ok(())
     }
@@ -309,14 +369,161 @@ mod tests {
     use std::io;
 
     #[test]
+    fn dircreate_existing_directory_adds_no_binding_or_sync_work() {
+        let temp = tempfile::tempdir().unwrap();
+        let binding = crate::root_binding::RootBinding::new(temp.path());
+        let before = crate::root_binding::CHECKS.with(|count| count.get());
+        let mut creation = super::DirectoryCreation::new(temp.path(), temp.path()).unwrap();
+        creation
+            .finish(&binding, |_| panic!("no mkdir, no sync"))
+            .unwrap();
+        assert_eq!(
+            crate::root_binding::CHECKS.with(|count| count.get()),
+            before
+        );
+        assert!(!creation.has_sync_debt());
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn dircreate_checks_original_open_binding_even_if_replaced_before_planning() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("graph");
+        std::fs::create_dir(&root).unwrap();
+        let binding = crate::root_binding::RootBinding::new(&root);
+        std::fs::rename(&root, temp.path().join("moved")).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        let mut creation = super::DirectoryCreation::new(&root.join("pages/sub"), &root).unwrap();
+        let error = creation
+            .finish(&binding, super::sync_directory_entry)
+            .unwrap_err();
+        assert!(error.to_string().contains("GraphRootMoved"));
+        assert!(!root.join("pages").exists());
+    }
+
+    #[test]
+    fn dircreate_rejects_parent_components() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(
+            super::DirectoryCreation::new(&temp.path().join("../outside/sub"), temp.path())
+                .is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dircreate_rechecks_each_actual_parent_before_mkdir() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("graph");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        let binding = crate::root_binding::RootBinding::new(&root);
+        let mut creation =
+            super::DirectoryCreation::new(&root.join("pages/sub/deep"), &root).unwrap();
+        let pages = root.join("pages");
+        let detached = root.join("old-pages");
+        super::BEFORE_CREATE_CHECK.with(|step| {
+            *step.borrow_mut() = Some(Box::new(move || {
+                super::BEFORE_CREATE_CHECK.with(|step| {
+                    *step.borrow_mut() = Some(Box::new(move || {
+                        std::fs::rename(&pages, detached).unwrap();
+                        std::os::unix::fs::symlink(outside, pages).unwrap();
+                    }));
+                });
+            }));
+        });
+        assert!(creation
+            .finish(&binding, super::sync_directory_entry)
+            .is_err());
+        assert!(!temp.path().join("outside/sub").exists());
+        assert!(creation.has_sync_debt(), "first mkdir still owes root sync");
+        // A stable contained replacement can be retried; no stale parent anchor.
+        std::fs::remove_file(root.join("pages")).unwrap();
+        std::fs::create_dir(root.join("pages")).unwrap();
+        creation
+            .finish(&binding, super::sync_directory_entry)
+            .unwrap();
+        assert!(root.join("pages/sub/deep").is_dir());
+        assert!(!creation.has_sync_debt());
+    }
+
+    #[test]
+    fn dircreate_sync_debt_survives_failure_and_contained_parent_replacement() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("graph");
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        let binding = crate::root_binding::RootBinding::new(&root);
+        let mut creation =
+            super::DirectoryCreation::new(&root.join("pages/sub/deep"), &root).unwrap();
+        assert!(creation
+            .finish(&binding, |_| Err(io::Error::other("sync failed")))
+            .is_err());
+        assert_eq!(creation.parents.len(), 2);
+        std::fs::rename(root.join("pages/sub"), root.join("old-sub")).unwrap();
+        std::fs::create_dir(root.join("pages/sub")).unwrap();
+        let synced = std::cell::RefCell::new(Vec::new());
+        creation
+            .finish(&binding, |parent| {
+                synced.borrow_mut().push(parent.to_path_buf());
+                super::sync_directory_entry(parent)
+            })
+            .unwrap();
+        assert_eq!(
+            *synced.borrow(),
+            vec![root.join("pages"), root.join("pages/sub")]
+        );
+        assert!(!creation.has_sync_debt());
+    }
+
+    #[test]
     fn l9_directory_creation_never_recreates_a_vanished_bound() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("graph");
         std::fs::create_dir(&root).unwrap();
+        let binding = crate::root_binding::RootBinding::new(&root);
         let mut creation = super::DirectoryCreation::new(&root.join("pages/sub"), &root).unwrap();
         std::fs::rename(&root, temp.path().join("moved")).unwrap();
-        assert!(creation.finish(|_| Ok(())).is_err());
+        assert!(creation.finish(&binding, |_| Ok(())).is_err());
         assert!(!root.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dircreate_sync_refusal_retains_unpaid_debt_until_safe_retry() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("graph");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        let binding = crate::root_binding::RootBinding::new(&root);
+        let mut creation = super::DirectoryCreation::new(&root.join("pages/sub"), &root).unwrap();
+        assert!(creation
+            .finish(&binding, |parent| {
+                if parent == root {
+                    Ok(())
+                } else {
+                    Err(io::Error::other("sync failed"))
+                }
+            })
+            .is_err());
+        assert_eq!(
+            creation.parents.len(),
+            1,
+            "paid root debt removed, pages debt retained"
+        );
+        std::fs::rename(root.join("pages"), root.join("old-pages")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("pages")).unwrap();
+        assert!(creation
+            .finish(&binding, |_| panic!("outside path must not sync"))
+            .is_err());
+        assert!(creation.has_sync_debt());
+        std::fs::remove_file(root.join("pages")).unwrap();
+        std::fs::rename(root.join("old-pages"), root.join("pages")).unwrap();
+        creation
+            .finish(&binding, super::sync_directory_entry)
+            .unwrap();
+        assert!(!creation.has_sync_debt());
     }
 
     #[test]

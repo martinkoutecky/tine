@@ -4191,7 +4191,11 @@ impl Graph {
         }
         let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
         self.ensure_write_target(&trash)?;
-        crate::directory_durability::create_dir_all_durable(&trash, &self.root)?;
+        crate::directory_durability::create_dir_all_durable(
+            &trash,
+            &self.root,
+            &self.root_binding,
+        )?;
         let name = path
             .file_name()
             .and_then(|value| value.to_str())

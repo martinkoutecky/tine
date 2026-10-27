@@ -1,5 +1,54 @@
 use super::*;
 
+#[cfg(unix)]
+#[test]
+fn dircreate_swap_during_save_keeps_input_in_durable_device_draft() {
+    for swap_root in [true, false] {
+        if swap_root && cfg!(target_os = "android") {
+            continue; // Existing vanish-only policy, including new folders.
+        }
+        let mut f = Fixture::new();
+        fs::create_dir(f.graph.join("pages")).unwrap();
+        f.host.fs.spell("c.md", "pages/sub/c.md");
+        let input = "- irreplaceable nested page input\n";
+        f.edit("c.md", input);
+        let outside = f.root.path().join("outside");
+        let detached = f.root.path().join("detached");
+        fs::create_dir(&outside).unwrap();
+        let swap = if swap_root {
+            f.graph.clone()
+        } else {
+            f.graph.join("pages")
+        };
+        let destination = outside.clone();
+        crate::directory_durability::BEFORE_CREATE_CHECK.with(|step| {
+            *step.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&swap, detached).unwrap();
+                if swap_root {
+                    fs::create_dir(&swap).unwrap();
+                } else {
+                    std::os::unix::fs::symlink(destination, swap).unwrap();
+                }
+            }));
+        });
+        assert_ne!(f.save("c.md"), Outcome::Published);
+        assert!(
+            crate::directory_durability::BEFORE_CREATE_CHECK.with(|step| step.borrow().is_none())
+        );
+        assert_eq!(f.host.pages["c.md"].buf, text(input));
+        assert_eq!(f.host.begin_draft("c.md"), Disposition::Pending);
+        f.drain();
+        assert_eq!(
+            drafts::scan(f.host.fs.draft_files(true)).logical["c.md"].bytes,
+            text(input)
+        );
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        if swap_root {
+            assert_eq!(fs::read_dir(&f.graph).unwrap().count(), 0);
+        }
+    }
+}
+
 #[cfg(not(target_os = "android"))]
 #[test]
 fn l9_replaced_root_refuses_creating_save_and_keeps_input() {

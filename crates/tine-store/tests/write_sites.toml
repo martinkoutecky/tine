@@ -410,7 +410,7 @@ domain = "primitive"
 guard = ""
 test = ""
 oracle = false
-note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
+note = "Every path-based mkdir rechecks the original caller binding and actual parent containment; path-based sync debt is retained on errors. Final check-to-call and parent-rename windows remain in ASSUMPTIONS. No independent oracle claim."
 mutations = "fs::create_dir=1"
 
 [[site]]

@@ -329,6 +329,7 @@ impl PagePlan<'_> {
                 crate::directory_durability::create_dir_all_durable(
                     parent,
                     self.store.graph.creation_bound(parent),
+                    &self.store.graph.root_binding,
                 )
                 .map_err(failed)?;
             }
@@ -360,6 +361,7 @@ impl PagePlan<'_> {
             crate::directory_durability::create_dir_all_durable(
                 parent,
                 self.store.graph.creation_bound(parent),
+                &self.store.graph.root_binding,
             )
             .map_err(failed)?;
         }
