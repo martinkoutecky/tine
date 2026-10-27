@@ -156,9 +156,23 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
         "src-tauri/src/css_files.rs",
         "spawn_blocking(",
-        4,
-        "read_css_file / save_css_file command future; graph operations retain their slot and Store close revokes writes",
-        "caller awaits each bounded read or guarded durable save before replying; no detached worker",
+        5,
+        "read_css_file / save_css_file / edit_global_css command future; graph operations retain their slot and Store close revokes writes",
+        "caller awaits each bounded read, guarded durable save or create-if-missing preparation before replying",
+    ),
+    (
+        "src-tauri/src/css_files.rs",
+        "recommended_watcher(",
+        1,
+        "app lifetime, independent of graph bindings; the app manages the watcher in a Mutex",
+        "app state owns the watch until teardown; process exit ends the native subscription; no graph worker",
+    ),
+    (
+        "src-tauri/src/css_files.rs",
+        ".spawn(move ||",
+        1,
+        "the external CSS launcher lifetime or app exit; a graph switch must not cancel a user's editor",
+        "dedicated detached reaper waits for launcher status and sends the verdict through a oneshot awaited by the command future; no graph lock or Tauri blocking worker is retained",
     ),
     (
         "src-tauri/src/settings.rs",

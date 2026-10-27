@@ -53,6 +53,8 @@ const TICK: Duration = Duration::from_secs(15);
 const REPACK_COMMITS: u32 = 50;
 /// Loose objects that trigger a repack regardless (git's `gc.auto` default).
 const REPACK_LOOSE_OBJECTS: usize = 6700;
+/// Failed maintenance must not run again on every commit/tick.
+const REPACK_RETRY: Duration = Duration::from_secs(10 * 60);
 /// Busy cycles over this long before Settings names a stale `index.lock`.
 const STALE_LOCK_AFTER: Duration = Duration::from_secs(30 * 60);
 const STALE_LOCK_CYCLES: u32 = 3;
@@ -678,12 +680,12 @@ fn loose_objects(objects: &Path) -> Vec<Oid> {
 /// `prune-packed`). Existing packs are never rewritten, so a repack costs
 /// what was added since the last one, not the history (review N1).
 /// Unreachable loose objects are packed too, not dropped. Returns how many
-/// were deleted; `Ok(0)` when skipped (a `git gc` is running, or the
+/// were deleted; `Ok(None)` when skipped (a `git gc` is running, or the
 /// repository is not SHA-1).
-pub(crate) fn repack(repo: &Repository) -> Result<usize, String> {
+pub(crate) fn repack(repo: &Repository) -> Result<Option<usize>, String> {
     let gitdir = repo.path();
     if gitdir.join("gc.pid").exists() {
-        return Ok(0);
+        return Ok(None);
     }
     if repo
         .config()
@@ -691,15 +693,19 @@ pub(crate) fn repack(repo: &Repository) -> Result<usize, String> {
         .and_then(|c| c.get_string("extensions.objectformat").ok())
         .is_some_and(|f| !f.eq_ignore_ascii_case("sha1"))
     {
-        return Ok(0);
+        return Ok(None);
     }
     let objects = gitdir.join("objects");
     let pack_dir = objects.join("pack");
     std::fs::create_dir_all(&pack_dir).map_err(|e| e.to_string())?;
     let loose = loose_objects(&objects);
     if loose.is_empty() {
-        return Ok(0);
+        return Ok(Some(0));
     }
+    // libgit2 1.9.7's indexer fsyncs both files on their writable creation
+    // handles, unmaps/closes the pack, then renames it into place. Enable
+    // that guarantee here too, including for callers outside open_repo_at.
+    super::git_run::enable_git_fsync();
     let mut builder = repo.packbuilder().map_err(|e| e.to_string())?;
     for oid in &loose {
         builder
@@ -713,13 +719,9 @@ pub(crate) fn repack(repo: &Repository) -> Result<usize, String> {
         .ok_or("the pack has no name")?
         .to_string();
     let idx = pack_dir.join(format!("pack-{name}.idx"));
-    for file in [pack_dir.join(format!("pack-{name}.pack")), idx.clone()] {
-        let pack_file =
-            std::fs::File::open(&file).map_err(|e| format!("{}: {e}", file.display()))?;
-        pack_file
-            .sync_all()
-            .map_err(|e| format!("{}: {e}", file.display()))?;
-    }
+    // Do not reopen the final read-only files for sync_all: on Windows
+    // FlushFileBuffers requires GENERIC_WRITE and fails with Access denied.
+    // builder.write already made their contents durable before publishing.
     sync_dir(&pack_dir)?;
     let packed = idx_oids(&std::fs::read(&idx).map_err(|e| e.to_string())?)?;
     let mut removed = 0;
@@ -733,7 +735,7 @@ pub(crate) fn repack(repo: &Repository) -> Result<usize, String> {
     for byte in 0..=255u8 {
         let _ = std::fs::remove_dir(objects.join(format!("{byte:02x}")));
     }
-    Ok(removed)
+    Ok(Some(removed))
 }
 
 /// Delete a loose object file. git writes them read-only, which on Windows
@@ -815,6 +817,8 @@ pub(crate) struct LastAttempt {
     /// disclose the changed file even when opened after the initial bind.
     pub(crate) syncthing_ignore_added: Option<String>,
     pub(crate) syncthing_ignore_failed: bool,
+    /// Maintenance waits for retry; this is separate from a commit refusal.
+    pub(crate) repack_deferred: bool,
     /// Unix seconds of the last autocommit this process made.
     pub(crate) committed_at: Option<i64>,
     pub(crate) commit: Option<String>,
@@ -843,6 +847,7 @@ mod registry {
         pub(super) flushed: u64,
         pub(super) last: LastAttempt,
         pub(super) commits_since_repack: u32,
+        pub(super) repack_not_before: Option<Instant>,
         pub(super) running: bool,
         /// The worker left the registry; a new bind makes a new one.
         pub(super) retired: bool,
@@ -1072,7 +1077,8 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
                     }
                 }
             }
-            let repack_due = state.commits_since_repack >= REPACK_COMMITS;
+            let repack_due =
+                state.commits_since_repack >= REPACK_COMMITS || state.last.repack_deferred;
             drop(state);
             if outcome.is_ok() && (repack_due || !checked_loose) {
                 checked_loose = true;
@@ -1096,6 +1102,15 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
 }
 
 fn maybe_repack(worker: &registry::Worker, root: &Path, due: bool) {
+    if worker
+        .state
+        .lock()
+        .unwrap()
+        .repack_not_before
+        .is_some_and(|at| Instant::now() < at)
+    {
+        return;
+    }
     let Ok(repo) = Repository::discover(root) else {
         return;
     };
@@ -1104,8 +1119,21 @@ fn maybe_repack(worker: &registry::Worker, root: &Path, due: bool) {
     }
     let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     match repack(&repo) {
-        Ok(_) => worker.state.lock().unwrap().commits_since_repack = 0,
-        Err(error) => crate::debug::diag_private("git-repack-failed", error),
+        Ok(Some(_)) => {
+            let mut state = worker.state.lock().unwrap();
+            state.commits_since_repack = 0;
+            state.last.repack_deferred = false;
+            state.repack_not_before = None;
+        }
+        deferred => {
+            let mut state = worker.state.lock().unwrap();
+            state.last.repack_deferred = true;
+            state.repack_not_before = Some(Instant::now() + REPACK_RETRY);
+            drop(state);
+            if let Err(error) = deferred {
+                crate::debug::diag_private("git-repack-failed", error);
+            }
+        }
     }
 }
 

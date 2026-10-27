@@ -57,6 +57,11 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-10-26, D-20261026-778 (GH #778): `commands.registry` 122→124,
+  `commands.palette` 69→71, `settings.appearance.advanced` 12→14 for the
+  explicitly approved **Open in default app** actions for graph and global CSS,
+  beside the existing in-app Edit buttons and in the desktop command palette.
+  Both external actions are hidden on Android/iOS; no additional preference.
 - 2026-10-24, D-20261024-QA (GH #758 and GH #757 part 3): `commands.registry` 120→122,
   `commands.registry.editor` 25→26, `commands.palette` 68→69 for the explicitly approved
   **All graphs** navigation command (`g shift+g`, also required in the palette) and

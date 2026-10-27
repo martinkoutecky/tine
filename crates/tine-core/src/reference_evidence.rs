@@ -18,74 +18,11 @@ pub use signature::{BlockSignature, ReferenceFilter};
 pub const ENGINE_VERSION: &str = "reference-evidence/v1";
 const MAX_OCCURRENCES_PER_BLOCK: usize = 64;
 
-// Exact OG 1.0.0 property-page exclusions from
-// `logseq.graph-parser.property/editable-built-in-properties` at 6e7afa8eb.
-// Keep source spellings here; `property_key_norm` supplies Tine's canonical
-// property identity (including underscore -> dash).
-const OG_EDITABLE_BUILT_IN_PROPERTIES: &[&str] = &[
-    "title",
-    "icon",
-    "template",
-    "template-including-parent",
-    "public",
-    "filters",
-    "exclude-from-graph-view",
-    "logseq.query/nlp-date",
-    "macro",
-    "filetags",
-    "alias",
-    "aliases",
-    "tags",
-    "logseq.color",
-    "logseq.table.version",
-    "logseq.table.compact",
-    "logseq.table.headers",
-    "logseq.table.hover",
-    "logseq.table.borders",
-    "logseq.table.stripes",
-    "logseq.table.max-width",
-];
-
-// Exact base set from `hidden-built-in-properties`, plus the only registered
-// extension set in that revision (`frontend.extensions.srs`).
-const OG_HIDDEN_BUILT_IN_PROPERTIES: &[&str] = &[
-    "id",
-    "custom-id",
-    "background-color",
-    "background_color",
-    "heading",
-    "collapsed",
-    "created-at",
-    "updated-at",
-    "last-modified-at",
-    "created_at",
-    "last_modified_at",
-    "query-table",
-    "query-properties",
-    "query-sort-by",
-    "query-sort-desc",
-    "ls-type",
-    "hl-type",
-    "hl-page",
-    "hl-stamp",
-    "hl-color",
-    "logseq.macro-name",
-    "logseq.macro-arguments",
-    "logseq.order-list-type",
-    "logseq.tldraw.page",
-    "logseq.tldraw.shape",
-    "todo",
-    "doing",
-    "now",
-    "later",
-    "done",
-    "card-last-interval",
-    "card-repeats",
-    "card-last-reviewed",
-    "card-next-schedule",
-    "card-ease-factor",
-    "card-last-score",
-];
+// This small module also compiles into lsdoc-wasm; keep one built-in answer.
+mod og_built_in;
+pub use og_built_in::is_og_built_in_property;
+#[cfg(test)]
+use og_built_in::{OG_EDITABLE_BUILT_IN_PROPERTIES, OG_HIDDEN_BUILT_IN_PROPERTIES};
 
 /// One parser-recognized page reference and its source span.
 #[deny(missing_docs)]
@@ -399,21 +336,10 @@ fn walk_list_item(
     }
 }
 
-/// Whether a normalized property key names a page (OG: every key but the
-/// built-in ones). The built-ins are normalized once per process, not once
-/// per property of every block (GJ5 S2).
+/// Whether a normalized property key names a page (OG: every nonempty key
+/// except built-ins). Reuses the same cached union as query-table discovery.
 fn property_key_eligible(norm: &str) -> bool {
-    static BUILT_IN: OnceLock<std::collections::HashSet<String>> = OnceLock::new();
-    !norm.is_empty()
-        && !BUILT_IN
-            .get_or_init(|| {
-                OG_EDITABLE_BUILT_IN_PROPERTIES
-                    .iter()
-                    .chain(OG_HIDDEN_BUILT_IN_PROPERTIES)
-                    .map(|built_in| crate::doc::property_key_norm(built_in))
-                    .collect()
-            })
-            .contains(norm)
+    !norm.is_empty() && !og_built_in::is_normalized_og_built_in_property(norm)
 }
 
 fn project_property_key(
@@ -1314,6 +1240,30 @@ mod tests {
                 "built-in key projected: {built_in}: {:?}",
                 projected.explicit
             );
+        }
+    }
+
+    #[test]
+    fn og_built_in_predicate_normalizes_and_includes_registered_srs_keys() {
+        for key in OG_EDITABLE_BUILT_IN_PROPERTIES
+            .iter()
+            .chain(OG_HIDDEN_BUILT_IN_PROPERTIES)
+        {
+            for spelling in [
+                key.to_string(),
+                format!(" {} ", key.to_uppercase()),
+                key.replace('-', "_"),
+            ] {
+                assert!(is_og_built_in_property(&spelling), "{spelling:?}");
+                assert_eq!(
+                    is_og_built_in_property(&spelling),
+                    !property_key_eligible(&crate::doc::property_key_norm(&spelling)),
+                );
+            }
+        }
+        assert!(is_og_built_in_property(" Card Ease_Factor "));
+        for key in ["", " ", "owner", "card-ease-factor-custom", "tine.custom"] {
+            assert!(!is_og_built_in_property(key), "{key:?}");
         }
     }
 

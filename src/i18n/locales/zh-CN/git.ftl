@@ -11,6 +11,7 @@ git-settings-branch = 分支：{ $branch }
 git-settings-unusable = Tine 无法在此提交：{ $message }
 git-settings-last-commit = 上次提交 { $commit }，时间 { $time }。
 git-settings-last-refused = 上次尝试失败：{ $message }
+git-settings-repack-deferred = Git 清理正在等待；提交仍会继续。Tine 将自动重试。
 git-settings-stale-lock = { $path } 已被占用超过 30 分钟，可能有 git 程序崩溃了。确认没有 git 命令在运行后请删除它。Tine 不会删除它。
 git-settings-load-failed = 无法加载 git 设置：{ $error }
 git-settings-save-failed = 无法更改 git 设置：{ $error }

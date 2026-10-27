@@ -1,8 +1,7 @@
 //! The owner endpoint end to end, in process: a real Store and page host,
 //! a real socket, the client's handshake and calls (CLI PROTOCOL §2–5),
 //! and the app lease through retirement and adoption (§3.1–3.2).
-// The endpoint is Unix-only in slice 1a (PROTOCOL §10: Windows has none yet).
-#![cfg(unix)]
+// Shared protocol and lifecycle tests run on all three desktop transports.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,9 +15,13 @@ use super::endpoint::{After, Endpoint, Gate, Handler, YieldRequest};
 use super::lease::{hello, Claimed};
 use super::lock::OwnerLock;
 use super::namespace::GraphPaths;
+#[cfg(windows)]
+use super::windows::Stream as RawStream;
 use super::wire::{ErrorBody, Request};
 use super::OwnerError;
 use crate::state::{GraphRegistry, GraphSlot, PageHostSlot};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream as RawStream;
 
 const UUID: &str = "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f";
 
@@ -92,7 +95,14 @@ impl Graph {
     fn paths(&self) -> GraphPaths {
         GraphPaths {
             lock: self.owners.join("g.lock"),
+            #[cfg(unix)]
             socket: self.owners.join("g.sock"),
+            #[cfg(windows)]
+            socket: super::windows_security::pipe_name(&format!(
+                "{:016x}",
+                crate::settings::graph_hash(&self.root)
+            ))
+            .unwrap(),
             start_log: self.owners.join("g.start.log"),
         }
     }
@@ -226,6 +236,7 @@ fn the_read_verbs_answer_over_the_socket() {
 }
 
 /// GH #771: on macOS an accepted socket inherits the listener's O_NONBLOCK.
+#[cfg(unix)]
 #[test]
 fn an_accepted_connection_is_made_blocking() {
     use std::os::unix::io::AsRawFd;
@@ -303,7 +314,7 @@ fn an_oversized_or_malformed_line_is_answered_and_closed() {
 /// Write `bytes`, half-close, and read whatever comes back.
 fn raw(socket: &Path, bytes: &[u8]) -> String {
     use std::io::{Read, Write};
-    let mut stream = std::os::unix::net::UnixStream::connect(socket).unwrap();
+    let mut stream = RawStream::connect(socket).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
@@ -330,6 +341,23 @@ fn closing_the_endpoint_removes_its_path_and_drops_its_connections() {
 }
 
 #[test]
+fn a_successor_can_listen_while_a_closed_client_handle_still_exists() {
+    let graph = Graph::new();
+    let slot = Arc::new(graph.slot());
+    let (first, _gate) = endpoint(&graph, slot.clone());
+    let mut old = graph.connect();
+    drop(first);
+    assert!(matches!(
+        old.call("pages", Value::Null),
+        Err(Failure::Lost(_))
+    ));
+    let (_next, _gate) = endpoint(&graph, slot);
+    assert!(graph.connect().call("pages", Value::Null).is_ok());
+    drop(old);
+}
+
+#[test]
+#[cfg(unix)]
 fn a_dead_owners_socket_path_is_replaced_by_the_next_holder() {
     let graph = Graph::new();
     // A crashed owner leaves its path; the lock went with the process.
@@ -455,9 +483,43 @@ fn serve_yields_only_into_its_own_draft_namespace() {
     assert_eq!(gate.state(), "stopping", "admits nothing more");
 }
 
+#[test]
+fn app_handover_takes_the_lock_only_after_serve_stops_and_closes() {
+    let graph = Graph::new();
+    let serving = lifecycle::Serving::new(&graph);
+    let slot = serving.slot.clone();
+    let finished = serving.run();
+    let claimed = super::client::take_over(
+        &graph.root,
+        &graph.paths(),
+        super::wire::Drafts {
+            app_data: graph.app_data.display().to_string(),
+            graph_id: "test-graph".into(),
+        },
+        Duration::from_secs(5),
+        |_| {},
+    )
+    .unwrap()
+    .expect("app took ownership");
+    finished.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(!matches!(
+        &*slot.host.read().unwrap(),
+        PageHostSlot::Running(_)
+    ));
+    assert!(OwnerLock::try_take(&graph.paths().lock, "other")
+        .unwrap()
+        .is_none());
+    assert!(dial(&graph.paths().socket, &graph.root).unwrap().is_none());
+    drop(claimed);
+    assert!(OwnerLock::try_take(&graph.paths().lock, "next")
+        .unwrap()
+        .is_some());
+}
+
 /// §1: the namespace is a private directory of this account, and a path
 /// the socket cannot bind is refused before anything binds it.
 #[test]
+#[cfg(unix)]
 fn the_namespace_is_private_and_fits_a_socket_path() {
     use super::namespace::Namespace;
     use std::os::unix::fs::PermissionsExt;
@@ -549,6 +611,8 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
         ("verbs", include_str!("verbs.rs")),
         ("window", include_str!("window.rs")),
         ("wire", include_str!("wire.rs")),
+        ("windows", include_str!("windows.rs")),
+        ("windows_security", include_str!("windows_security.rs")),
         ("write", include_str!("write.rs")),
     ] {
         assert!(
@@ -566,7 +630,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 18, "scan every owner/*.rs file");
+    assert_eq!(files, 20, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];
@@ -673,31 +737,39 @@ fn a_yield_closes_the_other_connections_before_it_replies() {
 /// and each request with `reply` (or never, when `None`).
 fn fake_owner(socket: &Path, hello: Value, reply: Option<Value>) {
     use std::io::{BufRead, BufReader, Write};
+    #[cfg(unix)]
     let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(stream) = stream else { return };
-            let hello = hello.clone();
-            let reply = reply.clone();
-            std::thread::spawn(move || {
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                let mut writer = stream;
-                let mut line = String::new();
+    #[cfg(windows)]
+    let listener = super::windows::Listener::bind(socket).unwrap();
+    std::thread::spawn(move || loop {
+        let stream = match listener.accept() {
+            Ok((stream, _)) => stream,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            Err(_) => return,
+        };
+        let hello = hello.clone();
+        let reply = reply.clone();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut writer = stream;
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                return;
+            }
+            let _ = writeln!(writer, "{hello}");
+            loop {
+                line.clear();
                 if reader.read_line(&mut line).unwrap_or(0) == 0 {
                     return;
                 }
-                let _ = writeln!(writer, "{hello}");
-                loop {
-                    line.clear();
-                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
-                        return;
-                    }
-                    if let Some(reply) = &reply {
-                        let _ = writeln!(writer, "{reply}");
-                    }
+                if let Some(reply) = &reply {
+                    let _ = writeln!(writer, "{reply}");
                 }
-            });
-        }
+            }
+        });
     });
 }
 
@@ -720,13 +792,17 @@ fn the_client_checks_the_owners_hello_and_each_replys_id() {
         dial(&socket, &graph.root),
         Err(OwnerError::Mismatch(_))
     ));
-    std::fs::remove_file(&socket).unwrap();
+    // Use separate graph endpoints: Windows pipe names stay occupied while
+    // the fake owner's accept thread lives, rather than an unlinkable path.
+    let second = Graph::new();
+    let socket = second.paths().socket;
     fake_owner(&socket, owner_hello(&root, None), None);
     assert!(matches!(
         dial(&socket, &graph.root),
         Err(OwnerError::Protocol(_))
     ));
-    std::fs::remove_file(&socket).unwrap();
+    let third = Graph::new();
+    let socket = third.paths().socket;
     fake_owner(
         &socket,
         owner_hello(&root, Some("serve")),

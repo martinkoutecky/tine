@@ -11,6 +11,7 @@ git-settings-branch = Branch: { $branch }
 git-settings-unusable = Tine can't commit here: { $message }
 git-settings-last-commit = Last commit { $commit } at { $time }.
 git-settings-last-refused = Last attempt failed: { $message }
+git-settings-repack-deferred = Git cleanup is waiting; commits continue. Tine will retry automatically.
 git-settings-stale-lock = { $path } has been held for over 30 minutes; a git program may have crashed. Remove it once no git command is running. Tine will not remove it.
 git-settings-load-failed = Couldn't load git settings: { $error }
 git-settings-save-failed = Couldn't change git settings: { $error }

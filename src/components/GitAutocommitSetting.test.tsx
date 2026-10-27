@@ -18,6 +18,29 @@ function mount() {
   return { root, dispose };
 }
 
+it("shows deferred cleanup separately from a successful commit and clears it on recovery", async () => {
+  vi.useFakeTimers();
+  try {
+    const last = { committed_at: 1_700_000_000, commit: "0123456789abcdef", refused: null, stale_lock: null };
+    const status = vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo({
+      policy: "commit", last: { ...last, repack_deferred: true },
+    }));
+    const { root, dispose } = mount();
+    await vi.waitFor(() => expect(root.textContent).toContain("Git cleanup is waiting"));
+    expect(root.textContent).toContain("Last commit 01234567");
+    expect(root.textContent).toContain("commits continue");
+    expect(root.textContent).toContain("retry automatically");
+    expect(root.textContent).not.toContain("Last attempt failed");
+    expect(root.querySelector("[role=alert]")).toBeNull();
+    status.mockResolvedValue(repo({ policy: "commit", last }));
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(root.textContent).not.toContain("Git cleanup is waiting");
+    dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("turns autocommit on for the bound graph and changes its interval", async () => {
   vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo());
   const set = vi.spyOn(backend(), "setGitAutocommit").mockImplementation(async (policy, minutes) => repo({ policy, interval_minutes: minutes }));

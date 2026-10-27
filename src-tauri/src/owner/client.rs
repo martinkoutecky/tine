@@ -16,6 +16,10 @@ use super::OwnerError;
 /// How long discovery waits for a started `tine serve` to answer.
 const START_WAIT: Duration = Duration::from_secs(10);
 
+/// A wedged owner must not hold a CLI process forever. Expiring this wait
+/// never cancels admitted work, retries a write, or grants the owner lease.
+const REPLY_WAIT: Duration = Duration::from_secs(60);
+
 /// Why a call got no answer from the owner.
 #[derive(Debug)]
 pub(crate) enum Failure {
@@ -28,23 +32,76 @@ pub(crate) enum Failure {
     Lost(String),
 }
 
-#[cfg(unix)]
-pub(crate) use unix::Conn;
+#[cfg(any(unix, windows))]
+pub(crate) use local::{dial, dial_with, Conn};
 
-#[cfg(unix)]
-mod unix {
+#[cfg(any(unix, windows))]
+mod local {
     use super::*;
-    use std::io::BufReader;
-    use std::os::unix::net::UnixStream;
+    #[cfg(windows)]
+    use crate::owner::windows::Stream;
+    use std::io::{self, BufRead, BufReader, Read};
+    #[cfg(unix)]
+    use std::os::unix::net::UnixStream as Stream;
 
     use crate::owner::endpoint::IO_TIMEOUT;
     use crate::owner::wire::{self, Hello, Reply, Request, PROTOCOL, REPLY_CAP, REQUEST_CAP};
 
     /// A connection to a graph's owner, past the handshake.
     pub(crate) struct Conn {
-        reader: BufReader<UnixStream>,
-        writer: UnixStream,
+        reader: BufReader<Stream>,
+        writer: Stream,
         next: u64,
+        reply_wait: Duration,
+    }
+
+    /// Bound the whole frame, even when a peer keeps trickling partial data.
+    /// A socket's read timeout alone restarts on every read.
+    struct FrameReader<'a> {
+        inner: &'a mut BufReader<Stream>,
+        deadline: Instant,
+    }
+
+    impl FrameReader<'_> {
+        fn set_remaining_frame_timeout(&self) -> io::Result<()> {
+            let remaining = self.deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            self.inner.get_ref().set_read_timeout(Some(remaining))
+        }
+    }
+
+    impl Read for FrameReader<'_> {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            self.set_remaining_frame_timeout()?;
+            self.inner.read(bytes)
+        }
+    }
+
+    impl BufRead for FrameReader<'_> {
+        fn fill_buf(&mut self) -> io::Result<&[u8]> {
+            self.set_remaining_frame_timeout()?;
+            self.inner.fill_buf()
+        }
+
+        fn consume(&mut self, bytes: usize) {
+            self.inner.consume(bytes);
+        }
+    }
+
+    fn read_frame(
+        reader: &mut BufReader<Stream>,
+        cap: usize,
+        bound: Duration,
+    ) -> Result<Option<Vec<u8>>, wire::FrameError> {
+        wire::read_frame(
+            &mut FrameReader {
+                inner: reader,
+                deadline: Instant::now() + bound,
+            },
+            cap,
+        )
     }
 
     /// The owner's hello names this protocol, this graph and an owner kind
@@ -77,14 +134,20 @@ mod unix {
     }
 
     /// [`dial`] with the handshake bounded by `io` and each reply by
-    /// `replies` (`None`: a reply waits for the work, however long).
+    /// `replies` (`None`: the ordinary 60 s reply deadline).
     pub(crate) fn dial_with(
         socket: &Path,
         root: &Path,
         io: Duration,
         replies: Option<Duration>,
     ) -> Result<Option<Conn>, OwnerError> {
-        let stream = match UnixStream::connect(socket) {
+        #[cfg(windows)]
+        let stream = match Stream::connect_checked(socket, io)? {
+            Some(stream) => stream,
+            None => return Ok(None),
+        };
+        #[cfg(unix)]
+        let stream = match Stream::connect(socket) {
             Ok(stream) => stream,
             Err(e)
                 if matches!(
@@ -115,7 +178,7 @@ mod unix {
             owner: None,
         };
         wire::write_frame(&mut writer, &hello).map_err(io)?;
-        let line = match wire::read_frame(&mut reader, REQUEST_CAP) {
+        let line = match read_frame(&mut reader, REQUEST_CAP, bound) {
             Ok(Some(line)) => line,
             // An owner that closed at once is stopping: like no endpoint.
             Ok(None) | Err(_) => return Ok(None),
@@ -123,13 +186,11 @@ mod unix {
         if let Ok(hello) = wire::read_line::<Hello>(&line) {
             if hello.tine == "owner" {
                 owner_hello_matches(&hello, root)?;
-                // Slow work is not a slow socket: wait for the answer, unless
-                // the caller bounds it (a status probe).
-                writer.set_read_timeout(replies).map_err(io)?;
                 return Ok(Some(Conn {
                     reader,
                     writer,
                     next: 1,
+                    reply_wait: replies.unwrap_or(REPLY_WAIT),
                 }));
             }
         }
@@ -154,7 +215,7 @@ mod unix {
             };
             wire::write_frame(&mut self.writer, &request)
                 .map_err(|e| Failure::Lost(e.to_string()))?;
-            let line = match wire::read_frame(&mut self.reader, REPLY_CAP) {
+            let line = match read_frame(&mut self.reader, REPLY_CAP, self.reply_wait) {
                 Ok(Some(line)) => line,
                 Ok(None) => return Err(Failure::Lost("the owner closed the connection".into())),
                 Err(e) => return Err(Failure::Lost(format!("{e:?}"))),
@@ -180,36 +241,45 @@ mod unix {
             let _ = self.writer.shutdown(std::net::Shutdown::Both);
         }
     }
-}
 
-#[cfg(windows)]
-pub(crate) struct Conn;
+    #[cfg(all(test, unix))]
+    mod tests {
+        use super::*;
+        use std::io::Write;
 
-#[cfg(windows)]
-impl Conn {
-    pub(crate) fn call(&mut self, _verb: &str, _args: Value) -> Result<Value, Failure> {
-        Err(Failure::Reach(OwnerError::Unsupported))
+        #[test]
+        fn reply_deadline_covers_silence_and_a_trickling_partial_frame() {
+            for trickle in [false, true] {
+                let (reader, mut writer) = Stream::pair().unwrap();
+                let (stop, stopped) = std::sync::mpsc::channel();
+                let (done, finished) = std::sync::mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    writer
+                        .set_write_timeout(Some(Duration::from_secs(1)))
+                        .unwrap();
+                    while matches!(
+                        stopped.recv_timeout(Duration::from_millis(20)),
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                    ) {
+                        if trickle && writer.write_all(b" ").is_err() {
+                            break;
+                        }
+                    }
+                    done.send(()).unwrap();
+                });
+                let start = Instant::now();
+                let mut reader = BufReader::new(reader);
+                assert!(matches!(
+                    read_frame(&mut reader, REPLY_CAP, Duration::from_millis(100)),
+                    Err(wire::FrameError::Io(_))
+                ));
+                stop.send(()).unwrap();
+                finished.recv_timeout(Duration::from_secs(2)).unwrap();
+                worker.join().unwrap();
+                assert!(start.elapsed() < Duration::from_secs(2));
+            }
+        }
     }
-
-    pub(crate) fn shutdown(&self) {}
-}
-
-#[cfg(windows)]
-pub(crate) fn dial(_socket: &Path, _root: &Path) -> Result<Option<Conn>, OwnerError> {
-    Err(OwnerError::Unsupported)
-}
-
-#[cfg(unix)]
-pub(crate) use unix::{dial, dial_with};
-
-#[cfg(windows)]
-pub(crate) fn dial_with(
-    _socket: &Path,
-    _root: &Path,
-    _io: Duration,
-    _replies: Option<Duration>,
-) -> Result<Option<Conn>, OwnerError> {
-    Err(OwnerError::Unsupported)
 }
 
 /// Reach `root`'s owner, starting `tine serve` when nobody answers (§3.4).
@@ -280,6 +350,13 @@ fn spawn_serve(root: &Path, paths: &GraphPaths) -> Result<(), OwnerError> {
                 Ok(())
             });
         }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS};
+        super::windows::detach_stdio().map_err(start)?;
+        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
     }
     command.spawn().map_err(start)?;
     Ok(())

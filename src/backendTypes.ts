@@ -81,6 +81,7 @@ export interface GitAutocommitStatus {
     /** One ignore-setup event, retained until the graph worker ends. */
     syncthing_ignore_added?: string | null;
     syncthing_ignore_failed?: boolean;
+    repack_deferred?: boolean;
     /** Unix seconds of this process's last autocommit. */
     committed_at: number | null;
     commit: string | null;

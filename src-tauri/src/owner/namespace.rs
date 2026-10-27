@@ -53,9 +53,14 @@ impl Namespace {
     }
 
     fn key(&self, key: &str) -> Result<GraphPaths, OwnerError> {
+        // Recheck at use, including an already-resolved namespace.
+        check_private(&self.dir)?;
         let paths = GraphPaths {
             lock: self.dir.join(format!("{key}.lock")),
+            #[cfg(unix)]
             socket: self.dir.join(format!("{key}.sock")),
+            #[cfg(windows)]
+            socket: super::windows_security::pipe_name(key)?,
             start_log: self.dir.join(format!("{key}.start.log")),
         };
         check_socket_path(&paths.socket)?;
@@ -100,7 +105,7 @@ fn account_dir() -> Result<PathBuf, OwnerError> {
 }
 
 /// Account-wide across stable/Beta, independently of environment variables
-/// and single-instance forwarding. Windows has a lock but no endpoint yet.
+/// and single-instance forwarding.
 #[cfg(target_os = "windows")]
 fn account_dir() -> Result<PathBuf, OwnerError> {
     use std::os::windows::ffi::OsStringExt;
@@ -125,7 +130,7 @@ fn account_dir() -> Result<PathBuf, OwnerError> {
         CoTaskMemFree(raw.cast());
         PathBuf::from(path)
     };
-    Ok(path.join("tine").join("owners"))
+    Ok(path.join("tine-owners"))
 }
 
 /// Mobile: one process per app, with per-app sandboxed data, no CLI host.
@@ -165,10 +170,9 @@ fn create_private(dir: &Path) -> Result<(), OwnerError> {
 
 #[cfg(windows)]
 fn create_private(dir: &Path) -> Result<(), OwnerError> {
-    // Inherit the account's LocalAppData ACL. No command endpoint is exposed;
-    // the in-scope exclusion is between concurrent honest instances.
-    std::fs::create_dir_all(dir)
-        .map_err(|e| OwnerError::Unsafe(format!("cannot create {}: {e}", dir.display())))
+    // The Known Folder is trusted. Create only our coordination directory,
+    // outside stable's case-insensitive LocalAppData\Tine install directory.
+    super::windows_security::create_directory(dir)
 }
 
 /// A directory, not a symlink, owned by this uid, with no group or other
@@ -191,21 +195,9 @@ fn check_private(dir: &Path) -> Result<(), OwnerError> {
 
 #[cfg(windows)]
 fn check_private(dir: &Path) -> Result<(), OwnerError> {
-    use std::os::windows::fs::MetadataExt;
-    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
-    // Inspect both components created below the trusted Known Folder. A
-    // junction on either must not redirect different apps to different locks.
-    for path in std::iter::once(dir).chain(dir.parent()) {
-        let meta = std::fs::symlink_metadata(path)
-            .map_err(|e| OwnerError::Unsafe(format!("cannot inspect {}: {e}", path.display())))?;
-        if !meta.is_dir() || meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return Err(OwnerError::Unsafe(format!(
-                "{} must be a directory, not a reparse point",
-                path.display()
-            )));
-        }
-    }
-    Ok(())
+    // Never repair a pre-existing DACL: a loosened directory may already
+    // contain a lock file controlled by another account.
+    super::windows_security::check_directory(dir)
 }
 
 /// A Unix socket path must fit `sockaddr_un.sun_path` (108 bytes on Linux,
@@ -234,19 +226,20 @@ fn check_socket_path(_: &Path) -> Result<(), OwnerError> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn windows_owner_lock_does_not_enable_a_headless_host() {
+    fn windows_and_unix_enable_the_shared_owner_protocol() {
         let source = include_str!("serve.rs");
         let function = &source[source.find("fn serve_graph(").unwrap()..];
         let before_claim = &function[..function.find("lease::claim(").unwrap()];
-        assert!(before_claim.contains("#[cfg(target_os = \"windows\")]"));
-        assert!(before_claim.contains("return Err(ServeFailure::Claim(OwnerError::Unsupported))"));
+        assert!(!before_claim.contains("OwnerError::Unsupported"));
+        assert!(include_str!("windows.rs").contains("first_pipe_instance(first)"));
+        assert!(!include_str!("client.rs").contains("Err(OwnerError::Unsupported)"));
     }
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_owner_directory_rejects_files_and_reparse_points() {
         use super::*;
         let data = tempfile::tempdir().unwrap();
-        let owners = data.path().join("owners");
+        let owners = data.path().join("tine-owners");
         create_private(&owners).unwrap();
         check_private(&owners).unwrap();
         let file = data.path().join("file");
@@ -274,6 +267,7 @@ mod tests {
         let arm = &arm[..arm.find("\n}\n").unwrap()];
         assert!(arm.contains("SHGetKnownFolderPath"));
         assert!(arm.contains("FOLDERID_LocalAppData"));
+        assert!(arm.contains("join(\"tine-owners\")"));
         assert!(!arm.contains("std::env"));
         assert!(!arm.contains("Unsupported"));
         let mobile = production

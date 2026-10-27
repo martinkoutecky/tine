@@ -73,6 +73,11 @@ fn ambiguous_rename_names_conflicting_files_and_keeps_them_unchanged() {
         };
         put(&root, first, "- first\n");
         put(&root, other, body);
+        if label == "case" && fs::read_dir(root.join("pages")).unwrap().count() < 2 {
+            // A case-insensitive filesystem (Windows, default macOS) holds
+            // one file for both spellings, so there is no duplicate.
+            continue;
+        }
         let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
         let error = hosted(&store, |host| {
             pages::rename_page_expected(&store, host, old, "Internal Tools", None)
