@@ -234,15 +234,6 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     provide: field => EditorView.decorations.from(field),
   });
   onMount(() => {
-    const want = takeCaretFor(props.id);
-    const historySelection = takeHistoryEditorSelectionFor(props.id, props.surface);
-    // Numeric targets use visible-source coordinates. History uses body
-    // coordinates for whole code and source coordinates for mixed occurrences.
-    if (!code() && !isCalc()) {
-      if (historySelection) codeView.enter(historySelection.start, historySelection.end);
-      else if (typeof want === "number") codeView.enter(want);
-      else if (want && "start" in want) codeView.enter(want.start, want.end);
-    }
     view = new EditorView({
       parent: editorHost,
       dispatchTransactions: (transactions, v) => {
@@ -354,33 +345,49 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       host.ownerDocument.defaultView!.removeEventListener("keydown", compositionKeys, true);
       host.removeEventListener("keydown", structuralKeys, true);
     };
-    let anchor = view.state.doc.length, head = anchor;
-    if (historySelection) { anchor = historySelection.start; head = historySelection.end; }
-    else if (typeof want === "number") anchor = head = Math.max(0, want - (code()?.open.length ?? 0));
-    else if (want && "start" in want) {
-      anchor = want.direction === "backward" ? want.end : want.start;
-      head = want.direction === "backward" ? want.start : want.end;
-    }
-    else if (want && "edge" in want) {
-      const edge = want.edge === "first" ? 0 : view.state.doc.length;
-      const row = view.moveToLineBoundary(EditorSelection.cursor(edge), false).head;
-      const end = view.moveToLineBoundary(EditorSelection.cursor(edge), true).head;
-      anchor = head = Math.min(row + want.col, end);
-    }
-    if (codeView.mixed() && (historySelection || want && typeof want === "object" && "start" in want)) {
-      anchor -= code()!.open.length; head -= code()!.open.length;
-    }
-    view.dispatch({ selection: { anchor: Math.min(anchor, view.state.doc.length), head: Math.min(head, view.state.doc.length) }, scrollIntoView: true });
+    const focusNow = () => {
+      if (!view) return;
+      // Mirrored occurrences share this request. Only the view taking focus
+      // may consume it, including when a stale surface stamp needs a fallback.
+      const want = takeCaretFor(props.id);
+      const historySelection = takeHistoryEditorSelectionFor(props.id, props.surface);
+      // Numeric targets use visible-source coordinates. History uses body
+      // coordinates for whole code and source coordinates for mixed occurrences.
+      if (!code() && !isCalc()) {
+        if (historySelection) codeView.enter(historySelection.start, historySelection.end);
+        else if (typeof want === "number") codeView.enter(want);
+        else if (want && "start" in want) codeView.enter(want.start, want.end);
+        syncView();
+      }
+      let anchor = view.state.doc.length, head = anchor;
+      if (historySelection) { anchor = historySelection.start; head = historySelection.end; }
+      else if (typeof want === "number") anchor = head = Math.max(0, want - (code()?.open.length ?? 0));
+      else if (want && "start" in want) {
+        anchor = want.direction === "backward" ? want.end : want.start;
+        head = want.direction === "backward" ? want.start : want.end;
+      }
+      else if (want && "edge" in want) {
+        const edge = want.edge === "first" ? 0 : view.state.doc.length;
+        const row = view.moveToLineBoundary(EditorSelection.cursor(edge), false).head;
+        const end = view.moveToLineBoundary(EditorSelection.cursor(edge), true).head;
+        anchor = head = Math.min(row + want.col, end);
+      }
+      if (codeView.mixed() && (historySelection || want && typeof want === "object" && "start" in want)) {
+        anchor -= code()!.open.length; head -= code()!.open.length;
+      }
+      view.dispatch({ selection: { anchor: Math.min(anchor, view.state.doc.length), head: Math.min(head, view.state.doc.length) }, scrollIntoView: true });
+      view.focus();
+    };
     const focusSurface = focusSurfaceFor(props.id);
     if (!focusSurface || focusSurface === props.surface) {
-      view.focus();
+      focusNow();
       queueMicrotask(() => clearFocusSurface(props.id));
     } else {
       queueMicrotask(() => {
         if (!view || !current() || !view.dom.isConnected || editingId() !== props.id) return;
         const active = host.ownerDocument.activeElement;
         if (!active?.closest('textarea.block-editor, [data-block-editor="cm6"]')) {
-          view.focus();
+          focusNow();
           clearFocusSurface(props.id);
         }
       });
