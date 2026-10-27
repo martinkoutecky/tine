@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 227] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 229] = [
     "add_defender_exclusion",
     "app_architecture",
     "app_platform",
@@ -104,6 +104,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 227] = [
     "open_pdf",
     "orphan_drafts",
     "owner_flush_answer",
+    "owner_protection_status",
     "page_alias_group",
     "page_backlink_counts",
     "page_close",
@@ -172,6 +173,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 227] = [
     "resolve_sync_conflict",
     "resolve_vcs_marker_conflict",
     "restore_backup",
+    "retry_owner_protection",
     "reveal_export",
     "reveal_known_graph",
     "rollback_pdf_area_image",
