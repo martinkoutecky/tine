@@ -184,6 +184,9 @@ impl Native {
                 .unwrap();
                 fs::create_dir(self.graph.join(dir)).unwrap();
             }
+            EnvStep::ExternalInPlace(..) => {
+                panic!("C7 uses M4's deterministic read/writer barriers")
+            }
         }
     }
 

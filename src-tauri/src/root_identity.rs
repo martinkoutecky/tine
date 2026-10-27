@@ -1,4 +1,8 @@
 //! Device-local namespaces follow a validated relocation, never graph content.
+#[cfg(test)]
+#[path = "root_identity_m4_environment_tests.rs"]
+mod m4_environment_tests;
+
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 

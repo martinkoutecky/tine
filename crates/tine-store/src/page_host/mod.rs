@@ -25,6 +25,8 @@ pub mod faults;
 mod io;
 mod logical;
 #[cfg(test)]
+mod m4_environment_tests;
+#[cfg(test)]
 mod model_entries;
 #[cfg(test)]
 mod model_fs;

@@ -31,11 +31,21 @@ pub(crate) enum EnvStep {
     SymlinkSwap(DirKey),
     DirRename(DirKey, DirKey),
     InodeChange(DirKey),
+    /// An in-place writer has exposed only this prefix when Read runs.
+    ExternalInPlace(String, Arc<[u8]>, usize),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Fold {
+    #[default]
+    None,
+    Case,
 }
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Env {
     pub root: RootState,
+    pub fold: Fold,
     pub dirs: BTreeMap<DirKey, Dir>,
     /// Physical parent for each graph/page-temp/trash/directory key. Root is
     /// ""; absence from this map preserves the old flat fixtures.
@@ -116,9 +126,30 @@ impl Env {
 }
 
 impl ModelFs {
+    /// Resolve physical spellings independently of logical page registration.
+    /// Case is deliberately ASCII here; Unicode normalization is outside C8.
+    pub fn case_alias(&self, page: &str) -> Option<String> {
+        self.case_alias_in(page, false)
+    }
+
+    fn case_alias_in(&self, page: &str, durable: bool) -> Option<String> {
+        if self.env.fold != Fold::Case {
+            return None;
+        }
+        let spelling = self.spelling(page);
+        (if durable { &self.stable } else { &self.files })
+            .keys()
+            .filter_map(|key| key.strip_prefix("graph/"))
+            .find(|key| *key != page && self.spelling(key).eq_ignore_ascii_case(&spelling))
+            .map(str::to_owned)
+    }
+
     /// Executable α from design §1. The byte maps are physical evidence;
     /// inaccessible entries stay there, rather than being silently deleted.
     pub fn alpha(&self, page: &str, durable: bool) -> Text {
+        let page = self
+            .case_alias_in(page, durable)
+            .unwrap_or_else(|| page.into());
         let key = format!("graph/{page}");
         self.env
             .contains(&self.env.parent(&key), true)
@@ -163,6 +194,13 @@ impl ModelFs {
             }
             EnvStep::DirRename(from, to) => self.relocate_dir(&from, Some(&to)),
             EnvStep::InodeChange(dir) => self.relocate_dir(&dir, None),
+            EnvStep::ExternalInPlace(page, bytes, prefix) => {
+                assert!(prefix < bytes.len(), "C7 must expose an incomplete version");
+                self.external(&page, Some(Arc::from(&bytes[..prefix])), false);
+                // external already advanced the ghost write epoch. C1–C4's
+                // namespace projection below must not count this write twice.
+                return;
+            }
         }
         if self.env.root != RootState::Bound {
             let keys: Vec<_> = self

@@ -12,7 +12,7 @@ const CUSTODY: &str = "draft/trash-custody/";
 
 #[path = "model_env.rs"]
 mod environment;
-pub(super) use environment::{Dir, DirKind, Env, EnvStep, Escape, RootState};
+pub(super) use environment::{Dir, DirKind, Env, EnvStep, Escape, Fold, RootState};
 
 /// The trash directory chain's own entries, outermost first: `logseq` in the
 /// graph root, `.tine-trash` in it, and `pages` in that. A payload is
@@ -690,6 +690,14 @@ impl HostIo for ModelFs {
         self.run(Phase::PageRename, |fs| {
             fs.root_step()?;
             fs.check_parent(&format!("graph/{page}"))?;
+            if fs.case_alias(page).is_some() {
+                return Err(IoFailure {
+                    kind: ErrorKind::Collision,
+                    completed: false,
+                    operation: None,
+                    os_error: None,
+                });
+            }
             // A directory replacement can remove a prepared temp's epoch.
             // Native PreparedWrite cannot publish a missing temporary either.
             if !fs.files.contains_key(&format!("temp/page/{page}")) {
@@ -769,7 +777,9 @@ impl HostIo for ModelFs {
         _bytes: &Text,
         _source: Option<&str>,
     ) -> IoResult<Option<String>> {
-        Ok(self.owners.get(page).cloned())
+        Ok(self
+            .case_alias(page)
+            .or_else(|| self.owners.get(page).cloned()))
     }
 
     fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult {
