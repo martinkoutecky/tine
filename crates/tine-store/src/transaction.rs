@@ -1139,7 +1139,10 @@ impl<'a> PagePlan<'a> {
 
     fn fault_collision(&self, path: &Path) {
         if fault(self.store, FaultPoint::NoReplaceCollision) {
-            let _ = atomic_write_new(path, b"external collision");
+            // An external writer, not a Tine mutation: like fault_twin, it
+            // bypasses the cfg(test) checked-target assertion (on a folding
+            // volume `Old.md` names the checked `old.md` in another spelling).
+            let _ = crate::atomic_file::atomic_write_new(path, b"external collision");
         }
     }
 

@@ -971,7 +971,7 @@ guard = "unguarded:A-MUTATION-CONTAINMENT"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
 note = "Syntactically shipped fault helper has no containment check of its own; fault() is false outside test-faults. It simulates an external writer; recorded conservatively, not a reachable user write claim."
-mutations = "atomic_write_new=1"
+mutations = "atomic_file::atomic_write_new=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
