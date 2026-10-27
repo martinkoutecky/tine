@@ -27,6 +27,8 @@ clearOnBindingInvalidated(() => clearSelection());
 
 let activeSelectionScope: OutlineScope | null = null;
 
+export function selectionScope(): OutlineScope | null { return activeSelectionScope; }
+
 /** Visible order to resolve a block SELECTION against. The journals feed lives in
  *  visibleData(); a routed single page is loaded via ensurePageLoaded and is NOT in
  *  doc.feed, so its blocks aren't in visibleOrder() — fall back to that block's own

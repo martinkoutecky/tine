@@ -58,7 +58,10 @@ try {
   proof.observations.push("Click ticks only the second item, through a durable save");
   const quoteId = await browser.execute(() => document.querySelector(".main-content .callout").closest(".ls-block").getAttribute("data-block-id"));
   await browser.$(`[data-block-id="${quoteId}"] .collapse-toggle`).click();
-  const collapsed = checked.replace("- > [!TIP]", `- collapsed:: true${newline}  > [!TIP]`);
+  // OG reads only the property group nearest the bullet (graph_parser/block.cljs extract-blocks),
+  // so collapsed:: joins the existing id:: group instead of opening a second one above the quote.
+  const idRow = "  id:: 11111111-1111-4111-8111-111111111111";
+  const collapsed = checked.replace(idRow, `${idRow}${newline}  collapsed:: true`);
   await saved(collapsed);
   if (await browser.execute(() => document.querySelector(".main-content .callout").textContent.includes("collapsed::"))) throw new Error("Metadata leaked into the callout");
   await openPageByName(browser, "Other");

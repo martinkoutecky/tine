@@ -12,6 +12,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Linux: automatically apply the WebKitGTK DMABUF workaround when an NVIDIA driver older than 610 is loaded, avoiding the blank window reported with the 0.8.0 AppImage on legacy drivers; newer NVIDIA drivers keep GPU rendering. Explicit `TINE_GPU` and `WEBKIT_DISABLE_DMABUF_RENDERER` settings keep precedence (GH #777).
 
+- Windows: a save made while the previous save of the same page was still replacing the file is no longer refused as "write target escapes graph root" when Windows reports the replaced file's location for the page (internal REG-WIN-WRITE-TARGET-DISPLACED; completes the 0.8.0-beta.4 fix).
+
+- A brand-new page with no file yet now shows an editable first bullet when opened in the right sidebar, so you can type or drag blocks into it without first editing it in the main pane (GH #524).
+
+- Clicking a hidden `{{cloze}}` reveals the answer in place again (and hides it on a second click), instead of opening the block editor (GH #763).
+
+- Expand and Collapse (one level) now follow a block embed's own folds and open or close child page embeds, while keeping embedded source folds separate (GH #768, GH #769).
+
 ## [0.8.0] - 2026-10-26
 
 Tine 0.8.0 makes the Tine Beta line stable. It is Tine Beta 0.8.0-beta.12
