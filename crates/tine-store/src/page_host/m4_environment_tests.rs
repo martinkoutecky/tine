@@ -433,6 +433,12 @@ fn m4_c8_native_case_insensitive_volume_admission_refuses_collision() {
     let upper = dir.path().join("pages/Foo.md");
     fs::write(&lower, OLD).unwrap();
     if !same_file::is_same_file(&lower, &upper).unwrap_or(false) {
+        // NTFS and APFS fold case by default, as do the hosted runners: a
+        // skip there would leave C8 untested where it matters.
+        assert!(
+            !cfg!(any(windows, target_os = "macos")),
+            "C8 expects a case-insensitive temp volume on Windows and macOS"
+        );
         eprintln!("NATIVE_MODELFS_ONLY C8: {}", NATIVE_MODELFS_ONLY[0].1);
         return;
     }
