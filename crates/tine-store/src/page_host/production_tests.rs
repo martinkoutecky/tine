@@ -12,13 +12,16 @@ use std::path::{Path, PathBuf};
 
 #[path = "production_guard_tests.rs"]
 mod guard_tests;
+#[path = "storage_acceptance_tests.rs"]
+mod storage_acceptance_tests;
 
 struct Fixture {
-    root: tempfile::TempDir,
     graph: PathBuf,
     app: PathBuf,
     trash: PathBuf,
     host: Host<ProductionIo>,
+    // Drop native handles before removing the sandbox, including on Windows.
+    root: tempfile::TempDir,
 }
 
 impl Fixture {
@@ -28,6 +31,13 @@ impl Fixture {
         } else {
             tempfile::tempdir().unwrap()
         };
+        Self::in_empty_root(root)
+    }
+
+    /// Only initialize a fresh directory owned by this fixture.
+    fn in_empty_root(root: tempfile::TempDir) -> Self {
+        assert!(fs::symlink_metadata(root.path()).unwrap().is_dir());
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
         let graph = root.path().join("graph");
         let app = root.path().join("app");
         let trash = graph.join("logseq/.tine-trash/pages");
@@ -120,6 +130,38 @@ impl Fixture {
             Disposition::Applied | Disposition::Pending
         ));
         self.drain();
+    }
+
+    /// End all host/adapter custody before enumerating survivors in a new host.
+    fn cold_reopen(self) -> Self {
+        let Self {
+            graph,
+            app,
+            trash,
+            host,
+            root,
+        } = self;
+        drop(host);
+        let io = ProductionIo::attach(&graph, &app, "test-graph", &trash);
+        let locks = ["a.md", "b.md", "c.md"]
+            .into_iter()
+            .map(|key| (key.into(), Arc::new(Mutex::new(()))))
+            .collect();
+        let mut host = Host::new(io, locks);
+        host.stop();
+        assert!(matches!(
+            host.launch(),
+            Disposition::Applied | Disposition::Pending
+        ));
+        let mut reopened = Self {
+            graph,
+            app,
+            trash,
+            host,
+            root,
+        };
+        reopened.drain();
+        reopened
     }
 }
 
