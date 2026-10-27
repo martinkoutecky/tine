@@ -372,6 +372,7 @@ mod name_search;
 #[cfg(test)]
 mod page_open_tests;
 mod page_read;
+mod scan_entry;
 mod snapshot;
 pub(crate) use snapshot::PublishedObservations;
 
@@ -1789,18 +1790,7 @@ impl Store {
             out: &mut Listing,
             pending: &mut Vec<PathBuf>,
         ) {
-            #[cfg(test)]
-            let forced = SCAN_FAULTS.with(|faults| {
-                let rel = dir.strip_prefix(root).unwrap_or(dir).to_string_lossy();
-                (faults.borrow().1.as_deref() == Some(rel.as_ref())).then(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        "injected list failure",
-                    )
-                })
-            });
-            #[cfg(not(test))]
-            let forced: Option<std::io::Error> = None;
+            let forced = scan_entry::forced_list_failure(root, dir);
             let entries = match forced.map_or_else(|| fs::read_dir(dir), Err) {
                 Ok(entries) => entries,
                 Err(error) => {
@@ -1859,17 +1849,7 @@ impl Store {
                 if area == Area::Meta && rel != "config.edn" && rel != "custom.css" {
                     continue;
                 }
-                #[cfg(test)]
-                let forced = SCAN_FAULTS.with(|faults| {
-                    (faults.borrow().0.as_deref() == Some(rel.as_str())).then(|| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::PermissionDenied,
-                            "injected stat failure",
-                        )
-                    })
-                });
-                #[cfg(not(test))]
-                let forced: Option<std::io::Error> = None;
+                let forced = scan_entry::forced_stat_failure(&rel);
                 let ty = match forced.map_or_else(|| entry.file_type(), Err) {
                     Ok(ty) => ty,
                     Err(error) => {
@@ -1894,35 +1874,8 @@ impl Store {
                         ));
                     }
                 } else if ty.is_file() {
-                    #[cfg(test)]
-                    SCAN_HOOKS.with(|hooks| {
-                        if let Some(hook) = hooks.borrow_mut().0.take() {
-                            hook(&path);
-                        }
-                    });
-                    // A name listed a moment ago and now absent was removed or
-                    // is being replaced (a sync tool that archives the old
-                    // version before moving the new one in): look once more,
-                    // then treat it as gone, never as unreadable. The watcher
-                    // delivers whatever arrives next.
-                    let meta = match entry.metadata() {
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                            #[cfg(test)]
-                            SCAN_HOOKS.with(|hooks| {
-                                if let Some(hook) = hooks.borrow_mut().1.take() {
-                                    hook(&path);
-                                }
-                            });
-                            match fs::symlink_metadata(&path) {
-                                Ok(meta) if meta.is_file() => Ok(meta),
-                                Ok(_) => continue,
-                                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                                    continue
-                                }
-                                Err(error) => Err(error),
-                            }
-                        }
-                        other => other,
+                    let Some(meta) = scan_entry::listed_file_metadata(&entry, &path) else {
+                        continue;
                     };
                     match meta {
                         Ok(meta) => {
@@ -2215,19 +2168,6 @@ pub struct Listing {
     /// Area-relative names that could not be read, with their errors. An empty
     /// name means directory iteration failed before an entry name was available.
     pub unreadable: Vec<(String, crate::IoError)>,
-}
-
-#[cfg(test)]
-thread_local! {
-    static SCAN_FAULTS: std::cell::RefCell<(Option<String>, Option<String>)> =
-        const { std::cell::RefCell::new((None, None)) };
-    /// Run before a listed file's metadata read and before its NotFound
-    /// re-check: tests remove or restore the file inside that window.
-    #[allow(clippy::type_complexity)]
-    static SCAN_HOOKS: std::cell::RefCell<(
-        Option<Box<dyn FnOnce(&Path)>>,
-        Option<Box<dyn FnOnce(&Path)>>,
-    )> = const { std::cell::RefCell::new((None, None)) };
 }
 
 /// Journal day encoded as a `yyyymmdd` integer. Construct it from
@@ -5568,11 +5508,11 @@ mod rev5_tests {
         fs::write(root.join("pages/Unreadable.md"), b"- page\n").unwrap();
         fs::write(root.join("pages/nested/Inside.md"), b"- page\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
-        SCAN_FAULTS.with(|faults| {
+        scan_entry::SCAN_FAULTS.with(|faults| {
             *faults.borrow_mut() = (Some("Unreadable.md".into()), Some("nested".into()));
         });
         let listing = store.scan_area(Area::Pages, None).unwrap();
-        SCAN_FAULTS.with(|faults| *faults.borrow_mut() = (None, None));
+        scan_entry::SCAN_FAULTS.with(|faults| *faults.borrow_mut() = (None, None));
         assert_eq!(
             listing
                 .unreadable
@@ -5605,7 +5545,7 @@ mod rev5_tests {
         // Replaced: gone at the first look, back at the second.
         let parked = root.join("journals-parked.md");
         let (away, back) = (parked.clone(), parked.clone());
-        SCAN_HOOKS.with(|hooks| {
+        scan_entry::SCAN_HOOKS.with(|hooks| {
             *hooks.borrow_mut() = (
                 Some(Box::new(move |path: &Path| {
                     fs::rename(path, &away).unwrap()
@@ -5627,14 +5567,14 @@ mod rev5_tests {
         );
 
         // Removed: gone at both looks.
-        SCAN_HOOKS.with(|hooks| {
+        scan_entry::SCAN_HOOKS.with(|hooks| {
             *hooks.borrow_mut() = (
                 Some(Box::new(|path: &Path| fs::remove_file(path).unwrap())),
                 None,
             );
         });
         let listing = store.scan_area(Area::Journals, None).unwrap();
-        SCAN_HOOKS.with(|hooks| *hooks.borrow_mut() = (None, None));
+        scan_entry::SCAN_HOOKS.with(|hooks| *hooks.borrow_mut() = (None, None));
         assert!(listing.unreadable.is_empty(), "{:?}", listing.unreadable);
         assert!(listing.files.is_empty());
         drop(store);
