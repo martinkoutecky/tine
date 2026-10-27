@@ -1,6 +1,8 @@
 //! Test-side path resolution beside ModelFs's byte map. No directories enter
 //! Quint: losing a containing directory projects to external ABSENT writes.
 use super::*;
+use unicode_casefold::UnicodeCaseFold;
+use unicode_normalization::UnicodeNormalization;
 
 pub(crate) type DirKey = String;
 
@@ -39,6 +41,8 @@ pub(crate) enum EnvStep {
 pub(crate) enum Fold {
     #[default]
     None,
+    /// Unicode default full case fold plus canonical normalization. A model
+    /// folding volume, not an emulation of NTFS's one-character upcase table.
     Case,
 }
 
@@ -127,7 +131,9 @@ impl Env {
 
 impl ModelFs {
     /// Resolve physical spellings independently of logical page registration.
-    /// Case is deliberately ASCII here; Unicode normalization is outside C8.
+    /// Case models full Unicode case folding and normalization insensitivity.
+    /// Production asks the actual directory resolver rather than using this
+    /// key: sensitive volumes must keep their distinct physical names.
     pub fn case_alias(&self, page: &str) -> Option<String> {
         self.case_alias_in(page, false)
     }
@@ -137,10 +143,19 @@ impl ModelFs {
             return None;
         }
         let spelling = self.spelling(page);
+        let folded: String = spelling.nfd().case_fold().nfc().collect();
         (if durable { &self.stable } else { &self.files })
             .keys()
             .filter_map(|key| key.strip_prefix("graph/"))
-            .find(|key| *key != page && self.spelling(key).eq_ignore_ascii_case(&spelling))
+            .find(|key| {
+                *key != page
+                    && self
+                        .spelling(key)
+                        .nfd()
+                        .case_fold()
+                        .nfc()
+                        .eq(folded.chars())
+            })
             .map(str::to_owned)
     }
 
