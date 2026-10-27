@@ -13,6 +13,14 @@ fn windows_junction_at_mkdir_recheck_keeps_cold_draft_then_retries() {
         let outside = f.root.path().join("outside");
         let detached = f.root.path().join("detached");
         fs::create_dir(&outside).unwrap();
+        // The substituted target holds the parent the planned mkdir needs, so
+        // without the recheck the nested folder would land outside the graph.
+        let planted = if swap_root {
+            fs::create_dir(outside.join("pages")).unwrap();
+            1
+        } else {
+            0
+        };
         let swap = if swap_root {
             f.graph.clone()
         } else {
@@ -46,7 +54,8 @@ fn windows_junction_at_mkdir_recheck_keeps_cold_draft_then_retries() {
             text(input),
             "recover from physical files after dropping host custody (root={swap_root})"
         );
-        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), planted);
+        assert!(!outside.join("pages/sub").exists() && !outside.join("sub").exists());
         // Remove only the junction, restore the original directory, then bind
         // a fresh adapter to that restored directory before retrying the input.
         fs::remove_dir(&swap).unwrap();
@@ -59,7 +68,8 @@ fn windows_junction_at_mkdir_recheck_keeps_cold_draft_then_retries() {
             input.as_bytes()
         );
         assert!(f.host.pages["c.md"].clean());
-        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), planted);
+        assert!(!outside.join("pages/sub").exists() && !outside.join("sub").exists());
         executed += 1;
     }
     assert_eq!(

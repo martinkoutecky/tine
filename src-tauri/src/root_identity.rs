@@ -730,6 +730,9 @@ mod tests {
         let graph = tempfile::tempdir().unwrap();
         let old = graph.path().join("old");
         fs::create_dir(&old).unwrap();
+        // Record the spelling the store compares against (a verbatim prefix on
+        // Windows, the resolved temp alias on macOS).
+        let old = fs::canonicalize(&old).unwrap();
         let id = crate::settings::host_graph_id(&old);
         let dir = data.path().join("drafts-v2").join(&id);
         fs::create_dir_all(&dir).unwrap();
