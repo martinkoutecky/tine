@@ -472,7 +472,6 @@ fn m3_native_alpha_and_escape_witness_negative_controls() {
 }
 
 #[test]
-#[ignore = "M3-1: C3/C4 parent loss after rename is reported current/published"]
 fn m3_finding_parent_loss_after_publish_must_not_report_current_durable() {
     let mut stale = vec![];
     for replace in [false, true] {
@@ -510,8 +509,9 @@ fn m3_finding_parent_loss_after_publish_must_not_report_current_durable() {
     );
 }
 
+// The approved Android directory policy detects disappearance only.
+#[cfg(not(target_os = "android"))]
 #[test]
-#[ignore = "M3-2: retained DirectoryCreation sync debt accepts a replaced directory epoch"]
 fn m3_finding_c4_retained_directory_sync_must_not_acknowledge_a_new_inode() {
     let n = Native::new(true);
     let target = n.graph.join("new/deep");
@@ -532,7 +532,6 @@ fn m3_finding_c4_retained_directory_sync_must_not_acknowledge_a_new_inode() {
 }
 
 #[test]
-#[ignore = "M3-2: ModelFs retained directory sync debt has no epoch witness, matching the native finding"]
 fn m3_finding_c4_model_retained_directory_sync_must_not_acknowledge_a_new_inode() {
     let mut fs = ModelFs::default();
     fs.spell(PAGE, "pages/new/deep/a.md");
@@ -551,6 +550,94 @@ fn m3_finding_c4_model_retained_directory_sync_must_not_acknowledge_a_new_inode(
         "C4 ModelFs retired old epoch debt by syncing replacement paths: {result:?}, owed={:?}",
         fs.owed
     );
+}
+
+#[test]
+fn m3_parent_loss_keeps_cold_draft_and_can_publish_after_restoration() {
+    for replace in [false, true] {
+        let mut n = Native::new(false);
+        at(&mut n.h, SavePhase::DirectorySync);
+        n.apply_env(&if replace {
+            EnvStep::InodeChange("pages/sub/deep".into())
+        } else {
+            EnvStep::DirRename("pages/sub/deep".into(), "pages/sub/moved".into())
+        });
+        finish(&mut n.h);
+        assert!(n.h.events.iter().any(|e| matches!(
+            e,
+            Event::SaveOutcome {
+                outcome: Outcome::Uncertain,
+                ..
+            }
+        )));
+        assert!(!n
+            .h
+            .events
+            .iter()
+            .any(|e| matches!(e, Event::Published { .. })));
+        keep_draft(&mut n.h);
+        n.reattach();
+        n.h.fs.draft_sync().unwrap();
+        assert_eq!(
+            drafts::scan(n.h.fs.draft_files(true)).logical[PAGE].bytes,
+            bytes(INPUT)
+        );
+        let original = if replace {
+            fs::remove_dir(n.graph.join("pages/sub/deep")).unwrap();
+            n.dir.path().join("detached-parent")
+        } else {
+            n.graph.join("pages/sub/moved")
+        };
+        fs::rename(original, n.graph.join("pages/sub/deep")).unwrap();
+        for _ in 0..2 {
+            if !n.h.pages[PAGE].clean() {
+                at(&mut n.h, SavePhase::Temp);
+                finish(&mut n.h);
+            }
+        }
+        assert!(n.h.pages[PAGE].clean());
+        assert_eq!(n.alpha(SPELLING), bytes(INPUT));
+        n.escapes();
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn m3_stale_directory_debt_replans_and_a_later_save_is_current() {
+    let mut n = Native::new(true);
+    let mut m = model(true);
+    for io in [&mut n.h.fs as &mut dyn HostIo, &mut m.fs as &mut dyn HostIo] {
+        io.spell(PAGE, "pages/new/deep/a.md");
+    }
+    crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(stdio::ErrorKind::Other)));
+    m.fs.inject(
+        Phase::PageTemp,
+        [Fault::Errno(stdio::ErrorKind::Other, Some(2))],
+    );
+    at(&mut n.h, SavePhase::Temp);
+    at(&mut m, SavePhase::Temp);
+    finish(&mut n.h);
+    finish(&mut m);
+    let step = EnvStep::InodeChange("pages/new".into());
+    n.apply_env(&step);
+    m.fs.apply_env(step);
+    // First retry refuses to settle the old epoch. The next retry pays the
+    // current chain and publishes, without discarding any admitted input.
+    for expected_clean in [false, true] {
+        at(&mut n.h, SavePhase::Temp);
+        at(&mut m, SavePhase::Temp);
+        finish(&mut n.h);
+        finish(&mut m);
+        assert_eq!(n.h.pages[PAGE].clean(), expected_clean);
+        assert_eq!(m.pages[PAGE].clean(), expected_clean);
+        assert_eq!(n.h.pages[PAGE].buf, bytes(INPUT));
+        assert_eq!(m.pages[PAGE].buf, bytes(INPUT));
+    }
+    assert_eq!(n.alpha("pages/new/deep/a.md"), bytes(INPUT));
+    assert_eq!(m.fs.alpha(PAGE, false), bytes(INPUT));
+    assert!(m.fs.owed.is_empty());
+    n.escapes();
+    m.fs.assert_no_escapes();
 }
 
 // Approved Android vanish-only binding cannot detect C1 replacement.

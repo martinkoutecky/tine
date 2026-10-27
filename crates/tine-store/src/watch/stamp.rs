@@ -56,7 +56,7 @@ thread_local! {
     /// Test-only: how many stamps this thread took by PATH (a per-file
     /// `symlink_metadata`, which on Windows opens the file). A full diff
     /// reads stamps from the directory listing instead (GH #623).
-    pub(super) static STAMPS_BY_PATH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static STAMPS_BY_PATH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]

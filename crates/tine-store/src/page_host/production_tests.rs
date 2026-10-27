@@ -350,7 +350,6 @@ fn graph_unsupported_is_distinct_and_does_not_refuse_betas_tolerated_set() {
         io::ErrorKind::Unsupported,
         io::ErrorKind::InvalidInput,
         io::ErrorKind::PermissionDenied,
-        io::ErrorKind::NotFound,
     ] {
         let mut f = Fixture::new();
         crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(kind)));
@@ -365,6 +364,26 @@ fn graph_unsupported_is_distinct_and_does_not_refuse_betas_tolerated_set() {
         assert!(f.host.pages["a.md"].clean());
         assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), b"mine");
     }
+}
+
+#[test]
+fn missing_directory_sync_is_an_uncertain_save_not_unsupported() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
+    for _ in 0..3 {
+        f.host.advance_save();
+    }
+    crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::NotFound)));
+    f.host.advance_save();
+    assert!(f.host.pages["a.md"].risk);
+    assert!(f.host.events.iter().any(|event| matches!(
+        event,
+        Event::SaveOutcome {
+            outcome: Outcome::Uncertain,
+            ..
+        }
+    )));
 }
 
 #[test]

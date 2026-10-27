@@ -97,13 +97,17 @@ fn l9_root_binding_cost_is_metadata_only_and_independent_of_page_size() {
         let body = "- typed\n".repeat(blocks);
         f.edit("a.md", &body);
         crate::root_binding::CHECKS.with(|count| count.set(0));
+        crate::watch::STAMPS_BY_PATH.with(|count| count.set(0));
         crate::atomic_file::TEMP_WRITES.with(|counts| counts.set((0, 0)));
         assert_eq!(f.save("a.md"), Outcome::Published);
         let checks = crate::root_binding::CHECKS.with(|count| count.get());
+        let stamps = crate::watch::STAMPS_BY_PATH.with(|count| count.get());
         let writes = crate::atomic_file::TEMP_WRITES.with(|counts| counts.get());
         assert_eq!(writes, (1, body.len() as u64));
-        assert_eq!(checks, 6);
-        eprintln!("L9 I-25 blocks={blocks}: root identity checks={checks}, payload writes={writes:?}; added files=0 bytes=0 transport=0");
+        // M3-1: six root probes plus one post-sync publication metadata probe,
+        // formerly six plus zero, for both 1 and 60 blocks; no payload reread.
+        assert_eq!((checks, stamps), (6, 1));
+        eprintln!("L9 I-25 blocks={blocks}: root identity checks={checks}, post-sync metadata probes={stamps}, total={}, payload writes={writes:?}; added files=0 bytes=0 transport=0", checks + stamps as u64);
         measured.push(checks);
     }
     assert_eq!(measured[0], measured[1]);

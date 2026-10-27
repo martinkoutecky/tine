@@ -67,6 +67,9 @@ pub(super) struct ModelFs {
     /// Trash chain entries created by this process whose parent sync is still
     /// owed (the adapter's retained `DirectoryCreation`; lost at a crash).
     pub owed: Vec<String>,
+    pub(super) owed_identities: BTreeMap<String, Vec<(String, u64)>>,
+    pub(super) replan_directories: bool,
+    pub(super) publication_epochs: BTreeMap<String, u64>,
     /// System calls left before an injected `Fault::Cut` fails the next one.
     pub budget: Option<usize>,
     pub budget_kind: Option<std::io::ErrorKind>,
@@ -233,7 +236,10 @@ impl ModelFs {
         self.root_fault = None;
         self.budget_kind = None;
         self.publications.clear();
+        self.publication_epochs.clear();
         self.owed.clear();
+        self.owed_identities.clear();
+        self.replan_directories = false;
         self.spellings.clear();
         self.down = false;
         self.chain_witnessed = false;
@@ -476,10 +482,80 @@ impl ModelFs {
         self.record_mutation(&temp);
         let bytes = self.files.remove(&temp);
         self.publications.insert(page.into(), bytes.clone());
+        self.publication_epochs
+            .insert(page.into(), self.epochs.get(page).copied().unwrap_or(0));
         self.record_mutation(&key);
         set(&mut self.files, &key, bytes);
         self.volatile.remove(&key);
         self.issue(page, None);
+    }
+
+    fn directory_identity(&self, entry: &str) -> Vec<(String, u64)> {
+        let mut path = entry.strip_prefix("dir/").unwrap();
+        let mut ids = Vec::new();
+        // Production retains the entry and its immediate parent, not a
+        // stronger identity guard on every ancestor (the root checks itself).
+        for _ in 0..2 {
+            if path.is_empty() {
+                break;
+            }
+            if let Some(dir) = self.env.dirs.get(path) {
+                ids.push((path.into(), dir.epoch));
+            }
+            path = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+        }
+        ids
+    }
+
+    fn owe_directory(&mut self, dir: String) {
+        self.owed_identities
+            .insert(dir.clone(), self.directory_identity(&dir));
+        self.owed.push(dir);
+    }
+
+    fn retry_directories(&mut self) {
+        if !self.replan_directories {
+            return;
+        }
+        self.replan_directories = false;
+        let old = std::mem::take(&mut self.owed);
+        self.owed_identities.clear();
+        let mut entries = BTreeSet::new();
+        for dir in old {
+            let mut path = dir.strip_prefix("dir/").unwrap();
+            while !path.is_empty() {
+                if self.env.dirs.contains_key(path) {
+                    entries.insert(format!("dir/{path}"));
+                }
+                path = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+            }
+        }
+        for dir in entries {
+            self.files
+                .entry(dir.clone())
+                .or_insert_with(|| Arc::from(&b""[..]));
+            self.owe_directory(dir);
+        }
+    }
+
+    fn settle_directories(&mut self) -> IoResult<()> {
+        while let Some(dir) = self.owed.first().cloned() {
+            self.call()?;
+            self.check_parent(&dir)?;
+            if self.owed_identities.get(&dir) != Some(&self.directory_identity(&dir)) {
+                self.replan_directories = true;
+                return Err(IoFailure {
+                    kind: ErrorKind::Io,
+                    completed: false,
+                    operation: None,
+                    os_error: None,
+                });
+            }
+            self.sync_entry(&dir);
+            self.owed.remove(0);
+            self.owed_identities.remove(&dir);
+        }
+        Ok(())
     }
 }
 
@@ -532,6 +608,7 @@ impl HostIo for ModelFs {
 
     fn page_finish(&mut self, page: &str) {
         self.files.remove(&format!("temp/page/{page}"));
+        self.publication_epochs.remove(page);
     }
 
     fn read_page(&mut self, page: &str) -> IoResult<Text> {
@@ -545,6 +622,7 @@ impl HostIo for ModelFs {
     fn page_temp(&mut self, page: &str, bytes: &Text) -> IoResult<()> {
         self.run(Phase::PageTemp, |fs| {
             fs.root_step()?;
+            fs.retry_directories();
             let key = format!("temp/page/{page}");
             fs.check_parent(&key)?;
             let parent = fs.env.parent(&key);
@@ -579,14 +657,9 @@ impl HostIo for ModelFs {
                     },
                 );
                 fs.files.insert(dir.clone(), Arc::from(&b""[..]));
-                fs.owed.push(dir);
+                fs.owe_directory(dir);
             }
-            while let Some(dir) = fs.owed.first().cloned() {
-                fs.call()?;
-                fs.check_parent(&dir)?;
-                fs.sync_entry(&dir);
-                fs.owed.remove(0);
-            }
+            fs.settle_directories()?;
             if !parent.is_empty() {
                 fs.call()?;
                 fs.check_parent(&key)?;
@@ -620,20 +693,35 @@ impl HostIo for ModelFs {
         self.run(Phase::PageSync, |fs| {
             fs.root_step()?;
             fs.check_parent(&format!("graph/{page}"))?;
-            // A removed directory yields NotFound, which native graph sync
-            // classifies Unsupported (not an I/O failure). Preserve that
-            // behavior: the ignored M3-1 test exposes the host's stale report.
+            // Missing directories are I/O failure, never Unsupported.
             if !fs
                 .env
                 .contains(&fs.env.parent(&format!("graph/{page}")), true)
             {
-                return Ok(Witness::Unsupported);
+                return Err(IoFailure {
+                    kind: ErrorKind::Io,
+                    completed: true,
+                    operation: None,
+                    os_error: None,
+                });
+            }
+            let key = format!("graph/{page}");
+            let current = fs.files.get(&key).cloned();
+            if let Some(epoch) = fs.publication_epochs.get(page) {
+                if fs.publications.get(page) != Some(&current)
+                    || *epoch != fs.epochs.get(page).copied().unwrap_or(0)
+                {
+                    return Err(IoFailure {
+                        kind: ErrorKind::Io,
+                        completed: true,
+                        operation: None,
+                        os_error: None,
+                    });
+                }
             }
             if fs.weak_graph {
                 return Ok(Witness::Unsupported);
             }
-            let key = format!("graph/{page}");
-            let current = fs.files.get(&key).cloned();
             // Model dirSync L421: stable advances only when the path still
             // contains the job's synced payload. External durable writes have
             // already advanced stable in external().
@@ -672,6 +760,7 @@ impl HostIo for ModelFs {
         let removed = self.files.get(&format!("graph/{page}")).cloned();
         let result = self.run(Phase::TrashMove, |fs| {
             fs.root_step()?;
+            fs.retry_directories();
             let source = format!("graph/{page}");
             fs.check_parent(&source)?;
             fs.check_parent(&format!("trash/{page}/{payload}"))?;
@@ -697,14 +786,9 @@ impl HostIo for ModelFs {
                 );
                 fs.files.insert(dir.into(), Arc::from(&b""[..]));
                 fs.order.insert(dir.into(), fs.next_order());
-                fs.owed.push(dir.into());
+                fs.owe_directory(dir.into());
             }
-            while let Some(dir) = fs.owed.first().cloned() {
-                fs.call()?;
-                fs.check_parent(&dir)?;
-                fs.sync_entry(&dir);
-                fs.owed.remove(0);
-            }
+            fs.settle_directories()?;
             fs.call()?;
             let key = format!("trash/{page}/{payload}");
             fs.check_parent(&source)?;
