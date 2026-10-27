@@ -313,8 +313,34 @@ for draining predecessor handles, and a client-side security check before sendin
 graph data. Busy pipes wait within the caller's I/O deadline rather than reporting
 no owner. Contention with serve follows the same custody-checked
 handover, seal-before-unlock order and 60 s app-open bound as Unix; contention
-with an app refuses through the translated app-owner error. Namespace/lock/bind
-errors still diagnose and open without an endpoint. Single-instance forwarding
+with an app refuses through the translated app-owner error. Namespace/lock
+errors keep editing available without a lease and display a persistent,
+non-dismissible warning naming single-writer protection, command-line access,
+the reason and a fix. It offers Retry now and diagnostic copying; Unix may
+explicitly repair mode 0700 on an owned non-symlink owners directory, keeping
+all existing lock inodes. Other access failures offer platform instructions;
+Windows DACLs, foreign-owned directories and symlinks are never repaired by the
+app. The app retries every 3 seconds after each attempt through the existing
+handover (at most 60 seconds per attempt). A CLI owner that appeared since the
+failure must yield and actually release its lock; timeout/refusal never grants
+ownership. Acquisition clears the warning. Retries serialize per binding and
+recheck the running host and revocation before attaching; a late claim is
+released after a graph switch or adoption.
+
+The account namespace remains deterministic and durable. Newly created Unix
+state parents request mode 0700 without changing existing parents. Unix socket
+length is checked at endpoint use, after lock discovery, so a long account home
+cannot prevent exclusion. Endpoint bind failure retains the lease; the CLI
+reports its endpoint limit separately. No `/tmp` or environment fallback splits
+the lock namespace. **Limit (D-20261027-OF):** while a claim fails, two hosts may
+overlap until claim/handover succeeds, including handover waits. Persistent
+failure or refusal leaves this window unbounded. The graph stays editable with
+the warning; revision guards and durable publication cannot supply missing
+owner serialization. Proof: owner namespace/lease tests,
+`src-tauri/src/owner_protection.rs` lifecycle tests, and
+`scripts/e2e-owner-protection.mjs` (disposable account home, editable fallback,
+permission repair, and automatic takeover of a CLI incumbent).
+Single-instance forwarding
 is not exclusion. iOS and Android retain
 Unsupported: one process per app with per-app sandboxed app data. A five-target
 guard pins desktop locks versus mobile sandbox exclusion, supplemented by the

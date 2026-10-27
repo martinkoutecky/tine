@@ -9128,5 +9128,10 @@ html.tine-embed-shading-accent .embed-block {
 }
 .root-recovery-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border-color); }
 .root-recovery-notice > span { min-width: 0; overflow-wrap: anywhere; }
+.owner-protection-notice { flex-shrink: 0; max-height: 45vh; overflow: auto; background: var(--background-secondary); }
+.owner-protection-explanation { flex: 1 1 100%; min-width: 0; }
+.owner-protection-explanation p { margin: 4px 0; }
+.owner-protection-notice code, .owner-protection-notice pre { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.owner-protection-notice details { flex-basis: 100%; min-width: 0; }
 .settings-backup-origin { display: block; color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
 .settings-backup-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }

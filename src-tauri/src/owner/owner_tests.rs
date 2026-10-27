@@ -498,6 +498,7 @@ fn app_handover_takes_the_lock_only_after_serve_stops_and_closes() {
         },
         Duration::from_secs(5),
         |_| {},
+        |_| {},
     )
     .unwrap()
     .expect("app took ownership");
@@ -514,6 +515,29 @@ fn app_handover_takes_the_lock_only_after_serve_stops_and_closes() {
     assert!(OwnerLock::try_take(&graph.paths().lock, "next")
         .unwrap()
         .is_some());
+}
+
+#[test]
+#[cfg(unix)]
+fn long_namespace_retains_the_owner_lock_without_a_command_endpoint() {
+    let graph = Graph::new();
+    let data = tempfile::tempdir().unwrap();
+    let owners = data.path().join("d".repeat(120));
+    let paths = super::namespace::Namespace::at(owners)
+        .unwrap()
+        .graph(Path::new("/g"))
+        .unwrap();
+    let lock = OwnerLock::try_take(&paths.lock, "app").unwrap().unwrap();
+    let slot = Arc::new(graph.slot());
+    let lease = super::lease::Claimed::from_lock(lock, paths.clone()).serve_app(&slot);
+    assert!(!lease.has_endpoint());
+    assert!(matches!(
+        lease.endpoint_error(),
+        Some(OwnerError::Unsafe(_))
+    ));
+    assert!(OwnerLock::try_take(&paths.lock, "serve").unwrap().is_none());
+    drop(lease);
+    assert!(OwnerLock::try_take(&paths.lock, "serve").unwrap().is_some());
 }
 
 /// §1: the namespace is a private directory of this account, and a path
@@ -545,10 +569,8 @@ fn the_namespace_is_private_and_fits_a_socket_path() {
 
     let deep = dir.path().join("d".repeat(120));
     let namespace = Namespace::at(deep).unwrap();
-    assert!(matches!(
-        namespace.graph(Path::new("/g")),
-        Err(OwnerError::Unsafe(_))
-    ));
+    let paths = namespace.graph(Path::new("/g")).unwrap();
+    assert!(super::namespace::check_socket_path(&paths.socket).is_err());
 }
 
 /// AGENTS.md §2: a platform `cfg` family names every shipped target. The
@@ -845,8 +867,14 @@ fn a_wedged_owner_cannot_hold_the_handover_past_its_bound() {
             app_data: "a".into(),
             graph_id: "g".into(),
         };
-        let result =
-            super::client::take_over(&root, &paths, drafts, Duration::from_secs(2), |_| {});
+        let result = super::client::take_over(
+            &root,
+            &paths,
+            drafts,
+            Duration::from_secs(2),
+            |_| {},
+            |_| {},
+        );
         let _ = done.send(result.is_err());
     });
     assert_eq!(

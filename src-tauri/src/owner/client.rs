@@ -285,6 +285,7 @@ mod local {
 /// Reach `root`'s owner, starting `tine serve` when nobody answers (§3.4).
 pub(crate) fn connect(root: &Path) -> Result<Conn, OwnerError> {
     let paths = Namespace::resolve()?.graph(root)?;
+    super::namespace::check_socket_path(&paths.socket)?;
     if let Some(conn) = dial(&paths.socket, root)? {
         return Ok(conn);
     }
@@ -316,6 +317,7 @@ pub(crate) fn connect(root: &Path) -> Result<Conn, OwnerError> {
 /// Reach `root`'s owner if one answers; never starts one.
 pub(crate) fn connect_existing(root: &Path) -> Result<Option<Conn>, OwnerError> {
     let paths = Namespace::resolve()?.graph(root)?;
+    super::namespace::check_socket_path(&paths.socket)?;
     dial(&paths.socket, root)
 }
 
@@ -371,6 +373,7 @@ pub(crate) fn take_over(
     drafts: Drafts,
     bound: Duration,
     mut waiting: impl FnMut(&str),
+    mut unavailable: impl FnMut(&OwnerError),
 ) -> Result<Option<Claimed>, String> {
     let deadline = Instant::now() + bound;
     let (answer, answered) = std::sync::mpsc::channel();
@@ -405,6 +408,7 @@ pub(crate) fn take_over(
             Ok(None) => {}
             Err(error) => {
                 crate::debug::diag_private("owner-lock-unavailable", &error.to_string());
+                unavailable(&error);
                 return Ok(None);
             }
         }

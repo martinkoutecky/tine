@@ -56,6 +56,7 @@ import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeU
 installAliasDraftRouteHandler((name, kind) => openPage(name, kind));
 import { pushToast } from "./toasts";
 import { RootRecoveryNotice } from "./components/RootRecoveryNotice";
+import { OwnerProtectionNotice } from "./components/OwnerProtectionNotice";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
@@ -1175,6 +1176,7 @@ export function App(): JSX.Element {
       </Show>
       <DrawerBackground class="main-container" blockedBy="left">
         <FailureBoundary region="Graph recovery"><RootRecoveryNotice /></FailureBoundary>
+        <FailureBoundary region="Single-writer protection"><OwnerProtectionNotice /></FailureBoundary>
         {/* In focus mode the topbar is hidden; this thin strip at the very top
             reveals it on hover (CSS adjacency), so controls are reachable. */}
         <DrawerBackground blockedBy="right">

@@ -208,6 +208,8 @@ class TauriBackend implements Backend {
     if (result.kind !== "focused_existing") this.bindingGeneration = result.binding_generation;
     return result;
   }
+  ownerProtectionStatus() { return this.call<import("./ownerProtection").OwnerProtectionIssue | null>("owner_protection_status"); }
+  retryOwnerProtection(repair: boolean) { return this.call<import("./ownerProtection").OwnerProtectionIssue | null>("retry_owner_protection", { repair }); }
   orphanDrafts() {
     return this.call<{ id: string; old_root: string | null }[]>("orphan_drafts");
   }

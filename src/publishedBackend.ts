@@ -258,6 +258,8 @@ function firstMappedSpan(text: string, needle: string): { start: number; end: nu
 /** Methods declared optional on `Backend`; a published export leaves them
  *  absent so the browser fallbacks in `backend.ts` take over. */
 const OPTIONAL_METHODS = new Set([
+  "ownerProtectionStatus",
+  "retryOwnerProtection",
   // Device-local graph relocation/recovery has no namespace in a published site.
   "orphanDrafts",
   "recoverOrphanDrafts",

@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-owner-protection.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"An intentional owner namespace refusal leaves a graph editable with a persistent actionable warning. Permission repair acquires a real lease and removes the warning. Automatic retry hands over a CLI host started after external repair.","blocking":false,"authority":"D-20261027-OF; UI-OWNER-PROTECTION-RECOVERY; REG-OWNER-FALLBACK-RETRY"}],
+      "acceptableVariations": ["Warning layout, wording, save latency and retry scheduling may vary. Kernel ownership and durable text determine success."],
+      "nonRequirements": ["No real account namespace, external graph, exact pixels, retry boundary enumeration, Windows/macOS runtime certification or mobile device acceptance."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-parity-09.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A tagged-page section stays folded after returning to its tab; Shift-clicking a calendar day opens a sidebar journal; a query ancestor link navigates; Backspace removes an emptied embedded child of a folded source and Undo restores it.","blocking":false,"authority":"GH #739, #740, #743, #766; UI-PARITY09-TAGGED-FOLD, UI-PARITY09-CALENDAR-SIDEBAR, UI-PARITY09-EMBED-BACKSPACE"}],
       "acceptableVariations": ["Layout, tab order, journal title format and save latency may vary."],
