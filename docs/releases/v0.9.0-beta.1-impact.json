@@ -2853,11 +2853,16 @@
       "section": "Fixed",
       "text": "A page file that a sync tool is replacing while Tine lists the folder is no longer reported as \"couldn't be read\" (REG-SCAN-VANISHED-ENTRY).",
       "userVisible": true,
-      "regressions": [],
+      "regressions": [
+        "REG-SCAN-VANISHED-ENTRY"
+      ],
       "regressionEvidence": {
-        "status": "not-applicable",
-        "reason": "REG-SCAN-VANISHED-ENTRY is named by the lane brief but is absent from the current regression inventories. No runtime proof was supplied or executed in this docs-only lane; the manager must supply the catalog row and evidence before the cut.",
-        "refs": []
+        "status": "current",
+        "reason": "Catalog inventory evidence. REG-SCAN-VANISHED-ENTRY (fail-before proven: the pre-fix scan reports the vanished file as NotFound unreadable). The test injects the removal and the rename-replace between listing and the metadata read.",
+        "refs": [
+          "tests/regressions/non-ui.json",
+          "crates/tine-store/src/store.rs"
+        ]
       },
       "docs": {
         "status": "not-applicable",
