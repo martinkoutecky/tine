@@ -11,6 +11,7 @@ import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { answerNativeDialog } from "./lib/e2e-native-dialog.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { APP_ID } from "./lib/app-identity.mjs";
+import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 
 const root = path.resolve(import.meta.dirname,"..");
 const artifacts = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(root,"artifacts/og-root-identity-r3/native"));
@@ -19,11 +20,7 @@ const run = fs.mkdtempSync(path.join(artifacts,"run-"));
 const old = path.join(run,"old/notes"), moved = path.join(run,"new/notes");
 for (const dir of ["pages","journals","logseq","assets"]) fs.mkdirSync(path.join(old,dir),{ recursive:true });
 for (const dir of ["data","config","cache"]) fs.mkdirSync(path.join(run,dir));
-const accountHome=path.join(run,"account-home");
-fs.mkdirSync(accountHome,{mode:0o700});
-const accountShim=path.join(run,"account-home.so");
-execFileSync("rtk",["proxy","cc","-shared","-fPIC","-Wall","-Werror",
-  path.join(root,"scripts/lib/e2e-account-home.c"),"-o",accountShim,"-ldl"],{cwd:root});
+const ownerFixture = installAccountHome(run);
 fs.mkdirSync(path.dirname(moved),{ recursive:true });
 fs.writeFileSync(path.join(old,"pages/A.md"),"- before move\n");
 fs.writeFileSync(path.join(old,"logseq/config.edn"),"{}\n");
@@ -42,7 +39,6 @@ const unusedPort=()=>new Promise((resolve,reject)=>{
   });
 });
 const env = { ...process.env, XDG_DATA_HOME:path.join(run,"data"),XDG_CONFIG_HOME:path.join(run,"config"),XDG_CACHE_HOME:path.join(run,"cache"),
-  LD_PRELOAD:[accountShim,process.env.LD_PRELOAD].filter(Boolean).join(":"),TINE_E2E_ACCOUNT_HOME:accountHome,
   TINE_ROOT_IDENTITY_RUN:run, WEBKIT_DISABLE_DMABUF_RENDERER:"1",WEBKIT_DISABLE_COMPOSITING_MODE:"1",LIBGL_ALWAYS_SOFTWARE:"1",GDK_BACKEND:"x11" };
 const data = path.join(run,"data",APP_ID);
 const testedCommit = execFileSync("rtk",["git","rev-parse","HEAD"],{ cwd:root,encoding:"utf8" }).trim();
@@ -76,7 +72,7 @@ async function launch(graph) {
   // new listener ports instead of relying on immediate rebinding of its port.
   const port=process.env.E2E_DRIVER_PORT ? Number(process.env.E2E_DRIVER_PORT)+2*launches : await unusedPort();
   launches++;
-  let nativePort=await unusedPort();
+  let nativePort=process.env.E2E_NATIVE_PORT ? Number(process.env.E2E_NATIVE_PORT)+2*(launches-1) : await unusedPort();
   while (nativePort===port) nativePort=await unusedPort();
   driver=spawn(td,["--port",String(port),"--native-port",String(nativePort),"--native-driver",process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"],
     { env:{...env,TINE_GRAPH:graph},stdio:["ignore",log,log],detached:true });
@@ -88,6 +84,7 @@ async function launch(graph) {
   // The shell mounts before asynchronous graph binding. Observe a real routed
   // page before reading the native lease, rather than racing startup with it.
   await openPageByName(browser,"A");
+  await assertAppLease(ownerFixture);
   const binding=await browser.executeAsync((graph,done)=>window.__TAURI_INTERNALS__.invoke("load_graph",{path:graph}).then(done,error=>done({error:String(error)})),graph);
   assert(binding.kind==="already_current",`unexpected binding: ${JSON.stringify(binding)}`);
   generation=binding.binding_generation;

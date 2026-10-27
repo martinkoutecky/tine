@@ -405,8 +405,8 @@ impl PageHost {
         let deadline = Arc::new(Mutex::new(deadline));
         let moving = deadline.clone();
         let id = slot.id;
-        // (answered, pages witnessed) at the last ask.
-        let mut progress = (false, 0);
+        // (answered, pages synced, pages indexed) at the last ask.
+        let mut progress = (false, 0, 0);
         let step = move |state: &mut HostState| {
             let host = &state.progress.host;
             let Some(reply) = host.order.slot(id) else {
@@ -421,14 +421,16 @@ impl PageHost {
                     if let Some(page) = &reply.superseded {
                         return Wait::Ready(Settled::Superseded(page.clone()));
                     }
-                    let now = (true, reply.witnessed.len());
+                    let now = (true, reply.witnessed.len(), reply.indexed.len());
                     if now != progress {
                         progress = now;
                         let mut at = moving.lock().unwrap();
                         *at = (*at).max(std::time::Instant::now() + OPERATION_WAIT);
                     }
-                    // `witnessed` holds answered pages only (`Order::published`).
-                    if reply.witnessed.len() == pages.len() {
+                    // Both sets hold answered pages only. A disk sync can
+                    // precede a deferred or failed index delivery, so neither
+                    // alone proves the operation complete to its caller.
+                    if reply.witnessed.len() == pages.len() && reply.indexed.len() == pages.len() {
                         return Wait::Ready(Settled::Applied);
                     }
                     // Per ask, the host's few stuck pages, not every answered

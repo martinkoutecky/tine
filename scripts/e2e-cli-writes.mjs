@@ -9,6 +9,7 @@ import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 
 const gitHead = () => { try { return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(); } catch { return "unknown"; } };
 import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
@@ -26,6 +27,7 @@ const typingFile = path.join(GRAPH,"pages/Typing.md");
 fs.writeFileSync(typingFile,"- user\n- agent\n");
 fs.writeFileSync(path.join(GRAPH, "pages/Referrer.md"), "- see [[CLI]]\n");
 fs.writeFileSync(path.join(GRAPH, "logseq/config.edn"), '{:default-home {:page "CLI"}}\n');
+const ownerFixture = installAccountHome(TMP, process.env.E2E_ARTIFACT_DIR || TMP);
 const env = { ...process.env, TAURI_WEBVIEW_AUTOMATION: "true", TINE_GRAPH: GRAPH, TINE_RUN: "", XDG_DATA_HOME: path.join(TMP,"data"), XDG_CONFIG_HOME: path.join(TMP,"config"), XDG_CACHE_HOME: path.join(TMP,"cache"), XDG_STATE_HOME: path.join(TMP,"state"), WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const port = Number(process.env.E2E_DRIVER_PORT || 4710);
 const native = Number(process.env.E2E_NATIVE_PORT || 4711);
@@ -69,6 +71,7 @@ try {
   await browser.$(".page-title, .ls-block").waitForExist({timeout:20_000});
   await openPageByName(browser,"CLI");
   assert.equal((await cli(["status"])).owner, "app");
+  await assertAppLease(ownerFixture);
   await browser.waitUntil(() => browser.execute(() => document.querySelector(".page")?.textContent.includes("agent before handover")), {timeout:15_000});
   assert.equal(fs.readFileSync(file,"utf8"), "- user\n- agent before handover\n");
   steps.push("handover: app owns graph and displays durable serve edit");
