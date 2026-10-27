@@ -35,6 +35,22 @@ for (const identity of Object.values(IDENTITIES)) {
 }
 const releaseWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/release.yml"), "utf8");
 const ciWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/ci.yml"), "utf8");
+// Desktop storage acceptance must execute the app's recovery/retirement
+// boundaries as well as store tests, and use the installed app-data volume.
+const windowsAppTests = ciWorkflow.match(/& \$exe backup::[^\n]*/)?.[0] ?? "";
+const macosAppTests = ciWorkflow.match(/cargo test --no-fail-fast -p tine --lib --features custom-protocol -- backup::[^\n]*/)?.[0] ?? "";
+for (const command of [windowsAppTests, macosAppTests]) {
+  for (const filter of ["root_identity::", "host_retirement::", "flight::tests::storage_report_is_copyable_and_private"]) {
+    assert.ok(command.includes(filter), `desktop app acceptance omits ${filter}: ${command}`);
+  }
+}
+for (const platform of ["Windows", "macOS"]) {
+  const step = ciWorkflow.split(`- name: ${platform} resolved app-data storage acceptance`)[1]?.split(/\n      - /)[0] ?? "";
+  assert.ok(step.includes("TINE_STORAGE_ACCEPT_ROOT"), `${platform} app-data cold recovery has no volume root`);
+  assert.ok(step.includes("TINE_HOST_FS_ROOT"), `${platform} app-data C6 has no volume root`);
+  assert.ok(step.includes("storage_acceptance_tests -- --ignored"), `${platform} omits cold recovery`);
+  assert.ok(step.includes("m3_c6_"), `${platform} omits C6 faults/admission/retry`);
+}
 const uiE2eWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/ui-e2e.yml"), "utf8");
 const flatpakWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/flatpak.yml"), "utf8");
 const flatpakMetadataWorkflow = fs.readFileSync(

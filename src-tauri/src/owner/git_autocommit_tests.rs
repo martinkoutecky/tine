@@ -5,6 +5,25 @@ use super::*;
 use git2::{Repository, Signature};
 use std::fs;
 
+#[cfg(unix)]
+fn directory_alias(target: &Path, path: &Path) {
+    std::os::unix::fs::symlink(target, path).unwrap();
+}
+
+#[cfg(windows)]
+fn directory_alias(target: &Path, path: &Path) {
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(path)
+        .arg(target)
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "mklink /J must create the Git containment fixture"
+    );
+}
+
 #[test]
 fn sb1_autocommit_refuses_root_replacement_before_index_lock() {
     let f = fixture(&[("pages/a.md", "- old\n")]);
@@ -68,7 +87,7 @@ fn sb1_index_cleanup_preserves_files_after_metadata_root_replacement() {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn sb1_repack_refuses_redirected_pack_directory() {
     let f = fixture(&[("pages/a.md", "- old\n")]);
@@ -76,12 +95,12 @@ fn sb1_repack_refuses_redirected_pack_directory() {
     fs::create_dir(&outside).unwrap();
     let pack = f.repo.path().join("objects/pack");
     fs::rename(&pack, f._dir.path().join("old-pack")).unwrap();
-    std::os::unix::fs::symlink(&outside, &pack).unwrap();
+    directory_alias(&outside, &pack);
     assert!(repack(&f.repo).is_err());
     assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn sb1_libgit_refuses_redirected_object_fanout() {
     let f = fixture(&[("pages/a.md", "- old\n")]);
@@ -92,22 +111,27 @@ fn sb1_libgit_refuses_redirected_object_fanout() {
         .map(|n| objects.join(format!("{n:02x}")))
         .find(|path| !path.exists())
         .unwrap();
-    std::os::unix::fs::symlink(&outside, &slot).unwrap();
+    directory_alias(&outside, &slot);
     fs::write(f.work.join("pages/a.md"), "- pending\n").unwrap();
     assert!(commit_now(&f.work, "autosave").is_err());
     assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn sb1_git_directory_alias_is_refused_before_any_metadata_write() {
     let f = fixture(&[("pages/a.md", "- old\n")]);
     let gitdir = f.work.join(".git");
     let outside = f._dir.path().join("redirected-gitdir");
     fs::rename(&gitdir, &outside).unwrap();
-    std::os::unix::fs::symlink(&outside, &gitdir).unwrap();
+    directory_alias(&outside, &gitdir);
+    let index = fs::read(outside.join("index")).unwrap();
+    let head = fs::read(outside.join("HEAD")).unwrap();
     fs::write(f.work.join("pages/a.md"), "- pending\n").unwrap();
     assert!(commit_now(&f.work, "autosave").is_err());
+    assert_eq!(fs::read(outside.join("index")).unwrap(), index);
+    assert_eq!(fs::read(outside.join("HEAD")).unwrap(), head);
+    assert!(!outside.join("index.lock").exists());
 }
 
 struct Fixture {

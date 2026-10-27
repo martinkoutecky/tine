@@ -1650,8 +1650,18 @@ domain = "app"
 guard = ""
 test = ""
 oracle = false
-note = "Private application owner namespace setup (Unix permissions 0700); Windows delegates protected-DACL creation to windows_security::create_directory. Outside graph."
-mutations = ".create=1, fs::create_dir_all=1"
+note = "Private application owner namespace setup (Unix permissions 0700), including missing state parents; Windows delegates protected-DACL creation to windows_security::create_directory. Outside graph."
+mutations = ".create=2"
+
+[[site]]
+file = "src-tauri/src/owner/namespace.rs"
+fn = "repair_private"
+domain = "app"
+guard = ""
+test = "src-tauri/src/owner/namespace.rs#explicit_permission_repair_keeps_the_held_inode_and_refuses_symlinks"
+oracle = false
+note = "Explicit Unix owner-directory permission repair opens O_DIRECTORY|O_NOFOLLOW, verifies the current uid, and tightens the same held directory inode to 0700. OpenOptions is read-only; no graph content or held lock inode is replaced."
+mutations = "OpenOptions::new=1"
 
 [[site]]
 file = "src-tauri/src/owner/windows_security.rs"

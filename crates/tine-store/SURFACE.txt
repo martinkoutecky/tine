@@ -27,7 +27,16 @@
 # L9-02: canonical_root can resolve a path, but cannot compare it with a retiring
 # Store's held physical witness. check_graph_root supplies that lifecycle check
 # before adoption; it exposes no path, inode, cache or new persisted identity.
-## Lifecycle (ceiling: 25)
+# SB1 Git guards already use BoundDirectory across the app/store boundary.
+# Store::check_graph_root checks only that Store's graph; a parameter cannot
+# capture and retain separate Git-selected worktree/gitdir/commondir witnesses
+# before libgit2 mutations. Record that existing API and its OS path hand-offs.
+## Lifecycle (ceiling: 30)
+struct root_binding::BoundDirectory
+fn root_binding::BoundDirectory::new
+fn root_binding::BoundDirectory::root
+fn root_binding::BoundDirectory::check
+fn root_binding::BoundDirectory::check_path
 enum store::WatchMode
 enum store::OpenError
 field store::GraphAccessInspection.external_assets
@@ -448,7 +457,9 @@ field page_host::HostRead.page
 field page_host::HostRead.bytes
 field page_host::HostRead.revision
 enum page_host::HostReadError
-## Re-exports (ceiling: 12)
+## Re-exports (ceiling: 13)
+# SB1's existing app-facing directory identity/containment witness, above.
+use crate::root_binding::BoundDirectory
 # GX4 S4: typed parameters/results for the existing reader registration door.
 use crate::store::change_summary::{QueryRegistration,QuerySubscription}
 use crate::tine_outline::edit_kind

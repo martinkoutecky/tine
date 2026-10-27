@@ -377,6 +377,26 @@ pub(crate) fn recover_namespace(
     adopt_namespace(data, id, &target.root_key)
 }
 
+// Keep the command's desktop lease check ahead of every recovery side effect.
+// The caller still serializes graph opens/retirement with graph_load.
+fn with_current_recovery_lease<T>(
+    slot: &crate::state::GraphSlot,
+    recover: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    if slot
+        .owner
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_none()
+    {
+        return Err("draft-recovery-lock-unavailable".into());
+    }
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let _ = slot;
+    recover()
+}
+
 #[tauri::command]
 pub(crate) async fn orphan_drafts(
     app: tauri::AppHandle,
@@ -411,30 +431,23 @@ pub(crate) async fn recover_orphan_drafts(
         // Serialize graph opens, host retirement/adoption and namespace rename.
         let state = app.state::<crate::state::AppState>();
         let _load = state.graph_load.lock().unwrap();
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-        if slot
-            .owner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_none()
-        {
-            return Err("draft-recovery-lock-unavailable".into());
-        }
-        let _old = orphan_owner_lock(&id)?;
-        let known = crate::settings::read_settings_value(&app)
-            .and_then(|json| json.get("known_graphs").and_then(|v| v.as_array()).cloned())
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|g| g["path"].as_str().map(str::to_owned))
-            .collect::<Vec<_>>();
-        if !find_orphans(&data, &slot.root_key, &known)
-            .iter()
-            .any(|orphan| orphan.id == id)
-        {
-            return Err("draft-recovery-no-longer-available".into());
-        }
-        crate::backup::restore_hosted(&slot.host, consumed_last_id, || {
-            recover_namespace(&data, &id, &slot, &state.graphs.read().unwrap())
+        with_current_recovery_lease(&slot, || {
+            let _old = orphan_owner_lock(&id)?;
+            let known = crate::settings::read_settings_value(&app)
+                .and_then(|json| json.get("known_graphs").and_then(|v| v.as_array()).cloned())
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|g| g["path"].as_str().map(str::to_owned))
+                .collect::<Vec<_>>();
+            if !find_orphans(&data, &slot.root_key, &known)
+                .iter()
+                .any(|orphan| orphan.id == id)
+            {
+                return Err("draft-recovery-no-longer-available".into());
+            }
+            crate::backup::restore_hosted(&slot.host, consumed_last_id, || {
+                recover_namespace(&data, &id, &slot, &state.graphs.read().unwrap())
+            })
         })
     })
     .await
@@ -444,6 +457,60 @@ pub(crate) async fn recover_orphan_drafts(
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn recovery_without_current_lease_refuses_before_adopting_any_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = dir.path().join("graph");
+        fs::create_dir(&graph).unwrap();
+        let store = std::sync::Arc::new(
+            tine_store::Store::open(&graph, Default::default())
+                .unwrap()
+                .0,
+        );
+        let root = tine_store::Store::canonical_root(&graph).unwrap();
+        let slot = std::sync::Arc::new(crate::state::GraphSlot::new(store, root));
+        assert!(slot.owner.lock().unwrap().is_none());
+        let data = dir.path().join("app");
+        let id = crate::settings::host_graph_id(&dir.path().join("old-graph"));
+        let source = data.join("drafts-v2").join(&id);
+        let target = data
+            .join("drafts-v2")
+            .join(crate::settings::host_graph_id(&slot.root_key));
+        fs::create_dir_all(source.join("trash-custody")).unwrap();
+        fs::write(source.join("vehicle"), b"irreplaceable draft").unwrap();
+        fs::write(source.join("trash-custody/marker"), b"retained custody").unwrap();
+        let registry = crate::state::GraphRegistry::default();
+        let entered = std::cell::Cell::new(false);
+        assert_eq!(
+            with_current_recovery_lease(&slot, || {
+                entered.set(true);
+                recover_namespace(&data, &id, &slot, &registry)
+            }),
+            Err("draft-recovery-lock-unavailable".into())
+        );
+        assert!(
+            !entered.get(),
+            "refuse before owner acquisition, host stop or adoption"
+        );
+        assert_eq!(
+            fs::read(source.join("vehicle")).unwrap(),
+            b"irreplaceable draft"
+        );
+        assert_eq!(
+            fs::read(source.join("trash-custody/marker")).unwrap(),
+            b"retained custody"
+        );
+        assert!(!target.exists(), "no target namespace was adopted");
+        // Control: these very same bytes are otherwise eligible for adoption.
+        recover_namespace(&data, &id, &slot, &registry).unwrap();
+        assert_eq!(
+            fs::read(target.join("vehicle")).unwrap(),
+            b"irreplaceable draft"
+        );
+        assert!(!source.exists());
+    }
+
     #[test]
     fn moved_namespace_with_failed_sync_reports_unwitnessed_durability() {
         let data = tempfile::tempdir().unwrap();
@@ -466,8 +533,11 @@ mod tests {
         );
     }
     fn roots() -> (PathBuf, PathBuf) {
-        (PathBuf::from("/private/var/mobile/Containers/Data/Application/11111111-1111-1111-1111-111111111111/Documents/g"),
-         PathBuf::from("/private/var/mobile/Containers/Data/Application/22222222-2222-2222-2222-222222222222/Documents/g"))
+        // This iOS-shaped validator fixture must also be absolute according
+        // to the Windows host's Path semantics when its app filter runs.
+        let prefix = if cfg!(windows) { "C:" } else { "" };
+        (PathBuf::from(format!("{prefix}/private/var/mobile/Containers/Data/Application/11111111-1111-1111-1111-111111111111/Documents/g")),
+         PathBuf::from(format!("{prefix}/private/var/mobile/Containers/Data/Application/22222222-2222-2222-2222-222222222222/Documents/g")))
     }
     #[test]
     fn orphan_census_is_bounded_by_device_namespaces_including_empty_subdirectories() {

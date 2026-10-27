@@ -933,6 +933,18 @@ fn public_paths_are_only_inputs_and_handoffs() {
             "validated file path to OS",
         ),
         (
+            "root_binding::BoundDirectory::new",
+            "host-selected graph or Git metadata directory input for an OS identity witness",
+        ),
+        (
+            "root_binding::BoundDirectory::root",
+            "bound Git metadata scope handed to the host's OS mutation guard",
+        ),
+        (
+            "root_binding::BoundDirectory::check_path",
+            "host-selected OS mutation target checked within its bound Git metadata scope",
+        ),
+        (
             "store::ConfigState.asset_trash_location",
             "trash location in user-facing error",
         ),

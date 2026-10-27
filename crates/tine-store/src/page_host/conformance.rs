@@ -13,6 +13,8 @@ mod creation;
 mod native_conformance;
 #[path = "native_environment_tests.rs"]
 mod native_environment_tests;
+#[cfg(windows)]
+pub(super) use native_environment_tests::junction;
 
 /// Test physical environment; the native implementation independently checks
 /// the real paths after every production I/O phase. Power stays ModelFs-only.

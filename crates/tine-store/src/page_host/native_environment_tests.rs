@@ -289,17 +289,27 @@ fn symlink(target: &std::path::Path, path: &std::path::Path) {
     std::os::unix::fs::symlink(target, path).unwrap();
 }
 
-// Windows symlink privilege/junction creation is not assumed by this harness.
-// The explicit ModelFs-only ledger below owns this unsupported native step.
 #[cfg(target_os = "windows")]
-fn symlink(_: &std::path::Path, _: &std::path::Path) {
-    panic!("C2 is NATIVE_MODELFS_ONLY on Windows");
+fn symlink(target: &std::path::Path, path: &std::path::Path) {
+    junction(target, path);
+}
+
+// Same unprivileged fixture as model.rs's approved-assets junction test.
+// Creation failure is a test failure, never a skipped native C2 sample.
+#[cfg(windows)]
+pub(crate) fn junction(target: &std::path::Path, path: &std::path::Path) {
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(path)
+        .arg(target)
+        .status()
+        .expect("run mklink /J for the native Windows C2 witness");
+    assert!(status.success(), "mklink /J must create the test junction");
 }
 
 // Separate from the frozen s3.5 corpus exclusions/counts in
 // native_conformance_tests.rs. Every exclusion here is asserted by a ledger test.
 const NATIVE_MODELFS_ONLY: &[(&str, &str)] = &[
-    ("windows", "C2: no unprivileged junction/symlink fixture"),
     (
         "android",
         "C1 RootReplaced: production policy is vanish-only",
@@ -316,10 +326,10 @@ const NATIVE_MODELFS_ONLY: &[(&str, &str)] = &[
 
 #[test]
 fn m3_native_environment_exclusion_ledger() {
-    assert_eq!(NATIVE_MODELFS_ONLY.len(), 4);
+    assert_eq!(NATIVE_MODELFS_ONLY.len(), 3);
     assert_eq!(
         NATIVE_MODELFS_ONLY.iter().map(|r| r.0).collect::<Vec<_>>(),
-        ["windows", "android", "all", "all"]
+        ["android", "all", "all"]
     );
     let ledger = include_str!("../../tests/write_sites.toml");
     for owner in ["PagePlan::apply", "PagePlan::apply_move"] {
@@ -349,10 +359,8 @@ fn m3_c1_c2_native_replay_matches_model_alpha_and_keeps_input() {
             if !cfg!(target_os = "android") {
                 steps.push(EnvStep::RootReplaced);
             }
-            if !cfg!(target_os = "windows") {
-                for parent in ["pages", "pages/sub/deep"] {
-                    steps.push(EnvStep::SymlinkSwap(parent.into()));
-                }
+            for parent in ["pages", "pages/sub/deep"] {
+                steps.push(EnvStep::SymlinkSwap(parent.into()));
             }
             for step in steps {
                 let mut n = Native::new(create);
@@ -387,16 +395,42 @@ fn m3_c1_c2_native_replay_matches_model_alpha_and_keeps_input() {
                     drafts::scan(n.h.fs.draft_files(true)).logical[PAGE].bytes,
                     bytes(INPUT)
                 );
+                #[cfg(windows)]
+                {
+                    match &step {
+                        EnvStep::RootGone => fs::rename(&n.bound, &n.graph).unwrap(),
+                        EnvStep::RootReplaced => {
+                            fs::remove_dir(&n.graph).unwrap();
+                            fs::rename(&n.bound, &n.graph).unwrap();
+                        }
+                        EnvStep::SymlinkSwap(parent) => {
+                            fs::remove_dir(n.graph.join(parent)).unwrap();
+                            fs::rename(n.dir.path().join("detached-parent"), n.graph.join(parent))
+                                .unwrap();
+                        }
+                        _ => unreachable!(),
+                    }
+                    n.bound = n.graph.clone();
+                    n.reattach();
+                    // A post-publication disturbance can first adopt equal
+                    // bytes; a subsequent save must settle the stable input.
+                    for _ in 0..2 {
+                        if !n.h.pages[PAGE].clean() {
+                            at(&mut n.h, SavePhase::Temp);
+                            finish(&mut n.h);
+                        }
+                    }
+                    assert!(n.h.pages[PAGE].clean(), "retry after {step:?}/{phase:?}");
+                    assert_eq!(n.alpha(SPELLING), bytes(INPUT));
+                    n.escapes();
+                }
                 counts[usize::from(matches!(step, EnvStep::SymlinkSwap(_)))] += 1;
             }
         }
     }
     assert_eq!(
         counts,
-        [
-            if cfg!(target_os = "android") { 8 } else { 16 },
-            if cfg!(target_os = "windows") { 0 } else { 16 }
-        ]
+        [if cfg!(target_os = "android") { 8 } else { 16 }, 16]
     );
     eprintln!("M3 C1/C2 native + model phase-boundary samples: {counts:?}");
 }

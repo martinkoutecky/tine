@@ -1,5 +1,73 @@
 use super::*;
 
+#[cfg(windows)]
+#[test]
+fn windows_junction_at_mkdir_recheck_keeps_cold_draft_then_retries() {
+    let mut executed = 0;
+    for swap_root in [true, false] {
+        let mut f = Fixture::new();
+        fs::create_dir(f.graph.join("pages")).unwrap();
+        f.host.fs.spell("c.md", "pages/sub/c.md");
+        let input = "- irreplaceable Windows nested page input\n";
+        f.edit("c.md", input);
+        let outside = f.root.path().join("outside");
+        let detached = f.root.path().join("detached");
+        fs::create_dir(&outside).unwrap();
+        let swap = if swap_root {
+            f.graph.clone()
+        } else {
+            f.graph.join("pages")
+        };
+        let destination = outside.clone();
+        let moved = detached.clone();
+        let substituted = swap.clone();
+        crate::directory_durability::BEFORE_CREATE_CHECK.with(|step| {
+            *step.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&substituted, moved).unwrap();
+                crate::page_host::conformance::junction(&destination, &substituted);
+            }));
+        });
+        let events = f.host.events.len();
+        assert_ne!(f.save("c.md"), Outcome::Published);
+        assert!(
+            crate::directory_durability::BEFORE_CREATE_CHECK.with(|step| step.borrow().is_none())
+        );
+        assert!(!f.host.events[events..]
+            .iter()
+            .any(|event| matches!(event, Event::Published { .. })));
+        assert_eq!(f.host.pages["c.md"].buf, text(input));
+        assert_eq!(f.host.begin_draft("c.md"), Disposition::Pending);
+        f.drain();
+        let mut f = f.cold_reopen();
+        assert_eq!(f.host.pages["c.md"].buf, text(input));
+        assert!(f.host.pages["c.md"].risk);
+        assert_eq!(
+            drafts::scan(draft_dir(&f).into_iter().collect()).logical["c.md"].bytes,
+            text(input),
+            "recover from physical files after dropping host custody (root={swap_root})"
+        );
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        // Remove only the junction, restore the original directory, then bind
+        // a fresh adapter to that restored directory before retrying the input.
+        fs::remove_dir(&swap).unwrap();
+        fs::rename(&detached, &swap).unwrap();
+        f = f.cold_reopen();
+        f.host.fs.spell("c.md", "pages/sub/c.md");
+        assert_eq!(f.save("c.md"), Outcome::Published);
+        assert_eq!(
+            fs::read(f.graph.join("pages/sub/c.md")).unwrap(),
+            input.as_bytes()
+        );
+        assert!(f.host.pages["c.md"].clean());
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        executed += 1;
+    }
+    assert_eq!(
+        executed, 2,
+        "Windows root and parent junction witnesses must run"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn dircreate_swap_during_save_keeps_input_in_durable_device_draft() {

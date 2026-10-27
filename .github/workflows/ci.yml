@@ -268,6 +268,21 @@ jobs:
         env:
           TINE_STORAGE_ACCEPT_ROOT: ${{ runner.temp }}
         run: cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
+      # Match app_identity::app_data_dir_of / Tauri's app_data_dir, rather
+      # than runner.temp. Every witness owns and removes a fresh sandbox.
+      - name: Windows resolved app-data storage acceptance
+        if: ${{ !cancelled() }}
+        run: |
+          $identifier = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).identifier
+          $base = Join-Path ([Environment]::GetFolderPath('ApplicationData')) $identifier
+          New-Item -ItemType Directory -Force -Path $base | Out-Null
+          $base = (Resolve-Path -LiteralPath $base).Path
+          $env:TINE_STORAGE_ACCEPT_ROOT = $base
+          $env:TINE_HOST_FS_ROOT = $base
+          Write-Output "Resolved Tine app-data acceptance base: $base"
+          cargo test -p tine-store --lib m3_c6_ -- --nocapture --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
       # M4 availability measurement (REVIEW-3b-P2b-2 G1): the release rename of 250 and of
       # 1000 referrers must reach its caller inside OPERATION_WAIT; the timings print here.
       - name: Windows release rename availability (250 and 1000 referrers)
@@ -285,8 +300,8 @@ jobs:
       # test exe fails to load (0xc0000139, TaskDialogIndirect). A side-by-side
       # `<exe>.manifest` supplies it to the test exe alone; the shipped binary
       # is untouched.
-      # owner:: and owner_protection:: are A-ONE-HOST's Windows runtime acceptance
-      # (account lock, fallback retry); data_home:: is A-DRAFT-DURABLE's classification.
+      # Include app C5 census/adoption, current-lease refusal, registry/retirement
+      # exclusion, owner fallback, app-data classification and private diagnostics.
       - name: Windows backup, file-lock and owner tests (Expand-Archive opens a backup)
         if: ${{ !cancelled() }}
         run: |
@@ -306,7 +321,7 @@ jobs:
           </assembly>
           '@
           Push-Location src-tauri
-          & $exe backup:: file_lock:: owner:: owner_protection:: data_home::
+          & $exe backup:: file_lock:: owner:: owner_protection:: data_home:: root_identity:: host_retirement:: flight::tests::storage_report_is_copyable_and_private
           $code = $LASTEXITCODE
           Pop-Location
           exit $code
@@ -360,7 +375,19 @@ jobs:
       # embeds Info.plist on macOS and the lib test fails to link
       # (`_EMBED_INFO_PLIST` already defined).
       - name: macOS backup, file-lock and owner tests (A-ONE-HOST, A-DRAFT-DURABLE)
-        run: "cargo test --no-fail-fast -p tine --lib --features custom-protocol -- backup:: file_lock:: owner:: owner_protection:: data_home:: --nocapture"
+        run: "cargo test --no-fail-fast -p tine --lib --features custom-protocol -- backup:: file_lock:: owner:: owner_protection:: data_home:: root_identity:: host_retirement:: flight::tests::storage_report_is_copyable_and_private --nocapture"
+      - name: macOS resolved app-data storage acceptance
+        if: ${{ !cancelled() }}
+        run: |
+          identifier=$(node -p "require('./src-tauri/tauri.conf.json').identifier")
+          base="$HOME/Library/Application Support/$identifier"
+          mkdir -p "$base"
+          base=$(cd "$base" && pwd -P)
+          export TINE_STORAGE_ACCEPT_ROOT="$base"
+          export TINE_HOST_FS_ROOT="$base"
+          echo "Resolved Tine app-data acceptance base: $base"
+          cargo test -p tine-store --lib m3_c6_ -- --nocapture --test-threads=1
+          cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
       - name: macOS restore destination-identity tests (Store owns case and Unicode folding)
         if: ${{ !cancelled() }}
         run: "cargo test --no-fail-fast -p tine-store --lib -- restore:: --nocapture"
