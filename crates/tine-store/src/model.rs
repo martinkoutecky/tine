@@ -451,6 +451,7 @@ pub(crate) struct Graph {
     live_journal_format: RwLock<Option<Arc<JournalFormat>>>,
     /// Launch/diff/save timings and load-pass accounting behind `Store::diagnostics`.
     pub(crate) diag: crate::launch_diag::DiagRecorder,
+    pub(crate) storage_diag: Arc<crate::storage_diag::StorageCounters>,
     #[cfg(test)]
     pub(crate) cache_publish_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     /// Between a name discovery's authority decision and its record.
@@ -2841,6 +2842,7 @@ impl Graph {
 
     fn empty_with_config(root: PathBuf, config: Config, journal_format: JournalFormat) -> Graph {
         Graph {
+            storage_diag: crate::storage_diag::for_graph(&root),
             root_binding: Arc::new(crate::root_binding::RootBinding::new(&root)),
             assets_root: root.join("assets"),
             root,

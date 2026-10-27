@@ -166,6 +166,56 @@ impl Fixture {
 }
 
 #[test]
+fn storage_diagnostics_count_outcomes_and_recovery() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "private page content");
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    f.edit("a.md", "private unsaved content");
+    f.host
+        .fs
+        .faults
+        .insert(Phase::PageSync, [io::ErrorKind::Other].into());
+    assert_eq!(f.save("a.md"), Outcome::Uncertain);
+    draft_after_failed_save(&mut f, "a.md");
+    let report = f.host.storage_diag.snapshot();
+    assert_eq!(
+        report["pageSaves"],
+        serde_json::json!({
+            "published": 1, "uncertain": 1, "failedOrRefused": 1
+        })
+    );
+    assert_eq!(report["draftsWritten"], 1);
+    assert_eq!(report["draftsRecovered"], 0);
+    f.restart();
+    assert_eq!(f.host.storage_diag.snapshot()["draftsRecovered"], 1);
+    let text = report.to_string();
+    assert!(!text.contains("a.md"));
+    assert!(!text.contains("private"));
+    assert!(!text.contains(f.graph.to_str().unwrap()));
+}
+
+#[test]
+fn storage_diagnostics_count_base_revision_refusal_once() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "my unsaved edits");
+    fs::write(f.graph.join("a.md"), b"external change").unwrap();
+    assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
+    f.host.advance_save();
+    f.host.advance_save();
+    assert!(f.host.job.is_none());
+    assert!(f.host.pages["a.md"].conflict);
+    assert_eq!(
+        f.host.storage_diag.snapshot()["pageSaves"]["failedOrRefused"],
+        1
+    );
+    assert_eq!(f.host.start_save("a.md"), Disposition::Disabled);
+    assert_eq!(
+        f.host.storage_diag.snapshot()["pageSaves"]["failedOrRefused"],
+        1
+    );
+}
+
+#[test]
 fn replace_and_create_publish_through_the_real_host() {
     let mut f = Fixture::new();
     f.edit("a.md", "replacement");

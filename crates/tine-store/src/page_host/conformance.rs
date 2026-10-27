@@ -214,6 +214,7 @@ impl<F: ConformanceIo> Driver<F> {
         let h = &self.host;
         Some(Self {
             host: Host {
+                storage_diag: Arc::new(Default::default()),
                 custody: h.custody.clone(),
                 retire: h.retire.clone(),
                 custody_errors: h.custody_errors.clone(),

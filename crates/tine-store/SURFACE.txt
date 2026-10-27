@@ -234,7 +234,15 @@ enum store::TrashKind
 fn store::Store::trash_stats
 fn store::Store::purge_asset_trash
 
-## Diagnostics (ceiling: 3)
+## Diagnostics (ceiling: 5)
+# SB2-DIAG: Store::diagnostics is a read-only pull snapshot and cannot record
+# a namespace move owned by the app layer when no report is being requested.
+# Passing an adoption to the snapshot would make export mutate the evidence
+# and miss moves between exports. One O(1), memory-only recorder accepts a
+# closed reason; it exposes no file I/O, paths or content. This is storage
+# field evidence, not a faster sibling of an existing reader.
+enum storage_diag::DraftAdoptionReason
+fn store::Store::record_draft_namespace_adoption
 # Storage A/B bench events (STEP3 §13 gate 2, branch og-bench-events): the
 # app asks once whether `TINE_BENCH_EVENTS` is set (its window then reports
 # `unfreeze`) and forwards that event. `Store::diagnostics` cannot answer
@@ -448,7 +456,8 @@ field page_host::HostRead.page
 field page_host::HostRead.bytes
 field page_host::HostRead.revision
 enum page_host::HostReadError
-## Re-exports (ceiling: 12)
+## Re-exports (ceiling: 13)
+use crate::storage_diag::DraftAdoptionReason
 # GX4 S4: typed parameters/results for the existing reader registration door.
 use crate::store::change_summary::{QueryRegistration,QuerySubscription}
 use crate::tine_outline::edit_kind

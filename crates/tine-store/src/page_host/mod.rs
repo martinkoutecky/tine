@@ -455,6 +455,7 @@ enum Disposition {
 #[cfg_attr(test, derive(Clone))]
 struct Host<F: HostIo> {
     fs: F,
+    storage_diag: Arc<crate::storage_diag::StorageCounters>,
     keys: Keys,
     /// Handles supplied from Graph::page_lock; this is not another registry.
     locks: BTreeMap<PageKey, Arc<Mutex<()>>>,
@@ -531,6 +532,7 @@ impl<F: HostIo> Host<F> {
         let drafts = drafts::scan(fs.draft_files(true)).files;
         fs.draft_changes();
         let mut host = Self {
+            storage_diag: Arc::new(crate::storage_diag::StorageCounters::default()),
             keys: Keys(locks.keys().cloned().collect()),
             fs,
             locks,
@@ -1308,6 +1310,9 @@ impl<F: HostIo> Host<F> {
         self.fs.graph_launch(&self.keys.iter().cloned().collect());
         self.with_locks(&keys, |host| {
             for (key, record) in &scan.logical {
+                host.storage_diag
+                    .drafts_recovered
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 host.version = host.next_version();
                 host.set_page(
                     key,
