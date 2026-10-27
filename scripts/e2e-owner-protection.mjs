@@ -62,7 +62,15 @@ try {
   await browser.$(notice).waitForExist({timeout:10000});
   assert.match(await browser.$(notice).getText(),/Single-writer protection and the command line/);
   assert.equal(fixture.sample().length,0,"intentional failure must not silently hold a lease");
+  assert.equal(await browser.$(`${notice} details`).getAttribute("open"),null);
+  assert.equal(await browser.$(`${notice} .owner-protection-explanation`).isDisplayed(),false);
+  assert.equal(await browser.$(".page .ls-block .block-content-wrapper").isDisplayed(),true);
   shotOwnerProtection(path.join(run,"warning.png"),env);
+  await browser.$(`${notice} summary`).click();
+  assert.match(await browser.$(`${notice} details`).getText(),/coordination folder.*Repair permissions/s);
+  assert.equal(await browser.$(".page .ls-block .block-content-wrapper").isDisplayed(),true);
+  shotOwnerProtection(path.join(run,"details.png"),env);
+  await browser.$(`${notice} summary`).click();
   await browser.waitUntil(()=>browser.execute(()=>{
     const content=document.querySelector(".page .ls-block .block-content-wrapper");
     if(!(content instanceof HTMLElement)) return false;

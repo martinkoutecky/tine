@@ -117,6 +117,18 @@ fn retry_with(
         Option<OwnerError>,
     ),
 ) {
+    retry_at_publication(slot, attempt, || {});
+}
+
+#[cfg(desktop)]
+fn retry_at_publication(
+    slot: &Arc<GraphSlot>,
+    attempt: impl FnOnce() -> (
+        Result<Option<crate::owner::lease::Claimed>, String>,
+        Option<OwnerError>,
+    ),
+    before_owner: impl FnOnce(),
+) {
     use std::sync::atomic::Ordering;
     let Ok(_attempt) = slot.owner_retry.try_lock() else {
         return;
@@ -131,8 +143,12 @@ fn retry_with(
     {
         return;
     }
+    before_owner();
     let mut owner = slot.owner.lock().unwrap();
-    if owner.is_some() {
+    // Retirement cancels before taking this same mutex to pause admission.
+    // Either it sees our lease and pauses it, or we see its cancellation and
+    // release the claim without publishing an admitting endpoint.
+    if slot.background_cancelled.load(Ordering::Acquire) || owner.is_some() {
         return;
     }
     match result {
@@ -232,6 +248,68 @@ mod tests {
     use super::*;
     use crate::owner::{lease::Claimed, lock::OwnerLock, namespace::Namespace};
     use crate::state::PageHostSlot;
+
+    #[test]
+    fn retirement_between_cancellation_check_and_owner_lock_prevents_publication() {
+        use std::sync::Barrier;
+        let data = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            tine_store::Store::open(data.path(), Default::default())
+                .unwrap()
+                .0,
+        );
+        let slot = Arc::new(GraphSlot::new(store, data.path().to_owned()));
+        *slot.host.write().unwrap() = PageHostSlot::Running(
+            tine_store::PageHost::start_for_tests(&slot.store, data.path()).unwrap(),
+        );
+        let paths = Namespace::at(data.path().join("owners"))
+            .unwrap()
+            .graph(&slot.root_key)
+            .unwrap();
+        let checked = Arc::new(Barrier::new(2));
+        let publish = Arc::new(Barrier::new(2));
+        let worker = {
+            let (slot, paths, checked, publish) = (
+                slot.clone(),
+                paths.clone(),
+                checked.clone(),
+                publish.clone(),
+            );
+            std::thread::spawn(move || {
+                retry_at_publication(
+                    &slot,
+                    || {
+                        let lock = OwnerLock::try_take(&paths.lock, "app").unwrap().unwrap();
+                        (Ok(Some(Claimed::from_lock(lock, paths))), None)
+                    },
+                    || {
+                        checked.wait();
+                        publish.wait();
+                    },
+                )
+            })
+        };
+        checked.wait();
+        // Keep the host alive while actual retirement observes no lease and
+        // skips pausing admission. The retry already passed its first check.
+        let host = slot.host.read().unwrap();
+        slot.cancel_background();
+        assert!(slot.owner.lock().unwrap().is_none());
+        let retirement = crate::host_retirement::HostRetirement::default();
+        assert!(retirement.retire(slot.clone()).is_none());
+        publish.wait();
+        worker.join().unwrap();
+        let attached = slot.owner.lock().unwrap().is_some();
+        drop(host);
+        retirement
+            .wait_idle(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(
+            !attached,
+            "retirement saw no lease: a late endpoint must never admit requests"
+        );
+        assert!(OwnerLock::try_take(&paths.lock, "serve").unwrap().is_some());
+    }
 
     #[test]
     fn retries_attach_once_and_cancelled_bindings_never_take_a_lease() {

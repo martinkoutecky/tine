@@ -72,18 +72,22 @@ export function OwnerProtectionNotice() {
     catch { if (owner()) setError(t("owner-protection-copy-failed")); }
   };
   return <Show when={issue()}>{(problem) => <div class="root-recovery-notice owner-protection-notice" role="status" data-testid="owner-protection-notice">
-    <div class="owner-protection-explanation">
-      <strong>{t("owner-protection-title")}</strong>
-      <p>{t("owner-protection-editable")}</p>
-      <p>{t(`owner-protection-reason-${problem().reason}`)}</p>
-      <p>{t(`owner-protection-fix-${problem().instructions}`)}</p>
-      <Show when={problem().command}><code>{problem().command}</code></Show>
-      <Show when={error()}><p role="alert">{error()}</p></Show>
-    </div>
+    <strong class="owner-protection-title">{t("owner-protection-title")}</strong>
     <Show when={problem().repairable}><button class="settings-btn" disabled={busy()} onClick={() => void retry(true)}>{t("owner-protection-repair")}</button></Show>
     <button class="settings-btn" disabled={busy()} onClick={() => void retry(false)}>{t("owner-protection-retry")}</button>
-    <Show when={problem().command}><button class="settings-btn" onClick={() => void copy(problem().command)}>{t("owner-protection-copy-command")}</button></Show>
-    <button class="settings-btn" onClick={() => void copy(problem().details)}>{t("owner-protection-copy-details")}</button>
-    <details><summary>{t("owner-protection-details")}</summary><pre>{problem().details}</pre></details>
+    <details>
+      <summary>{t("owner-protection-details")}</summary>
+      <div class="owner-protection-explanation">
+        <p>{t("owner-protection-editable")}</p>
+        <p>{t(`owner-protection-reason-${problem().reason}`)}</p>
+        <p>{t(`owner-protection-fix-${problem().instructions}`)}</p>
+        <Show when={problem().command}><p><code>{problem().command}</code></p>
+          <button class="settings-btn" onClick={() => void copy(problem().command)}>{t("owner-protection-copy-command")}</button>
+        </Show>
+        <button class="settings-btn" onClick={() => void copy(problem().details)}>{t("owner-protection-copy-details")}</button>
+        <pre>{problem().details}</pre>
+      </div>
+    </details>
+    <Show when={error()}><p class="owner-protection-error" role="alert">{error()}</p></Show>
   </div>}</Show>;
 }

@@ -885,6 +885,65 @@ fn a_wedged_owner_cannot_hold_the_handover_past_its_bound() {
 }
 
 #[test]
+fn timed_out_owner_retries_wait_for_outstanding_io_workers() {
+    use std::io::{BufRead, BufReader, Write};
+    let graph = Graph::new();
+    let paths = graph.paths();
+    let held = OwnerLock::try_take(&paths.lock, "serve").unwrap().unwrap();
+    #[cfg(unix)]
+    let listener = std::os::unix::net::UnixListener::bind(&paths.socket).unwrap();
+    #[cfg(windows)]
+    let listener = super::windows::Listener::bind(&paths.socket).unwrap();
+    let hello = owner_hello(&graph.root.display().to_string(), Some("serve"));
+    let (requested, requests) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = loop {
+            match listener.accept() {
+                Ok(connection) => break connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("accept: {error}"),
+            }
+        };
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        writeln!(stream, "{hello}").unwrap();
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        assert!(line.contains("owner.yield"));
+        requested.send(()).unwrap();
+        released.recv_timeout(Duration::from_secs(5)).unwrap();
+    });
+    let attempt = || {
+        super::client::take_over(
+            &graph.root,
+            &paths,
+            super::wire::Drafts {
+                app_data: "a".into(),
+                graph_id: "g".into(),
+            },
+            Duration::ZERO,
+            |_| {},
+            |_| {},
+        )
+    };
+    assert!(attempt().is_err());
+    requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    let blocked = (0..4)
+        .all(|_| matches!(attempt(), Err(message) if message.contains("previous owner handover")));
+    release.send(()).unwrap();
+    server.join().unwrap();
+    drop(held);
+    assert!(
+        blocked,
+        "a timed-out handover must retain its worker reservation until I/O finishes"
+    );
+}
+
+#[test]
 fn the_start_log_is_emptied_past_its_cap() {
     // Review CODE-1 F9.
     let dir = tempfile::tempdir().unwrap();

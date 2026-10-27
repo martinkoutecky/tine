@@ -33,6 +33,13 @@ it("keeps a non-dismissible actionable warning through display epochs, and clear
   expect(root.textContent).toContain("private coordination folder");
   expect(root.textContent).toContain(problem.command);
   expect(root.textContent).not.toMatch(/Dismiss|Not now/);
+  const details = root.querySelector("details")!;
+  expect(details.open).toBe(false);
+  expect(details.textContent).toContain("private coordination folder");
+  expect(details.textContent).toContain(problem.command);
+  expect(details.textContent).toContain(problem.details);
+  expect(details.querySelector("summary")?.textContent).toBe("Details");
+  details.open = true;
   bumpGraphEpoch();
   expect(root.querySelector('[role="status"]')).not.toBeNull();
   await vi.waitFor(()=>expect(api.ownerProtectionStatus).toHaveBeenCalledTimes(2));
@@ -50,6 +57,7 @@ it("Retry now preserves a failed condition and diagnostic copying uses the clipb
   button(root,"Retry now").click();
   await vi.waitFor(()=>expect(api.retryOwnerProtection).toHaveBeenCalledWith(false));
   expect(root.querySelector('[role="status"]')).not.toBeNull();
+  root.querySelector("details")!.open = true;
   button(root,"Copy diagnostic details").click();
   expect(copy).toHaveBeenCalledWith(problem.details);
   button(root,"Copy command").click();
@@ -60,6 +68,10 @@ it("gives sandbox instructions instead of a repair button when the app cannot fi
   api.ownerProtectionStatus=vi.fn(async():Promise<OwnerProtectionIssue>=>({...problem,repairable:false,instructions:"flatpak",command:"flatpak override --user --filesystem='/account/.local/state/tine/owners' org.example.Notes"}));
   const root=mount();
   await vi.waitFor(()=>expect(root.textContent).toContain("Grant this Flatpak access"));
+  const details = root.querySelector("details")!;
+  expect(details.open).toBe(false);
+  expect(details.textContent).toContain("Grant this Flatpak access");
+  expect(details.textContent).toContain("flatpak override");
   expect(button(root,"Repair permissions")).toBeUndefined();
   expect(button(root,"Retry now")).toBeDefined();
 });

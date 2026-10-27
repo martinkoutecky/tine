@@ -9128,10 +9128,14 @@ html.tine-embed-shading-accent .embed-block {
 }
 .root-recovery-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border-color); }
 .root-recovery-notice > span { min-width: 0; overflow-wrap: anywhere; }
-.owner-protection-notice { flex-shrink: 0; max-height: 45vh; overflow: auto; background: var(--background-secondary); }
-.owner-protection-explanation { flex: 1 1 100%; min-width: 0; }
+.owner-protection-notice { position: relative; flex-shrink: 0; max-height: 30vh; overflow: auto; padding: 6px 16px; background: var(--background-secondary); }
+.owner-protection-title { flex: 1 1 auto; font-weight: 500; }
+.owner-protection-explanation { min-width: 0; margin-top: 8px; }
 .owner-protection-explanation p { margin: 4px 0; }
 .owner-protection-notice code, .owner-protection-notice pre { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
-.owner-protection-notice details { flex-basis: 100%; min-width: 0; }
+.owner-protection-notice details { min-width: 0; }
+.owner-protection-notice details[open] { flex-basis: 100%; }
+.owner-protection-notice summary { cursor: pointer; }
+.owner-protection-error { flex-basis: 100%; margin: 0; }
 .settings-backup-origin { display: block; color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
 .settings-backup-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }

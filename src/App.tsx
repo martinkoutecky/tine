@@ -1176,7 +1176,6 @@ export function App(): JSX.Element {
       </Show>
       <DrawerBackground class="main-container" blockedBy="left">
         <FailureBoundary region="Graph recovery"><RootRecoveryNotice /></FailureBoundary>
-        <FailureBoundary region="Single-writer protection"><OwnerProtectionNotice /></FailureBoundary>
         {/* In focus mode the topbar is hidden; this thin strip at the very top
             reveals it on hover (CSS adjacency), so controls are reachable. */}
         <DrawerBackground blockedBy="right">
@@ -1284,6 +1283,7 @@ export function App(): JSX.Element {
             </Show>
           </div>
         </header>
+        <FailureBoundary region="Single-writer protection"><OwnerProtectionNotice /></FailureBoundary>
         <FailureBoundary region="The conflict notice"><ConflictBar /></FailureBoundary>
         <Show when={refreshingFromDisk()}><div class="focus-refresh-status" role="status" aria-live="polite">{t("app-refreshing-changes-from-disk")}</div>
         </Show>

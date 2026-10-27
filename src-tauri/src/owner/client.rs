@@ -2,7 +2,10 @@
 //! reaching the graph's owner (starting `tine serve` when nobody owns it),
 //! and the app's handover from a `tine serve` that owns a graph it opens.
 
+use std::collections::HashSet;
 use std::path::Path;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -364,6 +367,34 @@ fn spawn_serve(root: &Path, paths: &GraphPaths) -> Result<(), OwnerError> {
     Ok(())
 }
 
+// A deadline stops the caller's wait, but cannot stop a Unix connect blocked
+// behind a wedged listener. Keep this endpoint reserved until BOTH the attempt
+// and every detached yield/status worker have finished. Repeated fallback
+// retries (including a replacement binding) cannot accumulate I/O workers.
+static HANDOVER_FLIGHTS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+
+struct HandoverFlight(PathBuf);
+
+impl HandoverFlight {
+    fn reserve(socket: &Path) -> Option<Arc<Self>> {
+        let mut flights = HANDOVER_FLIGHTS.get_or_init(Mutex::default).lock().unwrap();
+        flights
+            .insert(socket.to_owned())
+            .then(|| Arc::new(Self(socket.to_owned())))
+    }
+}
+
+impl Drop for HandoverFlight {
+    fn drop(&mut self) {
+        HANDOVER_FLIGHTS
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .remove(&self.0);
+    }
+}
+
 /// The app's handover (§4): ask the `tine serve` owning `root` to yield,
 /// then take the lock itself once serve has exited (the reply is never
 /// permission). Waits up to `bound`, reporting serve's progress.
@@ -375,14 +406,19 @@ pub(crate) fn take_over(
     mut waiting: impl FnMut(&str),
     mut unavailable: impl FnMut(&OwnerError),
 ) -> Result<Option<Claimed>, String> {
+    let flight = HandoverFlight::reserve(&paths.socket).ok_or_else(|| {
+        "The previous owner handover is still waiting for the command line to respond. Try again in a moment.".to_owned()
+    })?;
     let deadline = Instant::now() + bound;
     let (answer, answered) = std::sync::mpsc::channel();
     {
         let socket = paths.socket.clone();
         let root = root.to_owned();
+        let flight = flight.clone();
         let spawned = std::thread::Builder::new()
             .name("tine-owner-yield".into())
             .spawn(move || {
+                let _flight = flight;
                 let result = match dial(&socket, &root) {
                     Ok(Some(mut conn)) => conn
                         .call("owner.yield", json!({ "drafts": drafts }))
@@ -441,7 +477,7 @@ pub(crate) fn take_over(
         if reported.elapsed() >= Duration::from_secs(1) {
             reported = Instant::now();
             if probe.is_none() {
-                probe = probe_status(&paths.socket, root);
+                probe = probe_status(&paths.socket, root, &flight);
             }
             waiting(&progress);
         }
@@ -473,16 +509,51 @@ pub(crate) fn app_owner_refusal() -> String {
 /// Probe the owner's state on a thread of its own; its answer (or `None`)
 /// arrives on the returned channel. A probe stuck in `connect` stays stuck
 /// only until the owner closes its listener.
-fn probe_status(socket: &Path, root: &Path) -> Option<std::sync::mpsc::Receiver<Option<String>>> {
+fn probe_status(
+    socket: &Path,
+    root: &Path,
+    flight: &Arc<HandoverFlight>,
+) -> Option<std::sync::mpsc::Receiver<Option<String>>> {
     let (answer, answered) = std::sync::mpsc::channel();
     let (socket, root) = (socket.to_owned(), root.to_owned());
+    let flight = flight.clone();
     std::thread::Builder::new()
         .name("tine-owner-status".into())
         .spawn(move || {
+            let _flight = flight;
             let _ = answer.send(status(&socket, &root, Duration::from_secs(2)));
         })
         .ok()
         .map(|_| answered)
+}
+
+#[cfg(test)]
+mod handover_flight_tests {
+    use super::*;
+
+    #[test]
+    fn owner_reservation_outlives_the_attempt_and_each_worker() {
+        let data = tempfile::tempdir().unwrap();
+        let socket = data.path().join("owner.sock");
+        let attempt = HandoverFlight::reserve(&socket).unwrap();
+        let yield_worker = attempt.clone();
+        let status_worker = attempt.clone();
+        drop(attempt);
+        assert!(HandoverFlight::reserve(&socket).is_none());
+        drop(yield_worker);
+        assert!(
+            HandoverFlight::reserve(&socket).is_none(),
+            "status alone still blocks another attempt"
+        );
+        drop(status_worker);
+        assert!(HandoverFlight::reserve(&socket).is_some());
+        assert!(!HANDOVER_FLIGHTS
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .contains(&socket));
+    }
 }
 
 /// The owner's `owner.status` state, if one answers within `bound` (each
