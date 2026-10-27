@@ -637,4 +637,3 @@
     .then(save(0)).then(save(1)).then(save(2))
     .expect(PAGES.forall(p => clean(s.pages.get(p)) and s.disk.get(p) == 3) and ok)
   run mMPD = ownProgressConflict
-

@@ -2,6 +2,39 @@
 //! real driver and default Progress. No test calls start_save/begin_draft/poll.
 use super::*;
 use serde_json::Value;
+use std::sync::atomic::AtomicBool;
+
+/// Order an external write after Submit applies and before the next driver
+/// step, at the normal delivery boundary (the sink holds no host/path lock).
+/// Only conflict setup arms this finite barrier. Save urgency and Progress
+/// remain unchanged; all later work runs through the production driver.
+struct OrderedChannel {
+    channel: Channel,
+    pause: Arc<AtomicBool>,
+    resume: mpsc::Receiver<()>,
+}
+
+impl Sink for OrderedChannel {
+    fn deliver(
+        &mut self,
+        delivery: Delivery,
+        owner: &dyn Fn(&str) -> Owner,
+        wait: bool,
+    ) -> Result<Vec<(Publication, Indexing)>, Delivery> {
+        let submitted = delivery
+            .mail
+            .iter()
+            .any(|(_, mail, _)| mail.answer.as_ref().is_some_and(|a| a.took));
+        let pause = submitted && self.pause.swap(false, Ordering::SeqCst);
+        let result = self.channel.deliver(delivery, owner, wait);
+        if pause {
+            self.resume
+                .recv_timeout(Duration::from_secs(5))
+                .expect("G3 conflict interference releases the delivery barrier");
+        }
+        result
+    }
+}
 
 fn key(p: usize) -> String {
     format!("{p:04}.md")
@@ -19,13 +52,10 @@ fn model_host(profile: &str) -> Host<ModelFs> {
     };
     fs.external(&key(0), text("1"), true);
     fs.external(&key(1), text("2"), true);
-    let mut h = Host::new(
+    Host::new(
         fs,
         (0..3).map(|p| (key(p), Arc::new(Mutex::new(())))).collect(),
-    );
-    // Keep the actual default edit debounce; SharedClock advances time.
-    h.test.submits_wait = true;
-    h
+    )
 }
 
 fn submit(d: &Test, receive: &mpsc::Receiver<Delivered>, p: usize, bytes: &str) {
@@ -128,7 +158,30 @@ fn g3_default_progress_replays_quint_endpoints_through_driver() {
         .filter(|c| c["name"].as_str().unwrap().starts_with("ownProgress"))
     {
         let name = case["name"].as_str().unwrap();
-        let (mut d, clock, receive) = spawn(model_host(case["profile"].as_str().unwrap()));
+        let clock = SharedClock::default();
+        let (send, receive) = mpsc::channel();
+        let (resume, release) = mpsc::channel();
+        let conflict = matches!(name, "ownProgressConflict" | "ownProgressRefresh");
+        let pause = Arc::new(AtomicBool::new(conflict));
+        let mut d = Driver::spawn(
+            model_host(case["profile"].as_str().unwrap()),
+            clock.clone(),
+            OrderedChannel {
+                channel: Channel(send),
+                pause,
+                resume: release,
+            },
+        );
+        if name == "ownProgressFailure" {
+            // Faults are ready before admission, so an immediately urgent
+            // production Submit cannot race the failure setup.
+            d.shared.with_state_for_tests(|s| {
+                s.progress
+                    .host
+                    .fs
+                    .inject(Phase::PageTemp, [Fault::Before; 3]);
+            });
+        }
         let count = if name == "ownProgressThree" { 3 } else { 1 };
         for p in 0..count {
             let id = admit(&d, &key(p), RequestKind::Open);
@@ -144,28 +197,20 @@ fn g3_default_progress_replays_quint_endpoints_through_driver() {
                 },
             );
         }
-        if name == "ownProgressFailure" {
+        if conflict {
             d.shared.with_state_for_tests(|s| {
-                s.progress
-                    .host
-                    .fs
-                    .inject(Phase::PageTemp, [Fault::Before; 3]);
-            });
-        }
-        if matches!(name, "ownProgressConflict" | "ownProgressRefresh") {
-            d.shared.with_state_for_tests(|s| {
-                s.progress.host.fs.external(&key(0), text("3"), true);
+                let h = &mut s.progress.host;
+                assert!(
+                    !h.test.submits_wait,
+                    "production submit urgency stays enabled"
+                );
+                assert!(h.job.is_none(), "delivery barrier precedes the save");
+                assert_eq!(h.pages[&key(0)].buf, text("2"));
+                assert_eq!(h.fs.files["graph/0000.md"], text("1").unwrap());
+                h.fs.external(&key(0), text("3"), true);
                 s.observe.insert(key(0), Default::default());
             });
-            // Freeze time until the queued watcher observation applies.
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while !d.shared.state_for_tests().progress.host.pages[&key(0)].conflict {
-                assert!(
-                    Instant::now() < deadline,
-                    "G3 watcher observation not scheduled"
-                );
-                std::thread::yield_now();
-            }
+            resume.send(()).unwrap();
         }
         if name == "ownProgressRefresh" {
             eventually(&d, &clock, |h| {

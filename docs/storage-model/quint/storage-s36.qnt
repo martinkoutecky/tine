@@ -905,4 +905,3 @@ module storage {
   val wHeldDiscard: bool = not(PAGES.exists(p => s.pages.get(p).held and s.pages.get(p).risk and not(s.pages.get(p).typed) and s.pages.get(p).buf == s.pages.get(p).base and s.pages.get(p).obs != NONE))
   // @@SCENARIOS@@
 }
-
