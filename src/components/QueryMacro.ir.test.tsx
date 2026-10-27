@@ -39,6 +39,7 @@ import { applyChangeSummary } from "../changeSummary";
 import { noteQueryInput, QUERY_QUIET_MS } from "../querySubscription";
 import { resetQueryTextOpenForTests } from "../navSettings";
 import { startEditing } from "../editorController";
+import { publishedBackend } from "../publishedBackend";
 
 // These component fixtures do not bind a page host. Their source edits update
 // the working set; native coverage exercises actual publication and the epoch
@@ -164,6 +165,24 @@ it("a newly mounted query uses its registration snapshot while a publication eve
     expect(run).toHaveBeenCalledTimes(1);
     expect(first.root.querySelector(".query-count")?.textContent).toBe("1");
   } finally { second?.dispose(); first.dispose(); host.registerQuerySubscription = original; }
+});
+
+// A 0.9 regression: the published export refused this optional registration, so
+// every {{query}} and board in an exported site showed "Query couldn't be loaded".
+it("a query in a published export renders its rows without a change subscription", async () => {
+  bumpGraphEpoch();
+  load("{{query (task TODO)}}");
+  const host = backend(); const original = host.registerQuerySubscription;
+  const published = publishedBackend(async () => { throw new Error("snapshot unused"); });
+  host.registerQuerySubscription = published.registerQuerySubscription;
+  vi.spyOn(host, "parseQuery").mockResolvedValue({ query: { anchor: "block", filter: { kind: "true" },
+    source: { kind: "og", original: "(task TODO)", og_options: "" } }, view: {} });
+  vi.spyOn(host, "queryRun").mockResolvedValue(blockRunResult(groups()));
+  const { root, dispose } = mount(() => <Block id="query" />);
+  try {
+    await vi.waitFor(() => expect(root.querySelector(".query-count")?.textContent).toBe("1"));
+    expect(root.textContent).not.toContain("read-only published export");
+  } finally { dispose(); host.registerQuerySubscription = original; }
 });
 
 it.each(["(and)", "(sort-by created-at)"])("restores the empty state after removing the last builder condition (%s)", async (blank) => {
