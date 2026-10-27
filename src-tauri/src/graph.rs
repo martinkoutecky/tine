@@ -518,6 +518,7 @@ fn claim_owner(
     app: &tauri::AppHandle,
     window_label: &str,
     root_key: &Path,
+    failure: &mut Option<crate::owner::OwnerError>,
 ) -> Result<Option<crate::owner::lease::Claimed>, String> {
     let Ok(app_data) = app.path().app_data_dir() else {
         // `start_host` refuses this open with the reason.
@@ -529,20 +530,26 @@ fn claim_owner(
     };
     // The window hears each change of serve's progress (§4.5), not only the start.
     let mut told: Option<String> = None;
-    crate::owner::lease::claim_for_app(root_key, drafts, OWNER_HANDOVER_WAIT, |progress| {
-        if told.as_deref() == Some(progress) {
-            return;
-        }
-        if told.is_none() {
-            crate::debug::diag("graph-open-waits-for-the-command-line-owner");
-        }
-        told = Some(progress.to_string());
-        let _ = app.emit_to(
-            window_label,
-            "graph-open-owner-waiting",
-            progress.to_string(),
-        );
-    })
+    crate::owner::lease::claim_for_app(
+        root_key,
+        drafts,
+        OWNER_HANDOVER_WAIT,
+        |progress| {
+            if told.as_deref() == Some(progress) {
+                return;
+            }
+            if told.is_none() {
+                crate::debug::diag("graph-open-waits-for-the-command-line-owner");
+            }
+            told = Some(progress.to_string());
+            let _ = app.emit_to(
+                window_label,
+                "graph-open-owner-waiting",
+                progress.to_string(),
+            );
+        },
+        |error| *failure = Some(error.clone()),
+    )
 }
 
 /// How long an open waits for an overlapping graph that is still saving.
@@ -669,7 +676,9 @@ fn load_graph_with_relocation(
             let mut slot = GraphSlot::new(store, root_key);
             // The owner lock before the host (CLI PROTOCOL §3.2); a
             // command-line owner yields first (§4).
-            let claimed = claim_owner(app, window_label, &slot.root_key)?;
+            let mut failure = None;
+            let claimed = claim_owner(app, window_label, &slot.root_key, &mut failure)?;
+            *slot.owner_failure.get_mut().unwrap() = failure;
             // On failure the dropped slot closes the Store, and the dropped
             // claim releases the lock.
             let host = start_host(app, window_label, &slot.store, &slot.root_key)?;
@@ -714,6 +723,7 @@ fn load_graph_with_relocation(
         window_label.to_string(),
         slot.binding_generation,
     ));
+    crate::owner_protection::start_retry(app, &slot);
     crate::watcher::start_slot_events(app.clone(), window_label.to_string(), &slot);
     backup_async(app.clone(), slot.clone());
     crate::git_settings::bound(app, &slot);

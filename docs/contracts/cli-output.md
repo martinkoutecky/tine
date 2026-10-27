@@ -584,9 +584,31 @@ the caller's I/O deadline; it is never reported as no owner. Before sending a he
 the client checks the connected pipe's owner and protected DACL. Unsafe permissions or pipe creation
 conflicts report `owner-unsafe` (exit 5). Same-account processes are trusted.
 Framing, caps, deadlines, custody checks, the 60 s handover bound and the rule that
-a timeout never permits takeover are shared with Unix. App lock/namespace/bind
-errors retain the diagnosed policy of opening without an endpoint. iOS/Android
+a timeout never permits takeover are shared with Unix. On desktop, a namespace or
+lock failure keeps the graph editable without a lease, with a persistent,
+non-dismissible warning naming single-writer protection and the command line,
+the cause, recovery instructions, Retry now, and copyable diagnostics. An owned,
+non-symlink Unix owners directory can be explicitly tightened to mode 0700;
+the repair preserves existing lock inodes. Foreign directories, symlinks and
+Windows DACLs are never repaired by this action. The app retries every 3 seconds
+after an attempt finishes, through the same custody-checked handover (up to
+60 seconds per attempt); a newly started `serve` must yield and release its
+lock before the app claims it. A timeout or refusal leaves the warning and
+unleased editing in place. Successful acquisition clears the warning.
+
+Lock discovery does not apply the Unix socket pathname limit. Missing Unix state
+parents are requested with mode 0700; existing parent permissions are preserved.
+An overlong account home therefore still permits the app to hold its durable
+account-wide lock. Endpoint binding then fails separately, retaining the lease;
+CLI discovery reports `owner-unsafe` (exit 5) with the endpoint pathname limit
+before attempting to start another host. There is no alternate temporary or
+environment-dependent lock namespace. A bind failure after acquisition keeps
+the lock and does not enter the unleased retry path. iOS/Android
 have no CLI and rely on one process per sandboxed app.
+Failed arbitration remains a limit: two hosts may overlap from the failed claim
+until acquisition/handover succeeds, including its wait. Persistent failure or
+handover refusal can make that interval indefinite. Revision guards and durable
+publication remain, but do not replace cross-process owner serialization.
 See `docs/storage-contract.md` (L9-01/L9-02).
 
 The client bounds each reply frame at 60 s, including `serve --stop`; partial
