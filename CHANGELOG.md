@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-27
+
+Bug fixes for Tine 0.8.0: a blank window on Linux with older NVIDIA drivers, a new page in the right sidebar, cloze reveal, Expand and Collapse in embeds, and a Windows save race.
+
 ### Fixed
 
 - Linux: automatically apply the WebKitGTK DMABUF workaround when an NVIDIA driver older than 610 is loaded, avoiding the blank window reported with the 0.8.0 AppImage on legacy drivers; newer NVIDIA drivers keep GPU rendering. Explicit `TINE_GPU` and `WEBKIT_DISABLE_DMABUF_RENDERER` settings keep precedence (GH #777).
@@ -7002,7 +7006,8 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/martinkoutecky/tine/compare/v0.8.0...v0.8.1
 [0.6.98]: https://github.com/martinkoutecky/tine/compare/v0.6.97...v0.6.98
 [0.6.90]: https://github.com/martinkoutecky/tine/compare/v0.6.5...v0.6.90
 [0.6.0]: https://github.com/martinkoutecky/tine/compare/v0.5.10...v0.6.0
