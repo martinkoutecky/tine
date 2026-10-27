@@ -190,6 +190,11 @@ impl<F: HostIo> Host<F> {
                         return Disposition::Waiting;
                     }
                     self.adopt_read(&key, bytes);
+                    // The base-revision guard ended this save without a
+                    // publication. Count the refusal, not each idle retry.
+                    self.storage_diag
+                        .failed
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     self.fs.page_finish(&key);
                     return Disposition::Applied;
                 }
@@ -374,6 +379,12 @@ impl<F: HostIo> Host<F> {
             }
         }
         if let Some(outcome) = result {
+            let counter = match outcome {
+                Outcome::Published => &self.storage_diag.published,
+                Outcome::Uncertain => &self.storage_diag.uncertain,
+                Outcome::Failed => &self.storage_diag.failed,
+            };
+            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.fs.page_finish(&key);
             let mut page = self.pages[&key].clone();
             if outcome == Outcome::Published {

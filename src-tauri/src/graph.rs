@@ -631,6 +631,8 @@ fn load_graph_with_relocation(
             (slot, meta, lease.map(Owner::Adopted))
         }
         None => {
+            #[cfg(target_os = "ios")]
+            let mut draft_namespace_adopted = false;
             // Only a fresh open may move namespaces, after the retirement
             // wait and before owner claim/host attachment. A live local host
             // of either namespace makes relocation skip without blocking open.
@@ -644,8 +646,11 @@ fn load_graph_with_relocation(
                             &root_key,
                             &state.graphs.read().unwrap(),
                         );
-                        if let Err(error) = relocation {
-                            crate::debug::diag_private("graph-relocation-owner-held", error);
+                        match relocation {
+                            Ok(adopted) => draft_namespace_adopted = adopted,
+                            Err(error) => {
+                                crate::debug::diag_private("graph-relocation-owner-held", error)
+                            }
                         }
                     }
                 } else {
@@ -674,6 +679,12 @@ fn load_graph_with_relocation(
                 ),
             }?;
             let mut slot = GraphSlot::new(store, root_key);
+            #[cfg(target_os = "ios")]
+            if draft_namespace_adopted {
+                slot.store.record_draft_namespace_adoption(
+                    tine_store::DraftAdoptionReason::AppContainerMove,
+                );
+            }
             // The owner lock before the host (CLI PROTOCOL §3.2); a
             // command-line owner yields first (§4).
             let mut failure = None;

@@ -956,6 +956,7 @@ pub fn run() {
             next_window: AtomicU64::new(1),
         })
         .setup(move |app| {
+            root_identity::capture_container_change(app.handle());
             // After the single-instance plugin: a forwarded second launch has
             // already exited and cannot rotate the primary's diagnostics.
             // Tauri's app-data path is the sandbox-private home on mobile too.

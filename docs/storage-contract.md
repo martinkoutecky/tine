@@ -418,9 +418,18 @@ zero additional checkpoint bytes or files per edit.
 `whole_graph_reconciled()` never serves the checkpoint: it waits for the launch
 diff, for graph-wide destructive operations and for a one-shot lookup that
 missed in the checkpoint (a cold-start `tine://` link, GH #181). The public operation
-surface is 54 operations: the methods of `Store`, `Transaction` and `PagePlan` plus every
+surface is 55 operations: the methods of `Store`, `Transaction` and `PagePlan` plus every
 public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
+SB2 diagnostics adds one memory-only operation to record a device-local draft
+namespace adoption with a closed reason. The read-only `diagnostics()` snapshot
+cannot capture moves performed by the app between report requests. Save
+outcomes and draft writes/recoveries are counted at their existing host
+boundaries; these counters add no per-save I/O or persisted record. The copyable
+report exposes only counts and fixed tokens, never graph paths, page names or
+content. The iOS comparison against the last remembered graph is distinct from
+the exact previous-launch question, which remains unknown without a persisted
+launch-by-launch container path.
 GX4 S4 extends the existing mounted-reader registration operation with a typed
 dependency parameter: an unlinked target, a resolved query/source, the registry,
 or a conservative full dependency. The one lifetime-bound operation registers

@@ -150,6 +150,7 @@ impl PageHost {
         io.marks = Some(graph.clone());
         io.store = Arc::downgrade(store);
         let mut host = Host::new(io, BTreeMap::new());
+        host.storage_diag = graph.storage_diag.clone();
         host.stop();
         let mut recovered = Vec::new();
         let keys = host.recovered_keys();

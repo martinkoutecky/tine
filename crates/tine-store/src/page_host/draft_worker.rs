@@ -300,6 +300,13 @@ impl<F: HostIo> Host<F> {
             let failures = worker.task.failures;
             self.with_locks(&keys, |host| {
                 worker.task.advance(&mut host.fs);
+                // Count a durable vehicle write once, on transition to Present.
+                // Cleanup/removal and unsuccessful writes never count.
+                if worker.task.stage == Stage::Present {
+                    host.storage_diag
+                        .drafts_written
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 host.sync_drafts();
             });
             worker.failures = worker

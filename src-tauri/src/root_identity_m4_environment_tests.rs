@@ -52,7 +52,7 @@ fn m4_c5_native_moved_graph_surfaces_every_old_namespace_vehicle() {
         fs::create_dir_all(target.join("unreadable")).unwrap();
         fs::write(target.join("p-current.draft"), "current input").unwrap();
         assert_eq!(
-            adopt_namespace(&data, &id, &new).unwrap_err(),
+            adopt_namespace(&data, &id, &new, || {}).unwrap_err(),
             "draft-recovery-current-unsaved"
         );
         assert_eq!(
@@ -60,7 +60,7 @@ fn m4_c5_native_moved_graph_surfaces_every_old_namespace_vehicle() {
             "first input"
         );
         fs::remove_file(target.join("p-current.draft")).unwrap();
-        adopt_namespace(&data, &id, &new).unwrap();
+        adopt_namespace(&data, &id, &new, || {}).unwrap();
         assert!(!source.exists());
         for (name, contents) in [
             ("p-one.draft", "first input"),
