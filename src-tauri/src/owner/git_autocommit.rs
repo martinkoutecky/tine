@@ -414,6 +414,9 @@ fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
         let tip = repo.tip().map_err(|e| Unusable::Failed(e.message))?;
         let tip_tree = tip.as_ref().map(|c| c.tree()).transpose().map_err(failed)?;
         stage(&repo, &prefix, &mut lock.index)?;
+        repo.guard
+            .check_git(&repo.repo, &repo.branch)
+            .map_err(failed)?;
         let staged = lock.index.write_tree_to(&repo.repo).map_err(failed)?;
         let tree = if prefix.is_empty() {
             staged
@@ -433,6 +436,9 @@ fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
         let tree = repo.repo.find_tree(tree).map_err(failed)?;
         let user = repo.user();
         let parents: Vec<&git2::Commit<'_>> = tip.iter().collect();
+        repo.guard
+            .check_git(&repo.repo, &repo.branch)
+            .map_err(failed)?;
         let oid = repo
             .repo
             .commit(None, &user, &user, message, &tree, &parents)
@@ -539,12 +545,18 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
                 let io = |e: std::io::Error| Unusable::Failed(format!("{path}: {e}"));
                 // Streamed: an asset is never held in memory whole.
                 let mut file = std::fs::File::open(&full).map_err(io)?;
+                repo.guard
+                    .check_git(&repo.repo, &repo.branch)
+                    .map_err(failed)?;
                 let mut writer = repo.repo.blob_writer(None).map_err(failed)?;
                 let size =
                     copy_unless_exiting(&mut file, &mut writer).map_err(|e| match e.kind() {
                         std::io::ErrorKind::Interrupted => Unusable::Quitting,
                         _ => io(e),
                     })?;
+                repo.guard
+                    .check_git(&repo.repo, &repo.branch)
+                    .map_err(failed)?;
                 let id = writer.commit().map_err(failed)?;
                 let old_mode = index.get_path(Path::new(path), 0).map(|e| e.mode);
                 index
@@ -682,7 +694,15 @@ fn loose_objects(objects: &Path) -> Vec<Oid> {
 /// Unreachable loose objects are packed too, not dropped. Returns how many
 /// were deleted; `Ok(None)` when skipped (a `git gc` is running, or the
 /// repository is not SHA-1).
-pub(crate) fn repack(repo: &Repository) -> Result<Option<usize>, String> {
+#[cfg(test)]
+fn repack(repo: &Repository) -> Result<Option<usize>, String> {
+    let checked = open_checked(repo.workdir().unwrap()).map_err(|e| e.message())?;
+    repack_guarded(&checked)
+}
+
+fn repack_guarded(checked: &Repo) -> Result<Option<usize>, String> {
+    let repo = &checked.repo;
+    let guard = &checked.guard;
     let gitdir = repo.path();
     if gitdir.join("gc.pid").exists() {
         return Ok(None);
@@ -697,6 +717,7 @@ pub(crate) fn repack(repo: &Repository) -> Result<Option<usize>, String> {
     }
     let objects = gitdir.join("objects");
     let pack_dir = objects.join("pack");
+    guard.check_path(&pack_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&pack_dir).map_err(|e| e.to_string())?;
     let loose = loose_objects(&objects);
     if loose.is_empty() {
@@ -712,6 +733,7 @@ pub(crate) fn repack(repo: &Repository) -> Result<Option<usize>, String> {
             .insert_object(*oid, None)
             .map_err(|e| e.to_string())?;
     }
+    guard.check_path(&pack_dir).map_err(|e| e.to_string())?;
     builder.write(&pack_dir, 0o444).map_err(|e| e.to_string())?;
     let name = builder
         .name()
@@ -722,18 +744,20 @@ pub(crate) fn repack(repo: &Repository) -> Result<Option<usize>, String> {
     // Do not reopen the final read-only files for sync_all: on Windows
     // FlushFileBuffers requires GENERIC_WRITE and fails with Access denied.
     // builder.write already made their contents durable before publishing.
-    sync_dir(&pack_dir)?;
+    sync_dir(&pack_dir, guard)?;
     let packed = idx_oids(&std::fs::read(&idx).map_err(|e| e.to_string())?)?;
     let mut removed = 0;
     for oid in loose.iter().filter(|oid| packed.contains(oid.as_bytes())) {
         let hex = oid.to_string();
         let file = objects.join(&hex[..2]).join(&hex[2..]);
-        if remove_object(&file).is_ok() {
+        if remove_object(&file, guard).is_ok() {
             removed += 1;
         }
     }
     for byte in 0..=255u8 {
-        let _ = std::fs::remove_dir(objects.join(format!("{byte:02x}")));
+        let dir = objects.join(format!("{byte:02x}"));
+        guard.check_path(&dir).map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_dir(dir);
     }
     Ok(Some(removed))
 }
@@ -741,18 +765,22 @@ pub(crate) fn repack(repo: &Repository) -> Result<Option<usize>, String> {
 /// Delete a loose object file. git writes them read-only, which on Windows
 /// refuses the unlink until the attribute is cleared (as git-for-windows
 /// does).
-fn remove_object(file: &Path) -> std::io::Result<()> {
+fn remove_object(file: &Path, guard: &super::git_run::GitMutationGuard) -> std::io::Result<()> {
+    guard.check_path(file)?;
     #[cfg(windows)]
     {
         let mut permissions = std::fs::metadata(file)?.permissions();
         #[allow(clippy::permissions_set_readonly_false)]
         permissions.set_readonly(false);
+        guard.check_path(file)?;
         std::fs::set_permissions(file, permissions)?;
     }
+    guard.check_path(file)?;
     std::fs::remove_file(file)
 }
 
-fn sync_dir(dir: &Path) -> Result<(), String> {
+fn sync_dir(dir: &Path, guard: &super::git_run::GitMutationGuard) -> Result<(), String> {
+    guard.check_path(dir).map_err(|e| e.to_string())?;
     tine_store::directory_durability::sync_directory_entry(dir)
         .map_err(|e| format!("{}: {e}", dir.display()))
 }
@@ -842,6 +870,7 @@ mod registry {
     pub(super) struct WorkerState {
         pub(super) settings: GitSettings,
         pub(super) slot: Weak<GraphSlot>,
+        pub(super) store: Option<Arc<tine_store::Store>>,
         pub(super) flush: bool,
         /// Bumped after every flush the worker finished.
         pub(super) flushed: u64,
@@ -918,6 +947,7 @@ pub(crate) fn start_worker(slot: &Arc<GraphSlot>, settings: GitSettings) {
             continue;
         }
         state.slot = Arc::downgrade(slot);
+        state.store = Some(slot.store.clone());
         state.settings = settings;
         if !fresh && state.running {
             worker.wake.notify_all();
@@ -951,6 +981,12 @@ pub(crate) fn last_attempt(root: &Path) -> LastAttempt {
     registry::get(root)
         .map(|w| w.state.lock().unwrap().last.clone())
         .unwrap_or_default()
+}
+
+/// The worker retains the original store through its final commit on unbind.
+/// Never recapture the graph identity after a folder replacement.
+pub(super) fn bound_store(root: &Path) -> Option<Arc<tine_store::Store>> {
+    registry::get(root).and_then(|worker| worker.state.lock().unwrap().store.clone())
 }
 
 /// App exit (G9 "at once on quit"): ask every worker for an autocommit and
@@ -1111,14 +1147,14 @@ fn maybe_repack(worker: &registry::Worker, root: &Path, due: bool) {
     {
         return;
     }
-    let Ok(repo) = Repository::discover(root) else {
+    let Ok(repo) = open_checked(root) else {
         return;
     };
-    if !due && loose_object_count(&repo.path().join("objects")) < REPACK_LOOSE_OBJECTS {
+    if !due && loose_object_count(&repo.repo.path().join("objects")) < REPACK_LOOSE_OBJECTS {
         return;
     }
     let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    match repack(&repo) {
+    match repack_guarded(&repo) {
         Ok(Some(_)) => {
             let mut state = worker.state.lock().unwrap();
             state.commits_since_repack = 0;

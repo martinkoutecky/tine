@@ -770,11 +770,16 @@ export function App(): JSX.Element {
     try {
       const result = await readOwned(ownedWhen(() => alive), backend().takeDataHomeFallbackNotice());
       if (result.kind === "stale" || !result.value) return;
-      pushToast(
-        msg("app-tine-could-not-write-its-usual-application-data", { fallbackDirectory: result.value }),
-        "warn",
-        { sticky: true },
-      );
+      if (result.value.relocated_to) {
+        pushToast(
+          msg("app-tine-could-not-write-its-usual-application-data", { fallbackDirectory: result.value.relocated_to }),
+          "warn",
+          { sticky: true },
+        );
+      }
+      if (result.value.volatile) {
+        pushToast(msg("app-drafts-on-volatile-storage"), "warn", { sticky: true });
+      }
     } catch {
       dbg("data-home notice unavailable");
     }
