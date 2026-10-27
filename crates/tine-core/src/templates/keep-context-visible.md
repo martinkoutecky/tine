@@ -44,6 +44,6 @@ icon:: 📌
   - **t f** (focus mode) hides the sidebars and toolbar so the screen is just text — on desktop it also takes the window full screen. Hover the top edge to reach the toolbar again; layered **Esc** steps back out.
   - **t b** fades every block except the one you're editing. Settings → **Appearance** → **Dim in focus mode** turns that dimming on for you whenever focus mode is on.
   - **t w** drops the reading-width cap for a wide page; Settings → **Appearance** → **Advanced** lets you set your own **Standard page width** and **Wide page width**.
-  - On a phone the layout stays one page: the sidebars open as overlays (dismiss with the shaded edge, Esc, or Android Back), and the tab strip and splits are off. Use **Open tabs** in the left sidebar to switch tabs. A PDF and its Notes page use that same history, so Back returns to the previous surface.
+  - In a narrow window (below 640 px), the sidebars open as overlays; dismiss them with the shaded edge, Esc, or Android Back. Use **Open tabs** in the left sidebar to switch tabs when the tab strip is hidden. At 640 px or wider, the tab strip is available on every platform. A PDF and its Notes page use the same one-pane history on a narrow screen, so Back returns to the previous surface.
 - ## Where next
   - [[Features/Tips & shortcuts]] has the compact shortcut map, [[Start/Where things are]] is the plain map of the places used here, and [[Workflows/Find and revisit]] covers getting back to anything you parked.
