@@ -926,7 +926,7 @@ class TauriBackend implements Backend {
     return this.call<GpuEnv>("gpu_env");
   }
   takeDataHomeFallbackNotice() {
-    return this.call<string | null>("take_data_home_fallback_notice");
+    return this.call<{ relocated_to: string | null; volatile: boolean } | null>("take_data_home_fallback_notice");
   }
   debugInfo() {
     return this.call<DebugInfo>("debug_info");

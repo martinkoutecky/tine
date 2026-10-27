@@ -664,9 +664,9 @@ export interface Backend {
    *  warning (see `gpu.ts`). A silent driver fallback is detected in the webview
    *  (WebGL renderer); this just supplies why/where context for the message. */
   gpuEnv(): Promise<GpuEnv>;
-  /** The fallback app-data folder iff this launch had to relocate an unwritable
-   *  one (desktop Linux), delivered once; `null` otherwise. */
-  takeDataHomeFallbackNotice(): Promise<string | null>;
+  /** Once-per-launch app-data relocation and detected volatile-storage warning;
+   *  relocation is Linux-only, classification covers all five native targets. */
+  takeDataHomeFallbackNotice(): Promise<{ relocated_to: string | null; volatile: boolean } | null>;
   /** Experimental smooth-scrolling preference (Lenis), app-level, default off. */
   getSmoothScroll(): Promise<boolean>;
   setSmoothScroll(value: boolean): Promise<void>;

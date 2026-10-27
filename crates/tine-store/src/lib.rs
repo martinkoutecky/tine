@@ -108,6 +108,7 @@ pub use page_host::{
     HostRead, HostReadError, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal,
     Reloaded, RenameRefusal, StopMode, StopState, Stopped,
 };
+pub use root_binding::BoundDirectory;
 #[cfg(test)]
 mod page_state;
 mod path_identity;

@@ -43,6 +43,7 @@ export interface MessageArgs {
   "app-couldn-t-confirm-closing-the-window-your-unsaved": {};
   "app-couldn-t-save-pending-pdf-changes-the-graph": {};
   "app-ctrl-k-open-a-page-in-this-pane": {};
+  "app-drafts-on-volatile-storage": {};
   "app-exit-focus-esc": {};
   "app-finishing-graph-operation": {};
   "app-journals": {};
