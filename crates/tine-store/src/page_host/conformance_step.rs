@@ -4,6 +4,13 @@ use super::*;
 
 impl<F: ConformanceIo> Driver<F> {
     pub(super) fn step(&mut self, name: &str, args: &[Value]) -> bool {
+        self.host.fs.physical().assert_no_escapes();
+        let result = self.step_inner(name, args);
+        self.host.fs.physical().assert_no_escapes();
+        result
+    }
+
+    fn step_inner(&mut self, name: &str, args: &[Value]) -> bool {
         let prepare_operations = self.prepare_operations
             || (self.refinement_schedule
                 && (self.queued_refusals > 0 || self.occupied_refusals > 0));

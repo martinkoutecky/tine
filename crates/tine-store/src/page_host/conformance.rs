@@ -15,6 +15,9 @@ mod native_conformance;
 /// Test physical environment; the native implementation independently checks
 /// the real paths after every production I/O phase. Power stays ModelFs-only.
 trait ConformanceIo: HostIo {
+    fn inject_env(&mut self, _phase: Phase, _k: usize, _step: model_fs::EnvStep) {
+        panic!("environment syscall replay is ModelFs-only until M3");
+    }
     fn native_create_refinement() -> bool {
         false
     }
@@ -30,6 +33,9 @@ trait ConformanceIo: HostIo {
 }
 
 impl ConformanceIo for ModelFs {
+    fn inject_env(&mut self, phase: Phase, k: usize, step: model_fs::EnvStep) {
+        self.inject_env(phase, k, step);
+    }
     fn fresh(profile: &str, count: usize) -> Self {
         let mut fs = Self {
             weak_graph: matches!(profile, "weak" | "all"),
@@ -471,9 +477,9 @@ impl<F: ConformanceIo> Driver<F> {
                 "phase":match j.phase { SavePhase::Custody|SavePhase::Temp|SavePhase::Check=>1,
                     SavePhase::Marker|SavePhase::Rename=>2,SavePhase::TrashSync|SavePhase::DirectorySync=>3 },"ep":j.epoch})
         );
-        let disk = |files: &BTreeMap<String, Arc<[u8]>>| -> Vec<_> {
+        let disk = |durable| -> Vec<_> {
             (0..self.windows.len())
-                .map(|p| label(&files.get(&format!("graph/{}", key(p))).cloned()))
+                .map(|p| label(&self.host.fs.physical().alpha(&key(p), durable)))
                 .collect()
         };
         let trash = |files| self.trash_labels(files);
@@ -494,8 +500,8 @@ impl<F: ConformanceIo> Driver<F> {
                 json!({"dst":index(dst),"src":index(src),"vers":vers,"open":open})
             })
             .collect();
-        json!({"alive":self.host.alive,"claimed":self.claims(),"gates":gates,"disk":disk(&self.host.fs.physical().files),
-            "stable":disk(&self.host.fs.physical().stable),"drafts":records,"pages":pages,
+        json!({"alive":self.host.alive,"claimed":self.claims(),"gates":gates,"disk":disk(false),
+            "stable":disk(true),"drafts":records,"pages":pages,
             "mb":mail,"up":up,"job":job,"w":self.windows,
             "trash":trash(&self.host.fs.physical().files),"trashStable":trash(&self.host.fs.physical().stable)})
     }
@@ -644,6 +650,7 @@ impl<F: ConformanceIo> Driver<F> {
     }
 
     fn compare_projection(&mut self, actual: &Value, context: &str) {
+        self.host.fs.physical().assert_no_escapes();
         let expected = self.oracle.state();
         for (name, value) in actual.as_object().unwrap() {
             if matches!(name.as_str(), "trash" | "trashStable") {
@@ -695,8 +702,9 @@ impl<F: ConformanceIo> Driver<F> {
     /// The binding registers a key when the window opens it or an operation
     /// names it (STEP3 §2), in trace order, not key order.
     fn register(&mut self, p: usize) {
+        let spelling = self.host.fs.spelling(&key(p));
         self.host
-            .register(key(p), &key(p), Arc::new(Mutex::new(())));
+            .register(key(p), &spelling, Arc::new(Mutex::new(())));
     }
 
     /// A process fault ends the binding: the next one registers afresh,
@@ -1127,6 +1135,8 @@ impl<F: ConformanceIo> Driver<F> {
     }
 }
 
+#[path = "conformance_environment_tests.rs"]
+mod environment_tests;
 #[path = "scheduler.rs"]
 mod scheduler;
 #[path = "conformance_step.rs"]
