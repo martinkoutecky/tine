@@ -4,6 +4,50 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// Process-local directory witness for application writers of repository
+/// metadata. Uses the same root identity and target-containment policy as graph
+/// writes. Checks remain sequential: a check-to-syscall race is not eliminated.
+pub struct BoundDirectory {
+    root: PathBuf,
+    binding: RootBinding,
+}
+
+impl BoundDirectory {
+    /// Capture an existing directory without retaining a directory descriptor.
+    pub fn new(root: &Path) -> io::Result<Self> {
+        // Preserve an absolute caller spelling (libgit2 may use a non-verbatim
+        // Windows path); the shared containment check canonicalizes both sides.
+        let root = if root.is_absolute() {
+            root.to_path_buf()
+        } else {
+            fs::canonicalize(root)?
+        };
+        let binding = RootBinding::new(&root);
+        binding.check()?;
+        Ok(Self { root, binding })
+    }
+
+    /// The absolute directory spelling used for its mutation targets.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Recheck the captured directory identity.
+    pub fn check(&self) -> io::Result<()> {
+        self.binding.check()
+    }
+
+    /// Recheck root identity and the target's lexical and resolved containment.
+    pub fn check_path(&self, path: &Path) -> io::Result<()> {
+        crate::model::checked_write_target(
+            &self.root,
+            path,
+            "repository metadata",
+            Some(&self.binding),
+        )
+    }
+}
+
 impl crate::Store {
     /// Check the directory witness taken at open before reusing a retiring
     /// Store at the same path. Graph writes also check the witness at their

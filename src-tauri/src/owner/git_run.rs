@@ -25,7 +25,7 @@
 //! (CL4: not a storage mode). libgit2 runs with GIT_OPT_ENABLE_FSYNC_GITDIR.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, Once};
+use std::sync::{Arc, Mutex, Once};
 
 use git2::{ErrorCode, Oid, Repository, RepositoryState, Signature};
 use libgit2_sys::init as libgit2_init;
@@ -208,10 +208,114 @@ pub(super) struct Repo {
     /// Path from the work tree root to the graph root ("" when equal).
     pub(super) prefix: PathBuf,
     pub(super) branch: String,
+    pub(super) guard: Arc<GitMutationGuard>,
+}
+
+/// Bind the graph and Git's own metadata directories before preparing a
+/// mutation. Parent repositories and linked worktrees retain their existing
+/// scope: Git's selected gitdir/commondir, never arbitrary redirected children.
+pub(super) struct GitMutationGuard {
+    graph: tine_store::BoundDirectory,
+    worktree: tine_store::BoundDirectory,
+    directories: Vec<tine_store::BoundDirectory>,
+    store: Option<Arc<tine_store::Store>>,
+}
+
+impl GitMutationGuard {
+    fn new(root: &Path, repo: &Repository) -> std::io::Result<Self> {
+        let graph = tine_store::BoundDirectory::new(root)?;
+        let worktree = tine_store::BoundDirectory::new(
+            repo.workdir()
+                .ok_or_else(|| std::io::Error::other("git worktree unavailable"))?,
+        )?;
+        let mut directories = vec![tine_store::BoundDirectory::new(repo.path())?];
+        if std::fs::canonicalize(repo.commondir())? != std::fs::canonicalize(repo.path())? {
+            directories.push(tine_store::BoundDirectory::new(repo.commondir())?);
+        }
+        Ok(Self {
+            graph,
+            worktree,
+            directories,
+            store: super::git_autocommit::bound_store(root),
+        })
+    }
+
+    pub(super) fn check_path(&self, path: &Path) -> std::io::Result<()> {
+        self.graph.check()?;
+        // A normal .git directory must not itself be an alias. A regular .git
+        // pointer file (linked worktree/submodule) still selects its bound
+        // gitdir/commondir, preserving Git's existing metadata scope.
+        let marker = self.worktree.root().join(".git");
+        self.worktree.check_path(&marker)?;
+        std::fs::metadata(&marker)?;
+        if let Some(store) = &self.store {
+            store
+                .check_graph_root()
+                .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+        }
+        for directory in &self.directories {
+            directory.check()?;
+        }
+        let directory = self
+            .directories
+            .iter()
+            .filter(|dir| path.starts_with(dir.root()))
+            .max_by_key(|dir| dir.root().components().count())
+            .ok_or_else(|| std::io::Error::other("git write target escapes repository metadata"))?;
+        directory.check_path(path)
+    }
+
+    /// libgit2 selects an object fanout directory internally. Inspect only its
+    /// bounded 256-slot namespace, plus the ref/reflog paths it may mutate;
+    /// never scan object contents or history. Internal multi-syscall operations
+    /// retain the same native race window as other guarded writes.
+    pub(super) fn check_git(&self, repo: &Repository, branch: &str) -> Result<(), git2::Error> {
+        let check = |path: &Path| {
+            self.check_path(path)
+                .map_err(|e| git2::Error::from_str(&e.to_string()))
+        };
+        for directory in &self.directories {
+            let root = directory.root();
+            for path in [
+                root.join("objects"),
+                root.join("objects/pack"),
+                root.join("HEAD"),
+                root.join("logs/HEAD"),
+                root.join(branch),
+                root.join("logs").join(branch),
+                root.join("index"),
+            ] {
+                check(&path)?;
+            }
+            let objects = root.join("objects");
+            match std::fs::read_dir(&objects) {
+                Ok(entries) => {
+                    for entry in entries {
+                        let entry = entry.map_err(|e| git2::Error::from_str(&e.to_string()))?;
+                        let name = entry.file_name();
+                        let name = name.to_string_lossy();
+                        if name.len() == 2 && name.bytes().all(|b| b.is_ascii_hexdigit()) {
+                            check(&entry.path())?;
+                        }
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(git2::Error::from_str(&error.to_string())),
+            }
+        }
+        check(&repo.path().join("index.lock"))
+    }
 }
 
 fn open_repo(slot: &GraphSlot) -> Result<Repo, ErrorBody> {
-    open_repo_at(&slot.root_key)
+    slot.store
+        .check_graph_root()
+        .map_err(|e| not_usable(format!("{e:?}")))?;
+    let mut repo = open_repo_at(&slot.root_key)?;
+    Arc::get_mut(&mut repo.guard)
+        .expect("new repository guard")
+        .store = Some(slot.store.clone());
+    Ok(repo)
 }
 
 pub(super) fn open_repo_at(graph_root: &Path) -> Result<Repo, ErrorBody> {
@@ -243,10 +347,14 @@ pub(super) fn open_repo_at(graph_root: &Path) -> Result<Repo, ErrorBody> {
         return Err(not_usable("HEAD is detached; check out a branch first"));
     };
     drop(head);
+    let guard =
+        Arc::new(GitMutationGuard::new(graph_root, &repo).map_err(|e| not_usable(e.to_string()))?);
+    guard.check_git(&repo, &branch).map_err(git_failed)?;
     Ok(Repo {
         repo,
         prefix,
         branch,
+        guard,
     })
 }
 
@@ -268,9 +376,9 @@ impl Repo {
         #[cfg(test)]
         lock_test_hook::pause();
         let lock = if waiting {
-            IndexLock::acquire_waiting(&self.repo)
+            IndexLock::acquire_waiting(&self.repo, self.guard.clone())
         } else {
-            IndexLock::acquire(&self.repo)
+            IndexLock::acquire(&self.repo, self.guard.clone())
         }?;
         let head = self
             .repo
@@ -358,6 +466,7 @@ impl Repo {
                 builder.insert(name, sub, 0o040000)?;
             }
         }
+        self.guard.check_git(&self.repo, &self.branch)?;
         builder.write()
     }
 
@@ -375,6 +484,7 @@ impl Repo {
         new: Oid,
         log: &str,
     ) -> Result<bool, git2::Error> {
+        self.guard.check_git(&self.repo, &self.branch)?;
         let result = match old {
             Some(old) => self
                 .repo
@@ -414,6 +524,7 @@ impl Repo {
 /// 0078 §4, review R2): a moved `HEAD` over an index still naming the old
 /// blobs would let the user's next plain `git commit` record a reversion.
 pub(super) struct IndexLock {
+    guard: Arc<GitMutationGuard>,
     lock: std::fs::File,
     lock_file: PathBuf,
     index_file: PathBuf,
@@ -472,10 +583,20 @@ impl IndexLock {
     /// Take `index.lock` and open a private copy of the index under it.
     /// Every honest copy holder holds the lock, so copies present once it is
     /// taken are a crash's leftovers and are removed here, never elsewhere.
-    pub(super) fn acquire(repo: &Repository) -> Result<Self, LockRefusal> {
+    pub(super) fn acquire(
+        repo: &Repository,
+        guard: Arc<GitMutationGuard>,
+    ) -> Result<Self, LockRefusal> {
         let gitdir = repo.path();
         let index_file = gitdir.join("index");
         let lock_file = gitdir.join("index.lock");
+        let check = |path: &Path| {
+            guard
+                .check_path(path)
+                .map_err(|e| LockRefusal::Failed(e.to_string()))
+        };
+        check(&index_file)?;
+        check(&lock_file)?;
         let lock = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -484,7 +605,7 @@ impl IndexLock {
                 std::io::ErrorKind::AlreadyExists => LockRefusal::Held,
                 _ => LockRefusal::Failed(format!("{}: {e}", lock_file.display())),
             })?;
-        remove_stale_copies(gitdir);
+        remove_stale_copies(gitdir, &guard);
         let scratch = gitdir.join(format!(
             "{SCRATCH_PREFIX}{}.tmp",
             uuid::Uuid::new_v4().simple()
@@ -504,6 +625,7 @@ impl IndexLock {
                 }
                 None => None,
                 Some(bytes) => {
+                    check(&scratch)?;
                     std::fs::write(&scratch, bytes).map_err(|e| failed(&e))?;
                     Some(header_entries(bytes).ok_or_else(|| failed(&"not an index file"))?)
                 }
@@ -519,6 +641,7 @@ impl IndexLock {
         })();
         match opened {
             Ok(index) => Ok(Self {
+                guard,
                 lock,
                 lock_file,
                 index_file,
@@ -527,10 +650,16 @@ impl IndexLock {
                 installed: false,
             }),
             Err(refusal) => {
-                let _ = std::fs::remove_file(&scratch);
-                let _ = std::fs::remove_file(scratch.with_extension("tmp.lock"));
+                if check(&scratch).is_ok() {
+                    let _ = std::fs::remove_file(&scratch);
+                }
+                if check(&scratch.with_extension("tmp.lock")).is_ok() {
+                    let _ = std::fs::remove_file(scratch.with_extension("tmp.lock"));
+                }
                 drop(lock);
-                let _ = std::fs::remove_file(&lock_file);
+                if check(&lock_file).is_ok() {
+                    let _ = std::fs::remove_file(&lock_file);
+                }
                 Err(refusal)
             }
         }
@@ -538,10 +667,13 @@ impl IndexLock {
 
     /// [`Self::acquire`], waiting up to about a second for a git command that
     /// holds the lock briefly.
-    pub(super) fn acquire_waiting(repo: &Repository) -> Result<Self, LockRefusal> {
+    pub(super) fn acquire_waiting(
+        repo: &Repository,
+        guard: Arc<GitMutationGuard>,
+    ) -> Result<Self, LockRefusal> {
         let mut attempt = 0;
         loop {
-            match Self::acquire(repo) {
+            match Self::acquire(repo, guard.clone()) {
                 Err(LockRefusal::Held) if attempt < 9 => {
                     attempt += 1;
                     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -592,9 +724,15 @@ impl IndexLock {
     /// Write the copy into the lock file and rename it over the index.
     pub(super) fn install(mut self) -> Result<(), Box<dyn std::error::Error>> {
         use std::io::Write;
+        self.guard.check_path(&self.scratch)?;
+        self.guard
+            .check_path(&self.scratch.with_extension("tmp.lock"))?;
         self.index.write()?;
+        self.guard.check_path(&self.lock_file)?;
         self.lock.write_all(&std::fs::read(&self.scratch)?)?;
         self.lock.sync_all()?;
+        self.guard.check_path(&self.lock_file)?;
+        self.guard.check_path(&self.index_file)?;
         std::fs::rename(&self.lock_file, &self.index_file)?;
         self.installed = true;
         Ok(())
@@ -603,9 +741,17 @@ impl IndexLock {
 
 impl Drop for IndexLock {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.scratch);
-        let _ = std::fs::remove_file(self.scratch.with_extension("tmp.lock"));
-        if !self.installed {
+        if self.guard.check_path(&self.scratch).is_ok() {
+            let _ = std::fs::remove_file(&self.scratch);
+        }
+        if self
+            .guard
+            .check_path(&self.scratch.with_extension("tmp.lock"))
+            .is_ok()
+        {
+            let _ = std::fs::remove_file(self.scratch.with_extension("tmp.lock"));
+        }
+        if !self.installed && self.guard.check_path(&self.lock_file).is_ok() {
             let _ = std::fs::remove_file(&self.lock_file);
         }
     }
@@ -613,7 +759,7 @@ impl Drop for IndexLock {
 
 /// Remove the private index copies a crash left in `gitdir` (never
 /// `index.lock`: that may be another git command's).
-pub(super) fn remove_stale_copies(gitdir: &Path) {
+pub(super) fn remove_stale_copies(gitdir: &Path, guard: &GitMutationGuard) {
     let Ok(entries) = std::fs::read_dir(gitdir) else {
         return;
     };
@@ -622,6 +768,7 @@ pub(super) fn remove_stale_copies(gitdir: &Path) {
         let Some(name) = name.to_str() else { continue };
         if name.starts_with(SCRATCH_PREFIX)
             && (name.ends_with(".tmp") || name.ends_with(".tmp.lock"))
+            && guard.check_path(&entry.path()).is_ok()
         {
             let _ = std::fs::remove_file(entry.path());
         }
@@ -730,11 +877,17 @@ fn commit_pair(
     }
     let agent = Signature::now(author, AGENT_EMAIL).map_err(git_failed)?;
     let old_blob = old
-        .map(|b| repo.repo.blob(b))
+        .map(|b| {
+            repo.guard.check_git(&repo.repo, &repo.branch)?;
+            repo.repo.blob(b)
+        })
         .transpose()
         .map_err(git_failed)?;
     let new_blob = new
-        .map(|b| repo.repo.blob(b))
+        .map(|b| {
+            repo.guard.check_git(&repo.repo, &repo.branch)?;
+            repo.repo.blob(b)
+        })
         .transpose()
         .map_err(git_failed)?;
     for _ in 0..CAS_ATTEMPTS {
@@ -755,6 +908,9 @@ fn commit_pair(
                 .and_then(|t| repo.repo.find_tree(t))
                 .map_err(git_failed)?;
             let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
+            repo.guard
+                .check_git(&repo.repo, &repo.branch)
+                .map_err(git_failed)?;
             let oid = repo
                 .repo
                 .commit(None, &user, &user, snapshot_msg, &snap_tree, &parents)
@@ -768,6 +924,9 @@ fn commit_pair(
             .and_then(|t| repo.repo.find_tree(t))
             .map_err(git_failed)?;
         let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
+        repo.guard
+            .check_git(&repo.repo, &repo.branch)
+            .map_err(git_failed)?;
         let oid = repo
             .repo
             .commit(None, &agent, &agent, agent_msg, &agent_tree, &parents)
@@ -958,6 +1117,9 @@ pub(crate) fn run_end(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody
     let full = format!("{title}\n\n{body}\n{TRAILER}: {}\n", id.as_str());
     let tree = tip.tree().map_err(git_failed)?;
     let parents: Vec<&git2::Commit<'_>> = base.iter().collect();
+    repo.guard
+        .check_git(&repo.repo, &repo.branch)
+        .map_err(git_failed)?;
     let squashed = repo
         .repo
         .commit(None, &author, &author, &full, &tree, &parents)

@@ -1,6 +1,5 @@
 //! Guarded atomic moves, including case-only spelling changes.
 use super::*;
-use unicode_normalization::UnicodeNormalization;
 
 impl PagePlan<'_> {
     /// The spelling preflight holds the write set's path locks and writer.
@@ -150,7 +149,9 @@ impl PagePlan<'_> {
             .is_some_and(|dst| case_only(Path::new(plan.src.as_str()), Path::new(dst.as_str())))
     }
 
-    // Preserve case while treating filesystem NFC/NFD spellings as equivalent.
+    // Physical directory spellings are exact. Folding these keys would merge
+    // coexisting NFC/NFD files on sensitive volumes and hide normalization-only
+    // self-alias renames on APFS. The resolver/same_file probe decides aliases.
     pub(super) fn listed_path(&self, path: &Path) -> io::Result<Option<PathBuf>> {
         let parent = path.parent().unwrap();
         let mut entries = self.spelling_entries.borrow_mut();
@@ -159,14 +160,14 @@ impl PagePlan<'_> {
                 .map(|entry| {
                     entry.map(|entry| {
                         let name = entry.file_name();
-                        (spelling_key(&name), name)
+                        (name.clone(), name)
                     })
                 })
                 .collect::<io::Result<BTreeMap<_, _>>>()?;
             entries.insert(parent.to_path_buf(), names);
         }
         Ok(entries[parent]
-            .get(&spelling_key(path.file_name().unwrap()))
+            .get(path.file_name().unwrap())
             .map(|name| parent.join(name)))
     }
 
@@ -477,19 +478,19 @@ fn rename_spelling_replace(src: &Path, dst: &Path) -> io::Result<()> {
 }
 
 pub(super) fn case_only(src: &Path, dst: &Path) -> bool {
+    // A candidate filter only, shared with registered-entry identity. Logical
+    // page keys use lowercase (so e.g. ß/SS and I/ı can differ); a folding
+    // volume may still resolve them to the same file. Only same_file plus an
+    // unlisted destination permits the replacement in source_spelling_alias.
     src != dst
         && src.parent() == dst.parent()
         && src
             .file_name()
-            .and_then(|s| s.to_str())
-            .zip(dst.file_name().and_then(|s| s.to_str()))
-            .is_some_and(|(from, to)| tine_core::refs::same_page(from, to))
-}
-
-fn spelling_key(name: &std::ffi::OsStr) -> std::ffi::OsString {
-    name.to_str()
-        .map(|name| name.nfc().collect::<String>().into())
-        .unwrap_or_else(|| name.to_os_string())
+            .zip(dst.file_name())
+            .is_some_and(|(from, to)| {
+                crate::model::entry_identity::fold_leaf(from)
+                    == crate::model::entry_identity::fold_leaf(to)
+            })
 }
 
 #[cfg(test)]
@@ -679,21 +680,88 @@ mod spelling_tests {
     }
 
     #[test]
-    fn directory_spelling_preserves_case_but_accepts_normalized_unicode() {
+    fn sb1_directory_spelling_keeps_normalization_distinct_entries_separate() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
-        fs::write(dir.path().join("pages/CAFE\u{301}.md"), "- body\n").unwrap();
+        let nfd = dir.path().join("pages/Ku\u{30a}n\u{30c}.md");
+        let nfc = dir.path().join("pages/Kůň.md");
+        fs::write(&nfd, "- nfd\n").unwrap();
+        if nfc.exists() {
+            assert!(same_file::is_same_file(&nfd, &nfc).unwrap());
+            return; // This volume cannot hold normalization-distinct entries.
+        }
+        fs::write(&nfc, "- nfc\n").unwrap();
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
         let tx = store.page_plan(None);
-        let desired = dir.path().join("pages/CAFÉ.md");
-        assert_eq!(
-            tx.listed_path(&desired).unwrap(),
-            Some(dir.path().join("pages/CAFE\u{301}.md"))
-        );
-        assert_eq!(
-            tx.listed_path(&dir.path().join("pages/café.md")).unwrap(),
-            None
-        );
+        assert_eq!(tx.listed_path(&nfd).unwrap(), Some(nfd.clone()));
+        assert_eq!(tx.listed_path(&nfc).unwrap(), Some(nfc.clone()));
+        assert_eq!(fs::read(nfd).unwrap(), b"- nfd\n");
+        assert_eq!(fs::read(nfc).unwrap(), b"- nfc\n");
+        store.close();
+    }
+
+    #[test]
+    fn sb1_unicode_self_aliases_allow_spelling_moves() {
+        for (from, to) in [
+            ("Kůň", "kůň"),
+            ("Kůň", "Ku\u{30a}n\u{30c}"),
+            ("ß", "SS"),
+            ("I", "ı"),
+            ("İ", "i\u{307}"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            fs::create_dir(dir.path().join("pages")).unwrap();
+            let source = format!("pages/{from}.md");
+            let target = format!("pages/{to}.md");
+            fs::write(dir.path().join(&source), b"- body\n").unwrap();
+            let store = Store::open(dir.path(), Default::default()).unwrap().0;
+            let src = store.graph.root.join(&source);
+            let dst = store.graph.root.join(&target);
+            let tx = store.page_plan(None);
+            // Linux fixture for an actual folding resolver: the unlisted
+            // destination resolves to the source, independently of page_key.
+            assert!(
+                tx.source_spelling_alias(&src, &dst, &src).unwrap(),
+                "{from} -> {to}"
+            );
+            let mut undo = Undo {
+                kind: UndoKind::Rename,
+                src: FileId::from(source.clone()),
+                dst: Some(FileId::from(target.clone())),
+                trash: None,
+                old: None,
+                new: None,
+                new_rev: None,
+                opaque_rev: None,
+                created: false,
+                moved: false,
+            };
+            crate::model::write_target::with_folding_alias(&dst, &src, || {
+                store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
+                tx.publish_move(&mut undo, &src, &dst).unwrap();
+            });
+            assert!(tx.spelling_moved(&FileId::from(source), &FileId::from(target)));
+            assert_eq!(fs::read(&dst).unwrap(), b"- body\n");
+            store.close();
+        }
+    }
+
+    #[test]
+    fn sb1_unicode_listed_hard_link_is_not_a_self_alias() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        let src = dir.path().join("pages/ß.md");
+        let dst = dir.path().join("pages/SS.md");
+        fs::write(&src, b"- kept\n").unwrap();
+        if dst.exists() {
+            return; // A full-folding volume cannot hold both directory entries.
+        }
+        fs::hard_link(&src, &dst).unwrap();
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let tx = store.page_plan(None);
+        assert_eq!(tx.source_spelling_alias(&src, &dst, &dst).unwrap(), false);
+        assert_eq!(fs::read(src).unwrap(), b"- kept\n");
+        assert_eq!(fs::read(dst).unwrap(), b"- kept\n");
         store.close();
     }
 }

@@ -5,10 +5,134 @@ use super::*;
 use git2::{Repository, Signature};
 use std::fs;
 
+#[test]
+fn sb1_autocommit_refuses_root_replacement_before_index_lock() {
+    let f = fixture(&[("pages/a.md", "- old\n")]);
+    fs::write(f.work.join("pages/a.md"), "- pending\n").unwrap();
+    let root = f.work.clone();
+    let moved = f._dir.path().join("moved");
+    super::super::git_run::lock_test_hook::install(move || {
+        fs::rename(&root, &moved).unwrap();
+        fs::create_dir(&root).unwrap();
+        Repository::init(&root).unwrap();
+    });
+    let error = commit_now(&f.work, "autosave").unwrap_err();
+    assert!(error.message().contains("GraphRootMoved"), "{error:?}");
+    assert!(!f.work.join(".git/index.lock").exists());
+    assert!(!f.work.join(".git/index").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn sb1_index_lock_refuses_a_redirected_index() {
+    let f = fixture(&[("pages/a.md", "- old\n")]);
+    let foreign = f._dir.path().join("foreign-index");
+    let original = fs::read(f.repo.path().join("index")).unwrap();
+    fs::write(&foreign, &original).unwrap();
+    fs::remove_file(f.repo.path().join("index")).unwrap();
+    std::os::unix::fs::symlink(&foreign, f.repo.path().join("index")).unwrap();
+    fs::write(f.work.join("pages/a.md"), "- pending\n").unwrap();
+    assert!(commit_now(&f.work, "autosave").is_err());
+    assert!(fs::symlink_metadata(f.repo.path().join("index"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(fs::read(foreign).unwrap(), original);
+}
+
+#[test]
+fn sb1_index_cleanup_preserves_files_after_metadata_root_replacement() {
+    let f = fixture(&[("pages/a.md", "- old\n")]);
+    let checked = open_checked(&f.work).unwrap();
+    let lock = IndexLock::acquire(&f.repo, checked.guard).unwrap();
+    let gitdir = f.repo.path();
+    let names: Vec<_> = fs::read_dir(gitdir)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name())
+        .filter(|name| name.to_string_lossy().starts_with("tine-index-") || name == "index.lock")
+        .collect();
+    let moved = f._dir.path().join("old-gitdir");
+    fs::rename(gitdir, &moved).unwrap();
+    fs::create_dir(gitdir).unwrap();
+    for name in &names {
+        fs::write(gitdir.join(name), b"replacement-owned").unwrap();
+    }
+    drop(lock);
+    for name in &names {
+        assert_eq!(fs::read(gitdir.join(name)).unwrap(), b"replacement-owned");
+        assert!(
+            moved.join(name).exists(),
+            "detached lock/copy left for inspection"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn sb1_repack_refuses_redirected_pack_directory() {
+    let f = fixture(&[("pages/a.md", "- old\n")]);
+    let outside = f._dir.path().join("foreign-pack");
+    fs::create_dir(&outside).unwrap();
+    let pack = f.repo.path().join("objects/pack");
+    fs::rename(&pack, f._dir.path().join("old-pack")).unwrap();
+    std::os::unix::fs::symlink(&outside, &pack).unwrap();
+    assert!(repack(&f.repo).is_err());
+    assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn sb1_libgit_refuses_redirected_object_fanout() {
+    let f = fixture(&[("pages/a.md", "- old\n")]);
+    let outside = f._dir.path().join("foreign-objects");
+    fs::create_dir(&outside).unwrap();
+    let objects = f.repo.path().join("objects");
+    let slot = (0..=255u8)
+        .map(|n| objects.join(format!("{n:02x}")))
+        .find(|path| !path.exists())
+        .unwrap();
+    std::os::unix::fs::symlink(&outside, &slot).unwrap();
+    fs::write(f.work.join("pages/a.md"), "- pending\n").unwrap();
+    assert!(commit_now(&f.work, "autosave").is_err());
+    assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn sb1_git_directory_alias_is_refused_before_any_metadata_write() {
+    let f = fixture(&[("pages/a.md", "- old\n")]);
+    let gitdir = f.work.join(".git");
+    let outside = f._dir.path().join("redirected-gitdir");
+    fs::rename(&gitdir, &outside).unwrap();
+    std::os::unix::fs::symlink(&outside, &gitdir).unwrap();
+    fs::write(f.work.join("pages/a.md"), "- pending\n").unwrap();
+    assert!(commit_now(&f.work, "autosave").is_err());
+}
+
 struct Fixture {
     _dir: tempfile::TempDir,
     work: PathBuf,
     repo: Repository,
+}
+
+#[test]
+fn sb1_linked_worktree_keeps_its_selected_git_metadata_scope() {
+    let f = fixture(&[("pages/a.md", "- old\n")]);
+    let tip = head(&f.repo).id();
+    let linked = f._dir.path().join("linked");
+    f.repo.worktree("linked", &linked, None).unwrap();
+    assert!(linked.join(".git").is_file());
+    fs::write(linked.join("pages/a.md"), "- linked edit\n").unwrap();
+    assert!(matches!(
+        commit_now(&linked, "autosave"),
+        Ok(Outcome::Committed(_))
+    ));
+    assert_eq!(head(&f.repo).id(), tip);
+    assert_eq!(
+        at_head(&Repository::open(linked).unwrap(), "pages/a.md").as_deref(),
+        Some("- linked edit\n")
+    );
 }
 
 /// A repository at `work` holding `files`, all committed by the user.
@@ -534,7 +658,7 @@ fn a_missing_index_refuses_instead_of_committing_deletions() {
 #[test]
 fn a_live_index_copy_survives_while_another_holds_the_lock() {
     let f = fixture(&[("pages/a.md", "- a\n")]);
-    let held = IndexLock::acquire(&f.repo).unwrap();
+    let held = IndexLock::acquire(&f.repo, open_checked(&f.work).unwrap().guard).unwrap();
     let copies = |dir: &Path| {
         fs::read_dir(dir)
             .unwrap()
@@ -874,7 +998,7 @@ fn a_crash_left_index_copy_is_removed_only_under_the_lock() {
     assert!(gitdir.join("index.lock").exists());
     // Once the lock is free, the next holder removes the leftovers.
     fs::remove_file(gitdir.join("index.lock")).unwrap();
-    drop(IndexLock::acquire(&f.repo).unwrap());
+    drop(IndexLock::acquire(&f.repo, open_checked(&f.work).unwrap().guard).unwrap());
     assert!(!gitdir.join("tine-index-abc.tmp").exists());
     assert!(!gitdir.join("tine-index-abc.tmp.lock").exists());
     assert!(!gitdir.join("index.lock").exists());

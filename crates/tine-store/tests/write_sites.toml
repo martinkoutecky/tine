@@ -90,7 +90,7 @@ guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "src-tauri/src/owner/git_autocommit_tests.rs#root_gitignore_keeps_the_non_page_revision_and_target_guards"
 oracle = false
 note = "D-20261026-GI: fixed root .gitignore only, through Store's non-page revision-guarded replace or no-replace create; no raw filesystem mutation or page write. Durable device-local attempt precedes the write; ordinary transaction crash scope applies."
-mutations = ".create=1"
+mutations = ".commit=1, .create=1"
 
 [[site]]
 file = "crates/tine-store/src/publish.rs"
@@ -1557,70 +1557,70 @@ mutations = ".write_all=1"
 file = "src-tauri/src/owner/git_autocommit.rs"
 fn = "remove_object"
 domain = "dotgit"
-guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = ""
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_repack_refuses_redirected_pack_directory"
 oracle = false
-note = "Repository-derived .git path/index/object/pack operation, protected by git's lock/publication protocol but no qualifying graph containment or bound-root guard. No page-data write; outside oracle."
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
 mutations = "fs::remove_file=1, fs::set_permissions=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_autocommit.rs"
-fn = "repack"
+fn = "repack_guarded"
 domain = "dotgit"
-guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = "src-tauri/src/owner/git_autocommit_tests.rs#repack_deletes_only_packed_loose_objects"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_repack_refuses_redirected_pack_directory"
 oracle = false
-note = "Repository-derived .git pack operation; no page-data write, outside oracle. Libgit2 fsyncs pack/index on writable creation handles before publishing; Tine syncs the pack directory and deletes only loose objects listed in that pack's index. Redundant read-only final-file sync removed for Windows (REG-AUTOCOMMIT-WINDOWS-REPACK)."
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
 mutations = ".write=1, fs::create_dir_all=1, fs::remove_dir=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_autocommit.rs"
 fn = "sync_dir"
 domain = "dotgit"
-guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = ""
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_repack_refuses_redirected_pack_directory"
 oracle = false
-note = "Repository-derived .git path/index/object/pack operation, protected by git's lock/publication protocol but no qualifying graph containment or bound-root guard. No page-data write; outside oracle."
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
 mutations = "directory_durability::sync_directory_entry=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_run.rs"
 fn = "IndexLock::acquire"
 domain = "dotgit"
-guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = ""
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_index_lock_refuses_a_redirected_index"
 oracle = false
-note = "Repository-derived .git path/index/object/pack operation, protected by git's lock/publication protocol but no qualifying graph containment or bound-root guard. No page-data write; outside oracle."
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
 mutations = ".create_new=1, .write=1, OpenOptions::new=1, fs::remove_file=3, fs::write=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_run.rs"
 fn = "IndexLock::drop"
 domain = "dotgit"
-guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = ""
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_index_cleanup_preserves_files_after_metadata_root_replacement"
 oracle = false
-note = "Repository-derived .git path/index/object/pack operation, protected by git's lock/publication protocol but no qualifying graph containment or bound-root guard. No page-data write; outside oracle."
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
 mutations = "fs::remove_file=3"
 
 [[site]]
 file = "src-tauri/src/owner/git_run.rs"
 fn = "IndexLock::install"
 domain = "dotgit"
-guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = ""
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_index_lock_refuses_a_redirected_index"
 oracle = false
-note = "Repository-derived .git path/index/object/pack operation, protected by git's lock/publication protocol but no qualifying graph containment or bound-root guard. No page-data write; outside oracle."
-mutations = ".sync_all=1, .write_all=1, fs::rename=1"
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
+mutations = ".sync_all=1, .write=1, .write_all=1, fs::rename=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_run.rs"
 fn = "remove_stale_copies"
 domain = "dotgit"
-guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = ""
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_index_lock_refuses_a_redirected_index"
 oracle = false
-note = "Repository-derived .git path/index/object/pack operation, protected by git's lock/publication protocol but no qualifying graph containment or bound-root guard. No page-data write; outside oracle."
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
 mutations = "fs::remove_file=1"
 
 [[site]]
@@ -1913,3 +1913,63 @@ test = "crates/tine-store/tests/host_only_writer.rs#public_transactions_refuse_d
 oracle = false
 note = "Public non-page wrapper queues a shared guarded create; preflight rejects a dynamically resolved page before any mutation."
 mutations = ".create=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_autocommit.rs"
+fn = "commit_locked"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirected_object_fanout"
+oracle = false
+note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
+mutations = ".commit=1, .write_tree_to=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_autocommit.rs"
+fn = "stage"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirected_object_fanout"
+oracle = false
+note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
+mutations = ".blob_writer=1, .commit=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_run.rs"
+fn = "Repo::advance"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirected_object_fanout"
+oracle = false
+note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
+mutations = ".reference=1, .reference_matching=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_run.rs"
+fn = "Repo::tree_with_parts"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirected_object_fanout"
+oracle = false
+note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
+mutations = ".write=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_run.rs"
+fn = "commit_pair"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirected_object_fanout"
+oracle = false
+note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
+mutations = ".blob=2, .commit=2"
+
+[[site]]
+file = "src-tauri/src/owner/git_run.rs"
+fn = "run_end"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirected_object_fanout"
+oracle = false
+note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
+mutations = ".commit=1"

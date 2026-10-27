@@ -959,6 +959,7 @@ pub fn run() {
             // already exited and cannot rotate the primary's diagnostics.
             // Tauri's app-data path is the sandbox-private home on mobile too.
             if let Ok(dir) = app.path().app_data_dir() {
+                data_home::classify_at_launch(&dir);
                 flight::persist_init(dir.join("diagnostics"));
             }
             diag("setup() begin");

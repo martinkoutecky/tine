@@ -372,6 +372,7 @@ mod name_search;
 #[cfg(test)]
 mod page_open_tests;
 mod page_read;
+mod scan_entry;
 mod snapshot;
 pub(crate) use snapshot::PublishedObservations;
 
@@ -1789,18 +1790,7 @@ impl Store {
             out: &mut Listing,
             pending: &mut Vec<PathBuf>,
         ) {
-            #[cfg(test)]
-            let forced = SCAN_FAULTS.with(|faults| {
-                let rel = dir.strip_prefix(root).unwrap_or(dir).to_string_lossy();
-                (faults.borrow().1.as_deref() == Some(rel.as_ref())).then(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        "injected list failure",
-                    )
-                })
-            });
-            #[cfg(not(test))]
-            let forced: Option<std::io::Error> = None;
+            let forced = scan_entry::forced_list_failure(root, dir);
             let entries = match forced.map_or_else(|| fs::read_dir(dir), Err) {
                 Ok(entries) => entries,
                 Err(error) => {
@@ -1859,17 +1849,7 @@ impl Store {
                 if area == Area::Meta && rel != "config.edn" && rel != "custom.css" {
                     continue;
                 }
-                #[cfg(test)]
-                let forced = SCAN_FAULTS.with(|faults| {
-                    (faults.borrow().0.as_deref() == Some(rel.as_str())).then(|| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::PermissionDenied,
-                            "injected stat failure",
-                        )
-                    })
-                });
-                #[cfg(not(test))]
-                let forced: Option<std::io::Error> = None;
+                let forced = scan_entry::forced_stat_failure(&rel);
                 let ty = match forced.map_or_else(|| entry.file_type(), Err) {
                     Ok(ty) => ty,
                     Err(error) => {
@@ -1894,7 +1874,10 @@ impl Store {
                         ));
                     }
                 } else if ty.is_file() {
-                    match entry.metadata() {
+                    let Some(meta) = scan_entry::listed_file_metadata(&entry, &path) else {
+                        continue;
+                    };
+                    match meta {
                         Ok(meta) => {
                             if let Ok(id) = store.file_id(area, &rel) {
                                 out.files.push(FileEntry {
@@ -2185,12 +2168,6 @@ pub struct Listing {
     /// Area-relative names that could not be read, with their errors. An empty
     /// name means directory iteration failed before an entry name was available.
     pub unreadable: Vec<(String, crate::IoError)>,
-}
-
-#[cfg(test)]
-thread_local! {
-    static SCAN_FAULTS: std::cell::RefCell<(Option<String>, Option<String>)> =
-        const { std::cell::RefCell::new((None, None)) };
 }
 
 /// Journal day encoded as a `yyyymmdd` integer. Construct it from
@@ -5531,11 +5508,11 @@ mod rev5_tests {
         fs::write(root.join("pages/Unreadable.md"), b"- page\n").unwrap();
         fs::write(root.join("pages/nested/Inside.md"), b"- page\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
-        SCAN_FAULTS.with(|faults| {
+        scan_entry::SCAN_FAULTS.with(|faults| {
             *faults.borrow_mut() = (Some("Unreadable.md".into()), Some("nested".into()));
         });
         let listing = store.scan_area(Area::Pages, None).unwrap();
-        SCAN_FAULTS.with(|faults| *faults.borrow_mut() = (None, None));
+        scan_entry::SCAN_FAULTS.with(|faults| *faults.borrow_mut() = (None, None));
         assert_eq!(
             listing
                 .unreadable
@@ -5544,6 +5521,61 @@ mod rev5_tests {
                 .collect::<Vec<_>>(),
             vec!["Unreadable.md", "nested"]
         );
+        assert!(listing.files.is_empty());
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Martin 10/27: a journal a sync tool was replacing (old version moved
+    /// away, new one moved in) was reported "No such file or directory" while
+    /// it existed and loaded. A listed file that vanishes before its metadata
+    /// read is gone or being replaced, never unreadable.
+    #[test]
+    fn scan_treats_a_file_vanishing_mid_scan_as_gone_or_replaced() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-scan-vanish-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("journals")).unwrap();
+        fs::write(root.join("journals/2026_10_26.md"), b"- day\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+
+        // Replaced: gone at the first look, back at the second.
+        let parked = root.join("journals-parked.md");
+        let (away, back) = (parked.clone(), parked.clone());
+        scan_entry::SCAN_HOOKS.with(|hooks| {
+            *hooks.borrow_mut() = (
+                Some(Box::new(move |path: &Path| {
+                    fs::rename(path, &away).unwrap()
+                })),
+                Some(Box::new(move |path: &Path| {
+                    fs::rename(&back, path).unwrap()
+                })),
+            );
+        });
+        let listing = store.scan_area(Area::Journals, None).unwrap();
+        assert!(listing.unreadable.is_empty(), "{:?}", listing.unreadable);
+        assert_eq!(
+            listing
+                .files
+                .iter()
+                .map(|f| f.rel.as_str())
+                .collect::<Vec<_>>(),
+            ["2026_10_26.md"]
+        );
+
+        // Removed: gone at both looks.
+        scan_entry::SCAN_HOOKS.with(|hooks| {
+            *hooks.borrow_mut() = (
+                Some(Box::new(|path: &Path| fs::remove_file(path).unwrap())),
+                None,
+            );
+        });
+        let listing = store.scan_area(Area::Journals, None).unwrap();
+        scan_entry::SCAN_HOOKS.with(|hooks| *hooks.borrow_mut() = (None, None));
+        assert!(listing.unreadable.is_empty(), "{:?}", listing.unreadable);
         assert!(listing.files.is_empty());
         drop(store);
         fs::remove_dir_all(root).unwrap();
