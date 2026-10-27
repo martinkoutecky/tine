@@ -8,41 +8,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
-### Fixed
-
-- Queries and boards in a published export show their results again instead of “Query couldn't be loaded: This is a read-only published export.” (development-only regression; UI-PUBLISHED-QUERY-SUBSCRIPTION).
-- Opening the right sidebar by a remapped shortcut keeps the main editor and caret when the sidebar shows the same block (UI-EDITOR-LATE-MOUNT).
-- Windows: automatic git cleanup no longer fails while flushing completed packs. Failed cleanup preserves loose objects, keeps commits running, and shows a quiet retry status in Settings → Git (REG-AUTOCOMMIT-WINDOWS-REPACK).
-- Clicking another block while journal days load keeps its editor and focus when the earlier Down navigation finishes (UI-EDITOR-C2).
-- Logseq-style query tables now let you toggle columns through View and save the choice as Logseq-compatible `query-properties::` (GH #749).
-- Date-shaped links open an existing ordinary page when no journal file exists for the day, avoiding an empty duplicate journal (UI-DATE-PAGE-LINK).
-- Backspace and Delete merges drop the absorbed block's hidden heading, flashcard state and clocks; referenced IDs transfer when possible, and merges that would lose a referenced ID leave both blocks in place (REG-F2-MERGE-HIDDEN-ROWS, hDI40A).
-- Links inside query-result ancestor breadcrumbs are clickable again (GH #743).
-- The “Pages tagged with” section stays folded when you return to a tab (GH #739).
-- Shift-click a calendar day, **Today**, or the calendar button to open that journal in the right sidebar, as in Logseq (GH #740).
-- A page embed's icon aligns with the first line of a title that wraps (GH #770).
-- Backspace removes an empty bullet inside a block embed when its source ancestor is folded (GH #766).
-- Refused renames of pages with duplicate identities now name the conflicting graph-relative files and explain that they must be merged or removed (GH #774).
-- Automatic git commits leave out Syncthing temporary files, add `.syncthing.*` to the graph's `.gitignore` once, and say so once in a toast and in Settings → Git. Removing the rule is respected; conflict copies remain committed (REG-AUTOCOMMIT-SYNCTHING-TEMP, D-20261026-GI).
-- macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
-- Linux release checks complete alias navigation despite WebDriver screenshot stalls and read the backlink count separately from tagged pages (GH #62, GH #179).
-- Quick share initializes Android's device certificate verifier before connecting to GitHub, and packages its matching Kotlin component (D-20261025-QV).
-- Journal feeds, Upcoming, calendar dots and slash templates now refresh from their relevant changes, avoiding unrelated reads while typing (GH #746).
-- Sidebar disclosure arrows now use the shared SVG triangle, including nested Favorites, Tabs and namespaces; graph and workspace switchers inherit the app font (GH #761).
-- Cmd+, on macOS and Ctrl+, elsewhere open Settings, including while editing a block; the existing `t s` shortcut remains available and both defaults appear in Keyboard shortcuts (GH #762).
-- Queries skip unrelated saves and graph-wide queries wait for a 1.5-second typing pause; collapsed reference sections keep their last count with a stale indicator until opened (GH #746).
-- Clock queries invalidate when an edit follows an expired instant, and Pages and blocks queries keep the typing pause even when subscription renewal finishes late (GH #746).
-- Linux: input methods can show composing text inside the editor. Verified with IBus Hangul; this may fix Fcitx5 input not appearing (GH #575), but Fcitx5/Hyprland remains unverified.
-- Mobile: the help "?" button no longer covers the last buttons of the bottom-docked formatting toolbar while text is selected, with or without the keyboard (internal UI-HELP-FAB-ABOVE-DOCKED-TOOLBAR).
-- Block references keep resolving after a block moves between pages and after reopening the graph; dangling references no longer scan unrelated pages (GH #746, GH #623).
-- The exact block-owner index builds in bulk at cold launch and writes compact checkpoint rows without temporary page copies (GH #623).
-- The exact block-owner index keeps UUID keys in 16 bytes and shares one allocation per tree node, reducing its memory use on large graphs (GH #623).
-- **Opening and scrolling a large page right after typing is fast again** (development only, internal card hDSCuw): the typing-stall diagnostics added for GH #746 ran work on every frame for two seconds after each key, which made a page opened from search or the page switcher, and its first scroll, about a frame slower. They now do no per-frame work.
-- Quick Capture keeps refused text on Escape, so reopening the box files it into the current graph; a claim retired before insertion no longer reports previous-graph uncertainty (GH #254). Deleting a conflicted page now refuses an unanswered input drain after five seconds and restores editable text.
-- Reference and embed rows validate their source page before becoming editable, so a copied block identity cannot expose another page's live block or selection (follow-up to GH #748).
-- Moving a graph preserves access to device-local unsaved edits through **Recover into this graph** and stops saves when an open folder moves or disconnects. Recovery excludes hosts still saving; open graphs permit drive eject, and recovery/backup notices explain that a graph may be moved or unavailable, including on a disconnected drive (L9-01, L9-02).
-- Windows now holds the same account-wide graph owner lock as Linux and macOS, so concurrent Tine apps cannot host one graph or adopt its live drafts (L9-01, L9-02).
-- An asset stays in place if sync replaces a set-aside duplicate journal while Tine checks whether the asset is unused; the check refuses stale bytes even when the replacement keeps the same length and modification time (GH #623).
 ### Added
 
 - Desktop: **Open in default app** beside the graph and global CSS editors in Settings, with matching command-palette actions. External global CSS edits now apply live across graph windows (GH #778).
@@ -102,6 +67,44 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **A task priority `[#A]` / `[#B]` / `[#C]` is a reference to the page A / B / C**, as in Logseq: the block appears in that page's Linked References, and queries on `[[A]]` or `[[TODO]]` find blocks by their priority or task marker. Only a priority in the block's header counts. Derived reference data rebuilds once on first launch.
 - **Editing an alias, or renaming or deleting an aliased page, no longer re-reads every page**: once the alias index exists, it is patched for the pages the edit changed instead of being rebuilt by a walk over the whole graph. On a generated 10,000-page graph the first alias lookup after such an edit examines 1 page instead of 10,000 (D-20261018-M2c).
 
+### Fixed
+
+- Opening the right sidebar by a remapped shortcut keeps the main editor and caret when the sidebar shows the same block (UI-EDITOR-LATE-MOUNT).
+- Windows: automatic git cleanup no longer fails while flushing completed packs. Failed cleanup preserves loose objects, keeps commits running, and shows a quiet retry status in Settings → Git (REG-AUTOCOMMIT-WINDOWS-REPACK).
+- Clicking another block while journal days load keeps its editor and focus when the earlier Down navigation finishes (UI-EDITOR-C2).
+- Logseq-style query tables now let you toggle columns through View and save the choice as Logseq-compatible `query-properties::` (GH #749).
+- Date-shaped links open an existing ordinary page when no journal file exists for the day, avoiding an empty duplicate journal (UI-DATE-PAGE-LINK).
+- Backspace and Delete merges drop the absorbed block's hidden heading, flashcard state and clocks; referenced IDs transfer when possible, and merges that would lose a referenced ID leave both blocks in place (REG-F2-MERGE-HIDDEN-ROWS, hDI40A).
+- Links inside query-result ancestor breadcrumbs are clickable again (GH #743).
+- The “Pages tagged with” section stays folded when you return to a tab (GH #739).
+- Shift-click a calendar day, **Today**, or the calendar button to open that journal in the right sidebar, as in Logseq (GH #740).
+- A page embed's icon aligns with the first line of a title that wraps (GH #770).
+- Backspace removes an empty bullet inside a block embed when its source ancestor is folded (GH #766).
+- Refused renames of pages with duplicate identities now name the conflicting graph-relative files and explain that they must be merged or removed (GH #774).
+- Automatic git commits leave out Syncthing temporary files, add `.syncthing.*` to the graph's `.gitignore` once, and say so once in a toast and in Settings → Git. Removing the rule is respected; conflict copies remain committed (REG-AUTOCOMMIT-SYNCTHING-TEMP, D-20261026-GI).
+- macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
+- Quick share initializes Android's device certificate verifier before connecting to GitHub, and packages its matching Kotlin component (D-20261025-QV).
+- Journal feeds, Upcoming, calendar dots and slash templates now refresh from their relevant changes, avoiding unrelated reads while typing. Queries skip unrelated saves and graph-wide queries wait for a 1.5-second typing pause; collapsed reference sections keep their last count with a stale indicator until opened. Clock queries invalidate when an edit follows an expired instant, and Pages and blocks queries keep the typing pause even when subscription renewal finishes late (GH #746).
+- Sidebar disclosure arrows now use the shared SVG triangle, including nested Favorites, Tabs and namespaces; graph and workspace switchers inherit the app font (GH #761).
+- Cmd+, on macOS and Ctrl+, elsewhere open Settings, including while editing a block; the existing `t s` shortcut remains available and both defaults appear in Keyboard shortcuts (GH #762).
+- Linux: input methods can show composing text inside the editor. Verified with IBus Hangul; this may fix Fcitx5 input not appearing (GH #575), but Fcitx5/Hyprland remains unverified.
+- Mobile: the help "?" button no longer covers the last buttons of the bottom-docked formatting toolbar while text is selected, with or without the keyboard (internal UI-HELP-FAB-ABOVE-DOCKED-TOOLBAR).
+- Block references keep resolving after a block moves between pages and after reopening the graph; dangling references no longer scan unrelated pages (GH #746, GH #623).
+- The exact block-owner index builds in bulk at cold launch and writes compact checkpoint rows without temporary page copies (GH #623).
+- The exact block-owner index keeps UUID keys in 16 bytes and shares one allocation per tree node, reducing its memory use on large graphs (GH #623).
+- Quick Capture keeps refused text on Escape, so reopening the box files it into the current graph; a claim retired before insertion no longer reports previous-graph uncertainty (GH #254). Deleting a conflicted page now refuses an unanswered input drain after five seconds and restores editable text.
+- Reference and embed rows validate their source page before becoming editable, so a copied block identity cannot expose another page's live block or selection (follow-up to GH #748).
+- Moving a graph preserves access to device-local unsaved edits through **Recover into this graph** and stops saves when an open folder moves or disconnects. Recovery excludes hosts still saving; open graphs permit drive eject, and recovery/backup notices explain that a graph may be moved or unavailable, including on a disconnected drive (L9-01, L9-02).
+- Windows now holds the same account-wide graph owner lock as Linux and macOS, so concurrent Tine apps cannot host one graph or adopt its live drafts (L9-01, L9-02).
+- An asset stays in place if sync replaces a set-aside duplicate journal while Tine checks whether the asset is unused; the check refuses stale bytes even when the replacement keeps the same length and modification time (GH #623).
+
+- A page file that a sync tool is replacing while Tine lists the folder is no longer reported as "couldn't be read" (REG-SCAN-VANISHED-ENTRY).
+
+Development-only fixes (not shipped in a release):
+
+- Queries and boards in a published export show their results again instead of “Query couldn't be loaded: This is a read-only published export.” (development-only regression; UI-PUBLISHED-QUERY-SUBSCRIPTION).
+- **Opening and scrolling a large page right after typing is fast again** (development only, internal card hDSCuw): the typing-stall diagnostics added for GH #746 ran work on every frame for two seconds after each key, which made a page opened from search or the page switcher, and its first scroll, about a frame slower. They now do no per-frame work.
+
 ## [0.8.1] - 2026-10-27
 
 Bug fixes for Tine 0.8.0: a blank window on Linux with older NVIDIA drivers, a new page in the right sidebar, cloze reveal, Expand and Collapse in embeds, and a Windows save race.
@@ -117,46 +120,26 @@ Bug fixes for Tine 0.8.0: a blank window on Linux with older NVIDIA drivers, a n
 - Clicking a hidden `{{cloze}}` reveals the answer in place again (and hides it on a second click), instead of opening the block editor (GH #763).
 
 - Expand and Collapse (one level) now follow a block embed's own folds and open or close child page embeds, while keeping embedded source folds separate (GH #768, GH #769).
+
+## [0.8.0] - 2026-10-26
+
+Tine 0.8.0 makes the Tine Beta line stable. It is Tine Beta 0.8.0-beta.12
+(the twelve Beta sections below list everything it changed since 0.7.0; the
+0.7.1 to 0.7.4 fixes are included) plus the macOS command-line fix in this
+section. Your settings, graphs and sessions carry over from 0.7.x. The
+highlights: a command line on Linux and macOS for reading pages, journals,
+search and queries; the interface in Simplified Chinese; the Android share
+sheet, launcher shortcuts and a Quick capture tile, and an iOS share
+extension; a Journal sections page for choosing what today's journal shows;
+page icons; and saving moved into one background page host per graph, so
+every edit is saved as you type, from any window.
+
+### Changed
+- Stable Tine now carries the 0.8 Beta line. Beta keeps its separate app and update channel, and continues with the next development line.
+
 ### Fixed
 
-- Linux: automatically apply the WebKitGTK DMABUF workaround when an NVIDIA driver older than 610 is loaded, avoiding the blank window reported with the 0.8.0 AppImage on legacy drivers; newer NVIDIA drivers keep GPU rendering. Explicit `TINE_GPU` and `WEBKIT_DISABLE_DMABUF_RENDERER` settings keep precedence (GH #777).
-- Opening the right sidebar by a remapped shortcut keeps the main editor and caret when the sidebar shows the same block (UI-EDITOR-LATE-MOUNT).
-- Windows: automatic git cleanup no longer fails while flushing completed packs. Failed cleanup preserves loose objects, keeps commits running, and shows a quiet retry status in Settings → Git (REG-AUTOCOMMIT-WINDOWS-REPACK).
-- Clicking another block while journal days load keeps its editor and focus when the earlier Down navigation finishes (UI-EDITOR-C2).
-- Logseq-style query tables now let you toggle columns through View and save the choice as Logseq-compatible `query-properties::` (GH #749).
-- Date-shaped links open an existing ordinary page when no journal file exists for the day, avoiding an empty duplicate journal (UI-DATE-PAGE-LINK).
-- Backspace and Delete merges drop the absorbed block's hidden heading, flashcard state and clocks; referenced IDs transfer when possible, and merges that would lose a referenced ID leave both blocks in place (REG-F2-MERGE-HIDDEN-ROWS, hDI40A).
-- Links inside query-result ancestor breadcrumbs are clickable again (GH #743).
-- The “Pages tagged with” section stays folded when you return to a tab (GH #739).
-- Shift-click a calendar day, **Today**, or the calendar button to open that journal in the right sidebar, as in Logseq (GH #740).
-- A page embed's icon aligns with the first line of a title that wraps (GH #770).
-- Backspace removes an empty bullet inside a block embed when its source ancestor is folded (GH #766).
-- Expand and Collapse (one level) now follow a block embed's own folds and open or close child page embeds, while keeping embedded source folds separate (GH #768, GH #769).
-- Refused renames of pages with duplicate identities now name the conflicting graph-relative files and explain that they must be merged or removed (GH #774).
-- Automatic git commits leave out Syncthing temporary files, add `.syncthing.*` to the graph's `.gitignore` once, and say so once in a toast and in Settings → Git. Removing the rule is respected; conflict copies remain committed (REG-AUTOCOMMIT-SYNCTHING-TEMP, D-20261026-GI).
 - macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
-- Quick share initializes Android's device certificate verifier before connecting to GitHub, and packages its matching Kotlin component (D-20261025-QV).
-- Journal feeds, Upcoming, calendar dots and slash templates now refresh from their relevant changes, avoiding unrelated reads while typing. Queries skip unrelated saves and graph-wide queries wait for a 1.5-second typing pause; collapsed reference sections keep their last count with a stale indicator until opened. Clock queries invalidate when an edit follows an expired instant, and Pages and blocks queries keep the typing pause even when subscription renewal finishes late (GH #746).
-- Sidebar disclosure arrows now use the shared SVG triangle, including nested Favorites, Tabs and namespaces; graph and workspace switchers inherit the app font (GH #761).
-- Cmd+, on macOS and Ctrl+, elsewhere open Settings, including while editing a block; the existing `t s` shortcut remains available and both defaults appear in Keyboard shortcuts (GH #762).
-- Linux: input methods can show composing text inside the editor. Verified with IBus Hangul; this may fix Fcitx5 input not appearing (GH #575), but Fcitx5/Hyprland remains unverified.
-- A brand-new page with no file yet now shows an editable first bullet when opened in the right sidebar, so you can type or drag blocks into it without first editing it in the main pane (GH #524).
-- Clicking a hidden `{{cloze}}` reveals the answer in place again (and hides it on a second click), instead of opening the block editor (GH #763).
-- Mobile: the help "?" button no longer covers the last buttons of the bottom-docked formatting toolbar while text is selected, with or without the keyboard (internal UI-HELP-FAB-ABOVE-DOCKED-TOOLBAR).
-- Windows: a save made while the previous save of the same page was still replacing the file is no longer refused as "write target escapes graph root" when Windows reports the replaced file's location for the page (internal REG-WIN-WRITE-TARGET-DISPLACED; completes the 0.8.0-beta.4 fix).
-- Block references keep resolving after a block moves between pages and after reopening the graph; dangling references no longer scan unrelated pages (GH #746, GH #623).
-- The exact block-owner index builds in bulk at cold launch and writes compact checkpoint rows without temporary page copies (GH #623).
-- The exact block-owner index keeps UUID keys in 16 bytes and shares one allocation per tree node, reducing its memory use on large graphs (GH #623).
-- Quick Capture keeps refused text on Escape, so reopening the box files it into the current graph; a claim retired before insertion no longer reports previous-graph uncertainty (GH #254). Deleting a conflicted page now refuses an unanswered input drain after five seconds and restores editable text.
-- Reference and embed rows validate their source page before becoming editable, so a copied block identity cannot expose another page's live block or selection (follow-up to GH #748).
-- Moving a graph preserves access to device-local unsaved edits through **Recover into this graph** and stops saves when an open folder moves or disconnects. Recovery excludes hosts still saving; open graphs permit drive eject, and recovery/backup notices explain that a graph may be moved or unavailable, including on a disconnected drive (L9-01, L9-02).
-- Windows now holds the same account-wide graph owner lock as Linux and macOS, so concurrent Tine apps cannot host one graph or adopt its live drafts (L9-01, L9-02).
-- An asset stays in place if sync replaces a set-aside duplicate journal while Tine checks whether the asset is unused; the check refuses stale bytes even when the replacement keeps the same length and modification time (GH #623).
-
-Development-only fixes (not shipped in a release):
-
-- Queries and boards in a published export show their results again instead of “Query couldn't be loaded: This is a read-only published export.” (development-only regression; UI-PUBLISHED-QUERY-SUBSCRIPTION).
-- **Opening and scrolling a large page right after typing is fast again** (development only, internal card hDSCuw): the typing-stall diagnostics added for GH #746 ran work on every frame for two seconds after each key, which made a page opened from search or the page switcher, and its first scroll, about a frame slower. They now do no per-frame work.
 
 ## [0.8.0-beta.12] - 2026-10-24
 
