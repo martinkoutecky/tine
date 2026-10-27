@@ -217,6 +217,49 @@ fn recording(kinds: &Kinds) -> impl FnMut(&str, &[EditKind]) + Send + 'static {
     move |page, taken| kinds.lock().unwrap().push((page.into(), taken.to_vec()))
 }
 
+#[test]
+fn bound_page_saves_reach_store_diagnostics() {
+    let live = Live::new(&[("pages/a.md", "- one\n"), ("pages/b.md", "- bee\n")]);
+    assert_eq!(
+        live.store.diagnostics()["storage"]["pageSaves"]["published"],
+        0
+    );
+    assert_eq!(
+        live.store.diagnostics()["storage"]["pageSaves"]["failedOrRefused"],
+        0
+    );
+
+    let (key, page) = live.open("pages/a.md");
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    live.until_indexed(&key, "- two\n");
+    assert_eq!(live.disk(&key), "- two\n");
+    assert_eq!(
+        live.store.diagnostics()["storage"]["pageSaves"]["published"],
+        1
+    );
+
+    // Fail before publication and keep retries failing until the assertion.
+    // The report must expose the real host's failures, not a separate counter.
+    let (key, page) = live.open("pages/b.md");
+    live.faults(Phase::PageTemp, 100);
+    let id = live
+        .submit(&key, "- unsaved\n", page.version, None)
+        .unwrap();
+    live.answer(&key, id);
+    live.wait(&key, "failed save", |mail| mail.notice.save_error);
+    assert_eq!(live.disk(&key), "- bee\n");
+    let report = live.store.diagnostics();
+    assert_eq!(report["storage"]["pageSaves"]["published"], 1);
+    assert!(
+        report["storage"]["pageSaves"]["failedOrRefused"]
+            .as_u64()
+            .unwrap()
+            >= 1
+    );
+    live.host.stop();
+}
+
 impl Live {
     fn new(files: &[(&str, &str)]) -> Self {
         Self::with(files, false)
