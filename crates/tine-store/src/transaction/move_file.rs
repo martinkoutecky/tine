@@ -578,10 +578,11 @@ mod spelling_tests {
         store.inject_fault(FaultPoint::CaseMoveAliasNoop);
         let src = dir.path().join(from.as_str());
         let dst = dir.path().join(to.as_str());
-        assert!(tx.publish_move(&mut undo, &src, &dst).is_err());
+        let published = tx.publish_move(&mut undo, &src, &dst);
+        assert!(published.is_err());
         assert!(
             undo.created,
-            "the provider returned success from rename_replace"
+            "the provider returned success from rename_replace; publish_move: {published:?}"
         );
         // Exercise the same post-call observation used by respell_entry.
         assert!(!tx.spelling_moved(&from, &to));
