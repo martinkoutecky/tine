@@ -27,7 +27,12 @@
 # L9-02: canonical_root can resolve a path, but cannot compare it with a retiring
 # Store's held physical witness. check_graph_root supplies that lifecycle check
 # before adoption; it exposes no path, inode, cache or new persisted identity.
-## Lifecycle (ceiling: 25)
+# SB1-DURABLE (D-20261027-SB1): application git writes (libgit2 autocommit, cleanup)
+# mutate repository metadata directories (.git, linked worktree metadata) that no Store
+# owns. check_graph_root answers only "is this Store's root still the one opened"; it
+# cannot bind a directory outside a Store, so BoundDirectory gives the app the same root
+# witness and containment check for those directories before it hands paths to libgit2.
+## Lifecycle (ceiling: 30)
 enum store::WatchMode
 enum store::OpenError
 field store::GraphAccessInspection.external_assets
@@ -41,6 +46,11 @@ fn store::Store::suggest_graph_name
 fn store::Store::inspect
 fn store::Store::canonical_root
 fn root_binding::Store::check_graph_root
+struct root_binding::BoundDirectory
+fn root_binding::BoundDirectory::new
+fn root_binding::BoundDirectory::root
+fn root_binding::BoundDirectory::check
+fn root_binding::BoundDirectory::check_path
 fn store::GraphAccessInspection::approves_external_assets
 fn store::Store::open
 fn store::Store::set_watch_mode
@@ -448,7 +458,7 @@ field page_host::HostRead.page
 field page_host::HostRead.bytes
 field page_host::HostRead.revision
 enum page_host::HostReadError
-## Re-exports (ceiling: 12)
+## Re-exports (ceiling: 13)
 # GX4 S4: typed parameters/results for the existing reader registration door.
 use crate::store::change_summary::{QueryRegistration,QuerySubscription}
 use crate::tine_outline::edit_kind
@@ -464,3 +474,5 @@ use store::tine_core::model::{FileId,PageId}
 # Card hB9Zjw: the inventory types moved beside their implementation in
 # store/inventory.rs (size ratchet seam); the same items, re-exported by store.
 use store::inventory::{Inventory,InventoryEntry,InventoryScope}
+# SB1-DURABLE: the app's git writer names it as tine_store::BoundDirectory.
+use crate::root_binding::BoundDirectory

@@ -933,6 +933,18 @@ fn public_paths_are_only_inputs_and_handoffs() {
             "validated file path to OS",
         ),
         (
+            "root_binding::BoundDirectory::new",
+            "repository metadata directory from libgit2, bound before app git writes",
+        ),
+        (
+            "root_binding::BoundDirectory::root",
+            "bound repository metadata directory handed back to libgit2",
+        ),
+        (
+            "root_binding::BoundDirectory::check_path",
+            "libgit2 mutation target checked against the bound directory",
+        ),
+        (
             "store::ConfigState.asset_trash_location",
             "trash location in user-facing error",
         ),
