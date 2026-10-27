@@ -294,7 +294,10 @@ impl DirectoryCreation {
     }
 
     pub(crate) fn has_sync_debt(&self) -> bool {
-        !self.parents.is_empty()
+        // A re-plan can replace recorded debt with missing components. They
+        // still owe parent syncs once created (or restored before mkdir), so an
+        // error before the first mkdir must not make this plan disposable.
+        !self.parents.is_empty() || !self.missing.is_empty()
     }
 
     pub(crate) fn finish(
@@ -306,8 +309,8 @@ impl DirectoryCreation {
         if let Err(error) = &result {
             // An ancestor can disappear at the pre-mkdir check, mkdir itself,
             // or sync, including during a current-chain retry. Keep the queues
-            // and unpaid debt on this failure; the next attempt explicitly
-            // replaces them through the same re-plan policy as stale identities.
+            // and unpaid obligations on this failure; the next attempt replaces
+            // them with current-chain debt and missing-component obligations.
             // Root detachment and outside substitutions still fail their guards.
             if matches!(
                 error.kind(),
@@ -328,6 +331,8 @@ impl DirectoryCreation {
             // The previous attempt reported non-durable creation, not payment
             // of the detached epoch's debt. Retry owes the entire current
             // chain, including existing replacements left by another writer.
+            // Missing entries also retain custody until their guarded mkdir
+            // (including AlreadyExists after restoration) records parent debt.
             let mut next = Self::new(&self.target, &self.bound)?;
             let mut entry = self.target.as_path();
             while entry != self.bound {

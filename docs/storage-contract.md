@@ -182,19 +182,28 @@ queues its parent for sync, with process-local identity witnesses for both the
 created entry and that parent. Before each path-based sync the same checks run,
 and both identities are checked before and after sync using RootBinding's
 existing platform policy (REG-M3-SYNC-AFTER-PARENT-LOSS).
-Unpaid sync obligations survive errors, Discard and page Close in the graph
-adapter until paid by a retry, replaced by a current-chain plan after an explicit
-non-durable result, or until the graph adapter closes. Failed attempts
-that created nothing are removed immediately. No plan holds directory handles
-or requires read access to ancestors merely to create a folder. A stable,
+The graph adapter retains a failed plan across Discard, page Close and retries
+while it has recorded parent debt or missing components. Re-planning after an
+explicit non-durable result replaces stale witnesses with current-chain
+obligations: existing entries record parent debt; missing components owe it
+once created or encountered as AlreadyExists after restoration. A refusal
+before the first replacement mkdir cannot dispose of that plan. Only a
+successful finish or an empty pair of obligation queues permits removal;
+closing the adapter also ends this process-local custody. This is not a
+persistent debt journal or retention by the one-shot helpers.
+No plan holds directory handles or requires read access to ancestors merely
+to create a folder. A stable,
 contained replacement parent first reports the old creation non-durable. The
 next attempt re-plans the target and syncs the entire current directory chain,
 including existing replacement entries. It does not acknowledge detached debt
 or loop forever on its stale witness. A missing ancestor detected at the
 pre-mkdir check or mkdir also requests this re-plan, even while descendants
 remain to be created or a previous re-plan is interrupted. The failed attempt
-retains its queues and unpaid obligations; a stable retry replaces them with
-the current-chain obligations before creating and syncing that chain. Re-planning
+retains its current queues; a retry requesting re-planning constructs both
+replacement queues before installing them. Retaining a missing component
+ensures that restoration of an earlier ancestor still records and pays its
+parent sync. Once interference ends, a stable contained chain can complete
+through the original identity and containment guards. Re-planning
 still uses the original root binding and checks containment; restoring the
 original identity also allows a retry after a containment refusal.
 Detected root detachment fails as `GraphRootMoved`; an outside parent or an

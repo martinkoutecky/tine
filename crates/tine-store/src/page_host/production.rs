@@ -258,9 +258,10 @@ impl ProductionIo {
             crate::cost_counters::fsync();
             durability::sync_directory_entry(dir)
         });
-        // Failed attempts that created nothing have no custody to retain.
-        // Created entries keep their sync debt across Discard/Close and retries,
-        // until paid or the graph adapter closes; no directory handle is held.
+        // Retain both recorded parent debt and missing-component obligations,
+        // including after a re-plan fails before its first mkdir. These survive
+        // Discard/Close and retries until paid or the graph adapter closes;
+        // no directory handle is held.
         if result.is_ok() || !creation.has_sync_debt() {
             self.directories.remove(dir);
         }
