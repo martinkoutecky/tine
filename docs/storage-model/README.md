@@ -17,8 +17,8 @@ host operation. It does not cover the UI, search, or how fast text is saved.
 - [`replay/`](replay/): the Quint-versus-Lean outcome replay, the evidence that the Lean copy behaves like
   the Quint model.
 
-**Where this stands (s3.5, the current model).** In the Lean proof, the three safety properties of the
-current model (the whole guarantee, `orderHolds` and `renameResolves`) hold in **every reachable state**, for
+**Where this stands (s3.5 safety proof, with the s3.6 supplement below).** In the Lean proof, the three safety properties of the
+s3.5 model (the whole guarantee, `orderHolds` and `renameResolves`) hold in **every reachable state**, for
 any number of pages and for every race profile (`Storage35.all_targets_reachable35_11`; exact scope and what
 it does not cover below). Each Lean round (the s2.1 rebuild aside) was rebuilt, audited and replayed by an
 independent verifier, and this package rebuilds from a clean checkout. The proof is about the abstract model. That the Lean copy equals
@@ -56,6 +56,43 @@ Under the assumptions below, the guarantee (`guarantee` in the models) says:
   s3.4 and s3.5, "the whole guarantee" (`guarantee`) is A, B, B′, C, G, the accepted non-losses and `trashed`;
   `orderHolds` and `renameResolves` are separate predicates, and the joint theorem
   `all_targets_reachable35_11` states all three.
+
+The SB1 **s3.6 supplement** (`quint/storage-s36.qnt`) restricts ordinary
+creating `flush` admission when another path claims the logical name. Input
+submission stays admitted. A refused physical attempt never publishes; input
+retention is checked separately against a risk-marking/draft endpoint. A claimant arriving after admission still relies on
+the production owner check. This adds no permanent global uniqueness or native
+check-to-call race guarantee. `MNC` bypasses the new guard and is caught before
+publication. The s3.5 files, invariants, bounds, mutants, full-state replay and
+Lean theorem retain their original hashes and scope; no s3.6 Lean proof is
+claimed.
+
+`replay/replay36.py` exports 36 semantic endpoints from actual Quint ITF tests
+(nine scenarios in four profiles). It hash-links both the model and scenarios
+to `s36-policy.json`. The new native binding tests use its base-profile
+creation endpoints, actual title/twin/unreadable claimant arrival, refusal,
+physical draft scans and departure/retry. The G3 test replays five progress
+journeys in all four profiles through the real driver and default `Progress`,
+without manually pumping saves or drafts: save, conflict draft, failed-save
+draft, draft refresh and three dirty pages. It compares the physical page and
+stable maps, buffer/base/conflict/risk/typed state and physical durable draft
+bytes/base/current version at bounded checkpoints. It is semantic endpoint
+replay, not full-state stepwise refinement of every scheduling interleaving.
+
+G3 assumes weakly fair driver scheduling, advancing time, finite input and
+interference, released locks and successful draft I/O. Each checkpoint allows
+5 seconds wall time and at most 10,000ms virtual-time advance. `MPD` deliberately
+starves the scheduled `draftSync` witness; `mMPD` fails its unchanged durable
+endpoint. Neither this bounded evidence nor the wakeup regression proves OS
+fairness or unbounded temporal liveness. Linux is the recorded execution
+platform; other target runtime acceptance remains separate.
+
+Reproduce the supplement with `rtk proxy python3 docs/storage-model/replay/replay36.py --check`
+and `rtk proxy python3 docs/storage-model/quint/cons36.py`, then the s3.6
+`sweep.py` (`QNT=storage-s36.qnt SCEN=scenarios-s36.inc`) and the unchanged
+s3.5 suite. `cons36.py` compares every old scenario under every old mutant in
+every profile, allowing only the two explicitly named newly refused creating
+flushes. Detailed ITF, comparison and mutant logs live in `artifacts/sb1-model/`.
 
 **Accepted, not losses** (SPEC-s2 §5, SPEC-s3 §3):
 - R1: another program writing a file between Tine's guard check and its rename. Its text is overwritten. No

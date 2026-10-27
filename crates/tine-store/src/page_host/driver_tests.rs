@@ -11,6 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+#[path = "s36_progress_tests.rs"]
+mod s36_progress_tests;
+
 #[derive(Clone, Default)]
 struct SharedClock(Arc<AtomicU64>);
 impl Clock for SharedClock {

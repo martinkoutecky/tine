@@ -1,0 +1,2443 @@
+{
+  "model_sha256": "9087f5d42754b0d71262c657728a409f208a06254a415745ca86da282bd43208",
+  "scenarios_sha256": "1174f3699ef89738f423a34ff241ced794243a2414f813e8ecb77c366ede098f",
+  "scope": "bounded semantic endpoints; default driver supplies scheduling; not full-state refinement",
+  "cases": [
+    {
+      "name": "ownPlainSlotRetained",
+      "profile": "base",
+      "model_steps": 10,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          -1
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [
+          2
+        ],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "bytes": 3,
+            "ver": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownPlainSlotLeaves",
+      "profile": "base",
+      "model_steps": 13,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          3
+        ],
+        "stable": [
+          1,
+          2,
+          3
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownPlainSlotUnrelated",
+      "profile": "base",
+      "model_steps": 12,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          3
+        ],
+        "stable": [
+          1,
+          2,
+          3
+        ],
+        "claimed": [
+          0
+        ],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownPlainSlotLate",
+      "profile": "base",
+      "model_steps": 11,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          -1
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [
+          2
+        ],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "bytes": 3,
+            "ver": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressSave",
+      "profile": "base",
+      "model_steps": 11,
+      "endpoint": {
+        "disk": [
+          3,
+          2,
+          -1
+        ],
+        "stable": [
+          3,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressConflict",
+      "profile": "base",
+      "model_steps": 10,
+      "endpoint": {
+        "disk": [
+          3,
+          2,
+          -1
+        ],
+        "stable": [
+          3,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 1,
+            "buf": 2,
+            "conflict": true,
+            "held": true,
+            "obs": 3,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": 1,
+            "bytes": 2,
+            "ver": 2
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressFailure",
+      "profile": "base",
+      "model_steps": 10,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          -1
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 1,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 1,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": 1,
+            "bytes": 3,
+            "ver": 2
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressRefresh",
+      "profile": "base",
+      "model_steps": 15,
+      "endpoint": {
+        "disk": [
+          3,
+          2,
+          -1
+        ],
+        "stable": [
+          3,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 1,
+            "buf": 1,
+            "conflict": true,
+            "held": true,
+            "obs": 3,
+            "risk": true,
+            "typed": true,
+            "ver": 3
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": 1,
+            "bytes": 1,
+            "ver": 3
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressThree",
+      "profile": "base",
+      "model_steps": 33,
+      "endpoint": {
+        "disk": [
+          3,
+          3,
+          3
+        ],
+        "stable": [
+          3,
+          3,
+          3
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 2,
+            "risk": false,
+            "typed": false,
+            "ver": 4
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 6
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownPlainSlotRetained",
+      "profile": "R1",
+      "model_steps": 10,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          -1
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [
+          2
+        ],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "bytes": 3,
+            "ver": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownPlainSlotLeaves",
+      "profile": "R1",
+      "model_steps": 13,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          3
+        ],
+        "stable": [
+          1,
+          2,
+          3
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownPlainSlotUnrelated",
+      "profile": "R1",
+      "model_steps": 12,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          3
+        ],
+        "stable": [
+          1,
+          2,
+          3
+        ],
+        "claimed": [
+          0
+        ],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownPlainSlotLate",
+      "profile": "R1",
+      "model_steps": 11,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          -1
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [
+          2
+        ],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "bytes": 3,
+            "ver": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressSave",
+      "profile": "R1",
+      "model_steps": 11,
+      "endpoint": {
+        "disk": [
+          3,
+          2,
+          -1
+        ],
+        "stable": [
+          3,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressConflict",
+      "profile": "R1",
+      "model_steps": 10,
+      "endpoint": {
+        "disk": [
+          3,
+          2,
+          -1
+        ],
+        "stable": [
+          3,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 1,
+            "buf": 2,
+            "conflict": true,
+            "held": true,
+            "obs": 3,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": 1,
+            "bytes": 2,
+            "ver": 2
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressFailure",
+      "profile": "R1",
+      "model_steps": 10,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          -1
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 1,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 1,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": 1,
+            "bytes": 3,
+            "ver": 2
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressRefresh",
+      "profile": "R1",
+      "model_steps": 15,
+      "endpoint": {
+        "disk": [
+          3,
+          2,
+          -1
+        ],
+        "stable": [
+          3,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 1,
+            "buf": 1,
+            "conflict": true,
+            "held": true,
+            "obs": 3,
+            "risk": true,
+            "typed": true,
+            "ver": 3
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": 1,
+            "bytes": 1,
+            "ver": 3
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressThree",
+      "profile": "R1",
+      "model_steps": 33,
+      "endpoint": {
+        "disk": [
+          3,
+          3,
+          3
+        ],
+        "stable": [
+          3,
+          3,
+          3
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 2,
+            "risk": false,
+            "typed": false,
+            "ver": 4
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 6
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownPlainSlotRetained",
+      "profile": "weak",
+      "model_steps": 10,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          -1
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [
+          2
+        ],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "bytes": 3,
+            "ver": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownPlainSlotLeaves",
+      "profile": "weak",
+      "model_steps": 13,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          3
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownPlainSlotUnrelated",
+      "profile": "weak",
+      "model_steps": 12,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          3
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [
+          0
+        ],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownPlainSlotLate",
+      "profile": "weak",
+      "model_steps": 11,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          -1
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [
+          2
+        ],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "bytes": 3,
+            "ver": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressSave",
+      "profile": "weak",
+      "model_steps": 11,
+      "endpoint": {
+        "disk": [
+          3,
+          2,
+          -1
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressConflict",
+      "profile": "weak",
+      "model_steps": 10,
+      "endpoint": {
+        "disk": [
+          3,
+          2,
+          -1
+        ],
+        "stable": [
+          3,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 1,
+            "buf": 2,
+            "conflict": true,
+            "held": true,
+            "obs": 3,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": 1,
+            "bytes": 2,
+            "ver": 2
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressFailure",
+      "profile": "weak",
+      "model_steps": 10,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          -1
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 1,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 1,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": 1,
+            "bytes": 3,
+            "ver": 2
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressRefresh",
+      "profile": "weak",
+      "model_steps": 15,
+      "endpoint": {
+        "disk": [
+          3,
+          2,
+          -1
+        ],
+        "stable": [
+          3,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 1,
+            "buf": 1,
+            "conflict": true,
+            "held": true,
+            "obs": 3,
+            "risk": true,
+            "typed": true,
+            "ver": 3
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": 1,
+            "bytes": 1,
+            "ver": 3
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressThree",
+      "profile": "weak",
+      "model_steps": 33,
+      "endpoint": {
+        "disk": [
+          3,
+          3,
+          3
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 2,
+            "risk": false,
+            "typed": false,
+            "ver": 4
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 6
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownPlainSlotRetained",
+      "profile": "all",
+      "model_steps": 10,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          -1
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [
+          2
+        ],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "bytes": 3,
+            "ver": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownPlainSlotLeaves",
+      "profile": "all",
+      "model_steps": 13,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          3
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownPlainSlotUnrelated",
+      "profile": "all",
+      "model_steps": 12,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          3
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [
+          0
+        ],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownPlainSlotLate",
+      "profile": "all",
+      "model_steps": 11,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          -1
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [
+          2
+        ],
+        "pages": [
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "bytes": 3,
+            "ver": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressSave",
+      "profile": "all",
+      "model_steps": 11,
+      "endpoint": {
+        "disk": [
+          3,
+          2,
+          -1
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressConflict",
+      "profile": "all",
+      "model_steps": 10,
+      "endpoint": {
+        "disk": [
+          3,
+          2,
+          -1
+        ],
+        "stable": [
+          3,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 1,
+            "buf": 2,
+            "conflict": true,
+            "held": true,
+            "obs": 3,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": 1,
+            "bytes": 2,
+            "ver": 2
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressFailure",
+      "profile": "all",
+      "model_steps": 10,
+      "endpoint": {
+        "disk": [
+          1,
+          2,
+          -1
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 1,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 1,
+            "risk": true,
+            "typed": true,
+            "ver": 2
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": 1,
+            "bytes": 3,
+            "ver": 2
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressRefresh",
+      "profile": "all",
+      "model_steps": 15,
+      "endpoint": {
+        "disk": [
+          3,
+          2,
+          -1
+        ],
+        "stable": [
+          3,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 1,
+            "buf": 1,
+            "conflict": true,
+            "held": true,
+            "obs": 3,
+            "risk": true,
+            "typed": true,
+            "ver": 3
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          },
+          {
+            "base": -1,
+            "buf": -1,
+            "conflict": false,
+            "held": false,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 0
+          }
+        ],
+        "drafts": [
+          {
+            "base": 1,
+            "bytes": 1,
+            "ver": 3
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ownProgressThree",
+      "profile": "all",
+      "model_steps": 33,
+      "endpoint": {
+        "disk": [
+          3,
+          3,
+          3
+        ],
+        "stable": [
+          1,
+          2,
+          -1
+        ],
+        "claimed": [],
+        "pages": [
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 1,
+            "risk": false,
+            "typed": false,
+            "ver": 2
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": 2,
+            "risk": false,
+            "typed": false,
+            "ver": 4
+          },
+          {
+            "base": 3,
+            "buf": 3,
+            "conflict": false,
+            "held": true,
+            "obs": -1,
+            "risk": false,
+            "typed": false,
+            "ver": 6
+          }
+        ],
+        "drafts": [
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          },
+          {
+            "base": -2,
+            "bytes": -2,
+            "ver": 0
+          }
+        ]
+      }
+    }
+  ]
+}
