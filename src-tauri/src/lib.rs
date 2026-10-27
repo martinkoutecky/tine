@@ -48,6 +48,8 @@ mod i18n_shell;
 mod ios_folder_picker;
 mod linux_inline_preedit;
 #[cfg(target_os = "linux")]
+mod linux_gpu;
+#[cfg(target_os = "linux")]
 mod linux_window_identity;
 #[cfg(test)]
 mod load_wait_guard_tests;
@@ -693,17 +695,10 @@ pub fn run() {
     data_home::ensure_usable(app_identity::APP_IDENTIFIER);
     migrate_identifier::run_early();
 
-    // GPU/DMABUF rendering is ON by default (smoother scrolling — that's the point
-    // of Tine). On the rare GPU/compositor combo where WebKitGTK's DMABUF renderer
-    // aborts ("Could not create default EGL display: EGL_BAD_PARAMETER"), set
-    // TINE_GPU=0 to fall back to software compositing. Linux-only.
+    // Configure rendering before GTK/WebKit initializes. NVIDIA needs the
+    // DMABUF workaround by default; explicit user overrides take precedence.
     #[cfg(target_os = "linux")]
-    if std::env::var("TINE_GPU").as_deref() == Ok("0")
-        && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
-    {
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-        diag("TINE_GPU=0 → set WEBKIT_DISABLE_DMABUF_RENDERER=1 (software compositing)");
-    }
+    linux_gpu::configure();
 
     // TEMPORARY (docs/app-identity.md): an experiment build with no graph of its
     // own starts from the released Tine's config. Before the Builder, because

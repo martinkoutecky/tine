@@ -781,8 +781,9 @@ mod image_copy_tests {
 /// — when Tine is painting on the CPU. Speed is the whole pitch, and a silent
 /// software-rendering fallback makes scrolling feel sluggish; better to say so.
 /// `software_forced` is true only when we *know* GPU compositing is off because
-/// an env var disabled it: TINE_GPU=0 (we then set WEBKIT_DISABLE_DMABUF_RENDERER
-/// just above in `main`), or the user set WEBKIT_DISABLE_DMABUF_RENDERER /
+/// an env var disabled it: the Linux startup policy sets
+/// WEBKIT_DISABLE_DMABUF_RENDERER for TINE_GPU=0 or an NVIDIA driver older than 610 (GH #777),
+/// or the user set WEBKIT_DISABLE_DMABUF_RENDERER /
 /// WEBKIT_DISABLE_COMPOSITING_MODE themselves. A *silent* driver/EGL fallback
 /// (DMABUF requested but EGL init failed) does NOT show up here — that's detected
 /// in the webview from the WebGL renderer string (llvmpipe/swrast ⇒ software).
