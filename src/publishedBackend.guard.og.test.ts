@@ -30,3 +30,16 @@ it("classifies every og Backend member and implements its browser reads", () => 
     }
   }
 });
+
+// An optional member is one a reader feature-tests. Refusing it throws on a read
+// path instead of taking the fallback (the 0.9 query regression). Only user
+// actions may be refused while optional.
+it("leaves optional reader hooks absent rather than refused", () => {
+  const file = ts.createSourceFile("backendInterface.ts", readFileSync(new URL("./backendInterface.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
+  const backend = file.statements.find((item): item is ts.InterfaceDeclaration =>
+    ts.isInterfaceDeclaration(item) && item.name.text === "Backend");
+  const optional = backend!.members.filter((member) => member.questionToken).map((member) => member.name?.getText(file));
+  const userActions = new Set(["rescanGraphNow"]);
+  const refused = new Set<string>(PUBLISHED_REFUSED_METHODS);
+  expect(optional.filter((name) => name && refused.has(name) && !userActions.has(name))).toEqual([]);
+});

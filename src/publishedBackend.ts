@@ -271,6 +271,10 @@ const OPTIONAL_METHODS = new Set([
   "onOwnerFlushRequest",
   "onOwnerPageRenamed",
   "ownerFlushAnswer",
+  // GX4 S2/S4: change subscriptions. A snapshot never changes, so readers fall
+  // back to the publication key; refusing them blanked every query and board.
+  "registerUnlinkedReference",
+  "registerQuerySubscription",
 ]);
 
 /** Build the snapshot backend. `load` is awaited lazily by every method. */
@@ -1122,8 +1126,6 @@ export const PUBLISHED_REFUSED_METHODS = [
   "pagePrintHtml",
   "queryExplainEmpty",
   "taggedPages",
-  "registerUnlinkedReference",
-  "registerQuerySubscription",
   "runQuery",
   "exportQuerySubtrees",
   "runAdvancedQuery",
