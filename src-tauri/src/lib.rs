@@ -59,6 +59,7 @@ mod migrate_identifier;
 mod native_integrations;
 mod native_mouse_history;
 mod owner;
+mod owner_protection;
 mod page_backlinks;
 mod page_commands;
 mod pdf_crop_rollback;
@@ -1038,6 +1039,8 @@ pub fn run() {
             migrate_identifier::take_identifier_migration_notice,
             load_graph,
             root_identity::orphan_drafts,
+            owner_protection::owner_protection_status,
+            owner_protection::retry_owner_protection,
             root_identity::recover_orphan_drafts,
             delete_old_backups,
             inspect_graph_access,

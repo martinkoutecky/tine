@@ -71,7 +71,9 @@ impl Claimed {
     /// no endpoint, no serving (§3.5).
     pub(crate) fn serve(self, hello: Hello, gate: Arc<Gate>, handler: Arc<dyn Handler>) -> Lease {
         let (endpoint, endpoint_error) =
-            match Endpoint::bind(&self.paths.socket, hello, gate.clone(), handler) {
+            match super::namespace::check_socket_path(&self.paths.socket)
+                .and_then(|()| Endpoint::bind(&self.paths.socket, hello, gate.clone(), handler))
+            {
                 Ok(endpoint) => (Some(endpoint), None),
                 Err(error) => {
                     crate::debug::diag_private("owner-endpoint-unavailable", &error.to_string());
@@ -204,8 +206,16 @@ pub(crate) fn claim_for_app(
     drafts: Drafts,
     bound: std::time::Duration,
     waiting: impl FnMut(&str),
+    unavailable: impl FnMut(&OwnerError),
 ) -> Result<Option<Claimed>, String> {
-    app_claim_result(claim(root, "app"), root, drafts, bound, waiting)
+    app_claim_result(
+        claim(root, "app"),
+        root,
+        drafts,
+        bound,
+        waiting,
+        unavailable,
+    )
 }
 
 /// Keep the app's open policy separate from namespace discovery so refusals can
@@ -217,15 +227,19 @@ fn app_claim_result(
     drafts: Drafts,
     bound: std::time::Duration,
     waiting: impl FnMut(&str),
+    mut unavailable: impl FnMut(&OwnerError),
 ) -> Result<Option<Claimed>, String> {
     match claim {
         Claim::Taken(claimed) => Ok(Some(claimed)),
         Claim::Failed(OwnerError::Unsupported) => Ok(None),
         Claim::Failed(error) => {
             crate::debug::diag_private("owner-lock-unavailable", &error.to_string());
+            unavailable(&error);
             Ok(None)
         }
-        Claim::Held(paths) => super::client::take_over(root, &paths, drafts, bound, waiting),
+        Claim::Held(paths) => {
+            super::client::take_over(root, &paths, drafts, bound, waiting, unavailable)
+        }
     }
 }
 
@@ -236,6 +250,7 @@ pub(crate) fn claim_for_app(
     _drafts: Drafts,
     _bound: std::time::Duration,
     _waiting: impl FnMut(&str),
+    _unavailable: impl FnMut(&OwnerError),
 ) -> Result<Option<Claimed>, String> {
     Ok(None)
 }
@@ -261,6 +276,7 @@ mod tests {
             Err(error @ OwnerError::Unsafe(_)) => error,
             _ => panic!("a file cannot be an owner namespace"),
         };
+        let mut reason = None;
         let result = app_claim_result(
             Claim::Failed(error),
             data.path(),
@@ -270,6 +286,11 @@ mod tests {
             },
             std::time::Duration::ZERO,
             |_| panic!("a namespace refusal must not enter handover"),
+            |error| reason = Some(error.to_string()),
+        );
+        assert!(
+            reason.unwrap().contains("private directory"),
+            "editable fallback must retain its actionable diagnosis"
         );
         assert!(
             matches!(result, Ok(None)),

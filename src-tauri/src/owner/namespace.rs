@@ -63,7 +63,6 @@ impl Namespace {
             socket: super::windows_security::pipe_name(key)?,
             start_log: self.dir.join(format!("{key}.start.log")),
         };
-        check_socket_path(&paths.socket)?;
         Ok(paths)
     }
 }
@@ -155,7 +154,10 @@ fn account_dir() -> Result<PathBuf, OwnerError> {
 fn create_private(dir: &Path) -> Result<(), OwnerError> {
     use std::os::unix::fs::DirBuilderExt;
     if let Some(parent) = dir.parent() {
-        std::fs::create_dir_all(parent)
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(parent)
             .map_err(|e| OwnerError::Unsafe(format!("cannot create {}: {e}", parent.display())))?;
     }
     match std::fs::DirBuilder::new().mode(0o700).create(dir) {
@@ -203,7 +205,7 @@ fn check_private(dir: &Path) -> Result<(), OwnerError> {
 /// A Unix socket path must fit `sockaddr_un.sun_path` (108 bytes on Linux,
 /// 104 on macOS) with its terminating NUL.
 #[cfg(unix)]
-fn check_socket_path(socket: &Path) -> Result<(), OwnerError> {
+pub(crate) fn check_socket_path(socket: &Path) -> Result<(), OwnerError> {
     use std::os::unix::ffi::OsStrExt;
     let room = unsafe { std::mem::zeroed::<libc::sockaddr_un>() }
         .sun_path
@@ -219,12 +221,129 @@ fn check_socket_path(socket: &Path) -> Result<(), OwnerError> {
 }
 
 #[cfg(windows)]
-fn check_socket_path(_: &Path) -> Result<(), OwnerError> {
+pub(crate) fn check_socket_path(_: &Path) -> Result<(), OwnerError> {
     Ok(())
+}
+
+/// No automatic repair at discovery: the user explicitly authorizes tightening
+/// this account's directory. Never replace/unlink a held lock inode. §5 trusts
+/// same-account filesystem access; a symlink or foreign owner is still refused.
+#[cfg(unix)]
+pub(crate) fn repair_private(dir: &Path) -> Result<(), OwnerError> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(dir)
+        .map_err(|e| {
+            OwnerError::Unsafe(format!("cannot inspect {} for repair: {e}", dir.display()))
+        })?;
+    let meta = file
+        .metadata()
+        .map_err(|e| OwnerError::Unsafe(e.to_string()))?;
+    if !meta.is_dir() || meta.uid() != unsafe { libc::getuid() } {
+        return Err(OwnerError::Unsafe(
+            "only your own non-symlink coordination directory can be repaired".into(),
+        ));
+    }
+    file.set_permissions(std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| OwnerError::Unsafe(format!("cannot repair {}: {e}", dir.display())))?;
+    check_private(dir)
+}
+
+pub(crate) fn repair_available() -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        return account_dir()
+            .ok()
+            .and_then(|dir| std::fs::symlink_metadata(dir).ok())
+            .is_some_and(|meta| {
+                meta.is_dir() && meta.uid() == unsafe { libc::getuid() } && meta.mode() & 0o077 != 0
+            });
+    }
+    #[cfg(windows)]
+    {
+        false
+    }
+}
+
+pub(crate) fn repair() -> Result<(), OwnerError> {
+    #[cfg(unix)]
+    {
+        repair_private(&account_dir()?)
+    }
+    #[cfg(windows)]
+    {
+        Err(OwnerError::Unsafe(
+            "change the coordination folder permissions in Windows Security settings".into(),
+        ))
+    }
+}
+
+pub(crate) fn directory() -> Result<PathBuf, OwnerError> {
+    account_dir()
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn explicit_permission_repair_keeps_the_held_inode_and_refuses_symlinks() {
+        use super::*;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let data = tempfile::tempdir().unwrap();
+        let owners = data.path().join("owners");
+        let ns = Namespace::at(owners.clone()).unwrap();
+        let paths = ns.graph(Path::new("/graph")).unwrap();
+        let held = crate::owner::lock::OwnerLock::try_take(&paths.lock, "serve")
+            .unwrap()
+            .unwrap();
+        let inode = std::fs::metadata(&paths.lock).unwrap().ino();
+        std::fs::set_permissions(&owners, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            Namespace::at(owners.clone()).is_err(),
+            "repair requires an explicit action"
+        );
+        repair_private(&owners).unwrap();
+        assert_eq!(std::fs::metadata(&owners).unwrap().mode() & 0o777, 0o700);
+        assert_eq!(std::fs::metadata(&paths.lock).unwrap().ino(), inode);
+        assert!(crate::owner::lock::OwnerLock::try_take(&paths.lock, "app")
+            .unwrap()
+            .is_none());
+        let link = data.path().join("link");
+        std::os::unix::fs::symlink(&owners, &link).unwrap();
+        assert!(repair_private(&link).is_err());
+        assert!(std::fs::symlink_metadata(link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        drop(held);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn missing_state_parents_are_created_privately() {
+        use std::os::unix::fs::PermissionsExt;
+        let data = tempfile::tempdir().unwrap();
+        let owners = data.path().join(".local/state/tine/owners");
+        super::Namespace::at(owners.clone()).unwrap();
+        for dir in [
+            ".local",
+            ".local/state",
+            ".local/state/tine",
+            ".local/state/tine/owners",
+        ] {
+            assert_eq!(
+                std::fs::metadata(data.path().join(dir))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700,
+                "{dir}"
+            );
+        }
+    }
     #[test]
     fn windows_and_unix_enable_the_shared_owner_protocol() {
         let source = include_str!("serve.rs");
@@ -259,6 +378,23 @@ mod tests {
         let production = &source[..source.find("#[cfg(test)]\nmod tests").unwrap()];
         for os in ["linux", "macos", "windows", "ios", "android"] {
             assert!(production.contains(&format!("target_os = \"{os}\"")));
+        }
+        let recovery = include_str!("../owner_protection.rs");
+        let cfgs: Vec<_> = recovery
+            .match_indices("fn recovery_instructions(")
+            .map(|(at, _)| {
+                let head = &recovery[..at];
+                &head[head.rfind("#[cfg(").unwrap()..]
+            })
+            .collect();
+        for os in ["linux", "macos", "windows", "ios", "android"] {
+            assert_eq!(
+                cfgs.iter()
+                    .filter(|cfg| cfg.contains(&format!("target_os = \"{os}\"")))
+                    .count(),
+                1,
+                "one recovery policy per shipped target: {os}"
+            );
         }
         let start = production
             .find("#[cfg(target_os = \"windows\")]\nfn account_dir")

@@ -157,6 +157,9 @@ export interface Backend {
   pageOwed(session: number, paths: readonly string[] | null): Promise<OwedPage[] | null>;
   /** Retry crash-draft storage after the host reported it unavailable. */
   pageDraftsRetry(): Promise<void>;
+  /** Desktop semantic lease recovery; absent in browser/mobile backends. */
+  ownerProtectionStatus?(): Promise<import("./ownerProtection").OwnerProtectionIssue | null>;
+  retryOwnerProtection?(repair: boolean): Promise<import("./ownerProtection").OwnerProtectionIssue | null>;
   onPageMail(cb: (mail: PageMail) => void): Promise<() => void>;
   /** The graph being opened overlaps one that is still saving its pages (F6). */
   onGraphOpenWaiting(cb: (saving: string) => void): Promise<() => void>;
