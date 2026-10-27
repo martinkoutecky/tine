@@ -517,14 +517,15 @@ fn m3_finding_c4_retained_directory_sync_must_not_acknowledge_a_new_inode() {
     let target = n.graph.join("new/deep");
     crate::model::checked_write_target(&n.graph, &target, "graph root", None).unwrap();
     crate::model::assert_checked_target(&target);
+    let binding = crate::root_binding::RootBinding::new(&n.graph);
     let mut plan = crate::directory_durability::DirectoryCreation::new(&target, &n.graph).unwrap();
     assert!(plan
-        .finish(|_| Err(stdio::ErrorKind::Other.into()))
+        .finish(&binding, |_| Err(stdio::ErrorKind::Other.into()))
         .is_err());
     fs::rename(n.graph.join("new"), n.graph.join("old-new")).unwrap();
     fs::create_dir_all(&target).unwrap();
     assert!(
-        plan.finish(crate::directory_durability::sync_directory_entry)
+        plan.finish(&binding, crate::directory_durability::sync_directory_entry)
             .is_err(),
         "C4 retained plan synced replacement paths and retired old epoch's sync debt"
     );
@@ -552,16 +553,18 @@ fn m3_finding_c4_model_retained_directory_sync_must_not_acknowledge_a_new_inode(
     );
 }
 
+// Approved Android vanish-only binding cannot detect C1 replacement.
+#[cfg(not(target_os = "android"))]
 #[test]
-#[ignore = "M2-1/M2-2: fix pending on batch/og-dircreate-escape"]
 fn m3_native_m2_1_replaced_root_between_plan_and_finish() {
     let mut n = Native::new(true);
     let target = n.graph.join("new/deep");
     crate::model::checked_write_target(&n.graph, &target, "graph root", None).unwrap();
     crate::model::assert_checked_target(&target);
+    let binding = crate::root_binding::RootBinding::new(&n.graph);
     let mut plan = crate::directory_durability::DirectoryCreation::new(&target, &n.graph).unwrap();
     n.apply_env(&EnvStep::RootReplaced);
-    let result = plan.finish(crate::directory_durability::sync_directory_entry);
+    let result = plan.finish(&binding, crate::directory_durability::sync_directory_entry);
     n.escapes();
     assert!(result.is_err());
 }
@@ -573,15 +576,15 @@ fn m3_native_m2_1_replaced_root_between_plan_and_finish() {
     target_os = "android"
 ))]
 #[test]
-#[ignore = "M2-1/M2-2: fix pending on batch/og-dircreate-escape"]
 fn m3_native_m2_2_symlink_between_plan_and_finish() {
     let mut n = Native::new(true);
     let target = n.graph.join("pages/new/deep");
     crate::model::checked_write_target(&n.graph, &target, "graph root", None).unwrap();
     crate::model::assert_checked_target(&target);
+    let binding = crate::root_binding::RootBinding::new(&n.graph);
     let mut plan = crate::directory_durability::DirectoryCreation::new(&target, &n.graph).unwrap();
     n.apply_env(&EnvStep::SymlinkSwap("pages".into()));
-    let result = plan.finish(crate::directory_durability::sync_directory_entry);
+    let result = plan.finish(&binding, crate::directory_durability::sync_directory_entry);
     n.escapes();
     assert!(result.is_err());
 }

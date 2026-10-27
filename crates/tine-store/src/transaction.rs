@@ -1132,6 +1132,7 @@ impl<'a> PagePlan<'a> {
             crate::directory_durability::create_dir_all_durable(
                 parent,
                 self.store.graph.creation_bound(parent),
+                &self.store.graph.root_binding,
             )
             .map_err(|error| failed_trash_dir(error, parent))?;
         }
@@ -1223,6 +1224,7 @@ impl<'a> PagePlan<'a> {
                     crate::directory_durability::create_dir_all_durable(
                         parent,
                         self.store.graph.creation_bound(parent),
+                        &self.store.graph.root_binding,
                     )
                     .map_err(failed)?;
                 }
@@ -1320,6 +1322,7 @@ impl<'a> PagePlan<'a> {
                         crate::directory_durability::create_dir_all_durable(
                             parent,
                             self.store.graph.creation_bound(parent),
+                            &self.store.graph.root_binding,
                         )
                         .map_err(failed)?;
                     }
@@ -1409,6 +1412,7 @@ impl<'a> PagePlan<'a> {
                         crate::directory_durability::create_dir_all_durable(
                             parent,
                             self.store.graph.creation_bound(parent),
+                            &self.store.graph.root_binding,
                         )
                         .map_err(|error| failed_trash_dir(error, parent))?;
                     }
@@ -1434,6 +1438,7 @@ impl<'a> PagePlan<'a> {
                     crate::directory_durability::create_dir_all_durable(
                         parent,
                         self.store.graph.creation_bound(parent),
+                        &self.store.graph.root_binding,
                     )
                     .map_err(|error| failed_trash_dir(error, parent))?;
                 }
@@ -1674,7 +1679,11 @@ impl<'a> PagePlan<'a> {
         recovery
             .parent()
             .map(|parent| {
-                crate::directory_durability::create_dir_all_durable(parent, &self.store.graph.root)
+                crate::directory_durability::create_dir_all_durable(
+                    parent,
+                    &self.store.graph.root,
+                    &self.store.graph.root_binding,
+                )
             })
             .unwrap_or(Ok(()))?;
         atomic_write_new(&recovery, bytes)?;

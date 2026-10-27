@@ -247,18 +247,20 @@ impl ProductionIo {
             let creation = durability::DirectoryCreation::new(dir, &self.graph).map_err(failure)?;
             self.directories.insert(dir.to_path_buf(), creation);
         }
-        self.directories
-            .get_mut(dir)
-            .unwrap()
-            .finish(|dir| {
-                // Each created directory's parent sync counts (I-25).
-                #[cfg(feature = "test-faults")]
-                crate::cost_counters::fsync();
-                durability::sync_directory_entry(dir)
-            })
-            .map_err(failure)?;
-        self.directories.remove(dir);
-        Ok(())
+        let creation = self.directories.get_mut(dir).unwrap();
+        let result = creation.finish(&self.root_binding, |dir| {
+            // Each created directory's parent sync counts (I-25).
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::fsync();
+            durability::sync_directory_entry(dir)
+        });
+        // Failed attempts that created nothing have no custody to retain.
+        // Created entries keep their sync debt across Discard/Close and retries,
+        // until paid or the graph adapter closes; no directory handle is held.
+        if result.is_ok() || !creation.has_sync_debt() {
+            self.directories.remove(dir);
+        }
+        result.map_err(failure)
     }
 }
 

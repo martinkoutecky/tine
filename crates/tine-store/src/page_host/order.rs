@@ -41,6 +41,9 @@ pub(super) struct Slot {
     pub reply: Option<OperationReply>,
     /// Answered pages with their witness.
     pub witnessed: BTreeSet<PageKey>,
+    /// Answered pages whose own save also reached the live index. The disk
+    /// witness alone cannot vouch for a deferred or failed consumer delivery.
+    pub indexed: BTreeSet<PageKey>,
     /// The first answered page discarded or resurrected before its witness.
     pub superseded: Option<PageKey>,
 }
@@ -193,6 +196,21 @@ impl Order {
             }
         }
         self.gates.retain(|g| !g.open.is_empty());
+    }
+
+    /// The publication consumer successfully indexed an own save. Keep this
+    /// separate from `published`: the rename's disk ordering uses that
+    /// witness, while its caller waits for the live view as well.
+    pub fn indexed(&mut self, key: &str, version: u64) {
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::host_publication_probes(self.replies.len());
+        for slot in self.replies.values_mut() {
+            if let Some(OperationReply::Applied(pages)) = &slot.reply {
+                if pages.get(key).is_some_and(|v| version >= *v) {
+                    slot.indexed.insert(key.into());
+                }
+            }
+        }
     }
 
     /// An answered, unwitnessed `key` changed under its caller: a Discard,
