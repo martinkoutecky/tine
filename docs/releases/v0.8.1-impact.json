@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "version": "0.8.1",
+  "baseTag": "v0.8.0",
+  "focusedAudit": {
+    "required": false,
+    "reason": "0.8.1 is a stable patch: five bug fixes taken through stable fix branches (develop first, then master), each with fail-before/pass-after proof; full suites and hosted CI run on the candidate. Martin authorized the cut on 2026-10-27 (\"then cut 0.8.1\")."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "Linux: automatically apply the WebKitGTK DMABUF workaround when an NVIDIA driver older than 610 is loaded, avoiding the blank window reported with the 0.8.0 AppImage on legacy drivers; newer NVIDIA drivers keep GPU rendering. Explicit `TINE_GPU` and `WEBKIT_DISABLE_DMABUF_RENDERER` settings keep precedence (GH #777).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH777-NVIDIA-BLANK"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog row REG-GH777-NVIDIA-BLANK; src-tauri/src/linux_gpu.rs unit tests pin the decision (the pre-fix startup kept DMABUF with an old NVIDIA driver). NVIDIA hardware validation is reporter evidence only.",
+        "refs": [
+          "tests/regressions/non-ui.json",
+          "src-tauri/src/linux_gpu.rs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The in-app Guide's troubleshooting page describes the automatic NVIDIA workaround and the overrides (src/guideGh777.test.ts pins it). The public website/guide is regenerated at the next stable cut (D-20261019-G1; 0.7.4 precedent); its manual TINE_GPU=0 advice stays true meanwhile.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Stable patch release; the website describes Tine generally and needs no change for this item.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No editorial release gate (Martin 2026-10-13); release notes live in CHANGELOG.md and the GitHub release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Windows: a save made while the previous save of the same page was still replacing the file is no longer refused as \"write target escapes graph root\" when Windows reports the replaced file's location for the page (internal REG-WIN-WRITE-TARGET-DISPLACED; completes the 0.8.0-beta.4 fix).",
+      "userVisible": true,
+      "regressions": [
+        "REG-WIN-WRITE-TARGET-DISPLACED"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog row REG-WIN-WRITE-TARGET-DISPLACED; its tine-store tests fail before the fix and pass on the candidate, and the hosted Windows lane runs them.",
+        "refs": [
+          "tests/regressions/non-ui.json"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix in the save path; the Guide describes saving and needs no change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Stable patch release; the website describes Tine generally and needs no change for this item.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No editorial release gate (Martin 2026-10-13); release notes live in CHANGELOG.md and the GitHub release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A brand-new page with no file yet now shows an editable first bullet when opened in the right sidebar, so you can type or drag blocks into it without first editing it in the main pane (GH #524).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH524-FILELESS-SIDEBAR",
+        "UI-GH524-EMPTY-SIDEBAR-DROP"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-GH524-FILELESS-SIDEBAR and UI-GH524-EMPTY-SIDEBAR-DROP; scripts/e2e-gh524-new-page-sidebar.mjs drives the reported path in the real app.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "scripts/e2e-gh524-new-page-sidebar.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix; the Guide already describes the right sidebar and needs no change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Stable patch release; the website describes Tine generally and needs no change for this item.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No editorial release gate (Martin 2026-10-13); release notes live in CHANGELOG.md and the GitHub release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Clicking a hidden `{{cloze}}` reveals the answer in place again (and hides it on a second click), instead of opening the block editor (GH #763).",
+      "userVisible": true,
+      "regressions": [
+        "UI-CLOZE-CLICK-REVEALS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog row UI-CLOZE-CLICK-REVEALS; src/components/Block.clozeReveal.test.tsx fails before the fix and passes on the candidate.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/Block.clozeReveal.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix; the documented click-to-reveal behaviour is restored.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Stable patch release; the website describes Tine generally and needs no change for this item.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No editorial release gate (Martin 2026-10-13); release notes live in CHANGELOG.md and the GitHub release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Expand and Collapse (one level) now follow a block embed's own folds and open or close child page embeds, while keeping embedded source folds separate (GH #768, GH #769).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH768-769-EMBED-ONE-LEVEL"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog row UI-GH768-769-EMBED-ONE-LEVEL; src/components/Block.embedCollapse.test.tsx and scripts/e2e-one-level-fold.mjs cover both reports.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/Block.embedCollapse.test.tsx",
+          "scripts/e2e-one-level-fold.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix; the Guide already describes Expand and Collapse and needs no change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Stable patch release; the website describes Tine generally and needs no change for this item.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No editorial release gate (Martin 2026-10-13); release notes live in CHANGELOG.md and the GitHub release.",
+        "refs": []
+      }
+    }
+  ]
+}

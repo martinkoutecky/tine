@@ -11,7 +11,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - Queries and boards in a published export show their results again instead of “Query couldn't be loaded: This is a read-only published export.” (development-only regression; UI-PUBLISHED-QUERY-SUBSCRIPTION).
-- Linux: automatically apply the WebKitGTK DMABUF workaround when an NVIDIA driver older than 610 is loaded, avoiding the blank window reported with the 0.8.0 AppImage on legacy drivers; newer NVIDIA drivers keep GPU rendering. Explicit `TINE_GPU` and `WEBKIT_DISABLE_DMABUF_RENDERER` settings keep precedence (GH #777).
 - Opening the right sidebar by a remapped shortcut keeps the main editor and caret when the sidebar shows the same block (UI-EDITOR-LATE-MOUNT).
 - Windows: automatic git cleanup no longer fails while flushing completed packs. Failed cleanup preserves loose objects, keeps commits running, and shows a quiet retry status in Settings → Git (REG-AUTOCOMMIT-WINDOWS-REPACK).
 - Clicking another block while journal days load keeps its editor and focus when the earlier Down navigation finishes (UI-EDITOR-C2).
@@ -23,7 +22,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Shift-click a calendar day, **Today**, or the calendar button to open that journal in the right sidebar, as in Logseq (GH #740).
 - A page embed's icon aligns with the first line of a title that wraps (GH #770).
 - Backspace removes an empty bullet inside a block embed when its source ancestor is folded (GH #766).
-- Expand and Collapse (one level) now follow a block embed's own folds and open or close child page embeds, while keeping embedded source folds separate (GH #768, GH #769).
 - Refused renames of pages with duplicate identities now name the conflicting graph-relative files and explain that they must be merged or removed (GH #774).
 - Automatic git commits leave out Syncthing temporary files, add `.syncthing.*` to the graph's `.gitignore` once, and say so once in a toast and in Settings → Git. Removing the rule is respected; conflict copies remain committed (REG-AUTOCOMMIT-SYNCTHING-TEMP, D-20261026-GI).
 - macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
@@ -35,10 +33,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Queries skip unrelated saves and graph-wide queries wait for a 1.5-second typing pause; collapsed reference sections keep their last count with a stale indicator until opened (GH #746).
 - Clock queries invalidate when an edit follows an expired instant, and Pages and blocks queries keep the typing pause even when subscription renewal finishes late (GH #746).
 - Linux: input methods can show composing text inside the editor. Verified with IBus Hangul; this may fix Fcitx5 input not appearing (GH #575), but Fcitx5/Hyprland remains unverified.
-- A brand-new page with no file yet now shows an editable first bullet when opened in the right sidebar, so you can type or drag blocks into it without first editing it in the main pane (GH #524).
-- Clicking a hidden `{{cloze}}` reveals the answer in place again (and hides it on a second click), instead of opening the block editor (GH #763).
 - Mobile: the help "?" button no longer covers the last buttons of the bottom-docked formatting toolbar while text is selected, with or without the keyboard (internal UI-HELP-FAB-ABOVE-DOCKED-TOOLBAR).
-- Windows: a save made while the previous save of the same page was still replacing the file is no longer refused as "write target escapes graph root" when Windows reports the replaced file's location for the page (internal REG-WIN-WRITE-TARGET-DISPLACED; completes the 0.8.0-beta.4 fix).
 - Block references keep resolving after a block moves between pages and after reopening the graph; dangling references no longer scan unrelated pages (GH #746, GH #623).
 - The exact block-owner index builds in bulk at cold launch and writes compact checkpoint rows without temporary page copies (GH #623).
 - The exact block-owner index keeps UUID keys in 16 bytes and shares one allocation per tree node, reducing its memory use on large graphs (GH #623).
@@ -116,6 +111,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **A task priority `[#A]` / `[#B]` / `[#C]` is a reference to the page A / B / C**, as in Logseq: the block appears in that page's Linked References, and queries on `[[A]]` or `[[TODO]]` find blocks by their priority or task marker. Only a priority in the block's header counts. Derived reference data rebuilds once on first launch.
 
 - **Editing an alias, or renaming or deleting an aliased page, no longer re-reads every page**: once the alias index exists, it is patched for the pages the edit changed instead of being rebuilt by a walk over the whole graph. On a generated 10,000-page graph the first alias lookup after such an edit examines 1 page instead of 10,000 (D-20261018-M2c).
+
+## [0.8.1] - 2026-10-27
+
+Bug fixes for Tine 0.8.0: a blank window on Linux with older NVIDIA drivers, a new page in the right sidebar, cloze reveal, Expand and Collapse in embeds, and a Windows save race.
+
+### Fixed
+
+- Linux: automatically apply the WebKitGTK DMABUF workaround when an NVIDIA driver older than 610 is loaded, avoiding the blank window reported with the 0.8.0 AppImage on legacy drivers; newer NVIDIA drivers keep GPU rendering. Explicit `TINE_GPU` and `WEBKIT_DISABLE_DMABUF_RENDERER` settings keep precedence (GH #777).
+
+- Windows: a save made while the previous save of the same page was still replacing the file is no longer refused as "write target escapes graph root" when Windows reports the replaced file's location for the page (internal REG-WIN-WRITE-TARGET-DISPLACED; completes the 0.8.0-beta.4 fix).
+
+- A brand-new page with no file yet now shows an editable first bullet when opened in the right sidebar, so you can type or drag blocks into it without first editing it in the main pane (GH #524).
+
+- Clicking a hidden `{{cloze}}` reveals the answer in place again (and hides it on a second click), instead of opening the block editor (GH #763).
+
+- Expand and Collapse (one level) now follow a block embed's own folds and open or close child page embeds, while keeping embedded source folds separate (GH #768, GH #769).
 
 ## [0.8.0-beta.12] - 2026-10-24
 
@@ -7109,7 +7120,8 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/martinkoutecky/tine/compare/v0.8.0...v0.8.1
 [0.6.98]: https://github.com/martinkoutecky/tine/compare/v0.6.97...v0.6.98
 [0.6.90]: https://github.com/martinkoutecky/tine/compare/v0.6.5...v0.6.90
 [0.6.0]: https://github.com/martinkoutecky/tine/compare/v0.5.10...v0.6.0
