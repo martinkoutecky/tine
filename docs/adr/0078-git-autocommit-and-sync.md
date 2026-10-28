@@ -56,6 +56,8 @@ skip-worktree entry under the graph root: libgit2's add would commit the exclude
 and iOS a repository without `core.precomposeunicode = true` (decomposed names would commit every diacritic page as
 a delete plus an add). A held `index.lock` is "busy, retry"; after three busy cycles spanning 30 minutes Settings
 names the file and says to remove it if no git command is running (a crash can leave it; Tine never deletes it).
+Slice 3: the lock named is the one actually held, `index.lock` or a ref lock a crashed commit left on `HEAD`, the
+branch or `packed-refs` (`held_lock`; before, Settings always named `index.lock`, even when a branch lock was the cause).
 Sync additionally needs the graph root to be the work tree root: a fast-forward of a bigger repository changes
 files outside the graph, which Tine does not own.
 
@@ -244,7 +246,7 @@ stack per target and refuses to compile for any other (AGENTS §2). Lifecycle on
 worker starts as on desktop; going to the background flushes the pages, then each worker commits what is
 pending and, under **Commit and sync automatically**, pushes what the last fetch shows the remote lacks, with no
 fetch or pull (a push writes nothing to the local repository); coming back to the foreground runs a full cycle at
-once under that policy. Limit: a commit or push holds `index.lock`, so the OS ending the app midway leaves it, and
+once under that policy. Limit: a commit or push holds `index.lock` (and a commit briefly the branch's ref lock), so the OS ending the app midway can leave either, and
 §1's busy-then-name rule applies (measured in `git_mobile_tests.rs`, which CI also runs on an Android emulator with
 the graph on shared storage). Android's shared storage (MediaProvider FUSE) reports another owner for every file,
 so libgit2's repository-owner check is off on Android only (the trust model excludes an attacker with write access

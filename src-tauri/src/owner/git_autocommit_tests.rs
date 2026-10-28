@@ -41,6 +41,10 @@ fn directory_alias(target: &Path, path: &Path) {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "android",
+    ignore = "Android root identity is vanish-only (A-MUTATION-CONTAINMENT): a replaced root is not detected"
+)]
 fn sb1_autocommit_refuses_root_replacement_before_index_lock() {
     let f = fixture(&[("pages/a.md", "- old\n")]);
     fs::write(f.work.join("pages/a.md"), "- pending\n").unwrap();
@@ -117,6 +121,10 @@ fn sb1_index_lock_refuses_a_redirected_index() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "android",
+    ignore = "Android root identity is vanish-only (A-MUTATION-CONTAINMENT): a replaced root is not detected"
+)]
 fn sb1_index_cleanup_preserves_files_after_metadata_root_replacement() {
     let f = fixture(&[("pages/a.md", "- old\n")]);
     let checked = open_checked(&f.work).unwrap();

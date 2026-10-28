@@ -257,7 +257,7 @@ fn describe_volume(dir: &Path) -> String {
 
 /// Every object the repository holds reads back with its hash checked, every
 /// ref names a commit that is there, and no lock file or index copy is left.
-fn assert_whole(repo: &Repository, what: &str) -> Vec<String> {
+fn assert_whole(repo: &Repository, what: &str) -> Vec<PathBuf> {
     let odb = repo.odb().unwrap();
     let mut oids = Vec::new();
     odb.foreach(|oid| {
@@ -304,7 +304,7 @@ fn assert_whole(repo: &Repository, what: &str) -> Vec<String> {
             if entry.file_type().unwrap().is_dir() {
                 dirs.push(entry.path());
             } else if name.ends_with(".lock") || name.starts_with("tine-index-") {
-                leftovers.push(name);
+                leftovers.push(entry.path());
             }
         }
     }
@@ -412,6 +412,28 @@ fn a_pulled_case_only_rename_lands_on_the_graph_volume() {
     eprintln!("GIT-RESPELL result=PASS {volume}");
 }
 
+/// A commit the OS ended can leave the branch's lock as well as the index's:
+/// Settings names the one actually held, not always `index.lock`.
+#[test]
+fn settings_names_the_lock_a_killed_commit_left() {
+    let phone = Phone::new();
+    assert_eq!(held_lock(&phone.root), None);
+    let branch = phone.repo.path().join("refs/heads/main.lock");
+    fs::write(&branch, "").unwrap();
+    phone.edit("pages/b.md", "- typed before the kill\n");
+    assert_eq!(commit_now(&phone.root, MESSAGE), Err(Unusable::Busy));
+    let named = held_lock(&phone.root).unwrap();
+    assert!(named.ends_with("refs/heads/main.lock"), "{named}");
+    fs::write(phone.repo.path().join("index.lock"), "").unwrap();
+    assert!(held_lock(&phone.root).unwrap().ends_with("index.lock"));
+    fs::remove_file(phone.repo.path().join("index.lock")).unwrap();
+    fs::remove_file(branch).unwrap();
+    assert!(matches!(
+        commit_now(&phone.root, MESSAGE),
+        Ok(Outcome::Committed(_))
+    ));
+}
+
 /// The child half of the kill test: commit and push until the parent ends
 /// this process.
 fn commit_and_push_until_killed(root: &Path) {
@@ -440,7 +462,8 @@ fn a_commit_or_push_the_os_ends_leaves_the_repository_whole() {
         "{}::a_commit_or_push_the_os_ends_leaves_the_repository_whole",
         module_path!().split_once("::").unwrap().1
     );
-    let mut stale_locks = 0;
+    let mut stale_locks = std::collections::BTreeMap::<String, u32>::new();
+    let mut remote_locks = 0;
     let delays = [0u64, 2, 5, 9, 14, 20, 30, 45, 70, 110, 170, 260, 400];
     for delay in delays {
         let _ = fs::remove_file(phone.root.join("ready"));
@@ -464,20 +487,35 @@ fn a_commit_or_push_the_os_ends_leaves_the_repository_whole() {
         child.wait().unwrap();
 
         let leftovers = assert_whole(&phone.repo, &format!("killed after {delay} ms"));
-        assert!(assert_whole(&phone.bare, "the remote").is_empty());
-        if leftovers.iter().any(|l| l == "index.lock") {
-            // ADR 0078 §1: Tine never removes it; the next commit is busy
-            // until the person does (Settings names the file).
-            stale_locks += 1;
-            assert_eq!(commit_now(&phone.root, MESSAGE), Err(Unusable::Busy));
-            fs::remove_file(phone.repo.path().join("index.lock")).unwrap();
+        // The remote is a file:// repository this process wrote as a server
+        // would; a server recovers its own locks. Its objects and refs must
+        // be whole.
+        for lock in assert_whole(&phone.bare, "the remote") {
+            remote_locks += 1;
+            fs::remove_file(lock).unwrap();
         }
-        // The next holder of the lock removes a killed index copy.
-        let next = commit_now(&phone.root, MESSAGE);
-        assert!(
-            matches!(next, Ok(Outcome::Committed(_) | Outcome::Clean)),
-            "killed after {delay} ms, left {leftovers:?}: the next commit {next:?} on {volume}"
-        );
+        // ADR 0078 §1: Tine never removes a lock; the next commit is busy
+        // and Settings names the lock until the person removes it.
+        for _ in 0..4 {
+            let next = commit_now(&phone.root, MESSAGE);
+            if next != Err(Unusable::Busy) {
+                assert!(
+                    matches!(next, Ok(Outcome::Committed(_) | Outcome::Clean)),
+                    "killed after {delay} ms, left {leftovers:?}: the next commit {next:?} on {volume}"
+                );
+                break;
+            }
+            let named = held_lock(&phone.root).map(PathBuf::from);
+            let lock = named.unwrap_or_else(|| {
+                panic!("killed after {delay} ms, left {leftovers:?}: busy, no lock named")
+            });
+            assert!(leftovers.contains(&lock), "{lock:?} not in {leftovers:?}");
+            *stale_locks
+                .entry(lock.file_name().unwrap().to_string_lossy().into_owned())
+                .or_insert(0) += 1;
+            fs::remove_file(lock).unwrap();
+        }
+        // The next holder of the index lock removes a killed index copy.
         let leftovers = assert_whole(&phone.repo, "after the next commit");
         assert!(leftovers.is_empty(), "{leftovers:?}");
     }
@@ -489,7 +527,7 @@ fn a_commit_or_push_the_os_ends_leaves_the_repository_whole() {
     );
     assert_eq!(phone.remote_tip(), head(&phone.repo));
     eprintln!(
-        "GIT-KILL result=PASS kills={} stale_index_lock={stale_locks} {volume}",
+        "GIT-KILL result=PASS kills={} stale_locks={stale_locks:?} remote_locks={remote_locks} {volume}",
         delays.len()
     );
 }

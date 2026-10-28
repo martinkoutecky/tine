@@ -59,7 +59,7 @@ const REPACK_COMMITS: u32 = 50;
 const REPACK_LOOSE_OBJECTS: usize = 6700;
 /// Failed maintenance must not run again on every commit/tick.
 const REPACK_RETRY: Duration = Duration::from_secs(10 * 60);
-/// Busy cycles over this long before Settings names a stale `index.lock`.
+/// Busy cycles over this long before Settings names a stale lock ([`held_lock`]).
 const STALE_LOCK_AFTER: Duration = Duration::from_secs(30 * 60);
 const STALE_LOCK_CYCLES: u32 = 3;
 /// The device-settings key (`tine-settings.json`), keyed by graph root.
@@ -884,8 +884,8 @@ pub(crate) struct LastAttempt {
     pub(crate) commit: Option<String>,
     /// The last refusal (`Unusable::code`) and its message.
     pub(crate) refused: Option<(String, String)>,
-    /// `index.lock` stayed held through several cycles: probably left by a
-    /// crash. Settings names it; Tine never deletes it.
+    /// A lock ([`held_lock`]) stayed held through several cycles: probably
+    /// left by a crash. Settings names it; Tine never deletes it.
     pub(crate) stale_lock: Option<String>,
     pub(crate) sync: SyncStatus,
 }
@@ -1064,6 +1064,27 @@ pub(crate) fn foregrounded() {
     }
 }
 
+/// The lock a commit keeps finding held: `index.lock`, or the lock a git
+/// program (or Tine, ended by the OS mid-commit) left on `HEAD`, the branch
+/// or the packed refs. Tine names it and never removes it (ADR 0078 §1).
+pub(crate) fn held_lock(root: &Path) -> Option<String> {
+    let repo = Repository::discover(root).ok()?;
+    let mut locks = vec![
+        repo.path().join("index.lock"),
+        repo.path().join("HEAD.lock"),
+    ];
+    if let Some(branch) = repo
+        .find_reference("HEAD")
+        .ok()
+        .and_then(|head| head.symbolic_target().ok().flatten().map(str::to_owned))
+    {
+        locks.push(repo.commondir().join(format!("{branch}.lock")));
+    }
+    locks.push(repo.commondir().join("packed-refs.lock"));
+    let held = locks.into_iter().find(|lock| lock.exists())?;
+    Some(held.display().to_string())
+}
+
 pub(crate) fn last_attempt(root: &Path) -> LastAttempt {
     registry::get(root)
         .map(|w| w.state.lock().unwrap().last.clone())
@@ -1207,9 +1228,7 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
                         let (since, cycles) = busy_since.get_or_insert((Instant::now(), 0));
                         *cycles += 1;
                         if *cycles >= STALE_LOCK_CYCLES && since.elapsed() >= STALE_LOCK_AFTER {
-                            state.last.stale_lock = Repository::discover(&root)
-                                .ok()
-                                .map(|r| r.path().join("index.lock").display().to_string());
+                            state.last.stale_lock = held_lock(&root);
                         }
                     } else {
                         busy_since = None;
