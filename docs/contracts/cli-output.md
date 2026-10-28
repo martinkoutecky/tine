@@ -282,7 +282,7 @@ Kind `written`. Write replies carry no page text.
 | `git.committed` | boolean | optional | yes | `true`: the write's bytes are committed. `false`: the file is saved but not committed (`git.error`, `git.message` say why: `refused:git` for a repository error, `refused:git-busy` when the branch kept moving) |
 | `git.commit` | string | optional | no | the agent commit's id |
 | `git.snapshot` | string | nullable | yes | the commit of the user's uncommitted edits to the file, made first under the user's git identity; `null` when `HEAD` already had the bytes the write started from |
-| `git.index` | string | optional | yes | the committed file's index entry: `synced` (now matches the commit; changed under git's `index.lock` protocol, so a concurrent `git add` is never overwritten), `staged-kept` (the user had other content staged for the file; left staged, nothing of it lost), `busy` (the index was locked or conflicted; untouched, so `git status` may show the file changed until git refreshes) |
+| `git.index` | string | optional | yes | the committed file's index entry: `synced` (now matches the commit; changed under git's `index.lock` protocol, so a concurrent `git add` is never overwritten), `staged-kept` (the user had other content staged for the file; left staged, nothing of it lost). The index is installed before the branch moves; an index that cannot be written refuses the commit (`git.committed: false`, the file saved), never a moved branch over a stale index |
 
 Read by the text output: `name`, `rev`, `blocks`, `more`, `git`.
 
@@ -350,6 +350,7 @@ branch. A same-branch concurrent commit still uses compare-and-swap retries.
 | --- | --- | --- |
 | `refused:git` naming a conversion attribute | repository content conversion, including git-crypt plaintext disclosure | use Git's own conversion workflow; no page, ref, index or raw object is changed by the refused run write |
 | `git.committed: false` naming a changed branch | concurrent honest terminal checkout between repository open and index locking | inspect the saved page and active branch before starting another write; neither branch nor the new branch's index is changed by the refused commit |
+| `git.committed: false`, "the index could not be written" | disk error or full disk while the index is installed, before the branch moves (s3.7 P1/P1b) | the file is saved and the branch is unmoved, so no stale index sits under a new `HEAD`; the index is the old one or already stages the write, and the next commit records it |
 
 - **`run.begin`**: kind `run`; `run` (the id, `r<hex seconds>-<8 hex>`), `branch`. Text: the id.
 - **`run.show RUN`**: kind `run-commits`; `run`, `commits` (newest first: `commit`, `agent` (boolean; `false` =

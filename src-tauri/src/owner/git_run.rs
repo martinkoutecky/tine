@@ -547,6 +547,8 @@ impl Repo {
         new: Oid,
         log: &str,
     ) -> Result<bool, git2::Error> {
+        #[cfg(test)]
+        lock_test_hook::before_ref_move();
         self.guard.check_git(&self.repo, &self.branch)?;
         let result = match old {
             Some(old) => self
@@ -577,23 +579,26 @@ impl Repo {
 /// copy for libgit2 to read and write (its own write would want the lock this
 /// holds). `index.lock` is created exclusively first: a held lock means
 /// another git command is at work, and the index is left alone. The index is
-/// read while the lock is held, and the new index is written into the lock
-/// file and renamed over the index, so a concurrent `git add` either finishes
-/// before the read or fails on the lock; it is never overwritten. Dropped
-/// without [`IndexLock::install`], the lock and the copy are removed and the
-/// index is as it was.
+/// read while the lock is held, and [`IndexLock::install`] renames the
+/// synced copy over the index while the lock is still held, so a concurrent
+/// `git add` either finishes before the read or fails on the lock; it is never
+/// overwritten. Dropping this removes the copy and releases the lock; dropped
+/// without an install, the index is as it was.
 ///
 /// A branch move that the index must follow happens while this is held (ADR
-/// 0078 §4, review R2): a moved `HEAD` over an index still naming the old
-/// blobs would let the user's next plain `git commit` record a reversion.
+/// 0078 §4, review R2), and after the install (s3.7 repair P1/P1b): a moved
+/// `HEAD` over an index still naming the old blobs, left by a crash between
+/// the two or by a power cut that undid the index rename, would let the user's
+/// next plain `git commit` record a reversion.
 pub(super) struct IndexLock {
     guard: Arc<GitMutationGuard>,
-    lock: std::fs::File,
+    /// `index.lock`, held until drop; it stays empty (git never reads another
+    /// command's lock file).
+    lock: Option<std::fs::File>,
     lock_file: PathBuf,
     index_file: PathBuf,
     scratch: PathBuf,
     pub(super) index: git2::Index,
-    installed: bool,
 }
 
 /// The prefix of the private index copies [`IndexLock`] makes in `.git`;
@@ -705,12 +710,11 @@ impl IndexLock {
         match opened {
             Ok(index) => Ok(Self {
                 guard,
-                lock,
+                lock: Some(lock),
                 lock_file,
                 index_file,
                 scratch,
                 index,
-                installed: false,
             }),
             Err(refusal) => {
                 if check(&scratch).is_ok() {
@@ -759,6 +763,11 @@ impl IndexLock {
         old: Option<Oid>,
     ) -> Result<IndexSync, git2::Error> {
         let staged = self.index.get_path(Path::new(path), 0).map(|e| e.id);
+        if staged == blob {
+            // Already staged (by the user, or by this commit's earlier
+            // attempt before a lost compare-and-swap).
+            return Ok(IndexSync::Synced);
+        }
         if staged != tip && staged != old {
             return Ok(IndexSync::StagedKept);
         }
@@ -784,20 +793,42 @@ impl IndexLock {
         Ok(IndexSync::Synced)
     }
 
-    /// Write the copy into the lock file and rename it over the index.
-    pub(super) fn install(mut self) -> Result<(), Box<dyn std::error::Error>> {
-        use std::io::Write;
+    /// Make the copy the index, durably, before the caller moves the branch:
+    /// write and fsync the copy, rename it over the index, then sync `.git`
+    /// (Unix; Windows: no directory flush, see below)
+    /// (libgit2 fsyncs a ref and its directory, so an index rename left
+    /// unsynced could come back from a power cut as the old index under the
+    /// new `HEAD`: s3.7 P1b). `index.lock` stays held until drop, so no git
+    /// command touches the index between this and the branch move. An error
+    /// means the branch must not move; the index is then the old or the new
+    /// one, either of which is safe under the old `HEAD`.
+    pub(super) fn install(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.guard.check_path(&self.scratch)?;
         self.guard
             .check_path(&self.scratch.with_extension("tmp.lock"))?;
         self.index.write()?;
-        self.guard.check_path(&self.lock_file)?;
-        self.lock.write_all(&std::fs::read(&self.scratch)?)?;
-        self.lock.sync_all()?;
-        self.guard.check_path(&self.lock_file)?;
+        // libgit2 never fsyncs an index write, even with FSYNC_GITDIR.
+        self.guard.check_path(&self.scratch)?;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&self.scratch)?
+            .sync_all()?;
+        self.guard.check_path(&self.scratch)?;
         self.guard.check_path(&self.index_file)?;
-        std::fs::rename(&self.lock_file, &self.index_file)?;
-        self.installed = true;
+        std::fs::rename(&self.scratch, &self.index_file)?;
+        let gitdir = self.index_file.parent().ok_or("the index has no folder")?;
+        self.guard.check_path(gitdir)?;
+        // The graph folders' entry sync, held strict on Unix like libgit2's
+        // own directory fsync of the ref it moves next (a filesystem without
+        // directory sync refuses here, as libgit2's ref write would). On
+        // Windows it is the guard's identity checks without a directory flush
+        // (ADR 0078 §2; D-20261028-WDD keeps the best-effort flush to app
+        // data: a flush on a cloud or network folder could hang under
+        // `index.lock` and the runs' lock).
+        use tine_store::directory_durability::{self, DirectoryWitness};
+        if directory_durability::sync_directory_witness(gitdir)? == DirectoryWitness::Unsupported {
+            return Err(format!("{}: directory sync unsupported", gitdir.display()).into());
+        }
         Ok(())
     }
 }
@@ -814,7 +845,10 @@ impl Drop for IndexLock {
         {
             let _ = std::fs::remove_file(self.scratch.with_extension("tmp.lock"));
         }
-        if !self.installed && self.guard.check_path(&self.lock_file).is_ok() {
+        // Close before unlinking: Windows keeps a deleted, open file's name
+        // until its last handle closes, which would refuse the next lock.
+        drop(self.lock.take());
+        if self.guard.check_path(&self.lock_file).is_ok() {
             let _ = std::fs::remove_file(&self.lock_file);
         }
     }
@@ -844,8 +878,6 @@ pub(crate) enum IndexSync {
     Synced,
     /// The user had other content staged for the file; it stays staged.
     StagedKept,
-    /// The index was locked, conflicted or changing; it was not touched.
-    Busy,
 }
 
 impl IndexSync {
@@ -853,7 +885,6 @@ impl IndexSync {
         match self {
             Self::Synced => "synced",
             Self::StagedKept => "staged-kept",
-            Self::Busy => "busy",
         }
     }
 }
@@ -1008,25 +1039,34 @@ fn commit_pair(
                 format!("{} The file is saved, its commit is missing.", refusal.message()),
             )),
         };
-        if repo
-            .advance(tip.as_ref().map(|c| c.id()), oid, "tine run: commit")
-            .map_err(git_failed)?
-        {
-            let index = match lock.set_committed(
+        // The index is durably at the commit before the branch moves to it;
+        // without that, no branch move (s3.7 P1/P1b).
+        let uncommitted = |e: &dyn std::fmt::Display| {
+            super::write::refused(
+                "git",
+                None,
+                format!(
+                    "the index could not be written: {e}; the file is saved, its commit is missing"
+                ),
+            )
+        };
+        let index = lock
+            .set_committed(
                 &path,
                 new_blob,
                 new.map_or(0, |b| b.len() as u32),
                 mode as u32,
                 repo.blob_at(tip_tree.as_ref(), &path),
                 old_blob,
-            ) {
-                Ok(IndexSync::Synced) => match lock.install() {
-                    Ok(()) => IndexSync::Synced,
-                    Err(_) => IndexSync::Busy,
-                },
-                Ok(other) => other,
-                Err(_) => IndexSync::Busy,
-            };
+            )
+            .map_err(|e| uncommitted(&e.message()))?;
+        if index == IndexSync::Synced {
+            lock.install().map_err(|e| uncommitted(&e))?;
+        }
+        if repo
+            .advance(tip.as_ref().map(|c| c.id()), oid, "tine run: commit")
+            .map_err(git_failed)?
+        {
             return Ok(Committed {
                 snapshot,
                 agent: oid,
@@ -1438,20 +1478,46 @@ fn text_of(bytes: Option<&[u8]>) -> String {
 
 #[cfg(test)]
 pub(super) mod lock_test_hook {
+    type Hook = Option<Box<dyn FnOnce()>>;
     thread_local! {
-        static HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const {
-            std::cell::RefCell::new(None)
+        /// One-shot hooks: once the index is locked, and before a branch move.
+        static HOOKS: std::cell::RefCell<[Hook; 2]> = const {
+            std::cell::RefCell::new([None, None])
         };
     }
 
     pub(crate) fn install(hook: impl FnOnce() + 'static) {
-        HOOK.with(|h| *h.borrow_mut() = Some(Box::new(hook)));
+        HOOKS.with(|h| h.borrow_mut()[0] = Some(Box::new(hook)));
+    }
+
+    pub(crate) fn install_before_ref_move(hook: impl FnOnce() + 'static) {
+        HOOKS.with(|h| h.borrow_mut()[1] = Some(Box::new(hook)));
+    }
+
+    fn run(slot: usize) {
+        if let Some(hook) = HOOKS.with(|h| h.borrow_mut()[slot].take()) {
+            hook();
+        }
     }
 
     pub(super) fn pause() {
-        if let Some(hook) = HOOK.with(|h| h.borrow_mut().take()) {
-            hook();
-        }
+        run(0);
+    }
+
+    pub(super) fn before_ref_move() {
+        run(1);
+    }
+
+    /// What a crash or power cut right now would leave: the blob the on-disk
+    /// index stages for `path`, and whether `gitdir` was synced since the
+    /// caller last took this thread's synced directories.
+    pub(crate) fn durable_entry(gitdir: &std::path::Path, path: &str) -> (Option<git2::Oid>, bool) {
+        let index = git2::Index::open(&gitdir.join("index")).unwrap();
+        let staged = index.get_path(std::path::Path::new(path), 0).map(|e| e.id);
+        let synced = tine_store::directory_durability::take_synced_directories()
+            .iter()
+            .any(|dir| same_file::is_same_file(dir, gitdir).unwrap_or(false));
+        (staged, synced)
     }
 }
 

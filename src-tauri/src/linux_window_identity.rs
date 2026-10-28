@@ -24,12 +24,18 @@ use crate::app_identity::{APP_IDENTIFIER as APP_ID, PRODUCT_NAME};
 const DESKTOP_FILE: &str = concat!(env!("TINE_APP_IDENTIFIER"), ".desktop");
 const MANAGED_MARKER: &str = "X-Tine-Managed=true";
 
+macro_rules! identity_icon {
+    ($file:literal) => {
+        include_bytes!(concat!("../", env!("TINE_ICON_DIRECTORY"), "/", $file))
+    };
+}
+
 const ICONS: &[(&str, &[u8])] = &[
-    ("512x512", include_bytes!("../icons/icon.png")),
-    ("256x256", include_bytes!("../icons/128x128@2x.png")),
-    ("128x128", include_bytes!("../icons/128x128.png")),
-    ("64x64", include_bytes!("../icons/64x64.png")),
-    ("32x32", include_bytes!("../icons/32x32.png")),
+    ("512x512", identity_icon!("icon.png")),
+    ("256x256", identity_icon!("128x128@2x.png")),
+    ("128x128", identity_icon!("128x128.png")),
+    ("64x64", identity_icon!("64x64.png")),
+    ("32x32", identity_icon!("32x32.png")),
 ];
 
 #[derive(Debug, Eq, PartialEq)]

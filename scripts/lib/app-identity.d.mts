@@ -3,6 +3,7 @@ export interface AppIdentity {
   productName: string;
   androidApplicationId: string;
   deployName: string;
+  iconDirectory: string;
 }
 export interface AppIdentitySwitch {
   ship: string;

@@ -2,6 +2,23 @@
 //! atomic increment; no names, payloads, file I/O or extra locks enter here.
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
+// Directory sync has no graph context (it also serves private app-data).
+// Count API outcomes process-wide, without retaining paths or adding locks.
+#[cfg(target_os = "windows")]
+static WINDOWS_DIRECTORY_FLUSH_SUCCEEDED: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_os = "windows")]
+static WINDOWS_DIRECTORY_FLUSH_FAILED: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(target_os = "windows")]
+pub(crate) fn record_windows_directory_flush(succeeded: bool) {
+    let counter = if succeeded {
+        &WINDOWS_DIRECTORY_FLUSH_SUCCEEDED
+    } else {
+        &WINDOWS_DIRECTORY_FLUSH_FAILED
+    };
+    counter.fetch_add(1, Relaxed);
+}
+
 // Retain counts when a graph closes and reopens during this process. The path
 // is only an in-memory lookup key and never enters the exported snapshot.
 pub(crate) fn for_graph(root: &std::path::Path) -> std::sync::Arc<StorageCounters> {
@@ -48,7 +65,7 @@ impl StorageCounters {
     }
 
     pub(crate) fn snapshot(&self) -> serde_json::Value {
-        serde_json::json!({
+        let report = serde_json::json!({
             "scope": "since-launch",
             "pageSaves": {
                 "published": self.published.load(Relaxed),
@@ -64,6 +81,17 @@ impl StorageCounters {
             // Tine has no general storage-backend classifier. Do not infer
             // a filesystem or cloud provider from a graph's private path.
             "backendClass": "unclassified",
-        })
+        });
+        #[cfg(target_os = "windows")]
+        let report = {
+            let mut report = report;
+            report["windowsDirectoryFlush"] = serde_json::json!({
+                "scope": "process-since-launch",
+                "apiSucceeded": WINDOWS_DIRECTORY_FLUSH_SUCCEEDED.load(Relaxed),
+                "apiFailed": WINDOWS_DIRECTORY_FLUSH_FAILED.load(Relaxed),
+            });
+            report
+        };
+        report
     }
 }

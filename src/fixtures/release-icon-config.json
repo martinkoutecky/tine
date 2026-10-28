@@ -1,0 +1,168 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Tine",
+  "version": "0.9.0-beta.1",
+  "identifier": "page.tine.Tine",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5181",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Tine",
+        "width": 1200,
+        "height": 820,
+        "minWidth": 640,
+        "minHeight": 480,
+        "decorations": false,
+        "visible": false
+      },
+      {
+        "label": "capture",
+        "url": "capture.html",
+        "title": "Quick Capture",
+        "width": 600,
+        "height": 92,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": true,
+        "center": true,
+        "visible": false,
+        "focus": false
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'wasm-unsafe-eval' https://www.youtube.com",
+        "style-src": "'self' 'unsafe-inline' https:",
+        "connect-src": "'self' ipc: http://ipc.localhost https: blob: data:",
+        "img-src": "'self' data: blob: tine-media: http://tine-media.localhost https://tine-media.localhost https: http:",
+        "media-src": "'self' data: blob: tine-media: http://tine-media.localhost https://tine-media.localhost https: http:",
+        "font-src": "'self' data: https:",
+        "worker-src": "'self' blob:",
+        "frame-src": "'self' https:",
+        "object-src": "'none'",
+        "base-uri": "'none'"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["appimage", "deb", "rpm", "nsis", "app", "dmg"],
+    "createUpdaterArtifacts": true,
+    "macOS": { "infoPlist": "Info.plist" },
+    "iOS": { "infoPlist": "Info.plist", "minimumSystemVersion": "15.4" },
+    "windows": { "nsis": { "installerHooks": "tine-url-hooks.nsh" } },
+    "android": {
+      "versionCode": 9001
+    },
+    "linux": {
+      "deb": {
+        "recommends": ["libayatana-appindicator3-1"],
+        "desktopTemplate": "tine.desktop",
+        "files": {
+          "usr/share/man/man1/tine.1": "../docs/tine.1",
+          "usr/share/man/man1/tine-open.1": "../docs/tine-open.1",
+          "usr/share/man/man1/tine-capture.1": "../docs/tine-capture.1",
+          "usr/share/man/man1/tine-export.1": "../docs/tine-export.1",
+          "usr/share/man/man1/tine-export-static.1": "../docs/tine-export-static.1",
+          "usr/share/man/man1/tine-export-live.1": "../docs/tine-export-live.1",
+          "usr/share/man/man1/tine-doctor.1": "../docs/tine-doctor.1",
+          "usr/share/man/man1/tine-version.1": "../docs/tine-version.1",
+          "usr/share/man/man1/tine-serve.1": "../docs/tine-serve.1",
+          "usr/share/man/man1/tine-status.1": "../docs/tine-status.1",
+          "usr/share/man/man1/tine-page.1": "../docs/tine-page.1",
+          "usr/share/man/man1/tine-page-show.1": "../docs/tine-page-show.1",
+          "usr/share/man/man1/tine-page-create.1": "../docs/tine-page-create.1",
+          "usr/share/man/man1/tine-page-rename.1": "../docs/tine-page-rename.1",
+          "usr/share/man/man1/tine-page-delete.1": "../docs/tine-page-delete.1",
+          "usr/share/man/man1/tine-ref.1": "../docs/tine-ref.1",
+          "usr/share/man/man1/tine-embed.1": "../docs/tine-embed.1",
+          "usr/share/man/man1/tine-pages.1": "../docs/tine-pages.1",
+          "usr/share/man/man1/tine-journal.1": "../docs/tine-journal.1",
+          "usr/share/man/man1/tine-block.1": "../docs/tine-block.1",
+          "usr/share/man/man1/tine-block-show.1": "../docs/tine-block-show.1",
+          "usr/share/man/man1/tine-refs.1": "../docs/tine-refs.1",
+          "usr/share/man/man1/tine-search.1": "../docs/tine-search.1",
+          "usr/share/man/man1/tine-query.1": "../docs/tine-query.1",
+          "usr/share/man/man1/tine-edit.1": "../docs/tine-edit.1",
+          "usr/share/man/man1/tine-delete.1": "../docs/tine-delete.1",
+          "usr/share/man/man1/tine-add.1": "../docs/tine-add.1",
+          "usr/share/man/man1/tine-move.1": "../docs/tine-move.1",
+          "usr/share/man/man1/tine-prop.1": "../docs/tine-prop.1",
+          "usr/share/man/man1/tine-prop-set.1": "../docs/tine-prop-set.1",
+          "usr/share/man/man1/tine-prop-remove.1": "../docs/tine-prop-remove.1",
+          "usr/share/man/man1/tine-run.1": "../docs/tine-run.1",
+          "usr/share/man/man1/tine-run-begin.1": "../docs/tine-run-begin.1",
+          "usr/share/man/man1/tine-run-show.1": "../docs/tine-run-show.1",
+          "usr/share/man/man1/tine-run-end.1": "../docs/tine-run-end.1",
+          "usr/share/man/man1/tine-run-revert.1": "../docs/tine-run-revert.1"
+        }
+      },
+      "rpm": {
+        "recommends": ["libayatana-appindicator-gtk3"],
+        "desktopTemplate": "tine.desktop",
+        "files": {
+          "/usr/share/man/man1/tine.1": "../docs/tine.1",
+          "/usr/share/man/man1/tine-open.1": "../docs/tine-open.1",
+          "/usr/share/man/man1/tine-capture.1": "../docs/tine-capture.1",
+          "/usr/share/man/man1/tine-export.1": "../docs/tine-export.1",
+          "/usr/share/man/man1/tine-export-static.1": "../docs/tine-export-static.1",
+          "/usr/share/man/man1/tine-export-live.1": "../docs/tine-export-live.1",
+          "/usr/share/man/man1/tine-doctor.1": "../docs/tine-doctor.1",
+          "/usr/share/man/man1/tine-version.1": "../docs/tine-version.1",
+          "/usr/share/man/man1/tine-serve.1": "../docs/tine-serve.1",
+          "/usr/share/man/man1/tine-status.1": "../docs/tine-status.1",
+          "/usr/share/man/man1/tine-page.1": "../docs/tine-page.1",
+          "/usr/share/man/man1/tine-page-show.1": "../docs/tine-page-show.1",
+          "/usr/share/man/man1/tine-page-create.1": "../docs/tine-page-create.1",
+          "/usr/share/man/man1/tine-page-rename.1": "../docs/tine-page-rename.1",
+          "/usr/share/man/man1/tine-page-delete.1": "../docs/tine-page-delete.1",
+          "/usr/share/man/man1/tine-ref.1": "../docs/tine-ref.1",
+          "/usr/share/man/man1/tine-embed.1": "../docs/tine-embed.1",
+          "/usr/share/man/man1/tine-pages.1": "../docs/tine-pages.1",
+          "/usr/share/man/man1/tine-journal.1": "../docs/tine-journal.1",
+          "/usr/share/man/man1/tine-block.1": "../docs/tine-block.1",
+          "/usr/share/man/man1/tine-block-show.1": "../docs/tine-block-show.1",
+          "/usr/share/man/man1/tine-refs.1": "../docs/tine-refs.1",
+          "/usr/share/man/man1/tine-search.1": "../docs/tine-search.1",
+          "/usr/share/man/man1/tine-query.1": "../docs/tine-query.1",
+          "/usr/share/man/man1/tine-edit.1": "../docs/tine-edit.1",
+          "/usr/share/man/man1/tine-delete.1": "../docs/tine-delete.1",
+          "/usr/share/man/man1/tine-add.1": "../docs/tine-add.1",
+          "/usr/share/man/man1/tine-move.1": "../docs/tine-move.1",
+          "/usr/share/man/man1/tine-prop.1": "../docs/tine-prop.1",
+          "/usr/share/man/man1/tine-prop-set.1": "../docs/tine-prop-set.1",
+          "/usr/share/man/man1/tine-prop-remove.1": "../docs/tine-prop-remove.1",
+          "/usr/share/man/man1/tine-run.1": "../docs/tine-run.1",
+          "/usr/share/man/man1/tine-run-begin.1": "../docs/tine-run-begin.1",
+          "/usr/share/man/man1/tine-run-show.1": "../docs/tine-run-show.1",
+          "/usr/share/man/man1/tine-run-end.1": "../docs/tine-run-end.1",
+          "/usr/share/man/man1/tine-run-revert.1": "../docs/tine-run-revert.1"
+        }
+      }
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://tine.page/updates/beta/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE5MEE5NzJDNjJGQzYzQQpSV1E2eGkvR2NxbVFDc3B5WUdRY21mUWFCVVEwZTRKWjl2S2h1ZWVkd3M2R0VmdnBUbHQvYmh1eQo=",
+      "windows": { "installMode": "passive" }
+    }
+  }
+}

@@ -100,7 +100,15 @@ commits refuses (`run git reset`): staging into an empty index would record ever
 index with unresolved conflicts refuses as such. It is built on a private copy of the index taken while Tine holds
 `index.lock` (the protocol `git_run.rs` already uses): stage the graph root's changes into the copy, write its
 tree, take only the graph root's subtree into `HEAD`'s tree (a user's staged changes outside the graph are never
-committed), commit, move the branch by compare-and-swap, then rename the copy over the index. Author and
+committed), commit, install the copy as the index (fsync the copy, rename it over the index, sync `.git`), then
+move the branch by compare-and-swap, all under the lock. Index first (s3.7 repairs P1/P1b, `SPEC-s37-gitpull.md`):
+the ref moved first, a crash between the two, or a power cut that undid the unsynced index rename (libgit2 fsyncs
+the ref and its folder), left the old index under the new `HEAD`, and the user's next plain `git commit` recorded a
+reversion. An index left ahead of an unmoved `HEAD` (crash, lost compare-and-swap) only stages what the next
+commit records; an index that cannot be installed refuses the commit. Run commits use the same helper. Windows
+performs identity checks without directory flush for this `.git` sync (D-20261028-WDD keeps the best-effort flush
+to app-data folders; a flush on a cloud or network folder could hang under `index.lock`), so there the index
+rename's survival of a power cut rests on the file system, with no witness. Author and
 committer: the repository's identity, else "Your name" with `user@tine.invalid` (`git_run.rs`'s fallback, which
 seen's "me" matches; per field, `git_run::user_identity`: repository `user.name` else "Your name" else `Tine user`,
 repository `user.email` else `user@tine.invalid`). Message `Tine: autosave`; no trailers (G3: generic). Nothing to commit → no commit.
@@ -205,7 +213,8 @@ Measured in the spike (`specs/campaigns/2026-10-git-sync/spike/measure/*.txt`, c
   rewritten trees on the changed paths, one commit (160 B). The trees dominate: Logseq keeps all pages in one
   flat `pages/` folder, so its tree object is rewritten whole on every commit: **247 KB loose at 10 000 pages**,
   25 KB at 1 000. Files: one loose object per new object (blobs + 2 trees + commit), plus ref and reflog, and the
-  index rewritten whole (880 KB at 10 000 pages).
+  index rewritten whole (880 KB at 10 000 pages). Index install: one fsync of the index copy and one of `.git`
+  (Windows: none, identity checks only) per commit (s3.7 P1b; counted from the code, `IndexLock::install`).
 - **Rate:** at most one autocommit per interval of editing (default 10 min) plus one per structural operation:
   ≤ 6 per editing hour, ≤ 1.5 MB loose per editing hour at 10 000 pages. The incremental repack at 50 commits
   deltifies the trees: on 10 000 flat pages, 50 one-page autocommits (200 loose objects) pack to 265 KB in

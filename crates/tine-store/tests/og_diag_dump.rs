@@ -95,6 +95,7 @@ fn the_dump_never_names_the_graph() {
     strings(&store.diagnostics(), &mut found);
     let closed = [
         "since-launch",
+        "process-since-launch",
         "unclassified",
         "ready",
         "loading",

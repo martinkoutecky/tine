@@ -6,9 +6,9 @@
 //! It is built on a private copy of the index taken under `index.lock`
 //! ([`IndexLock`]): the graph root's changes are staged into the copy, its
 //! tree is written, only the graph root's subtree goes into `HEAD`'s tree (a
-//! user's staged changes outside the graph are never committed), the branch
-//! moves by compare-and-swap while the lock is held, and the copy replaces
-//! the index. The graph root is matched as a literal path prefix, never as a
+//! user's staged changes outside the graph are never committed), the copy
+//! durably replaces the index, and then the branch moves by compare-and-swap,
+//! all while the lock is held. The graph root is matched as a literal path prefix, never as a
 //! pathspec pattern (a folder named `Notes [work]` is a glob).
 //!
 //! When (G9): when nothing was published for [`IDLE`] and the interval
@@ -446,12 +446,15 @@ fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
         if EXITING.load(Ordering::Acquire) {
             return Err(Unusable::Quitting);
         }
+        // The index durably names the commit's blobs before the branch moves
+        // to it (s3.7 P1/P1b); a lost compare-and-swap leaves them staged,
+        // which the next attempt commits.
+        lock.install()
+            .map_err(|e| Unusable::Failed(format!("the index could not be written: {e}")))?;
         if repo
             .advance(tip.as_ref().map(|c| c.id()), oid, "tine: autocommit")
             .map_err(failed)?
         {
-            lock.install()
-                .map_err(|e| Unusable::Failed(format!("the index could not be written: {e}")))?;
             return Ok(Outcome::Committed(oid));
         }
     }

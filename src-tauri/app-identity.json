@@ -5,13 +5,15 @@
       "identifier": "page.tine.Tine",
       "productName": "Tine",
       "androidApplicationId": "page.tine.app",
-      "deployName": "tine"
+      "deployName": "tine",
+      "iconDirectory": "icons"
     },
     "experiment": {
       "identifier": "page.tine.TineBeta",
       "productName": "Tine Beta",
       "androidApplicationId": "page.tine.beta",
-      "deployName": "tine-og"
+      "deployName": "tine-og",
+      "iconDirectory": "icons-beta"
     }
   }
 }

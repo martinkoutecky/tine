@@ -149,8 +149,8 @@ domain = "primitive"
 guard = ""
 test = "src-tauri/src/root_identity.rs#relocation_is_idempotent_and_preserves_sealed_bytes"
 oracle = false
-note = "App-data caller of the existing shared directory witness; Unsupported is reported instead of accepted as strong. No new sync primitive or graph path."
-mutations = "directory_durability::sync_directory_witness=1"
+note = "App-data caller of the shared private Windows flush, followed by the existing directory witness; Unix Unsupported handling is unchanged. No new sync primitive or graph path."
+mutations = "directory_durability::sync_directory_witness=1, directory_durability::sync_private_directory=1"
 
 [[site]]
 file = "crates/tine-store/src/root_binding.rs"
@@ -1628,10 +1628,10 @@ file = "src-tauri/src/owner/git_run.rs"
 fn = "IndexLock::install"
 domain = "dotgit"
 guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
-test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_index_lock_refuses_a_redirected_index"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#autocommit_index_is_durable_before_the_branch_moves"
 oracle = false
-note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
-mutations = ".sync_all=1, .write=1, .write_all=1, fs::rename=1"
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. s3.7 P1/P1b: the private copy is fsynced, renamed over the index and .git synced (sync_directory_witness, Unsupported refused: strict on Unix like libgit2's ref fsync; Windows identity checks without directory flush, D-20261028-WDD) while index.lock stays held, before the caller's compare-and-swap; an error refuses the branch move. Crash scope: old or new index under the old HEAD, a stale empty index.lock. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux evidence; Windows/macOS runtime acceptance pending."
+mutations = ".sync_all=1, .write=2, OpenOptions::new=1, directory_durability::sync_directory_witness=1, fs::rename=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_run.rs"
