@@ -232,12 +232,25 @@ fn describe_volume(dir: &Path) -> String {
     };
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     let (fuse, noreplace) = (false, "not probed".to_string());
+    // A case-only rename (a pull that respells a page): does a plain rename
+    // land, and which spelling does the directory list afterwards?
+    let respell = match fs::rename(probe.join("fold"), probe.join("Fold")) {
+        Ok(()) => {
+            let mut listed: Vec<String> = fs::read_dir(&probe)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            listed.sort();
+            format!("renamed,listed:{}", listed.join("|"))
+        }
+        Err(e) => format!("refused ({e})"),
+    };
     fs::remove_dir_all(&probe).unwrap();
     if std::env::var("TINE_EXPECT_FUSE").as_deref() == Ok("1") {
         assert!(fuse, "the graph volume {} is not FUSE", dir.display());
     }
     format!(
-        "volume={} fuse={fuse} noreplace={noreplace} folds_case={folds}",
+        "volume={} fuse={fuse} noreplace={noreplace} folds_case={folds} case_rename={respell}",
         dir.display()
     )
 }
@@ -325,6 +338,24 @@ fn git_commits_pulls_pushes_and_repacks_on_the_graph_volume() {
         ("pages/C.md", Some("- lower case\n")),
     ]);
     let pulled = cycle(&slot, &credentials());
+    if pulled.code != "pulled" {
+        // What the stopped pull left, for the CI log, before the assert.
+        let pages: Vec<_> = (phone.page_names().into_iter())
+            .map(|n| {
+                (
+                    fs::read_to_string(phone.root.join("pages").join(&n)).ok(),
+                    n,
+                )
+            })
+            .collect();
+        let at_theirs = head(&phone.repo) == theirs;
+        let again = cycle(&slot, &credentials());
+        let leftovers = assert_whole(&phone.repo, "after the stopped pull");
+        eprintln!(
+            "GIT-STORAGE stopped pull: pages={pages:?} head_at_theirs={at_theirs} \
+             retry={again:?} leftovers={leftovers:?}"
+        );
+    }
     assert_eq!(pulled.code, "pulled", "{pulled:?} on {volume}");
     assert_eq!(head(&phone.repo), theirs);
     assert_eq!(

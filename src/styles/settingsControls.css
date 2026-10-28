@@ -68,7 +68,8 @@
   width: 150px;
   accent-color: var(--accent);
 }
-.settings-width-number {
+.settings-width-number,
+.settings-input[data-git-interval] {
   width: 76px;
 }
 .settings-width-unit {
@@ -76,10 +77,13 @@
   font-size: 12px;
 }
 @media (max-width: 640px) {
-  .settings-field-row:has(.settings-width-control) {
+  /* Git (ADR 0078 slice 3): policy select + interval wrap under the label on a phone. */
+  .settings-field-row:has(.settings-width-control),
+  .settings-field-row:has([data-git-policy]) {
     flex-wrap: wrap;
   }
   .settings-field-row:has(.settings-width-control) .settings-field-control,
+  .settings-field-row:has([data-git-policy]) .settings-field-control,
   .settings-width-control {
     flex: 1 1 100%;
     justify-content: flex-start;
