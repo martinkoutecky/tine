@@ -202,6 +202,12 @@
       "nonRequirements":["The more-than-five truncation and the Copy contents (unit-tested), and native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-code-scrollbar.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A real pointer press on the horizontal scrollbar under a long-line code block, then a drag, scrolls the card on the first try and never opens the block's editor; a click on the code text still does (GH #787).","blocking":true}],
+      "acceptableVariations":["Scrollbar thickness, thumb shape, colours and the card's height may vary while a press anywhere on the visible bar strip drag-scrolls the card."],
+      "nonRequirements":["Native certification outside Linux WebKitGTK (macOS overlay scrollbars are covered by the same geometry but unmeasured), and touch devices, which scroll by swipe."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-sidebar-crumbs.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A nested block opened in the right sidebar is titled with its page, an ellipsis and its nearest three ancestors rendered inline; clicking an ancestor crumb swaps that card to the ancestor without writing the page.","blocking":true},{"class":"stateful-ux","userOutcome":"With Block embed breadcrumbs on, a block embed shows its page and nearest three ancestors in a muted, smaller trail that starts at the embedded bullet, and each ancestor crumb opens that block (plain click: its page; Shift: the sidebar) (GH #440, #779).","blocking":true}],
       "acceptableVariations":["Separator glyphs, truncation and styling may vary while the page, ancestor order and swap agree."],
