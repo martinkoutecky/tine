@@ -1046,12 +1046,12 @@ fn shape(rows: &[DiffRow], offset_mine: usize, offset_theirs: usize) -> Vec<Shap
         .collect()
 }
 
-/// `trimmed_alignment_is_exact` is sound: whenever it says yes, the whole-list
-/// diff equals the window's diff plus the content-equal ends paired in place,
+/// `diff_blocks_trimmed` is sound: whenever it answers, the whole-list
+/// diff pairs exactly as its window rows plus the content-equal ends in place,
 /// on both sides of the LCS budget, with reorders, moves, duplicates and
 /// missing ids in the mix.
 #[test]
-fn trimmed_alignment_is_exact_only_when_the_whole_list_diff_agrees() {
+fn trimmed_diff_pairs_exactly_like_the_whole_list() {
     struct Rng(u64);
     impl Rng {
         fn next(&mut self, n: usize) -> usize {
@@ -1134,38 +1134,228 @@ fn trimmed_alignment_is_exact_only_when_the_whole_list_diff_agrees() {
             .take(room)
             .take_while(|(a, b)| a == b)
             .count();
-        if !trimmed_alignment_is_exact(&mine, &theirs, head, tail, &mut PersistedIds::new()) {
+        let Some(trimmed) =
+            diff_blocks_trimmed(&mine, &theirs, head, tail, &mut PersistedIds::new())
+        else {
             refused += 1;
             continue;
-        }
+        };
         exact += 1;
         exact_reorders += usize::from(reordered);
-        let whole = shape(&diff_blocks(&mine, &theirs), 0, 0);
-        let mut composed: Vec<Shape> = (0..head)
-            .map(|i| Shape(Some(i), Some(i), RowKind::Unchanged, Vec::new()))
-            .collect();
-        composed.extend(shape(
-            &diff_blocks(
-                &mine[head..mine.len() - tail],
-                &theirs[head..theirs.len() - tail],
-            ),
-            head,
-            head,
-        ));
-        composed.extend((0..tail).map(|k| {
-            Shape(
-                Some(mine.len() - tail + k),
-                Some(theirs.len() - tail + k),
-                RowKind::Unchanged,
-                Vec::new(),
-            )
-        }));
-        assert_eq!(whole, composed, "case {case}");
+        assert_trim_agrees(&mine, &theirs, &trimmed, case);
     }
     assert!(
         exact > 150 && refused > 50 && exact_reorders > 15,
         "coverage: exact {exact}, refused {refused}, exact with a reorder {exact_reorders}"
     );
+}
+
+/// Row shape with content-equal pairs made canonical: a `Both` row whose
+/// blocks are content-equal and whose children are paired in place (or not
+/// listed) is `Unchanged` with no children. The gap pass reports such a pair
+/// as `Modified`; every block still has the same partner.
+fn canonical(rows: &[DiffRow], mine: &[DocBlock], theirs: &[DocBlock]) -> Vec<Shape> {
+    let (mut m, mut t) = (0, 0);
+    rows.iter()
+        .map(|row| {
+            let mi = row.mine.as_ref().map(|_| m);
+            let ti = row.theirs.as_ref().map(|_| t);
+            m += usize::from(mi.is_some());
+            t += usize::from(ti.is_some());
+            let (Some(i), Some(j)) = (mi, ti) else {
+                return Shape(mi, ti, row.kind, Vec::new());
+            };
+            let children = canonical(&row.children, &mine[i].children, &theirs[j].children);
+            let in_place = children.is_empty()
+                || (children.len() == mine[i].children.len()
+                    && children.iter().enumerate().all(|(k, s)| {
+                        *s == Shape(Some(k), Some(k), RowKind::Unchanged, Vec::new())
+                    }));
+            if mine[i] == theirs[j] && in_place {
+                Shape(mi, ti, RowKind::Unchanged, Vec::new())
+            } else {
+                Shape(mi, ti, row.kind, children)
+            }
+        })
+        .collect()
+}
+
+/// The whole-list diff pairs every block as the window's diff plus the ends
+/// paired in place. Under the exact LCS the row shapes are equal outright;
+/// under patience, after [`canonical`].
+fn assert_trim_agrees(mine: &[DocBlock], theirs: &[DocBlock], trimmed: &TrimmedDiff, case: usize) {
+    let (n, m) = (mine.len(), theirs.len());
+    let (head, tail) = (trimmed.head, trimmed.tail);
+    let ends = |shapes: Vec<Shape>| -> Vec<Shape> {
+        let mut out: Vec<Shape> = (0..head)
+            .map(|i| Shape(Some(i), Some(i), RowKind::Unchanged, Vec::new()))
+            .collect();
+        out.extend(
+            shapes
+                .into_iter()
+                .map(|Shape(a, b, k, c)| Shape(a.map(|a| a + head), b.map(|b| b + head), k, c)),
+        );
+        out.extend((0..tail).map(|k| {
+            Shape(
+                Some(n - tail + k),
+                Some(m - tail + k),
+                RowKind::Unchanged,
+                Vec::new(),
+            )
+        }));
+        out
+    };
+    let (window_mine, window_theirs) = (&mine[head..n - tail], &theirs[head..m - tail]);
+    let window_rows = &trimmed.rows;
+    let whole_rows = diff_blocks(mine, theirs);
+    if n * m <= 250_000 {
+        assert_eq!(
+            shape(&whole_rows, 0, 0),
+            ends(shape(window_rows, 0, 0)),
+            "case {case}: exact LCS"
+        );
+    }
+    assert_eq!(
+        canonical(&whole_rows, mine, theirs),
+        ends(canonical(window_rows, window_mine, window_theirs)),
+        "case {case}: pairing"
+    );
+}
+
+/// Pages shaped like real ones: repeated root bodies (empty bullets, `---`,
+/// the same TODO line) all over the page, and an edit or two (often adding
+/// another empty bullet). The check must accept most of them on both sides
+/// of the LCS budget, and be sound whenever it does.
+#[test]
+fn trimmed_diff_accepts_repeated_bodies_on_real_shaped_pages() {
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self, n: usize) -> usize {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 % n as u64) as usize
+        }
+    }
+    let render = |rows: &[(String, Vec<String>)]| -> String {
+        rows.iter()
+            .map(|(body, children)| {
+                let mut out = format!("- {}\n", body.replace('\n', "\n  "));
+                for child in children {
+                    out.push_str(&format!("\t- {child}\n"));
+                }
+                out
+            })
+            .collect()
+    };
+    let mut rng = Rng(0x0dd_b1a5_e5ca_fe11);
+    let mut accepted = [0usize; 2];
+    let mut tried = [0usize; 2];
+    let mut accepted_with_repeats_nearby = 0usize;
+    for case in 0..800 {
+        let large = case % 4 == 0;
+        let size = if large {
+            510 + rng.next(200)
+        } else {
+            20 + rng.next(300)
+        };
+        let mut old: Vec<(String, Vec<String>)> = (0..size)
+            .map(|i| {
+                let body = match rng.next(20) {
+                    0 | 1 => String::new(),
+                    2 => "---".to_owned(),
+                    3 => "TODO review".to_owned(),
+                    4 => format!("meeting {i}\nid:: 6720{i:04}-aaaa"),
+                    5 if i > 0 => format!("same as {}", rng.next(3)),
+                    _ => format!("ordinary text {i}"),
+                };
+                let children = match rng.next(6) {
+                    0 => vec![String::new()],
+                    1 => vec![format!("child {i}"), "---".to_owned()],
+                    _ => Vec::new(),
+                };
+                (body, children)
+            })
+            .collect();
+        let mut new = old.clone();
+        for _ in 0..1 + rng.next(3) {
+            let at = rng.next(new.len());
+            match rng.next(8) {
+                0 | 1 => new.insert(at, (String::new(), Vec::new())),
+                2 => new.insert(at, ("---".to_owned(), Vec::new())),
+                3 => new.insert(at, (format!("agent {case}"), Vec::new())),
+                4 => {
+                    new.remove(at);
+                }
+                5 => new[at].1.push(String::new()),
+                6 if at + 1 < new.len() => new.swap(at, at + 1),
+                _ => new[at].0.push_str(" edited"),
+            }
+        }
+        if rng.next(4) == 0 {
+            std::mem::swap(&mut old, &mut new);
+        }
+        let mine = parse(&render(&new)).roots;
+        let theirs = parse(&render(&old)).roots;
+        let head = mine.iter().zip(&theirs).take_while(|(a, b)| a == b).count();
+        let room = mine.len().min(theirs.len()) - head;
+        let tail = mine
+            .iter()
+            .rev()
+            .zip(theirs.iter().rev())
+            .take(room)
+            .take_while(|(a, b)| a == b)
+            .count();
+        let branch = usize::from(mine.len() * theirs.len() > 250_000);
+        tried[branch] += 1;
+        let Some(trimmed) =
+            diff_blocks_trimmed(&mine, &theirs, head, tail, &mut PersistedIds::new())
+        else {
+            continue;
+        };
+        accepted[branch] += 1;
+        let near = |i: usize| i.checked_sub(1).into_iter().chain([i, i + 1]);
+        accepted_with_repeats_nearby +=
+            usize::from(near(head).any(|i| {
+                i < theirs.len() && theirs.iter().filter(|b| **b == theirs[i]).count() > 1
+            }));
+        assert_trim_agrees(&mine, &theirs, &trimmed, case);
+    }
+    eprintln!(
+        "trimmed check on real-shaped pages: exact LCS {}/{} accepted, patience {}/{}; \
+         {accepted_with_repeats_nearby} accepted with a repeated body next to the edit",
+        accepted[0], tried[0], accepted[1], tried[1]
+    );
+    assert!(
+        accepted[0] * 10 > tried[0] * 6 && accepted[1] * 10 > tried[1] * 4,
+        "acceptance: exact LCS {}/{}, patience {}/{}",
+        accepted[0],
+        tried[0],
+        accepted[1],
+        tried[1]
+    );
+}
+
+/// Patience pages where the gap pass cannot pair equal repeated blocks in
+/// place: 600 empty bullets in a row (past the gap budget), and a repeated
+/// block whose 600 identical children exceed it one level down. The trimmed
+/// diff must not answer there, or must agree.
+#[test]
+fn trimmed_diff_respects_the_gap_budget_edges() {
+    let unique: String = (0..600).map(|i| format!("- unique {i}\n")).collect();
+    let empties = "- \n".repeat(600);
+    let kids = format!("- parent\n{}", "\t- \n".repeat(600));
+    for (case, middle) in [(0, empties), (1, format!("{kids}{kids}"))] {
+        let old = format!("{unique}{middle}- after\n- last\n");
+        let new = format!("{unique}{middle}- after\n- last edited\n");
+        let (mine, theirs) = (parse(&new).roots, parse(&old).roots);
+        let head = mine.len() - 1;
+        assert!(mine.len() * theirs.len() > 250_000);
+        match diff_blocks_trimmed(&mine, &theirs, head, 0, &mut PersistedIds::new()) {
+            Some(trimmed) => assert_trim_agrees(&mine, &theirs, &trimmed, case),
+            None => {}
+        }
+    }
 }
 
 /// The Hirschberg anchors (id read once) are exactly `anchor_eq`, over ids,
@@ -1177,9 +1367,13 @@ fn precomputed_anchors_are_exactly_anchor_eq() {
                 - a\n  id:: \n- c\n  id:: y\n- a\n  id:: y\n- plain\n- plain\n";
     let roots = parse(text).roots;
     let anchors = Anchor::all(&roots);
+    // The trimmed diff's anchors read ids and fingerprints through the memo.
+    let mut memo_ids = PersistedIds::new();
+    let memo = Anchor::memo(&roots, &mut memo_ids);
     for (i, a) in roots.iter().enumerate() {
         for (j, b) in roots.iter().enumerate() {
             assert_eq!(anchors[i].eq(&anchors[j]), anchor_eq(a, b), "{i} vs {j}");
+            assert_eq!(memo[i].eq(&memo[j]), anchor_eq(a, b), "memo {i} vs {j}");
         }
     }
     // The memoized fingerprint is exactly the patience one, warm or cold.

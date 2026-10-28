@@ -73,6 +73,8 @@ export type GitPolicy = "off" | "commit";
 export type SeenBlockPath = number[];
 export interface SeenPageChanges {
   available: boolean;
+  /** Why the page is unavailable; on an available result, a note on how the
+   * baseline was found (rewritten history, first-open fallback, walk bound). */
   reason: string | null;
   head_commit: string | null;
   /** null means the empty-tree baseline when tracked; unavailable/absent also
@@ -81,7 +83,8 @@ export interface SeenPageChanges {
   /** SHA-256 of the supplied UTF-8 currentText. Discard stale responses. */
   current_text_sha256: string;
   identity_known: boolean;
-  /** More than 200 touching commits: net diff counts every author. */
+  /** More than 200 touching commits, or a baseline past the 500-commit walk:
+   * the net diff counts every author. */
   unattributed: boolean;
   /** Only other-author committed changes still unchanged in currentText. */
   blocks: { block_path: SeenBlockPath; persisted_id: string | null }[];

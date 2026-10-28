@@ -72,6 +72,30 @@ impl Fixture {
             .commit(Some("HEAD"), &sig, &sig, "rename", &tree, &[&parent])
             .unwrap()
     }
+    /// A commit of `tree_of`'s tree on `parents`, made HEAD (detached): a
+    /// squash, amend or rebase as git leaves it.
+    fn rewrite(&self, tree_of: Oid, parents: &[Oid], who: &str) -> Oid {
+        let tree = self.repo.find_commit(tree_of).unwrap().tree().unwrap();
+        let parents: Vec<_> = parents
+            .iter()
+            .map(|p| self.repo.find_commit(*p).unwrap())
+            .collect();
+        let sig =
+            git2::Signature::now(who, &format!("{}@example.test", who.to_lowercase())).unwrap();
+        let oid = self
+            .repo
+            .commit(
+                None,
+                &sig,
+                &sig,
+                "rewritten",
+                &tree,
+                &parents.iter().collect::<Vec<_>>(),
+            )
+            .unwrap();
+        self.repo.set_head_detached(oid).unwrap();
+        oid
+    }
     fn start(&self) {
         initialize(&self.data, &self.root).unwrap();
     }
@@ -356,6 +380,8 @@ fn seen_forget_page_drops_only_that_page_and_writes_nothing_otherwise() {
     f.start();
     f.commit("pages/p.md", Some(OTHER), "Agent");
     mark(&f.data, &f.root, Some(("p", "pages/p.md"))).unwrap();
+    // A mark needs the page on disk (an uncommitted new page is enough).
+    fs::write(f.root.join("pages/q.md"), "- q\n").unwrap();
     mark(&f.data, &f.root, Some(("q", "pages/q.md"))).unwrap();
     assert!(f.read(OTHER).blocks.is_empty());
     let path = record_path(&f.data, &f.root);
@@ -1054,4 +1080,395 @@ fn seen_per_open_cost_with_local_edit_and_removal() {
     let removal = measure(&head, 1, 1);
     let local = measure(&format!("- unsaved\n{head}"), 1, 1);
     eprintln!("seen 600 blocks / 20 commits with a removal: median {removal:?}; plus an unsaved local edit: median {local:?}");
+}
+
+/// A page shaped like real ones: repeated root bodies (empty bullets, `---`,
+/// the same TODO line), nested children, some ids and properties; 600
+/// blocks, then 20 commits by another author that each edit or add a block
+/// or two. Returns the page history (snapshots) for the cost test.
+fn real_shaped_history(rng: &mut Rng) -> Vec<String> {
+    let mut rows: Vec<(usize, String)> = Vec::new();
+    for i in 0..600 {
+        let depth = if rows.is_empty() {
+            0
+        } else {
+            [0, 0, 0, 1, 1, 2][rng.next(6)].min(rows.last().unwrap().0 + 1)
+        };
+        let body = match rng.next(20) {
+            0 | 1 => String::new(),
+            2 => "---".to_owned(),
+            3 => "TODO review".to_owned(),
+            4 => format!("[[Meeting]] notes {i}\nid:: 6720{i:04}-aaaa-bbbb-cccc-000000000000"),
+            5 => format!("status:: open\ntopic {i}"),
+            _ => format!("Some ordinary text about thing {i}, with a [[link]] or two"),
+        };
+        rows.push((depth, body));
+    }
+    let mut snapshots = vec![render(&rows)];
+    for c in 0..20 {
+        for _ in 0..(1 + rng.next(2)) {
+            let at = rng.next(rows.len());
+            match rng.next(4) {
+                0 => rows.insert(at, (rows[at].0, String::new())),
+                1 => rows.insert(at, (rows[at].0, format!("agent added {c}"))),
+                _ => rows[at].1.push_str(&format!(" (agent edit {c})")),
+            }
+        }
+        snapshots.push(render(&rows));
+    }
+    snapshots
+}
+
+#[test]
+fn seen_per_open_cost_real_shaped_page() {
+    let mut rng = Rng(0x51ed_270b_27a4_3c2d);
+    let snapshots = real_shaped_history(&mut rng);
+    let f = Fixture::new();
+    f.commit("pages/p.md", Some(&snapshots[0]), "Me");
+    f.start();
+    for text in &snapshots[1..] {
+        f.commit("pages/p.md", Some(text), "Agent");
+    }
+    let current = snapshots.last().unwrap().clone();
+    let mut other = vec![false];
+    other.extend([true; 20]);
+    let mut samples = Vec::new();
+    for _ in 0..11 {
+        let started = std::time::Instant::now();
+        let result = f.read(&current);
+        samples.push(started.elapsed());
+        assert!(!result.blocks.is_empty());
+    }
+    samples.sort();
+    let (want, _) = reference(&snapshots, &other, &current);
+    let got: Vec<_> = f
+        .read(&current)
+        .blocks
+        .iter()
+        .map(|b| (b.block_path.clone(), b.persisted_id.clone()))
+        .collect();
+    assert_eq!(got, want);
+    eprintln!(
+        "seen real-shaped 600 blocks / 20 commits: median {:?}, min {:?}",
+        samples[5], samples[0]
+    );
+}
+
+const RUN_1: &str = "- anchor\n- run edit one\n  id:: stable\n- removed content\n";
+const RUN_2: &str = "- anchor\n- run edit one\n  id:: stable\n- removed content\n- run added two\n";
+const RUN_3: &str = "- anchor\n- run edit one\n  id:: stable\n- run added two\n- run added three\n";
+
+fn bodies(result: &SeenChanges, text: &str) -> Vec<String> {
+    let doc = parse(text, false);
+    result
+        .blocks
+        .iter()
+        .map(|b| block_at(&doc.roots, &b.block_path).raw().to_owned())
+        .collect()
+}
+
+/// R1: the user leaves the page mid-run (the mark lands on a run commit),
+/// then the run is squashed: the baseline commit still exists but is off the
+/// branch. The run's changes show, from the merge base (over-reported,
+/// never hidden), and the result says so.
+#[test]
+fn seen_mid_run_leave_then_squash_still_shows_the_runs_changes() {
+    let f = Fixture::new();
+    let base = f.commit("pages/p.md", Some(BASE), "Me");
+    f.start();
+    f.commit("pages/p.md", Some(RUN_1), "Agent");
+    f.commit("pages/p.md", Some(RUN_2), "Agent");
+    mark(&f.data, &f.root, Some(("p", "pages/p.md"))).unwrap();
+    let r3 = f.commit("pages/p.md", Some(RUN_3), "Agent");
+    assert_eq!(bodies(&f.read(RUN_3), RUN_3), ["run added three"]);
+    let squash = f.rewrite(r3, &[base], "Agent");
+    let result = f.read(RUN_3);
+    assert!(result.available, "{:?}", result.reason);
+    assert!(result.reason.as_deref().unwrap().contains("rewritten"));
+    assert_eq!(result.baseline_commit, Some(base.to_string()));
+    assert_eq!(
+        bodies(&result, RUN_3),
+        [
+            "run edit one\nid:: stable",
+            "run added two",
+            "run added three"
+        ]
+    );
+    assert_eq!(result.removed.len(), 1, "the run's removal shows too");
+    // Leaving again moves the mark onto the squash: nothing is new then.
+    mark(&f.data, &f.root, Some(("p", "pages/p.md"))).unwrap();
+    let after = f.read(RUN_3);
+    assert!(after.blocks.is_empty() && after.reason.is_none());
+    assert_eq!(after.head_commit, Some(squash.to_string()));
+}
+
+/// R1: "Mark graph seen" mid-run moves the first-open baseline onto a run
+/// commit; after the squash every never-left page still shows the run.
+/// An amend of the marked commit is the same case.
+#[test]
+fn seen_mark_graph_mid_run_then_squash_or_amend() {
+    let f = Fixture::new();
+    let base = f.commit("pages/p.md", Some(BASE), "Me");
+    f.start();
+    f.commit("pages/p.md", Some(RUN_1), "Agent");
+    mark(&f.data, &f.root, None).unwrap();
+    let r2 = f.commit("pages/p.md", Some(RUN_2), "Agent");
+    f.rewrite(r2, &[base], "Agent");
+    let result = f.read(RUN_2);
+    assert!(result.reason.as_deref().unwrap().contains("rewritten"));
+    assert_eq!(
+        bodies(&result, RUN_2),
+        ["run edit one\nid:: stable", "run added two"]
+    );
+
+    // Amend: the marked commit is replaced by one with the same parent.
+    let f = Fixture::new();
+    let base = f.commit("pages/p.md", Some(BASE), "Me");
+    f.start();
+    let x = f.commit("pages/p.md", Some(RUN_1), "Agent");
+    mark(&f.data, &f.root, Some(("p", "pages/p.md"))).unwrap();
+    fs::write(f.root.join("pages/p.md"), RUN_2).unwrap();
+    let mut index = f.repo.index().unwrap();
+    index.add_path(Path::new("pages/p.md")).unwrap();
+    index.write().unwrap();
+    let amended_tree = index.write_tree().unwrap();
+    let sig = git2::Signature::now("Agent", "agent@example.test").unwrap();
+    let amended = f
+        .repo
+        .find_commit(x)
+        .unwrap()
+        .amend(
+            None,
+            Some(&sig),
+            Some(&sig),
+            None,
+            None,
+            Some(&f.repo.find_tree(amended_tree).unwrap()),
+        )
+        .unwrap();
+    f.repo.set_head_detached(amended).unwrap();
+    let result = f.read(RUN_2);
+    assert_eq!(result.baseline_commit, Some(base.to_string()));
+    assert_eq!(
+        bodies(&result, RUN_2),
+        ["run edit one\nid:: stable", "run added two"]
+    );
+}
+
+/// R1: a page baseline sharing no history with the branch falls back to the
+/// graph's first-open baseline; with neither, or a pruned baseline object
+/// and no other, the page is unavailable with a reason (never an error).
+#[test]
+fn seen_unrelated_or_pruned_baseline_uses_first_open_else_unavailable() {
+    let f = Fixture::new();
+    let base = f.commit("pages/p.md", Some(BASE), "Me");
+    f.start();
+    let tip = f.commit("pages/p.md", Some(OTHER), "Agent");
+    // The page's mark lands on an unrelated (orphan) history.
+    f.rewrite(tip, &[], "Me");
+    mark(&f.data, &f.root, Some(("p", "pages/p.md"))).unwrap();
+    f.repo.set_head_detached(tip).unwrap();
+    let result = f.read(OTHER);
+    assert!(result.available);
+    assert!(result.reason.as_deref().unwrap().contains("first-open"));
+    assert_eq!(result.baseline_commit, Some(base.to_string()));
+    assert_eq!(result.blocks.len(), 1);
+
+    // A well-formed baseline whose object is gone (pruned after a squash).
+    let path = record_path(&f.data, &f.root);
+    let mut record = load(&path).unwrap();
+    record.pages.get_mut("p").unwrap().seen_commit = Some("1".repeat(40));
+    save(&path, &record).unwrap();
+    let result = f.read(OTHER);
+    assert!(result.reason.as_deref().unwrap().contains("first-open"));
+    assert_eq!(result.blocks.len(), 1);
+
+    // Neither shares history with the branch.
+    record.first_open_commit = Some("1".repeat(40));
+    save(&path, &record).unwrap();
+    let result = f.read(OTHER);
+    assert!(!result.available);
+    assert!(result
+        .reason
+        .unwrap()
+        .contains("not in this branch's history"));
+    record.pages.clear();
+    save(&path, &record).unwrap();
+    assert!(!f.read(OTHER).available);
+}
+
+/// R1: a baseline merged in from a side branch is an ancestor of HEAD but
+/// not on its first-parent line: the walk falls back to the fork point.
+#[test]
+fn seen_baseline_on_a_merged_side_branch_falls_back_to_the_fork_point() {
+    let f = Fixture::new();
+    let fork = f.commit("pages/p.md", Some(BASE), "Me");
+    f.start();
+    let side = f.commit("pages/p.md", Some(RUN_1), "Agent");
+    mark(&f.data, &f.root, Some(("p", "pages/p.md"))).unwrap();
+    // The main line moves on from the fork; the merge takes the side branch.
+    let main = f.rewrite(fork, &[fork], "Me");
+    let merge = f.rewrite(side, &[main, side], "Me");
+    f.repo.set_head_detached(merge).unwrap();
+    f.commit("pages/p.md", Some(RUN_2), "Agent");
+    let result = f.read(RUN_2);
+    assert!(result.available);
+    assert!(result.reason.is_some());
+    // The merge base of the side commit and HEAD.
+    assert_eq!(result.baseline_commit, Some(fork.to_string()));
+    // The merge is mine (ADR 0079 first-parent rule); the last commit is
+    // the agent's.
+    assert_eq!(bodies(&result, RUN_2), ["run added two"]);
+}
+
+/// R2: the walk is bounded in total, touching commits or not. Past the
+/// bound the open shows the unattributed net diff and says so.
+#[test]
+fn seen_walk_bound_counts_non_touching_commits_then_unattributed() {
+    let f = Fixture::new();
+    f.commit("pages/p.md", Some(BASE), "Me");
+    f.start();
+    f.commit("pages/p.md", Some(OTHER), "Me");
+    for i in 0..WALK_LIMIT - 2 {
+        f.commit("pages/other.md", Some(&format!("- {i}\n")), "Agent");
+    }
+    // Within the bound: attributed, and the own edit is not a change.
+    let result = f.read(OTHER);
+    assert!(!result.unattributed && result.reason.is_none());
+    assert!(result.blocks.is_empty());
+    f.commit("pages/other.md", Some("- one more\n"), "Agent");
+    f.commit("pages/other.md", Some("- and another\n"), "Agent");
+    let result = f.read(OTHER);
+    assert!(result.unattributed);
+    assert!(result.reason.as_deref().unwrap().contains("too long"));
+    assert_eq!(result.blocks.len(), 1, "every author counts past the bound");
+}
+
+/// F3: a page version in history that is not UTF-8 makes that open
+/// unavailable with a reason, not a command error.
+#[test]
+fn seen_non_utf8_history_is_unavailable_not_an_error() {
+    let f = Fixture::new();
+    fs::write(f.root.join("pages/p.md"), b"- caf\xe9\n").unwrap();
+    let mut index = f.repo.index().unwrap();
+    index.add_path(Path::new("pages/p.md")).unwrap();
+    index.write().unwrap();
+    let tree = f.repo.find_tree(index.write_tree().unwrap()).unwrap();
+    let sig = git2::Signature::now("Me", "me@example.test").unwrap();
+    f.repo
+        .commit(Some("HEAD"), &sig, &sig, "latin-1", &tree, &[])
+        .unwrap();
+    f.start();
+    f.commit("pages/p.md", Some(OTHER), "Agent");
+    let result = f.read(OTHER);
+    assert!(!result.available);
+    assert!(result.reason.unwrap().contains("not UTF-8"));
+}
+
+/// F6: Tine's own rename (or delete) drops the page's entry; the leave mark
+/// that follows names the old path, which is gone from disk, and must not
+/// re-create the entry for a page later created there.
+#[test]
+fn seen_leave_mark_after_a_rename_does_not_recreate_the_entry() {
+    let f = Fixture::new();
+    f.commit("pages/p.md", Some(BASE), "Me");
+    f.start();
+    f.commit("pages/p.md", Some(OTHER), "Agent");
+    mark(&f.data, &f.root, Some(("p", "pages/p.md"))).unwrap();
+    let path = record_path(&f.data, &f.root);
+    assert!(load(&path).unwrap().pages.contains_key("p"));
+    f.rename("pages/p.md", "pages/q.md", "Me");
+    forget_page(&f.data, &f.root, Some("p"), Some("pages/p.md")).unwrap();
+    mark(&f.data, &f.root, Some(("p", "pages/p.md"))).unwrap();
+    assert!(!load(&path).unwrap().pages.contains_key("p"));
+    // A page created at the old name later starts from the graph baseline.
+    f.commit("pages/p.md", Some(OTHER), "Agent");
+    assert_eq!(f.read(OTHER).blocks.len(), 1);
+    // Deleted on disk before the autocommit: the same.
+    fs::remove_file(f.root.join("pages/p.md")).unwrap();
+    mark(&f.data, &f.root, Some(("p", "pages/p.md"))).unwrap();
+    assert!(!load(&path).unwrap().pages.contains_key("p"));
+}
+
+/// R2 measurement (release, ignored): one open whose walk crosses a given
+/// number of commits that do not touch the page, on a graph of 3000 pages
+/// (each commit edits another page, so every commit has its own `pages/`
+/// tree). `cargo test --release -p tine --lib seen_walk_cost -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn seen_walk_cost_per_commit() {
+    let f = Fixture::new();
+    let sig = git2::Signature::now("Agent", "agent@example.test").unwrap();
+    let blob = |text: &str| f.repo.blob(text.as_bytes()).unwrap();
+    let mut pages = f.repo.treebuilder(None).unwrap();
+    for i in 0..3000 {
+        pages
+            .insert(
+                format!("page-{i:04}.md"),
+                blob(&format!("- page {i}\n")),
+                0o100644,
+            )
+            .unwrap();
+    }
+    pages.insert("p.md", blob(BASE), 0o100644).unwrap();
+    let commit = |pages: &git2::TreeBuilder<'_>, parent: Option<Oid>| -> Oid {
+        let mut root = f.repo.treebuilder(None).unwrap();
+        root.insert("pages", pages.write().unwrap(), 0o040000)
+            .unwrap();
+        let tree = f.repo.find_tree(root.write().unwrap()).unwrap();
+        let parents: Vec<_> = parent
+            .map(|p| f.repo.find_commit(p).unwrap())
+            .into_iter()
+            .collect();
+        f.repo
+            .commit(
+                None,
+                &sig,
+                &sig,
+                "edit",
+                &tree,
+                &parents.iter().collect::<Vec<_>>(),
+            )
+            .unwrap()
+    };
+    let mut chain = vec![commit(&pages, None)];
+    for i in 0..WALK_LIMIT + 500 {
+        pages
+            .insert(
+                format!("page-{:04}.md", i % 3000),
+                blob(&format!("- edit {i}\n")),
+                0o100644,
+            )
+            .unwrap();
+        chain.push(commit(&pages, chain.last().copied()));
+    }
+    f.repo.set_head_detached(*chain.last().unwrap()).unwrap();
+    f.start();
+    let path = record_path(&f.data, &f.root);
+    for walked in [0, 100, 250, WALK_LIMIT, WALK_LIMIT + 400] {
+        let mut record = load(&path).unwrap();
+        record.pages.insert(
+            "p".into(),
+            PageRecord {
+                path: "pages/p.md".into(),
+                seen_commit: Some(chain[chain.len() - 1 - walked].to_string()),
+                seen_at: 0,
+            },
+        );
+        save(&path, &record).unwrap();
+        let mut samples: Vec<_> = (0..7)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                let result = f.read(BASE);
+                assert!(result.blocks.is_empty());
+                assert_eq!(result.unattributed, walked > WALK_LIMIT);
+                started.elapsed()
+            })
+            .collect();
+        samples.sort();
+        eprintln!(
+            "seen walk over {walked} non-touching commits (3000-page tree): median {:?}",
+            samples[3]
+        );
+    }
 }

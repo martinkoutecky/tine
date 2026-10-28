@@ -578,3 +578,36 @@ fn git_run_user_identity_is_repo_then_your_name_then_fallback() {
         "a configured email identifies me anywhere"
     );
 }
+
+/// Seen baseline (ADR 0079, round-3 R1) across a real `run end` squash: the
+/// user leaves page a mid-run, so its mark lands on a run commit that the
+/// squash then takes off the branch. Opening a again still shows every edit
+/// of the run, from the squash's parent, and says why.
+#[test]
+fn seen_shows_a_squashed_runs_changes_after_a_mid_run_leave() {
+    use crate::owner::seen;
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let repo = repo(&graph);
+    let initial = head(&repo).id();
+    seen::initialize(&graph.app_data, &graph.root).unwrap();
+
+    let run = begin(&slot);
+    edit(&slot, &handle(&slot, "a", 1), "two, by the run", Some(&run));
+    seen::mark(&graph.app_data, &graph.root, Some(("a", "pages/a.md"))).unwrap();
+    edit(&slot, &handle(&slot, "a", 0), "one, by the run", Some(&run));
+    let open = |text: &str| {
+        seen::changes(&graph.app_data, &graph.root, "a", "pages/a.md", text, "a").unwrap()
+    };
+    let before = open(&disk(&graph, "pages/a.md"));
+    assert_eq!(before.blocks.len(), 1, "{before:?}");
+
+    let ended = verb(&slot, "run.end", json!({ "run": run })).unwrap();
+    assert!(ended["squashed"].is_string(), "{ended}");
+    assert_eq!(head(&repo).parent_id(0).unwrap(), initial);
+    let after = open(&disk(&graph, "pages/a.md"));
+    assert!(after.available, "{after:?}");
+    assert!(after.reason.as_deref().unwrap().contains("rewritten"));
+    assert_eq!(after.baseline_commit, Some(initial.to_string()));
+    assert_eq!(after.blocks.len(), 2, "both run edits show: {after:?}");
+}
