@@ -10,6 +10,7 @@ fn create_nested(live: &Live) -> Result<(), ApplyRefusal> {
         kinds: vec![EditKind::SaveBlock],
         policy: Input::Refuse,
         moves: vec![],
+        publications: None,
         creation_checks: vec![],
         view: None,
     })

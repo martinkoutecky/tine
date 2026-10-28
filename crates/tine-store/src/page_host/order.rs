@@ -13,6 +13,7 @@
 //! answers exactly once into its caller's slot; the caller owns the slot and
 //! removes it on every exit, so a late answer creates nothing.
 use super::*;
+use crate::PageId;
 
 /// A caller's reply slot, scoped to the host incarnation that admitted it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -94,6 +95,15 @@ pub(super) struct Order {
     replies: BTreeMap<ReplyId, Slot>,
     next: u64,
     gates: Vec<Gates>,
+    publication_pending: BTreeMap<ReplyId, PublicationWatch>,
+    publication_versions: BTreeMap<PageKey, (u64, Arc<PublicationWatch>)>,
+}
+
+#[derive(Clone, Debug)]
+struct PublicationWatch {
+    sink: Arc<Mutex<BTreeSet<PageId>>>,
+    names: BTreeMap<PageKey, Vec<PageId>>,
+    bytes: BTreeMap<PageKey, Text>,
 }
 
 impl Order {
@@ -142,12 +152,48 @@ impl Order {
 
     /// Answer `id`; false when its caller already left.
     pub fn answer(&mut self, id: ReplyId, reply: OperationReply) -> bool {
+        if let Some(watch) = self.publication_pending.remove(&id) {
+            if let OperationReply::Applied(pages) = &reply {
+                let watch = Arc::new(watch);
+                for (key, version) in pages {
+                    self.publication_versions
+                        .insert(key.clone(), (*version, watch.clone()));
+                }
+            }
+        }
         match self.replies.get_mut(&id) {
             Some(slot) => {
                 slot.reply = Some(reply);
                 true
             }
             None => false,
+        }
+    }
+
+    pub fn watch_publications(
+        &mut self,
+        id: ReplyId,
+        sink: Arc<Mutex<BTreeSet<PageId>>>,
+        names: BTreeMap<PageKey, Vec<PageId>>,
+        bytes: BTreeMap<PageKey, Text>,
+    ) {
+        self.publication_pending
+            .insert(id, PublicationWatch { sink, names, bytes });
+    }
+
+    /// The guarded rename actually published this version, even if a later
+    /// sync fails. Independent of reply slots: a caller may already be gone.
+    pub fn renamed(&mut self, key: &str, version: u64, bytes: Option<&[u8]>) {
+        if self
+            .publication_versions
+            .get(key)
+            .is_some_and(|(v, watch)| {
+                *v <= version && watch.bytes.get(key).map(|bytes| bytes.as_deref()) == Some(bytes)
+            })
+        {
+            let (_, watch) = self.publication_versions.remove(key).unwrap();
+            let mut sink = watch.sink.lock().unwrap_or_else(|p| p.into_inner());
+            sink.extend(watch.names.get(key).into_iter().flatten().cloned());
         }
     }
 
@@ -250,6 +296,8 @@ impl Order {
     /// stopped or relaunched host.
     pub fn stop(&mut self) {
         self.gates.clear();
+        self.publication_pending.clear();
+        self.publication_versions.clear();
     }
 }
 
@@ -316,6 +364,61 @@ impl<F: HostIo> Host<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publication_receipt_survives_a_late_draft_answer_and_removed_caller() {
+        let mut order = Order::default();
+        let id = order.allocate(1);
+        let sink = Arc::new(Mutex::new(BTreeSet::new()));
+        order.register(id);
+        order.watch_publications(
+            id,
+            sink.clone(),
+            BTreeMap::from([("p".into(), vec![PageId::from("pages/p.md")])]),
+            BTreeMap::from([("p".into(), Some(Arc::from(&b"U"[..])))]),
+        );
+        // Uncertain/Late caller leaves before the draft worker completes.
+        assert!(order.remove(id));
+        assert!(!order.answer(
+            id,
+            OperationReply::Applied(BTreeMap::from([("p".into(), 7)]))
+        ));
+        assert!(sink.lock().unwrap().is_empty());
+        order.renamed("p", 7, Some(b"U"));
+        assert_eq!(
+            *sink.lock().unwrap(),
+            BTreeSet::from([PageId::from("pages/p.md")])
+        );
+        assert!(order.publication_pending.is_empty());
+        assert!(order.publication_versions.is_empty());
+        assert_eq!(order.slots(), 0);
+    }
+
+    #[test]
+    fn a_newer_publication_is_not_a_receipt_for_unpublished_pull_bytes() {
+        let mut order = Order::default();
+        let id = order.allocate(1);
+        let sink = Arc::new(Mutex::new(BTreeSet::new()));
+        order.watch_publications(
+            id,
+            sink.clone(),
+            BTreeMap::from([("p".into(), vec![PageId::from("pages/p.md")])]),
+            BTreeMap::from([("p".into(), Some(Arc::from(&b"U"[..])))]),
+        );
+        order.answer(
+            id,
+            OperationReply::Applied(BTreeMap::from([("p".into(), 7)])),
+        );
+        order.renamed("p", 8, Some(b"H"));
+        assert!(sink.lock().unwrap().is_empty());
+        // A coalesced/newer save of U still counts as U's publication.
+        order.renamed("p", 9, Some(b"U"));
+        assert_eq!(
+            *sink.lock().unwrap(),
+            BTreeSet::from([PageId::from("pages/p.md")])
+        );
+        assert!(order.publication_versions.is_empty());
+    }
 
     fn order(moves: &[(&str, &str)], pages: &[&str]) -> Order {
         let versions = pages.iter().map(|p| (p.to_string(), 1)).collect();

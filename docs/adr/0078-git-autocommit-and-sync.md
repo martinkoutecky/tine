@@ -160,6 +160,10 @@ design. The changed paths between `H` and `U` inside the graph root are applied 
    index entry is a staged blob other than its `H` or `U` blob (git's own fast-forward refuses there too). A
    symlink, gitlink, file↔directory change, mode-only change, foreign staged blob or an ignored local file in
    the way refuses the pull by name before anything is written.
+   All page operations are planned and all non-page transactions run read-only
+   validation before the first write. Publication repeats the guards; a later
+   refusal after files changed is `pull-stopped`, naming the path and saying
+   files were already updated.
 2. **Pages** (anything the page host owns) go through `HostOp`s with `Effect::Write(new blob)` or `Delete`,
    `Expected::Bytes(H blob)` or `Absent`, `Input::Refuse`, and the existing edit kinds (`ReplacePage`,
    `CreatePage`, `DeletePage`, `RenamePage`; the first version's new `GitPull` kind is dropped, so the closed
@@ -187,6 +191,12 @@ if a fetched `U` is a strict descendant of `H` and every path that differs from 
 this process's applied-path set (P4), the autocommit is skipped and the next sync resumes the pull from step 1.
 Otherwise (a genuine local change) the autocommit runs and the pull ends as `diverged`: nothing is lost.
 
+The host records P4 at each guarded publication, even when the caller already
+received `Uncertain`. An admitted pull pins its `H`, `U` and branch in memory:
+later fetches may advance the tracking tip, but pull and P3 finish that same `U`
+first. A tracking tip that no longer descends from the pending `U` stops as
+`diverged` with a force-push reason, retaining the pending provenance.
+
 **Stated limit (D-20261028-GU).** If the user edits a pulled path back to exactly its `H` bytes while the pull is
 held, and the process then crashes, loses power or switches graph before step 5 (or another program, such as a
 sync service, delivers `U` and then `H`), the resumed pull writes `U` over that text. The overwritten text is
@@ -196,12 +206,13 @@ Refusals (contract refusal table rows, each with its in-scope threat):
 
 | Refusal | In-scope threat | Recovery |
 | --- | --- | --- |
-| `pull-held: unsaved` (a pulled page has unsaved input) | concurrent edit in a window | retried at the next sync once the page saves; nothing written |
+| `pull-held: unsaved` (a pulled page has unsaved input) | concurrent edit in a window | retried at the next sync once the page saves; earlier operations may already have updated files |
 | `pull-held: changed` (a file no longer holds its `H` bytes; HostOp `Changed`) | an external editor or Syncthing changed it after the autocommit | the next cycle autocommits it, then diverges |
 | `pull-held: busy` (HostOp `Busy`, `index.lock`, `gc.pid`) | other work holds the pages, or another git command runs | retried later; the stale-lock notice after 30 min (§1) |
 | `pull-incomplete` (HostOp `Unwritten`, `Superseded`, `Uncertain`, `DraftFailed`, a failed non-page write or durability barrier) | disk error, full disk, a page edited back before it published | the ref stays at `H`; the resume rule finishes it |
 | `pull-refused: <path> <reason>` (symlink, submodule, type or mode change, a staged change other than `H`'s or `U`'s, ignored local file in the way) | the user's repository content | Settings names the path; the user resolves it in git |
-| `diverged` (the remote is not a descendant of `HEAD`, or a push is rejected) | multi-device divergence | phase 1 stops and says so; nothing in the graph changes; phase 2 merges with Concord |
+| `pull-stopped: <path> <reason>` (a refusal after publication began, including a staged-blob race) | another git program or external writer changes a guard after planning | Settings names the path and says files were already updated; resolve it in git, then retry the pinned target |
+| `diverged` (the remote is not a descendant of `HEAD`, a force push replaced a pending target, the captured branch changed, or a push is rejected) | multi-device divergence or another git program | phase 1 stops and says so; a mid-apply branch race may leave earlier file updates in place; phase 2 merges with Concord |
 | `refused: conversion / sparse / precompose / bare / detached / mid-merge` | user's repository configuration | Settings explains; commit-only where possible |
 
 Push never forces and never rebases.

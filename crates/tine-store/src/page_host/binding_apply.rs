@@ -42,6 +42,11 @@ pub struct HostOp {
     /// sources' deletions). No page is in two moves (S2: a namespace rename
     /// moves every page of the namespace in one operation).
     pub moves: Vec<(PageId, PageId)>,
+    /// In-memory publication receipts, recorded at the guarded live rename,
+    /// before any later host action. Kept by admitted work even if its caller
+    /// times out. Only publications of this operation's bytes at its version
+    /// or later produce receipts.
+    pub publications: Option<Arc<Mutex<BTreeSet<PageId>>>>,
     /// Transaction creation preconditions: page, optional DTO name, optional
     /// move source. In-memory admission metadata; no persisted format changes.
     /// Hand-built operations use an empty vector and the raw-create checks.
@@ -118,7 +123,18 @@ impl PageHost {
         for (dst, src) in &op.moves {
             let source = self.try_identify(src).ok_or(ApplyRefusal::Refused)?;
             let target = self.try_identify(dst).ok_or(ApplyRefusal::Refused)?;
-            if source.0 == target.0 {
+            // A case-only move on a sensitive volume also needs the
+            // entry-first path: registering its source would otherwise make
+            // the absent destination an unproved folded collision. A real
+            // second entry (or a separately held destination) still refuses.
+            let sensitive_case_move = src.as_str().eq_ignore_ascii_case(dst.as_str())
+                && !target.2
+                && self
+                    .store
+                    .page_plan(None)
+                    .admission_slot(&dst.file(), None, Some(&src.file()))
+                    .is_ok();
+            if source.0 == target.0 || sensitive_case_move {
                 spellings.push((dst.clone(), src.clone(), source.0, source.1));
             }
         }
@@ -187,6 +203,14 @@ impl PageHost {
         let shared = Arc::downgrade(&self.driver.shared);
         let effects = Arc::new(effects);
         let store = self.store.clone();
+        let publications = op.publications.clone();
+        let mut publication_names: BTreeMap<PageKey, Vec<PageId>> = BTreeMap::new();
+        for (page, key) in &spellings {
+            publication_names
+                .entry(key.clone())
+                .or_default()
+                .push(page.clone());
+        }
         let creations: Vec<_> = op
             .pages
             .iter()
@@ -222,6 +246,8 @@ impl PageHost {
             let creations = creations.clone();
             let view = op.view.clone();
             let save_rules = save_rules.clone();
+            let publications = publications.clone();
+            let publication_names = publication_names.clone();
             let admit = move |state: &mut HostState| {
                 let host = &state.progress.host;
                 if !host.alive {
@@ -255,10 +281,19 @@ impl PageHost {
                                 .note_creation(key, bytes.clone(), name.clone(), source.clone());
                         }
                     }
-                    (
-                        disposition,
-                        pending.then(|| host.register_reply()).flatten(),
-                    )
+                    let reply = pending.then(|| host.register_reply()).flatten();
+                    if let (Some(id), Some(sink)) = (reply, publications.clone()) {
+                        host.order.watch_publications(
+                            id,
+                            sink,
+                            publication_names.clone(),
+                            effects
+                                .iter()
+                                .map(|(key, (bytes, _))| (key.clone(), bytes.clone()))
+                                .collect(),
+                        );
+                    }
+                    (disposition, reply)
                 });
                 if state.progress.host.lock_request.is_some() {
                     // It runs again under its path locks.

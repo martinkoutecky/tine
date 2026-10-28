@@ -913,6 +913,8 @@ const CENSUS_CALL_SITES: &[&str] = &[
     "src-tauri/src/graph.rs",
     "src-tauri/src/owner/write.rs",
     "src-tauri/src/owner/pages.rs",
+    // ADR 0078: audited HostOps, already in write_sites.toml.
+    "src-tauri/src/owner/git_pull.rs",
 ];
 
 /// Production `PageHost::start(` lines the census below saw.

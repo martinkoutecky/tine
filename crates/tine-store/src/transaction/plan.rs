@@ -30,6 +30,7 @@ impl PagePlan<'_> {
             kinds: self.kinds.clone(),
             policy: Input::Refuse,
             moves: Vec::new(),
+            publications: None,
             creation_checks: Vec::new(),
             view: self.view.clone(),
         };

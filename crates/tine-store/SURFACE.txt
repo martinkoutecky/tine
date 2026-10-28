@@ -189,7 +189,11 @@ enum store::SaveBase
 enum store::SaveOutcome
 enum store::StoreError
 
-## Transaction steps (ceiling: 37)
+## Transaction steps (ceiling: 38)
+# GS-FIX: commit cannot validate a mixed host/non-page pull without writing.
+# validate runs its read-only preflight before the first host publication;
+# commit still repeats the checks under its own locks at publication time.
+fn transaction::Transaction::validate
 enum transaction::Content
 enum transaction::Refusal
 enum transaction::StepResult
@@ -401,7 +405,7 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 51)
+## Page host (ceiling: 52)
 # Approved by Martin 2026-10-10 (surface concept, STEP3 §7): the binding's page host, exported
 # for its retained-writer callers (census writers in tine-graph-features, backup restore in
 # src-tauri) and, from step 3b P1 (ceiling 12 -> 36), for the window's page commands and
@@ -455,6 +459,9 @@ fn page_host::Stopped::relaunch
 struct page_host::HostOp
 field page_host::HostOp.pages
 field page_host::HostOp.moves
+# GS-FIX: apply's return cannot report publications after an Uncertain/Late
+# answer. Its optional in-memory sink records matching bytes at publication.
+field page_host::HostOp.publications
 field page_host::HostOp.policy
 field page_host::HostOp.kinds
 fn page_host::PageHost::apply
