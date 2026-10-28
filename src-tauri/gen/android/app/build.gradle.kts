@@ -33,7 +33,17 @@ val keystoreProperties = Properties().apply {
 val releaseStoreFile = keystoreProperties.getProperty("storeFile")?.let { file(it) }
 val hasReleaseKey = releaseStoreFile != null && releaseStoreFile.exists()
 
+// Derived by set-app-identity.mjs. Build-type resources override main resources;
+// stable uses the original main resources without an overlay.
+val tineIconDirectory = "icons-beta"
+
 android {
+    if (tineIconDirectory != "icons") {
+        sourceSets {
+            getByName("debug").res.srcDir("../../../$tineIconDirectory/android")
+            getByName("release").res.srcDir("../../../$tineIconDirectory/android")
+        }
+    }
     compileSdk = 36
     // Reproducible build (F-Droid #reproducible): pin the NDK to the same version the
     // F-Droid recipe declares (`ndk: 26.3.11579264`, clang/lld 17) so AGP never

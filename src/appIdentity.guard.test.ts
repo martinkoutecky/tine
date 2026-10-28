@@ -43,7 +43,7 @@ function identityLiterals(): RegExp {
 
 describe("app identity switch", () => {
   it("the Beta identity is fixed, and the shipped identity matches the updater channel", () => {
-    expect(IDENTITIES.experiment).toEqual({ identifier: "page.tine.TineBeta", productName: "Tine Beta", androidApplicationId: "page.tine.beta", deployName: "tine-og" });
+    expect(IDENTITIES.experiment).toEqual({ identifier: "page.tine.TineBeta", productName: "Tine Beta", androidApplicationId: "page.tine.beta", deployName: "tine-og", iconDirectory: "icons-beta" });
     // The Beta identity updates only from the beta release and stable Tine only
     // from the latest stable release (scripts/release-policy.mjs releaseChannel).
     const conf = JSON.parse(fs.readFileSync(path.join(ROOT, "src-tauri/tauri.conf.json"), "utf8"));

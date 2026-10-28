@@ -21,6 +21,9 @@ pub(crate) mod endpoint;
 #[cfg(desktop)]
 pub(crate) mod git_autocommit;
 #[cfg(desktop)]
+#[cfg_attr(not(test), allow(dead_code))] // GS-UI's sync worker calls `pull`
+pub(crate) mod git_pull;
+#[cfg(desktop)]
 pub(crate) mod git_run;
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 pub(crate) mod git_sync;

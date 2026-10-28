@@ -4,7 +4,8 @@
     QNT=storage-s35.qnt SCEN=scenarios-s35.inc INV='guarantee and orderHolds and renameResolves' \
         python3 run.py PROFILE MUTANT SAMPLES STEPS [SEED]      # random simulation
 
-PROFILE is base | R1 | weak | all; MUTANT is none or a name from the model's `SWEEP-MUTS` line.
+PROFILE is base | R1 | weak | all; MUTANT is none or a name from the model's `SWEEP-MUTS` line. STEP and INIT
+name another next-state or initial action (defaults `step`, `init`), e.g. s3.7's `gitDriveStep`, `startAtRef`.
 The model is instantiated by rewriting its RACES and MUTANT constants and splicing the scenario file in at
 `// @@SCENARIOS@@`; the variant is written under OUT (default ./.out), never over the model.
 Quint: $QUINT, else ./node_modules/.bin/quint (`npm ci` here), else `quint` on PATH. Tested with Quint 0.33.0.
@@ -52,11 +53,15 @@ def run(profile, mutant, samples, steps, seed=None, inv=None):
     f = variant(profile, mutant)
     logs = OUT / 'logs'
     logs.mkdir(parents=True, exist_ok=True)
-    stem = f'{Path(model()).stem}-{profile}-{mutant}-{samples}x{steps}'
+    stem = f'{Path(model()).stem}-{profile}-{mutant}-{samples}x{steps}' + ''.join(
+        f'-{os.environ[k]}' for k in ['INIT', 'STEP'] if os.environ.get(k))
     cmd = [Q, 'run', str(f), '--invariant', inv, '--max-samples', str(samples), '--max-steps', str(steps),
            '--backend', 'typescript', '--verbosity', '1', '--out-itf', str(logs / f'{stem}.itf.json')]
     if seed:
         cmd += ['--seed', seed]
+    for k in ['INIT', 'STEP']:            # another initial / next-state action of the model
+        if os.environ.get(k):
+            cmd += [f'--{k.lower()}', os.environ[k]]
     t = time.time()
     r = subprocess.run(cmd, capture_output=True, text=True, env=_env())
     out = r.stdout + r.stderr

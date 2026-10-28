@@ -57,6 +57,47 @@ fn sb1_autocommit_refuses_root_replacement_before_index_lock() {
     assert!(!f.work.join(".git/index").exists());
 }
 
+/// s3.7 P1/P1b: when the branch moves, the index already durably stages the
+/// commit's blob (installed, and `.git` synced after the rename). Moving the
+/// ref first, or leaving the index rename unsynced, lets a crash or power cut
+/// bring the old index back under the new `HEAD`, and the user's next plain
+/// `git commit` would record a reversion of the autocommit.
+#[test]
+fn autocommit_index_is_durable_before_the_branch_moves() {
+    use super::super::git_run::lock_test_hook;
+    let f = fixture(&[("pages/a.md", "- old\n")]);
+    fs::write(f.work.join("pages/a.md"), "- new\n").unwrap();
+    let gitdir = f.repo.path().to_path_buf();
+    let seen = std::rc::Rc::new(std::cell::Cell::new(None));
+    let record = seen.clone();
+    let _ = tine_store::directory_durability::take_synced_directories();
+    lock_test_hook::install_before_ref_move(move || {
+        record.set(Some(lock_test_hook::durable_entry(&gitdir, "pages/a.md")));
+    });
+    assert!(matches!(
+        commit_now(&f.work, "autosave"),
+        Ok(Outcome::Committed(_))
+    ));
+    let (staged, synced) = seen.take().expect("the branch moved");
+    let blob = git2::Oid::hash_object(git2::ObjectType::Blob, b"- new\n").unwrap();
+    assert_eq!(
+        staged,
+        Some(blob),
+        "the index is installed before the ref move"
+    );
+    // Unix: a real `.git` fsync. Windows: the graph folders' entry sync, with
+    // identity checks and no directory flush (D-20261028-WDD, ADR 0078 §2);
+    // the census row for `IndexLock::install` pins `sync_directory_witness`,
+    // never the private (flushing) variant.
+    #[cfg(unix)]
+    assert!(synced, "`.git` is fsynced before the ref move");
+    #[cfg(windows)]
+    assert!(
+        synced,
+        "`.git`'s entry sync (no directory flush on Windows) runs before the ref move"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn sb1_index_lock_refuses_a_redirected_index() {

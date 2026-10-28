@@ -439,6 +439,9 @@ struct Undo {
 pub struct PagePlan<'a> {
     store: &'a Store,
     non_page: bool,
+    /// Set by [`Self::plan`]: the steps become a host operation, the only
+    /// place a raw page replacement ([`Self::replace_page_bytes`]) is legal.
+    for_host: bool,
     steps: Vec<Step>,
     /// Declared intent for page-file steps other than `save_page` (which
     /// carries its own). Debug builds assert at commit that a page-file step
@@ -554,6 +557,7 @@ impl Store {
         PagePlan {
             store: self,
             non_page: false,
+            for_host: false,
             steps: Vec::new(),
             kinds: kind.into_iter().collect(),
             spelling_entries: Default::default(),
@@ -663,6 +667,27 @@ impl<'a> PagePlan<'a> {
     ) -> &mut Self {
         self.steps.push(Step::Replace {
             file: file.clone(),
+            expected,
+            bytes,
+        });
+        self
+    }
+
+    /// Queue a raw-bytes replacement of an existing page guarded by
+    /// `expected`, for a host operation only ([`Self::plan`]; a
+    /// [`Transaction`] refuses page targets). The bytes come from outside
+    /// Tine (a git pull's blob, ADR 0078 §4) and are written exactly as they
+    /// are: they pass the page input checks [`Self::create`] runs (UTF-8, the
+    /// 64 MiB input cap, the source depth cap), and there is no round-trip
+    /// check, because Tine serializes nothing. Cost O(bytes) at plan.
+    pub fn replace_page_bytes(
+        &mut self,
+        id: &PageId,
+        expected: FileRev,
+        bytes: Vec<u8>,
+    ) -> &mut Self {
+        self.steps.push(Step::Replace {
+            file: id.file(),
             expected,
             bytes,
         });

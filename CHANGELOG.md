@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Tine Beta has its own amber icon.
 - Desktop: **Open in default app** beside the graph and global CSS editors in Settings, with matching command-palette actions. External global CSS edits now apply live across graph windows (GH #778).
 - Tags and page references expose Logseq-compatible `data-ref` names so custom CSS can style individual tags and links, including static exports (GH #773).
 - Windows: graph read/write commands and git runs now use a private named pipe to the app or `tine serve`, including automatic startup, app handover and `serve --stop`. Commands wait for a busy pipe, owner locks live in `%LOCALAPPDATA%\tine-owners` outside the install folder, and a stalled reply times out without retrying a write the owner already admitted (REG-CLI-WINDOWS, REG-CLI-WINDOWS-R3, REG-CLI-WINDOWS-R4).
@@ -82,6 +83,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Backspace removes an empty bullet inside a block embed when its source ancestor is folded (GH #766).
 - Refused renames of pages with duplicate identities now name the conflicting graph-relative files and explain that they must be merged or removed (GH #774).
 - Automatic git commits leave out Syncthing temporary files, add `.syncthing.*` to the graph's `.gitignore` once, and say so once in a toast and in Settings → Git. Removing the rule is respected; conflict copies remain committed (REG-AUTOCOMMIT-SYNCTHING-TEMP, D-20261026-GI).
+- Automatic git commits and `--run` commits write the repository's index to disk durably before moving the branch, so a crash or power cut can no longer leave the old index under the new commit, where your next plain `git commit` would have undone Tine's (REG-GIT-INDEX-DURABLE-BEFORE-REF).
 - macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
 - Quick share initializes Android's device certificate verifier before connecting to GitHub, and packages its matching Kotlin component (D-20261025-QV).
 - Journal feeds, Upcoming, calendar dots and slash templates now refresh from their relevant changes, avoiding unrelated reads while typing. Queries skip unrelated saves and graph-wide queries wait for a 1.5-second typing pause; collapsed reference sections keep their last count with a stale indicator until opened. Clock queries invalidate when an edit follows an expired instant, and Pages and blocks queries keep the typing pause even when subscription renewal finishes late (GH #746).

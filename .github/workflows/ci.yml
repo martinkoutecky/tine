@@ -30,6 +30,7 @@ on:
           - performance
           - multiwindow
           - macos
+          - linux
       purpose:
         description: release (default) checks release metadata; development skips only that check, and release.yml accepts such a run only with publish=false
         required: false
@@ -110,7 +111,7 @@ jobs:
 
   test:
     name: Full CI / Linux tests and release contracts
-    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'linux')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -201,8 +202,29 @@ jobs:
       - name: Frontend tests (vitest)
         run: npm test
 
+      # Independent of the frontend and contract steps: their failure still reports these.
       - name: Rust core tests
+        if: ${{ !cancelled() }}
         run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
+
+      # The storage ledger records each tested volume's filesystem from this output.
+      - name: Linux tested volumes (filesystem types for the storage ledger)
+        if: ${{ !cancelled() }}
+        run: |
+          base="${XDG_DATA_HOME:-$HOME/.local/share}/$(node -p "require('./src-tauri/tauri.conf.json').identifier")"
+          mkdir -p "$base"
+          for p in "$base" "$RUNNER_TEMP" "${TMPDIR:-/tmp}"; do
+            echo "Tested volume: $p $(findmnt -n -T "$p" -o TARGET,SOURCE,FSTYPE,OPTIONS)"
+          done
+      # F-M3S-1: ordinary saves, finite metadata interference and cold draft
+      # recovery on the runner's local volume and at the resolved app-data base.
+      - name: Linux storage volume acceptance (F-M3S-1)
+        if: ${{ !cancelled() }}
+        run: |
+          base="${XDG_DATA_HOME:-$HOME/.local/share}/$(node -p "require('./src-tauri/tauri.conf.json').identifier")"
+          TINE_STORAGE_ACCEPT_ROOT="$RUNNER_TEMP" cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
+          TINE_STORAGE_ACCEPT_ROOT="$base" TINE_HOST_FS_ROOT="$base" cargo test -p tine-store --lib m3_c6_ -- --nocapture --test-threads=1
+          TINE_STORAGE_ACCEPT_ROOT="$base" cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
 
       # Real TS HostClient against a real native PageHost (builds the tine-store
       # lib-test peer, reusing this job's target). Mandatory: it must not skip.
@@ -212,11 +234,13 @@ jobs:
       # The app crate's own tests (commands, query wiring, IPC guards) ran
       # nowhere until GH #628 broke one unnoticed; they need the WebKitGTK headers.
       - name: App crate native dependencies
+        if: ${{ !cancelled() }}
         run: |
           sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
           sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev build-essential libssl-dev strace
 
       - name: App crate tests
+        if: ${{ !cancelled() }}
         run: |
           npm run build
           cargo test --no-fail-fast -p tine --lib

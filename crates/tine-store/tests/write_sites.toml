@@ -93,6 +93,36 @@ note = "D-20261026-GI: fixed root .gitignore only, through Store's non-page revi
 mutations = ".commit=1, .create=1"
 
 [[site]]
+file = "src-tauri/src/owner/git_pull.rs"
+fn = "plan_pages"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
+test = "src-tauri/src/owner/owner_tests/git_pull_tests.rs#q_git_pull_lands_a_fast_forward"
+oracle = false
+note = "ADR 0078 §4 rev 2 step 2 (s3.7): a pull's pages as one page-host operation planned from H's bytes (replace_page_bytes, no-replace create, trash), Input::Refuse; the host applies it through the audited save path. Renames go through plan_rename (move_file, the receiver's Write effect patched to U's validated bytes)."
+mutations = ".create=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_pull.rs"
+fn = "write_other"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
+test = "src-tauri/src/owner/owner_tests/git_pull_tests.rs#q_git_pull_lands_a_fast_forward"
+oracle = false
+note = "ADR 0078 §4 rev 2 step 3: one non-page pulled file per store transaction (revision-guarded replace from H's bytes, no-replace create, trash); config.edn validates and reloads through the transaction's own config path."
+mutations = ".create=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_pull.rs"
+fn = "barrier"
+domain = "graph"
+guard = "crates/tine-store/src/root_binding.rs#BoundDirectory::check_path"
+test = "src-tauri/src/owner/owner_tests/git_pull_tests.rs#q_git_barrier_syncs_paths_already_at_u"
+oracle = false
+note = "s3.7 P2: under index.lock, fsync every changed path (those already at U included) and its folder before the index and ref move, each file bound to the graph root first. Writes no content: Unix opens read-only; Windows opens for write only because FlushFileBuffers needs it. Folder sync is the store's witness (Windows: no directory flush, D-20261028-WDD)."
+mutations = ".sync_all=1, .write=1, OpenOptions::new=1, sync_directory_witness=1"
+
+[[site]]
 file = "crates/tine-store/src/publish.rs"
 fn = "query_publication_snapshot"
 domain = "primitive"
@@ -1608,10 +1638,10 @@ file = "src-tauri/src/owner/git_run.rs"
 fn = "IndexLock::install"
 domain = "dotgit"
 guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
-test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_index_lock_refuses_a_redirected_index"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#autocommit_index_is_durable_before_the_branch_moves"
 oracle = false
-note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
-mutations = ".sync_all=1, .write=1, .write_all=1, fs::rename=1"
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. s3.7 P1/P1b: the private copy is fsynced, renamed over the index and .git synced (sync_directory_witness, Unsupported refused: strict on Unix like libgit2's ref fsync; Windows identity checks without directory flush, D-20261028-WDD) while index.lock stays held, before the caller's compare-and-swap; an error refuses the branch move. Crash scope: old or new index under the old HEAD, a stale empty index.lock. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux evidence; Windows/macOS runtime acceptance pending."
+mutations = ".sync_all=1, .write=2, OpenOptions::new=1, directory_durability::sync_directory_witness=1, fs::rename=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_run.rs"

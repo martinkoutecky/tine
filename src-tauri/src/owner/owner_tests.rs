@@ -38,6 +38,10 @@ mod page_tests;
 #[path = "owner_tests/git_run_tests.rs"]
 mod git_run;
 
+#[cfg(desktop)]
+#[path = "owner_tests/git_pull_tests.rs"]
+mod git_pull;
+
 struct Graph {
     _dir: tempfile::TempDir,
     root: PathBuf,
