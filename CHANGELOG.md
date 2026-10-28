@@ -74,6 +74,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- On long pages with images, Enter, Backspace, Tab, Shift+Tab, moves and drags no longer remount the blocks around the edit: the touched window keeps its other blocks, windows after it keep their boundaries, an outdent that leaves the list long keeps it windowed, so no image flashes back to its placeholder and the view does not jump (GH #745). An image that finishes loading after the edit no longer leaves the caret off screen.
 - Opening the right sidebar by a remapped shortcut keeps the main editor and caret when the sidebar shows the same block (UI-EDITOR-LATE-MOUNT).
 - Windows: automatic git cleanup no longer fails while flushing completed packs. Failed cleanup preserves loose objects, keeps commits running, and shows a quiet retry status in Settings → Git (REG-AUTOCOMMIT-WINDOWS-REPACK).
 - Clicking another block while journal days load keeps its editor and focus when the earlier Down navigation finishes (UI-EDITOR-C2).
