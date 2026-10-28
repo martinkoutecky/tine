@@ -140,16 +140,34 @@ pub(crate) fn author_of(args: &Value) -> String {
         .unwrap_or_else(|| "agent".into())
 }
 
-pub(super) fn enable_git_fsync() {
-    static FSYNC: Once = Once::new();
-    FSYNC.call_once(|| {
+/// Whether libgit2 checks that a repository belongs to this OS user (its
+/// `safe.directory` rule, CVE-2022-24765), per shipped target: Linux, macOS,
+/// Windows and iOS yes; Android no. Android shared storage answers `stat`
+/// with the backing file's owner, never the app's uid (MediaProvider's FUSE
+/// daemon, `pf_getattr`; CI `android-git-storage`), so the check refuses
+/// every repository there. The check guards against a repository another
+/// user planted; on Android any app with storage access can rewrite the
+/// graph itself, which Tine's trust model leaves out of scope
+/// (`specs/notes/2026-08-07-trust-model-and-threat-model-decision.md`).
+pub(crate) const VERIFY_OWNER: bool = !cfg!(target_os = "android");
+
+/// libgit2's process-wide options, set once before this process opens a
+/// repository: fsync on (D-20261019-G8) and [`VERIFY_OWNER`]. Every
+/// production opener calls it first.
+pub(crate) fn configure_libgit2() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
         libgit2_init();
-        // SAFETY: a process-global libgit2 option set once, before any
-        // repository is opened by this module; takes one int argument.
+        // SAFETY: process-global libgit2 options set once, before any
+        // repository is opened; each takes one int argument.
         unsafe {
             libgit2_sys::git_libgit2_opts(
                 libgit2_sys::GIT_OPT_ENABLE_FSYNC_GITDIR as std::os::raw::c_int,
                 1 as std::os::raw::c_int,
+            );
+            libgit2_sys::git_libgit2_opts(
+                libgit2_sys::GIT_OPT_SET_OWNER_VALIDATION as std::os::raw::c_int,
+                VERIFY_OWNER as std::os::raw::c_int,
             );
         }
     });
@@ -321,7 +339,7 @@ fn open_repo(slot: &GraphSlot) -> Result<Repo, ErrorBody> {
 }
 
 pub(super) fn open_repo_at(graph_root: &Path) -> Result<Repo, ErrorBody> {
-    enable_git_fsync();
+    configure_libgit2();
     let repo = match Repository::discover(graph_root) {
         Ok(repo) => repo,
         Err(error) if error.code() == ErrorCode::NotFound => return Err(not_usable(

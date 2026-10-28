@@ -17,6 +17,10 @@ adb push "$bin" "$device/tine_lib_tests" > /dev/null
 adb shell "chmod 755 $device/tine_lib_tests && mkdir -p $device/tmp $shared"
 adb shell getprop ro.build.version.sdk > "$out/sdk.txt"
 adb shell mount > "$out/mount.txt" || true
+# Who the tests run as, and whom shared storage says owns its files (libgit2's
+# owner check, git_run::VERIFY_OWNER).
+adb shell "id; stat -c '%u:%g %A %n' $shared $device" > "$out/owners.txt" || true
+cat "$out/owners.txt"
 
 run() {
   local name="$1" env="$2"

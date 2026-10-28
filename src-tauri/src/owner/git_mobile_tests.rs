@@ -80,6 +80,9 @@ struct Phone {
 
 impl Phone {
     fn new() -> Self {
+        // As the app's openers do: on Android, shared storage reports files
+        // as another uid's (CI run 40750744019 refused every repository).
+        crate::owner::git_run::configure_libgit2();
         let private = tempfile::tempdir().unwrap();
         let volume = match std::env::var_os("TINE_HOST_FS_ROOT") {
             Some(base) => tempfile::Builder::new()

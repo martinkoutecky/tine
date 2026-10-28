@@ -312,6 +312,7 @@ fn lock_refused(refusal: LockRefusal) -> Unusable {
 
 /// Open and check the repository holding `root` for autocommits.
 pub(super) fn open_checked(root: &Path) -> Result<Repo, Unusable> {
+    super::git_run::configure_libgit2();
     match Repository::discover(root) {
         Err(error) if error.code() == git2::ErrorCode::NotFound => {
             return Err(Unusable::NotARepository)
@@ -757,7 +758,7 @@ fn repack_guarded(checked: &Repo) -> Result<Option<usize>, String> {
     // libgit2 1.9.7's indexer fsyncs both files on their writable creation
     // handles, unmaps/closes the pack, then renames it into place. Enable
     // that guarantee here too, including for callers outside open_repo_at.
-    super::git_run::enable_git_fsync();
+    super::git_run::configure_libgit2();
     let mut builder = repo.packbuilder().map_err(|e| e.to_string())?;
     for oid in &loose {
         builder
