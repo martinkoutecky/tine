@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use git2::{ErrorCode, Oid, Repository};
 use serde::{Deserialize, Serialize};
 use tine_core::doc::{DocBlock, Document};
-use tine_core::sync_diff::{diff_blocks, trimmed_alignment_is_exact, DiffRow, PersistedIds};
+use tine_core::sync_diff::{diff_blocks, diff_blocks_trimmed, DiffRow, PersistedIds};
 
 use crate::seen::{SeenBlock, SeenChanges, SeenRemoved};
 
@@ -164,6 +164,13 @@ pub(crate) fn mark(data: &Path, root: &Path, page: Option<(&str, &str)>) -> Resu
             return Err("seen needs a page key".into());
         }
         relative(path)?;
+        // A leave can arrive just after Tine's own rename, merge or delete
+        // dropped this page's entry (forget_page): its file is gone then, and
+        // an entry made now would hand its stale baseline to a page later
+        // created at the same path. Nothing on disk is nothing to mark.
+        if std::fs::symlink_metadata(root.join(path)).is_err() {
+            return Ok(());
+        }
     }
     let (repo, _) = open(root)?;
     let _guard = RECORD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -376,10 +383,11 @@ fn equal(old: &DocBlock, a: BlockPath, b: BlockPath, out: &mut Alignment) {
 
 /// `tine_core::sync_diff` alignment of two page snapshots, mapped to block
 /// paths. Leading and trailing root blocks that are content-equal on both
-/// sides are paired directly and only the window between them goes to
-/// `diff_blocks` (the usual diff trim): consecutive snapshots differ in a
-/// few blocks, and this keeps the per-block lsdoc projections that
-/// `diff_blocks` needs to that window.
+/// sides are paired directly and only the window between them is diffed
+/// (`diff_blocks_trimmed`, the usual diff trim where it provably pairs as the
+/// whole-list diff): consecutive snapshots differ in a few blocks, and this
+/// keeps the per-block lsdoc projections that `diff_blocks` needs to that
+/// window.
 fn align(old: &[DocBlock], new: &[DocBlock], ids: &mut PersistedIds) -> Alignment {
     fn walk(
         rows: &[DiffRow],
@@ -445,12 +453,12 @@ fn align(old: &[DocBlock], new: &[DocBlock], ids: &mut PersistedIds) -> Alignmen
         .take(room)
         .take_while(|(a, b)| a == b)
         .count();
-    // Trim only where the whole-list diff provably agrees (duplicates and
-    // reorders fall back to the whole list: correctness over speed).
-    let (head, tail) = if trimmed_alignment_is_exact(new, old, head, tail, ids) {
-        (head, tail)
-    } else {
-        (0, 0)
+    // Trim only where the whole-list diff provably pairs the same (an
+    // ambiguous duplicate or a reorder near the edit falls back to the whole
+    // list: correctness over speed).
+    let (head, tail, rows) = match diff_blocks_trimmed(new, old, head, tail, ids) {
+        Some(trimmed) => (trimmed.head, trimmed.tail, trimmed.rows),
+        None => (0, 0, diff_blocks(new, old)),
     };
     let mut out = Alignment {
         head,
@@ -460,10 +468,7 @@ fn align(old: &[DocBlock], new: &[DocBlock], ids: &mut PersistedIds) -> Alignmen
         ..Alignment::default()
     };
     let (old_mid, new_mid) = (&old[head..old.len() - tail], &new[head..new.len() - tail]);
-    if !old_mid.is_empty() || !new_mid.is_empty() {
-        let rows = diff_blocks(new_mid, old_mid);
-        walk(&rows, old_mid, new_mid, &[], &[], head, &mut out);
-    }
+    walk(&rows, old_mid, new_mid, &[], &[], head, &mut out);
     out.back = out
         .pairs
         .iter()
@@ -531,7 +536,7 @@ impl<'r> History<'r> {
                 None => String::new(),
                 Some(oid) => {
                     let blob = self.repo.find_blob(oid).map_err(|e| e.to_string())?;
-                    String::from_utf8(blob.content().to_vec()).map_err(|e| e.to_string())?
+                    String::from_utf8(blob.content().to_vec()).map_err(|_| NOT_UTF8)?
                 }
             };
             self.texts[i] = Some(text);
@@ -630,7 +635,180 @@ impl<'r> History<'r> {
     }
 }
 
+/// First-parent commits one open examines in total, touching the page or not
+/// (D-10: never the whole history). Each costs a commit read and a tree path
+/// lookup, about 0.45 ms on a 3000-page `pages/` tree (release,
+/// `seen_walk_cost_per_commit`), so the bound keeps one open under ~0.25 s
+/// there; past it the open shows the unattributed net diff (round-3 receipt).
+const WALK_LIMIT: usize = 500;
+const REWRITTEN: &str = "The seen baseline is not on this branch's main line (it was \
+     rewritten by a squash, rebase or amend, or merged in from a side branch); changes since \
+     the last commit it shares with this branch are shown.";
+const FIRST_OPEN: &str = "This page's seen baseline is not in this branch's history; \
+     changes since the graph's first-open baseline are shown.";
+const HISTORY_TOO_LONG: &str = "The history since the seen baseline is too long to attribute; \
+     every change since then is shown. Mark the page seen to start fresh.";
+const TOO_MANY_COMMITS: &str = "More than 200 commits changed this page since the seen \
+     baseline; every change since then is shown.";
+const NOT_UTF8: &str = "A version of this page in the git history is not UTF-8 text.";
+
+/// One first-parent commit: the page blob at it and at its first parent.
+struct Link {
+    oid: Oid,
+    after: Option<Oid>,
+    before: Option<Oid>,
+    /// Committed by someone other than me.
+    other: bool,
+}
+
+/// The first-parent line from HEAD, newest first, until the baseline, the
+/// root or [`WALK_LIMIT`].
+struct Walk {
+    links: Vec<Link>,
+    tip_blob: Option<Oid>,
+    /// The baseline commit the walk stopped at.
+    stopped_at: Option<Oid>,
+    root: bool,
+}
+
+/// Where a baseline sits relative to the walked line.
+enum Located {
+    /// Compare from position `k` (`links[k]`'s commit, or the commit the walk
+    /// ended at when `k == links.len()`), with a note when it is not the
+    /// baseline itself.
+    OnChain(usize, Option<&'static str>),
+    /// Beyond the walk bound: only the net diff from this baseline.
+    Beyond(Option<Oid>, Option<&'static str>),
+    /// Absent, or sharing no history with the walked line.
+    Unrelated,
+}
+
+impl Walk {
+    fn new(
+        repo: &Repository,
+        tip: Option<Oid>,
+        tip_blob: Option<Oid>,
+        base: Option<Oid>,
+        path: &Path,
+        me: &super::git_run::UserIdentity,
+    ) -> Result<Self, String> {
+        let mut walk = Walk {
+            links: Vec::new(),
+            tip_blob,
+            stopped_at: None,
+            root: false,
+        };
+        let (mut cursor, mut after) = (tip, tip_blob);
+        loop {
+            let Some(oid) = cursor else {
+                walk.root = true;
+                break;
+            };
+            if Some(oid) == base {
+                walk.stopped_at = base;
+                break;
+            }
+            if walk.links.len() == WALK_LIMIT {
+                break;
+            }
+            let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+            let parent = if commit.parent_count() == 0 {
+                None
+            } else {
+                Some(commit.parent_id(0).map_err(|e| e.to_string())?)
+            };
+            let before = parent
+                .map(|o| blob_id(repo, o, path))
+                .transpose()?
+                .flatten();
+            walk.links.push(Link {
+                oid,
+                after,
+                before,
+                other: !me.wrote(&commit.author()),
+            });
+            after = before;
+            cursor = parent;
+        }
+        Ok(walk)
+    }
+    /// The page blob at position `k` of [`Located::OnChain`].
+    fn blob_at(&self, k: usize) -> Option<Oid> {
+        match self.links.get(k) {
+            Some(link) => link.after,
+            None => self.links.last().map_or(self.tip_blob, |l| l.before),
+        }
+    }
+    /// The commit at position `k` (`None`: the empty tree before the root).
+    fn oid_at(&self, k: usize) -> Option<Oid> {
+        match self.links.get(k) {
+            Some(link) => Some(link.oid),
+            None => self.stopped_at,
+        }
+    }
+    /// Place `target` (`None`: the empty tree) on the walked line. A target
+    /// off the line (rewritten by a squash, rebase or amend, or merged in
+    /// from a side branch) falls back to the newest line commit among its
+    /// ancestors, which shows more, never less.
+    fn locate(&self, repo: &Repository, target: Option<Oid>) -> Located {
+        let Some(target) = target else {
+            return if self.root {
+                Located::OnChain(self.links.len(), None)
+            } else {
+                Located::Beyond(None, None)
+            };
+        };
+        if self.stopped_at == Some(target) {
+            return Located::OnChain(self.links.len(), None);
+        }
+        if let Some(k) = self.links.iter().position(|l| l.oid == target) {
+            return Located::OnChain(k, None);
+        }
+        if repo.find_commit(target).is_err() {
+            return Located::Unrelated; // pruned: no history to share
+        }
+        // The target's ancestors, bounded like the walk (D-10).
+        let mut ancestors = HashSet::new();
+        let mut queue = std::collections::VecDeque::from([target]);
+        while let Some(oid) = queue.pop_front() {
+            if ancestors.len() == WALK_LIMIT || !ancestors.insert(oid) {
+                continue;
+            }
+            if let Ok(commit) = repo.find_commit(oid) {
+                queue.extend(commit.parent_ids());
+            }
+        }
+        if let Some(k) = self.links.iter().position(|l| ancestors.contains(&l.oid)) {
+            return Located::OnChain(k, Some(REWRITTEN));
+        }
+        if self.stopped_at.is_some_and(|oid| ancestors.contains(&oid)) {
+            return Located::OnChain(self.links.len(), Some(REWRITTEN));
+        }
+        if self.root {
+            Located::Unrelated
+        } else {
+            Located::Beyond(Some(target), None)
+        }
+    }
+}
+
 pub(crate) fn changes(
+    data: &Path,
+    root: &Path,
+    key: &str,
+    path: &str,
+    current_text: &str,
+    name: &str,
+) -> Result<SeenChanges, String> {
+    match changes_in(data, root, key, path, current_text, name) {
+        // Malformed input in history: this open has nothing to show, and
+        // the command must not fail on every open of the page.
+        Err(reason) if reason == NOT_UTF8 => Ok(SeenChanges::unavailable(NOT_UTF8)),
+        other => other,
+    }
+}
+
+fn changes_in(
     data: &Path,
     root: &Path,
     key: &str,
@@ -663,69 +841,76 @@ pub(crate) fn changes(
     if base == tip {
         return Ok(result);
     }
-    if base.is_some_and(|oid| repo.find_commit(oid).is_err()) {
-        // A pruned/replaced repository can leave a well-formed but unknown
-        // baseline oid. It is as disposable as a damaged record.
-        return Ok(result);
-    }
     let repo_path = prefix.join(path);
     let org = path.ends_with(".org");
-    let base_blob = base
-        .map(|oid| blob_id(&repo, oid, &repo_path))
-        .transpose()?
-        .flatten();
     let tip_blob = tip
         .map(|oid| blob_id(&repo, oid, &repo_path))
         .transpose()?
         .flatten();
     // First-parent history describes the successive page snapshots actually
     // integrated into this branch; a merge's resulting edits belong to its
-    // author (ADR 0079).
-    let mut touching = Vec::new();
-    let mut cursor = tip;
-    let mut after = tip_blob;
-    let mut reached = base.is_none();
-    while let Some(oid) = cursor {
-        if Some(oid) == base {
-            reached = true;
-            break;
-        }
-        let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
-        let parent = if commit.parent_count() == 0 {
-            None
-        } else {
-            Some(commit.parent_id(0).map_err(|e| e.to_string())?)
+    // author (ADR 0079). The walk is bounded in total (D-10).
+    let walk = Walk::new(&repo, tip, tip_blob, base, &repo_path, &me)?;
+    let mut located = walk.locate(&repo, base);
+    if matches!(located, Located::Unrelated)
+        && page.is_some()
+        && record.first_open_commit != *baseline
+    {
+        // The page's own baseline shares no history with this branch: the
+        // graph's first-open baseline still bounds what is new.
+        let first = record
+            .first_open_commit
+            .as_ref()
+            .map(|s| Oid::from_str(s).unwrap());
+        located = match walk.locate(&repo, first) {
+            Located::OnChain(k, _) => Located::OnChain(k, Some(FIRST_OPEN)),
+            Located::Beyond(_, _) => Located::Beyond(first, Some(FIRST_OPEN)),
+            Located::Unrelated => Located::Unrelated,
         };
-        let before = parent
-            .map(|o| blob_id(&repo, o, &repo_path))
-            .transpose()?
-            .flatten();
-        if before != after {
-            touching.push((after, !me.wrote(&commit.author())));
+    }
+    let (blobs, other) = match located {
+        Located::Unrelated => {
+            return Ok(SeenChanges::unavailable(
+                "The seen baseline is not in this branch's history. Mark the page seen to start fresh.",
+            ));
+        }
+        Located::Beyond(baseline, note) => {
+            // Only the net baseline-to-HEAD diff is used.
+            result.unattributed = true;
+            result.reason = Some(note.unwrap_or(HISTORY_TOO_LONG).into());
+            result.baseline_commit = baseline.map(|o| o.to_string());
+            let blob = baseline
+                .map(|oid| blob_id(&repo, oid, &repo_path))
+                .transpose()?
+                .flatten();
+            (vec![blob, tip_blob], vec![true, true])
+        }
+        Located::OnChain(k, note) => {
+            if let Some(note) = note {
+                result.reason = Some(note.into());
+                result.baseline_commit = walk.oid_at(k).map(|o| o.to_string());
+            }
+            let touching: Vec<_> = walk.links[..k]
+                .iter()
+                .filter(|l| l.before != l.after)
+                .collect();
             if touching.len() > COMMIT_LIMIT {
                 result.unattributed = true;
-                break;
+                result.reason = Some(match note {
+                    Some(note) => format!("{note} {TOO_MANY_COMMITS}"),
+                    None => TOO_MANY_COMMITS.into(),
+                });
+                (vec![walk.blob_at(k), tip_blob], vec![true, true])
+            } else {
+                let mut blobs = vec![walk.blob_at(k)];
+                let mut other = vec![false];
+                for link in touching.into_iter().rev() {
+                    blobs.push(link.after);
+                    other.push(link.other);
+                }
+                (blobs, other)
             }
         }
-        after = before;
-        cursor = parent;
-    }
-    if !reached && !result.unattributed {
-        return Ok(SeenChanges::unavailable(
-            "The seen baseline is no longer on this branch's history.",
-        ));
-    }
-    let (blobs, other) = if result.unattributed {
-        // Only the net baseline-to-HEAD diff is used.
-        (vec![base_blob, tip_blob], vec![true, true])
-    } else {
-        let mut blobs = vec![base_blob];
-        let mut other = vec![false];
-        for (blob, by_other) in touching.into_iter().rev() {
-            blobs.push(blob);
-            other.push(by_other);
-        }
-        (blobs, other)
     };
     let mut history = History::new(&repo, org, blobs, other);
     let last = history.last();
