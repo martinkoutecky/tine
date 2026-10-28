@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A first launch with a default journal template no longer sometimes opens Journals as "Couldn't open this page: Journal feed read failed" while today's template page is still being saved; Journals shows as soon as that save ends (GH #671, E2E-BASE-4).
 - Scrolling the Journals feed keeps loading older days while you are editing a journal day. After some graph-wide changes (for example a sync bringing in many files) the feed could stop at its first three days until you clicked outside the journals (UI-JOURNAL-FEED-PAGING-WHILE-EDITING).
 - The horizontal scrollbar under a long-line code block is easy to grab (GH #787). It is now a 14px strip with a visible thumb in every theme (it was a few-pixel overlay bar hidden in the card's padding), and pressing it scrolls the card instead of opening the block's editor; presses on the code text still edit. Cards that scroll sideways are 14px taller. Touch devices keep their own scrollbar.
 - Every ancestor crumb in a block embed's breadcrumb opens that block, not just the page: click to go there, Shift-click for the sidebar, Ctrl/Cmd-click for a new tab, Alt-click for the other pane (GH #779).

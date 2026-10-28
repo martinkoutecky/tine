@@ -588,6 +588,47 @@ describe("Journals feed generation lifecycle", () => {
     }
   });
 
+  it.each(["dirty", "saving"] as const)("keeps a startup Journals route pending, not failed, while a feed page is %s (GH #671 startup race)", async (gate) => {
+    vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} });
+    const host = await bindTestHost();
+    const api = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([journalDto("released-startup")]));
+    const today = journalTitle(new Date());
+    setDoc({
+      byId: { feed: node("feed", "original", today) },
+      pages: [page(today, "journal", ["feed"])], feed: [today], loaded: true,
+    });
+    openAsLoaded(host);
+    let releaseSave: (() => void) | null = null;
+    let saved: Promise<boolean> | null = null;
+    if (gate === "saving") {
+      const submit = backend().pageSubmit.bind(backend());
+      vi.spyOn(backend(), "pageSubmit").mockImplementation(async (...args) => {
+        releaseSave = () => { void submit(...args); };
+        return null;
+      });
+    }
+    setRaw("feed", "dirty");
+    if (gate === "saving") {
+      saved = flushPage(today);
+      await vi.waitFor(() => expect(releaseSave).not.toBeNull());
+      expect(isSaving(today)).toBe(true);
+    }
+    // The template-created today page is still being saved when the route first loads.
+    const mounted = mount(() => <PageView />);
+    try {
+      await flushMicrotasks(); await tick(); await flushMicrotasks();
+      expect(api).not.toHaveBeenCalled();
+      expect(mounted.root.textContent).not.toContain("Couldn't open this page");
+      expect(mounted.root.textContent).not.toContain("Journal feed read failed");
+      if (gate === "saving") { releaseSave!(); await saved; } else await flushPage(today);
+      await vi.waitFor(() => expect(doc.feed).toContain("released-startup"), { timeout: 3000 });
+      expect(mounted.root.textContent).not.toContain("Couldn't open this page");
+    } finally {
+      mounted.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("reports no feed failure before the window binds its graph, then loads (og 12e P2)", async () => {
     vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} });
     const binding = vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(0);
