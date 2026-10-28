@@ -759,6 +759,70 @@ fn the_background_never_fetches_or_pulls() {
     slot.background_cancelled.store(true, Ordering::Release);
 }
 
+/// A worker that starts while the app is away starts away (review r2 B1):
+/// a bind that ends after the person switched apps pulls nothing until the
+/// app comes back.
+#[test]
+fn a_worker_started_while_away_waits_for_the_foreground() {
+    let phone = Phone::new();
+    let slot = Arc::new(phone.slot());
+    let tracking = || {
+        phone
+            .repo
+            .refname_to_id("refs/remotes/origin/main")
+            .unwrap()
+    };
+    let (mine, seen) = (head(&phone.repo), tracking());
+    let theirs = phone.peer_pushes(&[("pages/a.md", Some("- from the laptop\n"))]);
+    backgrounded_at(&phone.root);
+    start_worker(
+        &slot,
+        GitSettings {
+            policy: Policy::SyncAutomatically,
+            interval: Duration::from_secs(3),
+        },
+        credentials(),
+    );
+    // The opening cycle and a tick past the interval: both would pull.
+    std::thread::sleep(TICK + Duration::from_secs(5));
+    assert_eq!(head(&phone.repo), mine, "nothing pulled in the background");
+    assert_eq!(tracking(), seen, "nothing fetched in the background");
+    assert_eq!(phone.disk("pages/a.md"), "- one\n- two\n");
+
+    foregrounded_at(&phone.root);
+    wait_for("the foreground pull", || head(&phone.repo) == theirs);
+    slot.background_cancelled.store(true, Ordering::Release);
+}
+
+/// "Sync now" pressed as the app leaves (review r2 FU1): the request waits
+/// for the foreground, neither syncing in the background nor getting lost.
+#[test]
+fn a_sync_asked_for_while_away_runs_in_the_foreground() {
+    let phone = Phone::new();
+    let slot = Arc::new(phone.slot());
+    start_worker(
+        &slot,
+        GitSettings {
+            policy: Policy::SyncOnDemand,
+            interval: Duration::from_secs(10 * 60),
+        },
+        credentials(),
+    );
+    let mine = head(&phone.repo);
+    let theirs = phone.peer_pushes(&[("pages/a.md", Some("- from the laptop\n"))]);
+    backgrounded_at(&phone.root);
+    assert!(request_sync(&phone.root));
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(head(&phone.repo), mine, "nothing pulled in the background");
+    assert_eq!(phone.disk("pages/a.md"), "- one\n- two\n");
+
+    // On demand, coming back syncs only because the request waited.
+    foregrounded_at(&phone.root);
+    wait_for("the requested pull", || head(&phone.repo) == theirs);
+    assert_eq!(phone.disk("pages/a.md"), "- from the laptop\n");
+    slot.background_cancelled.store(true, Ordering::Release);
+}
+
 #[test]
 fn commit_only_never_pushes_from_the_background() {
     let phone = Phone::new();

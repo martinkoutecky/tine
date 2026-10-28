@@ -216,9 +216,9 @@ impl Operation {
     /// name differs. Configured push refspecs/mirrors are never executed.
     ///
     /// `index.lock` is held for the local checks only, not the transfer: a
-    /// push reads objects and writes only the remote-tracking ref (under its
-    /// own ref lock), and the negotiation re-checks the branch, its ref and
-    /// the repository before anything is sent. So the OS ending the app
+    /// push reads objects and writes nothing here (an anonymous remote moves
+    /// no remote-tracking ref), and the negotiation re-checks the branch, its
+    /// ref and the repository before anything is sent. So the OS ending the app
     /// during a slow upload leaves no `index.lock` behind (ADR 0078 slice 3).
     pub(crate) fn push_upstream_locked(self, root: &Path) -> Outcome {
         self.execute(|| {

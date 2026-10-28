@@ -249,8 +249,10 @@ pending (at most one autocommit per interval, D-20261026-GC: backgrounding is no
 are saved and commit at the next allowed moment or the next launch) and, under **Commit and sync automatically**, pushes what the last fetch shows the remote lacks, with no
 fetch or pull (a push writes nothing to the local repository); coming back to the foreground runs a full cycle at
 once under that policy, without forcing a commit (unlike **Sync now**). Until then no automatic cycle runs, however
-long the app stays away: the background edge sets an away state that only the foreground edge clears, and the
-frontend drops a background edge that a newer foreground edge overtook during its page flush (review F1, F4). The
+long the app stays away: the background edge sets an away state that only the foreground edge clears, a worker that
+starts meanwhile (a bind ending after the switch) starts away, the frontend reports an app already hidden when it
+mounts, a **Sync now** asked for meanwhile waits for the foreground, and the frontend drops a background edge that
+a newer foreground edge overtook during its page flush (review F1, F4; round 2 B1, FU1). The
 pull's own pre-pull autocommit (§3) is outside the cap, so a foreground cycle can add one commit after a background
 one (review F7, a follow-up). Limit: a commit holds `index.lock` (and briefly the branch's ref lock); a push takes it
 only for its local checks, not during the network transfer (review F3). The OS ending the app midway can leave either, and

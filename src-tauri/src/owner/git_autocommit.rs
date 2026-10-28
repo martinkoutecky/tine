@@ -914,8 +914,9 @@ mod registry {
         /// The app came back to the foreground ([`foregrounded`]): sync at
         /// once, commit only on cadence.
         pub(super) foreground: bool,
-        /// The app is in the background: set by [`backgrounded`], cleared by
-        /// [`foregrounded`]; no automatic cycle (fetch, pull) starts meanwhile.
+        /// The app is in the background: set by [`backgrounded`] (or at start,
+        /// when the app is away then), cleared by [`foregrounded`]; no
+        /// automatic or requested cycle (fetch, pull) starts meanwhile.
         pub(super) away: bool,
         pub(super) credentials: Option<Arc<dyn Credentials>>,
         pub(super) commits_since_repack: u32,
@@ -1003,6 +1004,7 @@ pub(crate) fn start_worker(
             return;
         }
         state.running = true;
+        state.away = lifecycle::app_away(&slot.root_key);
         drop(state);
         break worker;
     };
@@ -1037,60 +1039,6 @@ pub(crate) fn request_sync(root: &Path) -> bool {
     state.last.sync.running = true;
     worker.wake.notify_all();
     true
-}
-
-/// The app went to the background (ADR 0078 §3, slice 3; Android and iOS):
-/// every worker commits its pending changes at once, unless it committed
-/// less than an interval ago (the cap on autocommits, D-20261026-GC), and,
-/// when it syncs automatically, pushes the commits its last fetch shows the
-/// remote lacks. Until [`foregrounded`] no automatic cycle starts, so no
-/// fetch and no pull start in the background: a push writes nothing to this
-/// repository but the remote-tracking ref (`index.lock` is held only for its
-/// local checks, not the transfer), so the OS freezing or ending the app
-/// mid-push leaves it as it was, and the commit is the one short local write.
-pub(crate) fn backgrounded() {
-    lifecycle_edge(false, None);
-}
-
-/// The app came back to the foreground (slice 3): every worker may sync
-/// again, and a graph that syncs automatically runs a cycle at once. Unlike
-/// "Sync now" it does not force a commit; pending edits commit on the
-/// interval's cadence, except the pre-pull autocommit when the remote has
-/// news (ADR 0078 §3), which follows the other device's pushes.
-pub(crate) fn foregrounded() {
-    lifecycle_edge(true, None);
-}
-
-/// One visibility edge for every running worker, or (tests) the one at `only`.
-fn lifecycle_edge(foreground: bool, only: Option<&Path>) {
-    for worker in registry::all() {
-        if only.is_some_and(|root| root != worker.root) {
-            continue;
-        }
-        let mut state = worker.state.lock().unwrap();
-        if !state.running {
-            continue;
-        }
-        state.away = !foreground;
-        if !foreground && state.settings.policy.commits() {
-            state.background = true;
-        }
-        if foreground && state.settings.policy == Policy::SyncAutomatically {
-            state.foreground = true;
-            state.last.sync.running = true;
-        }
-        worker.wake.notify_all();
-    }
-}
-
-#[cfg(test)]
-pub(super) fn backgrounded_at(root: &Path) {
-    lifecycle_edge(false, Some(root));
-}
-
-#[cfg(test)]
-pub(super) fn foregrounded_at(root: &Path) {
-    lifecycle_edge(true, Some(root));
 }
 
 /// The lock a commit keeps finding held: `index.lock`, or the lock a git
@@ -1191,11 +1139,14 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
     loop {
         let (settings, flush, slot, sync_now, background, foreground, away) = {
             let mut state = worker.state.lock().unwrap();
-            if !state.flush && !state.sync_requested && !state.background && !state.foreground {
+            // A sync the person asked for while the app is away waits for
+            // the foreground (review r2 FU1): no fetch or pull starts away.
+            let asked = state.sync_requested && !state.away;
+            if !state.flush && !asked && !state.background && !state.foreground {
                 state = worker.wake.wait_timeout(state, TICK).unwrap().0;
             }
             let flush = std::mem::take(&mut state.flush);
-            let sync_now = std::mem::take(&mut state.sync_requested);
+            let sync_now = !state.away && std::mem::take(&mut state.sync_requested);
             let background = std::mem::take(&mut state.background);
             let foreground = std::mem::take(&mut state.foreground);
             (
@@ -1476,6 +1427,12 @@ pub(crate) fn git_status(root: &Path, settings: GitSettings) -> GitStatus {
         signed_in: None,
     }
 }
+
+#[path = "git_lifecycle.rs"]
+mod lifecycle;
+pub(crate) use lifecycle::{backgrounded, foregrounded};
+#[cfg(test)]
+use lifecycle::{backgrounded_at, foregrounded_at};
 
 #[cfg(test)]
 #[path = "git_autocommit_tests.rs"]
