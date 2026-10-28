@@ -327,16 +327,60 @@ fn git_commits_pulls_pushes_and_repacks_on_the_graph_volume() {
     assert_eq!(pushed.code, "pushed", "{pushed:?}");
     assert_eq!(phone.remote_tip(), head(&phone.repo));
 
-    // The laptop edits, creates, deletes and renames by case only; the
-    // pull lands it all through the page host (GH #538-b: no-replace
-    // publication on a volume that refuses the flag).
+    // The laptop edits, creates and deletes; the pull lands it all through
+    // the page host (GH #538-b: no-replace publication on a volume that
+    // refuses the flag).
     let theirs = phone.peer_pushes(&[
         ("pages/a.md", Some("- one\n- two\n- from the laptop\n")),
         ("pages/new page.md", Some("- created on the laptop\n")),
         ("pages/gone.md", None),
-        ("pages/c.md", None),
-        ("pages/C.md", Some("- lower case\n")),
     ]);
+    let pulled = cycle(&slot, &credentials());
+    assert_eq!(pulled.code, "pulled", "{pulled:?} on {volume}");
+    assert_eq!(head(&phone.repo), theirs);
+    assert_eq!(
+        phone.disk("pages/a.md"),
+        "- one\n- two\n- from the laptop\n"
+    );
+    assert_eq!(phone.disk("pages/new page.md"), "- created on the laptop\n");
+    assert_eq!(
+        phone.page_names(),
+        ["a.md", "b.md", "c.md", "new page.md"],
+        "{volume}"
+    );
+    let statuses = phone
+        .repo
+        .statuses(Some(git2::StatusOptions::new().include_untracked(true)))
+        .unwrap();
+    let dirty: Vec<_> = statuses
+        .iter()
+        .filter_map(|s| s.path().ok().map(str::to_owned))
+        .filter(|p| p.starts_with("pages/"))
+        .collect();
+    assert!(dirty.is_empty(), "{dirty:?} on {volume}");
+
+    // Another edit after the pull, then the repack writes its pack here.
+    phone.edit("pages/c.md", "- lower case\n- edited after the pull\n");
+    assert!(matches!(
+        commit_now(&phone.root, MESSAGE),
+        Ok(Outcome::Committed(_))
+    ));
+    assert!(repack(&phone.repo).unwrap().is_some_and(|n| n > 0));
+    assert_eq!(cycle(&slot, &credentials()).code, "pushed");
+    assert_eq!(cycle(&slot, &credentials()).code, "up-to-date");
+    let leftovers = assert_whole(&phone.repo, "the phone's repository");
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+    assert!(assert_whole(&phone.bare, "the remote").is_empty());
+    eprintln!("GIT-STORAGE result=PASS {volume}");
+}
+
+/// GH #538-b and case folding: the laptop renames a page by case only.
+#[test]
+fn a_pulled_case_only_rename_lands_on_the_graph_volume() {
+    let phone = Phone::new();
+    let volume = describe_volume(phone.root.parent().unwrap());
+    let slot = phone.slot();
+    let theirs = phone.peer_pushes(&[("pages/c.md", None), ("pages/C.md", Some("- lower case\n"))]);
     let pulled = cycle(&slot, &credentials());
     if pulled.code != "pulled" {
         // What the stopped pull left, for the CI log, before the assert.
@@ -352,46 +396,20 @@ fn git_commits_pulls_pushes_and_repacks_on_the_graph_volume() {
         let again = cycle(&slot, &credentials());
         let leftovers = assert_whole(&phone.repo, "after the stopped pull");
         eprintln!(
-            "GIT-STORAGE stopped pull: pages={pages:?} head_at_theirs={at_theirs} \
+            "GIT-RESPELL stopped pull: pages={pages:?} head_at_theirs={at_theirs} \
              retry={again:?} leftovers={leftovers:?}"
         );
     }
     assert_eq!(pulled.code, "pulled", "{pulled:?} on {volume}");
     assert_eq!(head(&phone.repo), theirs);
     assert_eq!(
-        phone.disk("pages/a.md"),
-        "- one\n- two\n- from the laptop\n"
-    );
-    assert_eq!(phone.disk("pages/new page.md"), "- created on the laptop\n");
-    assert_eq!(
         phone.page_names(),
-        ["C.md", "a.md", "b.md", "new page.md"],
+        ["C.md", "a.md", "b.md", "gone.md"],
         "{volume}"
     );
-    let statuses = phone
-        .repo
-        .statuses(Some(git2::StatusOptions::new().include_untracked(true)))
-        .unwrap();
-    let dirty: Vec<_> = statuses
-        .iter()
-        .filter_map(|s| s.path().ok().map(str::to_owned))
-        .filter(|p| p.starts_with("pages/"))
-        .collect();
-    assert!(dirty.is_empty(), "{dirty:?} on {volume}");
-
-    // Another edit after the pull, then the repack writes its pack here.
-    phone.edit("pages/C.md", "- lower case\n- edited after the pull\n");
-    assert!(matches!(
-        commit_now(&phone.root, MESSAGE),
-        Ok(Outcome::Committed(_))
-    ));
-    assert!(repack(&phone.repo).unwrap().is_some_and(|n| n > 0));
-    assert_eq!(cycle(&slot, &credentials()).code, "pushed");
-    assert_eq!(cycle(&slot, &credentials()).code, "up-to-date");
-    let leftovers = assert_whole(&phone.repo, "the phone's repository");
-    assert!(leftovers.is_empty(), "{leftovers:?}");
-    assert!(assert_whole(&phone.bare, "the remote").is_empty());
-    eprintln!("GIT-STORAGE result=PASS {volume}");
+    assert_eq!(phone.disk("pages/C.md"), "- lower case\n");
+    assert!(assert_whole(&phone.repo, "the phone's repository").is_empty());
+    eprintln!("GIT-RESPELL result=PASS {volume}");
 }
 
 /// The child half of the kill test: commit and push until the parent ends
