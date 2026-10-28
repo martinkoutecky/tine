@@ -1041,5 +1041,11 @@
       "nonRequirements": ["Exact pixels or DOM structure; native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     }
+    ,"scripts/e2e-ui-sticky-selection.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"The seen notice stays clickable at the pane top after scrolling a routed page; a desktop toolbar follows the first selected line near the bottom of a long block, including after scrolling.","blocking":true}],
+      "acceptableVariations": ["Toolbar may flip below when there is no room above; dimensions, wrapping and theme colors may vary."],
+      "nonRequirements": ["OG has no selection toolbar. Mobile retains the docked toolbar. Native platforms other than Linux WebKitGTK require separate acceptance."],
+      "stability":"burn-in"
+    }
   }
 }

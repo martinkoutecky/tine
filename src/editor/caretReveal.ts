@@ -25,9 +25,10 @@ function pinnedBottom(editor: HTMLElement, scroller: HTMLElement): number {
     if (el.hasAttribute("data-sticky-parent")) parents.push(el);
   }
   const viewTop = scroller.getBoundingClientRect().top + scroller.clientTop;
+  const reserved = parseFloat(windowOf(scroller).getComputedStyle(scroller).getPropertyValue("--seen-header-height")) || 0;
   let bottom = 0;
   parents.forEach((ancestor, i) => {
-    const slotBottom = viewTop + (parents.length - i) * PIN; // the outermost ancestor pins at the top
+    const slotBottom = viewTop + reserved + (parents.length - i) * PIN; // outermost pins below the notice
     const row = ancestor.querySelector(":scope > .block-main");
     if (row && row.getBoundingClientRect().bottom <= slotBottom) bottom = Math.max(bottom, slotBottom);
   });
@@ -61,7 +62,8 @@ export function revealCaret(editor: HTMLTextAreaElement, scroller: HTMLElement |
   const view = scroller.getBoundingClientRect();
   const top = box.top + editor.clientTop + row.top - editor.scrollTop;
   const bottom = box.top + editor.clientTop + row.bottom - editor.scrollTop;
-  const visibleTop = Math.max(view.top + scroller.clientTop, pinnedBottom(editor, scroller)) + MARGIN;
+  const reservedTop = parseFloat(windowOf(scroller).getComputedStyle(scroller).scrollPaddingTop) || 0;
+  const visibleTop = Math.max(view.top + scroller.clientTop + reservedTop, pinnedBottom(editor, scroller)) + MARGIN;
   const visibleBottom = view.top + scroller.clientTop + scroller.clientHeight - MARGIN;
   let delta = 0;
   if (top < visibleTop) delta = top - visibleTop;

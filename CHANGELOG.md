@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- The seen notice stays at the top so you can click it even in the middle of a page (UI-SEEN-STICKY).
+- The desktop formatting toolbar displays over the selection, including near the bottom of a long block, and moves below it when there is no room above (UI-SEL-TOOLBAR).
 - Mouse back/forward buttons also navigate on macOS; dragging with a side button does not navigate. macOS also accepts Cmd+[ and Cmd+] for history (#780).
 - Expand or collapse the current page from Commands, or press `t o` to toggle all blocks. Bulk folding uses one page edit and Undo step (#785).
 
