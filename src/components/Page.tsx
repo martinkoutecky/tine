@@ -62,6 +62,9 @@ import { captureReadingViewport } from "./readingViewportAnchor";
 import { createMarginSurface } from "./MarginColumn";
 import { MarginContext } from "./marginContext";
 import { JournalFeedDays } from "./JournalFeedDays";
+import { SeenHeader, SeenRemoved, SeenRows } from "../seen/SeenHeader";
+import { createPageSeen } from "../seen/pageSeen";
+import { markSeenOnLeave } from "../seen/leave";
 
 installPageIdentityNavigation((from, to) => {
   // Rewrite both pinned and formerly pathless routes to the exact file owner.
@@ -432,6 +435,8 @@ export function PageView(): JSX.Element {
   // route — without this, route() would re-fire this loader, remount the feed via
   // setReady(false), and reset scroll to the top.
   const currentRoute = createMemo(() => router.route(), undefined, { equals: sameRoute });
+  // Leaving a routed page marks it seen (ADR 0079).
+  markSeenOnLeave(() => { const r = currentRoute(); return r.kind === "page" ? r.name : null; });
   const journalOwner = (route = currentRoute(), epoch = graphEpoch(), tabId = router.activeId(), revision = router.routeIntentRevision()): JournalsFeedOwner => ({
     graphEpoch: epoch,
     isLive: () => surfaceAlive && router.activeId() === tabId && router.routeIntentRevision() === revision && sameRoute(currentRoute(), route),
@@ -742,7 +747,7 @@ export function PageView(): JSX.Element {
     const r = loadedRoute();
     return !!r && ready() && sameRoute(r, currentRoute()) && (r.kind !== "journals" || isLoaded() || !!feedRefusal());
   };
-  const renderDay = (p: FeedPage) => <PageSection page={p}>
+  const renderDay = (p: FeedPage) => <PageSection page={p} seen={currentRoute().kind === "page"}>
     {/* OG page/today-queries and journal: queries precede agenda. */}
     <Show when={p.kind === "journal" && p.name === journalTitle(localDateFromDayKey(currentDayKey()))}>
       <TodaySections today={p.name} upcoming={<UpcomingSection feed={currentRoute().kind === "journals"} />} />
@@ -963,9 +968,11 @@ function ZoomedView(props: { id: string }): JSX.Element {
   );
 }
 
-function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Element {
+function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Element }): JSX.Element {
   const pane = paneContextFromContext();
   const router = pane.router;
+  // "Changed since you last looked": the routed single page only (ADR 0079).
+  const seen = createPageSeen(() => (props.seen && !props.page.guide ? props.page : null));
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
   // An open title-rename draft pins its page: no reload may remount it (og 20b contract 2).
@@ -1259,6 +1266,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         <div class="page-readonly-banner" title={t("page-ui-tine-can-t-reproduce-this-org-file-byte-for")}><Rich message={msg("page-ui-read-only-this-org-file-uses-a-structure-tine")} /></div>
       </Show>
       <ExternalChangeBar name={props.page.name} />
+      <SeenHeader seen={seen} pageName={props.page.name} />
       {/* Concord: a queued conflict is resolved AT the page, block by block. */}
       <Show when={conflictForPage(props.page.id) ?? liveConflictForPage(props.page.name, props.page.id)}>
         {(conflict) => (
@@ -1286,7 +1294,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
             </div>
           )}
         </Show>
-        <BlockList ids={rootsToRender()} />
+        <SeenRows seen={seen}><SeenRemoved first={null} /><BlockList ids={rootsToRender()} /></SeenRows>
       </div>
       </MarginContext.Provider>
       <margin.Column />

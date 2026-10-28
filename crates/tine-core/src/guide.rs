@@ -953,6 +953,30 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn seen_changes_are_documented() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for behavior in [
+            "## Git: what changed since you last looked",
+            "N changes since you last looked",
+            "It works only on git graphs",
+            "it compares **commits**, not files on disk",
+            "invisible until it is committed",
+            "Your own commits never count",
+            "A block was removed here",
+            "**Mark page seen**",
+            "**Mark whole graph seen**",
+            "**Forget seen state**",
+            "never in the graph and never synced",
+            "The journals feed, the sidebar, a zoomed block and references show no bars",
+        ] {
+            assert!(
+                files.contains(behavior),
+                "missing seen-changes Guide text: {behavior}"
+            );
+        }
+    }
+
+    #[test]
     fn margin_comments_are_documented() {
         let tips = include_str!("templates/tips.md");
         for behavior in [

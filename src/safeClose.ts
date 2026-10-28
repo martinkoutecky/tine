@@ -12,6 +12,9 @@ export interface SafeCloseDeps {
   recordDiscard?(reason: DiscardReason): Promise<void>;
   /** The user chose to keep unsaved work: show where it is (GH #540). */
   onDiscardDeclined?(): void;
+  /** Pages still shown count as left ("changed since you last looked", ADR 0079).
+   *  Bounded to one second; its failure never blocks the close. */
+  markPagesSeen?(): Promise<void>;
   flushSession(): Promise<void>;
   setTransition(active: boolean): void;
   notifyPdfFailure(): void;
@@ -129,6 +132,12 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
         } catch {
           dbg("close discard not recorded"); // diagnostics never block a confirmed close
         }
+      }
+
+      try {
+        await writeOwned(owner, bounded(deps.markPagesSeen?.() ?? Promise.resolve(), 1000, undefined));
+      } catch {
+        dbg("close seen marks not written"); // a disposable device record: never blocks the close
       }
 
       try {

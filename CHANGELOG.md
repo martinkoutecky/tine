@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Changed since you last looked** (git graphs, desktop): a margin bar marks blocks other people or tools committed since you last left a page, a removed block leaves a marker that unfolds its text, and the page header counts the changes. Leaving the page marks it seen; **Mark page seen**, **Mark whole graph seen** and **Forget seen state** are in the page actions menu, the command palette and Settings → Graph. Your own commits never count, uncommitted edits are invisible, and the record stays on this device (ADR 0079).
 - Desktop: **Open in default app** beside the graph and global CSS editors in Settings, with matching command-palette actions. External global CSS edits now apply live across graph windows (GH #778).
 - Tags and page references expose Logseq-compatible `data-ref` names so custom CSS can style individual tags and links, including static exports (GH #773).
 - Windows: graph read/write commands and git runs now use a private named pipe to the app or `tine serve`, including automatic startup, app handover and `serve --stop`. Commands wait for a busy pipe, owner locks live in `%LOCALAPPDATA%\tine-owners` outside the install folder, and a stalled reply times out without retrying a write the owner already admitted (REG-CLI-WINDOWS, REG-CLI-WINDOWS-R3, REG-CLI-WINDOWS-R4).

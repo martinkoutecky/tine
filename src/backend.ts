@@ -92,6 +92,7 @@ export function isTauri(): boolean {
 
 export { QueryPrintRefusedError, queryPrintRefusal } from "./queryPrintRefusal";
 import { queryPrintRefusal } from "./queryPrintRefusal";
+import { dropDisplayedFor } from "./seen/displayed";
 
 /** Commands whose timing would only describe the diagnostics channel. */
 const DIAGNOSTIC_COMMANDS = new Set([
@@ -364,6 +365,7 @@ class TauriBackend implements Backend {
     return this.call<PageRefusal | null>("page_close", { session, id, key });
   }
   pageDelete(session: number, name: string, kind: PageKind, expectedPath?: string) {
+    dropDisplayedFor({ name }); // the backend drops the page's seen record; a mark on leave would recreate it
     return this.call<PageOperation>("page_delete", { session, name, kind, expectedPath });
   }
   pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number) {
@@ -418,6 +420,8 @@ class TauriBackend implements Backend {
     return this.call<RefGroup[]>("block_referrers", { uuid });
   }
   renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]) {
+    dropDisplayedFor({ name: old });
+    if (mergeInto) dropDisplayedFor({ name: mergeInto });
     return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto, unsavedPaths });
   }
   publishHtml() {
@@ -661,9 +665,12 @@ class TauriBackend implements Backend {
     return this.call<import("./types").PageRead | null>("get_page_by_path", { path });
   }
   mergePages(src: string, dst: string) {
+    dropDisplayedFor({ name: src });
+    dropDisplayedFor({ name: dst });
     return this.call<void>("merge_pages", { src, dst });
   }
   renameFileToPage(path: string, newName: string) {
+    dropDisplayedFor({ path });
     return this.call<void>("rename_file_to_page", { path, newName });
   }
   listSyncConflicts() {

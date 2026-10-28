@@ -146,6 +146,7 @@ const BOUNDED_COLLECTIONS: Record<string, string> = {
   "src/components/pdfHighlightState.ts#sessions": "one entry per PDF with a mounted view or unresolved highlight work (keyed by ownership generation, so never reused across graphs); deleted once viewless and idle, and when the binding retires",
   "src/render/seededFacets.ts#seeded": "one reference-counted entry per loaded-node raw; resetStore releases owners and clears",
   "src/render/seededFacets.ts#owners": "one observer per loaded node; releases on raw change, replacement, deletion and resetStore",
+  "src/seen/displayed.ts#displayed": "one entry per routed page showing seen marks (keyed by page identity; dropped on leave, rename, merge and delete); a leaf module so backend.ts can drop entries without an import cycle, so the binding clear lives in src/seen/seenState.ts (clearOnBindingInvalidated -> clearDisplayed) and each entry holds only the binding owner",
   "src/changeKeys.ts#invalidators": "one permanent callback per importing cache module, no graph payload",
   "src/i18n/index.ts#bundles": "one Fluent bundle per shipped UI locale (the generated LOCALES registry), app-lifetime; not graph state",
   "src/i18n/index.ts#loading": "one in-flight catalog load per shipped UI locale; deleted when the load settles",

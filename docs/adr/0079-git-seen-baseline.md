@@ -1,6 +1,6 @@
 # 0079 — Device-local git seen baselines
 
-- Status: Accepted design, backend implementation; UI port follows.
+- Status: Accepted; backend and UI implemented.
 - Date: 2026-10-28
 - Authority: D-20261028-SG, seen-git DESIGN rev 1 with rev 2 overrides;
   D-20261018-SN1, D-20261017-SB2 and ADR 0078 identity conventions.

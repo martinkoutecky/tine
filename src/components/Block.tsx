@@ -102,6 +102,7 @@ import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { youtubeTimestampMacroFor, insertYoutubeTimestamp } from "./youtubeTimestampEdit";
 import { Rendered, detectMacro } from "./Rendered";
+import { SeenRemoved, useSeenRow } from "../seen/SeenHeader";
 import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecorationStyle, threadLineSettings, type ThreadLineDecoration } from "./block/rowChrome";
 import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
@@ -256,6 +257,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const outlineScope = useContext(OutlineScopeContext);
   const collapseSurface = useContext(CollapseSurfaceContext);
   const bulletOpen = useContext(BulletOpenContext);
+  const seenRow = useSeenRow(props.id);
   const editing = () => {
     if (editingId() !== props.id) return false;
     const owner = editingOwner();
@@ -381,6 +383,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           selected: isSelected(props.id),
           // Marks the row being edited; drives dim-mode's active-block spotlight.
           editing: editing(),
+          "seen-changed": seenRow.changed(),
         }}
         onContextMenu={(e) => {
           // GH #726: a nested result/embed row owns its menu (contextMenuPolicy).
@@ -485,6 +488,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         </div>
         <MarginMarker parentId={props.id} comments={marginComments()} />
       </div>
+      <SeenRemoved first={props.id} />
 
       <Show when={showRefs()}>
         <div class="block-references">
@@ -520,6 +524,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         </Switch>
       </Show>
       <Show when={commentClasses()["comment-card"]}><CommentComposer id={props.id} surface={surfaceKey} /></Show>
+      <SeenRemoved after={props.id} />
     </div>
   );
 }
