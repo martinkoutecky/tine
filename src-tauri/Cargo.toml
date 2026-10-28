@@ -137,6 +137,11 @@ reqwest = { version = "0.13", default-features = false, features = ["native-tls"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-window-state = "2"
 tauri-plugin-single-instance = "2"
+# Smart git HTTP runs async reqwest IO on one private runtime while libgit2
+# stays on the dedicated blocking git thread. bytes shares buffered retry
+# bodies without duplicating a push pack. TLS/proxy remain target-defined above.
+bytes = "1"
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "time"] }
 # Read OS-native copied-file lists (CF_HDROP / NSPasteboard file URLs /
 # text/uri-list), with a bounded bitmap alongside the original file on copy.
 clipboard-rs = { version = "0.3.5", default-features = false, features = ["image", "wayland"] }
@@ -150,7 +155,7 @@ clipboard-rs = { version = "0.3.5", default-features = false, features = ["image
 # or expose the updater.
 # CLI git runs (CLI slice 3, D-20261019-CL1…CL4) on the desktop owner only (the
 # command line has no mobile owner). libgit2 per git-sync G7, vendored, no
-# https/ssh (no network use here); libgit2-sys for GIT_OPT_ENABLE_FSYNC_GITDIR,
+# built-in https/ssh (git sync registers reqwest HTTPS); libgit2-sys for GIT_OPT_ENABLE_FSYNC_GITDIR,
 # which git2 does not expose (spike §9.5: history writes must fsync).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies.git2]
 version = "0.21"

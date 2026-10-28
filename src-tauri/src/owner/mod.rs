@@ -22,6 +22,11 @@ pub(crate) mod endpoint;
 pub(crate) mod git_autocommit;
 #[cfg(desktop)]
 pub(crate) mod git_run;
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+pub(crate) mod git_sync;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+#[path = "git_sync_mobile.rs"]
+pub(crate) mod git_sync;
 pub(crate) mod lease;
 pub(crate) mod lock;
 pub(crate) mod namespace;

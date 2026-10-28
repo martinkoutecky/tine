@@ -310,7 +310,7 @@ fn open_checked(root: &Path) -> Result<Repo, Unusable> {
 /// `working-tree-encoding` changes what the repository should hold: committing
 /// the working tree's bytes would bypass it (an encrypted file pushed in
 /// clear), so those refuse.
-fn check_config(repo: &Repo) -> Result<(), Unusable> {
+pub(super) fn check_config(repo: &Repo) -> Result<(), Unusable> {
     let config = repo.repo.config().map_err(failed)?;
     let flag = |key: &str| config.get_bool(key).ok();
     // Representative graph paths, so Settings can say so up front;
