@@ -40,6 +40,8 @@ try {
     // miss) and lands after revealCaretSettled's frame cap. Chromium's scroll anchoring would hide the
     // drift, so it is switched off to behave like WebKit, which has none.
     ["late-image", "mid", ["Enter"]],
+    // Render cost of ordinary typing on the same long page: key to next frame, per keystroke.
+    ["typing", "end", ["type"]],
   ].filter(([name]) => !process.env.ONLY || process.env.ONLY.split(",").includes(name));
   for (const [name, caret, keys] of variants) {
     const late = name === "late-image";
@@ -122,6 +124,20 @@ try {
         requestAnimationFrame(tick);
         return { ...snapshot(), editorHeight: ed.clientHeight };
       });
+      if (key === "type") {
+        const samples = [];
+        for (let i = 0; i < 40; i++) {
+          await page.evaluate(() => { window.__typeCost = new Promise((resolve) => {
+            window.addEventListener("keydown", () => { const t0 = performance.now();
+              requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now() - t0))); }, { capture: true, once: true }); }); });
+          await page.keyboard.press("a");
+          samples.push(await page.evaluate(() => window.__typeCost));
+          await page.waitForTimeout(30);
+        }
+        samples.sort((a, b) => a - b);
+        console.log(JSON.stringify({ name, key, typingKeyToSecondFrameMs: { median: +samples[20].toFixed(1), p95: +samples[38].toFixed(1), max: +samples[39].toFixed(1) } }));
+        continue;
+      }
       if (key === "drag") {
         const bullet = page.locator(`[data-block-id="row-5-${row}"] > .block-main .bullet-container`);
         const from = await bullet.boundingBox();
