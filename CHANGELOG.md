@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Mouse back/forward buttons also navigate on macOS; dragging with a side button does not navigate. macOS also accepts Cmd+[ and Cmd+] for history (#780).
+- Expand or collapse the current page from Commands, or press `t o` to toggle all blocks. Bulk folding uses one page edit and Undo step (#785).
+
 ### Added
 
 - Git sync offers **Turn off line-ending conversion for this repository** when tracked bytes already match their index blobs. It changes only local `core.autocrlf`, leaves graph files untouched, and otherwise links to safe commit-and-checkout steps in the Guide.

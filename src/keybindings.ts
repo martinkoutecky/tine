@@ -1,4 +1,6 @@
 import { shortcutKey } from "./shortcutKey";
+import { installMouseHistory } from "./mouseHistory";
+import { setCurrentPageCollapsed, toggleCurrentPageCollapsed } from "./pageCollapse";
 import { ensureSeenAvailability, markGraphSeenNow, markPageSeenNow, seenAvailable } from "./seen/seenState";
 import { changeCodeWrapping, codeWrapping } from "./codeDisplay";
 import { openWorkspaceCreation } from "./workspaceCreation";
@@ -334,8 +336,8 @@ const COMMANDS: CommandDef[] = [
   { id: "go/keyboard-shortcuts", binding: "g s", label: msg("command-go-keyboard-shortcuts"), scope: "global", run: () => openSettings("shortcuts") },
   // Browser-style history nav (per-tab back/forward). Special-cased in the
   // dispatcher so they fire even while editing a block; remappable like any other.
-  { id: "go/backward", binding: "alt+left", label: msg("command-go-backward"), scope: "global", run: goBack, global: true },
-  { id: "go/forward", binding: "alt+right", label: msg("command-go-forward"), scope: "global", run: goForward, global: true },
+  { id: "go/backward", binding: "alt+left", alias: isMac ? "mod+[" : "", label: msg("command-go-backward"), scope: "global", run: goBack, global: true },
+  { id: "go/forward", binding: "alt+right", alias: isMac ? "mod+]" : "", label: msg("command-go-forward"), scope: "global", run: goForward, global: true },
   // mod+w is a mod-chord, so it clears the while-editing guard and reaches the
   // generic dispatch loop below — closes the active tab even mid-edit (like a
   // browser). The last tab can't be closed, so this never quits the app.
@@ -458,6 +460,9 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/select-embedding-block", binding: "", label: msg("command-editor-select-embedding-block"), scope: "global", run: () => { dispatchFocusedEditorCommand("editor/select-embedding-block"); }, global: true },
   { id: "editor/collapse-children", binding: "", label: msg("command-editor-collapse-children"), scope: "global", run: () => { setTargetChildrenCollapsed(true); }, global: true },
   { id: "editor/expand-children", binding: "", label: msg("command-editor-expand-children"), scope: "global", run: () => { setTargetChildrenCollapsed(false); }, global: true },
+  { id: "editor/toggle-open-blocks", binding: "t o", label: msg("command-editor-toggle-open-blocks"), scope: "global", run: toggleCurrentPageCollapsed },
+  { id: "editor/collapse-all", binding: "", label: msg("command-editor-collapse-all"), scope: "global", run: () => setCurrentPageCollapsed(true), global: true },
+  { id: "editor/expand-all", binding: "", label: msg("command-editor-expand-all"), scope: "global", run: () => setCurrentPageCollapsed(false), global: true },
   // GH #448: the clipboard's URL or block ref becomes a link around the selection.
   {
     id: "editor/paste-as-link",
@@ -1180,8 +1185,10 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
   };
   type MouseHistoryDirection = "back" | "forward";
   type MouseHistorySource = "dom" | "native";
+  const mouseGuards = new Set<ReturnType<typeof installMouseHistory>>();
   let lastMouseHistory: { direction: MouseHistoryDirection; source: MouseHistorySource; at: number } | undefined;
   const navigateMouseHistory = (direction: MouseHistoryDirection, source: MouseHistorySource) => {
+    if (source === "native" && [...mouseGuards].some(guard => !guard.nativeAllowed())) return;
     const now = performance.now();
     // A platform that exposes both its native command and DOM auxclick must not
     // advance twice for one physical release. Repeated events from the same
@@ -1193,21 +1200,6 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     if (direction === "back") goBack();
     else goForward();
   };
-  // Mouse side buttons: X1 (DOM button 3) navigates back, X2 (button 4) forward,
-  // reusing the same history ops as Alt+Left / Alt+Right (GH #156). `auxclick`
-  // fires once per non-primary button release, so a single listener never
-  // double-navigates; preventDefault suppresses any webview built-in nav.
-  // Middle-click (button 1) is left untouched for new-tab handlers.
-  const mouseNav = (e: MouseEvent) => {
-    if (e.button === 3) {
-      e.preventDefault();
-      navigateMouseHistory("back", "dom");
-    } else if (e.button === 4) {
-      e.preventDefault();
-      navigateMouseHistory("forward", "dom");
-    }
-  };
-
   let disposed = false;
   let unlistenNativeMouseHistory = () => {};
   if ("__TAURI_INTERNALS__" in window) {
@@ -1238,14 +1230,16 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     win.addEventListener("keydown", superTracker, true);
     win.addEventListener("keyup", superTracker, true);
     win.addEventListener("blur", clearSuper);
-    win.addEventListener("auxclick", mouseNav, true);
+    const disposeMouse = installMouseHistory(win, win.document, direction => navigateMouseHistory(direction, "dom"));
+    mouseGuards.add(disposeMouse);
     return () => {
       win.removeEventListener("keydown", handler, true);
       win.removeEventListener("paste", pasteHandler, true);
       win.removeEventListener("keydown", superTracker, true);
       win.removeEventListener("keyup", superTracker, true);
       win.removeEventListener("blur", clearSuper);
-      win.removeEventListener("auxclick", mouseNav, true);
+      mouseGuards.delete(disposeMouse);
+      disposeMouse();
     };
   });
   return () => {

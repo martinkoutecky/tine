@@ -20,6 +20,7 @@ const ONE_PAGE = new Map([
 // independent (no block moves between pages) is K page submits, one per page;
 // each entry says why nothing transfers.
 const INDEPENDENT = new Map([
+  ["src/document/edits/properties.ts::setCollapsedTrees", "rewrites fold properties in place on each page; no block changes page"],
   ["src/document/edits/moves.ts::moveSelectionItems", "reorders siblings within each page; no block changes page"],
   ["src/document/edits/selection.ts::cycleSelectionTasks", "rewrites each selected block's marker in place"],
   ["src/document/edits/selection.ts::deleteSelection", "removes blocks from their own pages; nothing is inserted elsewhere"],
