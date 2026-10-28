@@ -656,7 +656,13 @@ fn pre_check(
                 Err(error) => return Err(PullOutcome::Incomplete(format!("{path}: {error:?}"))),
             };
             let (h, u) = (change.h_blob(path), change.u_blob(path));
-            let staged = index.get_path(Path::new(path), 0).map(|e| e.id);
+            // Under core.ignorecase (APFS, NTFS) the lookup folds case, so
+            // a case-only rename's `A.md` would find `a.md`'s entry: only an
+            // entry of this exact spelling is staged for this path.
+            let staged = index
+                .get_path(Path::new(path), 0)
+                .filter(|e| e.path == path.as_bytes())
+                .map(|e| e.id);
             if staged != h && staged != u {
                 return Err(refused(
                     path,

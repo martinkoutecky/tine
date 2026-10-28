@@ -143,6 +143,9 @@ fn repo(graph: &Graph) -> Repository {
         let mut config = repo.config().unwrap();
         config.set_str("user.name", "Martin").unwrap();
         config.set_str("user.email", "martin@example.org").unwrap();
+        // Hosted Windows runners set core.autocrlf=true globally, which sync
+        // refuses by design (ADR 0078 §4); these fixtures model a plain repo.
+        config.set_bool("core.autocrlf", false).unwrap();
     }
     commit_all(&repo, "initial");
     let branch = repo.head().unwrap().shorthand().unwrap().to_string();
@@ -888,6 +891,12 @@ fn q_git_case_only_rename_keeps_both_sides() {
             );
             if folding {
                 test_hook::simulate_folding();
+                // As `git init` sets it on APFS and NTFS: libgit2's index
+                // lookups then fold case (hosted macOS, run 40689517236).
+                repo.config()
+                    .unwrap()
+                    .set_bool("core.ignorecase", true)
+                    .unwrap();
             }
             test_hook::on_host(|op| {
                 assert_eq!(
@@ -907,6 +916,14 @@ fn q_git_case_only_rename_keeps_both_sides() {
                 .collect();
             assert!(names.contains(&"A.md".into()));
             assert!(!names.contains(&"a.md".into()));
+            let mut index = repo.index().unwrap();
+            index.read(true).unwrap();
+            let staged: Vec<_> = index
+                .iter()
+                .map(|e| String::from_utf8(e.path).unwrap())
+                .filter(|p| p.eq_ignore_ascii_case("pages/a.md"))
+                .collect();
+            assert_eq!(staged, ["pages/A.md"], "folding={folding} edited={edited}");
         }
     }
 }
