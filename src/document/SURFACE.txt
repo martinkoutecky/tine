@@ -169,6 +169,7 @@ setBlockProperty
 setCollapsed
 setCollapsedDeep
 setCollapsedDescendants
+setCollapsedTrees  # why: GH #785 batches page and selected subtree folding into one save notification per page; batch-sweep-nav
 setFeedExtender
 setHeading
 setPageProperty
