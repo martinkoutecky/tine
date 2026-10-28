@@ -136,6 +136,10 @@ pub struct Config {
     /// `:ui/show-brackets?` — OG default ON; only explicit false hides the
     /// brackets around page references.
     pub show_brackets: bool,
+    /// `:feature/enable-journals?` — OG default ON (`state/enable-journals?`:
+    /// `(not (false? …))`); only explicit false turns the journals feature off
+    /// (the sidebar offers the configured home page instead of Journals).
+    pub enable_journals: bool,
     /// `:shortcut/doc-mode-enter-for-new-block?` — when document mode is on,
     /// retain the normal Enter = new block mapping. Absent defaults to false.
     pub doc_mode_enter_for_new_block: bool,
@@ -246,6 +250,7 @@ impl Default for Config {
             enable_timetracking: true,
             enable_search_remove_accents: true,
             show_brackets: true,
+            enable_journals: true,
             doc_mode_enter_for_new_block: false,
             logical_outdenting: false,
             logbook: LogbookSettings::default(),
@@ -377,6 +382,8 @@ impl Config {
                 })
                 .unwrap_or(cfg.enable_search_remove_accents);
         cfg.show_brackets = bool_value(edn, ":ui/show-brackets?").unwrap_or(cfg.show_brackets);
+        cfg.enable_journals =
+            bool_value(edn, ":feature/enable-journals?").unwrap_or(cfg.enable_journals);
         cfg.doc_mode_enter_for_new_block =
             bool_value(edn, ":shortcut/doc-mode-enter-for-new-block?")
                 .unwrap_or(cfg.doc_mode_enter_for_new_block);
@@ -1561,6 +1568,20 @@ mod tests {
         assert_eq!(template(r#"{:default-templates {:journals "  "}}"#), None);
         assert_eq!(template(r#"{:default-templates {:journals ""}}"#), None);
         assert_eq!(template("{}"), None);
+    }
+
+    #[test]
+    fn enable_journals_is_on_unless_explicitly_false() {
+        // OG `state/enable-journals?`: `(not (false? (:feature/enable-journals? config)))`.
+        for (edn, enabled) in [
+            ("{}", true),
+            ("{:feature/enable-journals? true}", true),
+            ("{:feature/enable-journals? nil}", true),
+            ("{:feature/enable-journals? false}", false),
+            ("{;; :feature/enable-journals? false\n}", true),
+        ] {
+            assert_eq!(Config::parse(edn).enable_journals, enabled, "{edn}");
+        }
     }
 
     #[test]

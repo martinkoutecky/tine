@@ -244,6 +244,7 @@ pub(crate) fn config_key(config: &tine_core::config::Config) -> [u8; 32] {
         macros: _,
         enable_timetracking: _,
         show_brackets: _,
+        enable_journals: _,
         doc_mode_enter_for_new_block: _,
         logical_outdenting: _,
         logbook: _,
