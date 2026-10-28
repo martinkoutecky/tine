@@ -63,6 +63,10 @@ export interface GpuEnv {
    *  updater's installer would add a second, installed copy, so it updates by
    *  download. Absent from an older backend. */
   portable: boolean;
+  /** The package manager that built this copy (compile-time `TINE_PACKAGED_BY`,
+   *  tine#187): it owns updates, so the updater never checks, notifies or
+   *  installs and About names it. Null/absent = not a package-manager build. */
+  packaged_by?: string | null;
 }
 
 /** Settings → Graph → Git (ADR 0078): the bound graph's autocommit state. On a

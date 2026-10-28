@@ -10,8 +10,9 @@ import { msg, t } from "./i18n";
 // verify, flush saves, then install in place. macOS offers restart after installation;
 // Windows/Linux relaunch immediately. Android/iOS update through their distribution channel, so
 // both the notifier and installer are disabled there. MSIX package identity also
-// disables both; Microsoft Store manages those updates. The updater is inert until
-// a signed release with a `latest.json` exists; any failure (no manifest yet, bad
+// disables both; Microsoft Store manages those updates. So does a build made with
+// `TINE_PACKAGED_BY` (a distribution package, tine#187): not even the network
+// check runs. The updater is inert until a signed release with a `latest.json` exists; any failure (no manifest yet, bad
 // signature, offline) is caught and also falls back to the releases page — it can
 // never brick the app.
 //
@@ -85,9 +86,12 @@ export function resolvePackagedUpdateMode(packaged: boolean | "unknown", install
  * `false` from every probe; anything else unanswered is "unknown", which may
  * still notify but never installs (GH #719 r1: a second probe could disagree
  * with the first, so each decision reads once). */
-export type UpdatePackaging = "msix" | "flatpak" | "portable" | "in-place" | "unknown";
+export type UpdatePackaging = "package-manager" | "msix" | "flatpak" | "portable" | "in-place" | "unknown";
 
-export function resolveUpdatePackaging(env: { packaged?: unknown; flatpak?: unknown; portable?: unknown }): UpdatePackaging {
+/** A package-manager build (`TINE_PACKAGED_BY`, tine#187) outranks every other
+ * answer: its distribution owns updates, so nothing here may check or offer. */
+export function resolveUpdatePackaging(env: { packaged?: unknown; flatpak?: unknown; portable?: unknown; packaged_by?: unknown }): UpdatePackaging {
+  if (typeof env.packaged_by === "string" && env.packaged_by.trim() !== "") return "package-manager";
   if (env.packaged === true) return "msix";
   if (env.flatpak === true) return "flatpak";
   if (env.portable === true) return "portable";
@@ -104,10 +108,27 @@ async function updatePackaging(): Promise<UpdatePackaging> {
   }
 }
 
+/** Whether a package manager owns this copy's updates (`TINE_PACKAGED_BY`,
+ * tine#187), for the About tab: the packager's name, "none", or "unknown" when
+ * the probe cannot answer (the controls then stay as they were). Reads
+ * `updatePackaging` semantics from the same `gpu_env()` answer. */
+export async function packagedBy(): Promise<{ name: string } | "none" | "unknown"> {
+  try {
+    const env = await readOwned(ownedWhen(), backend().gpuEnv());
+    if (env.kind !== "current") return "unknown";
+    const name = env.value.packaged_by;
+    return resolveUpdatePackaging(env.value) === "package-manager" && typeof name === "string" ? { name } : "none";
+  } catch (error) {
+    dbg(`update packager probe failed: ${String(error)}`);
+    return "unknown";
+  }
+}
+
 /** Resolve update behavior conservatively, from one packaging read. Mobile
  * builds update through their distribution channel; a platform-detection
  * failure must therefore fail closed instead of exposing the desktop updater.
- * MSIX: the Store updates it. Flatpak (read-only /app) and portable Windows
+ * Package-manager builds (tine#187) and MSIX: the package manager / Store
+ * updates it, so neither notifies nor installs. Flatpak (read-only /app) and portable Windows
  * (the installer would add a second, installed copy; GH #719) update by
  * download. The installer runs only on an affirmative "in-place". */
 async function updateMode(installer = false): Promise<UpdateMode> {
@@ -118,6 +139,7 @@ async function updateMode(installer = false): Promise<UpdateMode> {
     return "unavailable";
   }
   const packaging = await updatePackaging();
+  if (packaging === "package-manager") return "unavailable";
   const packaged = packaging === "msix" ? true : packaging === "unknown" ? "unknown" : false;
   if (resolvePackagedUpdateMode(packaged, installer) === "unavailable") return "unavailable";
   return packaging === "flatpak" || packaging === "portable" ? "manual" : "self";
@@ -421,6 +443,8 @@ export async function offerUpdate(version: string, current: string, live: () => 
   const generation = ++offerGeneration;
   const manualOnly = await isManualOnlyBuild();
   const packaging = manualOnly ? "in-place" : await updatePackaging();
+  // Defence in depth: every caller already stopped at updateMode().
+  if (packaging === "package-manager") return { manual: false };
   // "unknown" keeps the established Install offer: installing re-reads once
   // and runs only on an affirmative "in-place".
   const manual = manualOnly || packaging === "flatpak" || packaging === "portable";

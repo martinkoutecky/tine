@@ -3,8 +3,9 @@ import { render } from "solid-js/web";
 import { AboutTab } from "./AboutTab";
 import { setToasts, toasts } from "../toasts";
 
-const { packagedMock, getVersionMock, copyVersionMock, isTauriMock, platformKindMock, openExternalMock, checkNowMock, getAppBoolMock, setAppBoolMock, openReleasesMock } = vi.hoisted(() => ({
+const { packagedMock, packagedByMock, getVersionMock, copyVersionMock, isTauriMock, platformKindMock, openExternalMock, checkNowMock, getAppBoolMock, setAppBoolMock, openReleasesMock } = vi.hoisted(() => ({
   packagedMock: vi.fn(async () => false),
+  packagedByMock: vi.fn(async (): Promise<{ name: string } | "none" | "unknown"> => "none"),
   getAppBoolMock: vi.fn(async () => true),
   setAppBoolMock: vi.fn(async () => {}),
   getVersionMock: vi.fn(async () => "0.5.3"),
@@ -23,6 +24,7 @@ vi.mock("../backend", () => ({
 vi.mock("../platform", () => ({ platformKind: platformKindMock }));
 vi.mock("../update", () => ({
   isMsixPackaged: packagedMock,
+  packagedBy: packagedByMock,
   checkForUpdateNow: checkNowMock,
   openReleasesPage: openReleasesMock,
 }));
@@ -42,8 +44,36 @@ describe("AboutTab", () => {
     isTauriMock.mockReturnValue(false);
     platformKindMock.mockResolvedValue("desktop");
     packagedMock.mockResolvedValue(false);
+    packagedByMock.mockResolvedValue("none");
     openExternalMock.mockResolvedValue(undefined);
     setToasts([]);
+  });
+
+  it("a package-manager build names its packager and shows no update controls (tine#187)", async () => {
+    isTauriMock.mockReturnValue(true);
+    packagedByMock.mockResolvedValue({ name: "Nixpkgs" });
+    const host = document.createElement("div");
+    const dispose = render(() => <AboutTab />, host);
+    try {
+      await flush();
+      expect(host.textContent).toContain(`This copy of ${IDENTITY.productName} is packaged by Nixpkgs. Update it there.`);
+      expect(host.textContent).not.toContain("Check for updates");
+      expect(host.querySelector(".about-check")).toBeNull();
+      expect(host.querySelector('[role="switch"]')).toBeNull();
+      expect(getAppBoolMock).not.toHaveBeenCalled();
+      expect(checkNowMock).not.toHaveBeenCalled();
+    } finally { dispose(); }
+  });
+
+  it("an ordinary desktop build keeps the update controls and no packager line (tine#187)", async () => {
+    isTauriMock.mockReturnValue(true);
+    const host = document.createElement("div");
+    const dispose = render(() => <AboutTab />, host);
+    try {
+      await flush();
+      expect(host.textContent).toContain("Check for updates");
+      expect(host.textContent).not.toContain("is packaged by");
+    } finally { dispose(); }
   });
 
   it("MSIX replaces update controls with Microsoft Store distribution text", async () => {

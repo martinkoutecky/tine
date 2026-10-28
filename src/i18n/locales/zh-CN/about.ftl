@@ -31,6 +31,7 @@ about-check-for-updates-automatically = 自动检查更新
 about-applies-to-this-device-manual-checks-remain = 仅适用于本设备。关闭后仍可手动检查更新。
 
 about-updates-arrive-through-your-app-s-distribution-channel = 更新通过应用的分发渠道提供。
+about-packaged-by-update-there = 此 { $product } 副本由 { $packager } 打包。请通过它进行更新。
 
 about-releases = 发布版本
 

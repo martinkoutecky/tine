@@ -18,6 +18,7 @@ export interface MessageArgs {
   "about-email-support": {};
   "about-engineering-and-analysis": {};
   "about-license-agpl-3-0-only": {};
+  "about-packaged-by-update-there": { "packager": string | number; "product": string | number };
   "about-privacy": {};
   "about-releases": {};
   "about-report-an-issue": {};
