@@ -24,6 +24,7 @@ import { pdfTakesOverPane } from "../viewportClass";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { acquirePdfHighlightState } from "./pdfHighlightState";
 import { acquirePdfDocument, type OpenPdfDocument } from "./pdfDocumentShare";
+import { createPdfPageCache } from "./pdfPageCache";
 import { pdfTextSelection, type PdfTextSelection } from "./pdfSelection";
 import { createPdfFind } from "./pdfFind";
 import { createPdfTiles, PDF_TILE_PIXEL_BUDGET } from "./pdfTiles";
@@ -177,12 +178,11 @@ export function PdfViewer(props: {
   // estimate until first render), so opening a long PDF doesn't parse every page
   // dict before first paint.
   const dimsKnown = new Set<number>();
-  // Rendered pages in recency order (LRU). Admission is governed primarily by
-  // actual aggregate backing-store pixels, with a page count as a secondary
-  // guard. The wrapper stays sized and re-renders on scroll-back.
+  // LRU canvas admission uses both backing pixels and a page count guard.
   const lru: number[] = [];
   const canvasPixels: Record<number, number> = {};
-  const tilePages: Record<number, pdfjs.PDFPageProxy> = {};
+  const pageCache = createPdfPageCache();
+  const tilePages = pageCache.pages;
   const pdfTiles = createPdfTiles((error) => failPdf(errorMessage("Couldn't render this PDF tile", error)));
   // Actual backing-store scale used for each rendered page. This can be lower
   // than devicePixelRatio for an unusually large page, keeping canvas memory
@@ -388,7 +388,6 @@ export function PdfViewer(props: {
     layoutGeneration += 1;
     releaseAllCanvases();
     pdfTiles.reset();
-    for (const key of Object.keys(tilePages)) delete tilePages[Number(key)];
     scrollRef.innerHTML = "";
     for (const k of Object.keys(pageEls)) delete pageEls[Number(k)];
     for (const k of Object.keys(textLayers)) delete textLayers[Number(k)];
@@ -576,7 +575,7 @@ export function PdfViewer(props: {
     }
     if (disposed || layoutGeneration !== layout || renderGeneration[n] !== generation
       || scale() !== s || pageEls[n] !== wrap) return;
-    tilePages[n] = page;
+    pageCache.retain(n, page);
     const viewport = page.getViewport({ scale: s });
     // First time we touch this page, learn its real unscaled size and correct the
     // wrapper if the page-1 estimate was off (non-uniform PDF).
@@ -835,7 +834,6 @@ export function PdfViewer(props: {
   }
   function freePage(n: number) {
     pdfTiles.releasePage(n);
-    delete tilePages[n];
     renderGeneration[n] = (renderGeneration[n] ?? 0) + 1;
     tasks[n]?.cancel();
     delete tasks[n];
@@ -861,9 +859,11 @@ export function PdfViewer(props: {
     delete textBuildScale[n];
     textGeneration[n] = (textGeneration[n] ?? 0) + 1;
     pendingText.delete(n);
+    pageCache.release(n);
   }
   function releaseAllCanvases() {
     for (const page of Object.keys(canvasPixels)) freePage(Number(page));
+    pageCache.clear();
     lru.length = 0;
   }
 
