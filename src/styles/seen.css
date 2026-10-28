@@ -39,6 +39,12 @@
 .seen-header-text {
   color: var(--text-secondary);
 }
+.seen-header-muted {
+  flex-basis: 100%;
+  color: var(--text-tertiary, var(--text-secondary));
+  font-size: 12px;
+  opacity: 0.8;
+}
 .seen-header-text.has-note {
   cursor: help;
   text-decoration: underline dotted;

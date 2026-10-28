@@ -2301,6 +2301,7 @@ export interface MessageArgs {
   "seen-mark-page": {};
   "seen-note-identity-unknown": {};
   "seen-note-unattributed": {};
+  "seen-note-unattributed-line": {};
   "seen-page-marked": { "name": string | number };
   "seen-removed-block": {};
   "seen-settings-forget": {};

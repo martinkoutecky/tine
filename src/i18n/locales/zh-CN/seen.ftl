@@ -8,6 +8,7 @@ seen-mark-page = 标记页面为已看
 seen-removed-block = 此处有一个块被删除
 seen-note-identity-unknown = 此图谱未设置 git 身份，因此只有 Tine 以占位名称提交的内容才算作你的。
 seen-note-unattributed = 自你上次查看以来此页面的历史很长，因此其中所有更改（包括你自己的）都会计入。
+seen-note-unattributed-line = 其中一些可能是你自己的编辑。
 # $name (string): the page's name.
 seen-page-marked = { $name } 已标记为已看
 seen-graph-marked = 整个图谱已标记为已看

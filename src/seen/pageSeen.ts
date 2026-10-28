@@ -30,6 +30,8 @@ export interface PageSeen {
   count: Accessor<number>;
   identityKnown: Accessor<boolean>;
   unattributed: Accessor<boolean>;
+  /** The backend's note on this answer, or null. */
+  reason: Accessor<string | null>;
 }
 
 /** Track `page()` while it is non-null. `page` must change identity when the
@@ -79,5 +81,6 @@ export function createPageSeen(page: Accessor<{ name: string } | null>): PageSee
     count,
     identityKnown: () => marks.identityKnown,
     unattributed: () => marks.unattributed,
+    reason: () => marks.reason,
   };
 }

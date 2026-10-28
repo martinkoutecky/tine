@@ -70,6 +70,49 @@ describe("mapping a backend reply onto the rendered tree (ADR 0079)", () => {
     expect(marks.after.a.map((m) => m.text)).toEqual(["r1", "r2"]);
   });
 
+  it("counts a heavy edit once: the removed marker at a changed block's place is that block's old text", () => {
+    // a2 (path [0,1]) follows a1: a removal anchored after a1 in the same parent is its old text.
+    const heavy = marksFromChanges(reply({
+      blocks: [{ block_path: [0, 1], persisted_id: null }],
+      removed: [{ text: "old A2", baseline_block_path: [0, 1], parent_path: [0], previous_sibling_path: [0, 0] }],
+    }), roots);
+    expect(heavy.after.a1).toEqual([{ text: "old A2" }]);
+    expect(heavy.blocks).toEqual({ a2: "A2" });
+    expect(changeCount(heavy, () => "A2")).toBe(1);
+    // Edited locally since: the bar and its count go, the marker still counts.
+    expect(changeCount(heavy, () => "A2 edited")).toBe(1);
+    // A first child: no previous sibling, same parent.
+    const first = marksFromChanges(reply({
+      blocks: [{ block_path: [0, 0], persisted_id: null }],
+      removed: [{ text: "old A1", baseline_block_path: [0, 0], parent_path: [0], previous_sibling_path: null }],
+    }), roots);
+    expect(changeCount(first, () => "A1")).toBe(1);
+    // A top-level first block and a removal first on the page.
+    const top = marksFromChanges(reply({
+      blocks: [{ block_path: [0], persisted_id: null }],
+      removed: [{ text: "old", baseline_block_path: [0], parent_path: null, previous_sibling_path: null }],
+    }), roots);
+    expect(changeCount(top, () => "A")).toBe(1);
+  });
+
+  it("does not pair a removal elsewhere, nor one removal with two changed blocks", () => {
+    const apart = marksFromChanges(reply({
+      blocks: [{ block_path: [0, 1], persisted_id: null }],
+      removed: [{ text: "x", baseline_block_path: [1], parent_path: null, previous_sibling_path: [0] }],
+    }), roots);
+    expect(changeCount(apart, () => "A2")).toBe(2);
+    const two = marksFromChanges(reply({
+      blocks: [{ block_path: [0, 1], persisted_id: null }, { block_path: [1], persisted_id: null }],
+      removed: [{ text: "x", baseline_block_path: [0, 1], parent_path: [0], previous_sibling_path: [0, 0] }],
+    }), roots);
+    expect(changeCount(two, (id) => ({ a2: "A2", b: "B" } as Record<string, string>)[id])).toBe(2);
+  });
+
+  it("carries the backend's note on an available answer", () => {
+    expect(marksFromChanges(reply({ reason: "baseline rewritten" }), roots).reason).toBe("baseline rewritten");
+    expect(marksFromChanges(reply({}), roots).reason).toBeNull();
+  });
+
   it("carries the identity and attribution notes", () => {
     const marks = marksFromChanges(reply({ identity_known: false, unattributed: true }), roots);
     expect(marks.identityKnown).toBe(false);

@@ -50,6 +50,7 @@ export function SeenHeader(props: { seen: PageSeen; pageName: string }): JSX.Ele
   const notes = () => [
     props.seen.identityKnown() ? "" : t("seen-note-identity-unknown"),
     props.seen.unattributed() ? t("seen-note-unattributed") : "",
+    props.seen.reason() ?? "",
   ].filter(Boolean).join(" ");
   return (
     <Show when={props.seen.count() > 0}>
@@ -60,6 +61,9 @@ export function SeenHeader(props: { seen: PageSeen; pageName: string }): JSX.Ele
         <button type="button" class="settings-btn seen-header-mark" onClick={() => void markPageSeenNow(props.pageName, false)}>
           {t("seen-mark-page")}
         </button>
+        <Show when={props.seen.unattributed()}>
+          <div class="seen-header-muted" data-seen-unattributed>{t("seen-note-unattributed-line")}</div>
+        </Show>
       </div>
     </Show>
   );

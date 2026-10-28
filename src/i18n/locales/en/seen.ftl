@@ -8,6 +8,7 @@ seen-mark-page = Mark page seen
 seen-removed-block = A block was removed here
 seen-note-identity-unknown = No git identity is set for this graph, so only commits Tine made under its placeholder name count as yours.
 seen-note-unattributed = This page has a long history since you last looked, so every change in it counts, including yours.
+seen-note-unattributed-line = Some of these may be your own edits.
 # $name (string): the page's name.
 seen-page-marked = { $name } marked seen
 seen-graph-marked = The whole graph is marked seen

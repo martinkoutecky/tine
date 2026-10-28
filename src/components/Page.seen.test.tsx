@@ -104,6 +104,45 @@ it("the header explains an unknown identity and an unattributed history", async 
   } finally { dispose(); }
 });
 
+it("a heavy edit (marker at the changed block's place) counts once", async () => {
+  vi.spyOn(backend(), "getPageChanges").mockResolvedValue(reply({
+    blocks: [{ block_path: [1], persisted_id: null }],
+    removed: [{ text: "Old text", baseline_block_path: [1], parent_path: null, previous_sibling_path: [0] }],
+  }));
+  const { host, dispose } = openPage();
+  try {
+    await ready(host);
+    await vi.waitFor(() => expect(host.querySelector("[data-seen-header]")).not.toBeNull());
+    expect(host.querySelector("[data-seen-header]")?.textContent).toContain("1 change since you last looked");
+    expect(host.querySelector("[data-seen-removed]")).not.toBeNull();
+    expect(rowOf(host, "seen-1")?.classList.contains("seen-changed")).toBe(true);
+  } finally { dispose(); }
+});
+
+it("shows the backend's reason in the tooltip and a muted line when unattributed", async () => {
+  vi.spyOn(backend(), "getPageChanges").mockResolvedValue(reply({
+    reason: "The seen baseline is not on this branch's main line.", unattributed: true,
+    blocks: [{ block_path: [2], persisted_id: null }],
+  }));
+  const { host, dispose } = openPage();
+  try {
+    await ready(host);
+    await vi.waitFor(() => expect(host.querySelector("[data-seen-header]")).not.toBeNull());
+    expect(host.querySelector(".seen-header-text")?.getAttribute("title")).toContain("not on this branch's main line");
+    expect(host.querySelector("[data-seen-unattributed]")?.textContent).toBe("Some of these may be your own edits.");
+  } finally { dispose(); }
+});
+
+it("a known-attribution answer has no muted line", async () => {
+  vi.spyOn(backend(), "getPageChanges").mockResolvedValue(reply({ blocks: [{ block_path: [2], persisted_id: null }] }));
+  const { host, dispose } = openPage();
+  try {
+    await ready(host);
+    await vi.waitFor(() => expect(host.querySelector("[data-seen-header]")).not.toBeNull());
+    expect(host.querySelector("[data-seen-unattributed]")).toBeNull();
+  } finally { dispose(); }
+});
+
 it("F4: the page's own edits never read again; an edited marked block loses its mark and its count", async () => {
   const read = vi.spyOn(backend(), "getPageChanges").mockResolvedValue(reply({
     blocks: [{ block_path: [1], persisted_id: null }, { block_path: [2], persisted_id: null }],
