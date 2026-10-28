@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Mouse back/forward buttons also navigate on macOS; dragging with a side button does not navigate. macOS also accepts Cmd+[ and Cmd+] for history (#780).
+- Expand or collapse the current page from Commands, or press `t o` to toggle all blocks. Bulk folding uses one page edit and Undo step (#785).
+- Query and Markdown tables: a table in a query box or a sidebar item stays inside its box and scrolls there; long text cells wrap instead of cramming every column to a few letters, and numbers never split; a visible scrollbar strip shows when a table still overflows. Board column counts no longer touch their labels, table and board page links read as links, and the "Grouped by" breakdown above a board is folded behind its summary. Collapse all sits in the Linked/Unlinked References header row, the gap above Linked References is smaller, a stale count shows a small refresh icon instead of a stray "·", and an image in a reference breadcrumb renders at breadcrumb height.
+- `:feature/enable-journals? false` in `logseq/config.edn` shows the configured home page in the sidebar in place of Journals, as in Logseq. Each comma item of a property listed in `:property/separated-by-commas` is now a page link in page and block properties.
+
 ### Added
 
 - Git sync offers **Turn off line-ending conversion for this repository** when tracked bytes already match their index blobs. It changes only local `core.autocrlf`, leaves graph files untouched, and otherwise links to safe commit-and-checkout steps in the Guide.
@@ -74,6 +79,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Scrolling the Journals feed keeps loading older days while you are editing a journal day. After some graph-wide changes (for example a sync bringing in many files) the feed could stop at its first three days until you clicked outside the journals (UI-JOURNAL-FEED-PAGING-WHILE-EDITING).
+- The horizontal scrollbar under a long-line code block is easy to grab (GH #787). It is now a 14px strip with a visible thumb in every theme (it was a few-pixel overlay bar hidden in the card's padding), and pressing it scrolls the card instead of opening the block's editor; presses on the code text still edit. Cards that scroll sideways are 14px taller. Touch devices keep their own scrollbar.
+- Every ancestor crumb in a block embed's breadcrumb opens that block, not just the page: click to go there, Shift-click for the sidebar, Ctrl/Cmd-click for a new tab, Alt-click for the other pane (GH #779).
+- On long pages with images, Enter, Backspace, Tab, Shift+Tab, moves and drags no longer remount the blocks around the edit: the touched window keeps its other blocks, windows after it keep their boundaries, an outdent that leaves the list long keeps it windowed, so no image flashes back to its placeholder and the view does not jump (GH #745). An image that finishes loading after the edit no longer leaves the caret off screen.
 - While you scroll a PDF, Tine remembers the reading position once scrolling stops instead of at every page passed; the page indicator still follows live, and zoom, page jumps and closing are remembered at once (D-20261028-PDF9 item 4).
 - Large graph PDFs load requested byte ranges through the read-only asset IPC, so opening one no longer copies the entire file into the webview first (D-20261028-PDF9 item 3).
 
@@ -109,6 +118,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - An asset stays in place if sync replaces a set-aside duplicate journal while Tine checks whether the asset is unused; the check refuses stale bytes even when the replacement keeps the same length and modification time (GH #623).
 
 - A page file that a sync tool is replacing while Tine lists the folder is no longer reported as "couldn't be read" (REG-SCAN-VANISHED-ENTRY).
+- Tine no longer warns "Some page files couldn't be read" about a file that was deleted or replaced while the graph was loading (REG-JOURNAL-HARDEN-GONE-BUILD; also affected stable 0.8.1).
 
 Development-only fixes (not shipped in a release):
 

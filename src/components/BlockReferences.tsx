@@ -60,12 +60,12 @@ export function BlockReferences(props: { id: string }): JSX.Element {
       <div class="block-references-inner">
         <div class="block-references-header">
           {t("editor-references-linked-reference", { count: count() })}
+          <Show when={(groups() ?? []).length > 1}>
+            <span class="reference-bulk-controls" role="group" aria-label={t("editor-references-reference-page-groups")}>
+              <button type="button" onClick={() => setAllGroups(bulkCollapseTarget(groups() ?? [], groupCollapsed))}>{t(bulkCollapseTarget(groups() ?? [], groupCollapsed) ? "editor-references-collapse-all" : "editor-references-expand-all")}</button>
+            </span>
+          </Show>
         </div>
-        <Show when={(groups() ?? []).length > 1}>
-          <div class="reference-bulk-controls" aria-label={t("editor-references-reference-page-groups")}>
-            <button type="button" onClick={() => setAllGroups(bulkCollapseTarget(groups() ?? [], groupCollapsed))}>{t(bulkCollapseTarget(groups() ?? [], groupCollapsed) ? "editor-references-collapse-all" : "editor-references-expand-all")}</button>
-          </div>
-        </Show>
         <For each={groups()}>
           {(g) => (
             <div class="reference-group">

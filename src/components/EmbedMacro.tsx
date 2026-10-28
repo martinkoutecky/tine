@@ -4,7 +4,7 @@ import { backend } from "../backend";
 import { pageIdentityKey } from "../ui";
 import { blocksContainEdit, createMembershipResource } from "../resultMembership";
 import { graphOwner, readOwned } from "../owned";
-import { blockHasPageEmbed, formatForBlock, pageByName, resolveBlockRef, resolveGuidePageDto, node as docNode } from "../document";
+import { blockHasPageEmbed, blockRef, formatForBlock, pageByName, resolveBlockRef, resolveGuidePageDto, node as docNode } from "../document";
 import { blockDtoExternalId } from "../blockIdentity";
 import { nearestAncestors } from "../render/blockTrail";
 import { visibleBody } from "../render/block";
@@ -148,8 +148,21 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
               <Show when={sourceTrail()} fallback={
                 <For each={(embedded()!.blocks[0]?.breadcrumb ?? []).slice(-3)}>{(label) => <><span class="ref-crumb-sep">›</span><span class="ref-crumb"><InlineText text={label} /></span></>}</For>
               }>
+                {/* GH #779: every ancestor crumb opens that block, at the shared link
+                    destination (plain: here/zoom, Shift: sidebar, Ctrl/Cmd: tab, Alt:
+                    other pane), like the Open source button. Linked References' plain
+                    click grows its own group's context root, which an embed (fixed to
+                    its one block) has no counterpart for. */}
                 <For each={sourceTrail()!.ids}>{(id) => <><span class="ref-crumb-sep">›</span>
-                  <span class="ref-crumb"><InlineText text={visibleBody(docNode(id)?.raw ?? "", formatForBlock(id))[0] || "…"} format={formatForBlock(id)} /></span></>}</For>
+                  <span role="button" tabIndex={0} class="ref-crumb" onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+                    event.preventDefault();
+                    event.currentTarget.click();
+                  }} onClick={(event) => {
+                    event.stopPropagation();
+                    if (!docNode(id)) return;
+                    openRefTarget(blockRef(id), internalLinkDest(event), pane?.paneId ?? focusedPaneId());
+                  }}><InlineText text={visibleBody(docNode(id)?.raw ?? "", formatForBlock(id))[0] || "…"} format={formatForBlock(id)} /></span></>}</For>
               </Show>
             </div>
           </Show>

@@ -396,6 +396,8 @@ mod journal_guide_tests {
             "keeps your current tab active and confirms **Opened in a new tab**",
             "it is listed under **Open tabs** in the left sidebar",
             "Block embed breadcrumbs",
+            // GH #779: the trail's parent crumbs are links.
+            "Each parent in the trail opens that block when you click it",
             // GH #417/#418: per-occurrence actions on references and embeds.
             "**Edit link** and **Remove reference**",
             // D-20261019-QC(5): OG's Replace with text / embed on a block reference.

@@ -244,6 +244,7 @@ pub(crate) fn config_key(config: &tine_core::config::Config) -> [u8; 32] {
         macros: _,
         enable_timetracking: _,
         show_brackets: _,
+        enable_journals: _,
         doc_mode_enter_for_new_block: _,
         logical_outdenting: _,
         logbook: _,
@@ -535,6 +536,30 @@ impl ChangeFeed {
             stamps,
             racy,
         } = loaded.body;
+        // `PageEntry::path` is not serialized: rebuild each claimant's under
+        // this root, as `checkpoint_install` does for the rows and the list.
+        // An empty path never matches the incremental update's
+        // `candidate.path != path`, so the stale claimant outlived every
+        // edit and the journal reconcile read `""` (ENOENT) as unreadable.
+        let root = &self.graph.root;
+        let claimants = Arc::new(
+            claimants
+                .iter()
+                .map(|(key, entries)| {
+                    let entries = entries
+                        .iter()
+                        .cloned()
+                        .map(|mut entry| {
+                            if entry.rel_path.is_some() {
+                                entry.path = root.join(entry.rel_path_str());
+                            }
+                            entry
+                        })
+                        .collect();
+                    (key.clone(), entries)
+                })
+                .collect(),
+        );
         let config = self.config.read().unwrap().clone();
         let (evaluator, list) = self
             .graph

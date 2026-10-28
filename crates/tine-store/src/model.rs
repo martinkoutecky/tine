@@ -136,6 +136,21 @@ pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
     String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
+/// One classification boundary for automatic unreadable-file rows. A missing
+/// file is gone or being replaced, never unreadable. Producer labels use the
+/// public diagnostic sink's fixed strings: no paths or content enter logs.
+pub(crate) fn unreadable_error(
+    error: impl Into<crate::IoError>,
+    producer: &'static str,
+) -> Option<crate::IoError> {
+    let error = error.into();
+    if error.kind() == io::ErrorKind::NotFound {
+        return None;
+    }
+    tine_core::diag_line::diagnostic_line(producer);
+    Some(error)
+}
+
 pub(crate) fn read_parse_bytes(path: &Path) -> io::Result<Vec<u8>> {
     read_parse_bytes_observed(path).map(|(bytes, _)| bytes)
 }
@@ -2345,6 +2360,15 @@ enum PageParseFailure {
 }
 type PageParseResult = Result<Option<ParsedPage>, PageParseFailure>;
 
+impl PageParseFailure {
+    fn unreadable(path: String, error: io::Error, producer: &'static str) -> PageParseResult {
+        match unreadable_error(error, producer) {
+            Some(error) => Err(Self::Unreadable(path, error.to_string())),
+            None => Ok(None),
+        }
+    }
+}
+
 impl PageCacheBuild {
     fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -3585,10 +3609,11 @@ impl Graph {
                     if e.kind == PageKind::Page {
                         name_failure = Some(io::Error::new(error.kind(), error.to_string()));
                     }
-                    Err(PageParseFailure::Unreadable(
+                    PageParseFailure::unreadable(
                         e.rel_path_str().to_owned(),
-                        error.to_string(),
-                    ))
+                        error,
+                        "Tine unreadable file producer=launch-read",
+                    )
                 }
             };
             let racy = stamp.as_ref().is_some_and(|stamp| stamp.racy_at(observed));
@@ -4462,7 +4487,10 @@ impl Graph {
         if !self.disk_sourced(path) {
             return None;
         }
-        let entry = self.entry_for_path(path)?;
+        let Some(entry) = self.entry_for_path(path) else {
+            self.forget_unreadable(path);
+            return None;
+        };
         let cached_entry = self
             .with_cached(path, |row| row.map(|(entry, _)| entry.clone()))
             .flatten();
@@ -5486,6 +5514,76 @@ mod tests {
     use super::*;
 
     use crate::test_fixture_io::hosted;
+
+    #[test]
+    fn a_file_gone_before_an_on_demand_build_is_not_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("journals")).unwrap();
+        let path = dir.path().join("journals/2026_10_26.md");
+        fs::write(&path, "- day\n").unwrap();
+        let graph = Graph::open(dir.path());
+        // Retain the listing as a replacement between listing and read does.
+        assert_eq!(graph.list_pages_shared().len(), 1);
+        fs::remove_file(&path).unwrap();
+        graph.with_pages(|pages| assert!(pages.is_empty()));
+        assert!(
+            graph.reported_unreadable_pages().is_empty(),
+            "{:?}",
+            graph.reported_unreadable_pages()
+        );
+    }
+
+    #[test]
+    fn discovery_does_not_report_a_file_that_vanished_during_naming() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path());
+        let path = dir.path().join("pages/Gone.md");
+        graph.record_name_discovery(&path, Some(io::ErrorKind::NotFound.into()));
+        assert!(
+            graph.reported_unreadable_pages().is_empty(),
+            "{:?}",
+            graph.reported_unreadable_pages()
+        );
+    }
+
+    #[test]
+    fn listing_does_not_report_a_file_that_vanished_during_naming() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path());
+        graph.replace_discovery_errors(
+            None,
+            vec![(
+                crate::FileId::from("pages/Gone.md".to_owned()),
+                io::Error::from(io::ErrorKind::NotFound).into(),
+            )],
+        );
+        assert!(
+            graph.reported_unreadable_pages().is_empty(),
+            "{:?}",
+            graph.reported_unreadable_pages()
+        );
+    }
+
+    #[test]
+    fn launch_does_not_report_a_file_that_vanished_during_naming() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path());
+        assert!(graph.install_built(
+            PageCacheBuild::with_capacity(0),
+            (graph.cache_generation(), graph.held.epoch()),
+            false,
+            None,
+            Some(vec![(
+                crate::FileId::from("pages/Gone.md".to_owned()),
+                io::Error::from(io::ErrorKind::NotFound).into()
+            )])
+        ));
+        assert!(
+            graph.reported_unreadable_pages().is_empty(),
+            "{:?}",
+            graph.reported_unreadable_pages()
+        );
+    }
 
     fn delete(
         store: &std::sync::Arc<tine_store::Store>,

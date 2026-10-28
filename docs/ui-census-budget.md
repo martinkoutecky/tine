@@ -57,6 +57,9 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-10-28, sweep-nav dossier / GH #785: `commands.registry` 126→129 and
+  `commands.palette` 71→74 for the explicitly requested localized **Expand all**,
+  **Collapse all**, and OG's remappable **t o** toggle. No new topbar control.
 - 2026-10-28, D-20261028-SG ("Changed since you last looked", ADR 0079): `commands.registry` 124→126
   for the required **Mark page seen** and **Mark whole graph seen** commands. Both are
   available only on a git graph that answered a seen read (never on Android/iOS), so the
