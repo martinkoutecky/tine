@@ -175,10 +175,16 @@ struct store::ConfigState
 # page host's contract for graph saves. The witness form the host already used
 # (DirectoryWitness, sync_directory_witness) becomes public instead of a copy
 # of the tolerated error set in src-tauri (4 -> 6).
-## Save (ceiling: 6)
+# WIN-DIR-FLUSH fix1: namespace adoption lives in the app crate and needs the
+# existing private flush on Windows. sync_directory_witness serves graph
+# callers and intentionally never flushes there; reusing it would change graph
+# saves. A mode parameter would break the existing graph/backup call signature;
+# expose the existing helper, preserving Unix witness handling in the app.
+## Save (ceiling: 7)
 fn directory_durability::sync_directory_entry
 enum directory_durability::DirectoryWitness
 fn directory_durability::sync_directory_witness
+fn directory_durability::sync_private_directory
 enum store::SaveBase
 enum store::SaveOutcome
 enum store::StoreError

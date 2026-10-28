@@ -896,6 +896,10 @@ fn public_paths_are_only_inputs_and_handoffs() {
             "app-data backup directory outside any graph handed to the OS for sync; the weak/strong answer gates backup pruning",
         ),
         (
+            "directory_durability::sync_private_directory",
+            "app-data namespace adoption directory outside any graph handed to the OS for the private Windows flush",
+        ),
+        (
             "store::Store::create_graph",
             "user-chosen parent input; created root to user",
         ),

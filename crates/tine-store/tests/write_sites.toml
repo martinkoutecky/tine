@@ -149,8 +149,8 @@ domain = "primitive"
 guard = ""
 test = "src-tauri/src/root_identity.rs#relocation_is_idempotent_and_preserves_sealed_bytes"
 oracle = false
-note = "App-data caller of the existing shared directory witness; Unsupported is reported instead of accepted as strong. No new sync primitive or graph path."
-mutations = "directory_durability::sync_directory_witness=1"
+note = "App-data caller of the shared private Windows flush, followed by the existing directory witness; Unix Unsupported handling is unchanged. No new sync primitive or graph path."
+mutations = "directory_durability::sync_directory_witness=1, directory_durability::sync_private_directory=1"
 
 [[site]]
 file = "crates/tine-store/src/root_binding.rs"
