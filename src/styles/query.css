@@ -1066,6 +1066,8 @@
 .query-board-card {
   display: block;
   width: 100%;
+  font-size: 14px;
+  line-height: 1.4;
   box-sizing: border-box;
   margin-top: 4px;
   padding: 4px 8px;
