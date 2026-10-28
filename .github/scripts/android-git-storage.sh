@@ -16,6 +16,18 @@ device=/data/local/tmp/tine-git-tests
 shared=/sdcard/Documents/tine-git-storage
 adb push "$bin" "$device/tine_lib_tests" > /dev/null
 adb shell "chmod 755 $device/tine_lib_tests && mkdir -p $device/tmp $shared"
+# Just after boot MediaProvider may still refuse writes in shared storage
+# (EPERM on the first file, run 40762656695 API 33): wait until a file of the
+# kinds the tests write can be created and removed.
+ready=0
+for i in $(seq 1 60); do
+  if adb shell "mkdir -p $shared/probe-$i && echo p > $shared/probe-$i/p.edn && echo p > $shared/probe-$i/p.md && rm -r $shared/probe-$i" 2> /dev/null; then
+    ready=1
+    break
+  fi
+  sleep 2
+done
+[ "$ready" = 1 ] || echo "shared storage never accepted a write" >&2
 adb shell getprop ro.build.version.sdk > "$out/sdk.txt"
 adb shell mount > "$out/mount.txt" || true
 # Who the tests run as, and whom shared storage says owns its files (libgit2's

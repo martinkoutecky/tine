@@ -7,7 +7,7 @@
 //! temporary folder, as on a phone. CI runs this module on an Android
 //! emulator with the graph on shared storage (MediaProvider's FUSE daemon,
 //! GH #538-b) and `TINE_EXPECT_FUSE=1`, which fails unless the graph volume
-//! is FUSE (`.github/workflows/android-git-storage.yml`).
+//! is FUSE (`android-git-storage` in `ci.yml`, `.github/scripts/android-git-storage.sh`).
 
 use super::*;
 use crate::owner::git_sync::{NoCredentials, Operation, Outcome as Net, TransportOptions};
@@ -150,21 +150,68 @@ impl Phone {
         slot
     }
 
-    /// Another device, on case-sensitive private storage: clone, write
-    /// (`Some`) or delete (`None`) each path, commit, push.
+    /// Another device: clone, write (`Some`) or delete (`None`) each path,
+    /// commit, push. The commit is built in the index, not the clone's
+    /// folder, so a case-only rename stays one even where the private
+    /// temporary folder folds case (hosted macOS and Windows, run 40757889922).
     fn peer_pushes(&self, changes: &[(&str, Option<&str>)]) -> Oid {
         let dir = self
             .private
             .join(format!("peer-{}", uuid::Uuid::new_v4().simple()));
         let peer = Repository::clone(&self.url, &dir).unwrap();
         configure(&peer);
+        peer.config()
+            .unwrap()
+            .set_bool("core.ignorecase", false)
+            .unwrap();
+        // Reopened, so the index is loaded under the setting just written.
+        let peer = Repository::open(&dir).unwrap();
+        let mut index = peer.index().unwrap();
         for (path, text) in changes {
             match text {
-                Some(text) => fs::write(dir.join(path), text).unwrap(),
-                None => fs::remove_file(dir.join(path)).unwrap(),
+                Some(text) => {
+                    let mut entry =
+                        index
+                            .get_path(Path::new(path), 0)
+                            .unwrap_or(git2::IndexEntry {
+                                ctime: git2::IndexTime::new(0, 0),
+                                mtime: git2::IndexTime::new(0, 0),
+                                dev: 0,
+                                ino: 0,
+                                mode: 0o100644,
+                                uid: 0,
+                                gid: 0,
+                                file_size: 0,
+                                id: Oid::ZERO_SHA1,
+                                flags: 0,
+                                flags_extended: 0,
+                                path: Vec::new(),
+                            });
+                    entry.path = path.as_bytes().to_vec();
+                    index.add_frombuffer(&entry, text.as_bytes()).unwrap();
+                }
+                None => index.remove_path(Path::new(path)).unwrap(),
             }
         }
-        let oid = commit_all(&peer, "from the laptop");
+        let tree = peer.find_tree(index.write_tree().unwrap()).unwrap();
+        for (path, text) in changes {
+            assert_eq!(
+                tree.get_path(Path::new(path)).is_ok(),
+                text.is_some(),
+                "the peer's commit has exactly the spelling {path}"
+            );
+        }
+        let parent = peer.head().unwrap().peel_to_commit().unwrap();
+        let oid = peer
+            .commit(
+                Some("HEAD"),
+                &me(),
+                &me(),
+                "from the laptop",
+                &tree,
+                &[&parent],
+            )
+            .unwrap();
         assert_eq!(operation().push_upstream(&dir), Net::UpToDate);
         oid
     }
