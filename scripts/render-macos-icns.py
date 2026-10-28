@@ -5,17 +5,23 @@ The macOS icon is docs/app-icon.svg inside Apple's icon grid: viewBox -31..287, 
 at 4x and downsampled (no SVG renderer needed); run from the repository root.
 """
 from PIL import Image, ImageDraw
+import sys
+import xml.etree.ElementTree as ET
+
+source = sys.argv[1] if len(sys.argv) > 1 else "docs/app-icon-macos.svg"
+output = sys.argv[2] if len(sys.argv) > 2 else "src-tauri/icons/icon.icns"
+background = ET.parse(source).getroot().find("{http://www.w3.org/2000/svg}rect").attrib["fill"]
 
 SIZE, SS, VIEW, ORIGIN = 1024, 4, 318, -31
 scale = SIZE * SS / VIEW
 px = lambda v: (v - ORIGIN) * scale
 img = Image.new("RGBA", (SIZE * SS,) * 2, (0, 0, 0, 0))
 d = ImageDraw.Draw(img)
-d.rounded_rectangle([px(0), px(0), px(256), px(256)], radius=56 * scale, fill="#10b981")
+d.rounded_rectangle([px(0), px(0), px(256), px(256)], radius=56 * scale, fill=background)
 half = 9 * scale  # stroke-width 18 with round caps: each stroke is a capsule
 for (x1, y1), (x2, y2) in [((96, 72), (96, 128)), ((128, 72), (128, 128)), ((160, 72), (160, 128)),
                            ((96, 128), (160, 128)), ((128, 128), (128, 188))]:
     d.rounded_rectangle([px(x1) - half, px(y1) - half, px(x2) + half, px(y2) + half], radius=half, fill="white")
 icon = img.resize((SIZE, SIZE), Image.LANCZOS)
-icon.save("src-tauri/icons/icon.icns", sizes=[(s, s) for s in (16, 32, 64, 128, 256, 512, 1024)])
-print("wrote src-tauri/icons/icon.icns")
+icon.save(output, sizes=[(s, s) for s in (16, 32, 64, 128, 256, 512, 1024)])
+print(f"wrote {output}")
