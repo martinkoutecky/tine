@@ -77,6 +77,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Scrolling the Journals feed keeps loading older days while you are editing a journal day. After some graph-wide changes (for example a sync bringing in many files) the feed could stop at its first three days until you clicked outside the journals (UI-JOURNAL-FEED-PAGING-WHILE-EDITING).
 - The horizontal scrollbar under a long-line code block is easy to grab (GH #787). It is now a 14px strip with a visible thumb in every theme (it was a few-pixel overlay bar hidden in the card's padding), and pressing it scrolls the card instead of opening the block's editor; presses on the code text still edit. Cards that scroll sideways are 14px taller. Touch devices keep their own scrollbar.
 - Every ancestor crumb in a block embed's breadcrumb opens that block, not just the page: click to go there, Shift-click for the sidebar, Ctrl/Cmd-click for a new tab, Alt-click for the other pane (GH #779).
 - On long pages with images, Enter, Backspace, Tab, Shift+Tab, moves and drags no longer remount the blocks around the edit: the touched window keeps its other blocks, windows after it keep their boundaries, an outdent that leaves the list long keeps it windowed, so no image flashes back to its placeholder and the view does not jump (GH #745). An image that finishes loading after the edit no longer leaves the caret off screen.

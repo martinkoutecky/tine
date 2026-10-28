@@ -590,7 +590,11 @@ export function PageView(): JSX.Element {
     if (route.kind !== "journals") return;
     const owner = journalOwner(route);
     if (!ownerIsLive(owner)) return;
-    if (pendingFeedRestart || journalAsOfDay !== localDayKey()) {
+    // A restart deferred for an edit in the loaded window waits for that edit
+    // (the lifecycle effect below retries it); appending older days touches
+    // no loaded page, so scrolling still pages meanwhile. Retrying here only
+    // deferred again, pinning the feed at its first page.
+    if ((pendingFeedRestart && !feedHasActiveEdit()) || journalAsOfDay !== localDayKey()) {
       await refreshJournalFeedForCurrentDay(owner);
       return;
     }
