@@ -15,6 +15,8 @@ import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { dismissToast, pushToast, toasts } from "../../toasts";
 import { clearOnBindingInvalidated } from "../../binding";
+import { blockHasFoldableBody, blockHasPageEmbed } from "./blocks";
+import { queryOptionFolds, storedFold } from "./queryFoldOption";
 
 /** Pure Markdown property rewrite for one compound store mutation. It scans only
  * the canonical head (title — or, when the first line is itself a property, no
@@ -612,16 +614,44 @@ export function expandAncestors(id: string): boolean {
 
 /** Collapse or expand a block and its entire descendant subtree. */
 export function setCollapsedDeep(id: string, collapsed: boolean) {
-  if (!blockWritable(id)) return;
-  pushUndo("collapse-all", [doc.byId[id].page]);
-  const walk = (bid: string) => {
-    const n = doc.byId[bid];
-    if (!n) return;
-    if (n.children.length) writeCollapsed(bid, collapsed);
-    n.children.forEach(walk);
-  };
-  walk(id);
-  markDirty(doc.byId[id].page, "save-block");
+  setCollapsedTrees([id], collapsed);
+}
+
+/** Bulk page/subtree fold: one snapshot, one reactive transaction and one dirty
+ * notification per affected page, irrespective of block count (GH #785).
+ * An omitted value follows OG toggle-open!: any fold => expand all. */
+export function setCollapsedTrees(roots: readonly string[], collapsed?: boolean) {
+  const seen = new Set<string>();
+  const foldable: string[] = [];
+  const stack = [...roots];
+  while (stack.length) {
+    const id = stack.pop()!;
+    const n = doc.byId[id];
+    if (!n || seen.has(id) || !blockWritable(id)) continue;
+    seen.add(id);
+    stack.push(...n.children);
+    if (blockHasFoldableBody(id)) foldable.push(id);
+  }
+  const value = collapsed ?? !foldable.some(id => storedFold(id));
+  const changes = foldable.filter(id => storedFold(id) !== value).map(id => {
+    const n = doc.byId[id];
+    // Query/page-embed defaults require an explicit false, like a single fold.
+    const raw = blockHasPageEmbed(id) || queryOptionFolds(id)
+      ? editBlock(n.raw, formatForBlock(id), { kind: "property", key: "collapsed", value: String(value) })
+      : rawWithCollapsed(n.raw, value, formatForBlock(id));
+    return { id, raw, page: n.page };
+  });
+  if (!changes.length) return;
+  const pages = [...new Set(changes.map(change => change.page))];
+  pushUndo("collapse-all", pages);
+  setDoc(produce(state => {
+    for (const change of changes) {
+      state.byId[change.id].collapsed = value;
+      state.byId[change.id].raw = change.raw;
+    }
+  }));
+  bumpCollapseEpochs(changes.map(change => change.id));
+  for (const page of pages) markDirty(page, "save-block");
 }
 
 /** Every descendant that can itself be folded, including descendants hidden by
