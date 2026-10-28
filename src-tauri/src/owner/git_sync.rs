@@ -214,17 +214,26 @@ impl Operation {
 
     /// Push current branch to its tracked upstream, even when the upstream's
     /// name differs. Configured push refspecs/mirrors are never executed.
+    ///
+    /// `index.lock` is held for the local checks only, not the transfer: a
+    /// push reads objects and writes only the remote-tracking ref (under its
+    /// own ref lock), and the negotiation re-checks the branch, its ref and
+    /// the repository before anything is sent. So the OS ending the app
+    /// during a slow upload leaves no `index.lock` behind (ADR 0078 slice 3).
     pub(crate) fn push_upstream_locked(self, root: &Path) -> Outcome {
         self.execute(|| {
             let repo = checked(root)?;
-            let _index = repo.lock_index(false).map_err(lock_error)?;
-            let target = Target::read(&repo)?;
-            let head = repo
-                .tip()
-                .map_err(|e| Outcome::Refused(e.message))?
-                .ok_or_else(|| refused("commit the branch before syncing"))?
-                .id();
-            target.check_ref(&repo)?;
+            let (target, head) = {
+                let _index = repo.lock_index(false).map_err(lock_error)?;
+                let target = Target::read(&repo)?;
+                let head = repo
+                    .tip()
+                    .map_err(|e| Outcome::Refused(e.message))?
+                    .ok_or_else(|| refused("commit the branch before syncing"))?
+                    .id();
+                target.check_ref(&repo)?;
+                (target, head)
+            };
             let mut remote = validated_remote(&repo, &target.push_url)?;
             let mut rejection = None;
             let mut local_refusal = None;

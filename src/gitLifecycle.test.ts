@@ -45,6 +45,28 @@ describe("git lifecycle edges (ADR 0078 slice 3)", () => {
       .resolves.toBeUndefined();
   });
 
+  it("drops a background edge a foreground edge overtook during the flush", async () => {
+    let finishFlush!: () => void;
+    const log: string[] = [];
+    const tell = async (fg: boolean) => { log.push(`tell:${fg}`); };
+    const away = gitLifecycleEdge(false, () => new Promise<boolean>((done) => {
+      finishFlush = () => done(true);
+    }), tell);
+    await gitLifecycleEdge(true, async () => true, tell);
+    finishFlush();
+    await away;
+    expect(log).toEqual(["tell:true"]);
+  });
+
+  it("sends edges in order when none overtakes another", async () => {
+    const log: string[] = [];
+    const tell = async (fg: boolean) => { log.push(`tell:${fg}`); };
+    await gitLifecycleEdge(true, async () => true, tell);
+    await gitLifecycleEdge(false, async () => true, tell);
+    await gitLifecycleEdge(true, async () => true, tell);
+    expect(log).toEqual(["tell:true", "tell:false", "tell:true"]);
+  });
+
   it("follows the mobile session-activity edges in App", () => {
     const app = readFileSync("src/App.tsx", "utf8");
     const install = app.slice(app.indexOf("installSessionActivity({"));

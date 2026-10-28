@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-use git2::{Oid, Repository, Status, StatusOptions};
+use git2::{Oid, Status, StatusOptions};
 use serde::Serialize;
 
 #[cfg(test)]
@@ -312,8 +312,7 @@ fn lock_refused(refusal: LockRefusal) -> Unusable {
 
 /// Open and check the repository holding `root` for autocommits.
 pub(super) fn open_checked(root: &Path) -> Result<Repo, Unusable> {
-    super::git_run::configure_libgit2();
-    match Repository::discover(root) {
+    match super::git_run::discover(root) {
         Err(error) if error.code() == git2::ErrorCode::NotFound => {
             return Err(Unusable::NotARepository)
         }
@@ -727,7 +726,7 @@ fn loose_objects(objects: &Path) -> Vec<Oid> {
 /// were deleted; `Ok(None)` when skipped (a `git gc` is running, or the
 /// repository is not SHA-1).
 #[cfg(test)]
-fn repack(repo: &Repository) -> Result<Option<usize>, String> {
+fn repack(repo: &git2::Repository) -> Result<Option<usize>, String> {
     let checked = open_checked(repo.workdir().unwrap()).map_err(|e| e.message())?;
     repack_guarded(&checked)
 }
@@ -912,6 +911,12 @@ mod registry {
         pub(super) sync_requested: bool,
         /// The app went to the background ([`backgrounded`]).
         pub(super) background: bool,
+        /// The app came back to the foreground ([`foregrounded`]): sync at
+        /// once, commit only on cadence.
+        pub(super) foreground: bool,
+        /// The app is in the background: set by [`backgrounded`], cleared by
+        /// [`foregrounded`]; no automatic cycle (fetch, pull) starts meanwhile.
+        pub(super) away: bool,
         pub(super) credentials: Option<Arc<dyn Credentials>>,
         pub(super) commits_since_repack: u32,
         pub(super) repack_not_before: Option<Instant>,
@@ -1035,40 +1040,64 @@ pub(crate) fn request_sync(root: &Path) -> bool {
 }
 
 /// The app went to the background (ADR 0078 §3, slice 3; Android and iOS):
-/// every worker commits its pending changes at once and, when it syncs
-/// automatically, pushes the commits its last fetch shows the remote lacks.
-/// No fetch and no pull run in the background: a push writes nothing to
-/// this repository but its `index.lock`, so the OS freezing or ending the
-/// app mid-push leaves it as it was, at worst with that lock left (stated
-/// limit: Tine never removes it), and the commit is the one short local write.
+/// every worker commits its pending changes at once, unless it committed
+/// less than an interval ago (the cap on autocommits, D-20261026-GC), and,
+/// when it syncs automatically, pushes the commits its last fetch shows the
+/// remote lacks. Until [`foregrounded`] no automatic cycle starts, so no
+/// fetch and no pull start in the background: a push writes nothing to this
+/// repository but the remote-tracking ref (`index.lock` is held only for its
+/// local checks, not the transfer), so the OS freezing or ending the app
+/// mid-push leaves it as it was, and the commit is the one short local write.
 pub(crate) fn backgrounded() {
+    lifecycle_edge(false, None);
+}
+
+/// The app came back to the foreground (slice 3): every worker may sync
+/// again, and a graph that syncs automatically runs a cycle at once. Unlike
+/// "Sync now" it does not force a commit; pending edits commit on the
+/// interval's cadence, except the pre-pull autocommit when the remote has
+/// news (ADR 0078 §3), which follows the other device's pushes.
+pub(crate) fn foregrounded() {
+    lifecycle_edge(true, None);
+}
+
+/// One visibility edge for every running worker, or (tests) the one at `only`.
+fn lifecycle_edge(foreground: bool, only: Option<&Path>) {
     for worker in registry::all() {
-        let mut state = worker.state.lock().unwrap();
-        if state.settings.policy.commits() && state.running {
-            state.background = true;
-            worker.wake.notify_all();
+        if only.is_some_and(|root| root != worker.root) {
+            continue;
         }
+        let mut state = worker.state.lock().unwrap();
+        if !state.running {
+            continue;
+        }
+        state.away = !foreground;
+        if !foreground && state.settings.policy.commits() {
+            state.background = true;
+        }
+        if foreground && state.settings.policy == Policy::SyncAutomatically {
+            state.foreground = true;
+            state.last.sync.running = true;
+        }
+        worker.wake.notify_all();
     }
 }
 
-/// The app came back to the foreground (slice 3): a graph that syncs
-/// automatically commits and syncs at once, as "Sync now" does.
-pub(crate) fn foregrounded() {
-    for worker in registry::all() {
-        let mut state = worker.state.lock().unwrap();
-        if state.settings.policy == Policy::SyncAutomatically && state.running {
-            state.sync_requested = true;
-            state.last.sync.running = true;
-            worker.wake.notify_all();
-        }
-    }
+#[cfg(test)]
+pub(super) fn backgrounded_at(root: &Path) {
+    lifecycle_edge(false, Some(root));
+}
+
+#[cfg(test)]
+pub(super) fn foregrounded_at(root: &Path) {
+    lifecycle_edge(true, Some(root));
 }
 
 /// The lock a commit keeps finding held: `index.lock`, or the lock a git
 /// program (or Tine, ended by the OS mid-commit) left on `HEAD`, the branch
 /// or the packed refs. Tine names it and never removes it (ADR 0078 §1).
 pub(crate) fn held_lock(root: &Path) -> Option<String> {
-    let repo = Repository::discover(root).ok()?;
+    let repo = super::git_run::discover(root).ok()?;
     let mut locks = vec![
         repo.path().join("index.lock"),
         repo.path().join("HEAD.lock"),
@@ -1160,20 +1189,23 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
     let mut sync_after: Option<Instant> = None;
     let mut backing_off = false;
     loop {
-        let (settings, flush, slot, sync_now, background) = {
+        let (settings, flush, slot, sync_now, background, foreground, away) = {
             let mut state = worker.state.lock().unwrap();
-            if !state.flush && !state.sync_requested && !state.background {
+            if !state.flush && !state.sync_requested && !state.background && !state.foreground {
                 state = worker.wake.wait_timeout(state, TICK).unwrap().0;
             }
             let flush = std::mem::take(&mut state.flush);
             let sync_now = std::mem::take(&mut state.sync_requested);
             let background = std::mem::take(&mut state.background);
+            let foreground = std::mem::take(&mut state.foreground);
             (
                 state.settings,
                 flush,
                 state.slot.upgrade(),
                 sync_now,
                 background,
+                foreground,
+                state.away,
             )
         };
         let ending = ended(slot.as_ref());
@@ -1201,8 +1233,14 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
             && rev.is_some()
             && started.elapsed() >= IDLE;
         // Backgrounded: commit what is pending (nothing committed yet this
-        // binding counts as pending), never on cadence.
-        let background_commit = background && (changed_at.is_some() || last_commit.is_none());
+        // binding counts as pending), but no more often than the interval
+        // (D-20261026-GC: at most one autocommit per interval, the lever on
+        // its unit cost). Edits the interval holds back are already saved;
+        // they commit when the interval allows, or at the next launch.
+        let background_commit = background
+            && (last_commit.is_none()
+                || (changed_at.is_some()
+                    && last_commit.is_some_and(|at| at.elapsed() >= settings.interval)));
         let mut committed = false;
         if commit && (flush || ending || due || first || sync_now || background_commit) {
             let outcome = commit_now(&root, MESSAGE);
@@ -1251,7 +1289,10 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
             }
         }
         let automatic = settings.policy == Policy::SyncAutomatically
-            && ((committed && !backing_off) || sync_after.is_none_or(|at| Instant::now() >= at));
+            && !away
+            && (foreground
+                || (committed && !backing_off)
+                || sync_after.is_none_or(|at| Instant::now() >= at));
         let live = !flush && !ending && !EXITING.load(Ordering::Acquire);
         if live && background && settings.policy == Policy::SyncAutomatically {
             // The full cycle (with its pull) waits for the foreground.

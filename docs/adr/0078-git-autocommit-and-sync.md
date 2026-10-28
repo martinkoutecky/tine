@@ -24,7 +24,7 @@ DESIGN (rev 0 + §8–§9) and the seen design (rev 1). Dossier with line number
 | D-20261018-G6 | lands in whatever release the timing gives; no release waits for it | follow (card hBpb2k's "after model v0" is stale) |
 | D-20261018-G7 | libgit2 (git2-rs, `default-features = false`) on all five platforms; HTTPS through Tine's own Rust HTTP/TLS stack as a registered smart transport; no OpenSSL | follow |
 | D-20261019-G8 | Android TLS through the OS trust store (rustls-platform-verifier); Tine owns repack; batched cadence; libgit2 fsync on; SSH later, pure Rust, only when asked (supersedes G7's libssh2) | follow |
-| D-20261019-G9 | autocommit when no page saved for 60 s and ≥ 10 min (a setting) since the last one; at once on background/quit, before a pull, and around structural operations; repack at 50 loose commits on the git thread, skipped while a `git gc` lock exists | follow |
+| D-20261019-G9 | autocommit when no page saved for 60 s and ≥ 10 min (a setting) since the last one; at once on background/quit, before a pull, and around structural operations; repack at 50 loose commits on the git thread, skipped while a `git gc` lock exists | follow, except background on Android/iOS: capped at one autocommit per interval (D-20261026-GC, manager 2026-10-28; deviation to confirm with Martin) |
 | D-20261017-SB2, LD1, C13 | seen reads git; only commits by others count; "me" = the repository's `user.email`, "Your name" as fallback | follow: autocommits use exactly that identity |
 | D-17, D-10, I-25, trust model | Direct Files only; a new mode is specified with budgets and approved before code; every refusal names its in-scope threat | follow: this record, the refusal table, the unit-cost line |
 
@@ -125,7 +125,8 @@ write is reported uncommitted (L7s5-02). Concurrent commits on the same branch r
 
 ### 3. When
 Per G9: when no page has saved for 60 s and the interval (default 10 min) has passed since the last autocommit;
-at once when the last window closes or the app goes to the background, before every pull, and around a
+at once when the last window closes or the app goes to the background (on Android and iOS at most once per interval,
+slice 3, D-20261026-GC), before every pull, and around a
 structural operation (rename, merge, delete or move of a page, restore from backup): commit pending changes
 first, run the operation, then commit its files with its verb (`Rename page "A" to "B"`). A failed operation
 leaves only the first commit. Autocommits take the CLI runs' lock, so they never fall between a run write's
@@ -244,12 +245,18 @@ Slice 3 (D-20261028-GM) removed the mobile "Git is not available on this device 
 one implementation on all five targets, pinned by `git_has_no_platform_arm`; the HTTPS transport names its TLS
 stack per target and refuses to compile for any other (AGENTS §2). Lifecycle on Android and iOS: at open the
 worker starts as on desktop; going to the background flushes the pages, then each worker commits what is
-pending and, under **Commit and sync automatically**, pushes what the last fetch shows the remote lacks, with no
+pending (at most one autocommit per interval, D-20261026-GC: backgrounding is no exemption from §Unit cost's rate; held-back edits
+are saved and commit at the next allowed moment or the next launch) and, under **Commit and sync automatically**, pushes what the last fetch shows the remote lacks, with no
 fetch or pull (a push writes nothing to the local repository); coming back to the foreground runs a full cycle at
-once under that policy. Limit: a commit or push holds `index.lock` (and a commit briefly the branch's ref lock), so the OS ending the app midway can leave either, and
+once under that policy, without forcing a commit (unlike **Sync now**). Until then no automatic cycle runs, however
+long the app stays away: the background edge sets an away state that only the foreground edge clears, and the
+frontend drops a background edge that a newer foreground edge overtook during its page flush (review F1, F4). The
+pull's own pre-pull autocommit (§3) is outside the cap, so a foreground cycle can add one commit after a background
+one (review F7, a follow-up). Limit: a commit holds `index.lock` (and briefly the branch's ref lock); a push takes it
+only for its local checks, not during the network transfer (review F3). The OS ending the app midway can leave either, and
 §1's busy-then-name rule applies (measured in `git_mobile_tests.rs`, which CI also runs on an Android emulator with
 the graph on shared storage). Android's shared storage (MediaProvider FUSE) reports another owner for every file,
-so libgit2's repository-owner check is off on Android only (the trust model excludes an attacker with write access
+so libgit2's repository-owner check is off on Android only (accepted under the trust model, 2026-10-28: it excludes an attacker with write access
 to the files). On that storage a case-only rename succeeds but keeps the old spelling, so a pull that renames a page
 by capitalization alone stays `pull-incomplete` and writes nothing (an open decision).
 

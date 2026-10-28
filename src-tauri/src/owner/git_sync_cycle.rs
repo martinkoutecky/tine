@@ -173,7 +173,7 @@ fn tell_window(slot: &GraphSlot, from: git2::Oid, to: git2::Oid) {
     let Some(link) = slot.window.get() else {
         return;
     };
-    let Ok(repo) = git2::Repository::open(&slot.root_key) else {
+    let Ok(repo) = super::git_run::discover(&slot.root_key) else {
         return;
     };
     let tree = |oid| repo.find_commit(oid).and_then(|c| c.tree());

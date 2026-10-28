@@ -579,14 +579,6 @@ fn a_commit_or_push_the_os_ends_leaves_the_repository_whole() {
     );
 }
 
-/// `backgrounded` and `foregrounded` reach every worker in the process: the
-/// lifecycle tests take turns.
-static LIFECYCLE: Mutex<()> = Mutex::new(());
-
-fn lifecycle_turn() -> std::sync::MutexGuard<'static, ()> {
-    LIFECYCLE.lock().unwrap_or_else(|p| p.into_inner())
-}
-
 fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(90);
     while !done() {
@@ -597,7 +589,6 @@ fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
 
 #[test]
 fn the_background_commits_and_pushes_and_the_foreground_syncs() {
-    let _turn = lifecycle_turn();
     let phone = Phone::new();
     let slot = Arc::new(phone.slot());
     start_worker(
@@ -618,7 +609,7 @@ fn the_background_commits_and_pushes_and_the_foreground_syncs() {
     // push, long before the ten-minute cadence.
     let before = head(&phone.repo);
     phone.edit("pages/b.md", "- typed before switching apps\n");
-    backgrounded();
+    backgrounded_at(&phone.root);
     wait_for("the background push", || {
         head(&phone.repo) != before && phone.remote_tip() == head(&phone.repo)
     });
@@ -637,7 +628,7 @@ fn the_background_commits_and_pushes_and_the_foreground_syncs() {
     // The laptop pushes while the phone sleeps; back in the foreground the
     // phone pulls at once.
     let theirs = phone.peer_pushes(&[("pages/a.md", Some("- from the laptop\n"))]);
-    foregrounded();
+    foregrounded_at(&phone.root);
     wait_for("the foreground pull", || head(&phone.repo) == theirs);
     assert_eq!(phone.disk("pages/a.md"), "- from the laptop\n");
     wait_for("the cycle's end", || {
@@ -650,16 +641,29 @@ fn the_background_commits_and_pushes_and_the_foreground_syncs() {
     slot.background_cancelled.store(true, Ordering::Release);
 }
 
+/// Autocommits on this branch since `from` (exclusive).
+fn autocommits_since(repo: &Repository, from: Oid) -> usize {
+    let mut walk = repo.revwalk().unwrap();
+    walk.push(head(repo)).unwrap();
+    walk.hide(from).unwrap();
+    walk.map(|oid| repo.find_commit(oid.unwrap()).unwrap())
+        .filter(|c| c.message().ok() == Some(MESSAGE))
+        .count()
+}
+
+/// D-20261026-GC caps autocommits at one per interval (≤ 6 an hour at the
+/// default ten minutes); switching apps is no exemption, and neither is
+/// coming back. Edits the cap holds back commit once the interval allows.
 #[test]
-fn the_background_never_pulls() {
-    let _turn = lifecycle_turn();
+fn switching_apps_commits_at_most_once_per_interval() {
     let phone = Phone::new();
     let slot = Arc::new(phone.slot());
+    let interval = Duration::from_secs(20);
     start_worker(
         &slot,
         GitSettings {
             policy: Policy::SyncAutomatically,
-            interval: Duration::from_secs(10 * 60),
+            interval,
         },
         credentials(),
     );
@@ -667,20 +671,93 @@ fn the_background_never_pulls() {
         let sync = last_attempt(&phone.root).sync;
         !sync.running && sync.at.is_some()
     });
-    // The laptop pushes; the phone has nothing new. A sync would pull, but
-    // the background only pushes what this device committed.
-    let mine = head(&phone.repo);
-    phone.peer_pushes(&[("pages/a.md", Some("- from the laptop\n"))]);
-    backgrounded();
-    std::thread::sleep(Duration::from_secs(3));
+    let start = head(&phone.repo);
+    phone.edit("pages/b.md", "- switch 0\n");
+    backgrounded_at(&phone.root);
+    wait_for("the first background commit", || head(&phone.repo) != start);
+    let first = Instant::now();
+    // Seven more app switches with an edit each, all inside one interval.
+    for n in 1..=7 {
+        foregrounded_at(&phone.root);
+        std::thread::sleep(Duration::from_millis(300));
+        phone.edit("pages/b.md", &format!("- switch {n}\n"));
+        backgrounded_at(&phone.root);
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(
+        first.elapsed() < interval,
+        "the switches outlasted the interval"
+    );
+    assert_eq!(autocommits_since(&phone.repo, start), 1, "one per interval");
+    assert_eq!(
+        phone.disk("pages/b.md"),
+        "- switch 7\n",
+        "the edit is saved"
+    );
+
+    // Once the interval has passed, the next switch commits what waited.
+    std::thread::sleep(interval.saturating_sub(first.elapsed()) + Duration::from_secs(1));
+    backgrounded_at(&phone.root);
+    wait_for("the held-back edits' commit", || {
+        autocommits_since(&phone.repo, start) == 2
+    });
+    let tip = phone.repo.find_commit(head(&phone.repo)).unwrap();
+    let blob = tip
+        .tree()
+        .unwrap()
+        .get_path(Path::new("pages/b.md"))
+        .unwrap();
+    assert_eq!(
+        phone.repo.find_blob(blob.id()).unwrap().content(),
+        b"- switch 7\n"
+    );
+    slot.background_cancelled.store(true, Ordering::Release);
+}
+
+/// Backgrounded stays backgrounded until the foreground edge (review F1):
+/// the automatic cycle, with its fetch and pull, waits however long the
+/// app is away, and runs as soon as it comes back.
+#[test]
+fn the_background_never_fetches_or_pulls() {
+    let phone = Phone::new();
+    let slot = Arc::new(phone.slot());
+    let interval = Duration::from_secs(3);
+    start_worker(
+        &slot,
+        GitSettings {
+            policy: Policy::SyncAutomatically,
+            interval,
+        },
+        credentials(),
+    );
+    wait_for("the opening cycle", || {
+        let sync = last_attempt(&phone.root).sync;
+        !sync.running && sync.at.is_some()
+    });
+    let tracking = || {
+        phone
+            .repo
+            .refname_to_id("refs/remotes/origin/main")
+            .unwrap()
+    };
+    let (mine, seen) = (head(&phone.repo), tracking());
+    let theirs = phone.peer_pushes(&[("pages/a.md", Some("- from the laptop\n"))]);
+    backgrounded_at(&phone.root);
+    // Past the interval and a worker tick: an automatic cycle would be due.
+    std::thread::sleep(interval + TICK + Duration::from_secs(3));
     assert_eq!(head(&phone.repo), mine, "nothing pulled in the background");
+    assert_eq!(tracking(), seen, "nothing fetched in the background");
     assert_eq!(phone.disk("pages/a.md"), "- one\n- two\n");
+
+    foregrounded_at(&phone.root);
+    wait_for("the foreground pull", || head(&phone.repo) == theirs);
+    assert_eq!(phone.disk("pages/a.md"), "- from the laptop\n");
     slot.background_cancelled.store(true, Ordering::Release);
 }
 
 #[test]
 fn commit_only_never_pushes_from_the_background() {
-    let _turn = lifecycle_turn();
     let phone = Phone::new();
     let slot = Arc::new(phone.slot());
     start_worker(
@@ -693,7 +770,7 @@ fn commit_only_never_pushes_from_the_background() {
     );
     let remote = phone.remote_tip();
     phone.edit("pages/b.md", "- typed before switching apps\n");
-    backgrounded();
+    backgrounded_at(&phone.root);
     wait_for("the background commit", || {
         last_attempt(&phone.root).commit.is_some()
     });
@@ -702,7 +779,7 @@ fn commit_only_never_pushes_from_the_background() {
     let mine = head(&phone.repo);
     assert_ne!(mine, remote);
     assert_eq!(phone.remote_tip(), remote, "commit only: nothing pushed");
-    foregrounded();
+    foregrounded_at(&phone.root);
     std::thread::sleep(Duration::from_millis(500));
     assert_eq!(
         head(&phone.repo),

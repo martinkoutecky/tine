@@ -152,8 +152,8 @@ pub(crate) fn author_of(args: &Value) -> String {
 pub(crate) const VERIFY_OWNER: bool = !cfg!(target_os = "android");
 
 /// libgit2's process-wide options, set once before this process opens a
-/// repository: fsync on (D-20261019-G8) and [`VERIFY_OWNER`]. Every
-/// production opener calls it first.
+/// repository: fsync on (D-20261019-G8) and [`VERIFY_OWNER`]. Production
+/// opens go through [`discover`].
 pub(crate) fn configure_libgit2() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -171,6 +171,13 @@ pub(crate) fn configure_libgit2() {
             );
         }
     });
+}
+
+/// [`Repository::discover`] after [`configure_libgit2`], so no open depends on
+/// another having configured libgit2 first (Android's owner check).
+pub(crate) fn discover(path: &Path) -> Result<Repository, git2::Error> {
+    configure_libgit2();
+    Repository::discover(path)
 }
 
 /// The graph's repository cannot take a run's commits: `refused:git`.
@@ -339,8 +346,7 @@ fn open_repo(slot: &GraphSlot) -> Result<Repo, ErrorBody> {
 }
 
 pub(super) fn open_repo_at(graph_root: &Path) -> Result<Repo, ErrorBody> {
-    configure_libgit2();
-    let repo = match Repository::discover(graph_root) {
+    let repo = match discover(graph_root) {
         Ok(repo) => repo,
         Err(error) if error.code() == ErrorCode::NotFound => return Err(not_usable(
             "the graph is not in a git repository; runs need one (`git init` in the graph folder)",

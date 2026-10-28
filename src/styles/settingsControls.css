@@ -92,4 +92,10 @@
     flex: 1 1 120px;
     min-width: 100px;
   }
+  /* The policy labels outgrow the select's desktop 240px cap: take the row. */
+  .settings-field-row [data-git-policy] {
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
 }
