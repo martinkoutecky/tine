@@ -276,6 +276,7 @@ mod tests {
             Err(error @ OwnerError::Unsafe(_)) => error,
             _ => panic!("a file cannot be an owner namespace"),
         };
+        let diagnosis = error.to_string();
         let mut reason = None;
         let result = app_claim_result(
             Claim::Failed(error),
@@ -288,8 +289,9 @@ mod tests {
             |_| panic!("a namespace refusal must not enter handover"),
             |error| reason = Some(error.to_string()),
         );
-        assert!(
-            reason.unwrap().contains("private directory"),
+        assert_eq!(
+            reason.as_deref(),
+            Some(diagnosis.as_str()),
             "editable fallback must retain its actionable diagnosis"
         );
         assert!(

@@ -524,8 +524,10 @@ mod tests {
 
     #[test]
     fn storage_container_evidence_uses_existing_paths_without_exporting_them() {
-        let a = "/var/mobile/Containers/Data/Application/11111111-1111-1111-1111-111111111111/Documents";
-        let b = "/var/mobile/Containers/Data/Application/22222222-2222-2222-2222-222222222222/Documents";
+        // Reuse the validator fixture's absolute host spelling on Windows too.
+        let (a, b) = roots();
+        let a = a.parent().unwrap().to_str().unwrap();
+        let b = b.parent().unwrap().to_str().unwrap();
         assert_eq!(
             compare_container_paths(Some(&format!("{a}/PrivateGraph")), Some(Path::new(b))),
             "changed"

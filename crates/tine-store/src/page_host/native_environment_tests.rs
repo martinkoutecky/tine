@@ -298,13 +298,32 @@ fn symlink(target: &std::path::Path, path: &std::path::Path) {
 // Creation failure is a test failure, never a skipped native C2 sample.
 #[cfg(windows)]
 pub(crate) fn junction(target: &std::path::Path, path: &std::path::Path) {
-    let status = std::process::Command::new("cmd")
-        .args(["/C", "mklink", "/J"])
-        .arg(path)
-        .arg(target)
-        .status()
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    // mklink parses forward slashes as switches, including separators from
+    // join("pages/sub/deep"). Preserve the path's UTF-16 and verbatim prefix.
+    let native = |path: &std::path::Path| {
+        std::ffi::OsString::from_wide(
+            &path
+                .as_os_str()
+                .encode_wide()
+                .map(|c| if c == b'/' as u16 { b'\\' as u16 } else { c })
+                .collect::<Vec<_>>(),
+        )
+    };
+    let output = std::process::Command::new("cmd")
+        .args(["/D", "/C", "mklink", "/J"])
+        .arg(native(path))
+        .arg(native(target))
+        .output()
         .expect("run mklink /J for the native Windows C2 witness");
-    assert!(status.success(), "mklink /J must create the test junction");
+    assert!(
+        output.status.success(),
+        "mklink /J must create the test junction: {:?}; stdout: {}; stderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(same_file::is_same_file(target, path).unwrap());
 }
 
 // Separate from the frozen s3.5 corpus exclusions/counts in
