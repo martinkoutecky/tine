@@ -386,15 +386,22 @@ impl Graph {
         if self.with_cached(&winner.path, |row| row.is_some()) == Some(true) {
             return changed;
         }
+        // A claimant without a path, or whose file is gone, is stale (the
+        // watcher's removal follows); neither is an unreadable page.
+        if winner.path.as_os_str().is_empty() {
+            return changed;
+        }
         match self.source(&winner.path) {
             Source::Disk => {
                 if let SyncFileResult::ReadFailed(error) =
                     self.sync_file_internal(&winner.path, None)
                 {
-                    let id = crate::FileId::from(winner.rel_path_str().to_owned());
-                    let mut errors = self.derived.unreadable_pages.write().unwrap();
-                    if !errors.iter().any(|(known, _)| *known == id) {
-                        Arc::make_mut(&mut errors).push((id, error.to_string()));
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        let id = crate::FileId::from(winner.rel_path_str().to_owned());
+                        let mut errors = self.derived.unreadable_pages.write().unwrap();
+                        if !errors.iter().any(|(known, _)| *known == id) {
+                            Arc::make_mut(&mut errors).push((id, error.to_string()));
+                        }
                     }
                 }
             }

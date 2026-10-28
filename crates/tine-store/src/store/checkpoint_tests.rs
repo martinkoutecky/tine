@@ -1723,3 +1723,56 @@ fn a_warm_launch_resolves_every_runtime_block_id_of_the_loaded_pages() {
     );
     store.close();
 }
+
+/// JOURNAL-ENOENT: `PageEntry::path` is not serialized, so a warm launch
+/// rebuilds every claimant's path under the root. With empty paths, editing a
+/// checkpointed journal day left a stale claimant beside the fresh one, the
+/// day's reconcile read `""` (ENOENT) and recorded the day unreadable, and
+/// that row then blocked every later checkpoint, so it recurred each launch.
+#[test]
+fn a_warm_launch_rebuilds_claimant_paths_and_an_edited_day_stays_readable() {
+    let root = graph();
+    let dir = tempfile::tempdir().unwrap();
+    let cp = dir.path().join("graph.bin");
+    write_checkpoint(root.path(), &cp);
+    let store = open_cp(root.path(), &cp);
+    store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "loaded");
+    let snapshot = store.changes.snapshot.read().unwrap().clone().unwrap();
+    let mut restored = 0;
+    for (_, entries) in snapshot.claimants.iter() {
+        for entry in entries.iter().filter(|entry| entry.rel_path.is_some()) {
+            assert_eq!(
+                entry.path,
+                stored_path(root.path(), entry.rel_path_str()),
+                "restored claimant {:?}",
+                entry.rel_path_str()
+            );
+            restored += 1;
+        }
+    }
+    assert!(restored > 0, "the fixture restores claimants");
+    let day = "journals/2026_01_02.md";
+    fs::write(root.path().join(day), "- day [[B]] edited after launch\n").unwrap();
+    store.refresh(Depth::Stamps).unwrap();
+    store.whole_graph_reconciled().unwrap();
+    let snapshot = store.changes.snapshot.read().unwrap().clone().unwrap();
+    assert!(
+        snapshot.unreadable.is_empty(),
+        "edited day reported unreadable: {:?}",
+        snapshot.unreadable
+    );
+    assert!(store.graph.unreadable_pages().is_empty());
+    let day_claimants: Vec<_> = snapshot
+        .claimants
+        .iter()
+        .flat_map(|(_, entries)| entries.iter())
+        .filter(|entry| entry.rel_path_str() == day)
+        .collect();
+    assert_eq!(day_claimants.len(), 1, "one claimant for the day");
+    assert!(matches!(
+        store.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    store.close();
+}

@@ -119,7 +119,7 @@ function page(width: number, height: number) {
   return {
     getViewport: vi.fn(({ scale }: { scale: number }) => ({ width: width * scale, height: height * scale })),
     getTextContent: vi.fn().mockResolvedValue({ items: [] }),
-    render: vi.fn().mockReturnValue({ promise: Promise.resolve(), cancel: vi.fn() }),
+    render: vi.fn().mockReturnValue({ promise: Promise.resolve(), cancel: vi.fn() }), cleanup: vi.fn(() => true),
   };
 }
 

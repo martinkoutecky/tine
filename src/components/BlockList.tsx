@@ -20,10 +20,73 @@ import { createOutlineWindowGeometry, createOutlineWindowModel } from "./outline
 
 const GROUP = 24;
 const WINDOW_AT = 80;
-type OutlineEntry = string | { readonly groups: readonly (readonly string[])[] };
+/** A list enters windowing above WINDOW_AT but, once windowed, stays so until
+ * it shrinks by more than one group's weight: crossing 80 back and forth (an
+ * outdent moves siblings out, an indent takes them back) would otherwise swap
+ * windows for plain blocks and remount the whole list, collapsing every image
+ * in it for a frame. */
+const UNWINDOW_AT = WINDOW_AT - GROUP;
+/** One shell window. Its identity (the `For` key) outlives edits to its
+ * membership: a structural edit changes `ids` in place, so the blocks that
+ * stayed keep their DOM, measured height and loaded images (GH #745). */
+interface WindowGroup { readonly ids: () => readonly string[]; readonly set: (ids: readonly string[]) => void }
+type OutlineEntry = string | { readonly groups: readonly WindowGroup[] };
 // Bounded, graph-scoped geometry only: never retain components or document nodes.
 const heights = new Map<string, { width: number; structure: string; version: number; height: number }>();
 clearOnBindingInvalidated(() => heights.clear());
+
+function newGroup(initial: readonly string[]): WindowGroup {
+  const [ids, set] = createSignal<readonly string[]>(initial);
+  return { ids, set };
+}
+
+const sameIds = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((id, i) => id === b[i]);
+
+/** Partition `ids` into windows of about GROUP weight while keeping every
+ * unchanged window (and its handle) as it was. Greedy re-packing from scratch
+ * shifts every later boundary when one group overflows by a row; here each id
+ * stays in its prior window, a new id joins its predecessor's, and only a
+ * window that grew past 2*GROUP is split or that shrank is merged into its
+ * neighbour. O(ids). Returns the handles in order and the ids each must hold. */
+export function stablePartition(ids: readonly string[], sizes: readonly number[], prior: readonly WindowGroup[]):
+  { handle: WindowGroup | null; ids: string[] }[] {
+  const owner = new Map<string, number>();
+  prior.forEach((g, gi) => untrack(g.ids).forEach(id => owner.set(id, gi)));
+  const label = ids.map(id => owner.get(id) ?? -1);
+  for (let i = 1; i < label.length; i++) if (label[i] < 0) label[i] = label[i - 1];
+  for (let i = label.length - 2; i >= 0; i--) if (label[i] < 0) label[i] = label[i + 1];
+  // A single block moved into another window's range stays with its neighbours.
+  for (let i = 1; i + 1 < label.length; i++) if (label[i - 1] === label[i + 1] && label[i] !== label[i - 1]) label[i] = label[i - 1];
+  type Run = { handle: WindowGroup | null; ids: string[]; weight: number };
+  const claimed = new Set<number>();
+  const runs: Run[] = [];
+  ids.forEach((id, i) => {
+    const last = runs[runs.length - 1];
+    if (last && i > 0 && label[i] === label[i - 1]) { last.ids.push(id); last.weight += sizes[i]; return; }
+    const handle = label[i] >= 0 && !claimed.has(label[i]) ? prior[label[i]] : null;
+    if (label[i] >= 0) claimed.add(label[i]);
+    runs.push({ handle, ids: [id], weight: sizes[i] });
+  });
+  const out: Run[] = [];
+  const push = (run: Run) => {
+    const previous = out[out.length - 1];
+    if (previous && previous.weight + run.weight <= GROUP) { previous.ids.push(...run.ids); previous.weight += run.weight; }
+    else out.push(run);
+  };
+  let cursor = 0;
+  for (const run of runs) {
+    const start = cursor; cursor += run.ids.length;
+    if (run.weight <= 2 * GROUP || run.ids.length === 1) { push(run); continue; }
+    let piece: Run = { handle: run.handle, ids: [], weight: 0 };
+    run.ids.forEach((id, k) => {
+      const w = sizes[start + k];
+      if (piece.ids.length && piece.weight + w > GROUP) { out.push(piece); piece = { handle: null, ids: [], weight: 0 }; }
+      piece.ids.push(id); piece.weight += w;
+    });
+    out.push(piece);
+  }
+  return out;
+}
 
 export function BlockList(props: { ids: readonly string[] }): JSX.Element {
   return <For {...blockListProps(() => props.ids)} />;
@@ -37,14 +100,18 @@ export function BlockList(props: { ids: readonly string[] }): JSX.Element {
 export function blockListProps(idsOf: () => readonly string[]): { readonly each: readonly OutlineEntry[]; children: (entry: OutlineEntry) => JSX.Element } {
   onCleanup(listenForOutlinePrint());
   const collapseSurface = useContext(CollapseSurfaceContext);
-  const [groups, setGroups] = createSignal<readonly (readonly string[])[]>([]);
-  // Keep the list owner across structural edits. For keys windows by their id
-  // arrays, so unchanged membership must also keep its array identity (and its
-  // mounted images / measured spacer), even when a neighbouring group changes.
+  const [groups, setGroups] = createSignal<readonly WindowGroup[]>([]);
+  // Keep the list owner across structural edits. For keys windows by their
+  // handle, so an unchanged window keeps its mounted blocks and images, and a
+  // touched one keeps every block that stayed in it.
   const windowed: readonly OutlineEntry[] = [{ get groups() { return groups(); } }];
+  const plain = (ids: readonly string[]): readonly string[] => {
+    if (untrack(groups).length) setGroups([]);
+    return ids;
+  };
   const entries = (): readonly OutlineEntry[] => {
     const ids = idsOf();
-    if (ids.length <= 1) return ids;
+    if (ids.length <= 1) return plain(ids);
     // A shallow list can still own thousands of expanded descendants. Weight
     // groups by rendered subtree size, capped at the small-list threshold.
     const size = (id: string): number => {
@@ -57,25 +124,24 @@ export function blockListProps(idsOf: () => readonly string[]): { readonly each:
       return count;
     };
     const sizes = ids.map(size);
-    if (sizes.reduce((sum, value) => sum + value, 0) <= WINDOW_AT) return ids;
-    const out: string[][] = [];
-    let group: string[] = [], weight = 0;
-    ids.forEach((id, i) => {
-      if (group.length && weight + sizes[i] > GROUP) { out.push(group); group = []; weight = 0; }
-      group.push(id); weight += sizes[i];
-    });
-    if (group.length) out.push(group);
     const prior = untrack(groups);
+    if (sizes.reduce((sum, value) => sum + value, 0) <= (prior.length ? UNWINDOW_AT : WINDOW_AT)) return plain(ids);
     // Typing/editor-state reads keep the same O(ids) comparison as before;
-    // only a changed grouping needs the identity lookup below.
-    if (out.length === prior.length && out.every((ids, i) => ids.length === prior[i].length
-      && ids.every((id, j) => id === prior[i][j]))) return windowed;
-    const byFirst = new Map(prior.map(ids => [ids[0], ids]));
-    const retained = out.map(ids => {
-      const old = byFirst.get(ids[0]);
-      return old && old.length === ids.length && ids.every((id, i) => id === old[i]) ? old : ids;
+    // only a changed membership needs the partition below.
+    let at = 0;
+    const unchanged = prior.every(group => {
+      const members = untrack(group.ids);
+      let weight = 0;
+      for (const id of members) { if (ids[at] !== id) return false; weight += sizes[at++]; }
+      return members.length === 1 || weight <= 2 * GROUP;
+    }) && at === ids.length;
+    if (unchanged) return windowed;
+    const next = stablePartition(ids, sizes, prior).map(part => {
+      const handle = part.handle ?? newGroup(part.ids);
+      if (!sameIds(untrack(handle.ids), part.ids)) handle.set(part.ids);
+      return handle;
     });
-    if (retained.length !== prior.length || retained.some((ids, i) => ids !== prior[i])) setGroups(retained);
+    if (next.length !== prior.length || next.some((handle, i) => handle !== prior[i])) setGroups(next);
     return windowed;
   };
   // Use the existing For owner alone: legal deep outlines cannot gain another
@@ -87,7 +153,7 @@ export function blockListProps(idsOf: () => readonly string[]): { readonly each:
   };
 }
 
-function WindowedList(props: { groups: readonly (readonly string[])[] }): JSX.Element {
+function WindowedList(props: { groups: readonly WindowGroup[] }): JSX.Element {
   let container!: HTMLDivElement;
   const [width, setWidth] = createSignal(900);
   const [font, setFont] = createSignal("16px sans-serif");
@@ -112,21 +178,21 @@ function WindowedList(props: { groups: readonly (readonly string[])[] }): JSX.El
     resize?.observe(container);
     onCleanup(() => resize?.disconnect());
   });
-  return <div ref={container} class="outline-list"><For each={props.groups}>{(ids, index) =>
-    <BlockWindow ids={ids} first={index() === 0} width={width()} font={font()} observe={observe} />
+  return <div ref={container} class="outline-list"><For each={props.groups}>{(group, index) =>
+    <BlockWindow ids={group.ids} first={index() === 0} width={width()} font={font()} observe={observe} />
   }</For></div>;
 }
 
-function BlockWindow(props: { ids: readonly string[]; first: boolean; width: number; font: string; observe: (host: HTMLElement, callback: (near: boolean) => void) => () => void }): JSX.Element {
+function BlockWindow(props: { ids: () => readonly string[]; first: boolean; width: number; font: string; observe: (host: HTMLElement, callback: (near: boolean) => void) => () => void }): JSX.Element {
   const surface = useContext(SurfaceContext);
   const collapseSurface = useContext(CollapseSurfaceContext);
   const collapsed = (id: string, stored: boolean) => collapseSurface?.collapsed(id, stored) ?? stored;
-  const cacheKey = () => `${surface}\0${props.width}\0${props.font}\0${props.ids[0]}`;
+  const cacheKey = () => `${surface}\0${props.width}\0${props.font}\0${props.ids()[0]}`;
   let host!: HTMLDivElement;
   const [near, setNear] = createSignal(props.first || typeof IntersectionObserver === "undefined");
   const [forced, setForced] = createSignal(false);
   const [height, setHeight] = createSignal(0);
-  const model = createOutlineWindowModel(() => props.ids, collapsed);
+  const model = createOutlineWindowModel(props.ids, collapsed);
   const geometry = createOutlineWindowGeometry(model, () => props.width, () => props.font);
   const active = () => {
     const id = editingId();
@@ -203,7 +269,7 @@ function BlockWindow(props: { ids: readonly string[]; first: boolean; width: num
     <Show when={mounted()} fallback={
       <div aria-hidden="true" style={{ height: `${height() || geometry().estimate()}px` }} />
     }>
-      <For each={props.ids}>{(id) => <Block id={id} />}</For>
+      <For each={props.ids()}>{(id) => <Block id={id} />}</For>
     </Show>
   </div>;
 }
