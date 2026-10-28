@@ -1275,6 +1275,7 @@ pub fn run() {
             git_settings::git_sync_notice,
             git_settings::git_sign_in,
             git_settings::git_sign_out,
+            git_settings::git_app_lifecycle,
             seen::get_page_changes,
             seen::mark_page_seen,
             seen::mark_graph_seen,

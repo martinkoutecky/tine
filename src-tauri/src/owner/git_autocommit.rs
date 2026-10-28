@@ -909,6 +909,8 @@ mod registry {
         pub(super) last: LastAttempt,
         /// "Sync now" was asked for.
         pub(super) sync_requested: bool,
+        /// The app went to the background ([`backgrounded`]).
+        pub(super) background: bool,
         pub(super) credentials: Option<Arc<dyn Credentials>>,
         pub(super) commits_since_repack: u32,
         pub(super) repack_not_before: Option<Instant>,
@@ -1031,6 +1033,35 @@ pub(crate) fn request_sync(root: &Path) -> bool {
     true
 }
 
+/// The app went to the background (ADR 0078 §3, slice 3; Android and iOS):
+/// every worker commits its pending changes at once and, when it syncs
+/// automatically, pushes the commits its last fetch shows the remote lacks.
+/// No fetch and no pull run in the background: a push writes nothing to
+/// this repository, so the OS freezing or ending the app mid-push leaves it
+/// as it was, and the commit is the one short local write.
+pub(crate) fn backgrounded() {
+    for worker in registry::all() {
+        let mut state = worker.state.lock().unwrap();
+        if state.settings.policy.commits() && state.running {
+            state.background = true;
+            worker.wake.notify_all();
+        }
+    }
+}
+
+/// The app came back to the foreground (slice 3): a graph that syncs
+/// automatically commits and syncs at once, as "Sync now" does.
+pub(crate) fn foregrounded() {
+    for worker in registry::all() {
+        let mut state = worker.state.lock().unwrap();
+        if state.settings.policy == Policy::SyncAutomatically && state.running {
+            state.sync_requested = true;
+            state.last.sync.running = true;
+            worker.wake.notify_all();
+        }
+    }
+}
+
 pub(crate) fn last_attempt(root: &Path) -> LastAttempt {
     registry::get(root)
         .map(|w| w.state.lock().unwrap().last.clone())
@@ -1106,14 +1137,21 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
     let mut sync_after: Option<Instant> = None;
     let mut backing_off = false;
     loop {
-        let (settings, flush, slot, sync_now) = {
+        let (settings, flush, slot, sync_now, background) = {
             let mut state = worker.state.lock().unwrap();
-            if !state.flush && !state.sync_requested {
+            if !state.flush && !state.sync_requested && !state.background {
                 state = worker.wake.wait_timeout(state, TICK).unwrap().0;
             }
             let flush = std::mem::take(&mut state.flush);
             let sync_now = std::mem::take(&mut state.sync_requested);
-            (state.settings, flush, state.slot.upgrade(), sync_now)
+            let background = std::mem::take(&mut state.background);
+            (
+                state.settings,
+                flush,
+                state.slot.upgrade(),
+                sync_now,
+                background,
+            )
         };
         let ending = ended(slot.as_ref());
         let rev = slot
@@ -1139,8 +1177,11 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
             && changed_at.is_none()
             && rev.is_some()
             && started.elapsed() >= IDLE;
+        // Backgrounded: commit what is pending (nothing committed yet this
+        // binding counts as pending), never on cadence.
+        let background_commit = background && (changed_at.is_some() || last_commit.is_none());
         let mut committed = false;
-        if commit && (flush || ending || due || first || sync_now) {
+        if commit && (flush || ending || due || first || sync_now || background_commit) {
             let outcome = commit_now(&root, MESSAGE);
             let mut state = worker.state.lock().unwrap();
             match &outcome {
@@ -1190,8 +1231,15 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
         }
         let automatic = settings.policy == Policy::SyncAutomatically
             && ((committed && !backing_off) || sync_after.is_none_or(|at| Instant::now() >= at));
-        if !flush && !ending && !EXITING.load(Ordering::Acquire) && (sync_now || automatic) {
-            if let Some((delay, backoff)) = sync_on_worker(&worker, settings.interval) {
+        let live = !flush && !ending && !EXITING.load(Ordering::Acquire);
+        if live && background && settings.policy == Policy::SyncAutomatically {
+            // The full cycle (with its pull) waits for the foreground.
+            if let Some((delay, backoff)) = sync_on_worker(&worker, settings.interval, true) {
+                sync_after = Some(Instant::now() + delay);
+                backing_off = backoff;
+            }
+        } else if live && !background && (sync_now || automatic) {
+            if let Some((delay, backoff)) = sync_on_worker(&worker, settings.interval, false) {
                 sync_after = Some(Instant::now() + delay);
                 backing_off = backoff;
             }
@@ -1214,9 +1262,14 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
     }
 }
 
-/// One sync cycle on this thread; answers when the next automatic one is due
-/// and whether that is a back-off (`None`: the graph is unbinding).
-fn sync_on_worker(worker: &registry::Worker, interval: Duration) -> Option<(Duration, bool)> {
+/// One sync cycle on this thread, or with `background` only the push of what
+/// the remote lacks; answers when the next automatic one is due and whether
+/// that is a back-off (`None`: the graph is unbinding, or nothing to push).
+fn sync_on_worker(
+    worker: &registry::Worker,
+    interval: Duration,
+    background: bool,
+) -> Option<(Duration, bool)> {
     let (slot, credentials) = {
         let mut state = worker.state.lock().unwrap();
         state.last.sync.running = true;
@@ -1230,7 +1283,15 @@ fn sync_on_worker(worker: &registry::Worker, interval: Duration) -> Option<(Dura
         worker.state.lock().unwrap().last.sync.running = false;
         return None;
     };
-    let cycle = super::git_sync_cycle::cycle(&slot, &credentials);
+    let cycle = if background {
+        super::git_sync_cycle::push_pending(&slot, &credentials)
+    } else {
+        Some(super::git_sync_cycle::cycle(&slot, &credentials))
+    };
+    let Some(cycle) = cycle else {
+        worker.state.lock().unwrap().last.sync.running = false;
+        return None;
+    };
     // The transport refuses in words, the pull with its `conversion` code.
     let line_endings = (cycle.code == "conversion" || cycle.message.contains("conversion"))
         .then(|| super::git_sync::line_endings::probe(&slot.root_key));
@@ -1282,7 +1343,8 @@ fn maybe_repack(worker: &registry::Worker, root: &Path, due: bool) {
 /// What Settings → Graph → Git shows.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct GitStatus {
-    /// Git features exist on this platform (desktop in slice 1).
+    /// Git features exist here: always in the app (all five targets, slice 3);
+    /// the browser mock and a published graph send `false`.
     pub(crate) available: bool,
     /// The graph is inside a git work tree.
     pub(crate) repository: bool,
@@ -1339,7 +1401,7 @@ pub(crate) fn git_status(root: &Path, settings: GitSettings) -> GitStatus {
         .filter(|(code, why)| code == "conversion" || why.contains("conversion"))
         .map(|_| super::git_sync::line_endings::probe(root));
     GitStatus {
-        available: super::git_sync::AVAILABLE,
+        available: true,
         repository,
         branch,
         unusable,
@@ -1356,3 +1418,7 @@ pub(crate) fn git_status(root: &Path, settings: GitSettings) -> GitStatus {
 #[cfg(test)]
 #[path = "git_autocommit_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "git_mobile_tests.rs"]
+mod mobile_tests;

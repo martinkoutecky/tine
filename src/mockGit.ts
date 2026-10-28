@@ -26,4 +26,6 @@ export const mockGitCommands = {
   gitDisableLineEndings: () => Promise.reject(new Error("git is not available in the browser mock")),
   gitSignIn: () => Promise.reject(new Error("git is not available in the browser mock")),
   gitSignOut: () => Promise.reject(new Error("git is not available in the browser mock")),
+  // No repository, so no git thread to tell.
+  async gitAppLifecycle(): Promise<void> {},
 } satisfies Partial<Backend>;

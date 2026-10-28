@@ -1,6 +1,8 @@
-//! IPC contract shared by the desktop implementation and the mobile stub.
+//! The seen baseline's IPC (ADR 0079), on all five shipped targets.
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+
+use crate::owner::seen as imp;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SeenBlock {
@@ -49,45 +51,6 @@ impl SeenChanges {
             reason: Some(reason.into()),
             ..Self::available("")
         }
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
-mod imp {
-    pub(crate) use crate::owner::seen::{changes, forget, forget_page, initialize, mark};
-}
-
-#[cfg(any(target_os = "ios", target_os = "android"))]
-mod imp {
-    use super::SeenChanges;
-    use std::path::Path;
-    const REASON: &str = "Git is not available on this device yet";
-    pub(crate) fn initialize(_: &Path, _: &Path) -> Result<(), String> {
-        Ok(())
-    }
-    pub(crate) fn changes(
-        _: &Path,
-        _: &Path,
-        _: &str,
-        _: &str,
-        _: &str,
-        _: &str,
-    ) -> Result<SeenChanges, String> {
-        Ok(SeenChanges::unavailable(REASON))
-    }
-    pub(crate) fn mark(_: &Path, _: &Path, _: Option<(&str, &str)>) -> Result<(), String> {
-        Err(REASON.into())
-    }
-    pub(crate) fn forget(_: &Path, _: &Path) -> Result<(), String> {
-        Err(REASON.into())
-    }
-    pub(crate) fn forget_page(
-        _: &Path,
-        _: &Path,
-        _: Option<&str>,
-        _: Option<&str>,
-    ) -> Result<(), String> {
-        Ok(())
     }
 }
 
@@ -238,18 +201,6 @@ pub(crate) async fn forget_seen_state(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn five_targets_name_both_seen_branches() {
-        let source = include_str!("seen.rs");
-        for target in ["linux", "windows", "macos", "ios", "android"] {
-            assert!(source.contains(&format!("target_os = \"{target}\"")));
-        }
-        assert!(source.contains("SeenChanges::unavailable(REASON)"));
-        assert!(
-            source.contains("crate::owner::seen::{changes, forget, forget_page, initialize, mark}")
-        );
-    }
-
     /// D-20261017-SB1 call 6: Tine's own rename, merge and delete drop the
     /// page's seen record, after the operation and without failing it.
     #[test]

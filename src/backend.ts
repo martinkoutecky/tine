@@ -918,6 +918,9 @@ class TauriBackend implements Backend {
   gitSignOut() {
     return this.call<GitAutocommitStatus>("git_sign_out");
   }
+  gitAppLifecycle(foreground: boolean) {
+    return this.call<void>("git_app_lifecycle", { foreground });
+  }
   getBackupKeep() {
     return this.call<number>("get_backup_keep");
   }
