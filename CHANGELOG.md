@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Package-manager builds turn the updater off** (tine#187). A distribution package built with the compile-time variable `TINE_PACKAGED_BY=<name>` (for example `Nixpkgs`) never checks for updates, shows no update notification and offers no installer; Settings → About says the copy is packaged by that name and to update it there. Unset or empty keeps today's behaviour. See the README section "Packaging Tine for a distribution".
 - Tine Beta has its own amber icon.
 - **Changed since you last looked** (git graphs, desktop): a margin bar marks blocks other people or tools committed since you last left a page, a removed block leaves a marker that unfolds its text, and the page header counts the changes. Leaving the page marks it seen; **Mark page seen**, **Mark whole graph seen** and **Forget seen state** are in the page actions menu, the command palette and Settings → Graph. Your own commits never count, uncommitted edits are invisible, and the record stays on this device (ADR 0079).
 - Desktop: **Open in default app** beside the graph and global CSS editors in Settings, with matching command-palette actions. External global CSS edits now apply live across graph windows (GH #778).

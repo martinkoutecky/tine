@@ -14,7 +14,7 @@ src/App.tsx osDrawsWindowControls x2  # why: window-chrome; draw our own window 
 src/App.tsx platform-literal x2  # why: host-event; native host kind selects the edge-swipe back model
 src/App.tsx touchGesturePlatform x1  # why: host-event; edge-swipe back model (iOS history swipe vs Android back event)
 src/androidBack.ts platform-literal x1  # why: host-event; Android back button is a host event
-src/components/AboutTab.tsx platform-literal x8  # why: native-api; update and store channel differ per host
+src/components/AboutTab.tsx platform-literal x6  # why: native-api; update and store channel differ per host
 src/components/AboutTab.tsx platformKind x1  # why: native-api; update and store channel differ per host
 src/components/AllGraphs.tsx canRevealInFileManager x4  # why: native-api; desktop-only graph window and reveal actions share the sidebar's native capability gate
 src/components/Block.tsx isMobilePlatform x1  # why: native-api; /drawio launches a desktop-only external editor
