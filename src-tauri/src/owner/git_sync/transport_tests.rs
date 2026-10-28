@@ -10,10 +10,8 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 fn tempdir() -> tempfile::TempDir {
-    // Test fixtures and all generated keys remain in this worktree's target/.
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/gs-transport");
-    fs::create_dir_all(&dir).unwrap();
-    tempfile::tempdir_in(dir).unwrap()
+    // Self-deleting, so a panic leaves nothing behind (testTempDirs guard).
+    tempfile::tempdir().unwrap()
 }
 
 fn init(path: &Path) -> Repository {
