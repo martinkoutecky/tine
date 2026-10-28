@@ -1051,7 +1051,9 @@
 }
 .query-page-link:hover,
 .query-page-link:focus-visible { text-decoration: underline; }
-.query-board-heading {
+.query-board-heading,
+.query-board-column > h2,
+.query-board-column > h4 {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
