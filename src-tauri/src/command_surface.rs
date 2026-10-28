@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 239] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 241] = [
     "add_defender_exclusion",
     "app_architecture",
     "app_platform",
@@ -163,6 +163,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 239] = [
     "quick_switch",
     "read_android_clipboard_image",
     "read_asset",
+    "read_asset_range",
     "read_css_file",
     "read_custom_css",
     "read_highlights",
@@ -225,6 +226,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 239] = [
     "sheet_export_inputs",
     "start_recording",
     "startup_graph_path",
+    "stat_asset",
     "stop_recording",
     "store_plugin_registry_cache",
     "stream_asset_path",

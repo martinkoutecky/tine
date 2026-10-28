@@ -74,6 +74,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Large graph PDFs load requested byte ranges through the read-only asset IPC, so opening one no longer copies the entire file into the webview first (D-20261028-PDF9 item 3).
+
 - PDF page eviction releases decoded images and drawing data once no split view retains the page, reducing retained memory while reading scanned books (D-20261028-PDF9, item 1).
 - Opening the right sidebar by a remapped shortcut keeps the main editor and caret when the sidebar shows the same block (UI-EDITOR-LATE-MOUNT).
 - Windows: automatic git cleanup no longer fails while flushing completed packs. Failed cleanup preserves loose objects, keeps commits running, and shows a quiet retry status in Settings → Git (REG-AUTOCOMMIT-WINDOWS-REPACK).
