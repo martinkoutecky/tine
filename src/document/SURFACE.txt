@@ -159,6 +159,7 @@ retireFeedPages  # why: releases measured offscreen journal documents through th
 revealNode
 sameLiveDraft  # why: a live resolution applies only to the exact draft the user reviewed (og 8e); batch21a
 sanitizeOutlineIdsForPaste  # why: prevent off-screen ID collisions in ordinary paste; batch05
+seenPageSnapshot  # why: "changed since you last looked" sends the page's unsaved-inclusive text to the git read and maps block paths back to runtime ids (ADR 0079); batch-og-seen-ui
 selectBlock
 selectBlockSubtree  # why: Ctrl/Cmd+A escalation from the editor (GH #262); batch17a
 selectedIds

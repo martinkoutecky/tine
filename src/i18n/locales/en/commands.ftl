@@ -152,3 +152,5 @@ command-go-all-graphs = All graphs
 command-editor-insert-youtube-timestamp = Insert YouTube timestamp
 all-graphs-keyboard-help = Use Up and Down to choose a graph, Enter to open it. Tab reaches graph actions.
 all-graphs-new-window-help = Shift+Enter opens the selected graph in a new window.
+command-seen-mark-page = Mark page seen
+command-seen-mark-graph = Mark whole graph seen

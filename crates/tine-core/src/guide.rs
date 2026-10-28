@@ -962,6 +962,30 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn seen_changes_are_documented() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for behavior in [
+            "## Git: what changed since you last looked",
+            "N changes since you last looked",
+            "It works only on git graphs",
+            "it compares **commits**, not files on disk",
+            "invisible until it is committed",
+            "Your own commits never count",
+            "A block was removed here",
+            "**Mark page seen**",
+            "**Mark whole graph seen**",
+            "**Forget seen state**",
+            "never in the graph and never synced",
+            "The journals feed, the sidebar, a zoomed block and references show no bars",
+        ] {
+            assert!(
+                files.contains(behavior),
+                "missing seen-changes Guide text: {behavior}"
+            );
+        }
+    }
+
+    #[test]
     fn margin_comments_are_documented() {
         let tips = include_str!("templates/tips.md");
         for behavior in [
@@ -1051,6 +1075,30 @@ mod rename_guide_tests {
         assert!(
             about.contains("settings-about-store-updates = Updates come from the Microsoft Store."),
             "the Guide quotes Settings → About's Store line; keep them in step"
+        );
+    }
+
+    #[test]
+    fn desktop_guide_says_a_package_manager_build_has_no_updater() {
+        // tine#187: a distribution package turns the updater off at build time.
+        let platforms = include_str!("templates/platforms-and-mobile.md");
+        for outcome in [
+            "**Installed from a distribution's package manager (for example Nixpkgs)?**",
+            "`TINE_PACKAGED_BY`",
+            "\"This copy of Tine is packaged by <name>. Update it there.\"",
+            "shows no update notification and offers no installer",
+        ] {
+            assert!(
+                platforms.contains(outcome),
+                "missing package-manager Guide outcome: {outcome}"
+            );
+        }
+        let about = include_str!("../../../src/i18n/locales/en/about.ftl");
+        assert!(
+            about.contains(
+                "about-packaged-by-update-there = This copy of { $product } is packaged by { $packager }. Update it there."
+            ),
+            "the Guide quotes Settings → About's packager line; keep them in step"
         );
     }
 

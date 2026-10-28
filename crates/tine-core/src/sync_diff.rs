@@ -610,7 +610,17 @@ enum Node<'a> {
 /// the diff and merge walks.
 fn align_nodes<'a>(mine: &'a [DocBlock], theirs: &'a [DocBlock], prefix: &str) -> Vec<Node<'a>> {
     // --- L1: LCS over the sibling sequences using anchor equality. ---
-    let matched = lcs_pairs(mine, theirs);
+    align_matched(mine, theirs, &lcs_pairs(mine, theirs), prefix)
+}
+
+/// [`align_nodes`] after L1: the gaps between the `matched` anchors (sorted
+/// `(mine, theirs)` pairs) and the children of every pair.
+fn align_matched<'a>(
+    mine: &'a [DocBlock],
+    theirs: &'a [DocBlock],
+    matched: &[(usize, usize)],
+    prefix: &str,
+) -> Vec<Node<'a>> {
     let mut out: Vec<Node> = Vec::new();
     let mut mi = 0usize;
     let mut ti = 0usize;
@@ -1137,13 +1147,61 @@ fn row_id(prefix: &str, n: usize) -> String {
     format!("{prefix}{n}")
 }
 
+/// A sibling with its persisted id read once. [`anchor_eq`] reads the id
+/// through the block's property projection on every comparison; the exact
+/// LCS makes O(n·m·log n) comparisons, so it compares these instead (same
+/// relation, no per-comparison allocation).
+struct Anchor<'a> {
+    id: Option<String>,
+    /// The anchor fingerprint, when known: unequal fingerprints are never
+    /// `anchor_eq`, which settles most comparisons without the bodies.
+    fingerprint: Option<u64>,
+    block: &'a DocBlock,
+}
+
+impl<'a> Anchor<'a> {
+    fn all(blocks: &'a [DocBlock]) -> Vec<Self> {
+        blocks
+            .iter()
+            .map(|block| Anchor {
+                id: persisted_id(block),
+                fingerprint: None,
+                block,
+            })
+            .collect()
+    }
+    /// [`Anchor::all`], with each id and fingerprint read through `ids`.
+    fn memo(blocks: &'a [DocBlock], ids: &mut PersistedIds) -> Vec<Self> {
+        blocks
+            .iter()
+            .map(|block| Anchor {
+                id: ids.of(block),
+                fingerprint: Some(ids.fingerprint(block)),
+                block,
+            })
+            .collect()
+    }
+    /// Exactly [`anchor_eq`].
+    fn eq(&self, other: &Anchor<'_>) -> bool {
+        if let (Some(a), Some(b)) = (self.fingerprint, other.fingerprint) {
+            if a != b {
+                return false;
+            }
+        }
+        match (&self.id, &other.id) {
+            (Some(a), Some(b)) => a == b,
+            _ => self.block == other.block,
+        }
+    }
+}
+
 /// LCS row lengths for Hirschberg reconstruction. Memory is O(right.len()).
-fn lcs_lengths(left: &[DocBlock], right: &[DocBlock]) -> Vec<u32> {
+fn lcs_lengths(left: &[Anchor<'_>], right: &[Anchor<'_>]) -> Vec<u32> {
     let mut prev = vec![0u32; right.len() + 1];
     let mut cur = vec![0u32; right.len() + 1];
     for a in left {
         for (j, b) in right.iter().enumerate() {
-            cur[j + 1] = if anchor_eq(a, b) {
+            cur[j + 1] = if a.eq(b) {
                 prev[j] + 1
             } else {
                 prev[j + 1].max(cur[j])
@@ -1155,12 +1213,12 @@ fn lcs_lengths(left: &[DocBlock], right: &[DocBlock]) -> Vec<u32> {
     prev
 }
 
-fn lcs_lengths_reversed(left: &[DocBlock], right: &[DocBlock]) -> Vec<u32> {
+fn lcs_lengths_reversed(left: &[Anchor<'_>], right: &[Anchor<'_>]) -> Vec<u32> {
     let mut prev = vec![0u32; right.len() + 1];
     let mut cur = vec![0u32; right.len() + 1];
     for a in left.iter().rev() {
         for (j, b) in right.iter().rev().enumerate() {
-            cur[j + 1] = if anchor_eq(a, b) {
+            cur[j + 1] = if a.eq(b) {
                 prev[j] + 1
             } else {
                 prev[j + 1].max(cur[j])
@@ -1173,8 +1231,8 @@ fn lcs_lengths_reversed(left: &[DocBlock], right: &[DocBlock]) -> Vec<u32> {
 }
 
 fn hirschberg_pairs(
-    mine: &[DocBlock],
-    theirs: &[DocBlock],
+    mine: &[Anchor<'_>],
+    theirs: &[Anchor<'_>],
     mine_offset: usize,
     theirs_offset: usize,
     out: &mut Vec<(usize, usize)>,
@@ -1183,7 +1241,7 @@ fn hirschberg_pairs(
         return;
     }
     if mine.len() == 1 {
-        if let Some(j) = theirs.iter().position(|b| anchor_eq(&mine[0], b)) {
+        if let Some(j) = theirs.iter().position(|b| mine[0].eq(b)) {
             out.push((mine_offset, theirs_offset + j));
         }
         return;
@@ -1227,6 +1285,10 @@ fn anchor_fingerprint(block: &DocBlock) -> u64 {
     }
     hash
 }
+
+#[path = "sync_diff_trimmed.rs"]
+mod trimmed;
+pub use trimmed::{diff_blocks_trimmed, PersistedIds, TrimmedDiff};
 
 /// Fast large-list alignment: unique strong/content fingerprints become
 /// candidates, then a patience/LIS pass keeps their longest ordered subset.
@@ -1292,7 +1354,7 @@ fn lcs_pairs(mine: &[DocBlock], theirs: &[DocBlock]) -> Vec<(usize, usize)> {
         return patience_pairs(mine, theirs);
     }
     let mut out = Vec::new();
-    hirschberg_pairs(mine, theirs, 0, 0, &mut out);
+    hirschberg_pairs(&Anchor::all(mine), &Anchor::all(theirs), 0, 0, &mut out);
     out
 }
 

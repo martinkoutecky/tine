@@ -18,6 +18,7 @@ export interface MessageArgs {
   "about-email-support": {};
   "about-engineering-and-analysis": {};
   "about-license-agpl-3-0-only": {};
+  "about-packaged-by-update-there": { "packager": string | number; "product": string | number };
   "about-privacy": {};
   "about-releases": {};
   "about-report-an-issue": {};
@@ -232,6 +233,8 @@ export interface MessageArgs {
   "command-plugin": { "title": string | number };
   "command-right-sidebar-grow-width": {};
   "command-right-sidebar-shrink-width": {};
+  "command-seen-mark-graph": {};
+  "command-seen-mark-page": {};
   "command-select-copy-block-ref": {};
   "command-sidebar-grow-width": {};
   "command-sidebar-shrink-width": {};
@@ -2336,6 +2339,21 @@ export interface MessageArgs {
   "row-chrome-collapse-all-descendants": {};
   "row-chrome-expand-all-descendants": {};
   "search-result-row-block": {};
+  "seen-forget-failed": { "error": string | number };
+  "seen-graph-marked": {};
+  "seen-header-count": { "count": number };
+  "seen-mark-failed": { "error": string | number };
+  "seen-mark-page": {};
+  "seen-note-identity-unknown": {};
+  "seen-note-unattributed": {};
+  "seen-note-unattributed-line": {};
+  "seen-page-marked": { "name": string | number };
+  "seen-removed-block": {};
+  "seen-settings-forget": {};
+  "seen-settings-hint": {};
+  "seen-settings-label": {};
+  "seen-settings-mark-graph": {};
+  "seen-state-forgotten": {};
   "selection-outline-is-too-deep-to-indent": {};
   "session-could-not-restore-workspaces": { "error": string | number };
   "session-live-changes-were-kept-workspace-recovery-was-skipped": {};

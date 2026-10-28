@@ -100,11 +100,14 @@ export const PERSISTED_FORMATS = Object.freeze([
   "quick-share-records-json", "quick-share-account-json",
   // PENDING Martin: GIT-CRED (ADR 0078 open question 2) and its Rule 8 approval; not to integrate before.
   "git-credentials-json",
+  // D-20261028-SG, seen design rev 2; docs/adr/0079.
+  "seen-git-json",
 ]);
-export const PINNED_FORMAT_COUNT = 34;
+export const PINNED_FORMAT_COUNT = 35;
 // Writer sites Martin approved after the base, each with its ADR. Only an
 // approved format may add sites here; the count is exact, not a budget.
 export const APPROVED_WRITER_SITES = Object.freeze({
+  "src-tauri/src/owner/seen.rs": { sites: 1, approval: "Martin 2026-10-28 D-20261028-SG; seen design rev 2; docs/adr/0079" },
   "src-tauri/src/flight_store.rs": { sites: 3, approval: "og QUESTIONS Q5 2026-09-29; docs/adr/0058" },
   "src-tauri/src/concord_ledger.rs": { sites: 1, approval: "og QUESTIONS Q4 2026-09-29; docs/adr/0056" },
   "src-tauri/src/drafts.rs": { sites: 1, approval: "og QUESTIONS Q6 2026-09-29; docs/adr/0061" },

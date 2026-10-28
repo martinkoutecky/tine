@@ -63,6 +63,10 @@ export interface GpuEnv {
    *  updater's installer would add a second, installed copy, so it updates by
    *  download. Absent from an older backend. */
   portable: boolean;
+  /** The package manager that built this copy (compile-time `TINE_PACKAGED_BY`,
+   *  tine#187): it owns updates, so the updater never checks, notifies or
+   *  installs and About names it. Null/absent = not a package-manager build. */
+  packaged_by?: string | null;
 }
 
 /** Settings → Graph → Git (ADR 0078): the bound graph's autocommit and sync state. On a
@@ -89,6 +93,36 @@ export interface GitRemote {
   url: string;
   /** `https://host[:port]` when the remote takes a sign-in. */
   https_origin: string | null;
+}
+/** Paths index roots, then each child list, in the exact currentText snapshot.
+ * They are structural addresses, not runtime document ids or persisted id::. */
+export type SeenBlockPath = number[];
+export interface SeenPageChanges {
+  available: boolean;
+  /** Why the page is unavailable; on an available result, a note on how the
+   * baseline was found (rewritten history, first-open fallback, walk bound). */
+  reason: string | null;
+  head_commit: string | null;
+  /** null means the empty-tree baseline when tracked; unavailable/absent also
+   * has null and no marks. The UI only needs the marks and availability. */
+  baseline_commit: string | null;
+  /** SHA-256 of the supplied UTF-8 currentText. Discard stale responses. */
+  current_text_sha256: string;
+  identity_known: boolean;
+  /** More than 200 touching commits, or a baseline past the 500-commit walk:
+   * the net diff counts every author. */
+  unattributed: boolean;
+  /** Only other-author committed changes still unchanged in currentText. */
+  blocks: { block_path: SeenBlockPath; persisted_id: string | null }[];
+  removed: {
+    /** One removed block body, properties included; descendants have own rows. */
+    text: string;
+    baseline_block_path: SeenBlockPath;
+    /** null = page roots. */
+    parent_path: SeenBlockPath | null;
+    /** null = before the first child/root of parent_path. */
+    previous_sibling_path: SeenBlockPath | null;
+  }[];
 }
 export interface GitAutocommitStatus {
   available: boolean;

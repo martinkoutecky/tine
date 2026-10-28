@@ -156,6 +156,30 @@ pub(crate) fn read_settings_value_at(path: &std::path::Path) -> Option<serde_jso
         .and_then(|text| serde_json::from_str(&text).ok())
 }
 
+/// The "Your name" device setting (D-20261017-LD1), written by
+/// `src/commentIdentity.ts` through `set_app_string`.
+pub(crate) const YOUR_NAME_KEY: &str = "comment_author_name";
+static APP_DATA: OnceLock<PathBuf> = OnceLock::new();
+
+/// Record the app-data directory once at launch, so code without a Tauri
+/// handle (the git writers, ADR 0078) can read device settings. Unit tests
+/// never call it, so they never read the developer's settings.
+pub(crate) fn note_app_data(dir: &std::path::Path) {
+    let _ = APP_DATA.set(dir.to_path_buf());
+}
+
+/// "Your name", read from the settings file at the moment of use (no copy
+/// to go stale): one line, single spaces, trimmed, as the frontend stores it.
+/// Empty when unset, unreadable, or before launch recorded the app data.
+pub(crate) fn your_name() -> String {
+    APP_DATA
+        .get()
+        .and_then(|dir| read_settings_value_at(&settings_path_in(dir)))
+        .and_then(|value| value.get(YOUR_NAME_KEY)?.as_str().map(str::to_owned))
+        .map(|name| name.split_whitespace().collect::<Vec<_>>().join(" "))
+        .unwrap_or_default()
+}
+
 /// The device-settings JSON, if it can be read and parsed.
 pub(crate) fn read_settings_value(app: &tauri::AppHandle) -> Option<serde_json::Value> {
     settings_path(app).and_then(|path| read_settings_value_at(&path))

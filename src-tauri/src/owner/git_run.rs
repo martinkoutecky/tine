@@ -40,6 +40,8 @@ const SNAPSHOT_TRAILER: &str = "Tine-Snapshot";
 const REVERT_TRAILER: &str = "Tine-Run-Revert";
 pub(crate) const AGENT_EMAIL: &str = "agent@tine.invalid";
 pub(super) const USER_FALLBACK: (&str, &str) = ("Tine user", "user@tine.invalid");
+pub(crate) use super::git_identity::{user_identity, UserIdentity};
+
 /// How far before a run's begin time its commits are looked for (clock steps).
 const WINDOW_SLACK_SECS: i64 = 600;
 /// The most first-parent commits a run lookup walks.
@@ -404,12 +406,7 @@ impl Repo {
     }
 
     pub(super) fn user(&self) -> Signature<'static> {
-        self.repo
-            .signature()
-            .map(|s| s.to_owned())
-            .unwrap_or_else(|_| {
-                Signature::now(USER_FALLBACK.0, USER_FALLBACK.1).expect("valid fallback")
-            })
+        user_identity(&self.repo, &crate::settings::your_name()).signature()
     }
 
     /// The blob at `path` in `tree`, if any.

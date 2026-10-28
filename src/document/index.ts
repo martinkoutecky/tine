@@ -103,6 +103,7 @@ export { installHistoryRouteContextAdapter, redo, toggleUndoRedoMode, undo, undo
 export type { HistoryRouteContext } from "./history";
 export { blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, canIndentBlock, deleteBlock, ensureEmptyBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, mergeWithNext, mergeWithPrev, outdentBlock, outlineFits, replaceChildOrders, replaceEmptyBlockWithOutline, revealNode, setCollapsed, setRaw, splitBlock, toggleCollapse } from "./edits/blocks";
 export { reportQueryFoldOption, storedFold } from "./edits/queryFoldOption";
+export { seenPageSnapshot } from "./seenSnapshot";
 export { pasteClipboardPayload, sanitizeOutlineIdsForPaste } from "./edits/paste";
 export { appendToTodayJournal, appendToJournalDay, appendQueryBlock, captureToPage } from "./edits/capture";
 export { beginPageHeaderEdit, blockPageReadOnly, blockProperty, blockWritable, collapsibleDescendantIds, expandAncestors, finishPageHeaderEdit, makeOwnNumberedList, orderedListMarker, pageHeaderProperties, promotePagePreamble, readPageProperties, readPageProperty, readSchedule, removeOwnNumberedList, setBlockProperty, setCollapsedDeep, setCollapsedDescendants, setHeading, setPageProperty, setSchedule, stopOwnNumberedListOnEmptyEnter, toggleBlockProperty, toggleListItemAtIndex, toggleOwnNumberedList } from "./edits/properties";

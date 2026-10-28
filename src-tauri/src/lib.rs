@@ -75,6 +75,7 @@ mod quick_share;
 mod quit_signal;
 mod root_identity;
 mod search_workspace;
+mod seen;
 mod settings;
 mod share_inbox;
 mod spellcheck;
@@ -962,6 +963,7 @@ pub fn run() {
             // Tauri's app-data path is the sandbox-private home on mobile too.
             if let Ok(dir) = app.path().app_data_dir() {
                 data_home::classify_at_launch(&dir);
+                settings::note_app_data(&dir);
                 flight::persist_init(dir.join("diagnostics"));
             }
             diag("setup() begin");
@@ -1272,7 +1274,12 @@ pub fn run() {
             git_settings::git_sync_now,
             git_settings::git_sync_notice,
             git_settings::git_sign_in,
-            git_settings::git_sign_out
+            git_settings::git_sign_out,
+            seen::get_page_changes,
+            seen::mark_page_seen,
+            seen::mark_graph_seen,
+            seen::forget_seen_page,
+            seen::forget_seen_state
         ])
         .build(context)
         .expect("error while building tauri application")

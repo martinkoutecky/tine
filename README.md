@@ -234,6 +234,15 @@ npx tauri build --no-bundle
 TINE_GRAPH=/path/to/your/graph ./target/release/tine
 ```
 
+### Packaging Tine for a distribution
+
+A package manager updates its own packages, and its store is often read-only, so the in-app
+updater can never work there. Build with `TINE_PACKAGED_BY` set to your distribution's name, for
+example `TINE_PACKAGED_BY=Nixpkgs npx tauri build --no-bundle`. The variable is read at compile
+time (an empty or unset value changes nothing). With it set, that build never contacts the update
+feed, shows no update notification and offers no installer, and Settings → **About** says "This
+copy of Tine is packaged by Nixpkgs. Update it there." It applies on every desktop target.
+
 ### Release checklist
 
 Before tagging a release, run `npm run e2e:caret` against the release binary to

@@ -111,6 +111,7 @@ import { createAndroidRootCloseCoordinator, exitAndroidActivity, installAndroidB
 import { appBackAvailable, dispatchAppBack } from "./appBack";
 import { installEdgeSwipe } from "./edgeSwipe";
 import { createSafeCloseCoordinator } from "./safeClose";
+import { leaveAllSeenPages } from "./seen/seenState";
 import { openUnsavedRecovery } from "./unsavedRecovery";
 import { UnsavedRecovery } from "./components/UnsavedRecovery";
 import { currentPdfOwnership, drainPdfWork } from "./pdfOwnership";
@@ -156,6 +157,7 @@ export const safeClose = createSafeCloseCoordinator({
   recordDiscard: (reason) => recordDiagnostic("close_discarded_unsaved", { closeReason: reason, pages: unsavedPageCount() }),
   // The page host keeps a crash-recovery copy of every page it took and has
   // not saved; the close only persists the session layout.
+  markPagesSeen: leaveAllSeenPages,
   flushSession,
   setTransition: setGraphTransitioning,
   notifyPdfFailure: () => {

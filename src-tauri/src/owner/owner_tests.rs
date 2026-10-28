@@ -630,6 +630,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             "git_autocommit_tests",
             include_str!("git_autocommit_tests.rs"),
         ),
+        ("git_identity", include_str!("git_identity.rs")),
         ("git_pull", include_str!("git_pull.rs")),
         ("git_run", include_str!("git_run.rs")),
         ("git_sync", include_str!("git_sync.rs")),
@@ -645,6 +646,8 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
         ("mod", include_str!("mod.rs")),
         ("namespace", include_str!("namespace.rs")),
         ("pages", include_str!("pages.rs")),
+        ("seen", include_str!("seen.rs")),
+        ("seen_tests", include_str!("seen_tests.rs")),
         ("serve", include_str!("serve.rs")),
         ("terminal", include_str!("terminal.rs")),
         ("verbs", include_str!("verbs.rs")),
@@ -669,7 +672,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 24, "scan every owner/*.rs file");
+    assert_eq!(files, 27, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];

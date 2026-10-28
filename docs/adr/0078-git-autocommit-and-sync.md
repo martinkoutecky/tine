@@ -110,7 +110,8 @@ performs identity checks without directory flush for this `.git` sync (D-2026102
 to app-data folders; a flush on a cloud or network folder could hang under `index.lock`), so there the index
 rename's survival of a power cut rests on the file system, with no witness. Author and
 committer: the repository's identity, else "Your name" with `user@tine.invalid` (`git_run.rs`'s fallback, which
-seen's "me" matches). Message `Tine: autosave`; no trailers (G3: generic). Nothing to commit → no commit.
+seen's "me" matches; per field, `git_run::user_identity`: repository `user.name` else "Your name" else `Tine user`,
+repository `user.email` else `user@tine.invalid`). Message `Tine: autosave`; no trailers (G3: generic). Nothing to commit → no commit.
 
 The conversion check is shared with CLI run commits and applies to each exact repository-relative path,
 including nested graph roots. Runs refuse before flushing or saving an affected page and check again before

@@ -1,4 +1,5 @@
 import { PAGE_ICON_PROPERTIES, PAGE_ICON_PROPERTY } from "../pageIconImage";
+import { markPageSeenNow, seenAvailable, seenIdentityOf } from "../seen/seenState";
 import { pageIconPropertyInUse, readPageIconProperty } from "../pageIconBatch";
 import { focusOnMount } from "../focusOnMount";
 import { Rich } from "../i18n/Rich";
@@ -919,6 +920,8 @@ function PageMenu(props: {
           { id: "open-default-app", label: msg("context-menu-ui-open-with-default-app"), run: () => void runFileAction(false) },
         ]
       : []),
+    // "Changed since you last looked" (ADR 0079): only where a git read answered for this graph.
+    ...(seenAvailable() === true && seenIdentityOf(props.name) ? [{ id: "seen-mark", label: msg("seen-mark-page"), run: () => void markPageSeenNow(props.name) }] : []),
     // GH #338: a touch-first device has no Mod+F. The page header's menu opens
     // Find, whose bar holds the replace row (GH #208).
     ...(props.fileActions && touchPrimary() ? [{ id: "find-in-page", label: msg("context-menu-ui-find-in-page"), run: () => openInPageFind() }] : []),

@@ -18,6 +18,7 @@ import { Toasts } from "./Toasts";
 import { bindTestHost } from "../document/host/wiring.test.support";
 import { conflictedInHost, openAsLoaded } from "./hostConflict.test.support";
 import { reloadPage } from "../document/workingSet";
+import { noteSeenAnswer, resetSeenForTests } from "../seen/seenState";
 
 describe("PageMenu page-kind availability", () => {
   it("keeps rename page-only but exposes delete for pages and journals", () => {
@@ -650,6 +651,25 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       "set-page-icon",
       "carry-unfinished", "delete-journal",
     ]);
+    dispose();
+  });
+
+  it("offers Mark page seen only where a git read answered and the page has a file (ADR 0079)", async () => {
+    load();
+    setDoc("pages", 0, "id", "pages/P.md");
+    const mark = vi.spyOn(backend(), "markPageSeen").mockResolvedValue(undefined);
+    const dispose = mount(() => <ContextMenu />);
+    const item = () => document.querySelector<HTMLElement>('[data-page-action-id="seen-mark"]');
+    resetSeenForTests();
+    openPageContextMenu(10, 10, "P", "page", true);
+    expect(item()).toBeNull();
+    closeContextMenu();
+    noteSeenAnswer(true);
+    openPageContextMenu(10, 10, "P", "page", true);
+    expect(item()?.textContent?.trim()).toBe("Mark page seen");
+    item()!.click();
+    await vi.waitFor(() => expect(mark).toHaveBeenCalledWith("p", "pages/P.md"));
+    resetSeenForTests();
     dispose();
   });
 

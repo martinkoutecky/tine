@@ -174,6 +174,7 @@ pub(crate) async fn page_delete(
     name: String,
     kind: tine_core::model::PageKind,
     expected_path: Option<String>,
+    app: tauri::AppHandle,
     ctx: GraphContext<'_>,
 ) -> Result<PageOperation, String> {
     let slot = slot_for_context(&ctx)?;
@@ -195,6 +196,13 @@ pub(crate) async fn page_delete(
                 })?
             },
         )
+        .inspect(|operation| {
+            // A refused or waiting delete changed nothing.
+            if !matches!(operation, PageOperation::Refused | PageOperation::Waiting) {
+                let path: Vec<&str> = expected_path.as_deref().into_iter().collect();
+                crate::seen::page_gone(&app, &slot, Some(&name), &path);
+            }
+        })
     })
     .await
 }

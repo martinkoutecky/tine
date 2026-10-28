@@ -9,6 +9,7 @@ import { ASSET_INGRESS_MAX_BYTES } from "./clipboardImage";
 import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
 import { mockQuickShareCommands } from "./mockQuickShare";
+import { mockGitCommands } from "./mockGit";
 import { mockPageHost } from "./mockPageHost";
 import { createMockCaptureReceipts } from "./mockCaptureReceipts";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PageModified, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
@@ -1517,19 +1518,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async editCustomCss(): Promise<void> {
       // no OS editor in the browser mock
     },
-    async gitAutocommitStatus() {
-      return { available: false };
-    },
-    async setGitAutocommit(): Promise<never> {
-      throw new Error("git is not available in the browser mock");
-    },
-    async gitSyncNotice() {
-      return null;
-    },
-    // Git sync, like the setting above, has no browser-mock repository.
-    gitSyncNow: () => Promise.reject(new Error("git is not available in the browser mock")),
-    gitSignIn: () => Promise.reject(new Error("git is not available in the browser mock")),
-    gitSignOut: () => Promise.reject(new Error("git is not available in the browser mock")),
+    ...mockGitCommands,
     async getBackupKeep(): Promise<number> {
       return 12;
     },

@@ -57,6 +57,10 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-10-28, D-20261028-SG ("Changed since you last looked", ADR 0079): `commands.registry` 124→126
+  for the required **Mark page seen** and **Mark whole graph seen** commands. Both are
+  available only on a git graph that answered a seen read (never on Android/iOS), so the
+  jsdom palette count does not move; no key is bound.
 - 2026-10-26, D-20261026-778 (GH #778): `commands.registry` 122→124,
   `commands.palette` 69→71, `settings.appearance.advanced` 12→14 for the
   explicitly approved **Open in default app** actions for graph and global CSS,

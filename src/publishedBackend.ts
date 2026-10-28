@@ -831,6 +831,10 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async gitSyncNotice() {
       return null;
     },
+    async getPageChanges() {
+      return { available: false, reason: "Git is not available in a published graph.", head_commit: null,
+        baseline_commit: null, current_text_sha256: "", identity_known: false, unattributed: false, blocks: [], removed: [] };
+    },
     async getBackupKeep() {
       return 0;
     },
@@ -1043,6 +1047,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "takeDataHomeFallbackNotice",
   "gitAutocommitStatus",
   "gitSyncNotice",
+  "getPageChanges",
   "getBackupKeep",
   "listBackups",
   "getCaptureEnterFiles",
@@ -1193,6 +1198,10 @@ export const PUBLISHED_REFUSED_METHODS = [
   "gitSyncNow",
   "gitSignIn",
   "gitSignOut",
+  "markPageSeen",
+  "markGraphSeen",
+  "forgetSeenPage",
+  "forgetSeenState",
   "setCaptureEnterFiles",
   "setWatchMode",
   "restoreBackup",

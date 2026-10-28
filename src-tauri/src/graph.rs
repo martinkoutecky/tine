@@ -737,6 +737,7 @@ fn load_graph_with_relocation(
     crate::owner_protection::start_retry(app, &slot);
     crate::watcher::start_slot_events(app.clone(), window_label.to_string(), &slot);
     backup_async(app.clone(), slot.clone());
+    crate::seen::bound(app, &slot);
     crate::git_settings::bound(app, &slot);
     // The graph is bound above; a settings write that fails (disk full, EIO)
     // must not return early, or `open_graph_window` skips its cleanup and the

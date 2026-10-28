@@ -1,4 +1,5 @@
 import { shortcutKey } from "./shortcutKey";
+import { ensureSeenAvailability, markGraphSeenNow, markPageSeenNow, seenAvailable } from "./seen/seenState";
 import { changeCodeWrapping, codeWrapping } from "./codeDisplay";
 import { openWorkspaceCreation } from "./workspaceCreation";
 import { adjustSidebarWidth } from "./sidebarSizing";
@@ -188,6 +189,11 @@ function enterPaneSelectFromFocus() {
   enterPaneSelect(ids.includes(focused) ? focused : ids[0] ?? "main");
 }
 
+function seenRoutedPage(): string | null {
+  const route = paneRouter(focusedPaneId()).route();
+  return route.kind === "page" ? route.name : null;
+}
+
 function firstVisibleBlockInFocusedPane(): string | null {
   const currentRoute = paneRouter(focusedPaneId()).route();
   return currentRoute.kind === "page"
@@ -317,6 +323,9 @@ const COMMANDS: CommandDef[] = [
   // mod-chord, so it fires even while editing; remap it in Settings if you like.
   { id: "ui/toggle-devtools", binding: "mod+shift+j", label: msg("command-ui-toggle-devtools"), scope: "global", run: openDevtools, global: true },
   { id: "ui/toggle-custom-css", binding: "", label: msg("command-ui-toggle-custom-css"), scope: "global", run: () => setCustomCssDisabled(!customCssDisabled()), global: true },
+  // "Changed since you last looked" (ADR 0079): offered only once a git read answered for this graph.
+  { id: "seen/mark-page", binding: "", label: msg("command-seen-mark-page"), scope: "global", available: () => { ensureSeenAvailability(); return seenAvailable() === true && seenRoutedPage() !== null; }, run: () => { const name = seenRoutedPage(); if (name) void markPageSeenNow(name); } },
+  { id: "seen/mark-graph", binding: "", label: msg("command-seen-mark-graph"), scope: "global", available: () => { ensureSeenAvailability(); return seenAvailable() === true; }, run: () => void markGraphSeenNow() },
   { id: "go/journals", binding: "g j", label: msg("command-go-journals"), scope: "global", run: openJournals },
   { id: "go/all-graphs", binding: "g shift+g", label: msg("command-go-all-graphs"), scope: "global", run: openAllGraphs },
   { id: "go/home", binding: "g h", label: msg("command-go-home"), scope: "global", run: goHome },
