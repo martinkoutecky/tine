@@ -29,7 +29,7 @@
 //! does not own.
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use git2::{Delta, FileMode, ObjectType, Oid};
 use tine_store::{
@@ -72,7 +72,7 @@ pub(crate) enum PullOutcome {
         written: usize,
     },
     /// The upstream tip is not a descendant of `HEAD` (or became not one):
-    /// phase 1 stops; nothing in the graph changed this cycle.
+    /// phase 1 stops. A race can leave earlier file publications in place.
     Diverged(String),
     Held(Held),
     /// Some paths may be at `U`, the ref is at `H`: the resume finishes it
@@ -81,6 +81,12 @@ pub(crate) enum PullOutcome {
     /// The repository content needs the user (`pull-refused`); nothing was
     /// written this cycle.
     Refused {
+        path: String,
+        reason: String,
+    },
+    /// A refusal after publication began: files were already updated; the
+    /// named path needs attention before this pending target can finish.
+    Stopped {
         path: String,
         reason: String,
     },
@@ -101,6 +107,7 @@ impl PullOutcome {
             Self::Held(Held::Busy(_)) => "pull-held-busy",
             Self::Incomplete(_) => "pull-incomplete",
             Self::Refused { .. } => "pull-refused",
+            Self::Stopped { .. } => "pull-stopped",
             Self::NoUpstream => "no-upstream",
             Self::Unusable(_) => "refused",
         }
@@ -114,7 +121,8 @@ impl PullOutcome {
 struct Applied {
     base: Oid,
     upstream: Oid,
-    paths: HashSet<String>,
+    branch: String,
+    paths: Arc<Mutex<BTreeSet<PageId>>>,
 }
 
 static APPLIED: Mutex<Option<HashMap<PathBuf, Applied>>> = Mutex::new(None);
@@ -124,11 +132,23 @@ fn applied_paths(key: &Path, base: Oid, upstream: Oid) -> HashSet<String> {
     map.as_ref()
         .and_then(|m| m.get(key))
         .filter(|a| a.base == base && a.upstream == upstream)
-        .map(|a| a.paths.clone())
+        .map(|a| {
+            a.paths
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .iter()
+                .map(|p| p.as_str().to_string())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
-fn note_applied(key: &Path, base: Oid, upstream: Oid, path: &str) {
+fn publication_sink(
+    key: &Path,
+    base: Oid,
+    upstream: Oid,
+    branch: &str,
+) -> Arc<Mutex<BTreeSet<PageId>>> {
     let mut map = APPLIED.lock().unwrap_or_else(|p| p.into_inner());
     let entry = map
         .get_or_insert_with(HashMap::new)
@@ -136,16 +156,27 @@ fn note_applied(key: &Path, base: Oid, upstream: Oid, path: &str) {
         .or_insert_with(|| Applied {
             base,
             upstream,
-            paths: HashSet::new(),
+            branch: branch.to_string(),
+            paths: Arc::default(),
         });
     if entry.base != base || entry.upstream != upstream {
         *entry = Applied {
             base,
             upstream,
-            paths: HashSet::new(),
+            branch: branch.to_string(),
+            paths: Arc::default(),
         };
     }
-    entry.paths.insert(path.to_string());
+    entry.paths.clone()
+}
+
+/// Admission pins the target before asynchronous work can outlive the caller.
+/// A fetch may advance its tracking ref but cannot replace this provenance.
+fn pinned_target(repo: &Repo) -> Option<(Oid, Oid, String)> {
+    let key = work_tree_key(repo)?;
+    let map = APPLIED.lock().unwrap_or_else(|p| p.into_inner());
+    let entry = map.as_ref()?.get(&key)?;
+    Some((entry.base, entry.upstream, entry.branch.clone()))
 }
 
 fn forget_applied(key: &Path) {
@@ -170,6 +201,9 @@ fn upstream(repo: &Repo) -> Option<Oid> {
 /// A fetched `U` that is a strict descendant of `HEAD`'s `H`.
 fn pending_upstream(repo: &Repo) -> Option<(Oid, Oid)> {
     let head = repo.tip().ok()??.id();
+    if let Some((base, up, branch)) = pinned_target(repo) {
+        return (head == base && repo.branch == branch).then_some((base, up));
+    }
     let up = upstream(repo)?;
     (up != head && repo.repo.graph_descendant_of(up, head).ok()?).then_some((head, up))
 }
@@ -253,6 +287,20 @@ fn blob_at(tree: &git2::Tree<'_>, path: &str) -> Option<Oid> {
 /// The blob id of the regular file at `path`, `None` when absent; a folder,
 /// symlink or other non-file is an error.
 fn hash_on_disk(path: &Path) -> std::io::Result<Option<Oid>> {
+    #[cfg(test)]
+    if test_hook::folding() && !path.exists() {
+        if let Some(parent) = path.parent() {
+            if let Ok(entries) = std::fs::read_dir(parent) {
+                for entry in entries.flatten() {
+                    if entry.file_name().to_string_lossy().eq_ignore_ascii_case(
+                        &path.file_name().unwrap_or_default().to_string_lossy(),
+                    ) {
+                        return hash_on_disk(&entry.path());
+                    }
+                }
+            }
+        }
+    }
     match std::fs::symlink_metadata(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e),
@@ -335,7 +383,12 @@ fn pull_locked(slot: &GraphSlot) -> PullOutcome {
     if let Err(error) = check_sync(&repo) {
         return error;
     }
-    let Some(up) = upstream(&repo) else {
+    if let Some((_, _, branch)) = pinned_target(&repo) {
+        if repo.branch != branch {
+            return PullOutcome::Diverged("the branch changed while a pull was pending".into());
+        }
+    }
+    let Some(fetched) = upstream(&repo) else {
         return PullOutcome::NoUpstream;
     };
     let head = match repo.tip() {
@@ -348,6 +401,19 @@ fn pull_locked(slot: &GraphSlot) -> PullOutcome {
         Err(error) => return PullOutcome::Unusable(Unusable::Failed(error.message)),
     };
     let descends = |a: Oid, b: Oid| repo.repo.graph_descendant_of(a, b).unwrap_or(false);
+    let up = if let Some((base, pending, branch)) = pinned_target(&repo) {
+        if head != base || repo.branch != branch {
+            return PullOutcome::Diverged("the branch changed while a pull was pending".into());
+        }
+        if fetched != pending && !descends(fetched, pending) {
+            return PullOutcome::Diverged(
+                "the remote replaced the pending pull target (force push)".into(),
+            );
+        }
+        pending
+    } else {
+        fetched
+    };
     if up == head || descends(head, up) {
         return PullOutcome::UpToDate;
     }
@@ -369,7 +435,11 @@ fn pull_locked(slot: &GraphSlot) -> PullOutcome {
     if repo.repo.path().join("gc.pid").exists() {
         return PullOutcome::Held(Held::Busy("gc.pid".into()));
     }
-    apply(slot, &repo, head, up)
+    let outcome = apply_pull(slot, &repo, head, up);
+    late_refusal(
+        outcome,
+        work_tree_key(&repo).is_some_and(|key| !applied_paths(&key, head, up).is_empty()),
+    )
 }
 
 /// Sync refuses what a checkout would rewrite (G5, ADR §1): a graph inside a
@@ -587,7 +657,23 @@ fn pre_check(
                     "a staged change other than this device's or the remote's",
                 ));
             }
-            let disk = match hash_on_disk(&full) {
+            // A case-only move names directory entries, not two independent
+            // byte slots. On a folding volume the unlisted destination opens
+            // the source; it is still absent for this rename's admission.
+            // On a sensitive volume this gives the same two-sided HostOp.
+            let case_move = change.renamed()
+                && matches!((&change.old, &change.new),
+                (Some(old), Some(new)) if old.path.eq_ignore_ascii_case(&new.path));
+            // The OS handoff may canonicalize an alias to its source. Test
+            // the requested lexical spelling, not that resolved handoff.
+            let disk = match if case_move
+                && !listed_entry(&slot.root_key.join(path))
+                    .map_err(|e| PullOutcome::Incomplete(format!("{path}: {e}")))?
+            {
+                Ok(None)
+            } else {
+                hash_on_disk(&full)
+            } {
                 Ok(disk) => disk,
                 Err(_) => return Err(refused(path, "a folder or link is in the way")),
             };
@@ -628,8 +714,25 @@ fn pre_check(
     Ok(todo)
 }
 
+fn listed_entry(path: &Path) -> std::io::Result<bool> {
+    let Some(parent) = path.parent() else {
+        return Ok(false);
+    };
+    let entries = match std::fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        if Some(entry?.file_name().as_os_str()) == path.file_name() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The pull's steps 1–5 over `H` = `head`, `U` = `up`.
-fn apply(slot: &GraphSlot, repo: &Repo, head: Oid, up: Oid) -> PullOutcome {
+fn apply_pull(slot: &GraphSlot, repo: &Repo, head: Oid, up: Oid) -> PullOutcome {
     let git = |e: git2::Error| PullOutcome::Unusable(Unusable::Failed(e.message().into()));
     let Some(key) = work_tree_key(repo) else {
         return PullOutcome::Unusable(Unusable::Repository("the work tree is gone".into()));
@@ -659,36 +762,52 @@ fn apply(slot: &GraphSlot, repo: &Repo, head: Oid, up: Oid) -> PullOutcome {
             .map(|b| b.content().to_vec())
             .map_err(git)
     };
-    let note = |change: &Change| {
-        for path in change.paths() {
-            let full = key.join(path);
-            if hash_on_disk(&full).ok() == Some(change.u_blob(path)) {
-                note_applied(&key, head, up, path);
-            }
-        }
-    };
-
     // Step 2: pages. Each rename is its own operation (one move per op).
     let (renames, pages): (Vec<&Change>, Vec<&Change>) =
         todo.iter().filter(|c| c.page).partition(|c| c.renamed());
-    let mut ops: Vec<(Vec<&Change>, Result<HostOp, PullOutcome>)> = Vec::new();
+    let mut ops: Vec<HostOp> = Vec::new();
     for change in &renames {
-        ops.push((vec![change], plan_rename(slot, change, &blob)));
+        match plan_rename(slot, change, &blob) {
+            Ok(op) => ops.push(op),
+            Err(outcome) => return outcome,
+        }
     }
     if !pages.is_empty() {
-        ops.push((pages.clone(), plan_pages(slot, &pages, &blob)));
+        // Identify each planning refusal before combining the pages. Why's
+        // Refused variant has no path; a batch's first path is not evidence
+        // that it was the page which refused.
+        for change in &pages {
+            if let Err(outcome) = plan_pages(slot, &[*change], &blob) {
+                return outcome;
+            }
+        }
+        match plan_pages(slot, &pages, &blob) {
+            Ok(op) => ops.push(op),
+            Err(outcome) => return outcome,
+        }
     }
-    for (changes, op) in ops {
-        let op = match op {
-            Ok(op) => op,
+    let mut others = Vec::new();
+    for change in todo.iter().filter(|c| !c.page) {
+        let mut tx = match plan_other(slot, change, &blob) {
+            Ok(tx) => tx,
             Err(outcome) => return outcome,
         };
-        let result = host_apply(slot, op);
-        for change in &changes {
-            note(change);
+        if let Err(why) = tx.validate() {
+            return planned(why, change.paths()[0]);
         }
-        if let Err(outcome) = result {
-            return outcome;
+        others.push((change, tx));
+    }
+    let sink = publication_sink(&key, head, up, &repo.branch);
+    let late = |outcome| {
+        late_refusal(
+            outcome,
+            !sink.lock().unwrap_or_else(|p| p.into_inner()).is_empty(),
+        )
+    };
+    for mut op in ops {
+        op.publications = Some(sink.clone());
+        if let Err(outcome) = host_apply(slot, op) {
+            return late(outcome);
         }
     }
     #[cfg(test)]
@@ -698,11 +817,26 @@ fn apply(slot: &GraphSlot, repo: &Repo, head: Oid, up: Oid) -> PullOutcome {
     }
 
     // Step 3: other files, each in its own guarded transaction.
-    for change in todo.iter().filter(|c| !c.page) {
-        let outcome = write_other(slot, change, &blob);
-        note(change);
-        if let Err(outcome) = outcome {
-            return outcome;
+    for (change, tx) in others {
+        match tx.commit() {
+            TxOutcome::Committed { .. } => {
+                let mut paths = sink.lock().unwrap_or_else(|p| p.into_inner());
+                paths.extend(change.paths().into_iter().map(PageId::from));
+            }
+            TxOutcome::NotCommitted { why, .. } => {
+                return late(planned(why, change.paths()[0]));
+            }
+            TxOutcome::PublicationIncomplete { .. } => {
+                // This outcome means commit published its steps, but the
+                // subsequent readback failed. Do not lose that publication.
+                sink.lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .extend(change.paths().into_iter().map(PageId::from));
+                return PullOutcome::Incomplete(format!(
+                    "{}: a pulled file was written but could not be read back",
+                    change.paths()[0]
+                ));
+            }
         }
     }
     if git_autocommit::exiting() {
@@ -710,9 +844,16 @@ fn apply(slot: &GraphSlot, repo: &Repo, head: Oid, up: Oid) -> PullOutcome {
     }
 
     // Step 4: the durability barrier, holding index.lock (P2).
+    #[cfg(test)]
+    test_hook::before_lock();
     let mut lock = match repo.lock_index(false) {
         Ok(lock) => lock,
         Err(LockRefusal::Held) => return PullOutcome::Held(Held::Busy("index.lock".into())),
+        Err(LockRefusal::BranchChanged) => {
+            return PullOutcome::Diverged(
+                "the checked-out branch changed while the pull was applied".into(),
+            )
+        }
         Err(refusal) => return PullOutcome::Incomplete(refusal.message()),
     };
     if let Err(error) = barrier(slot, &key, &changes) {
@@ -753,10 +894,10 @@ fn apply(slot: &GraphSlot, repo: &Repo, head: Oid, up: Oid) -> PullOutcome {
             match lock.set_committed(path, blob, size, mode, h, h) {
                 Ok(super::git_run::IndexSync::Synced) => {}
                 Ok(super::git_run::IndexSync::StagedKept) => {
-                    return refused(
+                    return late(refused(
                         path,
                         "a staged change other than this device's or the remote's",
-                    )
+                    ))
                 }
                 Err(error) => return git(error),
             }
@@ -804,11 +945,21 @@ fn kinds_of(changes: &[&Change]) -> Vec<EditKind> {
     kinds
 }
 
-fn planned(why: Why) -> PullOutcome {
+fn late_refusal(outcome: PullOutcome, published: bool) -> PullOutcome {
+    match outcome {
+        PullOutcome::Refused { path, reason } if published => PullOutcome::Stopped {
+            path,
+            reason: format!("files were already updated; {reason}"),
+        },
+        other => other,
+    }
+}
+
+fn planned(why: Why, path: &str) -> PullOutcome {
     match why {
         Why::Conflict { file, .. } => changed(file.as_str()),
         Why::Refused(refusal) => PullOutcome::Refused {
-            path: String::new(),
+            path: path.to_string(),
             reason: format!("{refusal:?}"),
         },
         Why::Failed(error) => PullOutcome::Incomplete(format!("{error:?}")),
@@ -842,7 +993,9 @@ fn plan_pages(
             (None, None) => {}
         }
     }
-    let mut op = tx.plan().map_err(planned)?;
+    let mut op = tx
+        .plan()
+        .map_err(|why| planned(why, changes[0].paths()[0]))?;
     op.kinds = kinds_of(changes);
     op.policy = Input::Refuse;
     Ok(op)
@@ -866,7 +1019,7 @@ fn plan_rename(
         &FileId::from(new.path.clone()),
         None,
     );
-    let mut op = tx.plan().map_err(planned)?;
+    let mut op = tx.plan().map_err(|why| planned(why, &new.path))?;
     if new.blob != old.blob {
         let bytes = blob(new.blob)?;
         page_input(&new.path, &bytes)?;
@@ -917,6 +1070,8 @@ fn host_apply(slot: &GraphSlot, op: HostOp) -> Result<(), PullOutcome> {
         None => crate::page_commands::with_host(slot, |host| host.apply(op))
             .map_err(PullOutcome::Incomplete)?,
     };
+    #[cfg(test)]
+    test_hook::after_host();
     result.map_err(|refusal| match refusal {
         ApplyRefusal::Unsaved(page) => PullOutcome::Held(Held::Unsaved(page.as_str().to_string())),
         ApplyRefusal::Changed => PullOutcome::Held(Held::Changed(String::new())),
@@ -926,11 +1081,11 @@ fn host_apply(slot: &GraphSlot, op: HostOp) -> Result<(), PullOutcome> {
 }
 
 /// Step 3 for one non-page change: the store's checked atomic writer.
-fn write_other(
-    slot: &GraphSlot,
+fn plan_other<'a>(
+    slot: &'a GraphSlot,
     change: &Change,
     blob: &dyn Fn(Oid) -> Result<Vec<u8>, PullOutcome>,
-) -> Result<(), PullOutcome> {
+) -> Result<tine_store::Transaction<'a>, PullOutcome> {
     let mut tx = slot.store.transaction(None);
     match (&change.old, &change.new) {
         (Some(old), Some(new)) => {
@@ -947,15 +1102,9 @@ fn write_other(
             let rev = FileRev::from_bytes(&blob(old.blob)?);
             tx.trash(&FileId::from(old.path.clone()), rev, TrashIf::Any);
         }
-        (None, None) => return Ok(()),
+        (None, None) => {}
     }
-    match tx.commit() {
-        TxOutcome::Committed { .. } => Ok(()),
-        TxOutcome::NotCommitted { why, .. } => Err(planned(why)),
-        TxOutcome::PublicationIncomplete { .. } => Err(PullOutcome::Incomplete(
-            "a pulled file was written but could not be read back".into(),
-        )),
-    }
+    Ok(tx)
 }
 
 /// Step 4 (P2): every changed path and its folder synced, those already at
@@ -1030,6 +1179,9 @@ pub(crate) mod test_hook {
     thread_local! {
         static HOST: std::cell::RefCell<Option<HostHook>> = const { std::cell::RefCell::new(None) };
         static CRASH: std::cell::RefCell<Option<Step>> = const { std::cell::RefCell::new(None) };
+        static BEFORE_LOCK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+        static AFTER_HOST: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+        static FOLDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
     /// Answer the next host operations: `Some((apply_first, result))`
@@ -1048,6 +1200,9 @@ pub(crate) mod test_hook {
     pub(crate) fn clear() {
         HOST.with(|h| *h.borrow_mut() = None);
         CRASH.with(|c| *c.borrow_mut() = None);
+        BEFORE_LOCK.with(|h| *h.borrow_mut() = None);
+        AFTER_HOST.with(|h| *h.borrow_mut() = None);
+        FOLDING.with(|f| f.set(false));
     }
 
     pub(super) fn host(op: &HostOp) -> Option<(bool, Result<(), ApplyRefusal>)> {
@@ -1071,7 +1226,14 @@ pub(crate) mod test_hook {
         let mut paths: Vec<String> = map
             .as_ref()
             .and_then(|m| m.get(&key))
-            .map(|a| a.paths.iter().cloned().collect())
+            .map(|a| {
+                a.paths
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|p| p.as_str().to_string())
+                    .collect()
+            })
             .unwrap_or_default();
         paths.sort();
         paths
@@ -1080,5 +1242,36 @@ pub(crate) mod test_hook {
     /// A process restart: the P4 set is gone.
     pub(crate) fn restart(root: &Path) {
         forget_applied(&std::fs::canonicalize(root).unwrap());
+    }
+
+    pub(crate) fn on_before_lock(hook: impl FnOnce() + 'static) {
+        BEFORE_LOCK.with(|h| *h.borrow_mut() = Some(Box::new(hook)));
+    }
+
+    pub(super) fn before_lock() {
+        BEFORE_LOCK.with(|h| {
+            if let Some(hook) = h.borrow_mut().take() {
+                hook();
+            }
+        });
+    }
+
+    pub(crate) fn on_after_host(hook: impl FnOnce() + 'static) {
+        AFTER_HOST.with(|h| *h.borrow_mut() = Some(Box::new(hook)));
+    }
+
+    pub(super) fn after_host() {
+        AFTER_HOST.with(|h| {
+            if let Some(hook) = h.borrow_mut().take() {
+                hook();
+            }
+        });
+    }
+
+    pub(crate) fn simulate_folding() {
+        FOLDING.with(|f| f.set(true));
+    }
+    pub(super) fn folding() -> bool {
+        FOLDING.with(|f| f.get())
     }
 }

@@ -45,8 +45,12 @@ impl PagePlan<'_> {
             let src = self.path(from)?;
             let dst = self.spelled_path(to)?;
             // Same-file equality alone accepts symlinks and hard links;
-            // only an unlisted folded spelling is eligible.
-            if !self.destination_is_source_spelling(from, to)? {
+            // only an unlisted folded spelling or an absent case-only
+            // destination on a sensitive volume is eligible.
+            let absent_case_destination = from.as_str().eq_ignore_ascii_case(to.as_str())
+                && matches!(fs::symlink_metadata(&dst),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound);
+            if !self.destination_is_source_spelling(from, to)? && !absent_case_destination {
                 return Err(Why::Conflict {
                     file: to.clone(),
                     disk: disk_rev(&dst),

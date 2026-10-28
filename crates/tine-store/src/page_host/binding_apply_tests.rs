@@ -17,7 +17,7 @@ fn a_spelling_move_with_pending_input_is_refused_and_preserves_input_and_spellin
         .unwrap();
     assert_eq!(
         live.host
-            .move_spelling(src.clone(), dst, key.clone(), bytes("- old\n"), None),
+            .move_spelling(src.clone(), dst, key.clone(), bytes("- old\n"), None, None),
         Err(ApplyRefusal::Unsaved(src.clone()))
     );
     assert_eq!(live.host.spelling(&key), src);
@@ -82,6 +82,62 @@ fn bytes(text: &str) -> Arc<[u8]> {
     Arc::from(text.as_bytes())
 }
 
+#[test]
+fn an_uncertain_admitted_apply_records_its_later_publication() {
+    let live = Live::new(&[("pages/a.md", "- old\n")]);
+    let sink = Arc::new(Mutex::new(BTreeSet::new()));
+    let mut planned = op(
+        vec![(
+            "pages/a.md",
+            Effect::Write(bytes("- pulled\n")),
+            Expected::Bytes(bytes("- old\n")),
+        )],
+        Input::Refuse,
+    );
+    planned.publications = Some(sink.clone());
+    // Pause the real draft worker after admission until settle's production
+    // deadline expires. No fabricated receipt or reply stands in for it.
+    live.pause(true);
+    assert_eq!(live.host.apply(planned), Err(ApplyRefusal::Uncertain));
+    assert!(sink.lock().unwrap().is_empty());
+    assert_eq!(live.disk("pages/a.md"), "- old\n");
+    live.pause(false);
+    live.until_disk("pages/a.md", "- pulled\n");
+    // The same driver transition records the sink before exposing the file
+    // to a later command; synchronize with that driver before checking it.
+    live.host.driver.shared.with_state_for_tests(|_| ());
+    assert_eq!(
+        *sink.lock().unwrap(),
+        BTreeSet::from([PageId::from("pages/a.md")])
+    );
+    live.host.stop();
+}
+
+#[test]
+fn a_window_save_back_to_h_does_not_erase_the_publication_receipt() {
+    let live = Live::new(&[("pages/a.md", "- old\n")]);
+    let sink = Arc::new(Mutex::new(BTreeSet::new()));
+    let mut planned = op(
+        vec![(
+            "pages/a.md",
+            Effect::Write(bytes("- pulled\n")),
+            Expected::Bytes(bytes("- old\n")),
+        )],
+        Input::Refuse,
+    );
+    planned.publications = Some(sink.clone());
+    assert_eq!(live.host.apply(planned), Ok(()));
+    let (key, page) = live.open("pages/a.md");
+    let request = live.submit(&key, "- old\n", page.version, None).unwrap();
+    live.answer(&key, request);
+    live.until_disk("pages/a.md", "- old\n");
+    assert_eq!(
+        *sink.lock().unwrap(),
+        BTreeSet::from([PageId::from("pages/a.md")])
+    );
+    live.host.stop();
+}
+
 fn op(pages: Vec<(&str, Effect, Expected)>, policy: Input) -> HostOp {
     HostOp {
         creation_checks: Vec::new(),
@@ -92,6 +148,7 @@ fn op(pages: Vec<(&str, Effect, Expected)>, policy: Input) -> HostOp {
         kinds: vec![EditKind::InsertBlocks],
         policy,
         moves: Vec::new(),
+        publications: None,
         view: None,
     }
 }
@@ -258,6 +315,45 @@ fn folded_op(old: &str) -> HostOp {
         .moves
         .push((PageId::from("pages/Old.md"), PageId::from("pages/old.md")));
     planned
+}
+
+/// Enter the folding wrapper explicitly on Linux's sensitive tmpfs. This
+/// proves its entry-first/content protocol; native alias discovery remains
+/// covered by the folding-volume tests below on macOS/Windows.
+#[test]
+fn folded_wrapper_records_both_paths_with_and_without_an_edit() {
+    for edited in [false, true] {
+        let live = Live::new(&[("pages/old.md", "- old\n")]);
+        let src = PageId::from("pages/old.md");
+        let dst = PageId::from("pages/Old.md");
+        let (key, spelling, ..) = live.host.try_identify(&src).unwrap();
+        let sink = Arc::new(Mutex::new(BTreeSet::new()));
+        let new = if edited { "- edited\n" } else { "- old\n" };
+        let mut planned = op(
+            vec![
+                (
+                    src.as_str(),
+                    Effect::Delete,
+                    Expected::Bytes(bytes("- old\n")),
+                ),
+                (dst.as_str(), Effect::Write(bytes(new)), Expected::Absent),
+            ],
+            Input::Refuse,
+        );
+        planned.moves.push((dst.clone(), src.clone()));
+        planned.publications = Some(sink.clone());
+        assert_eq!(
+            live.host
+                .apply_spellings(planned, vec![(dst.clone(), src.clone(), key, spelling)]),
+            Ok(())
+        );
+        assert_eq!(
+            fs::read(live.root.join(dst.as_str())).unwrap(),
+            new.as_bytes()
+        );
+        assert_eq!(*sink.lock().unwrap(), BTreeSet::from([src, dst]));
+        live.host.stop();
+    }
 }
 
 /// Drive the entry-first postcondition on every filesystem: retain the old
@@ -490,6 +586,7 @@ fn a_folded_entry_move_publishes_an_unheld_page_before_reply() {
                 dst.clone(),
                 key,
                 bytes("title:: Old\n- [[Old]]\n"),
+                None,
                 None
             )
             .map(|_| ()),

@@ -94,7 +94,7 @@ impl Fixture {
             .unwrap()
             .to_string();
         track(&repo, &url);
-        assert_eq!(operation().push(&root), Outcome::UpToDate);
+        assert_eq!(operation().push_upstream(&root), Outcome::UpToDate);
         Self {
             _dir: dir,
             root,
@@ -125,7 +125,10 @@ impl Fixture {
     fn remote_commit(&self, text: &str) -> Oid {
         let peer = self.peer();
         let oid = commit(&peer, text);
-        assert_eq!(operation().push(peer.workdir().unwrap()), Outcome::UpToDate);
+        assert_eq!(
+            operation().push_upstream(peer.workdir().unwrap()),
+            Outcome::UpToDate
+        );
         oid
     }
 
@@ -190,7 +193,7 @@ fn file_push_and_fetch_classify_ahead_and_diverged_without_force() {
     ));
     let upstream = f.remote_commit("- remote\n");
     let before = f.snapshot();
-    assert_eq!(operation().push(&f.root), Outcome::Diverged);
+    assert_eq!(operation().push_upstream(&f.root), Outcome::Diverged);
     assert_eq!(operation().fetch(&f.root), Outcome::Diverged);
     assert_eq!(f.snapshot(), before);
     assert_eq!(f.repo.head().unwrap().target(), Some(local));
@@ -251,7 +254,7 @@ fn sync_refuses_unsupported_repositories_and_conversion_and_busy_locks() {
     let f = Fixture::new();
     fs::write(f.repo.path().join("index.lock"), "other git command").unwrap();
     assert_eq!(operation().fetch(&f.root), Outcome::Busy);
-    assert_eq!(operation().push(&f.root), Outcome::Busy);
+    assert_eq!(operation().push_upstream(&f.root), Outcome::Busy);
     fs::remove_file(f.repo.path().join("index.lock")).unwrap();
     assert!(matches!(
         operation().fetch(&f.root.join("pages")),
@@ -324,7 +327,10 @@ fn unsupported_remote_configs_are_refused_without_contacting_them() {
     ] {
         track(&f.repo, url);
         assert!(matches!(operation().fetch(&f.root), Outcome::Refused(_)));
-        assert!(matches!(operation().push(&f.root), Outcome::Refused(_)));
+        assert!(matches!(
+            operation().push_upstream(&f.root),
+            Outcome::Refused(_)
+        ));
     }
     track(&f.repo, &f.url);
     f.repo
@@ -339,7 +345,10 @@ fn unsupported_remote_configs_are_refused_without_contacting_them() {
         .unwrap()
         .set_bool("remote.origin.mirror", true)
         .unwrap();
-    assert!(matches!(operation().push(&f.root), Outcome::Refused(_)));
+    assert!(matches!(
+        operation().push_upstream(&f.root),
+        Outcome::Refused(_)
+    ));
     assert_eq!(f.snapshot(), before);
 }
 
@@ -358,7 +367,7 @@ fn url_rewrites_cannot_bypass_the_validated_fetch_or_push_endpoint() {
             .set_str(&format!("url.{sink_url}.{setting}"), &f.url)
             .unwrap();
         let before = f.snapshot();
-        let outcome = operation().push(&f.root);
+        let outcome = operation().push_upstream(&f.root);
         assert!(
             matches!(outcome, Outcome::Refused(_)),
             "{setting}: {outcome:?}"
@@ -382,7 +391,7 @@ fn push_uses_tracked_branch_name_and_ignores_extra_push_refspecs() {
         .unwrap()
         .set_str("remote.origin.push", "+refs/heads/main:refs/heads/extra")
         .unwrap();
-    assert_eq!(operation().push(&f.root), Outcome::UpToDate);
+    assert_eq!(operation().push_upstream(&f.root), Outcome::UpToDate);
     assert_eq!(
         f.bare
             .find_reference("refs/heads/different")
@@ -558,7 +567,7 @@ fn https_fetch_and_push_retry_401_once_and_keep_graph_bytes_unchanged() {
         server
             .operation(Some("fixture-token"))
             .0
-            .push(peer.workdir().unwrap()),
+            .push_upstream(peer.workdir().unwrap()),
         Outcome::UpToDate
     );
     assert_eq!(
@@ -566,7 +575,10 @@ fn https_fetch_and_push_retry_401_once_and_keep_graph_bytes_unchanged() {
         Some(pushed)
     );
     assert_eq!(
-        server.operation(Some("fixture-token")).0.push(&f.root),
+        server
+            .operation(Some("fixture-token"))
+            .0
+            .push_upstream(&f.root),
         Outcome::Diverged
     );
     assert_eq!(
@@ -680,7 +692,7 @@ fn https_post_401_retries_the_buffered_pack_once() {
     let server = Server::start(&f, "auth-post", "");
     track(&f.repo, &server.remote());
     let (op, credentials) = server.operation(Some("fixture-token"));
-    assert_eq!(op.push(&f.root), Outcome::UpToDate);
+    assert_eq!(op.push_upstream(&f.root), Outcome::UpToDate);
     assert_eq!(credentials.calls.load(Ordering::Relaxed), 1);
     let posts: Vec<_> = server
         .requests()
@@ -748,7 +760,7 @@ fn push_refuses_a_checkout_change_during_advertisement() {
             .unwrap();
         fs::write(release, "release").unwrap();
     });
-    let outcome = server.operation(None).0.push(&f.root);
+    let outcome = server.operation(None).0.push_upstream(&f.root);
     external.join().unwrap();
     assert!(matches!(outcome, Outcome::Refused(reason) if reason.contains("branch changed")));
     assert_eq!(
@@ -787,7 +799,10 @@ fn sync_refuses_symbolic_tracking_refs_and_missing_or_conflicted_indexes() {
     index.add(&entry).unwrap();
     index.write().unwrap();
     assert!(matches!(operation().fetch(&f.root), Outcome::Refused(_)));
-    assert!(matches!(operation().push(&f.root), Outcome::Refused(_)));
+    assert!(matches!(
+        operation().push_upstream(&f.root),
+        Outcome::Refused(_)
+    ));
 }
 
 fn wait_for_stall(log: &Path) {
@@ -828,7 +843,7 @@ fn https_cancel_aborts_stalled_fetch_and_push_and_releases_locks() {
         let result = if mode == "stall-fetch" {
             op.fetch(&f.root)
         } else {
-            op.push(&f.root)
+            op.push_upstream(&f.root)
         };
         canceller.join().unwrap();
         assert_eq!(result, Outcome::Cancelled, "{mode}");
@@ -859,7 +874,7 @@ fn https_timeout_and_buffer_limit_return_typed_errors() {
         ..TransportOptions::default()
     };
     assert!(
-        matches!(server.operation_at(None, server.remote(), &options, Arc::new(AtomicBool::new(false))).0.push(peer.workdir().unwrap()), Outcome::Refused(m) if m.contains("buffer limit"))
+        matches!(server.operation_at(None, server.remote(), &options, Arc::new(AtomicBool::new(false))).0.push_upstream(peer.workdir().unwrap()), Outcome::Refused(m) if m.contains("buffer limit"))
     );
 }
 

@@ -111,9 +111,9 @@ impl Operation {
         self.fetch_locked(root)
     }
 
-    pub(crate) fn push(self, root: &Path) -> Outcome {
+    pub(crate) fn push_upstream(self, root: &Path) -> Outcome {
         let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        self.push_locked(root)
+        self.push_upstream_locked(root)
     }
 
     /// Caller holds RUN_LOCK, including across any pre-pull autocommit/apply.
@@ -217,7 +217,7 @@ impl Operation {
 
     /// Push current branch to its tracked upstream, even when the upstream's
     /// name differs. Configured push refspecs/mirrors are never executed.
-    pub(crate) fn push_locked(self, root: &Path) -> Outcome {
+    pub(crate) fn push_upstream_locked(self, root: &Path) -> Outcome {
         self.execute(|| {
             let repo = checked(root)?;
             let _index = repo.lock_index(false).map_err(lock_error)?;
@@ -515,5 +515,5 @@ impl Target {
 }
 
 #[cfg(test)]
-#[path = "git_sync/tests.rs"]
+#[path = "git_sync/transport_tests.rs"]
 mod tests;

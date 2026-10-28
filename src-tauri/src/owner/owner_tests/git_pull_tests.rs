@@ -599,6 +599,315 @@ fn q_git_ignored_local_file_in_the_way_refuses() {
 }
 
 #[test]
+fn q_git_publication_is_remembered_before_host_returns() {
+    test_hook::clear();
+    let graph = Graph::new();
+    std::fs::write(graph.root.join("pages/window.md"), "- old\n").unwrap();
+    let page = PageId::from("pages/window.md");
+    let old = graph.store.page(&page).unwrap().doc;
+    let repo = repo(&graph);
+    let slot = std::sync::Arc::new(graph.slot());
+    let up = upstream(&repo, &[Edit::Write("pages/window.md", b"- theirs\n")]);
+    let root = graph.root.clone();
+    let window = slot.clone();
+    test_hook::on_after_host(move || {
+        // This is inside host_apply, before its caller can inspect disk.
+        // Drive the same open/submit protocol as a window, saving back to H.
+        crate::page_commands::with_host(&window, |host| {
+            let session = serde_json::to_value(host.window_reloaded()).unwrap();
+            let generation = session["session"].as_u64().unwrap();
+            let id = session["nextId"].as_u64().unwrap();
+            let opened =
+                serde_json::to_value(host.open(generation, id, &page, "window").unwrap()).unwrap();
+            let version = host.read(&page).unwrap().revision.unwrap().1;
+            host.submit(
+                generation,
+                id + 1,
+                opened["key"].as_str().unwrap(),
+                &old,
+                version,
+                None,
+                &[tine_store::EditKind::SaveBlock],
+            )
+            .unwrap();
+        })
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::fs::read(root.join("pages/window.md")).unwrap() != b"- old\n" {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "window undo did not save"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    });
+    test_hook::crash_at(Step::BarrierFails);
+    assert!(matches!(pull(&slot), PullOutcome::Incomplete(_)));
+    assert_eq!(test_hook::applied(&graph.root), ["pages/window.md"]);
+    landed(&pull(&slot));
+    assert_eq!(head(&repo), up);
+    assert_eq!(disk(&graph, "pages/window.md").unwrap(), b"- old\n");
+}
+
+#[test]
+fn q_git_publication_after_uncertain_updates_the_retained_sink() {
+    test_hook::clear();
+    let graph = Graph::new();
+    let repo = repo(&graph);
+    let slot = graph.slot();
+    let up = upstream(&repo, &[Edit::Write("pages/a.md", b"- theirs\n")]);
+    let delayed = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let captured = delayed.clone();
+    test_hook::on_host(move |op| {
+        *captured.borrow_mut() = Some(op.clone());
+        Some((false, Err(ApplyRefusal::Uncertain)))
+    });
+    assert!(matches!(pull(&slot), PullOutcome::Incomplete(_)));
+    assert!(test_hook::applied(&graph.root).is_empty());
+    test_hook::clear();
+    // Owner has returned; the original HostOp still owns its sink. The
+    // store's late-slot test separately drives admitted work losing a caller.
+    let op = delayed.borrow_mut().take().unwrap();
+    crate::page_commands::with_host(&slot, |host| host.apply(op))
+        .unwrap()
+        .unwrap();
+    assert_eq!(test_hook::applied(&graph.root), ["pages/a.md"]);
+    std::fs::write(graph.root.join("pages/a.md"), A_AT_H).unwrap();
+    landed(&pull(&slot));
+    assert_eq!(head(&repo), up);
+    assert_eq!(disk(&graph, "pages/a.md").unwrap(), A_AT_H.as_bytes());
+}
+
+#[test]
+fn q_git_pending_target_survives_refetch() {
+    for undo in [false, true] {
+        test_hook::clear();
+        let graph = Graph::new();
+        let repo = repo(&graph);
+        let slot = graph.slot();
+        let h = head(&repo);
+        let u1 = upstream(&repo, &[Edit::Write("pages/a.md", b"- first\n")]);
+        test_hook::crash_at(Step::BarrierFails);
+        assert!(matches!(pull(&slot), PullOutcome::Incomplete(_)));
+        if undo {
+            std::fs::write(graph.root.join("pages/a.md"), A_AT_H).unwrap();
+        }
+        let parent = repo.find_commit(u1).unwrap();
+        // An empty-tree advance exercises undo; otherwise U2 changes the
+        // same page again while the disk still holds U1.
+        let edits = if undo {
+            vec![]
+        } else {
+            vec![Edit::Write("pages/a.md", b"- second\n")]
+        };
+        let u2 = upstream_on(&repo, &parent, &edits);
+        let auto = commit_now(&graph.root, "Tine: autosave").unwrap();
+        assert!(
+            matches!(auto, Outcome::PullPending | Outcome::Clean),
+            "{auto:?}"
+        );
+        assert_eq!(head(&repo), h);
+        landed(&pull(&slot));
+        assert_eq!(head(&repo), u1, "finish the pending target first");
+        assert_eq!(
+            disk(&graph, "pages/a.md").unwrap(),
+            if undo {
+                A_AT_H.as_bytes()
+            } else {
+                b"- first\n"
+            }
+        );
+        if !undo {
+            landed(&pull(&slot));
+            assert_eq!(head(&repo), u2);
+            assert_eq!(disk(&graph, "pages/a.md").unwrap(), b"- second\n");
+        }
+    }
+}
+
+#[test]
+fn q_git_force_push_preserves_the_pending_target() {
+    test_hook::clear();
+    let graph = Graph::new();
+    let repo = repo(&graph);
+    let slot = graph.slot();
+    let h = head(&repo);
+    upstream(&repo, &[Edit::Write("pages/a.md", b"- first\n")]);
+    test_hook::crash_at(Step::BarrierFails);
+    assert!(matches!(pull(&slot), PullOutcome::Incomplete(_)));
+    upstream(&repo, &[Edit::Write("pages/a.md", b"- force pushed\n")]);
+    assert_eq!(
+        commit_now(&graph.root, "Tine: autosave").unwrap(),
+        Outcome::PullPending
+    );
+    let outcome = pull(&slot);
+    assert!(
+        matches!(outcome, PullOutcome::Diverged(ref why) if why.contains("force push")),
+        "{outcome:?}"
+    );
+    assert_eq!(head(&repo), h);
+    assert_eq!(disk(&graph, "pages/a.md").unwrap(), b"- first\n");
+    assert_eq!(test_hook::applied(&graph.root), ["pages/a.md"]);
+}
+
+#[test]
+fn q_git_case_only_rename_keeps_both_sides() {
+    for folding in [false, true] {
+        for edited in [false, true] {
+            test_hook::clear();
+            let graph = Graph::new();
+            let repo = repo(&graph);
+            let slot = graph.slot();
+            let mut bytes = disk(&graph, "pages/a.md").unwrap();
+            if edited {
+                bytes.extend_from_slice(b"- extra\n");
+            }
+            let up = upstream(
+                &repo,
+                &[
+                    Edit::Remove("pages/a.md"),
+                    Edit::Write("pages/A.md", &bytes),
+                ],
+            );
+            if folding {
+                test_hook::simulate_folding();
+            }
+            test_hook::on_host(|op| {
+                assert_eq!(
+                    op.moves,
+                    [(PageId::from("pages/A.md"), PageId::from("pages/a.md"))]
+                );
+                assert_eq!(op.pages.len(), 2, "never a source-only deletion");
+                None
+            });
+            landed(&pull(&slot));
+            test_hook::clear();
+            assert_eq!(head(&repo), up);
+            assert_eq!(disk(&graph, "pages/A.md").unwrap(), bytes);
+            let names: Vec<_> = std::fs::read_dir(graph.root.join("pages"))
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect();
+            assert!(names.contains(&"A.md".into()));
+            assert!(!names.contains(&"a.md".into()));
+        }
+    }
+}
+
+#[test]
+fn q_git_all_planning_refusals_precede_page_writes() {
+    for bad in ["logseq/config.edn", "pages/z.md"] {
+        test_hook::clear();
+        let graph = Graph::new();
+        let repo = repo(&graph);
+        let slot = graph.slot();
+        upstream(
+            &repo,
+            &[
+                Edit::Write("pages/a.md", b"- theirs\n"),
+                Edit::Write(
+                    bad,
+                    if bad == "logseq/config.edn" {
+                        b"{:pages-directory \"../outside\"}\n"
+                    } else {
+                        &[0xff]
+                    },
+                ),
+            ],
+        );
+        let outcome = pull(&slot);
+        assert!(
+            matches!(&outcome, PullOutcome::Refused { path, .. } if path == bad),
+            "{outcome:?}"
+        );
+        assert_eq!(disk(&graph, "pages/a.md").unwrap(), A_AT_H.as_bytes());
+        assert!(test_hook::applied(&graph.root).is_empty());
+    }
+}
+
+#[test]
+fn q_git_later_rename_planning_refusal_precedes_the_first_move() {
+    test_hook::clear();
+    let graph = Graph::new();
+    std::fs::write(graph.root.join("pages/z.md"), "- unique z\n").unwrap();
+    std::fs::write(graph.root.join("pages/z2.org"), "* twin\n").unwrap();
+    graph.store.whole_graph().unwrap();
+    let repo = repo(&graph);
+    let slot = graph.slot();
+    let b = disk(&graph, "pages/b.md").unwrap();
+    upstream(
+        &repo,
+        &[
+            Edit::Remove("pages/b.md"),
+            Edit::Write("pages/b2.md", &b),
+            Edit::Remove("pages/z.md"),
+            Edit::Write("pages/z2.md", b"- unique z\n"),
+        ],
+    );
+    let outcome = pull(&slot);
+    assert!(
+        matches!(&outcome, PullOutcome::Refused { path, .. }
+        if path == "pages/z2.md"),
+        "{outcome:?}"
+    );
+    assert_eq!(disk(&graph, "pages/b.md").unwrap(), b);
+    assert_eq!(disk(&graph, "pages/b2.md"), None);
+}
+
+#[test]
+fn q_git_late_staged_refusal_names_partial_progress() {
+    test_hook::clear();
+    let graph = Graph::new();
+    let repo = repo(&graph);
+    let slot = graph.slot();
+    let h = head(&repo);
+    upstream(&repo, &[Edit::Write("pages/a.md", b"- theirs\n")]);
+    let root = graph.root.clone();
+    test_hook::on_before_lock(move || {
+        let repo = Repository::open(root).unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_frombuffer(&entry("pages/a.md", 0o100644), b"- foreign\n")
+            .unwrap();
+        index.write().unwrap();
+    });
+    for _ in 0..2 {
+        let outcome = pull(&slot);
+        assert!(
+            matches!(&outcome, PullOutcome::Stopped { path, reason }
+            if path == "pages/a.md" && reason.contains("files were already updated")),
+            "{outcome:?}"
+        );
+        assert_eq!(head(&repo), h);
+        assert_eq!(disk(&graph, "pages/a.md").unwrap(), b"- theirs\n");
+    }
+}
+
+#[test]
+fn q_git_checkout_race_is_diverged() {
+    test_hook::clear();
+    let graph = Graph::new();
+    let repo = repo(&graph);
+    let slot = graph.slot();
+    let h = head(&repo);
+    upstream(&repo, &[Edit::Write("pages/a.md", b"- theirs\n")]);
+    repo.branch("other", &repo.find_commit(h).unwrap(), false)
+        .unwrap();
+    let root = graph.root.clone();
+    test_hook::on_before_lock(move || {
+        Repository::open(root)
+            .unwrap()
+            .set_head("refs/heads/other")
+            .unwrap();
+    });
+    let outcome = pull(&slot);
+    assert!(matches!(outcome, PullOutcome::Diverged(_)), "{outcome:?}");
+    assert_eq!(head(&repo), h);
+    assert_eq!(disk(&graph, "pages/a.md").unwrap(), b"- theirs\n");
+    assert!(matches!(pull(&slot), PullOutcome::Diverged(_)));
+}
+
+#[test]
 fn q_git_pull_inside_a_bigger_work_tree_refuses() {
     test_hook::clear();
     let graph = Graph::new();

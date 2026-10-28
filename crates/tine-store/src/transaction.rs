@@ -530,6 +530,29 @@ impl Transaction<'_> {
     pub fn commit(self) -> TxOutcome {
         self.inner.commit_internal()
     }
+
+    /// Run commit's read-only preflight without writing or reserving paths.
+    /// Commit repeats these checks under its locks; concurrent changes can
+    /// still refuse then. Used to validate a mixed page/non-page batch before
+    /// its first publication.
+    pub fn validate(&mut self) -> Result<(), Why> {
+        let plan = &mut self.inner;
+        plan.await_reference_publication();
+        let _writer = plan.store.writer.lock().unwrap();
+        let names = plan.preflight_names().map_err(|(_, why)| why)?;
+        let locks: Vec<_> = names
+            .iter()
+            .map(|file| {
+                plan.store
+                    .graph
+                    .page_lock(&plan.store.graph.root.join(file.as_str()))
+            })
+            .collect();
+        let _guards: Vec<_> = locks.iter().map(|lock| lock.lock().unwrap()).collect();
+        let result = plan.prepare_steps().map(|_| ()).map_err(|(_, why)| why);
+        plan.spelling_entries.borrow_mut().clear();
+        result
+    }
 }
 
 /// A page file's alternate-extension twin (`.md` ↔ `.org`) on disk, from one

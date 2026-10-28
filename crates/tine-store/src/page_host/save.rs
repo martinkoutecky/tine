@@ -205,6 +205,7 @@ impl<F: HostIo> Host<F> {
             },
             SavePhase::Rename if job.bytes.is_some() => match self.fs.page_rename(&key) {
                 Ok(()) => {
+                    self.order.renamed(&key, job.version, job.bytes.as_deref());
                     #[cfg(test)]
                     self.events.push(Event::Renamed {
                         page: key.clone(),
@@ -230,6 +231,7 @@ impl<F: HostIo> Host<F> {
                     None
                 }
                 Err(e) if e.completed => {
+                    self.order.renamed(&key, job.version, job.bytes.as_deref());
                     cause = Some(e);
                     #[cfg(test)]
                     self.events.push(Event::Renamed {
@@ -286,6 +288,7 @@ impl<F: HostIo> Host<F> {
                 }
                 match movement.result {
                     Ok(()) => {
+                        self.order.renamed(&key, job.version, job.bytes.as_deref());
                         #[cfg(test)]
                         self.events.push(Event::Renamed {
                             page: key.clone(),
@@ -323,6 +326,7 @@ impl<F: HostIo> Host<F> {
                         }
                     }
                     Err(e) if e.completed => {
+                        self.order.renamed(&key, job.version, job.bytes.as_deref());
                         cause = Some(e);
                         #[cfg(test)]
                         self.events.push(Event::Renamed {

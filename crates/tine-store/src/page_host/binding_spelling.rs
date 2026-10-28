@@ -80,8 +80,16 @@ impl PageHost {
         self.retain_spelling_bytes(&op, copies)?;
         let mut moved_pages = BTreeMap::new();
         for (src, dst, key, bytes) in moves {
+            let unchanged = planned_bytes_equal(&op, &src, &bytes);
             let rev = self
-                .move_spelling(src.clone(), dst.clone(), key, bytes, op.view.clone())
+                .move_spelling(
+                    src.clone(),
+                    dst.clone(),
+                    key,
+                    bytes,
+                    op.view.clone(),
+                    op.publications.clone().map(|sink| (sink, unchanged)),
+                )
                 .map_err(|_| ApplyRefusal::SpellingIncomplete)?;
             // Only our own publication advances this view. A delivery
             // between commands still refuses at the next full view check.
@@ -190,6 +198,7 @@ impl PageHost {
         key: PageKey,
         bytes: Arc<[u8]>,
         view: Option<(crate::GraphRev, Arc<tine_core::config::Config>)>,
+        publications: Option<(Arc<Mutex<BTreeSet<PageId>>>, bool)>,
     ) -> Result<crate::GraphRev, ApplyRefusal> {
         // No buffer/lock handover to a caller: the driver checks clean and
         // expected bytes again under the key's path lock. A later window
@@ -227,6 +236,17 @@ impl PageHost {
                     .page_plan(None)
                     .respell_entry(&src.file(), &dst.file(), &bytes);
             if moved {
+                // The entry move publishes the source's absence. Its
+                // destination already has U only for a byte-preserving move.
+                // Record inside the driver, including a late command or a
+                // directory-sync error after the entry was moved.
+                if let Some((sink, unchanged)) = &publications {
+                    let mut paths = sink.lock().unwrap_or_else(|p| p.into_inner());
+                    paths.insert(src.clone());
+                    if *unchanged {
+                        paths.insert(dst.clone());
+                    }
+                }
                 host.fs.spell(&key, dst.as_str());
                 host.locks.insert(key.clone(), lock.clone());
                 store
@@ -273,4 +293,10 @@ impl PageHost {
             }
         }
     }
+}
+
+fn planned_bytes_equal(op: &HostOp, src: &PageId, bytes: &[u8]) -> bool {
+    op.pages.iter().any(|(page, effect, _)| {
+        page == src && matches!(effect, Effect::Write(new) if new.as_ref() == bytes)
+    })
 }
