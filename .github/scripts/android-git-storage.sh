@@ -2,7 +2,8 @@
 # Runs the app crate's git tests on a booted emulator (ci.yml,
 # android-git-storage): first with the graph on shared storage, then the
 # autocommit and seen suites on app-private storage. Each run must print its
-# libtest success line; a missing or crashed run fails.
+# libtest success line; a missing or crashed run fails the job after every
+# run has had its turn.
 set -euo pipefail
 
 bin="$1"
@@ -31,12 +32,19 @@ run() {
   set -e
   if ! grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed' "$out/$name.txt"; then
     echo "$name: the tests did not all pass" >&2
-    exit 1
+    failed=1
   fi
 }
+failed=0
 
 run shared-storage "TINE_HOST_FS_ROOT=$shared TINE_EXPECT_FUSE=1" owner::git_autocommit::mobile_tests
 for line in 'GIT-STORAGE result=PASS' 'GIT-KILL result=PASS'; do
-  grep -q "$line" "$out/shared-storage.txt" || { echo "missing: $line" >&2; exit 1; }
+  grep -q "$line" "$out/shared-storage.txt" || { echo "missing: $line" >&2; failed=1; }
+done
+# The OS ending the app is a race: give it more kills.
+for n in 1 2 3; do
+  run "shared-storage-kill-$n" "TINE_HOST_FS_ROOT=$shared TINE_EXPECT_FUSE=1" \
+    --exact owner::git_autocommit::mobile_tests::a_commit_or_push_the_os_ends_leaves_the_repository_whole
 done
 run private-storage "" owner::git_autocommit owner::seen
+exit "$failed"

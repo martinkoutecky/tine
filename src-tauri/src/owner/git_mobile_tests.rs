@@ -455,10 +455,11 @@ fn a_commit_or_push_the_os_ends_leaves_the_repository_whole() {
             fs::remove_file(phone.repo.path().join("index.lock")).unwrap();
         }
         // The next holder of the lock removes a killed index copy.
-        assert!(matches!(
-            commit_now(&phone.root, MESSAGE),
-            Ok(Outcome::Committed(_) | Outcome::Clean)
-        ));
+        let next = commit_now(&phone.root, MESSAGE);
+        assert!(
+            matches!(next, Ok(Outcome::Committed(_) | Outcome::Clean)),
+            "killed after {delay} ms, left {leftovers:?}: the next commit {next:?} on {volume}"
+        );
         let leftovers = assert_whole(&phone.repo, "after the next commit");
         assert!(leftovers.is_empty(), "{leftovers:?}");
     }
@@ -475,6 +476,14 @@ fn a_commit_or_push_the_os_ends_leaves_the_repository_whole() {
     );
 }
 
+/// `backgrounded` and `foregrounded` reach every worker in the process: the
+/// lifecycle tests take turns.
+static LIFECYCLE: Mutex<()> = Mutex::new(());
+
+fn lifecycle_turn() -> std::sync::MutexGuard<'static, ()> {
+    LIFECYCLE.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(90);
     while !done() {
@@ -485,6 +494,7 @@ fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
 
 #[test]
 fn the_background_commits_and_pushes_and_the_foreground_syncs() {
+    let _turn = lifecycle_turn();
     let phone = Phone::new();
     let slot = Arc::new(phone.slot());
     start_worker(
@@ -538,7 +548,36 @@ fn the_background_commits_and_pushes_and_the_foreground_syncs() {
 }
 
 #[test]
-fn the_background_never_pulls_and_commit_only_never_pushes() {
+fn the_background_never_pulls() {
+    let _turn = lifecycle_turn();
+    let phone = Phone::new();
+    let slot = Arc::new(phone.slot());
+    start_worker(
+        &slot,
+        GitSettings {
+            policy: Policy::SyncAutomatically,
+            interval: Duration::from_secs(10 * 60),
+        },
+        credentials(),
+    );
+    wait_for("the opening cycle", || {
+        let sync = last_attempt(&phone.root).sync;
+        !sync.running && sync.at.is_some()
+    });
+    // The laptop pushes; the phone has nothing new. A sync would pull, but
+    // the background only pushes what this device committed.
+    let mine = head(&phone.repo);
+    phone.peer_pushes(&[("pages/a.md", Some("- from the laptop\n"))]);
+    backgrounded();
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(head(&phone.repo), mine, "nothing pulled in the background");
+    assert_eq!(phone.disk("pages/a.md"), "- one\n- two\n");
+    slot.background_cancelled.store(true, Ordering::Release);
+}
+
+#[test]
+fn commit_only_never_pushes_from_the_background() {
+    let _turn = lifecycle_turn();
     let phone = Phone::new();
     let slot = Arc::new(phone.slot());
     start_worker(
@@ -550,16 +589,16 @@ fn the_background_never_pulls_and_commit_only_never_pushes() {
         credentials(),
     );
     let remote = phone.remote_tip();
-    let theirs = phone.peer_pushes(&[("pages/a.md", Some("- from the laptop\n"))]);
     phone.edit("pages/b.md", "- typed before switching apps\n");
     backgrounded();
     wait_for("the background commit", || {
         last_attempt(&phone.root).commit.is_some()
     });
+    // A push would follow the commit at once.
+    std::thread::sleep(Duration::from_secs(2));
     let mine = head(&phone.repo);
     assert_ne!(mine, remote);
-    assert_eq!(phone.remote_tip(), theirs, "commit only: nothing pushed");
-    assert_eq!(phone.disk("pages/a.md"), "- one\n- two\n", "nothing pulled");
+    assert_eq!(phone.remote_tip(), remote, "commit only: nothing pushed");
     foregrounded();
     std::thread::sleep(Duration::from_millis(500));
     assert_eq!(

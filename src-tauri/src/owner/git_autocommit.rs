@@ -1038,8 +1038,9 @@ pub(crate) fn request_sync(root: &Path) -> bool {
 /// every worker commits its pending changes at once and, when it syncs
 /// automatically, pushes the commits its last fetch shows the remote lacks.
 /// No fetch and no pull run in the background: a push writes nothing to
-/// this repository, so the OS freezing or ending the app mid-push leaves it
-/// as it was, and the commit is the one short local write.
+/// this repository but its `index.lock`, so the OS freezing or ending the
+/// app mid-push leaves it as it was, at worst with that lock left (stated
+/// limit: Tine never removes it), and the commit is the one short local write.
 pub(crate) fn backgrounded() {
     for worker in registry::all() {
         let mut state = worker.state.lock().unwrap();
