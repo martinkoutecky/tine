@@ -828,6 +828,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async gitAutocommitStatus() {
       return { available: false };
     },
+    async gitSyncNotice() {
+      return null;
+    },
     async getBackupKeep() {
       return 0;
     },
@@ -1039,6 +1042,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "takeIdentifierMigrationNotice",
   "takeDataHomeFallbackNotice",
   "gitAutocommitStatus",
+  "gitSyncNotice",
   "getBackupKeep",
   "listBackups",
   "getCaptureEnterFiles",
@@ -1186,6 +1190,9 @@ export const PUBLISHED_REFUSED_METHODS = [
   "rollbackPdfAreaImage",
   "setBackupKeep",
   "setGitAutocommit",
+  "gitSyncNow",
+  "gitSignIn",
+  "gitSignOut",
   "setCaptureEnterFiles",
   "setWatchMode",
   "restoreBackup",

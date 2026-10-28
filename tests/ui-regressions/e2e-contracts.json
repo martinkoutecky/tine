@@ -238,6 +238,12 @@
       "nonRequirements":["Interval-driven commits (covered by Rust tests), push or pull, or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-git-sync.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"In a graph that is a git clone of a local bare repository, Settings → Graph names the remote and turns on Commit and sync on demand; an edit followed by Sync now pushes Tine's autosave commit; a commit pushed from a second clone reaches the open page through Sync now; when both sides have new commits Sync now changes neither the graph nor the remote, Settings names the divergence with the git command to merge, and the notice outside Settings appears; for an HTTPS remote Sign in keeps the token only in an owner-only app-data file.","blocking":true,"authority":"ADR 0078 slice 2; D-20261028-SG; D-20261027-OF"}],
+      "acceptableVariations":["Sync timing, Settings layout and notice wording may vary while each cycle ends with the named result and the repositories hold these commits."],
+      "nonRequirements":["Automatic sync on the interval (covered by Rust tests), HTTPS transport against a real host (covered by the transport's TLS fixture tests), Concord merging, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-sw-r2-polish2.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Settings highlights matching English and Chinese labels; Diagnostics retains real reporting, clear and rescan without the parser comparison runner.","blocking":true}],
       "acceptableVariations":["Typography, matching counts and diagnostic report content may vary while matches are highlighted and the remaining tools work."],

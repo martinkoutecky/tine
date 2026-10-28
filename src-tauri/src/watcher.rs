@@ -18,12 +18,12 @@ use tine_store::{Change, ChangeKind, GraphRev, Origin, SubscriptionEnd, WatchBat
 const BULK_CHANGE_THRESHOLD: usize = 32;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-struct GraphChange {
-    path: String,
-    name: String,
-    kind: PageKind,
-    created: bool,
-    removed: bool,
+pub(crate) struct GraphChange {
+    pub(crate) path: String,
+    pub(crate) name: String,
+    pub(crate) kind: PageKind,
+    pub(crate) created: bool,
+    pub(crate) removed: bool,
 }
 
 pub(crate) fn watch_mode(app: &tauri::AppHandle) -> WatchMode {
@@ -388,7 +388,7 @@ fn run_rescan(
 
 /// One publication's page events as window events: one `graph-changed` per
 /// page, or a single `graph-changed-bulk` above `BULK_CHANGE_THRESHOLD`.
-fn page_event_payloads(
+pub(crate) fn page_event_payloads(
     events: Vec<GraphChange>,
     binding_generation: u64,
     answers: Option<serde_json::Value>,
@@ -404,8 +404,9 @@ fn page_event_payloads(
         })
     };
     if events.len() > BULK_CHANGE_THRESHOLD || events.is_empty() && answers.is_some() {
-        let changes: Vec<_> = events.into_iter().map(payload).collect();
-        let bulk = serde_json::json!({ "changes": changes, "binding_generation": binding_generation, "answers": answers });
+        // Named `pages`: host_slot_guard_tests matches by name, and git_pull has a function `changes`.
+        let pages: Vec<_> = events.into_iter().map(payload).collect();
+        let bulk = serde_json::json!({ "changes": pages, "binding_generation": binding_generation, "answers": answers });
         vec![("graph-changed-bulk", bulk)]
     } else {
         events

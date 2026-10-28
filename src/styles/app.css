@@ -9136,6 +9136,9 @@ html.tine-embed-shading-accent .embed-block {
 .owner-protection-notice details { min-width: 0; }
 .owner-protection-notice details[open] { flex-basis: 100%; }
 .owner-protection-notice summary { cursor: pointer; }
+/* Git sync's fixes (Settings → Graph → Git and its notice): the git command on its own line, wrapped and selectable. */
+.git-sync-fixes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.git-sync-fixes code { flex-basis: 100%; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .owner-protection-error { flex-basis: 100%; margin: 0; }
 .settings-backup-origin { display: block; color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
 .settings-backup-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }

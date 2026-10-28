@@ -598,6 +598,28 @@ fn https_fetch_and_push_retry_401_once_and_keep_graph_bytes_unchanged() {
     );
 }
 
+/// I-25 (the sync worker's idle cycle): when neither side changed, a fetch
+/// reads the ref advertisement and asks for no pack.
+#[test]
+fn an_idle_https_fetch_reads_only_the_advertisement() {
+    let f = Fixture::new();
+    let server = Server::start(&f, "auth", "");
+    track(&f.repo, &server.remote());
+    let (op, _) = server.operation(Some("fixture-token"));
+    assert_eq!(op.fetch(&f.root), Outcome::UpToDate);
+    let before = server.requests().len();
+    let (op, _) = server.operation(Some("fixture-token"));
+    assert_eq!(op.fetch(&f.root), Outcome::UpToDate);
+    let idle: Vec<_> = server.requests().split_off(before);
+    assert!(
+        idle.iter().all(|r| r["method"] == "GET"),
+        "no upload-pack POST: {idle:?}"
+    );
+    // The advertisement, after the host's 401 challenge (credentials are
+    // never sent unasked).
+    assert!(idle.len() <= 2, "{idle:?}");
+}
+
 #[test]
 fn https_missing_or_rejected_token_is_typed_auth_required_with_bounded_retry() {
     for secret in [None, Some("wrong-secret")] {

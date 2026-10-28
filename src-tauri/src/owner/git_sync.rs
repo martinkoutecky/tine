@@ -3,12 +3,9 @@
 //! The apply lane can hold git_run::serialized across fetch/apply/push and
 //! use the `_locked` entry points. Public entry points take that lock themselves.
 //!
-//! Credential storage is deliberately absent pending GIT-CRED. Providers receive
-//! the original HTTPS repository URL only after a 401 and must scope tokens to
-//! that repository. Tokens never enter repository config or libgit2 callbacks.
-
-// These APIs are consumed by the subsequent apply/UI lanes.
-#![allow(dead_code)]
+//! Tokens come from [`credentials`] (one small module, so a keychain could
+//! replace its file). Providers receive the original HTTPS repository URL only
+//! after a 401. Tokens never enter repository config or libgit2 callbacks.
 
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -19,6 +16,7 @@ use git2::{AutotagOption, FetchOptions, FetchPrune, Oid, PushOptions, RemoteCall
 
 use super::git_run::{open_repo_at, raw_content_conversion, Repo, RUN_LOCK};
 
+pub(crate) mod credentials;
 mod http;
 
 pub(crate) const AVAILABLE: bool = true;
@@ -339,7 +337,42 @@ fn validated_remote<'a>(repo: &'a Repo, url: &str) -> Result<git2::Remote<'a>, O
     Ok(remote)
 }
 
+/// What Settings shows before sync is chosen: the tracked remote, or why sync
+/// cannot run. Reads configuration only; each cycle's [`checked`] also checks
+/// every tracked path's attributes.
+pub(crate) fn remote(root: &Path) -> Result<Remote, Outcome> {
+    let repo = config_checked(root)?;
+    let target = Target::read(&repo)?;
+    Ok(Remote {
+        https_origin: https_origin(&target.fetch_url),
+        name: target.remote,
+        // Target refuses an HTTPS URL carrying credentials; a file URL holds none.
+        url: target.fetch_url,
+    })
+}
+
+/// The tracked remote Settings names (read from the repository config, which
+/// Tine never writes).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct Remote {
+    pub(crate) name: String,
+    pub(crate) url: String,
+    /// `https://host[:port]` for an HTTPS remote: what a token is kept for.
+    pub(crate) https_origin: Option<String>,
+}
+
+/// `https://host[:port]` of an HTTPS remote URL, `None` for any other.
+pub(crate) fn https_origin(url: &str) -> Option<String> {
+    http::https_url(url)
+        .ok()
+        .map(|u| u.origin().ascii_serialization())
+}
+
 fn checked(root: &Path) -> Result<Repo, Outcome> {
+    checked_paths(config_checked(root)?)
+}
+
+fn config_checked(root: &Path) -> Result<Repo, Outcome> {
     let repo = open_repo_at(root).map_err(|e| Outcome::Refused(e.message))?;
     if !repo.prefix.as_os_str().is_empty() {
         return Err(refused(
@@ -360,6 +393,10 @@ fn checked(root: &Path) -> Result<Repo, Outcome> {
         Err(error) if error.code() != git2::ErrorCode::NotFound => return Err(git_error(error)),
         _ => {}
     }
+    Ok(repo)
+}
+
+fn checked_paths(repo: Repo) -> Result<Repo, Outcome> {
     let index = repo.repo.index().map_err(git_error)?;
     if index.iter().any(|e| e.flags_extended & (1 << 14) != 0) {
         return Err(refused("sync refuses sparse/skip-worktree entries"));
@@ -404,6 +441,7 @@ fn checked(root: &Path) -> Result<Repo, Outcome> {
 }
 
 struct Target {
+    remote: String,
     merge: String,
     tracking: String,
     fetch_url: String,
@@ -490,6 +528,7 @@ impl Target {
             }
         }
         Ok(Self {
+            remote: remote_name,
             merge,
             tracking,
             fetch_url,

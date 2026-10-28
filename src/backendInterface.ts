@@ -42,7 +42,7 @@ import type {
   QueryPublicationPlan,
   PublicationReceipt,
 } from "./types";
-import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, GraphAccessInspection, TrayStatus, GitAutocommitStatus, GitPolicy } from "./backendTypes";
+import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, GraphAccessInspection, TrayStatus, GitAutocommitStatus, GitPolicy, GitSyncStatus } from "./backendTypes";
 import type { EditKinds } from "./editKind";
 import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import type { NativeTineLinks } from "./nativeTineLinks";
@@ -627,6 +627,13 @@ export interface Backend {
   gitAutocommitStatus(): Promise<GitAutocommitStatus>;
   /** Set this device's autocommit policy for the bound graph; answers the new status. */
   setGitAutocommit(policy: GitPolicy, intervalMinutes: number): Promise<GitAutocommitStatus>;
+  /** "Sync now": commit pending changes, then one sync cycle on the graph's git thread. Answers at once. */
+  gitSyncNow(): Promise<GitAutocommitStatus>;
+  /** A sync problem that persists, for the notice outside Settings; `null` when there is none. */
+  gitSyncNotice(): Promise<GitSyncStatus | null>;
+  /** Keep a token for the remote's HTTPS host on this device (never in the graph or settings). */
+  gitSignIn(username: string, token: string): Promise<GitAutocommitStatus>;
+  gitSignOut(): Promise<GitAutocommitStatus>;
   /** How many launch snapshots to keep. */
   getBackupKeep(): Promise<number>;
   setBackupKeep(keep: number): Promise<void>;

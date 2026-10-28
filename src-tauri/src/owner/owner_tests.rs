@@ -42,6 +42,10 @@ mod git_run;
 #[path = "owner_tests/git_pull_tests.rs"]
 mod git_pull;
 
+#[cfg(desktop)]
+#[path = "owner_tests/git_sync_cycle_tests.rs"]
+mod git_sync_cycle;
+
 struct Graph {
     _dir: tempfile::TempDir,
     root: PathBuf,
@@ -629,6 +633,11 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
         ("git_pull", include_str!("git_pull.rs")),
         ("git_run", include_str!("git_run.rs")),
         ("git_sync", include_str!("git_sync.rs")),
+        (
+            "git_sync_credentials",
+            include_str!("git_sync/credentials.rs"),
+        ),
+        ("git_sync_cycle", include_str!("git_sync_cycle.rs")),
         ("git_sync_http", include_str!("git_sync/http.rs")),
         ("git_sync_mobile", include_str!("git_sync_mobile.rs")),
         ("lease", include_str!("lease.rs")),
@@ -660,7 +669,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 23, "scan every owner/*.rs file");
+    assert_eq!(files, 24, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];

@@ -23,6 +23,7 @@ src/components/CustomCssSettings.tsx isMac x1  # why: os-convention; the develop
 src/components/CustomCssSettings.tsx platform-literal x1  # why: native-api; developer tools and CSS default-app handoff exist on desktop hosts only
 src/components/CustomCssSettings.tsx platformKind x1  # why: native-api; developer tools and CSS default-app handoff exist on desktop hosts only
 src/components/DiagnosticsTab.tsx isMobilePlatform x1  # why: native-api; saving a report file uses the desktop file dialog
+src/components/GitSyncNotice.tsx canRevealInFileManager x1  # why: native-api; "open the folder" fix for a sync problem is a desktop shell call
 src/components/GraphFolderSetting.tsx canRevealInFileManager x1  # why: native-api; reveal-in-file-manager is a desktop shell call
 src/components/GraphPublish.tsx platform-literal x1  # why: native-api; publish folder access differs per host
 src/components/GraphPublish.tsx platformKind x1  # why: native-api; publish folder access differs per host

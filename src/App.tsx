@@ -57,6 +57,7 @@ installAliasDraftRouteHandler((name, kind) => openPage(name, kind));
 import { pushToast } from "./toasts";
 import { RootRecoveryNotice } from "./components/RootRecoveryNotice";
 import { OwnerProtectionNotice } from "./components/OwnerProtectionNotice";
+import { GitSyncNotice } from "./components/GitSyncNotice";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
@@ -1289,6 +1290,7 @@ export function App(): JSX.Element {
           </div>
         </header>
         <FailureBoundary region="Single-writer protection"><OwnerProtectionNotice /></FailureBoundary>
+        <FailureBoundary region="The git sync notice"><GitSyncNotice /></FailureBoundary>
         <FailureBoundary region="The conflict notice"><ConflictBar /></FailureBoundary>
         <Show when={refreshingFromDisk()}><div class="focus-refresh-status" role="status" aria-live="polite">{t("app-refreshing-changes-from-disk")}</div>
         </Show>

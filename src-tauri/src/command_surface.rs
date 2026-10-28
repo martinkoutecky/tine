@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 229] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 233] = [
     "add_defender_exclusion",
     "app_architecture",
     "app_platform",
@@ -68,6 +68,10 @@ pub(crate) const KNOWN_COMMANDS: [&str; 229] = [
     "get_unlinked_refs",
     "get_watch_mode",
     "git_autocommit_status",
+    "git_sign_in",
+    "git_sign_out",
+    "git_sync_notice",
+    "git_sync_now",
     "gpu_env",
     "graph_link_identity",
     "guide_pages",

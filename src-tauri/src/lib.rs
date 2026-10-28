@@ -1268,7 +1268,11 @@ pub fn run() {
             tine_open_devtools,
             tray::tray_apply,
             git_settings::git_autocommit_status,
-            git_settings::set_git_autocommit
+            git_settings::set_git_autocommit,
+            git_settings::git_sync_now,
+            git_settings::git_sync_notice,
+            git_settings::git_sign_in,
+            git_settings::git_sign_out
         ])
         .build(context)
         .expect("error while building tauri application")

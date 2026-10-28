@@ -98,8 +98,10 @@ export const PERSISTED_FORMATS = Object.freeze([
   "backup-zip-snapshot",
   // Martin 2026-10-18 (D-20261018-Q1 S1: Rule 8 approval of quick share's device-local records); docs/adr/0076.
   "quick-share-records-json", "quick-share-account-json",
+  // PENDING Martin: GIT-CRED (ADR 0078 open question 2) and its Rule 8 approval; not to integrate before.
+  "git-credentials-json",
 ]);
-export const PINNED_FORMAT_COUNT = 33;
+export const PINNED_FORMAT_COUNT = 34;
 // Writer sites Martin approved after the base, each with its ADR. Only an
 // approved format may add sites here; the count is exact, not a budget.
 export const APPROVED_WRITER_SITES = Object.freeze({

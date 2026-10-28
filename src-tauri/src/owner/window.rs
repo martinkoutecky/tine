@@ -19,6 +19,8 @@ use serde_json::json;
 use tauri::Emitter;
 use tine_core::model::PageKind;
 
+use crate::watcher::GraphChange;
+
 /// How long a write waits for the window to save the typed text. The barrier
 /// sends the input and waits for its publication (one guarded save); a
 /// window that does not answer in this time refuses the write, never guesses.
@@ -98,33 +100,35 @@ impl WindowLink {
         }
     }
 
-    /// Tell the window that `path` changed, as the watcher tells it of an
-    /// outside edit (`watcher::page_event_payloads`' per-page shape).
+    /// Tell the window that these pages changed, as the watcher tells it of
+    /// outside edits (`watcher::page_event_payloads`: one `graph-changed` per
+    /// page, one `graph-changed-bulk` for a checkout-sized batch).
+    pub(crate) fn pages_changed(&self, pages: Vec<GraphChange>) {
+        for (event, payload) in
+            crate::watcher::page_event_payloads(pages, self.binding_generation, None)
+        {
+            let _ = self.app.emit_to(self.label.as_str(), event, payload);
+        }
+    }
+
     pub(crate) fn changed(&self, path: &str, name: &str, kind: PageKind, created: bool) {
-        let _ = self.app.emit_to(
-            self.label.as_str(),
-            "graph-changed",
-            json!({
-                "path": path,
-                "name": name,
-                "kind": kind,
-                "created": created,
-                "removed": false,
-                "binding_generation": self.binding_generation,
-                "answers": null,
-            }),
-        );
+        self.pages_changed(vec![GraphChange {
+            path: path.into(),
+            name: name.into(),
+            kind,
+            created,
+            removed: false,
+        }]);
     }
 
     pub(crate) fn removed(&self, path: &str, name: &str, kind: PageKind) {
-        let _ = self.app.emit_to(
-            self.label.as_str(),
-            "graph-changed",
-            json!({
-                "path":path,"name":name,"kind":kind,"created":false,"removed":true,
-                "binding_generation":self.binding_generation,"answers":null,
-            }),
-        );
+        self.pages_changed(vec![GraphChange {
+            path: path.into(),
+            name: name.into(),
+            kind,
+            created: false,
+            removed: true,
+        }]);
     }
 
     pub(crate) fn renamed(

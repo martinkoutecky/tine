@@ -20,7 +20,6 @@ pub(crate) mod client;
 pub(crate) mod endpoint;
 #[cfg(desktop)]
 pub(crate) mod git_autocommit;
-#[cfg_attr(not(test), allow(dead_code))] // GS-UI's sync worker calls `pull`
 #[cfg(desktop)]
 pub(crate) mod git_pull;
 #[cfg(desktop)]
@@ -30,6 +29,8 @@ pub(crate) mod git_sync;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 #[path = "git_sync_mobile.rs"]
 pub(crate) mod git_sync;
+#[cfg(desktop)]
+pub(crate) mod git_sync_cycle;
 pub(crate) mod lease;
 pub(crate) mod lock;
 pub(crate) mod namespace;

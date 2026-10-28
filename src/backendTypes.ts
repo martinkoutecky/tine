@@ -65,9 +65,31 @@ export interface GpuEnv {
   portable: boolean;
 }
 
-/** Settings → Graph → Git (ADR 0078): the bound graph's autocommit state. On a
+/** Settings → Graph → Git (ADR 0078): the bound graph's autocommit and sync state. On a
  *  platform without git only `available: false` is sent. */
-export type GitPolicy = "off" | "commit";
+export type GitPolicy = "off" | "commit" | "sync-on-demand" | "sync-automatically";
+/** The last sync cycle (ADR 0078 §4): `code` is its refusal-table row. */
+export interface GitSyncStatus {
+  /** A cycle is running now. */
+  running: boolean;
+  /** Unix seconds when the last cycle finished. */
+  at: number | null;
+  code: string | null;
+  message: string | null;
+  /** The file a held or refused pull names. */
+  path: string | null;
+  /** Unix seconds of the last cycle that succeeded. */
+  ok_at: number | null;
+  failures: number;
+  /** Shown outside Settings too. */
+  persistent: boolean;
+}
+export interface GitRemote {
+  name: string;
+  url: string;
+  /** `https://host[:port]` when the remote takes a sign-in. */
+  https_origin: string | null;
+}
 export interface GitAutocommitStatus {
   available: boolean;
   /** The graph is inside a git work tree. */
@@ -88,7 +110,14 @@ export interface GitAutocommitStatus {
     refused: [string, string] | null;
     /** An `index.lock` held through several cycles over 30 minutes. */
     stale_lock: string | null;
+    sync?: GitSyncStatus;
   };
+  /** The tracked remote, when sync can run here. */
+  remote?: GitRemote | null;
+  /** Why the sync options are refused: [code, message]. */
+  sync_unusable?: [string, string] | null;
+  /** The username signed in for the remote's host on this device. */
+  signed_in?: string | null;
 }
 
 export interface BackupInfo {

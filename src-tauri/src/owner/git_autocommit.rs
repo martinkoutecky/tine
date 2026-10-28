@@ -17,7 +17,9 @@
 //! operation ([`around`]). One worker thread per graph root does the timed
 //! commits; libgit2 never runs on an async worker. Autocommits take the CLI
 //! runs' lock ([`RUN_LOCK`]), so they never fall between a run write's
-//! snapshot and its agent commit.
+//! snapshot and its agent commit. With a sync policy the same worker runs
+//! the sync cycles ([`super::git_sync_cycle`]): after each autocommit and on
+//! the interval when automatic, on "Sync now" either way.
 //!
 //! Only `.git` objects, refs and the index are normally written here. The
 //! single graph-file exception (D-20261026-GI) appends `.syncthing.*` once
@@ -39,6 +41,8 @@ use super::git_run::IndexLock;
 use super::git_run::{
     open_repo_at, raw_content_conversion as converting, LockRefusal, Repo, CAS_ATTEMPTS, RUN_LOCK,
 };
+use super::git_sync::Credentials;
+use super::git_sync_cycle::SyncStatus;
 use crate::state::GraphSlot;
 
 /// No publication for this long before a timed autocommit (G9).
@@ -73,19 +77,30 @@ const EXIT_GRACE: Duration = Duration::from_millis(500);
 static EXITING: AtomicBool = AtomicBool::new(false);
 
 /// The app is exiting ([`EXITING`]).
-#[cfg_attr(not(test), allow(dead_code))] // the pull (GS-UI wires it)
 pub(super) fn exiting() -> bool {
     EXITING.load(Ordering::Acquire)
 }
 
-/// What Tine does with a git graph on this device (ADR 0078 §1). Slice 1
-/// offers `Off` and `Commit`; sync arrives with slice 2.
+/// What Tine does with a git graph on this device (ADR 0078 §1). Both sync
+/// options also commit automatically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum Policy {
     #[default]
     Off,
     Commit,
+    SyncOnDemand,
+    SyncAutomatically,
+}
+
+impl Policy {
+    pub(crate) fn commits(self) -> bool {
+        self != Self::Off
+    }
+
+    pub(crate) fn syncs(self) -> bool {
+        matches!(self, Self::SyncOnDemand | Self::SyncAutomatically)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -838,7 +853,7 @@ pub(crate) fn around<T, E>(
     verb: impl FnOnce() -> String,
     op: impl FnOnce() -> Result<T, E>,
 ) -> Result<T, E> {
-    if registry::settings(root).policy != Policy::Commit {
+    if !registry::settings(root).policy.commits() {
         return op();
     }
     let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -871,6 +886,7 @@ pub(crate) struct LastAttempt {
     /// `index.lock` stayed held through several cycles: probably left by a
     /// crash. Settings names it; Tine never deletes it.
     pub(crate) stale_lock: Option<String>,
+    pub(crate) sync: SyncStatus,
 }
 
 mod registry {
@@ -891,6 +907,9 @@ mod registry {
         /// Bumped after every flush the worker finished.
         pub(super) flushed: u64,
         pub(super) last: LastAttempt,
+        /// "Sync now" was asked for.
+        pub(super) sync_requested: bool,
+        pub(super) credentials: Option<Arc<dyn Credentials>>,
         pub(super) commits_since_repack: u32,
         pub(super) repack_not_before: Option<Instant>,
         pub(super) running: bool,
@@ -952,8 +971,13 @@ mod registry {
 }
 
 /// Start (or retarget) the autocommit worker of `slot`'s graph root with
-/// `settings` read from the device settings at bind.
-pub(crate) fn start_worker(slot: &Arc<GraphSlot>, settings: GitSettings) {
+/// `settings` read from the device settings at bind, and the device's git
+/// tokens for its sync cycles.
+pub(crate) fn start_worker(
+    slot: &Arc<GraphSlot>,
+    settings: GitSettings,
+    credentials: Arc<dyn Credentials>,
+) {
     let worker = loop {
         let (worker, fresh) = registry::get_or_insert(&slot.root_key);
         let mut state = worker.state.lock().unwrap();
@@ -965,6 +989,7 @@ pub(crate) fn start_worker(slot: &Arc<GraphSlot>, settings: GitSettings) {
         state.slot = Arc::downgrade(slot);
         state.store = Some(slot.store.clone());
         state.settings = settings;
+        state.credentials = Some(credentials.clone());
         if !fresh && state.running {
             worker.wake.notify_all();
             return;
@@ -993,6 +1018,19 @@ pub(crate) fn set_settings(root: &Path, settings: GitSettings) {
     }
 }
 
+/// "Sync now": the worker commits pending changes, then runs one sync cycle.
+/// `false` when the graph has no worker.
+pub(crate) fn request_sync(root: &Path) -> bool {
+    let Some(worker) = registry::get(root) else {
+        return false;
+    };
+    let mut state = worker.state.lock().unwrap();
+    state.sync_requested = true;
+    state.last.sync.running = true;
+    worker.wake.notify_all();
+    true
+}
+
 pub(crate) fn last_attempt(root: &Path) -> LastAttempt {
     registry::get(root)
         .map(|w| w.state.lock().unwrap().last.clone())
@@ -1012,11 +1050,14 @@ pub(super) fn bound_store(root: &Path) -> Option<Arc<tine_store::Store>> {
 /// sure none is left when the process ends (review N2).
 pub(crate) fn flush_all(budget: Duration) {
     let deadline = Instant::now() + budget.saturating_sub(EXIT_GRACE);
+    // The quit commit is local and comes first: no network step starts, and
+    // one in flight is cancelled rather than waited on.
+    super::git_sync_cycle::stop_network();
     let workers = registry::all();
     let mut waits = Vec::new();
     for worker in &workers {
         let mut state = worker.state.lock().unwrap();
-        if state.settings.policy == Policy::Commit && state.running {
+        if state.settings.policy.commits() && state.running {
             state.flush = true;
             waits.push((worker.clone(), state.flushed));
             worker.wake.notify_all();
@@ -1059,14 +1100,20 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
     let mut busy_since: Option<(Instant, u32)> = None;
     let mut checked_loose = false;
     let started = Instant::now();
+    // When the next automatic sync cycle is due (`None`: at once), and
+    // whether failures are backing it off (then a commit does not bring it
+    // forward: no retry loop while diverged or offline).
+    let mut sync_after: Option<Instant> = None;
+    let mut backing_off = false;
     loop {
-        let (settings, flush, slot) = {
+        let (settings, flush, slot, sync_now) = {
             let mut state = worker.state.lock().unwrap();
-            if !state.flush {
+            if !state.flush && !state.sync_requested {
                 state = worker.wake.wait_timeout(state, TICK).unwrap().0;
             }
             let flush = std::mem::take(&mut state.flush);
-            (state.settings, flush, state.slot.upgrade())
+            let sync_now = std::mem::take(&mut state.sync_requested);
+            (state.settings, flush, state.slot.upgrade(), sync_now)
         };
         let ending = ended(slot.as_ref());
         let rev = slot
@@ -1081,7 +1128,9 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
             }
             last_rev = rev;
         }
-        let commit = settings.policy == Policy::Commit && !EXITING.load(Ordering::Acquire);
+        let commit = settings.policy.commits() && !EXITING.load(Ordering::Acquire);
+        // "Sync now" commits pending changes first, whatever the cadence.
+        let sync_now = sync_now && settings.policy.syncs();
         let due = changed_at.is_some_and(|at| at.elapsed() >= IDLE)
             && last_commit.is_none_or(|at| at.elapsed() >= settings.interval);
         // At bind: changes made while Tine was closed are committed after
@@ -1090,7 +1139,8 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
             && changed_at.is_none()
             && rev.is_some()
             && started.elapsed() >= IDLE;
-        if commit && (flush || ending || due || first) {
+        let mut committed = false;
+        if commit && (flush || ending || due || first || sync_now) {
             let outcome = commit_now(&root, MESSAGE);
             let mut state = worker.state.lock().unwrap();
             match &outcome {
@@ -1100,6 +1150,7 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
                     state.last.stale_lock = None;
                     changed_at = None;
                     if let Outcome::Committed(oid) = done {
+                        committed = true;
                         last_commit = Some(Instant::now());
                         state.last.committed_at = Some(chrono::Utc::now().timestamp());
                         state.last.commit = Some(oid.to_string());
@@ -1137,6 +1188,16 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
                 maybe_repack(&worker, &root, repack_due);
             }
         }
+        let automatic = settings.policy == Policy::SyncAutomatically
+            && ((committed && !backing_off) || sync_after.is_none_or(|at| Instant::now() >= at));
+        if !flush && !ending && !EXITING.load(Ordering::Acquire) && (sync_now || automatic) {
+            if let Some((delay, backoff)) = sync_on_worker(&worker, settings.interval) {
+                sync_after = Some(Instant::now() + delay);
+                backing_off = backoff;
+            }
+        } else if sync_now || !settings.policy.syncs() {
+            worker.state.lock().unwrap().last.sync.running = false;
+        }
         if flush || ending {
             let mut state = worker.state.lock().unwrap();
             state.flushed += 1;
@@ -1151,6 +1212,29 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
             }
         }
     }
+}
+
+/// One sync cycle on this thread; answers when the next automatic one is due
+/// and whether that is a back-off (`None`: the graph is unbinding).
+fn sync_on_worker(worker: &registry::Worker, interval: Duration) -> Option<(Duration, bool)> {
+    let (slot, credentials) = {
+        let mut state = worker.state.lock().unwrap();
+        state.last.sync.running = true;
+        let credentials = state
+            .credentials
+            .clone()
+            .unwrap_or_else(|| Arc::new(super::git_sync::NoCredentials));
+        (state.slot.upgrade(), credentials)
+    };
+    let Some(slot) = slot.filter(|s| !ended(Some(s))) else {
+        worker.state.lock().unwrap().last.sync.running = false;
+        return None;
+    };
+    let cycle = super::git_sync_cycle::cycle(&slot, &credentials);
+    drop(slot);
+    let mut state = worker.state.lock().unwrap();
+    let delay = state.last.sync.record(&cycle, interval);
+    Some((delay, cycle.backs_off()))
 }
 
 fn maybe_repack(worker: &registry::Worker, root: &Path, due: bool) {
@@ -1204,6 +1288,13 @@ pub(crate) struct GitStatus {
     pub(crate) policy: Policy,
     pub(crate) interval_minutes: u32,
     pub(crate) last: LastAttempt,
+    /// The tracked remote (read from the repository config), when sync can
+    /// run here.
+    pub(crate) remote: Option<super::git_sync::Remote>,
+    /// Why the sync options are refused (`code`, message), when they are.
+    pub(crate) sync_unusable: Option<(String, String)>,
+    /// The username this device signed in with for the remote's host.
+    pub(crate) signed_in: Option<String>,
 }
 
 pub(crate) fn git_status(root: &Path, settings: GitSettings) -> GitStatus {
@@ -1229,14 +1320,26 @@ pub(crate) fn git_status(root: &Path, settings: GitSettings) -> GitStatus {
             Some((error.code().to_string(), error.message())),
         ),
     };
+    let (remote, sync_unusable) = match (&unusable, repository) {
+        (Some(why), _) => (None, Some(why.clone())),
+        (None, false) => (None, None),
+        (None, true) => match super::git_sync::remote(root) {
+            Ok(remote) => (Some(remote), None),
+            Err(super::git_sync::Outcome::Refused(why)) => (None, Some(("refused".into(), why))),
+            Err(other) => (None, Some(("refused".into(), format!("{other:?}")))),
+        },
+    };
     GitStatus {
-        available: true,
+        available: super::git_sync::AVAILABLE,
         repository,
         branch,
         unusable,
         policy: settings.policy,
         interval_minutes: (settings.interval.as_secs() / 60) as u32,
         last: last_attempt(root),
+        remote,
+        sync_unusable,
+        signed_in: None,
     }
 }
 

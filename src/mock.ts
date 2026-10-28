@@ -1523,6 +1523,13 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async setGitAutocommit(): Promise<never> {
       throw new Error("git is not available in the browser mock");
     },
+    async gitSyncNotice() {
+      return null;
+    },
+    // Git sync, like the setting above, has no browser-mock repository.
+    gitSyncNow: () => Promise.reject(new Error("git is not available in the browser mock")),
+    gitSignIn: () => Promise.reject(new Error("git is not available in the browser mock")),
+    gitSignOut: () => Promise.reject(new Error("git is not available in the browser mock")),
     async getBackupKeep(): Promise<number> {
       return 12;
     },
