@@ -69,8 +69,7 @@ zero-test filter does not. Duplicate executions are not extra scenario samples.
 | M | [macOS run 40627810691](https://github.com/martinkoutecky/tine/actions/runs/40627810691), saved `artifacts/ci/macos-40627810691.log` | macOS 26.6.2 (25G83), arm64; image `macos-26-arm64` / `20261013.0424.1` (lines 11–20) | Temp `/Users/runner/work/_temp` and resolved app data `/Users/runner/Library/Application Support/page.tine.TineBeta`; all three F-M3S-1 witnesses passed at each (lines 2247–2252, 2636–2640). Case/normalization witnesses passed; filesystem type **not logged**, so this receipt does not independently verify an APFS label or iCloud storage |
 | E | Earlier `gate-og-sb1-accept2-r2.log`, supplied Linux real-app gate | Linux per manager; OS version and filesystem not logged | Three explicit owner warning/edit/repair/handover PASS records (lines 8242–8247). The log records commit `4b1e1bf6d14d6ef58e70ee1bffb82cbdc36c10ce`, not `4aa285dc6` or `4e3c53cea`; retained only as earlier evidence |
 
-L/E are under the manager's supplied
-`/aux/koutecky/logseq/tine-agents/runtime/logs/` directory. W/M logs include
+L/E are the maintainer's local gate logs, kept outside the repository. W/M logs include
 checkout hashes (W line 95, M line 109) and complete job cleanup; no truncation
 was found. Filesystem names cannot be filled from runner-image expectations.
 Successful C8 tests establish their asserted resolver behaviour, not a
