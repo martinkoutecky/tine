@@ -1,7 +1,7 @@
 # 0078 — Git graphs: Tine autocommits, and syncs fast-forward only through the page host
 
 - **Status:** Accepted for autocommit (slice 1), rev 1 (data-safety review folded in: `tine-agents/subagent-tasks/notes/review-adr-0078-git.md`; design accepted by Martin 2026-10-18/19: D-20261018-G1…G7, D-20261019-G8/G9; the autocommit unit cost accepted by Martin 2026-10-26, D-20261026-GC).
-  Git sync (slice 2) stays proposed: its push cost and credentials (open questions 1 and 2) are undecided.
+  Git sync (slice 2) is in 0.9 (D-20261028-SG); §4 rev 2 follows storage model s3.7 (repairs P1–P4; the residual is a stated limit, D-20261028-GU). Its push cost and credentials (open questions 1 and 2) are undecided.
 - **Date:** 2026-10-21
 
 ## Prior decisions
@@ -151,29 +151,46 @@ commit refusal, without a toast. Retry on a successful commit cycle after at lea
 ### 4. Applying a pull (the one-way door)
 Sync = fetch, then fast-forward, then push. The fast-forward never runs git's checkout. Let `H` be `HEAD` and `U`
 the fetched upstream tip (the remote-tracking ref, which fetch already persists), with `U` a strict descendant of
-`H`. The changed paths between `H` and `U` inside the graph root are applied in this order:
+`H`. The order below is the storage model s3.7 (`docs/storage-model/spec/SPEC-s37-gitpull.md`): the literal
+order of this ADR's first version failed four of its five checked properties, and repairs P1–P4 are part of the
+design. The changed paths between `H` and `U` inside the graph root are applied in this order:
 
-1. **Pre-check.** Every changed entry is a regular file (mode 100644/100755, no mode-only change) and every
-   non-page file still holds its `H` blob (or is absent). A symlink, gitlink, file↔directory change, mode-only
-   change or an ignored local file in the way refuses the pull by name before anything is written.
+1. **Pre-check.** Every changed entry is a regular file (mode 100644/100755, no mode-only change); every
+   non-page file holds its `H` blob, or is absent, or (on resume) already holds its `U` blob; no changed path's
+   index entry is a staged blob other than its `H` or `U` blob (git's own fast-forward refuses there too). A
+   symlink, gitlink, file↔directory change, mode-only change, foreign staged blob or an ignored local file in
+   the way refuses the pull by name before anything is written.
 2. **Pages** (anything the page host owns) go through `HostOp`s with `Effect::Write(new blob)` or `Delete`,
-   `Expected::Bytes(H blob)` or `Absent`, `Input::Refuse`, and a new `EditKind::GitPull`. Each upstream rename
-   (git's rename detection) is its own op with `moved`, as the host allows one move per op; case-only renames
+   `Expected::Bytes(H blob)` or `Absent`, `Input::Refuse`, and the existing edit kinds (`ReplacePage`,
+   `CreatePage`, `DeletePage`, `RenamePage`; the first version's new `GitPull` kind is dropped, so the closed
+   edit-kind vocabulary shared with the frontend does not change). Each upstream rename
+   (git's rename detection) is its own op with `moves`, as the host allows one move per op; case-only renames
    follow the #609 contract. The remaining pages are one op. The host admits an op only if every page still holds
-   exactly the `H` bytes and none has unsaved input.
+   exactly the `H` bytes and none has unsaved input. A path that already holds its `U` blob is skipped.
 3. **Other files** (assets, files Tine does not parse) are written by the store's checked atomic writer (temp,
    fsync, rename, directory sync, pre-rename check against the `H` blob), parents created as needed; deletions by
    a checked delete. `logseq/config.edn` goes through the config writer's own lock and live publication. All are
-   new write-protocol census sites. The watcher reports these as outside changes, which is what they are.
-4. **Ref and index**, holding `index.lock` (no lock, no ref move): the branch moves from `H` to `U` by
-   compare-and-swap, then the index entries of the changed paths move to `U`'s blobs under `git_run.rs`'s
-   staged-kept rule. A stale index under a moved `HEAD` would let the user's next plain `git commit` record a
-   reversion of the pull, which Tine would push.
+   write-protocol census sites. The watcher reports these as outside changes, which is what they are.
+4. **Durability barrier (P2)**, holding `index.lock`: every changed path is fsynced together with its directory
+   (a deleted page: its directory and the trash), including paths skipped as already at `U`. A failed sync ends
+   the cycle `pull-incomplete` with nothing moved.
+5. **Index, then ref (P1, P1b).** Still holding `index.lock`, the index entries of the changed paths move to
+   `U`'s blobs under `git_run.rs`'s staged-kept rule and the index is installed durably (copy fsynced, renamed,
+   `.git` synced; Windows: identity checks without directory flush). Then `index.lock` is taken again and the
+   branch moves from `H` to `U` by compare-and-swap. A crash between the two leaves `HEAD = H` over an index at
+   `U`: the next cycle resumes, and a plain `git commit` meanwhile records `H` plus the pull's changes, never a
+   reversion. A refused compare-and-swap leaves the index at `U`, which matches the working tree.
 
-**Resume.** A crash, an `Uncertain`/`Unwritten` answer or a refusal after step 2 leaves some paths at `U` and the
-ref at `H`. Before the pre-pull autocommit, if `U` is a strict descendant of `H` and every path that differs from
-`H` holds its `U` blob, the autocommit is skipped and the pull resumes; paths already at their `U` blob are
-skipped. Otherwise (a genuine local change) the autocommit runs and the pull ends as `diverged`: nothing is lost.
+**Resume.** A crash, an `Uncertain`/`Unwritten` answer or a refusal before step 5 completes leaves some paths at
+`U` and the ref at `H`. Before **every** autocommit (pre-pull, cadence, background/quit, structural brackets: P3),
+if a fetched `U` is a strict descendant of `H` and every path that differs from `H` holds its `U` blob or is in
+this process's applied-path set (P4), the autocommit is skipped and the next sync resumes the pull from step 1.
+Otherwise (a genuine local change) the autocommit runs and the pull ends as `diverged`: nothing is lost.
+
+**Stated limit (D-20261028-GU).** If the user edits a pulled path back to exactly its `H` bytes while the pull is
+held, and the process then crashes, loses power or switches graph before step 5 (or another program, such as a
+sync service, delivers `U` and then `H`), the resumed pull writes `U` over that text. The overwritten text is
+`H`'s blob and stays in git history. Within one process the applied-path set prevents it.
 
 Refusals (contract refusal table rows, each with its in-scope threat):
 
@@ -182,8 +199,8 @@ Refusals (contract refusal table rows, each with its in-scope threat):
 | `pull-held: unsaved` (a pulled page has unsaved input) | concurrent edit in a window | retried at the next sync once the page saves; nothing written |
 | `pull-held: changed` (a file no longer holds its `H` bytes; HostOp `Changed`) | an external editor or Syncthing changed it after the autocommit | the next cycle autocommits it, then diverges |
 | `pull-held: busy` (HostOp `Busy`, `index.lock`, `gc.pid`) | other work holds the pages, or another git command runs | retried later; the stale-lock notice after 30 min (§1) |
-| `pull-incomplete` (HostOp `Unwritten`, `Superseded`, `Uncertain`, `DraftFailed`, a failed non-page write) | disk error, full disk, a page edited back before it published | the ref stays at `H`; the resume rule finishes it |
-| `pull-refused: <path> <reason>` (symlink, submodule, type or mode change, ignored local file in the way) | the user's repository content | Settings names the path; the user resolves it in git |
+| `pull-incomplete` (HostOp `Unwritten`, `Superseded`, `Uncertain`, `DraftFailed`, a failed non-page write or durability barrier) | disk error, full disk, a page edited back before it published | the ref stays at `H`; the resume rule finishes it |
+| `pull-refused: <path> <reason>` (symlink, submodule, type or mode change, a staged change other than `H`'s or `U`'s, ignored local file in the way) | the user's repository content | Settings names the path; the user resolves it in git |
 | `diverged` (the remote is not a descendant of `HEAD`, or a push is rejected) | multi-device divergence | phase 1 stops and says so; nothing in the graph changes; phase 2 merges with Concord |
 | `refused: conversion / sparse / precompose / bare / detached / mid-merge` | user's repository configuration | Settings explains; commit-only where possible |
 
