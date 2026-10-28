@@ -567,16 +567,26 @@ fn journal_fallback_title_resolves_existing_day() {
     ));
 }
 
-// Case twins need a case-sensitive filesystem; Windows folds case, so the
-// second write replaces the first file's content under its original name. The
-// Windows sibling below asserts that one-file outcome instead.
-#[cfg(not(windows))]
+// Measure entries rather than assuming an OS implies case sensitivity:
+// default APFS and Windows fold these writes into one physical page.
 #[test]
 fn inventory_targets_agree_with_resolve_for_case_twins() {
     let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     std::fs::write(fixture.0.join("pages/Twin.md"), "- upper\n").unwrap();
     std::fs::write(fixture.0.join("pages/twin.md"), "- lower\n").unwrap();
+    let physical_twins = std::fs::read_dir(fixture.0.join("pages"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| name.to_string_lossy().eq_ignore_ascii_case("twin.md"))
+        .count();
+    assert!(matches!(physical_twins, 1 | 2));
+    if physical_twins == 1 {
+        assert_eq!(
+            std::fs::read(fixture.0.join("pages/Twin.md")).unwrap(),
+            b"- lower\n"
+        );
+    }
     let view = fixture.view();
     let inventory = view.inventory(tine_store::InventoryScope::All);
     let twins: Vec<_> = inventory
@@ -584,7 +594,11 @@ fn inventory_targets_agree_with_resolve_for_case_twins() {
         .iter()
         .filter(|entry| entry.name.eq_ignore_ascii_case("twin"))
         .collect();
-    assert!(!twins.is_empty());
+    assert_eq!(
+        twins.len(),
+        physical_twins,
+        "one inventory entry per stored spelling"
+    );
     for entry in twins {
         let existing = |target: &Resolved| match target {
             Resolved::Existing { id, others } => Some((
@@ -606,7 +620,11 @@ fn inventory_targets_agree_with_resolve_for_case_twins() {
         let Resolved::Existing { others, .. } = &entry.target else {
             panic!("twin should be an existing page");
         };
-        assert_eq!(others.len(), 1, "the other case twin is listed");
+        assert_eq!(
+            others.len(),
+            physical_twins - 1,
+            "every other physical twin is listed, with no phantom claimant"
+        );
     }
 }
 

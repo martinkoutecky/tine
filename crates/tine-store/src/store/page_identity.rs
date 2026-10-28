@@ -89,8 +89,8 @@ impl Store {
     }
 
     /// On a case-insensitive volume, an old route may reach a file through
-    /// another case spelling. Canonicalization reveals the disk spelling;
-    /// accept it only when case is the entire difference and it remains an
+    /// another case or normalization spelling. Canonicalization reveals the
+    /// disk spelling; accept it only under the shared Unicode fold and as an
     /// eligible graph text file. The normal page path guard runs afterward.
     /// A spelling resolver only (for a read and a new host key): which page
     /// a path names is [`crate::model::Graph::identify`]'s (B1).
@@ -100,7 +100,8 @@ impl Store {
         let rel = actual.strip_prefix(&root).ok()?;
         let spelling = rel.to_str()?.replace('\\', "/");
         if spelling == id.as_str()
-            || spelling.to_lowercase() != id.as_str().to_lowercase()
+            || crate::model::entry_identity::fold_leaf(std::ffi::OsStr::new(&spelling))
+                != crate::model::entry_identity::fold_leaf(std::ffi::OsStr::new(id.as_str()))
             || !crate::model::graph_text_eligible(&root, &actual, &self.graph.current_config())
         {
             return None;

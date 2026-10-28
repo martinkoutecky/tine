@@ -5589,12 +5589,22 @@ mod rev5_tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("pages")).unwrap();
         let name = std::ffi::OsString::from_vec(b"lost-\xff.md".to_vec());
-        fs::write(root.join("pages").join(name), b"- text\n").unwrap();
+        let non_utf8 = root.join("pages").join(name);
+        let non_utf8_entries = match fs::write(&non_utf8, b"- text\n") {
+            Ok(()) => 1,
+            // APFS only accepts valid UTF-8 names. The filesystem refuses
+            // this input before a scanner or backup could encounter it.
+            Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => {
+                assert!(!non_utf8.exists());
+                0
+            }
+            Err(error) => panic!("could not create non-UTF-8 fixture: {error}"),
+        };
         fs::write(root.join("pages/invalid\\name.md"), b"- text\n").unwrap();
         fs::create_dir_all(root.join("pages/invalid\\directory")).unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
         let listing = store.scan_area(Area::Pages, None).unwrap();
-        assert_eq!(listing.unreadable.len(), 3);
+        assert_eq!(listing.unreadable.len(), 2 + non_utf8_entries);
         assert!(listing
             .unreadable
             .iter()
