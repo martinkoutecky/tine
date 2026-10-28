@@ -13,7 +13,7 @@ import type { JournalFeedPage, PageRead } from "../types";
 
 beforeAll(initParser);
 afterEach(async () => {
-  endEdit();
+  endEdit("blur");
   vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({
     pages: [], next_before_day: null, done: true, as_of_day: localDayKey(),
   });
