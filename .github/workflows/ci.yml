@@ -262,12 +262,31 @@ jobs:
         run: cargo test --locked --manifest-path vendor/cap-primitives-4.0.2/Cargo.toml --lib removing_extended_prefix_keeps_unc_paths_absolute -- --nocapture
       - name: Windows core and graph-feature tests (including junction filesystem behavior)
         run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
+      # The storage ledger records each tested volume's filesystem from this output.
+      - name: Windows tested volumes (filesystem types for the storage ledger)
+        if: ${{ !cancelled() }}
+        run: |
+          foreach ($p in @($env:RUNNER_TEMP, $env:TEMP, [Environment]::GetFolderPath('ApplicationData'))) {
+            $v = Get-Volume -DriveLetter ([IO.Path]::GetPathRoot($p).Substring(0,1))
+            Write-Output "Tested volume: $p drive=$($v.DriveLetter) filesystem=$($v.FileSystemType) type=$($v.DriveType)"
+          }
       # F-M3S-1: ordinary saves, finite metadata interference and cold draft recovery on NTFS.
       - name: Windows storage volume acceptance (F-M3S-1)
         if: ${{ !cancelled() }}
         env:
           TINE_STORAGE_ACCEPT_ROOT: ${{ runner.temp }}
         run: cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
+      # F-M3S-1 / F-DC-1: the same witnesses through a UNC path (the runner's
+      # loopback administrative share), so a UNC graph root is exercised on SMB.
+      - name: Windows UNC loopback storage acceptance (F-M3S-1, F-DC-1)
+        if: ${{ !cancelled() }}
+        run: |
+          $t = $env:RUNNER_TEMP
+          $unc = "\\localhost\" + $t.Substring(0,1) + "$" + $t.Substring(2) + "\unc-accept"
+          New-Item -ItemType Directory -Force -Path $unc | Out-Null
+          Write-Output "UNC acceptance base: $unc"
+          $env:TINE_STORAGE_ACCEPT_ROOT = $unc
+          cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
       # Match app_identity::app_data_dir_of / Tauri's app_data_dir, rather
       # than runner.temp. Every witness owns and removes a fresh sandbox.
       - name: Windows resolved app-data storage acceptance
@@ -383,6 +402,11 @@ jobs:
           base="$HOME/Library/Application Support/$identifier"
           mkdir -p "$base"
           base=$(cd "$base" && pwd -P)
+          # The storage ledger records each tested volume's filesystem from this output.
+          for p in "$base" "$RUNNER_TEMP" "${TMPDIR:-/tmp}"; do
+            mp=$(df -P "$p" | tail -1 | awk '{print $NF}')
+            echo "Tested volume: $p mount=$mp $(mount | grep " on $mp (" | sed 's/.* (/(/')"
+          done
           export TINE_STORAGE_ACCEPT_ROOT="$base"
           export TINE_HOST_FS_ROOT="$base"
           echo "Resolved Tine app-data acceptance base: $base"

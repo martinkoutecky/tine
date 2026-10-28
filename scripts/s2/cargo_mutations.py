@@ -17,7 +17,7 @@ def main():
     ap.add_argument("--skip-witnesses", action="store_true", help="baseline census before s3 witnesses are regenerated")
     args = ap.parse_args()
     work = prepare()
-    command = ["rtk", "proxy", "cargo", "mutants", "--no-config", "--in-place",
+    command = ["cargo", "mutants", "--no-config", "--in-place",
                "--dir", str(work), "--package", "tine-store",
                "--output", str(args.output.resolve())]
     for name in SOURCES:

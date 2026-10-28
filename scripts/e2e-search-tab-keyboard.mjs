@@ -69,17 +69,17 @@ try {
   const selected = await browser.execute(() => ({ text: document.activeElement?.querySelector(".search-result-excerpt")?.textContent,
     active: document.activeElement?.classList.contains("active"), tabIndex: document.activeElement?.tabIndex }));
   if (selected.text !== rows[1] || !selected.active || selected.tabIndex !== 0) throw Error(`Expected second accessible highlighted row: ${JSON.stringify({ rows, selected })}`);
-  try { execFileSync("rtk", ["proxy", "import", "-window", "root", path.join(out, "highlight.png")], { env }); } catch {}
+  try { execFileSync("import", ["-window", "root", path.join(out, "highlight.png")], { env }); } catch {}
   stage = "Enter opens highlighted page";
   await browser.keys(["Enter"]);
   await browser.waitUntil(async () => (await browser.$(".page-title").getText()).trim() === rows[1],
     { timeout: 10000, timeoutMsg: "Enter did not open the highlighted page" });
-  try { execFileSync("rtk", ["proxy", "import", "-window", "root", path.join(out, "opened.png")], { env }); } catch {}
+  try { execFileSync("import", ["-window", "root", path.join(out, "opened.png")], { env }); } catch {}
   proof.outcome = "PASS"; proof.rows = rows; proof.opened = rows[1];
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));
   console.log(`PASS GH #697: ${out}`);
 } catch (error) {
-  try { execFileSync("rtk", ["proxy", "import", "-window", "root", path.join(out, "failure.png")], { env }); } catch {}
+  try { execFileSync("import", ["-window", "root", path.join(out, "failure.png")], { env }); } catch {}
   try { fs.writeFileSync(path.join(out, "failure-dom.html"), await browser.getPageSource()); } catch {}
   fs.writeFileSync(path.join(out, "failure.json"), JSON.stringify({ ...proof, stage,
     expected: "Second displayed page opens from Search tab after typing, ArrowDown twice and Enter", observed: String(error.stack),

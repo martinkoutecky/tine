@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 const out = "artifacts/sw-settings-search";
 mkdirSync(out, { recursive: true });
 const port = 20000 + Math.floor(Math.random() * 20000);
-const server = spawn("rtk", ["proxy", "npx", "vite", "preview", "--port", String(port), "--strictPort"], { stdio: "ignore", detached: true });
+const server = spawn("npx", ["vite", "preview", "--port", String(port), "--strictPort"], { stdio: "ignore", detached: true });
 let browser;
 try {
   for (let attempt = 0; ; attempt++) {

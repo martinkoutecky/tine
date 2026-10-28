@@ -28,7 +28,7 @@ fs.writeFileSync(B, b);
 fs.writeFileSync(path.join(GRAPH, "pages/Target.md"), "- Target body\n");
 fs.writeFileSync(path.join(GRAPH, "pages/Host.md"), "- {{embed [[B]]}}\n");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
-const tested = process.env.DUP_COMMIT || execFileSync("rtk", ["proxy", "git", "rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
+const tested = process.env.DUP_COMMIT || execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
 const port = Number(process.env.E2E_DRIVER_PORT || 4872);
 const env = { ...process.env, TINE_GRAPH: GRAPH, XDG_DATA_HOME: path.join(RUN, "data"), XDG_CONFIG_HOME: path.join(RUN, "config"), XDG_CACHE_HOME: path.join(RUN, "cache"), WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const log = fs.openSync(path.join(RUN, "driver.log"), "w");

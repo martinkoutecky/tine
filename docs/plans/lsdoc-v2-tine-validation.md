@@ -53,11 +53,11 @@ checked explicitly.
 From the Tine repo root:
 
 ```bash
-rtk npm run build:wasm
-rtk npm run build
-rtk cargo test --workspace
-rtk npm test
-rtk npm run test:render
+npm run build:wasm
+npm run build
+cargo test --workspace
+npm test
+npm run test:render
 ```
 
 `npm run build` matters because it runs the pin guard. A passing `cargo test` or
@@ -76,7 +76,7 @@ Expected result:
 Run Tine on a disposable copy of a real graph:
 
 ```bash
-rtk npm run app
+npm run app
 ```
 
 Then open **Settings -> Help improve Tine** and scan the graph. This is the best
@@ -126,8 +126,8 @@ After opening the graph, navigating, scanning with Help improve Tine, and doing
 one deliberate small edit, inspect disk changes:
 
 ```bash
-rtk git diff --stat
-rtk git diff
+git diff --stat
+git diff
 ```
 
 For pure navigation and scanning, there should be no note-file diffs. For the
@@ -146,9 +146,9 @@ Also watch for:
 Repeat the critical checks in the built app, not only in Vite dev mode:
 
 ```bash
-rtk npm run build:wasm
-rtk npm run build
-rtk npm run tauri -- build
+npm run build:wasm
+npm run build
+npm run tauri -- build
 ```
 
 Open the packaged app on the same disposable graph and repeat:

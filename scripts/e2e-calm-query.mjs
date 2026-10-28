@@ -9,7 +9,7 @@ import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 
 const out = path.resolve(process.env.OUT ?? "artifacts/queries/native");
-const testedCommit = execFileSync("rtk", ["proxy", "git", "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const graph = `${out}/graph`;
 // Every run starts from a fresh graph and app state: a previous run's session (last route = the Search view) made
 // startup fail. Only a directory this journey created (marker file, or an older run's graph) is cleared, never an arbitrary OUT.

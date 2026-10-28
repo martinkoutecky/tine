@@ -260,11 +260,14 @@ fn ask_across_the_deadline<R: Send + 'static>(
     last: impl FnOnce() -> Wait<R> + Send + 'static,
 ) -> Result<R, super::driver::Unanswered> {
     let (mut d, ..) = spawn(host());
-    let deadline = Instant::now() + Duration::from_millis(200);
+    // The re-ask is due 900 ms before the deadline: a loaded runner may wake
+    // the driver late (hosted macOS once overshot a 50 ms margin, run
+    // 40618342049), and a re-ask past the deadline never starts.
+    let deadline = Instant::now() + Duration::from_millis(2_000);
     let mut last = Some(last);
     let answer = d.shared.locked_wait(Deadline::At(deadline), move |_| {
-        if Instant::now() + Duration::from_millis(100) < deadline {
-            return Wait::Until(Some(deadline - Duration::from_millis(50)));
+        if Instant::now() + Duration::from_millis(1_000) < deadline {
+            return Wait::Until(Some(deadline - Duration::from_millis(900)));
         }
         // Mid-ask at the caller's deadline.
         std::thread::sleep(deadline + Duration::from_millis(100) - Instant::now());

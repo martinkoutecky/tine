@@ -9,7 +9,7 @@ import { APP_ID } from "./lib/app-identity.mjs";
 import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
 import { answerNativeDialog } from "./lib/e2e-native-dialog.mjs";
 ensurePrivateSessionBus();
-const testedCommit = execFileSync("rtk", ["git", "rev-parse", "HEAD"], { encoding: "utf8" }).trim() + " plus working diff";
+const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim() + " plus working diff";
 if (!process.env.DISPLAY) throw new Error("Run under xvfb-run");
 const artifacts = path.resolve("artifacts/desktop-misc");
 fs.mkdirSync(artifacts, { recursive: true });
@@ -99,7 +99,7 @@ try {
     journey = "native HTML export";
     await command("Export graph", "Export graph as HTML and read-only app");
     await click("Export HTML and read-only app…");
-    const native = (...args) => execFileSync("rtk", ["proxy", "xdotool", ...args], { env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const native = (...args) => execFileSync("xdotool", [...args], { env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
     let chooser;
     const chooserDeadline = Date.now() + 15000;
     while (!chooser && Date.now() < chooserDeadline) {
