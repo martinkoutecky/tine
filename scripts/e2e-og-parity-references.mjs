@@ -118,6 +118,13 @@ const popupSnapshot = (browser) => browser.execute(() => ({
   labels: [...document.querySelectorAll(".autocomplete .ac-label")].map((node) => node.textContent?.trim() ?? ""),
   rows: document.querySelectorAll(".autocomplete .ac-item").length,
 }));
+// Sticky toasts (the Guide announcement, and "did not close cleanly" after this journey's restarts) sit
+// bottom-right over the Settings modal's lower edge. WebDriver scrolls a control to the scroll
+// container's edge, where a toast intercepts the click, so close them and centre the control first.
+const clearToastsAndCentre = async (browser, control) => {
+  await browser.execute(() => document.querySelectorAll(".toast-stack .toast-close").forEach((button) => button.click()));
+  await browser.execute((el) => el.scrollIntoView({ block: "center" }), control);
+};
 const selectSetting = async (browser, value) => {
   await browser.$('button[title^="Settings"]').click();
   await browser.$(".settings-modal").waitForExist({ timeout: 5000 });
@@ -126,6 +133,7 @@ const selectSetting = async (browser, value) => {
   if ((await advanced.getAttribute("aria-expanded")) !== "true") await advanced.click();
   const select = await browser.$('select[aria-label="Link autocomplete default"]');
   await select.waitForExist({ timeout: 5000 });
+  await clearToastsAndCentre(browser, select);
   await select.selectByAttribute("value", value);
   await browser.waitUntil(() => fs.existsSync(SETTINGS) && JSON.parse(fs.readFileSync(SETTINGS, "utf8")).link_autocomplete_policy === value, {
     timeout: 5000,
@@ -151,7 +159,9 @@ const toggleReferenceSpacing = async (browser) => {
   await browser.$(".settings-modal").waitForExist({ timeout: 5000 });
   const row = await browser.$('[data-setting-label="Space after inserting a reference"]');
   await row.waitForExist({ timeout: 5000 });
-  await row.$('.settings-toggle[aria-checked="false"]').click();
+  const toggle = await row.$('.settings-toggle[aria-checked="false"]');
+  await clearToastsAndCentre(browser, toggle);
+  await toggle.click();
   await browser.waitUntil(() => fs.existsSync(SETTINGS) && JSON.parse(fs.readFileSync(SETTINGS, "utf8")).space_after_ref_completion === true, {
     timeout: 5000,
     timeoutMsg: "Settings UI did not enable reference continuation spacing",
