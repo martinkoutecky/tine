@@ -189,7 +189,7 @@ enum store::SaveBase
 enum store::SaveOutcome
 enum store::StoreError
 
-## Transaction steps (ceiling: 36)
+## Transaction steps (ceiling: 37)
 enum transaction::Content
 enum transaction::Refusal
 enum transaction::StepResult
@@ -242,6 +242,11 @@ fn transaction::PagePlan::create
 fn transaction::PagePlan::move_file
 fn transaction::PagePlan::trash
 fn transaction::PagePlan::expect_view
+# ADR 0078 §4 (git pull, s3.7): a pulled page lands as the upstream blob's exact
+# bytes over the H bytes it was planned from. `create` is no-replace by contract,
+# `save_page` serializes a PageDto (not the blob's bytes), and `Transaction::replace`
+# refuses pages; a mode on `create` would give one step two guards.
+fn transaction::PagePlan::replace_page_bytes
 fn transaction::IoError::kind
 
 ## Trash admin (ceiling: 3)

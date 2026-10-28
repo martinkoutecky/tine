@@ -10,7 +10,8 @@ impl PagePlan<'_> {
     /// move from a non-page source stages only its page destination; the caller
     /// must retire the source after Applied in its own revision-guarded transaction.
     /// Other non-page steps are refused.
-    pub fn plan(self) -> Result<HostOp, Why> {
+    pub fn plan(mut self) -> Result<HostOp, Why> {
+        self.for_host = true;
         self.await_reference_publication();
         let _writer = self.store.writer.lock().unwrap();
         let names = self.preflight_names().map_err(|(_, why)| why)?;

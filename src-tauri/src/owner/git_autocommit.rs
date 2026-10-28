@@ -60,7 +60,7 @@ const STALE_LOCK_AFTER: Duration = Duration::from_secs(30 * 60);
 const STALE_LOCK_CYCLES: u32 = 3;
 /// The device-settings key (`tine-settings.json`), keyed by graph root.
 pub(crate) const SETTINGS_KEY: &str = "git_autocommit";
-const MESSAGE: &str = "Tine: autosave";
+pub(super) const MESSAGE: &str = "Tine: autosave";
 const SYNCTHING_IGNORE_CHECKED: &str = "git-syncthing-ignore-checked";
 const SYNCTHING_IGNORE_LINE: &[u8] = b".syncthing.*";
 static IGNORE_SETUP_LOCK: Mutex<()> = Mutex::new(());
@@ -71,6 +71,12 @@ const EXIT_GRACE: Duration = Duration::from_millis(500);
 /// it moves the branch, and none starts (review N2: a commit killed by the
 /// exit would leave `index.lock` behind).
 static EXITING: AtomicBool = AtomicBool::new(false);
+
+/// The app is exiting ([`EXITING`]).
+#[cfg_attr(not(test), allow(dead_code))] // the pull (GS-UI wires it)
+pub(super) fn exiting() -> bool {
+    EXITING.load(Ordering::Acquire)
+}
 
 /// What Tine does with a git graph on this device (ADR 0078 §1). Slice 1
 /// offers `Off` and `Commit`; sync arrives with slice 2.
@@ -290,7 +296,7 @@ fn lock_refused(refusal: LockRefusal) -> Unusable {
 }
 
 /// Open and check the repository holding `root` for autocommits.
-fn open_checked(root: &Path) -> Result<Repo, Unusable> {
+pub(super) fn open_checked(root: &Path) -> Result<Repo, Unusable> {
     match Repository::discover(root) {
         Err(error) if error.code() == git2::ErrorCode::NotFound => {
             return Err(Unusable::NotARepository)
@@ -359,14 +365,14 @@ fn prefix_of(repo: &Repo) -> String {
     repo.prefix.to_string_lossy().replace('\\', "/")
 }
 
-fn syncthing_temp(path: &[u8]) -> bool {
+pub(super) fn syncthing_temp(path: &[u8]) -> bool {
     path.split(|b| *b == b'/')
         .any(|part| part.starts_with(b".syncthing."))
 }
 
 /// One of Tine's own in-flight atomic-save temp files
 /// (`.{name}.{pid}.{seq}{tag}.tmp`, `tine_store::atomic_file::temp_path`).
-fn tine_temp(path: &str) -> bool {
+pub(super) fn tine_temp(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
     let Some(stem) = name.strip_suffix(".tmp") else {
         return false;
@@ -390,6 +396,10 @@ pub(crate) enum Outcome {
     Committed(Oid),
     /// Nothing under the graph root differed from `HEAD`.
     Clean,
+    /// A pull is half applied: what differs from `HEAD` is the fetched
+    /// upstream's, so committing it would be a false local change (s3.7 P3,
+    /// [`super::git_pull::defers_autocommit`]).
+    PullPending,
 }
 
 /// Commit every change under the graph root with `message`, holding the CLI
@@ -400,8 +410,11 @@ pub(crate) fn commit_now(root: &Path, message: &str) -> Result<Outcome, Unusable
 }
 
 /// [`commit_now`] for a caller that already holds [`RUN_LOCK`].
-fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
+pub(super) fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
     let repo = open_checked(root)?;
+    if super::git_pull::defers_autocommit(&repo) {
+        return Ok(Outcome::PullPending);
+    }
     let prefix = prefix_of(&repo);
     for _ in 0..CAS_ATTEMPTS {
         if EXITING.load(Ordering::Acquire) {

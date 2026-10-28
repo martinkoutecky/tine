@@ -238,8 +238,14 @@ impl<'a> PagePlan<'a> {
                 expected,
                 bytes,
             } => {
-                if self.page(file) || file.as_str().starts_with("logseq/.tine-") {
+                // A page replacement is a host-operation plan's
+                // (`replace_page_bytes`); a direct commit refuses it.
+                let page = self.page(file);
+                if (page && !self.for_host) || file.as_str().starts_with("logseq/.tine-") {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
+                }
+                if page {
+                    validation::page_bytes(file, bytes)?;
                 }
                 let old = self.stage(file, expected)?;
                 if file.as_str() == "logseq/config.edn" {

@@ -163,6 +163,12 @@ pub(super) fn validate_page_content(file: &FileId, content: &Content) -> Result<
 
 /// Stage raw creation bytes with the same bounds and validation on the
 /// transaction and planning paths.
+/// The page input checks of [`page_content_bytes`] for bytes in memory.
+pub(super) fn page_bytes(file: &FileId, bytes: &[u8]) -> Result<(), Why> {
+    crate::model::validate_parse_bytes_for_path(bytes, Path::new(file.as_str()))
+        .map_err(content_refusal)
+}
+
 pub(super) fn page_content_bytes<'a>(
     file: &FileId,
     content: &'a Content,
