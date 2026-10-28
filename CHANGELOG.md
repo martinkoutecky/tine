@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Tine Beta has its own amber icon.
 - Desktop: **Open in default app** beside the graph and global CSS editors in Settings, with matching command-palette actions. External global CSS edits now apply live across graph windows (GH #778).
 - Tags and page references expose Logseq-compatible `data-ref` names so custom CSS can style individual tags and links, including static exports (GH #773).
 - Windows: graph read/write commands and git runs now use a private named pipe to the app or `tine serve`, including automatic startup, app handover and `serve --stop`. Commands wait for a busy pipe, owner locks live in `%LOCALAPPDATA%\tine-owners` outside the install folder, and a stalled reply times out without retrying a write the owner already admitted (REG-CLI-WINDOWS, REG-CLI-WINDOWS-R3, REG-CLI-WINDOWS-R4).

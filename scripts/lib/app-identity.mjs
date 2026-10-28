@@ -47,13 +47,18 @@ export function deriveIdentityFiles(root, ship) {
     if (!pattern.test(conf)) throw new Error(`${confFile}: no match for ${pattern}`);
     conf = conf.replace(pattern, `$1${JSON.stringify(value)}`);
   }
+  conf = conf.replace(/("icon": \[)([\s\S]*?)(\n    \])/,
+    (_, start, entries, end) => start + entries.replace(/"icons(?:-beta)?\//g, `"${identity.iconDirectory}/`) + end);
   out[confFile] = conf;
 
   const gradleFile = "src-tauri/gen/android/app/build.gradle.kts";
   const gradle = read(gradleFile);
   const applicationId = /^(\s*applicationId = )"[^"]*"$/m;
   if (!applicationId.test(gradle)) throw new Error(`${gradleFile}: no applicationId line`);
-  out[gradleFile] = gradle.replace(applicationId, `$1"${identity.androidApplicationId}"`);
+  const iconDirectory = /^(val tineIconDirectory = )"[^"]*"$/m;
+  if (!iconDirectory.test(gradle)) throw new Error(`${gradleFile}: no tineIconDirectory line`);
+  out[gradleFile] = gradle.replace(applicationId, `$1"${identity.androidApplicationId}"`)
+    .replace(iconDirectory, `$1"${identity.iconDirectory}"`);
 
   // Launcher shortcuts name their target package explicitly (ADR 0073).
   const shortcutsFile = "src-tauri/gen/android/app/src/main/res/xml/shortcuts.xml";
