@@ -515,7 +515,8 @@ fn a_held_index_lock_refuses_a_revert_before_it_changes_anything() {
 /// "me" (ADR 0079) is the same identity.
 #[test]
 fn git_run_user_identity_is_repo_then_your_name_then_fallback() {
-    use crate::owner::git_run::{identity_from, USER_FALLBACK};
+    use crate::owner::git_identity::identity_from;
+    use crate::owner::git_run::USER_FALLBACK;
     let some = |s: &str| Some(s.to_string());
     let cases = [
         (
