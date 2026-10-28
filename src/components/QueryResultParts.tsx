@@ -121,7 +121,7 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
         <div class="query-results-board" aria-label={t("query-query-result-parts-page-results-grouped")}>
           <For each={board()}>{([key, rows]) => (
             <section class="query-board-column" aria-label={key || t("query-query-result-parts-no-value")}>
-              <h4>{key || t("query-query-result-parts-no-value")}<span class="query-board-count">{rows.length}</span></h4>
+              <h4 class="query-board-heading"><span class="query-board-label">{key || t("query-query-result-parts-no-value")}</span><span class="query-board-count">{rows.length}</span></h4>
               <For each={rows}>{(row) => <div class="query-board-card">{link(row)}</div>}</For>
             </section>
           )}</For>
@@ -147,9 +147,11 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics }): 
     const groups = summary().groups;
     return groups?.length && !(groups.length === 1 && groups[0].key === null) ? groups : null;
   });
+  // F5: a group breakdown is secondary to the results below it (a board column
+  // already shows its own count), so it folds behind its "Grouped by" line.
   return (
     <>
-      <Show when={props.statistics.group_by}>
+      <Show when={props.statistics.group_by && !breakdown()}>
         <div class="query-summary" onClick={stop}>
           <span class="qs-label">{t("query-grouped-by", { field: groupLabel() ?? "" })}</span>
         </div>
@@ -174,7 +176,8 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics }): 
         }
       >
         {(groups) => (
-          <>
+          <details class="query-summary-details">
+            <summary class="query-summary qs-label" onClick={stop}>{t("query-grouped-by", { field: groupLabel() ?? "" })}</summary>
             <TableWrap><table class="md-table query-summary-table" onClick={stop}>
               <thead>
                 <tr>
@@ -200,7 +203,7 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics }): 
               <p class="query-summary-note" onClick={stop}>
                 {t("query-query-result-parts-a-row-with-several-tags-appears-in-every-matching-group")}</p>
             </Show>
-          </>
+          </details>
         )}
       </Show>
     </>

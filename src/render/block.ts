@@ -74,6 +74,14 @@ export function isImplicitPageRefProperty(key: string): boolean {
   return normalized === "alias" || normalized === "aliases" || normalized === "tags";
 }
 
+/** OG `property-cp`: a property in `linkable` (the backend's effective
+ *  `linkable_property_keys`: built-ins plus `:property/separated-by-commas`,
+ *  minus ignored-reference keys) shows each comma item as a page link. Without
+ *  the graph's answer (exports, tests) only the built-ins qualify. */
+export function isLinkablePropertyKey(key: string, linkable: readonly string[] | undefined): boolean {
+  return linkable ? linkable.includes(propertyKeyNorm(key)) : isImplicitPageRefProperty(key);
+}
+
 /** A whole quoted property value is literal text, including its commas. */
 export function isQuotedPagePropertyValue(value: string): boolean {
   const trimmed = value.trim();

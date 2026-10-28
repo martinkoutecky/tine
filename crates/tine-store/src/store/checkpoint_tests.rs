@@ -1090,7 +1090,7 @@ fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
     use tine_core::config::Config;
     const BASE: &str = ":preferred-format :markdown";
     // (field, the edited config's entries, keyed)
-    let cases: [(&str, String, bool); 37] = [
+    let cases: [(&str, String, bool); 38] = [
         (
             "default_journal_queries",
             format!("{BASE} :default-queries {{:journals [{{:query (task TODO)}}]}}"),
@@ -1242,6 +1242,11 @@ fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
         (
             "show_brackets",
             format!("{BASE} :ui/show-brackets? false"),
+            false,
+        ),
+        (
+            "enable_journals",
+            format!("{BASE} :feature/enable-journals? false"),
             false,
         ),
         (
