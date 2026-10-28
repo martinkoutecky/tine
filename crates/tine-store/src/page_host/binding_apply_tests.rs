@@ -322,13 +322,62 @@ fn folded_op(old: &str) -> HostOp {
 /// covered by the folding-volume tests below on macOS/Windows.
 #[test]
 fn folded_wrapper_records_both_paths_with_and_without_an_edit() {
-    for edited in [false, true] {
-        let live = Live::new(&[("pages/old.md", "- old\n")]);
-        let src = PageId::from("pages/old.md");
-        let dst = PageId::from("pages/Old.md");
-        let (key, spelling, ..) = live.host.try_identify(&src).unwrap();
-        let sink = Arc::new(Mutex::new(BTreeSet::new()));
-        let new = if edited { "- edited\n" } else { "- old\n" };
+    for (from, to) in [
+        ("pages/old.md", "pages/Old.md"),
+        ("pages/é.md", "pages/É.md"),
+    ] {
+        for edited in [false, true] {
+            let live = Live::new(&[(from, "- old\n")]);
+            let src = PageId::from(from);
+            let dst = PageId::from(to);
+            let (key, spelling, ..) = live.host.try_identify(&src).unwrap();
+            let sink = Arc::new(Mutex::new(BTreeSet::new()));
+            let new = if edited { "- edited\n" } else { "- old\n" };
+            let mut planned = op(
+                vec![
+                    (
+                        src.as_str(),
+                        Effect::Delete,
+                        Expected::Bytes(bytes("- old\n")),
+                    ),
+                    (dst.as_str(), Effect::Write(bytes(new)), Expected::Absent),
+                ],
+                Input::Refuse,
+            );
+            planned.moves.push((dst.clone(), src.clone()));
+            planned.publications = Some(sink.clone());
+            planned.kinds = vec![EditKind::RenamePage];
+            assert_eq!(
+                live.host.apply_spellings(
+                    planned,
+                    vec![(dst.clone(), src.clone(), key.clone(), spelling)]
+                ),
+                Ok(())
+            );
+            assert_eq!(
+                fs::read(live.root.join(dst.as_str())).unwrap(),
+                new.as_bytes()
+            );
+            assert_eq!(*sink.lock().unwrap(), BTreeSet::from([src, dst]));
+            assert!(
+                live.kinds
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|(page, kinds)| { page == &key && kinds.contains(&EditKind::RenamePage) }),
+                "entry-only completion must still report its edit kinds"
+            );
+            live.host.stop();
+        }
+    }
+}
+
+#[test]
+fn a_receipted_spelling_is_not_moved_by_a_stale_retry() {
+    for receipted in ["pages/é.md", "pages/É.md"] {
+        let live = Live::new(&[("pages/é.md", "- old\n")]);
+        let src = PageId::from("pages/é.md");
+        let dst = PageId::from("pages/É.md");
         let mut planned = op(
             vec![
                 (
@@ -336,22 +385,29 @@ fn folded_wrapper_records_both_paths_with_and_without_an_edit() {
                     Effect::Delete,
                     Expected::Bytes(bytes("- old\n")),
                 ),
-                (dst.as_str(), Effect::Write(bytes(new)), Expected::Absent),
+                (
+                    dst.as_str(),
+                    Effect::Write(bytes("- old\n")),
+                    Expected::Absent,
+                ),
             ],
             Input::Refuse,
         );
         planned.moves.push((dst.clone(), src.clone()));
-        planned.publications = Some(sink.clone());
+        planned.publications = Some(Arc::new(Mutex::new(BTreeSet::from([PageId::from(
+            receipted,
+        )]))));
         assert_eq!(
-            live.host
-                .apply_spellings(planned, vec![(dst.clone(), src.clone(), key, spelling)]),
-            Ok(())
+            live.host.apply(planned),
+            Err(ApplyRefusal::SpellingIncomplete)
         );
-        assert_eq!(
-            fs::read(live.root.join(dst.as_str())).unwrap(),
-            new.as_bytes()
-        );
-        assert_eq!(*sink.lock().unwrap(), BTreeSet::from([src, dst]));
+        let listed: BTreeSet<_> = fs::read_dir(live.root.join("pages"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(listed.contains(&std::ffi::OsString::from("é.md")));
+        assert!(!listed.contains(&std::ffi::OsString::from("É.md")));
+        assert_eq!(fs::read(live.root.join(src.as_str())).unwrap(), b"- old\n");
         live.host.stop();
     }
 }

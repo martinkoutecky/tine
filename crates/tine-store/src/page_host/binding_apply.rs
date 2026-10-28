@@ -45,7 +45,9 @@ pub struct HostOp {
     /// In-memory publication receipts, recorded at the guarded live rename,
     /// before any later host action. Kept by admitted work even if its caller
     /// times out. Only publications of this operation's bytes at its version
-    /// or later produce receipts.
+    /// or later produce receipts. Admission refuses a path already in this
+    /// set under the same driver state that records publication, so a stale
+    /// retry must replan rather than publish that path again.
     pub publications: Option<Arc<Mutex<BTreeSet<PageId>>>>,
     /// Transaction creation preconditions: page, optional DTO name, optional
     /// move source. In-memory admission metadata; no persisted format changes.
@@ -127,7 +129,7 @@ impl PageHost {
             // entry-first path: registering its source would otherwise make
             // the absent destination an unproved folded collision. A real
             // second entry (or a separately held destination) still refuses.
-            let sensitive_case_move = src.as_str().eq_ignore_ascii_case(dst.as_str())
+            let sensitive_case_move = crate::file_kind::case_only(&src.file(), &dst.file())
                 && !target.2
                 && self
                     .store
@@ -252,6 +254,19 @@ impl PageHost {
                 let host = &state.progress.host;
                 if !host.alive {
                     return Wait::Ready(Err(ApplyRefusal::Refused));
+                }
+                // The planner's receipt snapshot may predate an older
+                // Uncertain operation's publication and a window undo.
+                // Admission and guarded publication hold this same driver
+                // state, so an overlapping retry cannot admit stale work.
+                if publications.as_ref().is_some_and(|sink| {
+                    let paths = sink.lock().unwrap_or_else(|p| p.into_inner());
+                    publication_names
+                        .values()
+                        .flatten()
+                        .any(|page| paths.contains(page))
+                }) {
+                    return Wait::Ready(Err(ApplyRefusal::Changed));
                 }
                 if let Some((rev, config)) = &view {
                     if store.changes.rev() != *rev || !Arc::ptr_eq(&store.config().config, config) {

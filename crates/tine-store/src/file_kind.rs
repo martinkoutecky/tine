@@ -1,8 +1,28 @@
-//! File classes included in graph backup and restore.
+//! File classes and spelling candidates shared by graph clients.
 
 use std::path::Path;
 
 use tine_core::model::FileId;
+
+/// Whether two file identities are candidates for a case-only entry move: the same
+/// parent and different leaves equal under the store's Unicode fold.
+/// This proves neither alias identity nor destination absence. Publication
+/// must still check those and use the guarded no-replace move recipe.
+pub fn case_only(src: &FileId, dst: &FileId) -> bool {
+    case_only_paths(Path::new(src.as_str()), Path::new(dst.as_str()))
+}
+
+pub(crate) fn case_only_paths(src: &Path, dst: &Path) -> bool {
+    src != dst
+        && src.parent() == dst.parent()
+        && src
+            .file_name()
+            .zip(dst.file_name())
+            .is_some_and(|(from, to)| {
+                crate::model::entry_identity::fold_leaf(from)
+                    == crate::model::entry_identity::fold_leaf(to)
+            })
+}
 
 /// Whether a page or journal file identity names Logseq graph text.
 pub fn is_graph_text(file: &FileId) -> bool {

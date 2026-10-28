@@ -14,6 +14,123 @@ use tine_store::{ApplyRefusal, PageId};
 
 const A_AT_H: &str = "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- under one\n- two\n";
 
+#[test]
+fn r2_late_publication_after_retry_snapshot_keeps_window_undo() {
+    test_hook::clear();
+    let graph = Graph::new();
+    std::fs::write(graph.root.join("pages/window.md"), "- old\n").unwrap();
+    let page = PageId::from("pages/window.md");
+    let old = graph.store.page(&page).unwrap().doc;
+    let repo = repo(&graph);
+    let slot = std::sync::Arc::new(graph.slot());
+    let h = head(&repo);
+    let up = upstream(&repo, &[Edit::Write("pages/window.md", b"- theirs\n")]);
+    let delayed = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let captured = delayed.clone();
+    test_hook::on_host(move |op| {
+        *captured.borrow_mut() = Some(op.clone());
+        Some((false, Err(ApplyRefusal::Uncertain)))
+    });
+    assert!(matches!(pull(&slot), PullOutcome::Incomplete(_)));
+    test_hook::clear();
+    let mut pending = delayed.borrow_mut().take();
+    let window = slot.clone();
+    let root = graph.root.clone();
+    // The retry has already snapshotted receipts and planned. Publish the
+    // older operation, then save a real window undo before retry admission.
+    test_hook::on_host(move |_| {
+        crate::page_commands::with_host(&window, |host| {
+            host.apply(pending.take().unwrap()).unwrap();
+            let session = serde_json::to_value(host.window_reloaded()).unwrap();
+            let generation = session["session"].as_u64().unwrap();
+            let id = session["nextId"].as_u64().unwrap();
+            let opened =
+                serde_json::to_value(host.open(generation, id, &page, "window").unwrap()).unwrap();
+            let version = host.read(&page).unwrap().revision.unwrap().1;
+            host.submit(
+                generation,
+                id + 1,
+                opened["key"].as_str().unwrap(),
+                &old,
+                version,
+                None,
+                &[tine_store::EditKind::SaveBlock],
+            )
+            .unwrap();
+        })
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::fs::read(root.join("pages/window.md")).unwrap() != b"- old\n" {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "window undo did not save"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(test_hook::applied(&root), ["pages/window.md"]);
+        None
+    });
+    let outcome = pull(&slot);
+    assert_eq!(
+        disk(&graph, "pages/window.md").unwrap(),
+        b"- old\n",
+        "a receipt arriving after the retry snapshot must preserve the window undo: {outcome:?}"
+    );
+    assert!(
+        matches!(outcome, PullOutcome::Held(Held::Changed(_))),
+        "{outcome:?}"
+    );
+    assert_eq!(head(&repo), h);
+    test_hook::clear();
+    assert_eq!(landed(&pull(&slot)), 0);
+    assert_eq!(head(&repo), up);
+    assert_eq!(disk(&graph, "pages/window.md").unwrap(), b"- old\n");
+}
+
+#[test]
+fn r2_unicode_case_only_rename_lands_on_sensitive_volume() {
+    for folding in [false, true] {
+        for edited in [false, true] {
+            test_hook::clear();
+            let graph = Graph::new();
+            std::fs::write(graph.root.join("pages/é.md"), "- unique unicode\n").unwrap();
+            graph.store.whole_graph().unwrap();
+            let repo = repo(&graph);
+            let slot = graph.slot();
+            let bytes = if edited {
+                b"- unique unicode\n- extra\n".as_slice()
+            } else {
+                b"- unique unicode\n".as_slice()
+            };
+            upstream(
+                &repo,
+                &[Edit::Remove("pages/é.md"), Edit::Write("pages/É.md", bytes)],
+            );
+            if folding {
+                test_hook::simulate_folding();
+            }
+            test_hook::on_host(|op| {
+                assert_eq!(
+                    op.moves,
+                    [(PageId::from("pages/É.md"), PageId::from("pages/é.md"))]
+                );
+                assert_eq!(op.pages.len(), 2, "never a source-only deletion");
+                None
+            });
+            let outcome = pull(&slot);
+            landed(&outcome);
+            test_hook::clear();
+            assert_eq!(disk(&graph, "pages/É.md").unwrap(), bytes);
+            let listed: Vec<_> = std::fs::read_dir(graph.root.join("pages"))
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            assert!(listed.contains(&std::ffi::OsString::from("É.md")));
+            assert!(!listed.contains(&std::ffi::OsString::from("é.md")));
+        }
+    }
+}
+
 fn me() -> Signature<'static> {
     Signature::now("Martin", "martin@example.org").unwrap()
 }

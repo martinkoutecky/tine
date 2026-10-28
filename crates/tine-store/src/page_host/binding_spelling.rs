@@ -85,7 +85,7 @@ impl PageHost {
                 .move_spelling(
                     src.clone(),
                     dst.clone(),
-                    key,
+                    key.clone(),
                     bytes,
                     op.view.clone(),
                     op.publications.clone().map(|sink| (sink, unchanged)),
@@ -96,6 +96,13 @@ impl PageHost {
             if let Some((view, _)) = &mut op.view {
                 *view = rev;
             }
+            // The entry move already published unchanged destination bytes.
+            // Do not submit them again: admission must exclude every path
+            // already in this target's receipt set, including our own.
+            if unchanged && op.publications.is_some() {
+                self.report_spelling_kinds(&key, &op);
+                op.pages.retain(|(page, ..)| page != &src);
+            }
             moved_pages.insert(src, dst);
         }
         for (page, ..) in &mut op.pages {
@@ -103,7 +110,18 @@ impl PageHost {
                 *page = dst.clone();
             }
         }
-        self.apply(op).map_err(|_| ApplyRefusal::SpellingIncomplete)
+        if op.pages.is_empty() {
+            Ok(())
+        } else {
+            self.apply(op).map_err(|_| ApplyRefusal::SpellingIncomplete)
+        }
+    }
+
+    /// An entry-only completion has no later content publication to deliver
+    /// its kinds. Borrow the operation unchanged, and as the bridge does,
+    /// call the sink outside driver/writer locks: it may query the store.
+    fn report_spelling_kinds(&self, key: &PageKey, op: &HostOp) {
+        (self.launch.kinds.lock().unwrap())(key, &op.kinds);
     }
 
     fn retain_spelling_bytes(
@@ -215,6 +233,15 @@ impl PageHost {
             let host = &mut state.progress.host;
             if !host.alive || !host.admission_open {
                 return Wait::Ready(Err(ApplyRefusal::Uncertain));
+            }
+            // Entry publication precedes content admission. Apply the same
+            // retry exclusion here, under the publication-owning state,
+            // before this command can move either spelling.
+            if publications.as_ref().is_some_and(|(sink, _)| {
+                let paths = sink.lock().unwrap_or_else(|p| p.into_inner());
+                paths.contains(&src) || paths.contains(&dst)
+            }) {
+                return Wait::Ready(Err(ApplyRefusal::Changed));
             }
             if view.as_ref().is_some_and(|(rev, config)| {
                 store.changes.rev() != *rev || !Arc::ptr_eq(config, &store.config().config)
