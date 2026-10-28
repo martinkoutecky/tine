@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Mouse back/forward buttons also navigate on macOS; dragging with a side button does not navigate. macOS also accepts Cmd+[ and Cmd+] for history (#780).
 - Expand or collapse the current page from Commands, or press `t o` to toggle all blocks. Bulk folding uses one page edit and Undo step (#785).
+- Query and Markdown tables: a table in a query box or a sidebar item stays inside its box and scrolls there; long text cells wrap instead of cramming every column to a few letters, and numbers never split; a visible scrollbar strip shows when a table still overflows. Board column counts no longer touch their labels, table and board page links read as links, and the "Grouped by" breakdown above a board is folded behind its summary. Collapse all sits in the Linked/Unlinked References header row, the gap above Linked References is smaller, a stale count shows a small refresh icon instead of a stray "·", and an image in a reference breadcrumb renders at breadcrumb height.
+- `:feature/enable-journals? false` in `logseq/config.edn` shows the configured home page in the sidebar in place of Journals, as in Logseq. Each comma item of a property listed in `:property/separated-by-commas` is now a page link in page and block properties.
 
 ### Added
 

@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-query-layout.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"On a synthetic graph a query table lies inside its query box in the main pane and the right sidebar, board counts are separated from their labels, table and card page links read as links, Collapse all is in the Linked References header row, an image in a reference breadcrumb is small, comma-separated property values are page links, and with journals off the sidebar leads to the configured home page instead of Journals.","blocking":false,"authority":"D-20261028-UILP; UI-LP-QUERY-TABLE-BOX, UI-LP-BOARD-CARDS, UI-LP-REFERENCES-HEADER, UI-LP-BREADCRUMB-IMAGE, UI-LP-JOURNALS-OFF-HOME, UI-LP-COMMA-PROPERTY-LINKS"}],
+      "acceptableVariations": ["Exact pixels, column widths, fonts, scrollbar thickness, theme colours and window size may vary; only containment, separation and presence are asserted."],
+      "nonRequirements": ["No pixel comparison, no journals-off behaviour beyond the sidebar item and home route, no Windows/macOS/mobile certification."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-sweep-nav.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Mouse back/forward follows routed-page history without navigating after a drag; Commands and t o fold a 60-block page durably, while the bullet menu folds one subtree.","blocking":false,"authority":"GH #780, #785; UI-GH780-MOUSE-HISTORY; UI-GH785-PAGE-FOLD"}],
       "acceptableVariations": ["Menu layout, save latency, page geometry and native event sequences may vary."],
