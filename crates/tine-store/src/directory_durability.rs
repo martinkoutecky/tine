@@ -13,6 +13,9 @@
 use std::io;
 use std::path::Path;
 
+#[cfg(target_os = "windows")]
+mod windows;
+
 #[derive(Debug)]
 struct DirectorySyncFailure(io::Error);
 
@@ -66,8 +69,9 @@ pub fn take_synced_directories() -> Vec<std::path::PathBuf> {
 /// Errors that mean "this filesystem does not offer directory sync" are
 /// tolerated ([`dir_sync_is_unsupported`]); a real failure (`EIO`, `ENOSPC`, …)
 /// is returned, and the caller re-reads disk state. Windows returns success
-/// without a directory flush; standard file opening cannot flush its directory
-/// handles, and the caller is responsible for its own rename durability protocol.
+/// without a directory flush for graph folders; the caller's synced temp +
+/// write-through move is its recipe. App-data callers use
+/// [`sync_private_directory`], which adds a best-effort flush.
 pub fn sync_directory_entry(dir: &Path) -> io::Result<()> {
     sync_directory(dir, false).map(|_| ())
 }
@@ -75,7 +79,8 @@ pub fn sync_directory_entry(dir: &Path) -> io::Result<()> {
 /// What a directory sync proved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DirectoryWitness {
-    /// The platform synced the directory (or, on Windows, needs no flush).
+    /// The platform synced the directory, or (Windows) returned its historical
+    /// success result: no flush for graph folders, a best-effort one for app data.
     Durable,
     /// The filesystem does not offer directory sync: no platform witness.
     Unsupported,
@@ -88,12 +93,13 @@ pub fn sync_directory_witness(dir: &Path) -> io::Result<DirectoryWitness> {
 }
 
 /// App-data metadata must meet the design's platform witness. Unix never
-/// tolerates a directory-sync error here. Windows performs no directory flush:
-/// write-through moves cover their documented move scope, not arbitrary mkdir,
+/// tolerates a directory-sync error here. Windows attempts a best-effort flush
+/// without changing the historical success result, even on failure.
+/// Write-through moves cover their documented move scope, not arbitrary mkdir,
 /// unlink, or the ordinary-rename fallback. A-DRAFT-DURABLE in the assumption
 /// ledger records the strong backing-store/namespace persistence precondition;
 /// NTFS journaling alone does not establish it. No native power-cut proof.
-pub(crate) fn sync_private_directory(dir: &Path) -> io::Result<()> {
+pub fn sync_private_directory(dir: &Path) -> io::Result<()> {
     sync_directory(dir, true).map(|_| ())
 }
 
@@ -135,13 +141,16 @@ fn sync_directory(dir: &Path, private: bool) -> io::Result<DirectoryWitness> {
     }
     #[cfg(target_os = "windows")]
     {
-        // Directory handles cannot be synced with std::fs. NTFS renames are
-        // journaled, but this helper does not verify the filesystem or rename.
-        let _ = dir;
-        // The caller's synced temp + WRITE_THROUGH move is the Windows
-        // publication recipe (SPEC-s2 §4.7), not a directory flush.
-        let _ = private;
-        Ok(DirectoryWitness::Durable)
+        // Only app-data (drafts, custody) gets the best-effort flush. Graph
+        // folders may be network or cloud folders, where an extra flush per
+        // save is a server round trip; their recipe stays the synced temp +
+        // WRITE_THROUGH move (SPEC-s2 §4.7).
+        if private {
+            Ok(windows::sync_directory(dir))
+        } else {
+            let _ = dir;
+            Ok(DirectoryWitness::Durable)
+        }
     }
     #[cfg(not(any(
         target_os = "linux",
