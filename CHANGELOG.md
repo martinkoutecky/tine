@@ -114,6 +114,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - An asset stays in place if sync replaces a set-aside duplicate journal while Tine checks whether the asset is unused; the check refuses stale bytes even when the replacement keeps the same length and modification time (GH #623).
 
 - A page file that a sync tool is replacing while Tine lists the folder is no longer reported as "couldn't be read" (REG-SCAN-VANISHED-ENTRY).
+- A file replaced or deleted while an on-demand graph read builds its index is no longer reported as unreadable (REG-JOURNAL-HARDEN-GONE-BUILD; also affected stable 0.8.1).
 
 Development-only fixes (not shipped in a release):
 
