@@ -36,7 +36,7 @@ themes-default = 默认
 
 themes-color-scheme = 配色
 
-themes-style-and-colors-are-independent-theme-packages = 样式和颜色独立。主题包使用经过验证的颜色和 Tine 定义的显示样式；<code>logseq/custom.css</code> 仍优先。
+themes-style-and-colors-are-independent-theme-packages = 样式、颜色和排版相互独立。主题包使用经过验证的颜色、本机字体名称和 Tine 定义的显示样式；<code>logseq/custom.css</code> 仍优先。
 
 themes-theme-packages = 主题包
 
@@ -60,7 +60,7 @@ themes-install = 安装
 
 themes-install-a-token-theme = 安装样式变量主题
 
-themes-theme-packages-contain-only-whitelisted-color-tokens = 主题包仅包含白名单内的颜色变量和元数据，不包含脚本、选择器、导入或远程附件。
+themes-theme-packages-contain-only-whitelisted-color-tokens = 主题包仅包含白名单内的颜色变量、本机字体名称和元数据，不包含脚本、选择器、导入、字体文件或远程附件。
 
 themes-validating = 正在验证…
 
@@ -85,3 +85,13 @@ themes-uninstalling = 正在卸载…
 themes-uninstall = 卸载…
 
 themes-behavioral-port-of-for-credited-to = 对 { $ecosystem } 的 { $name } 进行功能移植，原作者：{ $authors }。
+
+themes-typography = 排版
+
+themes-fonts-and-block-line-height-from-a-theme-package = 来自已安装主题包的字体和块行高。
+
+themes-use-typography = 使用排版
+
+themes-typography-selected = 已选择排版
+
+themes-font-not-installed = 此设备上未安装 { $font }；正在使用备用字体。
