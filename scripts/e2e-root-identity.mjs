@@ -41,7 +41,7 @@ const unusedPort=()=>new Promise((resolve,reject)=>{
 const env = { ...process.env, XDG_DATA_HOME:path.join(run,"data"),XDG_CONFIG_HOME:path.join(run,"config"),XDG_CACHE_HOME:path.join(run,"cache"),
   TINE_ROOT_IDENTITY_RUN:run, WEBKIT_DISABLE_DMABUF_RENDERER:"1",WEBKIT_DISABLE_COMPOSITING_MODE:"1",LIBGL_ALWAYS_SOFTWARE:"1",GDK_BACKEND:"x11" };
 const data = path.join(run,"data",APP_ID);
-const testedCommit = execFileSync("rtk",["git","rev-parse","HEAD"],{ cwd:root,encoding:"utf8" }).trim();
+const testedCommit = execFileSync("git", ["rev-parse","HEAD"],{ cwd:root,encoding:"utf8" }).trim();
 const log = fs.openSync(path.join(run,"driver.log"),"w");
 let driver,browser,generation,stage="launch";
 const passed=[];
@@ -103,7 +103,7 @@ const toastText=()=>browser.execute(()=>[...document.querySelectorAll(".toast-ms
 const clickNotice=async label=>browser.execute(label=>[...document.querySelectorAll('[data-testid="root-recovery-notice"] button')].find(b=>b.textContent===label)?.click(),label);
 // WebKit's screenshot command can time out after a crash/relaunch even while
 // DOM commands work. Capture the actual Xvfb display at the observed state.
-const screenshot=name=>execFileSync("rtk",["proxy","import","-window","root",path.join(run,name)],{env,timeout:10000});
+const screenshot=name=>execFileSync("import", ["-window","root",path.join(run,name)],{env,timeout:10000});
 try {
   await launch(old);
   await browser.waitUntil(async ()=>(await invoke("list_backups")).some(b=>b.status==="ok"),{timeout:30000,timeoutMsg:"initial launch snapshot never became available"});

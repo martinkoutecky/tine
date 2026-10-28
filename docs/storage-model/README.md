@@ -87,8 +87,8 @@ endpoint. Neither this bounded evidence nor the wakeup regression proves OS
 fairness or unbounded temporal liveness. Linux is the recorded execution
 platform; other target runtime acceptance remains separate.
 
-Reproduce the supplement with `rtk proxy python3 docs/storage-model/replay/replay36.py --check`
-and `rtk proxy python3 docs/storage-model/quint/cons36.py`, then the s3.6
+Reproduce the supplement with `python3 docs/storage-model/replay/replay36.py --check`
+and `python3 docs/storage-model/quint/cons36.py`, then the s3.6
 `sweep.py` (`QNT=storage-s36.qnt SCEN=scenarios-s36.inc`) and the unchanged
 s3.5 suite. `cons36.py` compares every old scenario under every old mutant in
 every profile, allowing only the two explicitly named newly refused creating

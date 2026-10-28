@@ -9,13 +9,6 @@ import type { GraphAnswersChange } from "../../backend";
 import type { PageDto } from "../../types";
 import type { PageMail } from "./protocol";
 
-// The development agent uses RTK. Ordinary contributors/CI need only the
-// repository Rust toolchain; RTK is not a new required test dependency.
-const hasRtk = spawnSync("rtk", ["--version"], { stdio: "ignore" }).status === 0;
-function invocation(command: string, args: string[]): [string, string[]] {
-  return hasRtk ? ["rtk", ["proxy", command, ...args]] : [command, args];
-}
-
 export const TARGET = "12345678-1234-4234-8234-123456789abc";
 export interface NativeImage {
   rev: string;
@@ -31,8 +24,8 @@ export interface NativeReply {
 
 export function buildPeer(): string {
   mkdirSync("artifacts/conformance-f1-f6", { recursive: true });
-  const result = spawnSync(...invocation("bash", ["-c",
-    'source scripts/env.sh; CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}" CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" cargo test -p tine-store --lib --no-run --message-format=json']),
+  const result = spawnSync("bash", ["-c",
+    'source scripts/env.sh; CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}" CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" cargo test -p tine-store --lib --no-run --message-format=json'],
   { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout: 600_000 });
   writeFileSync("artifacts/conformance-f1-f6/peer-build.log", result.stderr ?? "");
   if (result.status !== 0) throw new Error(`native peer build failed: ${result.stderr}\n${result.error ?? ""}`);
@@ -49,10 +42,10 @@ export class NativePeer {
   private stderr = "";
   private ended: Error | undefined;
   readonly trace: unknown[] = [];
-  private readonly commit = spawnSync(...invocation("git", ["rev-parse", "HEAD"]), { encoding: "utf8" }).stdout?.trim();
+  private readonly commit = spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).stdout?.trim();
   constructor(executable: string) {
-    this.child = spawn(...invocation(executable, [
-      "page_host::binding::tests::window::native_window_peer", "--exact", "--ignored", "--nocapture"]),
+    this.child = spawn(executable, [
+      "page_host::binding::tests::window::native_window_peer", "--exact", "--ignored", "--nocapture"],
     { cwd: resolve("."), stdio: "pipe" });
     this.child.stderr.on("data", chunk => { this.stderr += String(chunk); });
     createInterface({ input: this.child.stdout }).on("line", line => {

@@ -2,7 +2,7 @@
 //! publication, directory sync and draft I/O. No native power loss is simulated.
 //!
 //! From the repository root, after sourcing scripts/env.sh:
-//! `rtk proxy env TINE_STORAGE_ACCEPT_ROOT=/path/on/volume CARGO_TARGET_DIR=target cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1`
+//! `env TINE_STORAGE_ACCEPT_ROOT=/path/on/volume CARGO_TARGET_DIR=target cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1`
 //!
 //! The supplied parent must already exist. Each case creates and owns a fresh
 //! empty subdirectory there; it never initializes or removes the parent itself.

@@ -52,7 +52,7 @@ const driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", ["--port", Stri
 let browser;
 let journey = "open local image page";
 const app = process.env.TINE_APP || path.join(root, "target/debug/tine");
-const proof = { commit: execFileSync("rtk", ["git", "rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(), delta: "round 5 working diff", appSha256: createHash("sha256").update(fs.readFileSync(app)).digest("hex"), steps: [] };
+const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(), delta: "round 5 working diff", appSha256: createHash("sha256").update(fs.readFileSync(app)).digest("hex"), steps: [] };
 const selectors = [".page-title-icon img[data-page-image-icon]", "#sidebar-favorites-list img[data-page-image-icon]"];
 async function rendered(name = "Image") {
   for (const selector of selectors) await browser.waitUntil(() => browser.execute((selector, name) => {
@@ -84,7 +84,7 @@ try {
     const dom = await browser.execute(() => ({ favorites: document.querySelectorAll("#sidebar-favorites-list .nav-page-label").length,
       images: document.querySelectorAll("#sidebar-favorites-list img[data-page-image-icon]").length,
       decoded: [...document.querySelectorAll("#sidebar-favorites-list img[data-page-image-icon]")].filter(img => img.complete && img.naturalWidth > 0).length }));
-    const processes = execFileSync("rtk", ["proxy", "ps", "-eo", "pid=,ppid=,comm=,rss="], { encoding: "utf8" }).trim().split("\n").map(line => {
+    const processes = execFileSync("ps", ["-eo", "pid=,ppid=,comm=,rss="], { encoding: "utf8" }).trim().split("\n").map(line => {
       const [pid, parent, name, rssKiB] = line.trim().split(/\s+/); return { pid: Number(pid), parent: Number(parent), name, rssKiB: Number(rssKiB) };
     });
     const descendants = new Set([driver.pid]);

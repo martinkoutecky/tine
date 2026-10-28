@@ -13,7 +13,7 @@ ensurePrivateSessionBus();
 assert.ok(process.env.DISPLAY, "Run under xvfb-run -a");
 const app = process.env.TINE_APP || path.resolve("target/debug/tine");
 const artifacts = path.resolve("artifacts/gh457");
-const testedCommit = spawnSync("rtk", ["git", "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+const testedCommit = spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
 fs.mkdirSync(artifacts, { recursive: true });
 const fixture = fs.mkdtempSync(path.join(artifacts, "native-"));
 const graph = path.join(fixture, "graph");
