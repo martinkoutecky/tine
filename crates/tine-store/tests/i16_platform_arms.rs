@@ -253,7 +253,8 @@ fn host_publication_witnesses_cover_exactly_the_five_shipped_targets() {
     let pinned = [
         // atomic_write_private adds two: its owner-only arm and refusal stub.
         ("src/atomic_file.rs", 5),
-        ("src/directory_durability.rs", 2),
+        // The Windows-only best-effort flush module adds a standalone arm.
+        ("src/directory_durability.rs", 3),
         ("src/no_replace.rs", 8),
     ];
     let found = pinned.map(|(file, _)| {
