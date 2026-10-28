@@ -118,7 +118,12 @@ field store::WatchBatch.reconcile_started
 # private transaction module).
 fn transaction::Store::read_is_current
 
-## Identity (ceiling: 9)
+## Identity (ceiling: 10)
+# GS-FIX2: is_graph_text/is_asset_sidecar classify file types, not spelling
+# candidates. Expose the existing Unicode case-only predicate so the pull
+# planner and host/transaction publication share one candidate policy;
+# this read-only path comparison proves no alias and adds no writer.
+fn file_kind::case_only
 fn file_kind::is_graph_text
 fn file_kind::is_asset_sidecar
 # og 21a: a live-conflict review finds its Concord-ledger base by the draft's revision.

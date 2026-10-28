@@ -192,7 +192,14 @@ this process's applied-path set (P4), the autocommit is skipped and the next syn
 Otherwise (a genuine local change) the autocommit runs and the pull ends as `diverged`: nothing is lost.
 
 The host records P4 at each guarded publication, even when the caller already
-received `Uncertain`. An admitted pull pins its `H`, `U` and branch in memory:
+received `Uncertain`. Host admission checks that same receipt set under the
+publication-owning driver state, including before a case-only entry move.
+A receipt arriving after planning holds the stale operation without writing
+the receipted path; the next cycle replans and skips it. An unchanged case-only
+destination is already published by the entry move and needs no content write.
+Case-only candidates use the store's Unicode fold; actual alias/absence checks
+and guarded no-replace publication still decide whether the entry can move.
+An admitted pull pins its `H`, `U` and branch in memory:
 later fetches may advance the tracking tip, but pull and P3 finish that same `U`
 first. A tracking tip that no longer descends from the pending `U` stops as
 `diverged` with a force-push reason, retaining the pending provenance.
@@ -207,7 +214,7 @@ Refusals (contract refusal table rows, each with its in-scope threat):
 | Refusal | In-scope threat | Recovery |
 | --- | --- | --- |
 | `pull-held: unsaved` (a pulled page has unsaved input) | concurrent edit in a window | retried at the next sync once the page saves; earlier operations may already have updated files |
-| `pull-held: changed` (a file no longer holds its `H` bytes; HostOp `Changed`) | an external editor or Syncthing changed it after the autocommit | the next cycle autocommits it, then diverges |
+| `pull-held: changed` (a file no longer holds its `H` bytes, or a prior publication made the plan stale; HostOp `Changed`) | an external editor, Syncthing or an earlier Uncertain pull operation changed it after planning | the next cycle replans, skipping receipted paths; a genuine local change is autocommitted, then diverges |
 | `pull-held: busy` (HostOp `Busy`, `index.lock`, `gc.pid`) | other work holds the pages, or another git command runs | retried later; the stale-lock notice after 30 min (§1) |
 | `pull-incomplete` (HostOp `Unwritten`, `Superseded`, `Uncertain`, `DraftFailed`, a failed non-page write or durability barrier) | disk error, full disk, a page edited back before it published | the ref stays at `H`; the resume rule finishes it |
 | `pull-refused: <path> <reason>` (symlink, submodule, type or mode change, a staged change other than `H`'s or `U`'s, ignored local file in the way) | the user's repository content | Settings names the path; the user resolves it in git |

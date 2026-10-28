@@ -47,8 +47,9 @@ impl PagePlan<'_> {
             // Same-file equality alone accepts symlinks and hard links;
             // only an unlisted folded spelling or an absent case-only
             // destination on a sensitive volume is eligible.
-            let absent_case_destination = from.as_str().eq_ignore_ascii_case(to.as_str())
-                && matches!(fs::symlink_metadata(&dst),
+            let absent_case_destination =
+                case_only(Path::new(from.as_str()), Path::new(to.as_str()))
+                    && matches!(fs::symlink_metadata(&dst),
                     Err(error) if error.kind() == io::ErrorKind::NotFound);
             if !self.destination_is_source_spelling(from, to)? && !absent_case_destination {
                 return Err(Why::Conflict {
@@ -481,21 +482,7 @@ fn rename_spelling_replace(src: &Path, dst: &Path) -> io::Result<()> {
     crate::atomic_file::rename_replace(src, dst)
 }
 
-pub(super) fn case_only(src: &Path, dst: &Path) -> bool {
-    // A candidate filter only, shared with registered-entry identity. Logical
-    // page keys use lowercase (so e.g. ß/SS and I/ı can differ); a folding
-    // volume may still resolve them to the same file. Only same_file plus an
-    // unlisted destination permits the replacement in source_spelling_alias.
-    src != dst
-        && src.parent() == dst.parent()
-        && src
-            .file_name()
-            .zip(dst.file_name())
-            .is_some_and(|(from, to)| {
-                crate::model::entry_identity::fold_leaf(from)
-                    == crate::model::entry_identity::fold_leaf(to)
-            })
-}
+pub(super) use crate::file_kind::case_only_paths as case_only;
 
 #[cfg(test)]
 mod spelling_tests {

@@ -292,8 +292,14 @@ fn hash_on_disk(path: &Path) -> std::io::Result<Option<Oid>> {
         if let Some(parent) = path.parent() {
             if let Ok(entries) = std::fs::read_dir(parent) {
                 for entry in entries.flatten() {
-                    if entry.file_name().to_string_lossy().eq_ignore_ascii_case(
-                        &path.file_name().unwrap_or_default().to_string_lossy(),
+                    if tine_store::file_kind::case_only(
+                        &FileId::from(entry.file_name().to_string_lossy().into_owned()),
+                        &FileId::from(
+                            path.file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned(),
+                        ),
                     ) {
                         return hash_on_disk(&entry.path());
                     }
@@ -663,7 +669,8 @@ fn pre_check(
             // On a sensitive volume this gives the same two-sided HostOp.
             let case_move = change.renamed()
                 && matches!((&change.old, &change.new),
-                (Some(old), Some(new)) if old.path.eq_ignore_ascii_case(&new.path));
+                (Some(old), Some(new)) if tine_store::file_kind::case_only(
+                    &FileId::from(old.path.clone()), &FileId::from(new.path.clone())));
             // The OS handoff may canonicalize an alias to its source. Test
             // the requested lexical spelling, not that resolved handoff.
             let disk = match if case_move
