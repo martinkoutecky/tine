@@ -349,6 +349,11 @@ fn q_git_up_to_date_no_upstream_and_diverged() {
     let slot = graph.slot();
     {
         let bare = Repository::init(&graph.root).unwrap();
+        // See `repo()`: hosted Windows runners set core.autocrlf globally.
+        bare.config()
+            .unwrap()
+            .set_bool("core.autocrlf", false)
+            .unwrap();
         commit_all(&bare, "initial");
     }
     assert_eq!(pull(&slot), PullOutcome::NoUpstream);
