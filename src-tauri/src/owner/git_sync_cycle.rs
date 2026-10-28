@@ -137,10 +137,10 @@ pub(crate) fn cycle(slot: &GraphSlot, credentials: &Arc<dyn Credentials>) -> Cyc
     if ahead == 0 {
         return ok("up-to-date");
     }
-    push(root, credentials)
+    push_branch(root, credentials)
 }
 
-fn push(root: &std::path::Path, credentials: &Arc<dyn Credentials>) -> Cycle {
+fn push_branch(root: &std::path::Path, credentials: &Arc<dyn Credentials>) -> Cycle {
     if stopped() {
         return cycle_of(Class::Quit, "cancelled", "");
     }
@@ -159,7 +159,7 @@ fn push(root: &std::path::Path, credentials: &Arc<dyn Credentials>) -> Cycle {
 /// as `diverged`, as a fetch would have found.
 pub(crate) fn push_pending(slot: &GraphSlot, credentials: &Arc<dyn Credentials>) -> Option<Cycle> {
     let root = &slot.root_key;
-    (!stopped() && super::git_sync::push_pending(root)).then(|| push(root, credentials))
+    (!stopped() && super::git_sync::push_pending(root)).then(|| push_branch(root, credentials))
 }
 
 /// A landed pull's pages, told to the window as the watcher tells it of

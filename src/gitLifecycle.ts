@@ -5,6 +5,7 @@
 // automatically, push. Coming back, they commit and sync. Desktop sends
 // nothing: it commits on the cadence and at quit.
 import { backend } from "./backend";
+import { dbg } from "./debug";
 import { ownedWhen, writeOwned } from "./owned";
 
 /** Tell the graphs' git threads; the answer carries nothing to land. */
@@ -13,13 +14,22 @@ function tellBackend(foreground: boolean): Promise<unknown> {
 }
 
 /** One visibility edge. `flushAll` publishes every page's input and asset
- *  writes (the background flush). Best effort: never rejects; a failed flush
- *  still commits what was saved, and a refused call waits for the next edge. */
+ *  writes (the background flush, which reports its own failure). Never
+ *  rejects: a failed flush still commits what was saved, and a refused call
+ *  waits for the next edge or the cadence. */
 export async function gitLifecycleEdge(
   foreground: boolean,
   flushAll: () => Promise<boolean>,
   tell: (foreground: boolean) => Promise<unknown> = tellBackend,
 ): Promise<void> {
-  if (!foreground) await flushAll().catch(() => false);
-  await tell(foreground).catch(() => undefined);
+  if (!foreground) {
+    await flushAll().then(
+      () => undefined,
+      () => dbg("git background edge: page flush failed"),
+    );
+  }
+  await tell(foreground).then(
+    () => undefined,
+    () => dbg("git lifecycle edge unrecorded"),
+  );
 }

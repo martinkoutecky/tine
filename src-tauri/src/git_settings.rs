@@ -232,7 +232,7 @@ pub(crate) async fn git_sign_in(
 /// desktop keeps committing on the cadence and at quit. Answers at once: the
 /// graphs' git threads do the work.
 #[tauri::command]
-pub(crate) fn git_app_lifecycle(foreground: bool) {
+pub(crate) async fn git_app_lifecycle(foreground: bool) {
     if foreground {
         autocommit::foregrounded();
     } else {
