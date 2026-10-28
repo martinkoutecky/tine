@@ -13,6 +13,7 @@ import { remote } from "webdriverio";
 import { tauriCapabilities, webdriverServerArgs } from "../e2e-capabilities.mjs";
 import { ensureMainWindow } from "../lib/e2e-main-window.mjs";
 import { IDENTITIES } from "../lib/app-identity.mjs";
+import { accountHomeFixture, assertAppLease } from "../lib/e2e-account-home.mjs";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 // The exe link /proc reports is the resolved path, so compare against that.
@@ -125,8 +126,10 @@ export async function launchApp({ corpus, pdfs, dpr, tmp, driverPort, nativePort
   const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
   fs.writeFileSync(path.join(graph, "journals", `${journal}.md`),
     pdfs.map((name) => `- ![${name}](../assets/${name})`).join("\n") + "\n");
+  const account = accountHomeFixture(tmp);
   const env = {
     ...process.env,
+    ...account.env,
     TINE_GRAPH: graph,
     XDG_DATA_HOME: path.join(tmp, "xdg", "data"),
     XDG_CONFIG_HOME: path.join(tmp, "xdg", "config"),
@@ -153,6 +156,7 @@ export async function launchApp({ corpus, pdfs, dpr, tmp, driverPort, nativePort
     capabilities: tauriCapabilities(APP, "default", process.platform),
   });
   await ensureMainWindow(browser);
+  await assertAppLease(account);
   await browser.setTimeout({ script: 300_000 });
   let appPid = null;
   for (let i = 0; i < 50 && !appPid; i++) { appPid = findAppPid(); if (!appPid) await sleep(100); }
@@ -160,6 +164,8 @@ export async function launchApp({ corpus, pdfs, dpr, tmp, driverPort, nativePort
     try { await browser.deleteSession(); } catch {}
     try { process.kill(-td.pid, "SIGKILL"); } catch {}
     await sleep(500);
+    account.close?.();
+    account.verify();
   };
   return { browser, appPid, stop, graph, env, driverPid: td.pid };
 }

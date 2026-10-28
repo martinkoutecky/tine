@@ -28,6 +28,7 @@ import { createPdfPageCache } from "./pdfPageCache";
 import { pdfTextSelection, type PdfTextSelection } from "./pdfSelection";
 import { createPdfFind } from "./pdfFind";
 import { createPdfTiles, PDF_TILE_PIXEL_BUDGET } from "./pdfTiles";
+import { createPdfViewState } from "./pdfViewState";
 import { pdfProbe } from "./pdfProbe";
 import { createPdfPinch } from "./pdfPinch";
 import { createWheelZoomAccumulator, highestPriorityPage, PDF_PREFETCH_PAGES, PDF_ZOOM_SETTLE_MS } from "./pdfRenderQueue";
@@ -110,7 +111,6 @@ export function PdfViewer(props: {
   let pageInputFocused = false;
   let scrollRaf: (() => void) | undefined;
   let viewStateReady = false;
-  let viewStateBaseline: { page: number; scale: number } | null = null;
   const [theme, setTheme] = createSignal<PdfTheme>(storedPdfTheme());
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [outlineOpen, setOutlineOpen] = createSignal(false);
@@ -352,13 +352,9 @@ export function PdfViewer(props: {
   const fitWidthScale = () => (dims[1] ? clampScale((scrollRef.clientWidth - 32) / dims[1].w) : 1);
   const fitHeightScale = () => (dims[1] ? clampScale((scrollRef.clientHeight - 24) / dims[1].h) : 1);
 
-  const scheduleViewState = (page: number, nextScale: number) => {
-    if (!isPdfOwnershipCurrent(owner)) return;
-    if (!viewStateReady || !Number.isFinite(nextScale) || nextScale <= 0) return;
-    if (viewStateBaseline?.page === page && viewStateBaseline?.scale === nextScale) return;
-    viewStateBaseline = { page, scale: nextScale };
-    props.onViewState?.(viewStateBaseline);
-  };
+  const viewState = createPdfViewState(() => ({ page: curPage(), scale: scale() }),
+    (state) => props.onViewState?.(state),
+    () => viewStateReady && isPdfOwnershipCurrent(owner));
 
   function failPdf(message: string) {
     detachHighlightPrepare(); // a failed document lends no geometry to siblings
@@ -367,6 +363,7 @@ export function PdfViewer(props: {
     io = null;
     clearTimeout(zoomTimer);
     clearTimeout(textTimer);
+    viewState.cancel();
     findController.cancel();
     releaseAllCanvases();
     pdfTiles.reset();
@@ -724,6 +721,7 @@ export function PdfViewer(props: {
     }
     setCurPage(page);
     setPageField(String(page));
+    viewState.publish(page, scale()); // explicit navigation is already a committed intent
     pageEls[page]?.scrollIntoView({ block: "start" });
 
     if (!highlight) {
@@ -1066,6 +1064,7 @@ export function PdfViewer(props: {
   }
 
   function cancelOwnedWork() {
+    viewState.flush();
     disposed = true;
     if (!pdfDoc) releaseDocument(); // a load still under way stops with its last view
     pinch.cancel();
@@ -1162,9 +1161,8 @@ export function PdfViewer(props: {
     const requestedPage = navigation.page ?? restoredPage ?? 1;
     await navigateToTarget({ ...navigation, page: requestedPage });
     if (disposed) return;
-    viewStateBaseline = { page: curPage(), scale: scale() };
     viewStateReady = true;
-    props.onViewState?.(viewStateBaseline);
+    viewState.publish(curPage(), scale());
     setReady(true);
   });
 
@@ -1187,7 +1185,7 @@ export function PdfViewer(props: {
   createEffect(on(scale, onZoom, { defer: true }));
   createEffect(on(
     () => [curPage(), scale()] as const,
-    ([page, nextScale]) => scheduleViewState(page, nextScale),
+    ([page, nextScale]) => viewState.changed(page, nextScale),
     { defer: true }
   ));
   // Repaint highlight overlays whenever the set changes (rendered pages only).
@@ -1582,6 +1580,7 @@ export function PdfViewer(props: {
 
   const closeSafely = async () => {
     if (await drainPdfWork()) {
+      viewState.publish(curPage(), scale());
       if (props.onClose) props.onClose();
       else void focusedRouter().closePdf();
     }
@@ -1649,6 +1648,7 @@ export function PdfViewer(props: {
     setCurPage(n);
   };
   const onScroll = () => {
+    viewState.scroll();
     const top = scrollRef.scrollTop;
     if (top !== lastScrollTop) {
       // A move of more than a viewport is a jump (outline, page field, link,

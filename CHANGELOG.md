@@ -74,6 +74,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- While you scroll a PDF, Tine remembers the reading position once scrolling stops instead of at every page passed; the page indicator still follows live, and zoom, page jumps and closing are remembered at once (D-20261028-PDF9 item 4).
 - Large graph PDFs load requested byte ranges through the read-only asset IPC, so opening one no longer copies the entire file into the webview first (D-20261028-PDF9 item 3).
 
 - PDF page eviction releases decoded images and drawing data once no split view retains the page, reducing retained memory while reading scanned books (D-20261028-PDF9, item 1).
