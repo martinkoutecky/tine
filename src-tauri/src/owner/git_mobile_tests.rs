@@ -422,6 +422,9 @@ fn git_commits_pulls_pushes_and_repacks_on_the_graph_volume() {
 }
 
 /// GH #538-b and case folding: the laptop renames a page by case only.
+/// Fails on Android shared storage (MediaProvider keeps the old spelling)
+/// until GS-S1 is decided; the assertion stays, and the `android-git-storage`
+/// CI job stays out of `scope=full` meanwhile.
 #[test]
 fn a_pulled_case_only_rename_lands_on_the_graph_volume() {
     let phone = Phone::new();

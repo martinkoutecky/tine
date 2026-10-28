@@ -490,7 +490,9 @@ jobs:
   # repack, and a commit or push killed midway, with the graph on Android
   # shared storage (MediaProvider's FUSE daemon). API 33 refuses the
   # no-replace rename flag (GH #538-b); API 35 is current. Focused proof only:
-  # not part of `full`.
+  # not part of `full`, and red by design until GS-S1 is decided:
+  # `a_pulled_case_only_rename_lands_on_the_graph_volume` fails on shared
+  # storage (a case-only rename keeps the old spelling). Keep it out of `full`.
   android-git-storage:
     name: Android git on shared storage (API ${{ matrix.api }})
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'android'
