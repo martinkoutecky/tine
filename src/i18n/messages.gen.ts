@@ -975,6 +975,8 @@ export interface MessageArgs {
   "git-sync-copy-failed": {};
   "git-sync-diverged": {};
   "git-sync-fix-copy-command": {};
+  "git-sync-fix-line-endings": {};
+  "git-sync-fix-line-endings-guide": {};
   "git-sync-fix-open-folder": {};
   "git-sync-fix-sign-in": {};
   "git-sync-held-changed": { "path": string | number };
@@ -986,6 +988,10 @@ export interface MessageArgs {
   "git-sync-last-pulled": { "time": string | number };
   "git-sync-last-pushed": { "time": string | number };
   "git-sync-last-up-to-date": { "time": string | number };
+  "git-sync-line-endings-blocked": { "reason": string | number };
+  "git-sync-line-endings-differ": { "count": string | number; "path": string | number };
+  "git-sync-line-endings-failed": { "error": string | number };
+  "git-sync-line-endings-safe": {};
   "git-sync-network": { "message": string | number };
   "git-sync-no-upstream": {};
   "git-sync-notice-settings": {};

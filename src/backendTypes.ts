@@ -87,6 +87,13 @@ export interface GitSyncStatus {
   failures: number;
   /** Shown outside Settings too. */
   persistent: boolean;
+  line_endings?: GitLineEndingsProbe | null;
+}
+export interface GitLineEndingsProbe {
+  safe: boolean;
+  differing: number;
+  sample: string | null;
+  reason: string | null;
 }
 export interface GitRemote {
   name: string;
@@ -150,6 +157,7 @@ export interface GitAutocommitStatus {
   remote?: GitRemote | null;
   /** Why the sync options are refused: [code, message]. */
   sync_unusable?: [string, string] | null;
+  line_endings?: GitLineEndingsProbe | null;
   /** The username signed in for the remote's host on this device. */
   signed_in?: string | null;
 }

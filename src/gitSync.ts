@@ -1,8 +1,8 @@
 import { t } from "./i18n";
-import type { GitSyncStatus } from "./backendTypes";
+import type { GitLineEndingsProbe, GitSyncStatus } from "./backendTypes";
 
 /** What the user can do about a sync problem (D-20261027-OF: a persistent indicator offers a fix). */
-export type GitSyncFix = "sync-now" | "sign-in" | "copy-command" | "open-folder";
+export type GitSyncFix = "sync-now" | "sign-in" | "copy-command" | "open-folder" | "line-endings" | "line-endings-guide";
 
 export interface GitSyncProblem {
   text: string;
@@ -11,10 +11,22 @@ export interface GitSyncProblem {
   command?: string;
 }
 
+export function gitLineEndingsProblem(probe: GitLineEndingsProbe | undefined | null): GitSyncProblem | null {
+  if (!probe) return null;
+  return {
+    text: probe.safe ? t("git-sync-line-endings-safe")
+      : probe.differing ? t("git-sync-line-endings-differ", { count: probe.differing, path: probe.sample ?? "" })
+      : t("git-sync-line-endings-blocked", { reason: probe.reason ?? "" }),
+    fixes: probe.safe ? ["line-endings"] : ["line-endings-guide", "sync-now"],
+  };
+}
+
 /** One refusal-table row of ADR 0078 §4 in plain language, for Settings → Graph → Git and the app's notice
  *  alike; `null` for a cycle that succeeded or none yet. `root` is the graph folder the git commands name. */
 export function gitSyncProblem(sync: GitSyncStatus | undefined | null, root: string | undefined): GitSyncProblem | null {
   if (!sync?.code) return null;
+  const lineEndings = gitLineEndingsProblem(sync.line_endings);
+  if (lineEndings) return lineEndings;
   const message = sync.message ?? "";
   const path = sync.path ?? "";
   const git = (args: string) => root ? `git -C "${root}" ${args}` : `git ${args}`;

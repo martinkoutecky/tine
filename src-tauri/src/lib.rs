@@ -897,7 +897,6 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_opener::init());
 
     let builder = linux_inline_preedit::configure(builder);
-
     builder
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
@@ -1272,6 +1271,7 @@ pub fn run() {
             git_settings::git_autocommit_status,
             git_settings::set_git_autocommit,
             git_settings::git_sync_now,
+            git_settings::git_disable_line_endings,
             git_settings::git_sync_notice,
             git_settings::git_sign_in,
             git_settings::git_sign_out,

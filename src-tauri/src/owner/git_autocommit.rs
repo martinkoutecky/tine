@@ -1231,9 +1231,13 @@ fn sync_on_worker(worker: &registry::Worker, interval: Duration) -> Option<(Dura
         return None;
     };
     let cycle = super::git_sync_cycle::cycle(&slot, &credentials);
+    // The transport refuses in words, the pull with its `conversion` code.
+    let line_endings = (cycle.code == "conversion" || cycle.message.contains("conversion"))
+        .then(|| super::git_sync::line_endings::probe(&slot.root_key));
     drop(slot);
     let mut state = worker.state.lock().unwrap();
     let delay = state.last.sync.record(&cycle, interval);
+    state.last.sync.line_endings = line_endings;
     Some((delay, cycle.backs_off()))
 }
 
@@ -1293,6 +1297,7 @@ pub(crate) struct GitStatus {
     pub(crate) remote: Option<super::git_sync::Remote>,
     /// Why the sync options are refused (`code`, message), when they are.
     pub(crate) sync_unusable: Option<(String, String)>,
+    pub(crate) line_endings: Option<super::git_sync::line_endings::Probe>,
     /// The username this device signed in with for the remote's host.
     pub(crate) signed_in: Option<String>,
 }
@@ -1329,6 +1334,10 @@ pub(crate) fn git_status(root: &Path, settings: GitSettings) -> GitStatus {
             Err(other) => (None, Some(("refused".into(), format!("{other:?}")))),
         },
     };
+    let line_endings = sync_unusable
+        .as_ref()
+        .filter(|(code, why)| code == "conversion" || why.contains("conversion"))
+        .map(|_| super::git_sync::line_endings::probe(root));
     GitStatus {
         available: super::git_sync::AVAILABLE,
         repository,
@@ -1339,6 +1348,7 @@ pub(crate) fn git_status(root: &Path, settings: GitSettings) -> GitStatus {
         last: last_attempt(root),
         remote,
         sync_unusable,
+        line_endings,
         signed_in: None,
     }
 }

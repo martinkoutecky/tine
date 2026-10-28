@@ -86,6 +86,21 @@ mod imp {
         Ok(status(app, &slot.root_key, settings))
     }
 
+    pub(crate) fn disable_line_endings(
+        app: &tauri::AppHandle,
+        slot: &GraphSlot,
+    ) -> Result<GitStatus, String> {
+        slot.store
+            .check_graph_root()
+            .map_err(|e| format!("{e:?}"))?;
+        crate::owner::git_sync::line_endings::disable(&slot.root_key)?;
+        let settings = read(app, &slot.root_key);
+        if settings.policy.syncs() {
+            autocommit::request_sync(&slot.root_key);
+        }
+        Ok(status(app, &slot.root_key, settings))
+    }
+
     /// The HTTPS host the bound graph's remote is on, for a sign-in.
     fn https_origin(slot: &GraphSlot) -> Result<String, String> {
         match crate::owner::git_sync::remote(&slot.root_key) {
@@ -209,6 +224,13 @@ mod imp {
         Err(UNAVAILABLE_REASON.into())
     }
 
+    pub(crate) fn disable_line_endings(
+        _app: &tauri::AppHandle,
+        _slot: &GraphSlot,
+    ) -> Result<Status, String> {
+        Err(UNAVAILABLE_REASON.into())
+    }
+
     pub(crate) fn sign_in(
         _app: &tauri::AppHandle,
         _slot: &GraphSlot,
@@ -262,6 +284,15 @@ pub(crate) async fn git_sync_now(
 ) -> Result<imp::Status, String> {
     let slot = crate::state::slot_for_context(&state)?;
     crate::state::off_ui(move || imp::sync_now(&app, &slot)).await
+}
+
+#[tauri::command]
+pub(crate) async fn git_disable_line_endings(
+    app: tauri::AppHandle,
+    state: crate::state::GraphContext<'_>,
+) -> Result<imp::Status, String> {
+    let slot = crate::state::slot_for_context(&state)?;
+    crate::state::off_ui(move || imp::disable_line_endings(&app, &slot)).await
 }
 
 #[tauri::command]

@@ -5,6 +5,7 @@
 //  4. Both sides move: Sync now stops at "diverged", changes nothing in the graph or the remote, says so in
 //     Settings, and the notice outside Settings appears with the git command to merge.
 //  5. An HTTPS remote offers Sign in; the token lands in a private app-data file, never in the settings file.
+//  6. An autocrlf refusal offers a local-only repair, then sync completes without restarting.
 // Usage: node scripts/e2e-git-sync.mjs (needs git on PATH; a custom-protocol build at TINE_APP or target/debug/tine).
 import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
@@ -16,8 +17,9 @@ import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities,
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 
-const run = path.resolve(`artifacts/git-sync/native/run-${Date.now()}`);
+const run = path.resolve(process.env.E2E_ARTIFACT_DIR || "artifacts/git-sync/native", `run-${Date.now()}`);
 const shots = process.env.E2E_SCREENSHOT_DIR ? path.resolve(process.env.E2E_SCREENSHOT_DIR) : run;
 const graph = path.join(run, "graph");
 const bare = path.join(run, "remote.git");
@@ -25,6 +27,9 @@ const peer = path.join(run, "peer");
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
 for (const dir of ["data", "config", "cache", "home"]) fs.mkdirSync(path.join(run, dir), { recursive: true });
 fs.mkdirSync(shots, { recursive: true });
+// Isolated inherited Windows-like default: a repair must never edit this file.
+const globalConfig = path.join(run, "home", ".gitconfig");
+fs.writeFileSync(globalConfig, "[core]\n\tautocrlf = true\n");
 fs.writeFileSync(path.join(graph, "pages/Alpha.md"), "- alpha body\n");
 fs.writeFileSync(path.join(graph, "pages/Other.md"), "- before\n");
 const gitIn = (dir) => (...args) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" }).trim();
@@ -51,6 +56,7 @@ const laptopPushes = (text) => {
 };
 
 const app = process.env.TINE_APP || path.resolve("target/debug/tine");
+const accountHome = installAccountHome(run);
 const env = { ...process.env, TINE_GRAPH: graph, HOME: path.join(run, "home"), XDG_DATA_HOME: path.join(run, "data"), XDG_CONFIG_HOME: path.join(run, "config"), XDG_CACHE_HOME: path.join(run, "cache"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const port = Number(process.env.E2E_DRIVER_PORT || 4636);
@@ -108,6 +114,7 @@ try {
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
     capabilities: tauriCapabilities(app, "default", process.platform, target.debuggerAddress) });
   await ensureMainWindow(browser);
+  await assertAppLease(accountHome);
   await browser.setWindowSize(1280, 900);
   await browser.$(".page-title, .ls-block").waitForExist({ timeout: 30_000 });
 
@@ -150,6 +157,32 @@ try {
   if (git("rev-parse", "HEAD") !== theirs) throw new Error("HEAD did not fast-forward to the laptop's commit");
   if (fs.readFileSync(path.join(graph, "pages/Other.md"), "utf8") !== "- from the laptop\n") throw new Error("the pulled page is not on disk");
   console.log("PASS: a commit from another clone reaches the open page through Sync now");
+
+  // 6. Converted-by-default configuration, but these working bytes are already LF.
+  const globalBefore = fs.readFileSync(globalConfig);
+  const trackedBefore = new Map(git("ls-files", "-z").split("\0").filter(Boolean)
+    .map((name) => [name, fs.readFileSync(path.join(graph, name))]));
+  // The app inherits true from its isolated global config, as Windows does
+  // from system config. No repository override exists until the button runs.
+  git("config", "--local", "--unset", "core.autocrlf");
+  await openGitSettings();
+  await syncNow("refused");
+  await closeSettings();
+  await browser.$('[data-testid="git-sync-notice"] [data-git-sync-fix="line-endings"]').waitForExist({ timeout: 25_000 });
+  const repairText = await browser.$('[data-git-sync-fix="line-endings"]').getText();
+  if (repairText !== "Turn off line-ending conversion for this repository") throw new Error(`repair button: ${repairText}`);
+  await shot("notice-line-endings");
+  await browser.$('[data-testid="git-sync-notice"] [data-git-sync-fix="line-endings"]').click();
+  await browser.waitUntil(() => git("config", "--local", "--get", "core.autocrlf") === "false", { timeout: 15_000 });
+  await openGitSettings();
+  await browser.$('[data-git-sync-result="up-to-date"]').waitForExist({ timeout: 20_000 });
+  if (!fs.readFileSync(globalConfig).equals(globalBefore)) throw new Error("the repair changed global config");
+  for (const [name, bytes] of trackedBefore) {
+    if (!fs.readFileSync(path.join(graph, name)).equals(bytes)) throw new Error(`the repair changed ${name}`);
+  }
+  if (git("status", "--porcelain")) throw new Error("the repair left the graph dirty");
+  await closeSettings();
+  console.log("PASS: the notice repairs autocrlf locally, leaves global config and graph bytes unchanged, and sync completes without restart");
 
   // 4. Both sides move: diverged, nothing changes, the notice says what to do.
   const remoteTip = laptopPushes("- laptop again\n");

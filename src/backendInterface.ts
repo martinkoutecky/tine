@@ -641,6 +641,7 @@ export interface Backend {
   setGitAutocommit(policy: GitPolicy, intervalMinutes: number): Promise<GitAutocommitStatus>;
   /** "Sync now": commit pending changes, then one sync cycle on the graph's git thread. Answers at once. */
   gitSyncNow(): Promise<GitAutocommitStatus>;
+  gitDisableLineEndings(): Promise<GitAutocommitStatus>;
   /** A sync problem that persists, for the notice outside Settings; `null` when there is none. */
   gitSyncNotice(): Promise<GitSyncStatus | null>;
   /** Keep a token for the remote's HTTPS host on this device (never in the graph or settings). */

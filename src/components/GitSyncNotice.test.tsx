@@ -64,3 +64,35 @@ it("shows nothing for a problem that has not persisted", async () => {
   expect(root.querySelector("[data-testid=git-sync-notice]")).toBeNull();
   dispose();
 });
+
+it("offers the safe repository repair and clears the notice after the command succeeds", async () => {
+  vi.spyOn(backend(), "gitSyncNotice").mockResolvedValue(sync({ code: "refused", line_endings: { safe: true, differing: 0, sample: null, reason: null } }));
+  const repair = vi.spyOn(backend(), "gitDisableLineEndings").mockResolvedValue({ available: true });
+  const { root, dispose } = mount();
+  await vi.waitFor(() => expect(root.textContent).toContain("Turn off line-ending conversion for this repository"));
+  root.querySelector<HTMLButtonElement>("[data-git-sync-fix=line-endings]")!.click();
+  await vi.waitFor(() => expect(repair).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(root.querySelector("[data-testid=git-sync-notice]")).toBeNull());
+  dispose();
+});
+
+it("explains differing bytes with a count and sample and offers Guide steps instead of a repair", async () => {
+  vi.spyOn(backend(), "gitSyncNotice").mockResolvedValue(sync({ code: "refused", line_endings: { safe: false, differing: 12, sample: "pages/windows.md", reason: null } }));
+  const { root, dispose } = mount();
+  await vi.waitFor(() => expect(root.textContent).toContain("12 tracked files"));
+  expect(root.textContent).toContain("pages/windows.md");
+  expect(root.querySelector("[data-git-sync-fix=line-endings]")).toBeNull();
+  expect(root.querySelector("[data-git-sync-fix=line-endings-guide]")).not.toBeNull();
+  dispose();
+});
+
+it("keeps the refusal visible when the click's fresh check fails", async () => {
+  vi.spyOn(backend(), "gitSyncNotice").mockResolvedValue(sync({ code: "refused", line_endings: { safe: true, differing: 0, sample: null, reason: null } }));
+  vi.spyOn(backend(), "gitDisableLineEndings").mockRejectedValue(new Error("1 tracked file differs: pages/edited.md"));
+  const { root, dispose } = mount();
+  await vi.waitFor(() => expect(root.querySelector("[data-git-sync-fix=line-endings]")).not.toBeNull());
+  root.querySelector<HTMLButtonElement>("[data-git-sync-fix=line-endings]")!.click();
+  await vi.waitFor(() => expect(root.querySelector("[role=alert]")?.textContent).toContain("pages/edited.md"));
+  expect(root.querySelector("[data-testid=git-sync-notice]")).not.toBeNull();
+  dispose();
+});

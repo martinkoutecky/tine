@@ -75,7 +75,7 @@ export async function ensureGuidePagesLoaded(force = false): Promise<GuidePage[]
   return pending;
 }
 
-export async function openGuide(): Promise<void> {
+export async function openGuide(title = GUIDE_INDEX_TITLE, block?: string): Promise<void> {
   // The new tab opens in the surface the user asked from: if they moved to
   // another pane, tab or route while the Guide loaded, it must not appear there
   // (I-20). A failure still reports while the graph itself is current.
@@ -84,7 +84,7 @@ export async function openGuide(): Promise<void> {
   try {
     await ensureGuidePagesLoaded(true);
     if (!owner()) return;
-    openPageInNewTab(guidePageName(GUIDE_INDEX_TITLE), "page", undefined, true);
+    openPageInNewTab(guidePageName(title), "page", block, true);
   } catch (e) {
     if (graphWhenAsked()) pushToast(msg("guide-couldn-t-open-the-guide", { error: String(e) }), "error");
   }

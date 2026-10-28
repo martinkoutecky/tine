@@ -275,6 +275,8 @@ pub(crate) struct SyncStatus {
     pub(crate) failures: u32,
     /// The problem should show outside Settings too.
     pub(crate) persistent: bool,
+    /// Raw-byte precondition for the repository-local autocrlf repair.
+    pub(crate) line_endings: Option<super::git_sync::line_endings::Probe>,
 }
 
 impl SyncStatus {
@@ -289,6 +291,7 @@ impl SyncStatus {
         self.code = Some(cycle.code.to_string());
         self.message = Some(cycle.message.clone()).filter(|m| !m.is_empty());
         self.path = cycle.path.clone();
+        self.line_endings = None;
         if cycle.class == Class::Ok {
             self.ok_at = Some(now);
             self.failures = 0;

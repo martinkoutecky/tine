@@ -614,10 +614,7 @@ fn the_namespace_names_every_shipped_target() {
     }
 }
 
-/// PROTOCOL §6: the endpoint is the command line's alone. No Tauri command
-/// in the owner module, and the app's invoke handler names nothing of it,
-/// so neither the webview nor a plugin (whose capabilities are semantic
-/// verbs, ADR 0052) can reach the endpoint.
+/// PROTOCOL §6: no owner Tauri commands or invoke handlers expose the CLI endpoint to a webview/plugin (ADR 0052).
 #[test]
 fn the_endpoint_has_no_webview_or_plugin_door() {
     for (name, source) in [
@@ -637,6 +634,10 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
         (
             "git_sync_credentials",
             include_str!("git_sync/credentials.rs"),
+        ),
+        (
+            "git_sync_line_endings",
+            include_str!("git_sync/line_endings.rs"),
         ),
         ("git_sync_cycle", include_str!("git_sync_cycle.rs")),
         ("git_sync_http", include_str!("git_sync/http.rs")),
@@ -662,7 +663,6 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             "owner/{name}.rs: no Tauri command may reach the owner endpoint (PROTOCOL §6)"
         );
     }
-    // Every owner file is scanned: a new one joins the list above.
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/owner");
     let files = std::fs::read_dir(dir)
         .unwrap()

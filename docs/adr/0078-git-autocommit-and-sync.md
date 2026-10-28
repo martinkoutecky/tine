@@ -20,6 +20,7 @@ DESIGN (rev 0 + §8–§9) and the seen design (rev 1). Dossier with line number
 | D-20261018-G3 | generic messages; a structural operation commits at its boundaries with its verb as message; no op log, no diff-derived messages | follow |
 | D-20261018-G4 | `author::` stays | untouched |
 | D-20261018-G5 | an autocommit includes every change git sees under the graph root, honouring `.gitignore`; Tine applies pulls itself through the audited writer; sync off under eol/filter conversion; Tine never writes `.gitignore` unasked | follow, with the scoped D-20261026-GI exception in §2 |
+| D-20261028-CRLF | offer a repository-local autocrlf repair only when raw tracked bytes match the index and no other conversion blocks sync; otherwise commit first, then re-checkout | follow; pull keeps refusing conversion |
 | D-20261018-G6 | lands in whatever release the timing gives; no release waits for it | follow (card hBpb2k's "after model v0" is stale) |
 | D-20261018-G7 | libgit2 (git2-rs, `default-features = false`) on all five platforms; HTTPS through Tine's own Rust HTTP/TLS stack as a registered smart transport; no OpenSSL | follow |
 | D-20261019-G8 | Android TLS through the OS trust store (rustls-platform-verifier); Tine owns repack; batched cadence; libgit2 fsync on; SSH later, pure Rust, only when asked (supersedes G7's libssh2) | follow |
@@ -221,7 +222,8 @@ Refusals (contract refusal table rows, each with its in-scope threat):
 | `pull-refused: <path> <reason>` (symlink, submodule, type or mode change, a staged change other than `H`'s or `U`'s, ignored local file in the way) | the user's repository content | Settings names the path; the user resolves it in git |
 | `pull-stopped: <path> <reason>` (a refusal after publication began, including a staged-blob race) | another git program or external writer changes a guard after planning | Settings names the path and says files were already updated; resolve it in git, then retry the pinned target |
 | `diverged` (the remote is not a descendant of `HEAD`, a force push replaced a pending target, the captured branch changed, or a push is rejected) | multi-device divergence or another git program | phase 1 stops and says so; a mid-apply branch race may leave earlier file updates in place; phase 2 merges with Concord |
-| `refused: conversion / sparse / precompose / bare / detached / mid-merge` | user's repository configuration | Settings explains; commit-only where possible |
+| `refused: conversion` | `core.autocrlf` or attributes would rewrite checkout bytes | For truthy autocrlf, hash each tracked regular file without filters against its index oid. Missing/unreadable/nonregular files or gitlinks count as differing paths, with a count and sample in the notice. If all match and no `text`/`eol`/`crlf`/filter/encoding conversion remains, offer **Turn off line-ending conversion for this repository**. Under `RUN_LOCK` and `index.lock`, repeat the probe and write only `core.autocrlf=false` at local config level; no graph files change. A higher-level worktree override refuses the fix. Otherwise link to Guide **Git line endings on Windows**: commit edits, verify a clean status, set local autocrlf false, then `git reset --hard HEAD` to re-check out that saved commit. Sync still refuses conversion. |
+| `refused: sparse / precompose / bare / detached / mid-merge` | user's repository configuration | Settings explains; commit-only where possible |
 
 Push never forces and never rebases.
 

@@ -906,6 +906,9 @@ class TauriBackend implements Backend {
   gitSyncNow() {
     return this.call<GitAutocommitStatus>("git_sync_now");
   }
+  gitDisableLineEndings() {
+    return this.call<GitAutocommitStatus>("git_disable_line_endings");
+  }
   gitSyncNotice() {
     return this.call<GitSyncStatus | null>("git_sync_notice");
   }

@@ -23,6 +23,7 @@ export const mockGitCommands = {
   },
   // Git sync, like the setting above, has no browser-mock repository.
   gitSyncNow: () => Promise.reject(new Error("git is not available in the browser mock")),
+  gitDisableLineEndings: () => Promise.reject(new Error("git is not available in the browser mock")),
   gitSignIn: () => Promise.reject(new Error("git is not available in the browser mock")),
   gitSignOut: () => Promise.reject(new Error("git is not available in the browser mock")),
 } satisfies Partial<Backend>;

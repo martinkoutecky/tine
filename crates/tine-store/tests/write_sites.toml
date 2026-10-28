@@ -2063,3 +2063,13 @@ test = "src-tauri/src/owner/git_sync/credentials.rs#tokens_are_kept_per_origin_o
 oracle = false
 note = "Private app-data git HTTPS tokens (git-credentials.json, owner-only), atomic JSON publication; the last sign-out deletes the file. Never in a graph (ADR 0078 §5, PENDING GIT-CRED)."
 mutations = "atomic_write_private=1, directory_durability::sync_directory_entry=1, fs::create_dir_all=1, fs::remove_file=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_sync/line_endings.rs"
+fn = "disable"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_sync/line_endings.rs#crlf_fix_overrides_inherited_true_and_input_only_locally_without_file_changes"
+oracle = false
+note = "D-20261028-CRLF: explicit user repair only. RUN_LOCK and index.lock protect a repeated raw-byte probe; bound common-dir config and config.lock containment checks precede libgit2's locked local-config replace. No graph, index or ref publication; a crash leaves conversion enabled or disabled, both safe for the checked bytes. Included/global/system files are never written."
+mutations = ".set_bool=1, .set_multivar=1"

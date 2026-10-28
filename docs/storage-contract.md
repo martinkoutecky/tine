@@ -1119,6 +1119,18 @@ measured) at ~1.3 GiB for a run that writes.
 
 ## I-8 refusal scenarios
 
+Desktop `git_disable_line_endings` (D-20261028-CRLF, ADR 0078 §4) repairs a sync
+refusal only after a raw blob hash of every tracked regular working file equals
+its index oid; missing/unreadable/nonregular paths and gitlinks refuse, with a
+count and sample. Attribute conversion also refuses. The owner holds `RUN_LOCK`
+and `index.lock` across the repeated check and libgit2's repository-local
+`core.autocrlf=false` config write. Both config and config.lock pass the existing
+bound metadata containment guard. No graph, index, ref, global or system config
+changes. A crash leaves conversion on or off; sync continues refusing conversion
+while it is on. This is an existing Git config key, not a new Tine persisted
+format or page-writer path. A converted checkout links to the Guide's
+commit-first, clean-status, local-config and re-checkout steps instead.
+
 Each row below is keyed by the source file, owning function and refusal family.
 The count is the number of production constructions or save-adapter outcomes;
 the source guard fails when an unreviewed site appears. These scenarios involve

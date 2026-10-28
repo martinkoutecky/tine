@@ -256,6 +256,8 @@ impl<'ast> Visit<'ast> for Mutations {
                     | "reference"
                     | "reference_matching"
                     | "write"
+                    | "set_bool"
+                    | "set_multivar"
             ))
             || (method == "write" && !node.args.is_empty())
             || matches!(
@@ -477,7 +479,8 @@ fn inventory() -> BTreeMap<(String, String), Owner> {
                 syn::parse_file(&source).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
             let mut scan = Mutations {
                 git_metadata: file.ends_with("owner/git_run.rs")
-                    || file.ends_with("owner/git_autocommit.rs"),
+                    || file.ends_with("owner/git_autocommit.rs")
+                    || file.ends_with("owner/git_sync/line_endings.rs"),
                 ..Mutations::default()
             };
             scan.visit_file(&syntax);

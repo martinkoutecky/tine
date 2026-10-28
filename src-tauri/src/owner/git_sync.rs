@@ -18,6 +18,7 @@ use super::git_run::{open_repo_at, raw_content_conversion, Repo, RUN_LOCK};
 
 pub(crate) mod credentials;
 mod http;
+pub(crate) mod line_endings;
 
 pub(crate) const AVAILABLE: bool = true;
 
@@ -351,8 +352,7 @@ pub(crate) fn remote(root: &Path) -> Result<Remote, Outcome> {
     })
 }
 
-/// The tracked remote Settings names (read from the repository config, which
-/// Tine never writes).
+/// The tracked remote Settings names (Tine never changes remote configuration).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct Remote {
     pub(crate) name: String,
@@ -397,6 +397,11 @@ fn config_checked(root: &Path) -> Result<Repo, Outcome> {
 }
 
 fn checked_paths(repo: Repo) -> Result<Repo, Outcome> {
+    check_paths(&repo)?;
+    Ok(repo)
+}
+
+fn check_paths(repo: &Repo) -> Result<(), Outcome> {
     let index = repo.repo.index().map_err(git_error)?;
     if index.iter().any(|e| e.flags_extended & (1 << 14) != 0) {
         return Err(refused("sync refuses sparse/skip-worktree entries"));
@@ -422,7 +427,7 @@ fn checked_paths(repo: Repo) -> Result<Repo, Outcome> {
                 "sync refuses {attr} conversion for {path}"
             )));
         }
-        for attr in ["text", "eol"] {
+        for attr in ["text", "eol", "crlf"] {
             let value = repo
                 .repo
                 .get_attr(Path::new(path), attr, git2::AttrCheckFlags::FILE_THEN_INDEX)
@@ -437,7 +442,7 @@ fn checked_paths(repo: Repo) -> Result<Repo, Outcome> {
             }
         }
     }
-    Ok(repo)
+    Ok(())
 }
 
 struct Target {

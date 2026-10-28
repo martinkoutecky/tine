@@ -6,14 +6,14 @@ import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
 import { Field } from "./settingsField";
 import { DialogActions } from "./DialogActions";
 import { GitSyncFixes } from "./GitSyncNotice";
-import { gitSyncProblem, gitSyncResult } from "../gitSync";
+import { gitLineEndingsProblem, gitSyncProblem, gitSyncResult } from "../gitSync";
 
 const SYNCS: readonly GitPolicy[] = ["sync-on-demand", "sync-automatically"];
 
 /** Settings → Graph → Git (ADR 0078 slices 1–2): whether Tine commits this graph's changes to the git repository it
  *  sits in, how often, and whether it syncs them with the branch's upstream. The setting is per device and per graph
  *  (`tine-settings.json`); the backend applies it to the running worker at once. Shows the branch, the remote (read
- *  from the repository config, never written), why Tine can't commit or sync, the last commit and sync, each sync
+ *  from the repository config), why Tine can't commit or sync, the last commit and sync, each sync
  *  problem with a way to fix it, an `index.lock` left held for a long time (Tine never removes it), and the sign-in
  *  for an HTTPS remote (the token goes to a private file on this device). */
 export function GitAutocommitSetting(): JSX.Element {
@@ -75,6 +75,7 @@ export function GitAutocommitSetting(): JSX.Element {
   const at = (seconds: number) => new Date(seconds * 1000).toLocaleTimeString();
   const syncing = () => SYNCS.includes(status()?.policy ?? "off");
   const problem = () => syncing() ? gitSyncProblem(status()?.last?.sync, graphMeta()?.root) : null;
+  const conversionProblem = () => gitLineEndingsProblem(status()?.line_endings);
   return <Field label={t("git-settings-label")} hint={<>
     <Show when={status()?.available !== false}>{t("git-settings-hint")}</Show>
     <Show when={status()}>{(s) => <>
@@ -84,6 +85,10 @@ export function GitAutocommitSetting(): JSX.Element {
       <Show when={s().remote}>{(remote) => <div data-git-remote={remote().name}>{t("git-settings-remote", { name: remote().name, url: remote().url })}</div>}</Show>
       <Show when={s().unusable}>{(why) => <div data-git-unusable={why()[0]}>{t("git-settings-unusable", { message: why()[1] })}</div>}</Show>
       <Show when={!s().unusable && s().repository && s().sync_unusable}>{(why) => <div data-git-sync-unusable={why()[0]}>{t("git-settings-sync-unusable", { message: why()[1] })}</div>}</Show>
+      <Show when={conversionProblem()}>{(p) => <div role="status" data-git-line-endings>
+        {p().text}
+        <GitSyncFixes problem={{ ...p(), fixes: p().fixes.filter((fix) => fix !== "sync-now") }} onSignIn={() => setSigningIn(true)} onSyncNow={syncNow} onRepaired={(value) => setStatus(value)} />
+      </div>}</Show>
       <Show when={s().last?.commit && s().last?.committed_at}>
         <div data-git-last-commit={s().last!.commit!}>{t("git-settings-last-commit", { commit: s().last!.commit!.slice(0, 8), time: at(s().last!.committed_at!) })}</div>
       </Show>
@@ -94,10 +99,10 @@ export function GitAutocommitSetting(): JSX.Element {
           <button class="settings-btn" data-git-sync-now disabled={!!s().last?.sync?.running} onClick={syncNow}>{t("git-settings-sync-now")}</button>
         </div>
       </Show>
-      <Show when={problem()}>{(p) => <div role="status" data-git-sync-problem={s().last?.sync?.code ?? ""}>
+      <Show when={!conversionProblem() && problem()}>{(p) => <div role="status" data-git-sync-problem={s().last?.sync?.code ?? ""}>
         {p().text}
         {/* Sync now has its own button above. */}
-        <GitSyncFixes problem={{ ...p(), fixes: p().fixes.filter((fix) => fix !== "sync-now") }} onSignIn={() => setSigningIn(true)} onSyncNow={syncNow} />
+        <GitSyncFixes problem={{ ...p(), fixes: p().fixes.filter((fix) => fix !== "sync-now") }} onSignIn={() => setSigningIn(true)} onSyncNow={syncNow} onRepaired={(value) => setStatus(value)} />
       </div>}</Show>
       <Show when={s().last?.stale_lock}>{(path) => <div>{t("git-settings-stale-lock", { path: path() })}</div>}</Show>
       <Show when={s().last?.syncthing_ignore_added}>{(path) => <div role="status">{t("git-settings-syncthing-ignore-added", { path: path() })}</div>}</Show>

@@ -18,6 +18,18 @@ function mount() {
   return { root, dispose };
 }
 
+it("offers the conversion repair before sync can be enabled", async () => {
+  vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo({ sync_unusable: ["refused", "core.autocrlf"], line_endings: { safe: true, differing: 0, sample: null, reason: null } }));
+  const repair = vi.spyOn(backend(), "gitDisableLineEndings").mockResolvedValue(repo());
+  const { root, dispose } = mount();
+  await vi.waitFor(() => expect(root.querySelector("[data-git-sync-fix=line-endings]")).not.toBeNull());
+  expect(root.querySelector<HTMLOptionElement>('[value="sync-on-demand"]')!.disabled).toBe(true);
+  root.querySelector<HTMLButtonElement>("[data-git-sync-fix=line-endings]")!.click();
+  await vi.waitFor(() => expect(repair).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(root.querySelector<HTMLOptionElement>('[value="sync-on-demand"]')!.disabled).toBe(false));
+  dispose();
+});
+
 it("shows deferred cleanup separately from a successful commit and clears it on recovery", async () => {
   vi.useFakeTimers();
   try {
