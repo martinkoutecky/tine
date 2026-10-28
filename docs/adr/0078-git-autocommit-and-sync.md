@@ -238,8 +238,18 @@ asks. Credential storage: open question 2.
 3. Android and iOS: libgit2 builds, trust store, lifecycle triggers (open, foreground, background).
 4. Phase 2 (Concord merge of a diverged history): a separate decision.
 
-Until slice 3, iOS and Android show "Git is not available on this device yet" in Settings, named explicitly in
-the platform `cfg` and pinned by a guard test (AGENTS §2).
+Slice 3 (D-20261028-GM) removed the mobile "Git is not available on this device yet" arm: git, sync and seen are
+one implementation on all five targets, pinned by `git_has_no_platform_arm`; the HTTPS transport names its TLS
+stack per target and refuses to compile for any other (AGENTS §2). Lifecycle on Android and iOS: at open the
+worker starts as on desktop; going to the background flushes the pages, then each worker commits what is
+pending and, under **Commit and sync automatically**, pushes what the last fetch shows the remote lacks, with no
+fetch or pull (a push writes nothing to the local repository); coming back to the foreground runs a full cycle at
+once under that policy. Limit: a commit or push holds `index.lock`, so the OS ending the app midway leaves it, and
+§1's busy-then-name rule applies (measured in `git_mobile_tests.rs`, which CI also runs on an Android emulator with
+the graph on shared storage). Android's shared storage (MediaProvider FUSE) reports another owner for every file,
+so libgit2's repository-owner check is off on Android only (the trust model excludes an attacker with write access
+to the files). On that storage a case-only rename succeeds but keeps the old spelling, so a pull that renames a page
+by capitalization alone stays `pull-incomplete` and writes nothing (an open decision).
 
 ## Unit cost (I-25)
 
