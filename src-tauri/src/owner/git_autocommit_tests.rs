@@ -12,16 +12,32 @@ fn directory_alias(target: &Path, path: &Path) {
 
 #[cfg(windows)]
 fn directory_alias(target: &Path, path: &Path) {
-    let status = std::process::Command::new("cmd")
-        .args(["/C", "mklink", "/J"])
-        .arg(path)
-        .arg(target)
-        .status()
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    // libgit2 returns forward-slash paths; mklink treats those as switches.
+    // Preserve UTF-16 and verbatim prefixes while changing only separators.
+    let native = |path: &Path| {
+        std::ffi::OsString::from_wide(
+            &path
+                .as_os_str()
+                .encode_wide()
+                .map(|c| if c == b'/' as u16 { b'\\' as u16 } else { c })
+                .collect::<Vec<_>>(),
+        )
+    };
+    let output = std::process::Command::new("cmd")
+        .args(["/D", "/C", "mklink", "/J"])
+        .arg(native(path))
+        .arg(native(target))
+        .output()
         .unwrap();
     assert!(
-        status.success(),
-        "mklink /J must create the Git containment fixture"
+        output.status.success(),
+        "mklink /J must create the Git containment fixture: {:?}; stdout: {}; stderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
+    assert!(same_file::is_same_file(target, path).unwrap());
 }
 
 #[test]
@@ -64,16 +80,26 @@ fn sb1_index_cleanup_preserves_files_after_metadata_root_replacement() {
     let f = fixture(&[("pages/a.md", "- old\n")]);
     let checked = open_checked(&f.work).unwrap();
     let lock = IndexLock::acquire(&f.repo, checked.guard).unwrap();
-    let gitdir = f.repo.path();
-    let names: Vec<_> = fs::read_dir(gitdir)
+    let gitdir = f.work.join(".git");
+    drop(checked.repo);
+    drop(f.repo);
+    let names: Vec<_> = fs::read_dir(&gitdir)
         .unwrap()
         .flatten()
         .map(|entry| entry.file_name())
         .filter(|name| name.to_string_lossy().starts_with("tine-index-") || name == "index.lock")
         .collect();
+    assert_eq!(names.len(), 2, "the held lock and private index must exist");
+    // Windows refuses to rename an ancestor of an open file. Move the held
+    // lock (std opens it with delete sharing) outside first, then put it back
+    // in the detached metadata. Keep IndexLock alive so its real Drop runs
+    // against the replacement, with every preservation assertion intact.
+    let held = f._dir.path().join("held-index.lock");
+    fs::rename(gitdir.join("index.lock"), &held).unwrap();
     let moved = f._dir.path().join("old-gitdir");
-    fs::rename(gitdir, &moved).unwrap();
-    fs::create_dir(gitdir).unwrap();
+    fs::rename(&gitdir, &moved).unwrap();
+    fs::rename(&held, moved.join("index.lock")).unwrap();
+    fs::create_dir(&gitdir).unwrap();
     for name in &names {
         fs::write(gitdir.join(name), b"replacement-owned").unwrap();
     }
