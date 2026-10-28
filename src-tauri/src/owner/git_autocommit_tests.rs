@@ -1103,3 +1103,44 @@ fn measure_incremental_repack() {
         );
     }
 }
+
+/// ADR 0078 identity: an autocommit in a repository with no `user.name` /
+/// `user.email` commits under the fallback (no "Your name" in unit tests),
+/// with only a name under that name and the placeholder email; seen's "me"
+/// recognizes exactly those commits.
+#[test]
+fn an_autocommit_without_a_repository_identity_uses_the_shared_identity_rule() {
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    {
+        let mut config = f.repo.config().unwrap();
+        // Empty local values hide any developer-global identity.
+        config.set_str("user.name", "").unwrap();
+        config.set_str("user.email", "").unwrap();
+    }
+    write(&f.work, "pages/a.md", "- a changed\n");
+    commit_now(&f.work, MESSAGE).unwrap();
+    let author = head(&f.repo).author().to_owned();
+    assert_eq!(
+        (author.name().ok(), author.email().ok()),
+        (
+            Some(super::super::git_run::USER_FALLBACK.0),
+            Some(super::super::git_run::USER_FALLBACK.1)
+        )
+    );
+    let me = super::super::git_run::user_identity(&f.repo, "");
+    assert!(me.wrote(&author) && !me.known);
+
+    f.repo
+        .config()
+        .unwrap()
+        .set_str("user.name", "Ada")
+        .unwrap();
+    write(&f.work, "pages/a.md", "- a changed again\n");
+    commit_now(&f.work, MESSAGE).unwrap();
+    let author = head(&f.repo).author().to_owned();
+    assert_eq!(
+        (author.name().ok(), author.email().ok()),
+        (Some("Ada"), Some(super::super::git_run::USER_FALLBACK.1))
+    );
+    assert!(super::super::git_run::user_identity(&f.repo, "").wrote(&author));
+}

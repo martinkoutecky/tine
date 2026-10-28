@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 229] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 234] = [
     "add_defender_exclusion",
     "app_architecture",
     "app_platform",
@@ -55,6 +55,8 @@ pub(crate) const KNOWN_COMMANDS: [&str; 229] = [
     "empty_asset_trash",
     "export_query_subtrees",
     "forget_known_graph",
+    "forget_seen_page",
+    "forget_seen_state",
     "get_app_bool",
     "get_app_string",
     "get_backlink_filter_context",
@@ -64,6 +66,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 229] = [
     "get_link_first_match",
     "get_page",
     "get_page_by_path",
+    "get_page_changes",
     "get_smooth_scroll",
     "get_unlinked_refs",
     "get_watch_mode",
@@ -94,6 +97,8 @@ pub(crate) const KNOWN_COMMANDS: [&str; 229] = [
     "load_session",
     "load_workspaces",
     "local_clock",
+    "mark_graph_seen",
+    "mark_page_seen",
     "merge_live_conflict",
     "merge_pages",
     "open_asset",

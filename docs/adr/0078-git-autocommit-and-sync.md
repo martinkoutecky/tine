@@ -102,7 +102,8 @@ index with unresolved conflicts refuses as such. It is built on a private copy o
 tree, take only the graph root's subtree into `HEAD`'s tree (a user's staged changes outside the graph are never
 committed), commit, move the branch by compare-and-swap, then rename the copy over the index. Author and
 committer: the repository's identity, else "Your name" with `user@tine.invalid` (`git_run.rs`'s fallback, which
-seen's "me" matches). Message `Tine: autosave`; no trailers (G3: generic). Nothing to commit → no commit.
+seen's "me" matches; per field, `git_run::user_identity`: repository `user.name` else "Your name" else `Tine user`,
+repository `user.email` else `user@tine.invalid`). Message `Tine: autosave`; no trailers (G3: generic). Nothing to commit → no commit.
 
 The conversion check is shared with CLI run commits and applies to each exact repository-relative path,
 including nested graph roots. Runs refuse before flushing or saving an affected page and check again before

@@ -1,0 +1,827 @@
+//! Read-only git comparison for the device-local seen baseline (design rev 2).
+//! No index, status refresh, mutation guard or autocommit lock is used here.
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
+
+use git2::{ErrorCode, Oid, Repository};
+use serde::{Deserialize, Serialize};
+use tine_core::doc::{DocBlock, Document};
+use tine_core::sync_diff::{diff_blocks, trimmed_alignment_is_exact, DiffRow, PersistedIds};
+
+use crate::seen::{SeenBlock, SeenChanges, SeenRemoved};
+
+const COMMIT_LIMIT: usize = 200;
+static RECORD_LOCK: Mutex<()> = Mutex::new(());
+type BlockPath = Vec<usize>;
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PageRecord {
+    path: String,
+    seen_commit: Option<String>,
+    seen_at: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Record {
+    version: u32,
+    // null is the empty tree captured while HEAD was unborn, not an absent record.
+    first_open_commit: Option<String>,
+    first_open_at: u64,
+    pages: BTreeMap<String, PageRecord>,
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn record_path(data: &Path, root: &Path) -> PathBuf {
+    data.join("seen-git")
+        .join(crate::settings::session_id(root))
+}
+
+fn outside_graph(data: &Path, root: &Path) -> Result<(), String> {
+    // Resolve the existing ancestor too: app data need not have been created
+    // yet, and a portable installation may place it next to a graph.
+    fn resolved(path: &Path) -> std::io::Result<PathBuf> {
+        if path.exists() {
+            return path.canonicalize();
+        }
+        let parent = path
+            .parent()
+            .ok_or_else(|| std::io::Error::other("no app-data ancestor"))?;
+        Ok(resolved(parent)?.join(path.file_name().unwrap()))
+    }
+    let data = resolved(&record_path(data, root)).map_err(|e| e.to_string())?;
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    if data.starts_with(root) {
+        return Err("Seen state needs an app-data directory outside the graph.".into());
+    }
+    Ok(())
+}
+
+fn load(path: &Path) -> Option<Record> {
+    let bytes = crate::device_io::read_bounded(path, 16 * 1024 * 1024)
+        .ok()
+        .flatten()?;
+    let record: Record = serde_json::from_slice(&bytes).ok()?;
+    let valid = |oid: &Option<String>| {
+        oid.as_ref()
+            .is_none_or(|s| s.len() == 40 && Oid::from_str(s).is_ok())
+    };
+    (record.version == 1
+        && valid(&record.first_open_commit)
+        && record
+            .pages
+            .values()
+            .all(|p| valid(&p.seen_commit) && relative(&p.path).is_ok()))
+    .then_some(record)
+}
+
+fn save(path: &Path, record: &Record) -> Result<(), String> {
+    let bytes = serde_json::to_vec(record).map_err(|e| e.to_string())?;
+    if bytes.len() > 16 * 1024 * 1024 {
+        return Err("seen record is too large".into());
+    }
+    std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    crate::device_io::atomic_write(path, &bytes).map_err(|e| e.to_string())
+}
+
+fn relative(path: &str) -> Result<(), String> {
+    if path.is_empty()
+        || path.contains('\\')
+        || !Path::new(path)
+            .components()
+            .all(|p| matches!(p, Component::Normal(_)))
+    {
+        return Err("seen needs a graph-relative page path".into());
+    }
+    Ok(())
+}
+
+/// Mirror git_run's discovery and canonical worktree-prefix convention, without
+/// its write-side checks (detached HEAD and index.lock do not prevent a read).
+fn open(root: &Path) -> Result<(Repository, PathBuf), String> {
+    let repo = Repository::discover(root).map_err(|e| {
+        if e.code() == ErrorCode::NotFound {
+            "The graph is not in a git repository.".into()
+        } else {
+            e.to_string()
+        }
+    })?;
+    let work = repo.workdir().ok_or("The graph's repository is bare.")?;
+    let work = work.canonicalize().map_err(|e| e.to_string())?;
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let prefix = root
+        .strip_prefix(work)
+        .map_err(|_| "The graph is outside its repository work tree.")?
+        .to_owned();
+    Ok((repo, prefix))
+}
+
+fn head(repo: &Repository) -> Result<Option<Oid>, String> {
+    match repo.head() {
+        Ok(r) => r
+            .peel_to_commit()
+            .map(|c| Some(c.id()))
+            .map_err(|e| e.to_string()),
+        Err(e) if matches!(e.code(), ErrorCode::UnbornBranch | ErrorCode::NotFound) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn fresh(commit: Option<Oid>) -> Record {
+    Record {
+        version: 1,
+        first_open_commit: commit.map(|o| o.to_string()),
+        first_open_at: now(),
+        pages: BTreeMap::new(),
+    }
+}
+
+/// Called at graph bind, before autocommit can move HEAD. Only this setup and
+/// explicit mark/forget operations write app data; get_page_changes never does.
+pub(crate) fn initialize(data: &Path, root: &Path) -> Result<(), String> {
+    outside_graph(data, root)?;
+    let (repo, _) = open(root)?;
+    let _guard = RECORD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let path = record_path(data, root);
+    if load(&path).is_none() {
+        save(&path, &fresh(head(&repo)?))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn mark(data: &Path, root: &Path, page: Option<(&str, &str)>) -> Result<(), String> {
+    outside_graph(data, root)?;
+    if let Some((key, path)) = page {
+        if key.is_empty() {
+            return Err("seen needs a page key".into());
+        }
+        relative(path)?;
+    }
+    let (repo, _) = open(root)?;
+    let _guard = RECORD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let path = record_path(data, root);
+    let tip = head(&repo)?;
+    let loaded = load(&path);
+    let existed = loaded.is_some();
+    let mut record = loaded.unwrap_or_else(|| fresh(tip));
+    let oid = tip.map(|o| o.to_string());
+    if let Some((key, page_path)) = page {
+        if record
+            .pages
+            .get(key)
+            .is_some_and(|p| p.seen_commit == oid && p.path == page_path)
+        {
+            return Ok(());
+        }
+        // An inherited baseline already at HEAD needs no per-page entry.
+        if !record.pages.contains_key(key) && record.first_open_commit == oid && existed {
+            return Ok(());
+        }
+        record.pages.insert(
+            key.into(),
+            PageRecord {
+                path: page_path.into(),
+                seen_commit: oid,
+                seen_at: now(),
+            },
+        );
+    } else {
+        if record.first_open_commit == oid && record.pages.is_empty() && existed {
+            return Ok(());
+        }
+        record = fresh(tip);
+    }
+    save(&path, &record)
+}
+
+/// Drop one page's override (Tine's own rename, merge or delete, D-20261017-SB1
+/// call 6): every entry under `key` or recorded at `path`. The page then
+/// inherits the graph baseline again. Nothing to drop writes nothing.
+pub(crate) fn forget_page(
+    data: &Path,
+    root: &Path,
+    key: Option<&str>,
+    path: Option<&str>,
+) -> Result<(), String> {
+    outside_graph(data, root)?;
+    let _guard = RECORD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let file = record_path(data, root);
+    let Some(mut record) = load(&file) else {
+        return Ok(());
+    };
+    let before = record.pages.len();
+    record
+        .pages
+        .retain(|k, p| Some(k.as_str()) != key && Some(p.path.as_str()) != path);
+    if record.pages.len() == before {
+        return Ok(());
+    }
+    save(&file, &record)
+}
+
+pub(crate) fn forget(data: &Path, root: &Path) -> Result<(), String> {
+    outside_graph(data, root)?;
+    let _guard = RECORD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let path = record_path(data, root);
+    match std::fs::remove_file(&path) {
+        Ok(()) => tine_store::directory_durability::sync_directory_entry(path.parent().unwrap())
+            .map_err(|e| e.to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn blob_id(repo: &Repository, commit: Oid, path: &Path) -> Result<Option<Oid>, String> {
+    let tree = repo
+        .find_commit(commit)
+        .and_then(|c| c.tree())
+        .map_err(|e| e.to_string())?;
+    match tree.get_path(path) {
+        Ok(e) if e.kind() == Some(git2::ObjectType::Blob) => Ok(Some(e.id())),
+        Ok(_) => Err("seen page is not a regular git blob".into()),
+        Err(e) if e.code() == ErrorCode::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn parse(text: &str, org: bool) -> Document {
+    if org {
+        tine_core::org::parse_org(text)
+    } else {
+        tine_core::doc::parse(text)
+    }
+}
+
+fn normalize(blocks: &mut [DocBlock], org: bool) {
+    for block in blocks {
+        // Avoid reparsing every block to remove an absent fold property.
+        // Actual removals still use parser-owned regions to protect literals.
+        let collapsed = block.raw().to_ascii_lowercase().contains("collapsed");
+        let spaces = block.raw().lines().any(|line| line.trim_end() != line);
+        if collapsed || spaces {
+            let raw = if collapsed {
+                tine_core::block_regions::parse(block.raw(), org)
+                    .apply(
+                        block.raw(),
+                        org,
+                        tine_core::block_regions::Edit::Property {
+                            key: "collapsed".into(),
+                            value: None,
+                        },
+                    )
+                    .unwrap_or_else(|_| block.raw().to_owned())
+            } else {
+                block.raw().to_owned()
+            };
+            block.set_raw(
+                raw.lines()
+                    .map(str::trim_end)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+        }
+        normalize(&mut block.children, org);
+    }
+}
+
+/// A block alignment of two snapshots. Root blocks before `head` and the
+/// last `tail` roots are content-equal on both sides and pair by position
+/// (computed, not stored); `pairs`/`back` hold the window between them.
+/// Trimmed blocks are never changed or removed.
+#[derive(Default)]
+struct Alignment {
+    head: usize,
+    tail: usize,
+    old_len: usize,
+    new_len: usize,
+    pairs: HashMap<BlockPath, BlockPath>, // old -> new, window only
+    back: HashMap<BlockPath, BlockPath>,  // new -> old, window only
+    changed: HashSet<BlockPath>,
+    removed: HashSet<BlockPath>,
+}
+
+impl Alignment {
+    fn carry(&self, p: &[usize], forward: bool) -> Option<BlockPath> {
+        let (from_len, to_len, window) = if forward {
+            (self.old_len, self.new_len, &self.pairs)
+        } else {
+            (self.new_len, self.old_len, &self.back)
+        };
+        let root = p[0];
+        if root < self.head {
+            Some(p.to_vec())
+        } else if root >= from_len - self.tail {
+            let mut q = p.to_vec();
+            q[0] = root + to_len - from_len;
+            Some(q)
+        } else {
+            window.get(p).cloned()
+        }
+    }
+    /// The later snapshot's block paired with `old`.
+    fn fwd(&self, old: &[usize]) -> Option<BlockPath> {
+        self.carry(old, true)
+    }
+    /// The earlier snapshot's block paired with `new`.
+    fn back(&self, new: &[usize]) -> Option<BlockPath> {
+        self.carry(new, false)
+    }
+    /// Every pair, trimmed ends included (`old` is the earlier snapshot).
+    fn all_pairs(&self, old: &[DocBlock]) -> Vec<(BlockPath, BlockPath)> {
+        let mut out: Vec<_> = self
+            .pairs
+            .iter()
+            .map(|(a, b)| (a.clone(), b.clone()))
+            .collect();
+        let ends = (0..self.head).chain(self.old_len - self.tail..self.old_len);
+        for root in ends {
+            out.push((vec![root], self.fwd(&[root]).unwrap()));
+            each(&old[root].children, &[root], &mut |p| {
+                let q = self.fwd(&p).unwrap();
+                out.push((p, q));
+            });
+        }
+        out
+    }
+}
+
+fn each(blocks: &[DocBlock], parent: &[usize], f: &mut impl FnMut(BlockPath)) {
+    for (i, block) in blocks.iter().enumerate() {
+        let mut path = parent.to_vec();
+        path.push(i);
+        f(path.clone());
+        each(&block.children, &path, f);
+    }
+}
+
+/// Pair two content-equal subtrees position by position.
+fn equal(old: &DocBlock, a: BlockPath, b: BlockPath, out: &mut Alignment) {
+    for (i, child) in old.children.iter().enumerate() {
+        let mut ca = a.clone();
+        ca.push(i);
+        let mut cb = b.clone();
+        cb.push(i);
+        equal(child, ca, cb, out);
+    }
+    out.pairs.insert(a, b);
+}
+
+/// `tine_core::sync_diff` alignment of two page snapshots, mapped to block
+/// paths. Leading and trailing root blocks that are content-equal on both
+/// sides are paired directly and only the window between them goes to
+/// `diff_blocks` (the usual diff trim): consecutive snapshots differ in a
+/// few blocks, and this keeps the per-block lsdoc projections that
+/// `diff_blocks` needs to that window.
+fn align(old: &[DocBlock], new: &[DocBlock], ids: &mut PersistedIds) -> Alignment {
+    fn walk(
+        rows: &[DiffRow],
+        old: &[DocBlock],
+        new: &[DocBlock],
+        op: &[usize],
+        np: &[usize],
+        offset: usize,
+        out: &mut Alignment,
+    ) {
+        let (mut oi, mut ni) = (0, 0);
+        for row in rows {
+            let mut a = op.to_vec();
+            a.push(offset + oi);
+            let mut b = np.to_vec();
+            b.push(offset + ni);
+            match (&row.theirs, &row.mine) {
+                (Some(_), Some(_)) => {
+                    if old[oi].raw() != new[ni].raw() {
+                        out.changed.insert(b.clone());
+                    }
+                    if row.children.is_empty() && old[oi] == new[ni] {
+                        equal(&old[oi], a, b, out);
+                    } else {
+                        out.pairs.insert(a.clone(), b.clone());
+                        walk(
+                            &row.children,
+                            &old[oi].children,
+                            &new[ni].children,
+                            &a,
+                            &b,
+                            0,
+                            out,
+                        );
+                    }
+                    oi += 1;
+                    ni += 1;
+                }
+                (Some(_), None) => {
+                    out.removed.insert(a.clone());
+                    each(&old[oi].children, &a, &mut |p| {
+                        out.removed.insert(p);
+                    });
+                    oi += 1;
+                }
+                (None, Some(_)) => {
+                    out.changed.insert(b.clone());
+                    each(&new[ni].children, &b, &mut |p| {
+                        out.changed.insert(p);
+                    });
+                    ni += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    let head = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let room = old.len().min(new.len()) - head;
+    let tail = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take(room)
+        .take_while(|(a, b)| a == b)
+        .count();
+    // Trim only where the whole-list diff provably agrees (duplicates and
+    // reorders fall back to the whole list: correctness over speed).
+    let (head, tail) = if trimmed_alignment_is_exact(new, old, head, tail, ids) {
+        (head, tail)
+    } else {
+        (0, 0)
+    };
+    let mut out = Alignment {
+        head,
+        tail,
+        old_len: old.len(),
+        new_len: new.len(),
+        ..Alignment::default()
+    };
+    let (old_mid, new_mid) = (&old[head..old.len() - tail], &new[head..new.len() - tail]);
+    if !old_mid.is_empty() || !new_mid.is_empty() {
+        let rows = diff_blocks(new_mid, old_mid);
+        walk(&rows, old_mid, new_mid, &[], &[], head, &mut out);
+    }
+    out.back = out
+        .pairs
+        .iter()
+        .map(|(a, b)| (b.clone(), a.clone()))
+        .collect();
+    out
+}
+
+fn block_at<'a>(blocks: &'a [DocBlock], path: &[usize]) -> &'a DocBlock {
+    let block = &blocks[path[0]];
+    if path.len() == 1 {
+        block
+    } else {
+        block_at(&block.children, &path[1..])
+    }
+}
+
+/// False only when `body` cannot be the (normalized) body of any block of
+/// the page `text`: a block body's lines are dedented, at most right-trimmed
+/// copies of page lines, and normalization only drops lines, so every
+/// non-empty body line occurs in the page text.
+fn may_contain(text: &str, body: &str) -> bool {
+    body.lines()
+        .filter(|line| !line.is_empty())
+        .all(|line| text.contains(line))
+}
+
+/// One open's page history along first-parent: snapshot 0 is the baseline,
+/// the last is HEAD, and step `i` (snapshot `i - 1` to `i`) is one touching
+/// commit. Texts, parses and step alignments are computed on demand, each at
+/// most once, and dropped with the open (no cache across opens, D-10).
+struct History<'r> {
+    repo: &'r Repository,
+    org: bool,
+    blobs: Vec<Option<Oid>>,
+    /// `other[i]`: step `i` was committed by someone other than me.
+    other: Vec<bool>,
+    texts: Vec<Option<String>>,
+    docs: Vec<Option<Document>>,
+    steps: Vec<Option<Alignment>>,
+    /// Ids by block body, for this open only (D-10).
+    ids: PersistedIds,
+}
+
+impl<'r> History<'r> {
+    fn new(repo: &'r Repository, org: bool, blobs: Vec<Option<Oid>>, other: Vec<bool>) -> Self {
+        let n = blobs.len();
+        Self {
+            repo,
+            org,
+            blobs,
+            other,
+            texts: (0..n).map(|_| None).collect(),
+            docs: (0..n).map(|_| None).collect(),
+            steps: (0..n).map(|_| None).collect(),
+            ids: PersistedIds::new(),
+        }
+    }
+    fn last(&self) -> usize {
+        self.blobs.len() - 1
+    }
+    fn snapshot_text(&mut self, i: usize) -> Result<&str, String> {
+        if self.texts[i].is_none() {
+            let text = match self.blobs[i] {
+                None => String::new(),
+                Some(oid) => {
+                    let blob = self.repo.find_blob(oid).map_err(|e| e.to_string())?;
+                    String::from_utf8(blob.content().to_vec()).map_err(|e| e.to_string())?
+                }
+            };
+            self.texts[i] = Some(text);
+        }
+        Ok(self.texts[i].as_deref().unwrap())
+    }
+    fn snapshot_doc(&mut self, i: usize) -> Result<&Document, String> {
+        if self.docs[i].is_none() {
+            let org = self.org;
+            let mut doc = parse(self.snapshot_text(i)?, org);
+            normalize(&mut doc.roots, org);
+            self.docs[i] = Some(doc);
+        }
+        Ok(self.docs[i].as_ref().unwrap())
+    }
+    fn snapshot_step(&mut self, i: usize) -> Result<&Alignment, String> {
+        if self.steps[i].is_none() {
+            self.snapshot_doc(i - 1)?;
+            self.snapshot_doc(i)?;
+            let (old, new) = (self.docs[i - 1].as_ref(), self.docs[i].as_ref());
+            self.steps[i] = Some(align(
+                &old.unwrap().roots,
+                &new.unwrap().roots,
+                &mut self.ids,
+            ));
+        }
+        Ok(self.steps[i].as_ref().unwrap())
+    }
+
+    /// Whether the newest step that changed or added HEAD's block at `path`
+    /// was someone else's: its lineage is followed back through the step
+    /// alignments. A step whose earlier snapshot cannot contain the block's
+    /// body changed it, whatever the alignment, so that step needs no parse.
+    fn changed_by_other(&mut self, path: &BlockPath) -> Result<bool, String> {
+        let mut path = path.clone();
+        for i in (1..=self.last()).rev() {
+            let body = block_at(&self.snapshot_doc(i)?.roots, &path)
+                .raw()
+                .to_owned();
+            if !may_contain(self.snapshot_text(i - 1)?, &body) {
+                return Ok(self.other[i]);
+            }
+            let step = self.snapshot_step(i)?;
+            if step.changed.contains(&path) {
+                return Ok(self.other[i]);
+            }
+            // Every block of a later snapshot is changed or paired.
+            path = step.back(&path).expect("an unchanged block is paired");
+        }
+        Ok(false)
+    }
+
+    /// For each baseline block path, the last removal of its lineage: who
+    /// removed it and its body just before. A removed block can come back
+    /// (restored with its `id::`); its baseline lineage is recovered through
+    /// the same aligner, so a later removal supersedes an earlier one.
+    fn deletions(&mut self) -> Result<HashMap<BlockPath, (bool, String)>, String> {
+        let mut origins = HashMap::<BlockPath, BlockPath>::new();
+        let mut deletions = HashMap::new();
+        each(&self.snapshot_doc(0)?.roots, &[], &mut |p| {
+            origins.insert(p.clone(), p);
+        });
+        for i in 1..=self.last() {
+            self.snapshot_step(i)?;
+            let (step, previous) = (
+                self.steps[i].as_ref().unwrap(),
+                self.docs[i - 1].as_ref().unwrap(),
+            );
+            for deleted in &step.removed {
+                if let Some(origin) = origins.get(deleted) {
+                    deletions.insert(
+                        origin.clone(),
+                        (
+                            self.other[i],
+                            block_at(&previous.roots, deleted).raw().into(),
+                        ),
+                    );
+                }
+            }
+            origins = origins
+                .into_iter()
+                .filter_map(|(a, v)| step.fwd(&a).map(|b| (b, v)))
+                .collect();
+            if step.changed.iter().any(|p| !origins.contains_key(p)) {
+                let base = &self.docs[0].as_ref().unwrap().roots;
+                let next = &self.docs[i].as_ref().unwrap().roots;
+                let mut used: HashSet<_> = origins.values().cloned().collect();
+                for (base_path, next_path) in align(base, next, &mut self.ids).all_pairs(base) {
+                    if !origins.contains_key(&next_path) && used.insert(base_path.clone()) {
+                        origins.insert(next_path, base_path);
+                    }
+                }
+            }
+        }
+        Ok(deletions)
+    }
+}
+
+pub(crate) fn changes(
+    data: &Path,
+    root: &Path,
+    key: &str,
+    path: &str,
+    current_text: &str,
+    name: &str,
+) -> Result<SeenChanges, String> {
+    relative(path)?;
+    let (repo, prefix) = match open(root) {
+        Ok(r) => r,
+        Err(reason) => return Ok(SeenChanges::unavailable(&reason)),
+    };
+    let mut result = SeenChanges::available(current_text);
+    let tip = head(&repo)?;
+    result.head_commit = tip.map(|o| o.to_string());
+    let Some(record) = load(&record_path(data, root)) else {
+        return Ok(result);
+    };
+    let page = record.pages.get(key);
+    if page.is_some_and(|p| p.path != path) {
+        return Ok(result);
+    } // external rename: start again on leave
+    let baseline = page
+        .map(|p| &p.seen_commit)
+        .unwrap_or(&record.first_open_commit);
+    let base = baseline.as_ref().map(|s| Oid::from_str(s).unwrap());
+    result.baseline_commit = baseline.clone();
+    let me = super::git_run::user_identity(&repo, name);
+    result.identity_known = me.known;
+    if base == tip {
+        return Ok(result);
+    }
+    if base.is_some_and(|oid| repo.find_commit(oid).is_err()) {
+        // A pruned/replaced repository can leave a well-formed but unknown
+        // baseline oid. It is as disposable as a damaged record.
+        return Ok(result);
+    }
+    let repo_path = prefix.join(path);
+    let org = path.ends_with(".org");
+    let base_blob = base
+        .map(|oid| blob_id(&repo, oid, &repo_path))
+        .transpose()?
+        .flatten();
+    let tip_blob = tip
+        .map(|oid| blob_id(&repo, oid, &repo_path))
+        .transpose()?
+        .flatten();
+    // First-parent history describes the successive page snapshots actually
+    // integrated into this branch; a merge's resulting edits belong to its
+    // author (ADR 0079).
+    let mut touching = Vec::new();
+    let mut cursor = tip;
+    let mut after = tip_blob;
+    let mut reached = base.is_none();
+    while let Some(oid) = cursor {
+        if Some(oid) == base {
+            reached = true;
+            break;
+        }
+        let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+        let parent = if commit.parent_count() == 0 {
+            None
+        } else {
+            Some(commit.parent_id(0).map_err(|e| e.to_string())?)
+        };
+        let before = parent
+            .map(|o| blob_id(&repo, o, &repo_path))
+            .transpose()?
+            .flatten();
+        if before != after {
+            touching.push((after, !me.wrote(&commit.author())));
+            if touching.len() > COMMIT_LIMIT {
+                result.unattributed = true;
+                break;
+            }
+        }
+        after = before;
+        cursor = parent;
+    }
+    if !reached && !result.unattributed {
+        return Ok(SeenChanges::unavailable(
+            "The seen baseline is no longer on this branch's history.",
+        ));
+    }
+    let (blobs, other) = if result.unattributed {
+        // Only the net baseline-to-HEAD diff is used.
+        (vec![base_blob, tip_blob], vec![true, true])
+    } else {
+        let mut blobs = vec![base_blob];
+        let mut other = vec![false];
+        for (blob, by_other) in touching.into_iter().rev() {
+            blobs.push(blob);
+            other.push(by_other);
+        }
+        (blobs, other)
+    };
+    let mut history = History::new(&repo, org, blobs, other);
+    let last = history.last();
+    history.snapshot_doc(0)?;
+    history.snapshot_doc(last)?;
+    let net = align(
+        &history.docs[0].as_ref().unwrap().roots,
+        &history.docs[last].as_ref().unwrap().roots,
+        &mut history.ids,
+    );
+    // The supplied snapshot usually is HEAD's text (no unsaved edits): then
+    // it maps onto HEAD block for block, with no parse or alignment.
+    let current = if history.snapshot_text(last)? == current_text {
+        None
+    } else {
+        let mut current = parse(current_text, org);
+        normalize(&mut current.roots, org);
+        let latest = &history.docs[last].as_ref().unwrap().roots;
+        let working = align(latest, &current.roots, &mut history.ids);
+        Some((current, working))
+    };
+    let to_current = |p: &BlockPath| -> Option<BlockPath> {
+        match &current {
+            None => Some(p.clone()),
+            Some((_, working)) => working.fwd(p).filter(|q| !working.changed.contains(q)),
+        }
+    };
+    let mut changed: Vec<_> = net.changed.iter().cloned().collect();
+    changed.sort();
+    for tip_path in changed {
+        if !result.unattributed && !history.changed_by_other(&tip_path)? {
+            continue;
+        }
+        if let Some(mapped) = to_current(&tip_path) {
+            let roots = match &current {
+                None => &history.docs[last].as_ref().unwrap().roots,
+                Some((doc, _)) => &doc.roots,
+            };
+            result.blocks.push(SeenBlock {
+                persisted_id: block_at(roots, &mapped).property("id"),
+                block_path: mapped,
+            });
+        }
+    }
+    let deletions = if result.unattributed || net.removed.is_empty() {
+        HashMap::new()
+    } else {
+        history.deletions()?
+    };
+    let old = &history.docs[0].as_ref().unwrap().roots;
+    let mapped = |p: &BlockPath| -> Option<BlockPath> {
+        let at_tip = net.fwd(p)?;
+        match &current {
+            None => Some(at_tip),
+            Some((_, working)) => working.fwd(&at_tip),
+        }
+    };
+    for path in &net.removed {
+        if !result.unattributed && !deletions.get(path).is_some_and(|(other, _)| *other) {
+            continue;
+        }
+        let mut parent = path[..path.len() - 1].to_vec();
+        // Removed parents have no rendered child list; attach to the nearest
+        // surviving ancestor's list, with the same preceding-sibling rule.
+        let mut slot = *path.last().unwrap();
+        while !parent.is_empty() && mapped(&parent).is_none() {
+            slot = parent.pop().unwrap();
+        }
+        let previous_sibling_path = (0..slot).rev().find_map(|i| {
+            let mut p = parent.clone();
+            p.push(i);
+            mapped(&p)
+        });
+        result.removed.push(SeenRemoved {
+            text: deletions
+                .get(path)
+                .map(|(_, text)| text.clone())
+                .unwrap_or_else(|| block_at(old, path).raw().into()),
+            baseline_block_path: path.clone(),
+            parent_path: if parent.is_empty() {
+                None
+            } else {
+                mapped(&parent)
+            },
+            previous_sibling_path,
+        });
+    }
+    result
+        .blocks
+        .sort_by(|a, b| a.block_path.cmp(&b.block_path));
+    result
+        .removed
+        .sort_by(|a, b| a.baseline_block_path.cmp(&b.baseline_block_path));
+    Ok(result)
+}
+
+#[cfg(test)]
+#[path = "seen_tests.rs"]
+mod tests;

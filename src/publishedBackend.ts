@@ -828,6 +828,10 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async gitAutocommitStatus() {
       return { available: false };
     },
+    async getPageChanges() {
+      return { available: false, reason: "Git is not available in a published graph.", head_commit: null,
+        baseline_commit: null, current_text_sha256: "", identity_known: false, unattributed: false, blocks: [], removed: [] };
+    },
     async getBackupKeep() {
       return 0;
     },
@@ -1039,6 +1043,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "takeIdentifierMigrationNotice",
   "takeDataHomeFallbackNotice",
   "gitAutocommitStatus",
+  "getPageChanges",
   "getBackupKeep",
   "listBackups",
   "getCaptureEnterFiles",
@@ -1186,6 +1191,10 @@ export const PUBLISHED_REFUSED_METHODS = [
   "rollbackPdfAreaImage",
   "setBackupKeep",
   "setGitAutocommit",
+  "markPageSeen",
+  "markGraphSeen",
+  "forgetSeenPage",
+  "forgetSeenState",
   "setCaptureEnterFiles",
   "setWatchMode",
   "restoreBackup",

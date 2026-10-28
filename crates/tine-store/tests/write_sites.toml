@@ -1224,6 +1224,26 @@ note = "Private app-data concord history/pins; atomic metadata publication and b
 mutations = "device_io::atomic_write=1, fs::create_dir_all=1"
 
 [[site]]
+file = "src-tauri/src/owner/seen.rs"
+fn = "save"
+domain = "app"
+guard = "src-tauri/src/owner/seen.rs#outside_graph"
+test = "src-tauri/src/owner/seen_tests.rs#seen_first_open_restart_mark_graph_forget_and_noop_writes"
+oracle = false
+note = "D-20261028-SG, ADR 0079: disposable device-local graph baselines through the existing atomic writer; no graph or git mutation."
+mutations = "device_io::atomic_write=1, fs::create_dir_all=1"
+
+[[site]]
+file = "src-tauri/src/owner/seen.rs"
+fn = "forget"
+domain = "app"
+guard = "src-tauri/src/owner/seen.rs#outside_graph"
+test = "src-tauri/src/owner/seen_tests.rs#seen_first_open_restart_mark_graph_forget_and_noop_writes"
+oracle = false
+note = "Forget removes only this graph's device-local baseline and syncs its parent directory."
+mutations = "directory_durability::sync_directory_entry=1, fs::remove_file=1"
+
+[[site]]
 file = "src-tauri/src/css_files.rs"
 fn = "graph_save"
 domain = "graph"

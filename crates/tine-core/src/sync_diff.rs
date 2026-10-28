@@ -1137,13 +1137,41 @@ fn row_id(prefix: &str, n: usize) -> String {
     format!("{prefix}{n}")
 }
 
+/// A sibling with its persisted id read once. [`anchor_eq`] reads the id
+/// through the block's property projection on every comparison; the exact
+/// LCS makes O(n·m·log n) comparisons, so it compares these instead (same
+/// relation, no per-comparison allocation).
+struct Anchor<'a> {
+    id: Option<String>,
+    block: &'a DocBlock,
+}
+
+impl<'a> Anchor<'a> {
+    fn all(blocks: &'a [DocBlock]) -> Vec<Self> {
+        blocks
+            .iter()
+            .map(|block| Anchor {
+                id: persisted_id(block),
+                block,
+            })
+            .collect()
+    }
+    /// Exactly [`anchor_eq`].
+    fn eq(&self, other: &Anchor<'_>) -> bool {
+        match (&self.id, &other.id) {
+            (Some(a), Some(b)) => a == b,
+            _ => self.block == other.block,
+        }
+    }
+}
+
 /// LCS row lengths for Hirschberg reconstruction. Memory is O(right.len()).
-fn lcs_lengths(left: &[DocBlock], right: &[DocBlock]) -> Vec<u32> {
+fn lcs_lengths(left: &[Anchor<'_>], right: &[Anchor<'_>]) -> Vec<u32> {
     let mut prev = vec![0u32; right.len() + 1];
     let mut cur = vec![0u32; right.len() + 1];
     for a in left {
         for (j, b) in right.iter().enumerate() {
-            cur[j + 1] = if anchor_eq(a, b) {
+            cur[j + 1] = if a.eq(b) {
                 prev[j] + 1
             } else {
                 prev[j + 1].max(cur[j])
@@ -1155,12 +1183,12 @@ fn lcs_lengths(left: &[DocBlock], right: &[DocBlock]) -> Vec<u32> {
     prev
 }
 
-fn lcs_lengths_reversed(left: &[DocBlock], right: &[DocBlock]) -> Vec<u32> {
+fn lcs_lengths_reversed(left: &[Anchor<'_>], right: &[Anchor<'_>]) -> Vec<u32> {
     let mut prev = vec![0u32; right.len() + 1];
     let mut cur = vec![0u32; right.len() + 1];
     for a in left.iter().rev() {
         for (j, b) in right.iter().rev().enumerate() {
-            cur[j + 1] = if anchor_eq(a, b) {
+            cur[j + 1] = if a.eq(b) {
                 prev[j] + 1
             } else {
                 prev[j + 1].max(cur[j])
@@ -1173,8 +1201,8 @@ fn lcs_lengths_reversed(left: &[DocBlock], right: &[DocBlock]) -> Vec<u32> {
 }
 
 fn hirschberg_pairs(
-    mine: &[DocBlock],
-    theirs: &[DocBlock],
+    mine: &[Anchor<'_>],
+    theirs: &[Anchor<'_>],
     mine_offset: usize,
     theirs_offset: usize,
     out: &mut Vec<(usize, usize)>,
@@ -1183,7 +1211,7 @@ fn hirschberg_pairs(
         return;
     }
     if mine.len() == 1 {
-        if let Some(j) = theirs.iter().position(|b| anchor_eq(&mine[0], b)) {
+        if let Some(j) = theirs.iter().position(|b| mine[0].eq(b)) {
             out.push((mine_offset, theirs_offset + j));
         }
         return;
@@ -1226,6 +1254,100 @@ fn anchor_fingerprint(block: &DocBlock) -> u64 {
         hash = add(hash, &anchor_fingerprint(child).to_le_bytes());
     }
     hash
+}
+
+/// Persisted ids, read once per distinct block body. A block's `id::` comes
+/// from the lsdoc parse of its body alone (`parse_projection(raw, is_org)`,
+/// then the header facets), so equal bodies have equal ids; the memo spares
+/// the projection of every block that already appeared, for one caller's
+/// short-lived use (never kept across operations).
+#[derive(Default)]
+pub struct PersistedIds {
+    /// Markdown bodies, then Org bodies.
+    by_body: [HashMap<String, Option<String>>; 2],
+}
+
+impl PersistedIds {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    fn of(&mut self, block: &DocBlock) -> Option<String> {
+        let memo = &mut self.by_body[usize::from(block.is_org)];
+        if let Some(id) = memo.get(block.raw.as_str()) {
+            return id.clone();
+        }
+        let id = persisted_id(block);
+        memo.insert(block.raw.clone(), id.clone());
+        id
+    }
+    /// Exactly [`anchor_fingerprint`], through the memo.
+    fn fingerprint(&mut self, block: &DocBlock) -> u64 {
+        if let Some(id) = self.of(block) {
+            return fnv(0xcbf2_9ce4_8422_2325 ^ 1, id.as_bytes());
+        }
+        let mut hash = fnv(0xcbf2_9ce4_8422_2325 ^ 2, block.raw.as_bytes());
+        for child in &block.children {
+            hash = fnv(hash, &self.fingerprint(child).to_le_bytes());
+        }
+        hash
+    }
+}
+
+fn fnv(mut hash: u64, bytes: &[u8]) -> u64 {
+    for byte in bytes {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// Whether aligning `mine` with `theirs` whole gives exactly the alignment of
+/// the window `[head, len - tail)` alone plus the `head` and `tail` blocks
+/// paired in place. A caller that already knows those ends are content-equal
+/// may then diff only the window (the git seen baseline, ADR 0079).
+///
+/// L1 (Hirschberg or patience, whichever the size picks) is the only step that
+/// sees the whole list; gaps are aligned locally between its pairs. When every
+/// anchor fingerprint is unique on each side, and the window's common anchors
+/// keep their order, each algorithm's pairs are exactly the common anchors, so
+/// the two runs agree. Otherwise (a duplicate, a reorder, a fingerprint
+/// collision) this answers `false` and the caller diffs the whole list.
+pub fn trimmed_alignment_is_exact(
+    mine: &[DocBlock],
+    theirs: &[DocBlock],
+    head: usize,
+    tail: usize,
+    ids: &mut PersistedIds,
+) -> bool {
+    let mut unique = |blocks: &[DocBlock]| -> Option<HashMap<u64, usize>> {
+        let mut seen = HashMap::with_capacity(blocks.len());
+        for (i, block) in blocks.iter().enumerate() {
+            if seen.insert(ids.fingerprint(block), i).is_some() {
+                return None;
+            }
+        }
+        Some(seen)
+    };
+    if head + tail > mine.len().min(theirs.len()) {
+        return false;
+    }
+    let (Some(mine_at), Some(theirs_at)) = (unique(mine), unique(theirs)) else {
+        return false;
+    };
+    let fingerprint_at: HashMap<usize, u64> = mine_at.into_iter().map(|(f, i)| (i, f)).collect();
+    let window = head..theirs.len() - tail;
+    let mut last = None;
+    for i in head..mine.len() - tail {
+        let Some(&j) = theirs_at.get(&fingerprint_at[&i]) else {
+            continue;
+        };
+        if !window.contains(&j) || !anchor_eq(&mine[i], &theirs[j]) || last.is_some_and(|l| j <= l)
+        {
+            return false;
+        }
+        last = Some(j);
+    }
+    true
 }
 
 /// Fast large-list alignment: unique strong/content fingerprints become
@@ -1292,7 +1414,7 @@ fn lcs_pairs(mine: &[DocBlock], theirs: &[DocBlock]) -> Vec<(usize, usize)> {
         return patience_pairs(mine, theirs);
     }
     let mut out = Vec::new();
-    hirschberg_pairs(mine, theirs, 0, 0, &mut out);
+    hirschberg_pairs(&Anchor::all(mine), &Anchor::all(theirs), 0, 0, &mut out);
     out
 }
 

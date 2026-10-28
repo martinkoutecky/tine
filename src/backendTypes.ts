@@ -68,6 +68,33 @@ export interface GpuEnv {
 /** Settings → Graph → Git (ADR 0078): the bound graph's autocommit state. On a
  *  platform without git only `available: false` is sent. */
 export type GitPolicy = "off" | "commit";
+/** Paths index roots, then each child list, in the exact currentText snapshot.
+ * They are structural addresses, not runtime document ids or persisted id::. */
+export type SeenBlockPath = number[];
+export interface SeenPageChanges {
+  available: boolean;
+  reason: string | null;
+  head_commit: string | null;
+  /** null means the empty-tree baseline when tracked; unavailable/absent also
+   * has null and no marks. The UI only needs the marks and availability. */
+  baseline_commit: string | null;
+  /** SHA-256 of the supplied UTF-8 currentText. Discard stale responses. */
+  current_text_sha256: string;
+  identity_known: boolean;
+  /** More than 200 touching commits: net diff counts every author. */
+  unattributed: boolean;
+  /** Only other-author committed changes still unchanged in currentText. */
+  blocks: { block_path: SeenBlockPath; persisted_id: string | null }[];
+  removed: {
+    /** One removed block body, properties included; descendants have own rows. */
+    text: string;
+    baseline_block_path: SeenBlockPath;
+    /** null = page roots. */
+    parent_path: SeenBlockPath | null;
+    /** null = before the first child/root of parent_path. */
+    previous_sibling_path: SeenBlockPath | null;
+  }[];
+}
 export interface GitAutocommitStatus {
   available: boolean;
   /** The graph is inside a git work tree. */

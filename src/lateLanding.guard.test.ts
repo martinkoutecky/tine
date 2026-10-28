@@ -112,6 +112,7 @@ const BOUNDARIES = new Set(["readOwned", "readOwnedResource", "writeOwned", "ser
 // Durable backend operations are classified by interface verb, including names
 // such as rename and paste that a write-prefix expression cannot recognize.
 const DURABLE_BACKEND_METHODS = new Set([
+  "markPageSeen", "markGraphSeen", "forgetSeenPage", "forgetSeenState",
   "retryOwnerProtection",
   "approveExternalAssets", "forgetKnownGraph", "installPlugin", "uninstallPlugin", "setPluginEnabled",
   "storePluginRegistryCache", "setSystemBarAppearance", "createGraph", "copyGuideIntoGraph",
@@ -139,6 +140,7 @@ const DURABLE_BACKEND_METHODS = new Set([
 // transient OS controls, or graph-binding controls. Adding a method requires
 // an explicit durable/non-durable decision in the census test below.
 const NON_DURABLE_BACKEND_METHODS = new Set([
+  "getPageChanges",
   "ownerProtectionStatus",
   "onOwnerPageRenamed",
   "createGraphVerification", "cancelGraphVerification", "onGraphVerificationProgress",

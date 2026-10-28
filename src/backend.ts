@@ -878,6 +878,21 @@ class TauriBackend implements Backend {
   gitAutocommitStatus() {
     return this.call<GitAutocommitStatus>("git_autocommit_status");
   }
+  getPageChanges(pageKey: string, path: string, currentText: string) {
+    return this.call<import("./backendTypes").SeenPageChanges>("get_page_changes", { pageKey, path, currentText });
+  }
+  markPageSeen(pageKey: string, path: string) {
+    return this.call<void>("mark_page_seen", { pageKey, path });
+  }
+  markGraphSeen() {
+    return this.call<void>("mark_graph_seen");
+  }
+  forgetSeenPage(pageKey: string, path: string) {
+    return this.call<void>("forget_seen_page", { pageKey, path });
+  }
+  forgetSeenState() {
+    return this.call<void>("forget_seen_state");
+  }
   setGitAutocommit(policy: GitPolicy, intervalMinutes: number) {
     return this.call<GitAutocommitStatus>("set_git_autocommit", { policy, intervalMinutes });
   }

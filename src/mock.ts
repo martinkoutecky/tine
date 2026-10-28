@@ -1520,6 +1520,14 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async gitAutocommitStatus() {
       return { available: false };
     },
+    async getPageChanges() {
+      return { available: false, reason: "Git is not available in the browser mock.", head_commit: null,
+        baseline_commit: null, current_text_sha256: "", identity_known: false, unattributed: false, blocks: [], removed: [] };
+    },
+    async markPageSeen(): Promise<never> { throw new Error("Git is not available in the browser mock."); },
+    async markGraphSeen(): Promise<never> { throw new Error("Git is not available in the browser mock."); },
+    async forgetSeenPage(): Promise<void> {},
+    async forgetSeenState(): Promise<void> {},
     async setGitAutocommit(): Promise<never> {
       throw new Error("git is not available in the browser mock");
     },

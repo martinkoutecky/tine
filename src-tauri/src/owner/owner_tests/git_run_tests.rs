@@ -508,3 +508,73 @@ fn a_held_index_lock_refuses_a_revert_before_it_changes_anything() {
     assert_eq!(disk(&graph, "pages/a.md"), before);
     assert_eq!(head(&repo).id(), tip);
 }
+
+/// ADR 0078: Tine commits the user's changes under the repository identity,
+/// "Your name" filling a missing name, the placeholder email a missing
+/// email, and the fixed fallback only when nothing is configured; seen's
+/// "me" (ADR 0079) is the same identity.
+#[test]
+fn git_run_user_identity_is_repo_then_your_name_then_fallback() {
+    use crate::owner::git_run::{identity_from, USER_FALLBACK};
+    let some = |s: &str| Some(s.to_string());
+    let cases = [
+        (
+            some("Martin"),
+            some("m@example.org"),
+            "Ada",
+            ("Martin", "m@example.org", true),
+        ),
+        (None, None, "Ada", ("Ada", USER_FALLBACK.1, true)),
+        (
+            None,
+            some("m@example.org"),
+            "Ada",
+            ("Ada", "m@example.org", true),
+        ),
+        (
+            some("Martin"),
+            None,
+            "Ada",
+            ("Martin", USER_FALLBACK.1, true),
+        ),
+        (
+            some(""),
+            some(" "),
+            "  Ada  ",
+            ("Ada", USER_FALLBACK.1, true),
+        ),
+        (None, None, "", (USER_FALLBACK.0, USER_FALLBACK.1, false)),
+        (
+            None,
+            None,
+            "A <b>",
+            (USER_FALLBACK.0, USER_FALLBACK.1, false),
+        ),
+        (
+            some("<x>"),
+            some("bad<"),
+            "",
+            (USER_FALLBACK.0, USER_FALLBACK.1, false),
+        ),
+    ];
+    for (name, email, yours, (want_name, want_email, known)) in cases {
+        let id = identity_from(name.clone(), email.clone(), yours);
+        assert_eq!(
+            (id.name.as_str(), id.email.as_str(), id.known),
+            (want_name, want_email, known),
+            "{name:?} {email:?} {yours:?}"
+        );
+        let own = id.signature();
+        assert!(id.wrote(&own), "the writer's own signature is mine");
+        let other_tine = Signature::now("Somebody else", USER_FALLBACK.1).unwrap();
+        assert!(!id.wrote(&other_tine));
+        let agent = Signature::now(want_name, crate::owner::git_run::AGENT_EMAIL).unwrap();
+        assert!(!id.wrote(&agent), "an agent commit is never mine");
+    }
+    let id = identity_from(some("Martin"), some("M@Example.org"), "");
+    let elsewhere = Signature::now("Martin K.", "m@example.ORG").unwrap();
+    assert!(
+        id.wrote(&elsewhere),
+        "a configured email identifies me anywhere"
+    );
+}

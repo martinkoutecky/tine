@@ -570,6 +570,7 @@ pub(crate) async fn rename_page(
     expected_path: Option<String>,
     merge_into: Option<String>,
     unsaved_paths: Option<Vec<String>>,
+    app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<tine_graph_features::pages::RenameReport, String> {
     let slot = slot_for_context(&state)?;
@@ -597,6 +598,7 @@ pub(crate) async fn rename_page(
                 .map_err(|e| e.to_string())
             },
         )
+        .inspect(|report| crate::seen::page_renamed(&app, &slot, &old, report))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2210,6 +2212,7 @@ pub(crate) async fn get_page_by_path(
 pub(crate) async fn merge_pages(
     src: String,
     dst: String,
+    app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
@@ -2227,6 +2230,7 @@ pub(crate) async fn merge_pages(
                 .map_err(graph_write_error_to_wire)
             },
         )
+        .inspect(|()| crate::seen::page_gone(&app, &slot, None, &[src.as_str()]))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2259,6 +2263,7 @@ fn graph_write_wire_keeps_rollback_incomplete_family() {
 pub(crate) async fn rename_file_to_page(
     path: String,
     new_name: String,
+    app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
@@ -2276,6 +2281,7 @@ pub(crate) async fn rename_file_to_page(
                 .map_err(|error| error.to_string())
             },
         )
+        .inspect(|()| crate::seen::page_gone(&app, &slot, None, &[path.as_str()]))
     })
     .await
     .map_err(|error| error.to_string())?

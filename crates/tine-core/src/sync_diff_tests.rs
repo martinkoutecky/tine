@@ -1028,3 +1028,165 @@ fn an_artifact_merged_row_keeps_its_children_decisions() {
     assert!(merged[0].raw.starts_with("the quick brown fox leapt"));
     assert_eq!(raws(&merged[0].children), vec!["the child line THERE"]);
 }
+
+/// Row shape with absolute sibling indices: (mine, theirs, kind, children).
+#[derive(Debug, PartialEq)]
+struct Shape(Option<usize>, Option<usize>, RowKind, Vec<Shape>);
+
+fn shape(rows: &[DiffRow], offset_mine: usize, offset_theirs: usize) -> Vec<Shape> {
+    let (mut m, mut t) = (offset_mine, offset_theirs);
+    rows.iter()
+        .map(|row| {
+            let mi = row.mine.as_ref().map(|_| m);
+            let ti = row.theirs.as_ref().map(|_| t);
+            m += usize::from(mi.is_some());
+            t += usize::from(ti.is_some());
+            Shape(mi, ti, row.kind, shape(&row.children, 0, 0))
+        })
+        .collect()
+}
+
+/// `trimmed_alignment_is_exact` is sound: whenever it says yes, the whole-list
+/// diff equals the window's diff plus the content-equal ends paired in place,
+/// on both sides of the LCS budget, with reorders, moves, duplicates and
+/// missing ids in the mix.
+#[test]
+fn trimmed_alignment_is_exact_only_when_the_whole_list_diff_agrees() {
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self, n: usize) -> usize {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 % n as u64) as usize
+        }
+    }
+    let render = |rows: &[(String, Vec<String>)]| -> String {
+        rows.iter()
+            .map(|(body, children)| {
+                let mut out = format!("- {}\n", body.replace('\n', "\n  "));
+                for child in children {
+                    out.push_str(&format!("\t- {child}\n"));
+                }
+                out
+            })
+            .collect()
+    };
+    let mut rng = Rng(0x1234_5678_9abc_def1);
+    let (mut exact, mut refused, mut exact_reorders) = (0usize, 0usize, 0usize);
+    for case in 0..600 {
+        let size = if case % 20 == 0 {
+            520 + rng.next(80)
+        } else {
+            3 + rng.next(25)
+        };
+        let duplicates = case % 3 == 0;
+        let mut old: Vec<(String, Vec<String>)> = (0..size)
+            .map(|i| {
+                let body = match rng.next(4) {
+                    0 => format!("b{i}\nid:: id-{i}"),
+                    1 if duplicates => format!("same {}", rng.next(3)),
+                    1 => format!("plain {i}"),
+                    2 if duplicates => format!("d\nid:: id-{}", rng.next(3)),
+                    _ => format!("text {i}"),
+                };
+                let children = (0..rng.next(3)).map(|c| format!("c{i}.{c}")).collect();
+                (body, children)
+            })
+            .collect();
+        let mut new = old.clone();
+        let mut reordered = false;
+        for _ in 0..1 + rng.next(4) {
+            if new.is_empty() {
+                break;
+            }
+            let at = rng.next(new.len());
+            match rng.next(6) {
+                0 => new[at].0.push_str(" edited"),
+                1 if at + 1 < new.len() => {
+                    new.swap(at, at + 1);
+                    reordered = true;
+                }
+                2 => {
+                    let row = new.remove(at);
+                    let to = rng.next(new.len() + 1);
+                    new.insert(to, row);
+                    reordered |= to != at;
+                }
+                3 => {
+                    new.remove(at);
+                }
+                4 => new.insert(at, (format!("fresh {case}"), Vec::new())),
+                _ => new[at].1.push("child added".into()),
+            }
+        }
+        if rng.next(5) == 0 {
+            std::mem::swap(&mut old, &mut new);
+        }
+        let mine = parse(&render(&new)).roots;
+        let theirs = parse(&render(&old)).roots;
+        let head = mine.iter().zip(&theirs).take_while(|(a, b)| a == b).count();
+        let room = mine.len().min(theirs.len()) - head;
+        let tail = mine
+            .iter()
+            .rev()
+            .zip(theirs.iter().rev())
+            .take(room)
+            .take_while(|(a, b)| a == b)
+            .count();
+        if !trimmed_alignment_is_exact(&mine, &theirs, head, tail, &mut PersistedIds::new()) {
+            refused += 1;
+            continue;
+        }
+        exact += 1;
+        exact_reorders += usize::from(reordered);
+        let whole = shape(&diff_blocks(&mine, &theirs), 0, 0);
+        let mut composed: Vec<Shape> = (0..head)
+            .map(|i| Shape(Some(i), Some(i), RowKind::Unchanged, Vec::new()))
+            .collect();
+        composed.extend(shape(
+            &diff_blocks(
+                &mine[head..mine.len() - tail],
+                &theirs[head..theirs.len() - tail],
+            ),
+            head,
+            head,
+        ));
+        composed.extend((0..tail).map(|k| {
+            Shape(
+                Some(mine.len() - tail + k),
+                Some(theirs.len() - tail + k),
+                RowKind::Unchanged,
+                Vec::new(),
+            )
+        }));
+        assert_eq!(whole, composed, "case {case}");
+    }
+    assert!(
+        exact > 150 && refused > 50 && exact_reorders > 15,
+        "coverage: exact {exact}, refused {refused}, exact with a reorder {exact_reorders}"
+    );
+}
+
+/// The Hirschberg anchors (id read once) are exactly `anchor_eq`, over ids,
+/// empty ids, missing ids, same text with different children, and
+/// duplicate ids on different text.
+#[test]
+fn precomputed_anchors_are_exactly_anchor_eq() {
+    let text = "- a\n  id:: x\n- a\n  id:: x\n\t- kid\n- b\n  id:: x\n- a\n- a\n\t- kid\n\
+                - a\n  id:: \n- c\n  id:: y\n- a\n  id:: y\n- plain\n- plain\n";
+    let roots = parse(text).roots;
+    let anchors = Anchor::all(&roots);
+    for (i, a) in roots.iter().enumerate() {
+        for (j, b) in roots.iter().enumerate() {
+            assert_eq!(anchors[i].eq(&anchors[j]), anchor_eq(a, b), "{i} vs {j}");
+        }
+    }
+    // The memoized fingerprint is exactly the patience one, warm or cold.
+    let mut ids = PersistedIds::new();
+    for _ in 0..2 {
+        for block in &roots {
+            assert_eq!(ids.fingerprint(block), anchor_fingerprint(block));
+        }
+    }
+}

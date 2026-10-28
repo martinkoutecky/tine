@@ -98,11 +98,14 @@ export const PERSISTED_FORMATS = Object.freeze([
   "backup-zip-snapshot",
   // Martin 2026-10-18 (D-20261018-Q1 S1: Rule 8 approval of quick share's device-local records); docs/adr/0076.
   "quick-share-records-json", "quick-share-account-json",
+  // D-20261028-SG, seen design rev 2; docs/adr/0079.
+  "seen-git-json",
 ]);
-export const PINNED_FORMAT_COUNT = 33;
+export const PINNED_FORMAT_COUNT = 34;
 // Writer sites Martin approved after the base, each with its ADR. Only an
 // approved format may add sites here; the count is exact, not a budget.
 export const APPROVED_WRITER_SITES = Object.freeze({
+  "src-tauri/src/owner/seen.rs": { sites: 1, approval: "Martin 2026-10-28 D-20261028-SG; seen design rev 2; docs/adr/0079" },
   "src-tauri/src/flight_store.rs": { sites: 3, approval: "og QUESTIONS Q5 2026-09-29; docs/adr/0058" },
   "src-tauri/src/concord_ledger.rs": { sites: 1, approval: "og QUESTIONS Q4 2026-09-29; docs/adr/0056" },
   "src-tauri/src/drafts.rs": { sites: 1, approval: "og QUESTIONS Q6 2026-09-29; docs/adr/0061" },

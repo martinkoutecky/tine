@@ -625,6 +625,18 @@ export interface Backend {
   editGlobalCss(): Promise<void>;
   /** Settings → Graph → Git (ADR 0078): the bound graph's autocommit status. */
   gitAutocommitStatus(): Promise<GitAutocommitStatus>;
+  /** Read only. pageKey is pageIdentityKey; path is graph-relative. currentText
+   * is the complete rendered page snapshot, including unsaved local edits.
+   * Re-read on page focus/visibility and external page-file changes. */
+  getPageChanges(pageKey: string, path: string, currentText: string): Promise<import("./backendTypes").SeenPageChanges>;
+  /** Call on leave, or explicitly from Mark page seen; never per edit. */
+  markPageSeen(pageKey: string, path: string): Promise<void>;
+  markGraphSeen(): Promise<void>;
+  /** Drop one page's seen baseline (by pageKey or recorded path); the page
+   * then inherits the graph baseline. Tine's own rename/merge/delete already
+   * do this in the backend. */
+  forgetSeenPage(pageKey: string, path: string): Promise<void>;
+  forgetSeenState(): Promise<void>;
   /** Set this device's autocommit policy for the bound graph; answers the new status. */
   setGitAutocommit(policy: GitPolicy, intervalMinutes: number): Promise<GitAutocommitStatus>;
   /** How many launch snapshots to keep. */

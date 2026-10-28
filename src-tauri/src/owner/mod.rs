@@ -27,6 +27,8 @@ pub(crate) mod lock;
 pub(crate) mod namespace;
 mod pages;
 #[cfg(desktop)]
+pub(crate) mod seen;
+#[cfg(desktop)]
 pub(crate) mod serve;
 #[cfg(desktop)]
 pub(crate) mod terminal;
