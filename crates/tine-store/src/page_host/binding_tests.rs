@@ -2066,7 +2066,10 @@ fn s9_draft_status_names_recovered_and_unsaved_pages() {
         host,
         ..
     } = live;
-    assert!(host.stop_finish().is_ok());
+    // Ready is a snapshot: a background save retry can start before the
+    // finish command runs. Use the complete stop API, which retries that
+    // readiness race without dropping the host or its draft custody.
+    assert!(host.stop_saved(id, StopMode::Switch).is_ok());
     assert_eq!(
         fs::read_to_string(root.join("pages/a.md")).unwrap(),
         "- one\n"

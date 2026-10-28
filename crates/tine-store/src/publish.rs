@@ -1064,7 +1064,10 @@ mod tests {
                 writer.write("index.html", b"first")
             })
             .unwrap();
-        assert_eq!(first.site, outside.join("selected"));
+        assert_eq!(
+            first.site,
+            fs::canonicalize(&outside).unwrap().join("selected")
+        );
         assert_eq!(fs::read(first.site.join("index.html")).unwrap(), b"first");
         assert!(!base.join("selected").exists());
         assert!(store

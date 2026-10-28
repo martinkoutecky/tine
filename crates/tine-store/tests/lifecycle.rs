@@ -15,7 +15,7 @@ impl Fixture {
         ));
         std::fs::create_dir_all(root.join("pages")).unwrap();
         std::fs::create_dir_all(root.join("journals")).unwrap();
-        Self(root)
+        Self(std::fs::canonicalize(root).unwrap())
     }
 
     fn root(&self) -> &Path {
