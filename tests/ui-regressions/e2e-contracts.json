@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-sweep-nav.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Mouse back/forward follows routed-page history without navigating after a drag; Commands and t o fold a 60-block page durably, while the bullet menu folds one subtree.","blocking":false,"authority":"GH #780, #785; UI-GH780-MOUSE-HISTORY; UI-GH785-PAGE-FOLD"}],
+      "acceptableVariations": ["Menu layout, save latency, page geometry and native event sequences may vary."],
+      "nonRequirements": ["No exact pixels, complete boundary enumeration, hosted macOS/Windows device acceptance or release burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-owner-protection.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"An intentional owner namespace refusal leaves a graph editable with a persistent actionable warning. Permission repair acquires a real lease and removes the warning. Automatic retry hands over a CLI host started after external repair.","blocking":false,"authority":"D-20261027-OF; UI-OWNER-PROTECTION-RECOVERY; REG-OWNER-FALLBACK-RETRY"}],
       "acceptableVariations": ["Warning layout, wording, save latency and retry scheduling may vary. Kernel ownership and durable text determine success."],
@@ -144,7 +150,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-gh745-structural-edit-viewport.mjs": {
-      "contracts":[{"class":"core-operation","userOutcome":"On a long windowed page with images above, after a block is scrolled from the bottom of the viewport to the top with the wheel and then edited structurally (Enter at the start or middle, Backspace merging into an image block, Delete merge, Tab and Shift+Tab including level 2 to 1 and back with NESTED=1, a multi-block paste), the caret is still on screen and the view has moved only as far as showing the caret needs (GH #745).","blocking":true}],
+      "contracts":[{"class":"core-operation","userOutcome":"On a long windowed page with images above, after a block is scrolled from the bottom of the viewport to the top with the wheel and then edited structurally (Enter at the start or middle, Backspace merging into an image block, Delete merge, Tab and Shift+Tab including level 2 to 1 and back with NESTED=1, a multi-block paste), the caret is still on screen and the view has moved only as far as showing the caret needs, and on the flat page no structural key replaces any outline window shell (GH #745).","blocking":true}],
       "acceptableVariations":["Exactly where in the viewport the caret row lands, a few lines of extra scroll for a merged block that grew, and animation or settle timing may vary while the caret row is visible and the view did not jump by most of a screen."],
       "nonRequirements":["WebView2 (Chromium) focus centring, covered by the unit test of the reveal rule rather than by this journey; mobile and the right sidebar."],
       "stability":"burn-in"
@@ -202,8 +208,14 @@
       "nonRequirements":["The more-than-five truncation and the Copy contents (unit-tested), and native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-code-scrollbar.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A real pointer press on the horizontal scrollbar under a long-line code block, then a drag, scrolls the card on the first try and never opens the block's editor; a click on the code text still does (GH #787).","blocking":true}],
+      "acceptableVariations":["Scrollbar thickness, thumb shape, colours and the card's height may vary while a press anywhere on the visible bar strip drag-scrolls the card."],
+      "nonRequirements":["Native certification outside Linux WebKitGTK (macOS overlay scrollbars are covered by the same geometry but unmeasured), and touch devices, which scroll by swipe."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-sidebar-crumbs.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"A nested block opened in the right sidebar is titled with its page, an ellipsis and its nearest three ancestors rendered inline; clicking an ancestor crumb swaps that card to the ancestor without writing the page.","blocking":true},{"class":"stateful-ux","userOutcome":"With Block embed breadcrumbs on, a block embed shows its page and nearest three ancestors in a muted, smaller trail that starts at the embedded bullet (GH #440).","blocking":true}],
+      "contracts": [{"class":"core-operation","userOutcome":"A nested block opened in the right sidebar is titled with its page, an ellipsis and its nearest three ancestors rendered inline; clicking an ancestor crumb swaps that card to the ancestor without writing the page.","blocking":true},{"class":"stateful-ux","userOutcome":"With Block embed breadcrumbs on, a block embed shows its page and nearest three ancestors in a muted, smaller trail that starts at the embedded bullet, and each ancestor crumb opens that block (plain click: its page; Shift: the sidebar) (GH #440, #779).","blocking":true}],
       "acceptableVariations":["Separator glyphs, truncation and styling may vary while the page, ancestor order and swap agree."],
       "nonRequirements":["Modifier destinations of crumbs (component-level), and native certification outside Linux WebKitGTK."],
       "stability":"burn-in"

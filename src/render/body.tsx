@@ -22,6 +22,7 @@ import { parseBody, renderedProperties, stripPlanningLines } from "./facets";
 import { createNearBlockMount } from "../createNearBlockMount";
 import { BeginQuery, inspectBeginQuery } from "../components/BeginQuery";
 import { readOr } from "../resourceRead";
+import "./codeBlock.css";
 import { QueryMacro } from "../components/Macro";
 import { hasQueryMacroCandidate, queryMacroRenderExtents, queryMacroRenderRun } from "./queryMacroRender";
 import { PeekContext } from "./PeekPopup";
