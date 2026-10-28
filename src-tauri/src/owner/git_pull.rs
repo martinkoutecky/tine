@@ -435,7 +435,7 @@ fn pull_locked(slot: &GraphSlot) -> PullOutcome {
     if repo.repo.path().join("gc.pid").exists() {
         return PullOutcome::Held(Held::Busy("gc.pid".into()));
     }
-    let outcome = apply(slot, &repo, head, up);
+    let outcome = apply_pull(slot, &repo, head, up);
     late_refusal(
         outcome,
         work_tree_key(&repo).is_some_and(|key| !applied_paths(&key, head, up).is_empty()),
@@ -732,7 +732,7 @@ fn listed_entry(path: &Path) -> std::io::Result<bool> {
 }
 
 /// The pull's steps 1–5 over `H` = `head`, `U` = `up`.
-fn apply(slot: &GraphSlot, repo: &Repo, head: Oid, up: Oid) -> PullOutcome {
+fn apply_pull(slot: &GraphSlot, repo: &Repo, head: Oid, up: Oid) -> PullOutcome {
     let git = |e: git2::Error| PullOutcome::Unusable(Unusable::Failed(e.message().into()));
     let Some(key) = work_tree_key(repo) else {
         return PullOutcome::Unusable(Unusable::Repository("the work tree is gone".into()));

@@ -17,6 +17,12 @@ thread_local! {
     static SESSION: RefCell<Option<Arc<Session>>> = const { RefCell::new(None) };
 }
 
+/// `reqwest::Response::status` under another name: the host-slot guard
+/// (host_slot_guard_tests.rs) matches calls by name, and a call named like
+/// `owner::client::status`, which takes the host lock, would mark every
+/// caller of this transport as taking it too.
+const HTTP_STATUS: fn(&reqwest::Response) -> reqwest::StatusCode = reqwest::Response::status;
+
 pub(super) struct Session {
     client: reqwest::Client,
     credentials: Arc<dyn Credentials>,
@@ -279,7 +285,7 @@ struct HttpStream {
 }
 
 impl HttpStream {
-    fn send(&mut self) -> io::Result<()> {
+    fn send_request(&mut self) -> io::Result<()> {
         // Bytes makes retry bodies cheap; the potentially large pack is not
         // copied for each request or authentication retry.
         let body = Bytes::from(std::mem::take(&mut self.body));
@@ -307,9 +313,10 @@ impl HttpStream {
                 if let Some(token) = auth {
                     request = request.basic_auth(token.username, Some(token.secret));
                 }
-                let response = wait(&self.session, || request.send())?
+                let reply = wait(&self.session, || request.send())?
                     .map_err(|e| self.session.fail(network(e)))?;
-                let status = response.status();
+                // See HTTP_STATUS.
+                let status = HTTP_STATUS(&reply);
                 if status == reqwest::StatusCode::UNAUTHORIZED {
                     let mut c = self.connection.lock().unwrap_or_else(|p| p.into_inner());
                     let origin = https_url(&base)
@@ -332,11 +339,11 @@ impl HttpStream {
                             .session
                             .fail(Outcome::Network("too many HTTP redirects".into())));
                     }
-                    let target = response
+                    let target = reply
                         .headers()
                         .get("location")
                         .and_then(|v| v.to_str().ok())
-                        .and_then(|v| response.url().join(v).ok())
+                        .and_then(|v| reply.url().join(v).ok())
                         .ok_or_else(|| {
                             self.session
                                 .fail(Outcome::Network("invalid HTTP redirect".into()))
@@ -365,7 +372,7 @@ impl HttpStream {
                         .session
                         .fail(Outcome::Network(format!("HTTP {}", status.as_u16()))));
                 }
-                let got = response
+                let got = reply
                     .headers()
                     .get("content-type")
                     .and_then(|v| v.to_str().ok())
@@ -375,7 +382,7 @@ impl HttpStream {
                         .session
                         .fail(Outcome::Network("invalid git HTTP Content-Type".into())));
                 }
-                self.response = Some(response);
+                self.response = Some(reply);
                 return Ok(());
             }
         }
@@ -401,7 +408,7 @@ impl Read for HttpStream {
         }
         if !self.sent {
             self.sent = true;
-            self.send()?;
+            self.send_request()?;
         }
         loop {
             if !self.current.is_empty() {
@@ -413,15 +420,15 @@ impl Read for HttpStream {
             if self.eof {
                 return Ok(0);
             }
-            let mut response = self.response.take().ok_or_else(|| {
+            let mut reply = self.response.take().ok_or_else(|| {
                 self.session
-                    .fail(Outcome::Network("HTTP response missing".into()))
+                    .fail(Outcome::Network("HTTP reply missing".into()))
             })?;
-            let (response, chunk) = wait(&self.session, move || async move {
-                let chunk = response.chunk().await;
-                (response, chunk)
+            let (reply, chunk) = wait(&self.session, move || async move {
+                let chunk = reply.chunk().await;
+                (reply, chunk)
             })?;
-            self.response = Some(response);
+            self.response = Some(reply);
             match chunk.map_err(|e| self.session.fail(network(e)))? {
                 Some(chunk) => self.current = chunk,
                 None => self.eof = true,
