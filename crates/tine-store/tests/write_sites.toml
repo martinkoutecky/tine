@@ -2033,3 +2033,33 @@ test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirecte
 oracle = false
 note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
 mutations = ".commit=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_sync/credentials.rs"
+fn = "Tokens::sign_in"
+domain = "app"
+guard = ""
+test = "src-tauri/src/owner/git_sync/credentials.rs#tokens_are_kept_per_origin_owner_only_and_never_in_errors"
+oracle = false
+note = "Private app-data git HTTPS tokens (git-credentials.json, owner-only), atomic JSON publication; the last sign-out deletes the file. Never in a graph (ADR 0078 §5, PENDING GIT-CRED)."
+mutations = ".write=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_sync/credentials.rs"
+fn = "Tokens::sign_out"
+domain = "app"
+guard = ""
+test = "src-tauri/src/owner/git_sync/credentials.rs#tokens_are_kept_per_origin_owner_only_and_never_in_errors"
+oracle = false
+note = "Private app-data git HTTPS tokens (git-credentials.json, owner-only), atomic JSON publication; the last sign-out deletes the file. Never in a graph (ADR 0078 §5, PENDING GIT-CRED)."
+mutations = ".write=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_sync/credentials.rs"
+fn = "Tokens::write"
+domain = "app"
+guard = ""
+test = "src-tauri/src/owner/git_sync/credentials.rs#tokens_are_kept_per_origin_owner_only_and_never_in_errors"
+oracle = false
+note = "Private app-data git HTTPS tokens (git-credentials.json, owner-only), atomic JSON publication; the last sign-out deletes the file. Never in a graph (ADR 0078 §5, PENDING GIT-CRED)."
+mutations = "atomic_write_private=1, directory_durability::sync_directory_entry=1, fs::create_dir_all=1, fs::remove_file=1"

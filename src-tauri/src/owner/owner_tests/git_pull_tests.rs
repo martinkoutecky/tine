@@ -991,7 +991,7 @@ fn q_git_late_staged_refusal_names_partial_progress() {
     for _ in 0..2 {
         let outcome = pull(&slot);
         assert!(
-            matches!(&outcome, PullOutcome::Stopped { path, reason }
+            matches!(&outcome, PullOutcome::StoppedPartway { path, reason }
             if path == "pages/a.md" && reason.contains("files were already updated")),
             "{outcome:?}"
         );

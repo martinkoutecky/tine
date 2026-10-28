@@ -240,7 +240,7 @@ fn pull_outcome(outcome: PullOutcome) -> Cycle {
             path: Some(path),
         },
         // Files were already updated: the named path needs the user in git, then a Sync.
-        PullOutcome::Stopped { path, reason } => Cycle {
+        PullOutcome::StoppedPartway { path, reason } => Cycle {
             class: Class::NeedsUser,
             code,
             message: reason,
@@ -411,7 +411,7 @@ mod tests {
             ),
             (Class::NeedsUser, Some("pages/link.md"), "a symbolic link")
         );
-        let stopped = pull_outcome(PullOutcome::Stopped {
+        let stopped = pull_outcome(PullOutcome::StoppedPartway {
             path: "pages/b.md".into(),
             reason: "a staged change".into(),
         });

@@ -86,7 +86,7 @@ pub(crate) enum PullOutcome {
     },
     /// A refusal after publication began: files were already updated; the
     /// named path needs attention before this pending target can finish.
-    Stopped {
+    StoppedPartway {
         path: String,
         reason: String,
     },
@@ -107,7 +107,7 @@ impl PullOutcome {
             Self::Held(Held::Busy(_)) => "pull-held-busy",
             Self::Incomplete(_) => "pull-incomplete",
             Self::Refused { .. } => "pull-refused",
-            Self::Stopped { .. } => "pull-stopped",
+            Self::StoppedPartway { .. } => "pull-stopped",
             Self::NoUpstream => "no-upstream",
             Self::Unusable(_) => "refused",
         }
@@ -954,7 +954,7 @@ fn kinds_of(changes: &[&Change]) -> Vec<EditKind> {
 
 fn late_refusal(outcome: PullOutcome, published: bool) -> PullOutcome {
     match outcome {
-        PullOutcome::Refused { path, reason } if published => PullOutcome::Stopped {
+        PullOutcome::Refused { path, reason } if published => PullOutcome::StoppedPartway {
             path,
             reason: format!("files were already updated; {reason}"),
         },
