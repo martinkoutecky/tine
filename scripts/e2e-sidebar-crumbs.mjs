@@ -128,6 +128,7 @@ try {
   await browser.waitUntil(async () => (await crumbs()).some(c => c.crumbs.join("|") === "First|Second bold|Third"),
     { timeout: 10000, timeoutMsg: `Shift-click on an embed ancestor crumb did not open that block in the sidebar (cards before: ${sidebarBefore})` });
   if (await currentPageTitle(browser) !== "Embed Host") throw Error("Shift-click on a crumb navigated the main pane");
+  await browser.executeAsync((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))); // let the new card paint before the screenshot
   try { execFileSync("import", ["-window", "root", path.join(out, "embed-crumb-click.png")], { env }); } catch {}
   stage = "GH #643 follow-up: a query result's trail renders its parent's markup";
   await openPageByName(browser, "Query Host");

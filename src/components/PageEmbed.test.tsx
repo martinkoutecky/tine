@@ -6,7 +6,7 @@ import { initParser } from "../render/parse";
 import type { BlockDto } from "../types";
 import { EmbedMacro } from "./Macro";
 import { KNOBS, setKnob } from "../styleKnobs";
-import { layoutPaneIds, paneRouter, resetPaneLayoutToSingle } from "../panes";
+import { PaneContext, focusPane, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, splitPane } from "../panes";
 import { rightSidebar, setRightSidebar, setRightSidebarOpen } from "../ui";
 
 // GH #439: a whole-page embed names the page it embeds, so it reads as a page and
@@ -106,6 +106,35 @@ describe("page embed header (GH #439)", () => {
         crumb("Second").click();
         // Opens in place in its page (Settings > ref-click-zoom off): the route is the page.
         expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
+      } finally { dispose(); }
+    });
+    it("in a split pane, Alt opens the other pane relative to the pane that holds the embed", async () => {
+      resetPaneLayoutToSingle(snapshot());
+      const second = splitPane("main", "row", { focusNew: false })!;
+      focusPane("main");
+      let row: BlockDto = leaf("e-leaf", "THE EMBEDDED BLOCK");
+      for (const [id, raw] of [["e-2", "Second"], ["e-1", "First"]] as const)
+        row = { id, raw, collapsed: false, children: [row] };
+      loadSingle({ name: "Source", title: "Source", kind: "page", pre_block: null, blocks: [row] });
+      vi.spyOn(backend(), "resolveBlocks").mockResolvedValue([
+        { page: "Source", kind: "page", blocks: [{ ...leaf("e-leaf", "THE EMBEDDED BLOCK"), breadcrumb: [] }] },
+      ] as never);
+      vi.spyOn(backend(), "setAppString").mockResolvedValue(undefined);
+      setKnob(KNOBS.find(k => k.id === "embed-breadcrumbs")!, true);
+      const root = document.createElement("div");
+      document.body.append(root);
+      const dispose = render(() => (
+        <PaneContext.Provider value={{ paneId: second, router: paneRouter(second) }}>
+          <EmbedMacro body="embed ((e-leaf))" />
+        </PaneContext.Provider>
+      ), root);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      try {
+        const crumb = [...root.querySelectorAll<HTMLElement>(".embed-source-breadcrumb [role=button]")].find((el) => el.textContent === "Second")!;
+        crumb.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, altKey: true }));
+        // Held by the second pane, so "the other pane" is the main one.
+        expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source", block: expect.any(String) });
+        expect(paneRouter(second).route()).not.toHaveProperty("block");
       } finally { dispose(); }
     });
     it("Shift opens the parent block in the sidebar, Alt in the other pane, Enter from the keyboard", async () => {
