@@ -203,7 +203,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-sidebar-crumbs.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"A nested block opened in the right sidebar is titled with its page, an ellipsis and its nearest three ancestors rendered inline; clicking an ancestor crumb swaps that card to the ancestor without writing the page.","blocking":true},{"class":"stateful-ux","userOutcome":"With Block embed breadcrumbs on, a block embed shows its page and nearest three ancestors in a muted, smaller trail that starts at the embedded bullet (GH #440).","blocking":true}],
+      "contracts": [{"class":"core-operation","userOutcome":"A nested block opened in the right sidebar is titled with its page, an ellipsis and its nearest three ancestors rendered inline; clicking an ancestor crumb swaps that card to the ancestor without writing the page.","blocking":true},{"class":"stateful-ux","userOutcome":"With Block embed breadcrumbs on, a block embed shows its page and nearest three ancestors in a muted, smaller trail that starts at the embedded bullet, and each ancestor crumb opens that block (plain click: its page; Shift: the sidebar) (GH #440, #779).","blocking":true}],
       "acceptableVariations":["Separator glyphs, truncation and styling may vary while the page, ancestor order and swap agree."],
       "nonRequirements":["Modifier destinations of crumbs (component-level), and native certification outside Linux WebKitGTK."],
       "stability":"burn-in"

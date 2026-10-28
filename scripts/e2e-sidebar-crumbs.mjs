@@ -6,7 +6,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { remote } from "webdriverio";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
-import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { currentPageTitle, openPageByName } from "./lib/e2e-navigation.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -32,7 +32,7 @@ const driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", webdriverServer
   { env, stdio: ["ignore", log, log], detached: true });
 const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   workingDiff: true, app, sha256: crypto.createHash("sha256").update(fs.readFileSync(app)).digest("hex"),
-  journey: "Shift-click a nested block's bullet; the sidebar card title shows page, ellipsis and the nearest three ancestors rendered; clicking an ancestor crumb swaps the card to that block; with Block embed breadcrumbs on, an embed of the block shows the same trail, muted and aligned with its bullet; a query result's trail renders its parent's bold and link markup" };
+  journey: "Shift-click a nested block's bullet; the sidebar card title shows page, ellipsis and the nearest three ancestors rendered; clicking an ancestor crumb swaps the card to that block; with Block embed breadcrumbs on, an embed of the block shows the same trail, muted and aligned with its bullet, and every ancestor crumb opens that block (plain: its page, Shift: the sidebar); a query result's trail renders its parent's bold and link markup" };
 const crumbs = () => browser.execute(() => [...document.querySelectorAll(".right-sidebar .rs-item")].map(item => ({
   title: item.querySelector(".rs-item-title")?.textContent, more: !!item.querySelector(".rs-crumb-more"),
   crumbs: [...item.querySelectorAll(".rs-crumb")].map(el => el.textContent), bold: item.querySelector(".rs-item-crumbs strong")?.textContent ?? null })));
@@ -106,6 +106,29 @@ try {
   if (embed.textLeft < embed.bulletLeft - 4 || embed.textLeft > embed.bulletRight + 4) throw Error(`embed trail not aligned with the bullet: ${JSON.stringify(embed)}`);
   if (embed.fontRatio > 0.85) throw Error(`embed trail not reduced like Linked References: ${JSON.stringify(embed)}`);
   try { execFileSync("import", ["-window", "root", path.join(out, "embed.png")], { env }); } catch {}
+  stage = "GH #779: an embed's ancestor crumbs are clickable";
+  const embedCrumb = async (text) => {
+    const found = await browser.$$(".embed-source-breadcrumb [role=button].ref-crumb");
+    for (const el of found) if ((await el.getText()) === text) return el;
+    throw Error(`no clickable embed crumb ${text}`);
+  };
+  const roles = await browser.execute(() => [...document.querySelectorAll(".embed-source-breadcrumb .ref-crumb")]
+    .map(el => `${el.textContent}:${el.getAttribute("role") ?? ""}`));
+  if (roles.join("|") !== "…:|Second bold:button|Third:button|Fourth:button") throw Error(`embed crumb roles: ${roles.join("|")}`);
+  await (await embedCrumb("Third")).click();
+  await browser.waitUntil(async () => (await currentPageTitle(browser)) === "Crumb Demo",
+    { timeout: 10000, timeoutMsg: "plain click on an embed ancestor crumb did not open its page" });
+  await openPageByName(browser, "Embed Host");
+  await browser.waitUntil(() => browser.execute(() => !!document.querySelector(".embed-source-breadcrumb [role=button].ref-crumb")), { timeout: 15000 });
+  await browser.execute(() => { window.getSelection()?.removeAllRanges(); });
+  const sidebarBefore = (await crumbs()).length;
+  await browser.performActions([{ type: "key", id: "kb2", actions: [{ type: "keyDown", value: "\uE008" }] }]);
+  await (await embedCrumb("Fourth")).click();
+  await browser.performActions([{ type: "key", id: "kb2", actions: [{ type: "keyUp", value: "\uE008" }] }]);
+  await browser.waitUntil(async () => (await crumbs()).some(c => c.crumbs.join("|") === "First|Second bold|Third"),
+    { timeout: 10000, timeoutMsg: `Shift-click on an embed ancestor crumb did not open that block in the sidebar (cards before: ${sidebarBefore})` });
+  if (await currentPageTitle(browser) !== "Embed Host") throw Error("Shift-click on a crumb navigated the main pane");
+  try { execFileSync("import", ["-window", "root", path.join(out, "embed-crumb-click.png")], { env }); } catch {}
   stage = "GH #643 follow-up: a query result's trail renders its parent's markup";
   await openPageByName(browser, "Query Host");
   await browser.waitUntil(() => browser.execute(() => !!document.querySelector(".main-content .ref-breadcrumb .ref-crumb strong")),

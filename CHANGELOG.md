@@ -74,6 +74,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Every ancestor crumb in a block embed's breadcrumb opens that block, not just the page: click to go there, Shift-click for the sidebar, Ctrl/Cmd-click for a new tab, Alt-click for the other pane (GH #779).
 - Opening the right sidebar by a remapped shortcut keeps the main editor and caret when the sidebar shows the same block (UI-EDITOR-LATE-MOUNT).
 - Windows: automatic git cleanup no longer fails while flushing completed packs. Failed cleanup preserves loose objects, keeps commits running, and shows a quiet retry status in Settings → Git (REG-AUTOCOMMIT-WINDOWS-REPACK).
 - Clicking another block while journal days load keeps its editor and focus when the earlier Down navigation finishes (UI-EDITOR-C2).

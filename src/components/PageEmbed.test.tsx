@@ -6,6 +6,8 @@ import { initParser } from "../render/parse";
 import type { BlockDto } from "../types";
 import { EmbedMacro } from "./Macro";
 import { KNOBS, setKnob } from "../styleKnobs";
+import { layoutPaneIds, paneRouter, resetPaneLayoutToSingle } from "../panes";
+import { rightSidebar, setRightSidebar, setRightSidebarOpen } from "../ui";
 
 // GH #439: a whole-page embed names the page it embeds, so it reads as a page and
 // not as unexplained rows (OG block.cljs `page-embed` header). The outline-grid
@@ -71,6 +73,55 @@ describe("page embed header (GH #439)", () => {
       expect(trail.textContent).not.toContain("THE EMBEDDED BLOCK");
       expect(trail.querySelector(".page-ref")?.textContent).toBe("Source");
     } finally { setKnob(knob, undefined); dispose(); }
+  });
+  describe("GH #779: every ancestor crumb of the embed trail opens that block", () => {
+    const snapshot = () => ({ tabs: [{ history: [{ kind: "journals" as const }], pos: 0, pinned: false }], activeIndex: 0 });
+    const mountTrail = async () => {
+      resetPaneLayoutToSingle(snapshot());
+      let row: BlockDto = leaf("e-leaf", "THE EMBEDDED BLOCK");
+      for (const [id, raw] of [["e-3", "Third"], ["e-2", "Second"], ["e-1", "First"]] as const)
+        row = { id, raw, collapsed: false, children: [row] };
+      loadSingle({ name: "Source", title: "Source", kind: "page", pre_block: null, blocks: [row] });
+      vi.spyOn(backend(), "resolveBlocks").mockResolvedValue([
+        { page: "Source", kind: "page", blocks: [{ ...leaf("e-leaf", "THE EMBEDDED BLOCK"), breadcrumb: [] }] },
+      ] as never);
+      vi.spyOn(backend(), "setAppString").mockResolvedValue(undefined);
+      setKnob(KNOBS.find(k => k.id === "embed-breadcrumbs")!, true);
+      const mounted = await mountEmbed("embed ((e-leaf))");
+      const crumb = (text: string) => [...mounted.root.querySelectorAll<HTMLElement>(".embed-source-breadcrumb .ref-crumb")]
+        .find((el) => el.textContent === text)!;
+      return { ...mounted, crumb };
+    };
+    afterEach(() => {
+      setKnob(KNOBS.find(k => k.id === "embed-breadcrumbs")!, undefined);
+      setRightSidebar([]);
+      setRightSidebarOpen(false);
+      resetPaneLayoutToSingle(snapshot());
+    });
+    it("a plain click goes to that parent block in its page; the embedded block itself is not a crumb", async () => {
+      const { root, dispose, crumb } = await mountTrail();
+      try {
+        expect(crumb("Second").getAttribute("role")).toBe("button");
+        expect(root.querySelectorAll(".embed-source-breadcrumb [role=button]")).toHaveLength(3);
+        crumb("Second").click();
+        // Opens in place in its page (Settings > ref-click-zoom off): the route is the page.
+        expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
+      } finally { dispose(); }
+    });
+    it("Shift opens the parent block in the sidebar, Alt in the other pane, Enter from the keyboard", async () => {
+      const { dispose, crumb } = await mountTrail();
+      try {
+        crumb("Third").dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, shiftKey: true }));
+        expect(rightSidebar()[0]).toMatchObject({ kind: "block", page: "Source" });
+        expect(paneRouter("main").route()).toEqual({ kind: "journals" });
+        crumb("First").dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, altKey: true }));
+        expect(layoutPaneIds()).toHaveLength(2);
+        expect(paneRouter(layoutPaneIds()[1]).route()).toMatchObject({ kind: "page", name: "Source", block: expect.any(String) });
+        resetPaneLayoutToSingle(snapshot());
+        crumb("Second").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+        expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
+      } finally { dispose(); }
+    });
   });
   it("names the embedded page with a link to it", async () => {
     vi.spyOn(backend(), "getPage").mockResolvedValue(pageRead("Source", [leaf("s1", "source row")]));
