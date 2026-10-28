@@ -30,7 +30,7 @@ const app=path.join(run,"tine"); fs.copyFileSync(process.env.TINE_APP || path.jo
 const env={...fixture.env,TINE_GRAPH:graph,TINE_OWNER_PROTECTION_RUN:run,TAURI_WEBVIEW_AUTOMATION:"true",
   XDG_DATA_HOME:path.join(run,"data"),XDG_CONFIG_HOME:path.join(run,"config"),XDG_CACHE_HOME:path.join(run,"cache"),
   WEBKIT_DISABLE_DMABUF_RENDERER:"1",WEBKIT_DISABLE_COMPOSITING_MODE:"1",LIBGL_ALWAYS_SOFTWARE:"1",GDK_BACKEND:"x11"};
-const testedCommit=execFileSync("rtk",["git","rev-parse","HEAD"],{cwd:root,encoding:"utf8"}).trim();
+const testedCommit=execFileSync("git", ["rev-parse","HEAD"],{cwd:root,encoding:"utf8"}).trim();
 const port=()=>new Promise((resolve,reject)=>{const server=net.createServer();server.on("error",reject);server.listen(0,"127.0.0.1",()=>{const number=server.address().port;server.close(error=>error?reject(error):resolve(number));});});
 const log=fs.openSync(path.join(run,"driver.log"),"w");
 let driver,browser,serve,stage="launch editable fallback";

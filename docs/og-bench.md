@@ -3,9 +3,9 @@
 Run after a fresh frontend build and release binary build:
 
 ```sh
-rtk npm run build
-rtk cargo build --release -p tine --features custom-protocol
-rtk proxy xvfb-run -a node scripts/bench-og-parity.mjs
+npm run build
+cargo build --release -p tine --features custom-protocol
+xvfb-run -a node scripts/bench-og-parity.mjs
 ```
 
 The runner copies og's fresh binary and the installed master reference into
@@ -42,7 +42,7 @@ starts as soon as WebDriver returns the session, so very early startup tasks
 before that point are outside its observation window. The 500 ms UI budget
 applies to every corpus and journey. A trial over it fails the bench. The
 typing p95 budget is under 16 ms. `taskset` can pin the whole bench when load is
-high, for example `rtk proxy taskset -c 2-5 xvfb-run -a node scripts/bench-og-parity.mjs`.
+high, for example `taskset -c 2-5 xvfb-run -a node scripts/bench-og-parity.mjs`.
 
 Optional environment variables: `TINE_OG_BENCH_OG`, `TINE_OG_BENCH_MASTER`,
 `TINE_OG_BENCH_ANON`, `TINE_OG_BENCH_OUT`, and `TINE_OG_BENCH_RUNS` (at least

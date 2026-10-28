@@ -172,9 +172,36 @@ the existing create/rename/unlink draft protocol. The driver-only
 [NtFlushBuffersFileEx documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntflushbuffersfileex)
 is not a supported user-mode implementation recipe here.
 
+Tine now also attempts a best-effort directory flush at the private (app-data)
+directory-sync boundary, including draft mkdir parents and unlink parents (graph
+folders are unchanged: they may be network or cloud folders, where a flush per
+save would add a server round trip):
+`CreateFileW(GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS)`, then `FlushFileBuffers` and close.
+All open/flush errors retain the previous success result. The Windows storage report's `windowsDirectoryFlush`
+counts API successes/failures across the process since launch, without paths;
+success is not evidence of a flush on every filesystem.
+This best-effort app-data hardening accepts a latency risk: the synchronous
+`CreateFileW(GENERIC_WRITE)` can wait for a conflicting oplock break acknowledgment
+even with share-all. Microsoft's [oplock create rules](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/irp-mj-create2)
+describe the conflicts; [Breaking Oplocks](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/breaking-oplocks)
+documents no timeout for the acknowledgment wait, so there is no finite bound.
+Tine adds no timeout/cancellation, and swallowing errors preserves results only
+after I/O completes. App data may itself be redirected or cloud-backed; provider
+interaction and flush latency remain unverified. This risk is accepted for this
+app-data attempt, with graph folders unchanged.
+[MS-FSA §2.1.5.7](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/0de7dc40-9627-437e-a4df-c4696cdc3d02)
+specifies directory-structure persistence, but
+[product behavior note <80>](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/4e3695bd-7574-4f24-a223-b4679c065b63)
+limits that implementation to NTFS; other filesystems may return success while
+doing nothing. This does not establish a supported Win32 directory durability
+contract or prove unprivileged operation or power-loss persistence. Hosted
+Windows runners run elevated; a passing fresh-directory flush test is only API
+acceptance there, not evidence for unprivileged users.
+
 Consequently Windows strong-store durability still requires app-data namespace
-persistence after acknowledged creation/removal and any fallback rename. No new
-flush mechanism or unconditional crash guarantee is invented. This unmet
+persistence after acknowledged creation/removal and any fallback rename. The
+best-effort attempt supplies no unconditional crash guarantee. This unmet
 precondition keeps A-DRAFT-DURABLE guarded-untested; a hosted successful save
 alone cannot close it. Volatile-store detection is advisory on all five targets,
 never a graph-open refusal or proof that every unflagged store is durable.

@@ -9,7 +9,7 @@ import { APP_ID } from "./lib/app-identity.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const testedCommit = execFileSync("rtk", ["git", "rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
+const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
 const artifactRoot = process.env.E2E_ARTIFACT_DIR || path.join(ROOT, "artifacts/youtube");
 fs.mkdirSync(artifactRoot, { recursive: true });
 const TMP = fs.mkdtempSync(path.join(artifactRoot, "e2e-"));

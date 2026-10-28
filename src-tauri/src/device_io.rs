@@ -121,6 +121,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn namespace_sync_preserves_results_and_uses_the_private_windows_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        sync_private_directory(dir.path()).unwrap();
+        let missing = dir.path().join("missing");
+        #[cfg(target_os = "windows")]
+        {
+            let (store, ..) = tine_store::Store::open(dir.path(), Default::default()).unwrap();
+            let before = store.diagnostics()["storage"]["windowsDirectoryFlush"]["apiFailed"]
+                .as_u64()
+                .unwrap();
+            sync_private_directory(&missing).unwrap();
+            let after = store.diagnostics()["storage"]["windowsDirectoryFlush"]["apiFailed"]
+                .as_u64()
+                .unwrap();
+            assert!(
+                after >= before + 1,
+                "namespace sync must attempt the private flush"
+            );
+            store.close();
+        }
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "ios"
+        ))]
+        {
+            let expected = directory_durability::sync_directory_witness(&missing).unwrap_err();
+            let actual = sync_private_directory(&missing).unwrap_err();
+            assert_eq!(actual.kind(), io::ErrorKind::NotFound);
+            assert_eq!(actual.kind(), expected.kind());
+            assert_eq!(actual.to_string(), expected.to_string());
+        }
+    }
+
+    #[test]
     fn clipboard_file_import_streams_original_bytes_above_bitmap_budget() {
         use std::io::{Read, Seek, Write};
         let graph = tempfile::tempdir().unwrap();
@@ -500,10 +536,13 @@ fn sync_dir(dir: &Path) -> io::Result<()> {
     tine_store::directory_durability::sync_directory_entry(dir)
 }
 
-/// App-data renames need a strong witness. Reuse Store's public witness
-/// primitive without exposing its internal draft-directory helper: graph saves
-/// may tolerate Unsupported, while an app-data relocation reports it.
+/// App-data renames need a strong witness. Add Store's best-effort private
+/// flush on Windows; its graph witness is a no-op there. Linux, Android, macOS
+/// and iOS retain the witness classification and error text below: Store's
+/// private helper instead returns the original sync error on Unsupported.
 pub(crate) fn sync_private_directory(dir: &Path) -> io::Result<()> {
+    #[cfg(target_os = "windows")]
+    directory_durability::sync_private_directory(dir)?;
     match directory_durability::sync_directory_witness(dir)? {
         directory_durability::DirectoryWitness::Durable => Ok(()),
         directory_durability::DirectoryWitness::Unsupported => Err(io::Error::new(

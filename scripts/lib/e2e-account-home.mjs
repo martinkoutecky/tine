@@ -16,7 +16,7 @@ export function accountHomeFixture(run, artifacts = run, inherited = process.env
   const shim = reuse ? inherited.TINE_E2E_ACCOUNT_SHIM : path.join(run, "account-home.so");
   if (!reuse) {
     fs.chmodSync(home, 0o700);
-    execFileSync("rtk", ["proxy", "cc", "-shared", "-fPIC", "-Wall", "-Werror",
+    execFileSync("cc", ["-shared", "-fPIC", "-Wall", "-Werror",
       path.join(import.meta.dirname, "e2e-account-home.c"), "-o", shim, "-ldl"]);
   }
   const env = { ...inherited, TINE_E2E_ACCOUNT_HOME: home, TINE_E2E_ACCOUNT_SHIM: shim,
@@ -24,7 +24,7 @@ export function accountHomeFixture(run, artifacts = run, inherited = process.env
     TINE_DEBUG: "1", TINE_E2E_DEBUG_DIR: path.resolve(artifacts) };
   const observed = new Map();
   const stderrLogs = new Set();
-  const testedCommit = inherited.TINE_SOURCE_REVISION || execFileSync("rtk", ["git", "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const testedCommit = inherited.TINE_SOURCE_REVISION || execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   function sample() {
     const owners = path.join(home, ".local/state/tine/owners");
     if (!fs.existsSync(owners)) return [];

@@ -10,7 +10,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const base = execFileSync("rtk", ["git", "rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
+const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
 const artifacts = path.join(ROOT, "artifacts/l10-03");
 fs.mkdirSync(artifacts, { recursive: true });
 const run = fs.mkdtempSync(path.join(artifacts, "native-"));

@@ -7,7 +7,7 @@ import { remote } from "webdriverio";
 import { openJournals, openPageByName } from "./lib/e2e-navigation.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const testedBase = execFileSync("rtk", ["proxy", "git", "rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
+const testedBase = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
 const ARTIFACTS = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(ROOT, "artifacts/gh671"));
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
 // Default: a synthetic template with the report's shape (page alias, a

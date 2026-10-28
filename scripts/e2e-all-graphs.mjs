@@ -30,7 +30,7 @@ const env = { ...process.env, TINE_GRAPH: alpha, XDG_DATA_HOME: path.join(run, "
 const port = Number(process.env.E2E_DRIVER_PORT || 4892);
 const log = fs.openSync(path.join(run, "driver.log"), "w");
 const driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", webdriverServerArgs(port, port + 1, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"), { env, stdio: ["ignore", log, log], detached: true });
-const commit = execFileSync("rtk", ["proxy", "git", "rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
 let browser;
 let stage = "startup";
 try {

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hash-linked s3.6 bounded policy/creation endpoints, directly from Quint ITF.
 
-Run at repository root: rtk proxy python3 docs/storage-model/replay/replay36.py
+Run at repository root: python3 docs/storage-model/replay/replay36.py
 Use --check to regenerate and compare without rewriting the committed fixture.
 Full ITF/logs stay in artifacts/sb1-model/. This supplement does not replace the
 s3.5 transcription, full-state conformance corpus or its Lean proof.
@@ -54,7 +54,7 @@ def main():
         variant = run.variant(profile, 'none')
         pattern = run.OUT / f'{profile}-{{test}}-{{seq}}.itf.json'
         result = subprocess.run([
-            'rtk', 'proxy', run.Q, 'test', str(variant), '--backend', 'typescript',
+            run.Q, 'test', str(variant), '--backend', 'typescript',
             '--max-samples', '1', '--match', '^(' + '|'.join(NAMES) + ')$',
             '--out-itf', str(pattern)], capture_output=True, text=True, env=run._env())
         (run.OUT / f'{profile}.log').write_text(result.stdout + result.stderr)

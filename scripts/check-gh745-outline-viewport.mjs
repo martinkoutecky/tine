@@ -14,7 +14,7 @@ fs.mkdirSync(out, { recursive: true });
 const fixture = gh745Page();
 const baseline = process.env.GH745_BASE === "1";
 const originals = new Map(baseline ? ["src/components/BlockList.tsx", "src/render/inline.tsx", "src/assetCache.ts"].map((file) =>
-  [path.resolve(file), execFileSync("rtk", ["git", "show", `HEAD:${file}`], { encoding: "utf8" })]) : []);
+  [path.resolve(file), execFileSync("git", ["show", `HEAD:${file}`], { encoding: "utf8" })]) : []);
 const server = await createServer({ cacheDir: path.resolve(out, ".vite"), server: { port: 31975, strictPort: false,
   fs: { allow: [process.cwd(), path.dirname(fs.realpathSync("node_modules/vite"))] } }, plugins: [{
   name: "gh745-fixture", enforce: "pre",
