@@ -2,6 +2,7 @@ icon:: ⌨️
 
 - # Tips & shortcuts
 	- A quick tour of the things that aren't obvious on day one. (Shortcuts are remappable in Settings.)
+	- On desktop, the formatting toolbar follows your selection, even near the bottom of a long block. It appears below the selection when there is no room above; choose an action there to format the selected words.
 	- With a non-Latin keyboard layout, shortcuts and recording use the physical key's Latin letter or digit: **Ctrl+K** still works when that key types **л**. Latin layouts such as AZERTY and Dvorak keep their letter-based shortcuts. Text you type keeps the selected language.
 - ## Find anything — Ctrl+K
 	- To switch graphs, press **g Shift+G**, choose a remembered graph with **Up/Down**, then press **Enter**. **All graphs** is also in the command palette.
@@ -14,7 +15,7 @@ icon:: ⌨️
 	- Each section has its own **Display** control: show Pages as a table with columns from authored page properties while Blocks stay a list, for example. Name the search and choose **Save page** to keep both choices on an ordinary query page. The compact filter button handles friendly fields and date ranges; **Query builder** opens the deeper visual editor when needed.
 	- Page-title matching keeps exact, prefix, substring, and fuzzy results in that order. Repeated choices may break ties inside one class using device-local history; disable or reset this under Search settings if you prefer fixed ordering.
 	- **Ctrl+F** searches the main and split panes and expanded right-sidebar items in that order; **Enter** / **Shift+Enter** move forward / backward through matches. The arrow at the left of the find bar adds **Replace** and **Replace all** for the page you opened Find in.
-	- In a Search tab, clicking a result opens a new tab and keeps the search available; right-click a page result for the switcher's page actions.
+	- In a Search tab, clicking a result opens a new tab and keeps the search available (**Settings → Editor → Advanced → Search results open in → This tab** opens it in the same tab instead); right-click a page result for the switcher's page actions.
 	- In the quick switcher or a Search tab, **Ctrl/Cmd-click** a result to open it in a background tab, **Shift-click** for the right sidebar, or **Alt-click** for another pane.
 	- The quick switcher, page search, suggestions, and find-in-page ignore accents, case, and compatibility-width differences by default: `cafe` finds `café`, `lodz` finds `Łódź`, and `Tine` finds `Ｔｉｎｅ`. Marks that form another letter stay significant (`か` and `が` differ). To require accents in these searches, set `:feature/enable-search-remove-accents? false` in `logseq/config.edn`. This changes matching only; page names and Markdown keep their original spelling.
 - ## Follow a link without the mouse — Ctrl+O

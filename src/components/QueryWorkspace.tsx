@@ -61,6 +61,7 @@ import { bumpPageInventoryRev } from "../graphSession";
 import { blockDtoExternalId } from "../blockIdentity";
 import { createPage, CreatePageRefusal, queryWorkspacePage } from "../document";
 import { internalLinkDest, internalLinkMouseDown, internalLinkAuxClick } from "../linkGesture";
+import { searchResultsOpenInThisTab } from "../navSettings";
 import { steppedResultIndex } from "../resultNavigation";
 import { openRouteInOtherPane } from "../panes";
 import { openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
@@ -982,7 +983,13 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       if (target.block) openBlockInSidebar({ uuid: target.block, page: target.name, pageKind: target.pageKind, path: target.path });
       else openPageInSidebar(target.name, target.pageKind, target.path);
     } else if (dest === "pane") openRouteInOtherPane(target);
-    else props.router.openInNewTab(target, dest !== "background");
+    else if (dest === "default" && searchResultsOpenInThisTab()) {
+      // GH #796 (Settings > Search results open in > This tab): the plain gesture
+      // is ordinary navigation of this tab, as the Quick Switcher's plain Enter
+      // is (GH #288). The modified destinations above and below are unchanged.
+      if (target.block) props.router.openPageAtBlock({ name: target.name, pageKind: target.pageKind, block: target.block, ...(target.path ? { path: target.path } : {}) });
+      else props.router.openPageTarget({ name: target.name, pageKind: target.pageKind, ...(target.path ? { path: target.path } : {}) });
+    } else props.router.openInNewTab(target, dest !== "background");
   };
   const [activeResult, setActiveResult] = createSignal<string | null>(null);
   // Navigation identity includes the physical owner: same-named page results

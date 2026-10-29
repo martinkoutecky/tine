@@ -5,6 +5,14 @@ seen-header-count = { NUMBER($count, useGrouping: 0) } { $count ->
        *[other] changes
     } since you last looked
 seen-mark-page = Mark page seen
+seen-previous-change = Previous change
+seen-next-change = Next change
+# $index (number): which change the last step landed on, counting from 1.
+# $total (number): how many changes the page has.
+seen-change-position = { NUMBER($index, useGrouping: 0) } of { NUMBER($total, useGrouping: 0) }
+# $index (number): which change the last step landed on, counting from 1.
+# $total (number): how many changes the page has.
+seen-change-position-wrapped = { NUMBER($index, useGrouping: 0) } of { NUMBER($total, useGrouping: 0) }, wrapped around
 seen-removed-block = A block was removed here
 seen-note-identity-unknown = No git identity is set for this graph, so only commits Tine made under its placeholder name count as yours.
 seen-note-unattributed = This page has a long history since you last looked, so every change in it counts, including yours.

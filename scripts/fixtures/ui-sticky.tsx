@@ -5,11 +5,12 @@ import type { PageSeen } from "../../src/seen/pageSeen";
 import "../../src/styles/theme.css";
 import "../../src/styles/app.css";
 
+const params = new URLSearchParams(location.search);
 const seen: PageSeen = {
   count: () => 3, identityKnown: () => false, unattributed: () => true, reason: () => null,
   changed: () => false, removedAfter: () => [], removedFirst: () => [],
+  position: () => (params.get("step") ? { index: 12, total: 12, wrapped: true } : null), step: async () => {},
 };
-const params = new URLSearchParams(location.search);
 document.documentElement.setAttribute("data-theme", params.get("theme") || "light");
 render(() => <div style={{ display: "flex", height: "100vh", gap: "12px", padding: "12px", "box-sizing": "border-box" }}>
   {(params.get("panes") === "all" ? ["main-content", "main-content", "right-sidebar"] : ["main-content"]).map((shell, i) =>

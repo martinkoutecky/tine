@@ -31,7 +31,7 @@ import {
   refClickZoom,
   setRefClickZoom,
 } from "../copySettings";
-import { mobileNavigationAtBottom, navReuseTabs, setMobileNavigationAtBottom, setNavReuseTabs } from "../navSettings";
+import { mobileNavigationAtBottom, navReuseTabs, searchResultsOpenInThisTab, setMobileNavigationAtBottom, setNavReuseTabs, setSearchResultsOpenInThisTab } from "../navSettings";
 import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "../localFileSettings";
 import { linkAutocompletePolicy, setLinkAutocompletePolicy, type LinkAutocompletePolicy } from "../editor/linkDefault";
@@ -817,6 +817,17 @@ function EditorTab(props: { search: string }): JSX.Element {
           hint={t("settings-ui-plain-navigation-to-a-page-journal-or-exact-zoomed")}
         >
           <Toggle on={navReuseTabs()} onClick={() => setNavReuseTabs(!navReuseTabs())} />
+        </Field>
+
+        <Field label={render(msg("settings-result-destination-label"))} hint={render(msg("settings-result-destination-hint"))}>
+          <select
+            aria-label={render(msg("settings-result-destination-label"))}
+            value={searchResultsOpenInThisTab() ? "here" : "tab"}
+            onChange={(event) => setSearchResultsOpenInThisTab(event.currentTarget.value === "here")}
+          >
+            <option value="tab">{render(msg("settings-result-destination-new-tab"))}</option>
+            <option value="here">{render(msg("settings-result-destination-this-tab"))}</option>
+          </select>
         </Field>
 
         <Field label={render(msg("settings-pinyin-label"))} hint={render(msg("settings-pinyin-description"))}>
