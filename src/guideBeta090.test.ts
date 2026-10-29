@@ -60,6 +60,8 @@ it("the Guide documents where Search-tab results open and the setting that chang
   expect(refs).toContain("**Settings → Editor → Advanced → Search results open in**");
   expect(refs).toContain("**New tab** is the default");
   expect(guide("tips")).toContain("**Settings → Editor → Advanced → Search results open in → This tab**");
+});
+
 it("the Beta Guide explains seen marks, controls and the reachable notice", () => {
   const files = guide("files-external-edits-backups");
   for (const detail of ["thin bar in the margin", "A block was removed here", "Your own commits never count", "**Mark page seen**", "**Mark whole graph seen**", "**Forget seen state**", "notice stays at the top while you scroll"]) expect(files).toContain(detail);
