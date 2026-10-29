@@ -58,6 +58,17 @@ a delete plus an add). A held `index.lock` is "busy, retry"; after three busy cy
 names the file and says to remove it if no git command is running (a crash can leave it; Tine never deletes it).
 Slice 3: the lock named is the one actually held, `index.lock` or a ref lock a crashed commit left on `HEAD`, the
 branch or `packed-refs` (`held_lock`; before, Settings always named `index.lock`, even when a branch lock was the cause).
+Slice 3, GS-LOCK (built ahead of Martin's answer; this sentence replaces "Tine never deletes it" for `index.lock`
+only once he accepts it): when a commit or sync finds `index.lock` held, Tine offers **Remove the stale lock** in
+the app's notice (under every committing policy) and in Settings if (a) Tine runs no git operation itself
+(`RUN_LOCK` is free; every Tine path that takes `index.lock` holds it), (b) the lock is a regular, empty file
+(Tine's own lock is always empty; a git program writes the new index into its lock, and `git commit -a` holds such
+a written lock while its editor is open), and (c) its modification time is at least 10 minutes old and not in
+the future. The click passes back the offered identity (size, modification and creation times); under `RUN_LOCK`
+Tine rechecks (a)–(c) and the identity, renames the lock aside, checks the renamed file is still the same one
+(otherwise links it back), deletes it, logs `git-stale-lock-removed`, and the worker commits (and syncs) at once.
+Tine never removes a lock unasked, and never a ref, `HEAD`, `packed-refs` or `shallow` lock
+(`src-tauri/src/owner/git_stale_lock.rs`).
 Sync additionally needs the graph root to be the work tree root: a fast-forward of a bigger repository changes
 files outside the graph, which Tine does not own.
 
