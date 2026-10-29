@@ -365,7 +365,7 @@ describe("reference authoring", () => {
     startEditing("reference-authoring", typed.length);
     const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, typed, typed.length);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
       accept(textarea);
@@ -396,7 +396,7 @@ describe("reference authoring", () => {
     startEditing("reference-authoring", 8);
     const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, "((picked", 8);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("picked"));
       accept(textarea);
