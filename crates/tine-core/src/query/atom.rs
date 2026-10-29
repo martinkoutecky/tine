@@ -187,6 +187,27 @@ pub(crate) fn separated_by_commas(key: &str, config: &ParseConfig) -> bool {
         || contains_config_key(&config.separated_by_commas, key)
 }
 
+/// The normalized keys whose value shows each comma item as a page link on
+/// screen: [`separated_by_commas`] keys that [`reference_parsing_suppressed`]
+/// does not exclude (OG `property-cp` renders a ref set only for a parsed
+/// value). Built-ins first, then configured keys in config order, no repeats.
+/// O(configured keys).
+pub fn linkable_property_keys(config: &ParseConfig) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    for key in EDITABLE_LINKABLE_BUILT_IN_PROPERTIES.iter().copied().chain(
+        config
+            .separated_by_commas
+            .iter()
+            .map(|key| key.trim_start_matches(':')),
+    ) {
+        let key = property_key_norm(key);
+        if !reference_parsing_suppressed(&key, config) && !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    keys
+}
+
 /// Step 1's key test: OG `parse-property`'s first `cond` branch
 /// (`text.cljs:169-176`).
 pub(crate) fn reference_parsing_suppressed(key: &str, config: &ParseConfig) -> bool {

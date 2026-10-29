@@ -1,7 +1,8 @@
 import { For, Show, createEffect, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { pageIcon } from "../pageIconBatch";
 import { msg, t } from "../i18n";
-import { JournalsIcon } from "./JournalsIcon";
+import { HomeIcon, JournalsIcon } from "./JournalsIcon";
+import { goHome, isHomeRouteName, journalsReplacementHome } from "../homePage";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { openAllGraphs, openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
 import { openSwitcher, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
@@ -14,7 +15,7 @@ import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type 
 import { reportGraphOpenFailure } from "../graphOpenFailure";
 import { backend } from "../backend";
 import { graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
-import { allPageNames, navigationName } from "../pageIndex";
+import { allPageNames, linkPageKind, navigationName } from "../pageIndex";
 import { SidebarTitle } from "./SidebarTitle";
 import { NamespaceTree } from "./Namespace";
 import { SidebarFavorites } from "./SidebarFavorites";
@@ -114,16 +115,34 @@ export function Sidebar(props: {
       </div>
 
       <div class="nav-contents">
-        <div
-          class="nav-item"
-          classList={{ active: route().kind === "journals" }}
-          onClick={() => { openJournals(); props.onActiveNavigationComplete?.(); }}
-          onMouseDown={internalLinkMouseDown}
-          onAuxClick={(e) => internalLinkAuxClick(e, () => openInNewTab({ kind: "journals" }))}
+        <Show
+          when={journalsReplacementHome()}
+          fallback={
+            <div
+              class="nav-item"
+              classList={{ active: route().kind === "journals" }}
+              onClick={() => { openJournals(); props.onActiveNavigationComplete?.(); }}
+              onMouseDown={internalLinkMouseDown}
+              onAuxClick={(e) => internalLinkAuxClick(e, () => openInNewTab({ kind: "journals" }))}
+            >
+              <JournalsIcon />
+              <span>{t("sidebar-journals")}</span>
+            </div>
+          }
         >
-          <JournalsIcon />
-          <span>{t("sidebar-journals")}</span>
-        </div>
+          {(home) => (
+            <div
+              class="nav-item home-nav"
+              classList={{ active: (() => { const r = route(); return r.kind === "page" && isHomeRouteName(r.name, home()); })() }}
+              onClick={() => { goHome(); props.onActiveNavigationComplete?.(); }}
+              onMouseDown={internalLinkMouseDown}
+              onAuxClick={(e) => internalLinkAuxClick(e, () => openPageInNewTab(home(), linkPageKind(home())))}
+            >
+              <HomeIcon />
+              <span>{home()}</span>
+            </div>
+          )}
+        </Show>
 
         <SidebarTabs onActiveNavigationComplete={props.onActiveNavigationComplete} />
 

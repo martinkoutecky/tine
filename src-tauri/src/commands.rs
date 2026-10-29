@@ -276,10 +276,10 @@ mod result_bridge_budget_tests {
         );
     }
 }
-
 mod asset_ingress;
+mod asset_ranges;
 pub(crate) use asset_ingress::decode_asset_b64;
-
+pub(crate) use asset_ranges::{read_asset_range, stat_asset};
 /// The whole name inventory: physical pages and journals, aliases, and names
 /// that are only referenced. A thin adapter over `WholeGraph::inventory`; the
 /// frontend caches it in `pageIndex.ts` and keeps no other name map.

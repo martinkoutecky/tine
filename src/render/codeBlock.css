@@ -1,0 +1,24 @@
+/* GH #787: a classic, always-present scrollbar strip on a long-line code card. An
+   overlay bar (WebKit's default) takes no layout, so its few-pixel thumb hides in the
+   card's bottom padding, a press misses it, and the press lands on the card, which
+   opens the editor (editTargets.ts can only recognise a bar that takes layout). A
+   14px strip with a 6px thumb is a target a drag hits first time, whatever the
+   platform's scrollbar mode, and the press never reaches the block; OG's
+   CodeMirror keeps a persistent bar at the card's foot the same way. Touch scrolls
+   by swipe and keeps the platform's bar. Kept out of app.css on purpose: scrollbarStyle.test.ts
+   (GH #103) forbids classic scrollbar geometry on the three primary panes there, and a
+   code card is not one. The fallbacks serve hosts without the app's theme tokens. */
+@media (pointer: fine) {
+  .code-block::-webkit-scrollbar { height: 14px; }
+  .code-block::-webkit-scrollbar-track,
+  .code-block::-webkit-scrollbar-corner { background: transparent; }
+  .code-block::-webkit-scrollbar-thumb {
+    min-width: 32px;
+    border: 4px solid transparent;
+    border-radius: 999px;
+    background-color: var(--scrollbar-thumb, rgba(128, 128, 128, 0.5));
+    background-clip: padding-box;
+  }
+  .code-block::-webkit-scrollbar-thumb:hover,
+  .code-block::-webkit-scrollbar-thumb:active { background-color: var(--scrollbar-thumb-hover, rgba(128, 128, 128, 0.75)); }
+}

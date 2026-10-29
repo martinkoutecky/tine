@@ -77,6 +77,32 @@ Notes.
   Dropping it lets a generic family resolve to a system color-emoji font that
   has crashed WebKitGTK (see `src/editableEmojiFont.test.ts`).
 
+### Theme-package typography (API 0.3, GH #760)
+
+A theme package may declare `typography` (`bodyFont`, `monoFont`, `titleFont`,
+`blockLineHeight`; vocabulary and limits in `docs/themes/README.md`). It adds no
+public token: Tine builds the CSS from the validated families and sets the
+existing public tokens in the theme layer, `#tine-theme`, which precedes
+`custom.css`:
+
+| Package field | Host output |
+|---|---|
+| `bodyFont` | `--tine-content-font`, and `--tine-editable-font` (the same stack with the emoji face before the final generic family, GH #458) |
+| `monoFont` | `--tine-mono-font` |
+| `titleFont` | `font-family` on page titles, heading blocks and the editorial journal title, and the editable face of a heading while editing (`.block-editor.h1`-`h6`) |
+| `blockLineHeight` | `--tine-typography-line-height` (internal, below), the source of `--ls-block-line-height` |
+
+Because these are the public tokens, a user's own `--tine-content-font`,
+`--tine-mono-font`, `--tine-editable-font` or `--ls-block-line-height` in
+`custom.css` or a knob still wins over a package. A package's typography
+beats the Style preset's own serif face and 30px line (an explicit choice
+beats a preset). Typography is chosen apart from colors and style
+(`theme.composition.v1`, key `typography`, written only when chosen); choosing
+none, uninstalling the package or revoking it restores Tine's own fonts. The
+"not installed" hint on an installed row is a canvas width probe of the first
+family of each stack (`src/themes/fontAvailability.ts`), done per family name
+once and only for the rows shown; a device that cannot measure shows no hint.
+
 ## 3. Internal `--tine-*` variables (not public)
 
 These exist in the shipped code but are implementation detail. They may change
@@ -87,6 +113,7 @@ without a CHANGELOG entry; a custom.css that sets them is unsupported.
 | `--tine-main-content-max-width` | Set inline by Settings > Standard page width (`src/contentWidth.ts`); not a documented knob, use `--tine-content-width` |
 | `--tine-wide-content-max-width` | Same, for Wide mode |
 | `--tine-editable-font-user` | What you set `--tine-editable-font` to, copied at the root so the editorial typography preset can fall back to it before its own serif face (`src/styles/theme.css`, `src/styles/themePresentation.css`) |
+| `--tine-typography-line-height` | The block line height a theme package's API 0.3 `typography.blockLineHeight` declares (an even `px` value, 20 to 48), set by the host in the `#tine-theme` element and read as the fallback-carrying source of `--ls-block-line-height` (`src/styles/app.css`, `src/styles/themePresentation.css`, `src/themes/typography.ts`). To change the line box yourself in `custom.css`, set `--ls-block-line-height` |
 | `--tine-editable-emoji-font` | The emoji face of the editable stack, chosen per platform in `src/styles/editableEmoji.css` (crash guard) |
 
 ## 4. `logseq/custom.css` itself
@@ -185,6 +212,8 @@ writer.
 ## Tests
 
 - src/components/justToggled.test.tsx (the `just-toggled` class: absent on load and remount, present on a user toggle, removed after the window)
+- src/themes/typography.test.ts (the typography vocabulary: every accepted and rejected fixture, judged by both the app parser and `tine-theme.mjs check`; the CSS built from parsed families only)
+- src/themeGallery.typography.test.tsx and src/components/Settings.themeTypography.test.tsx (the third composition role: apply, revert, uninstall, revoke, persistence; the Settings actions and the not-installed hint)
 - src/themeTokens.guard.test.ts (the token tables against the shipped CSS, the code and the Guide page)
 - src/styleKnobs.test.ts and src/styleKnobs.render.test.tsx (the knob table, what reaches CSS, the order of #tine-knobs, safe mode, the Settings control)
 - src/customCss.test.tsx (live reload, transient read failures keep the last sheet, latest read wins, safe mode, the palette command, the Settings affordances)

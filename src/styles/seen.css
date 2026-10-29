@@ -24,6 +24,10 @@
 }
 
 .seen-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg-primary);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -35,6 +39,9 @@
   border-left: 3px solid var(--seen-changed-color);
   border-radius: 6px;
   font-size: 13px;
+}
+.main-content, .right-sidebar {
+  scroll-padding-top: var(--seen-header-height, 0px);
 }
 .seen-header-text {
   color: var(--text-secondary);

@@ -1,4 +1,4 @@
-import { documentOf, requestFrame } from "../windowRealm";
+import { documentOf, requestFrame, windowOf } from "../windowRealm";
 import { textareaCaretLeft, textareaCaretRow } from "./caretRows";
 
 /** GH #745. The one rule for where the view goes when the caret lands in a
@@ -25,9 +25,10 @@ function pinnedBottom(editor: HTMLElement, scroller: HTMLElement): number {
     if (el.hasAttribute("data-sticky-parent")) parents.push(el);
   }
   const viewTop = scroller.getBoundingClientRect().top + scroller.clientTop;
+  const reserved = parseFloat(windowOf(scroller).getComputedStyle(scroller).getPropertyValue("--seen-header-height")) || 0;
   let bottom = 0;
   parents.forEach((ancestor, i) => {
-    const slotBottom = viewTop + (parents.length - i) * PIN; // the outermost ancestor pins at the top
+    const slotBottom = viewTop + reserved + (parents.length - i) * PIN; // outermost pins below the notice
     const row = ancestor.querySelector(":scope > .block-main");
     if (row && row.getBoundingClientRect().bottom <= slotBottom) bottom = Math.max(bottom, slotBottom);
   });
@@ -61,7 +62,8 @@ export function revealCaret(editor: HTMLTextAreaElement, scroller: HTMLElement |
   const view = scroller.getBoundingClientRect();
   const top = box.top + editor.clientTop + row.top - editor.scrollTop;
   const bottom = box.top + editor.clientTop + row.bottom - editor.scrollTop;
-  const visibleTop = Math.max(view.top + scroller.clientTop, pinnedBottom(editor, scroller)) + MARGIN;
+  const reservedTop = parseFloat(windowOf(scroller).getComputedStyle(scroller).scrollPaddingTop) || 0;
+  const visibleTop = Math.max(view.top + scroller.clientTop + reservedTop, pinnedBottom(editor, scroller)) + MARGIN;
   const visibleBottom = view.top + scroller.clientTop + scroller.clientHeight - MARGIN;
   let delta = 0;
   if (top < visibleTop) delta = top - visibleTop;
@@ -78,20 +80,45 @@ export function revealCaret(editor: HTMLTextAreaElement, scroller: HTMLElement |
  * settled layout never had. The signature (editor top, scrollTop, scrollHeight)
  * must repeat for `stableFrames` consecutive animation frames before the one
  * reveal; after `maxFrames` frames it reveals anyway, so the caret is never
- * left off screen. Any wheel/touch/pointer/key input on the scroller, a blur,
- * or the returned `cancel()` ends it: the user and any other focus owner always
- * win. */
-export function revealCaretSettled(editor: HTMLTextAreaElement, scroller: HTMLElement | null, stableFrames = 2, maxFrames = 40): () => void {
+ * left off screen. The reveal does not end the watch: for `lateMs` more, an
+ * image that finishes loading (`load`/`error`, which do not bubble but can be
+ * captured) above the caret - an asset-cache miss decoded after the frame cap
+ * - moves the editor again, so the caret is re-checked one frame after each and
+ * brought back if it left the view. Any wheel/touch/pointer/key input on the
+ * scroller, a blur, or the returned `cancel()` ends it: the user and any other
+ * focus owner always win. */
+export function revealCaretSettled(editor: HTMLTextAreaElement, scroller: HTMLElement | null, stableFrames = 2, maxFrames = 40, lateMs = 10_000): () => void {
   if (!scroller) return () => {};
   let stopped = false;
   let cancelFrame: (() => void) | undefined;
+  let lateTimer: number | undefined;
+  let lateFrame: (() => void) | undefined;
   const gestures = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+  const late = ["load", "error"] as const;
   const userInput = () => stop();
   function stop() {
     if (stopped) return;
     stopped = true;
     cancelFrame?.();
+    lateFrame?.();
+    if (lateTimer !== undefined) windowOf(editor).clearTimeout(lateTimer);
     for (const type of gestures) scroller!.removeEventListener(type, userInput, true);
+    for (const type of late) scroller!.removeEventListener(type, onLate, true);
+  }
+  function onLate() {
+    if (stopped || lateFrame) return;
+    lateFrame = requestFrame(editor, () => {
+      lateFrame = undefined;
+      if (stopped) return;
+      if (!editor.isConnected || documentOf(editor).activeElement !== editor) return stop();
+      revealCaret(editor, scroller);
+    });
+  }
+  function follow() {
+    cancelFrame = undefined;
+    if (stopped || lateMs <= 0) return stop();
+    for (const type of late) scroller!.addEventListener(type, onLate, { passive: true, capture: true });
+    lateTimer = windowOf(editor).setTimeout(stop, lateMs);
   }
   for (const type of gestures) scroller.addEventListener(type, userInput, { passive: true, capture: true });
   const signature = () => `${editor.getBoundingClientRect().top}|${scroller.scrollTop}|${scroller.scrollHeight}`;
@@ -106,7 +133,7 @@ export function revealCaretSettled(editor: HTMLTextAreaElement, scroller: HTMLEl
     last = now;
     if (same >= stableFrames || ++frames >= maxFrames) {
       revealCaret(editor, scroller);
-      return stop();
+      return follow();
     }
     cancelFrame = requestFrame(editor, tick);
   };

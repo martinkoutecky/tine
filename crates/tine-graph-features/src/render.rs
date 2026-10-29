@@ -1495,7 +1495,12 @@ fn render_block(
     // authored IDs. Emitting the `<li id>` and the search-index entry in the SAME place
     // keeps the HTML anchor and the index in lock-step.
     let anchor = anchors.get(b);
-    let class = if ord.marker().is_some() {
+    let view_fold = ctx.pages.is_some() && !b.children.is_empty();
+    let class = if view_fold && ord.marker().is_some() {
+        " class=\"outline-parent ol-item\""
+    } else if view_fold {
+        " class=\"outline-parent\""
+    } else if ord.marker().is_some() {
         " class=\"ol-item\""
     } else {
         ""
@@ -1517,7 +1522,20 @@ fn render_block(
     // canonical render_html; a `# heading` block is wrapped in `<span class="heading-text
     // h{n}">` by render_html itself, so the export markup matches the app) → trailer facets
     // (SCHEDULED/DEADLINE, block properties). Macros in the body are expanded via `ctx`.
-    out.push_str(if b.marker() == Some("DONE") {
+    // Static parents disclose from their own row. Leaves and print keep the
+    // original markup; every static child stays in the document and index.
+    if view_fold {
+        out.push_str(if b.collapsed() {
+            "<details class=\"outline-fold\">"
+        } else {
+            "<details class=\"outline-fold\" open>"
+        });
+    }
+    out.push_str(if view_fold && b.marker() == Some("DONE") {
+        "<summary class=\"b done\">"
+    } else if view_fold {
+        "<summary class=\"b\">"
+    } else if b.marker() == Some("DONE") {
         "<div class=\"b done\">"
     } else {
         "<div class=\"b\">"
@@ -1569,7 +1587,7 @@ fn render_block(
             }
         }
     }
-    out.push_str("</div>");
+    out.push_str(if view_fold { "</summary>" } else { "</div>" });
     // A sheet owner's `tine.*` view configuration is chrome (it drove the layout
     // above), not a property chip; every other block keeps all its properties.
     let mut props = b.properties();
@@ -1605,7 +1623,9 @@ fn render_block(
     // A collapsed block hides its children on screen; the print export expands them
     // by default (a PDF usually wants the whole page), but the dialog can keep them
     // folded to match what's visible.
-    if opts.expand_collapsed || !b.collapsed() {
+    // Static pages keep every child in the HTML and let readers disclose it
+    // without a script. Print retains its expand/omit policy.
+    if view_fold || opts.expand_collapsed || !b.collapsed() {
         let mut emit = render_sheets::Emit {
             ctx,
             slug,
@@ -1637,6 +1657,9 @@ fn render_block(
             }
             out.push_str("</ul>");
         }
+    }
+    if view_fold {
+        out.push_str("</details>");
     }
     out.push_str("</li>");
 }

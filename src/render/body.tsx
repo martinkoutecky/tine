@@ -1,13 +1,13 @@
 import { t } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
 import { LineGutter } from "./LineGutter";
-import { TableWrap } from "../components/TableWrap";
+import { TableWrap, longCellClass } from "../components/TableWrap";
 // Block-body rendering: splits a block's text lines into paragraphs, fenced
 // code blocks (syntax-highlighted), and markdown tables.
 
 import { For, Index, Show, createContext, createMemo, createResource, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
+import { astText, renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
 import { EmojiText } from "./emoji";
 import type { Block as AstBlock, Inline as AstInline, ListItem as AstListItem, Format } from "./ast";
 import { hiccupToHtml } from "./hiccup";
@@ -22,6 +22,7 @@ import { parseBody, renderedProperties, stripPlanningLines } from "./facets";
 import { createNearBlockMount } from "../createNearBlockMount";
 import { BeginQuery, inspectBeginQuery } from "../components/BeginQuery";
 import { readOr } from "../resourceRead";
+import "./codeBlock.css";
 import { QueryMacro } from "../components/Macro";
 import { hasQueryMacroCandidate, queryMacroRenderExtents, queryMacroRenderRun } from "./queryMacroRender";
 import { PeekContext } from "./PeekPopup";
@@ -327,7 +328,7 @@ function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string, 
         <Show when={b.header}>
           <thead>
             <tr>
-              <For each={b.header!}>{(cell, i) => <th style={al(i())}>{renderInlines(cell, blockId, true, macroExpansion, format)}</th>}</For>
+              <For each={b.header!}>{(cell, i) => <th class={longCellClass(astText(cell))} style={al(i())}>{renderInlines(cell, blockId, true, macroExpansion, format)}</th>}</For>
             </tr>
           </thead>
         </Show>
@@ -335,7 +336,7 @@ function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string, 
           <For each={b.rows}>
             {(row) => (
               <tr>
-                <For each={row}>{(cell, i) => <td style={al(i())}>{renderInlines(cell, blockId, true, macroExpansion, format)}</td>}</For>
+                <For each={row}>{(cell, i) => <td class={longCellClass(astText(cell))} style={al(i())}>{renderInlines(cell, blockId, true, macroExpansion, format)}</td>}</For>
               </tr>
             )}
           </For>

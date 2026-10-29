@@ -337,6 +337,16 @@ impl Core {
             // A new in-flux file has no committed baseline yet. A later full
             // scan must also clear its uncertainty if it disappears.
             names.extend(self.graph.unsettled_read_paths());
+            // Failed first reads can have neither a page entry nor a committed
+            // stamp. Their disappearance is still a change to the notice.
+            names.extend(
+                self.graph
+                    .reported_unreadable_pages()
+                    .iter()
+                    .map(|(id, _)| self.graph.root.join(id.as_str()))
+                    .chain(unreadable.as_ref().unwrap().keys().cloned())
+                    .filter(|path| !now.contains_key(path)),
+            );
             names
         };
         let mut names: Vec<_> = names.into_iter().collect();
@@ -347,6 +357,7 @@ impl Core {
         }
         let mut pages = Vec::new();
         let mut forwarded = Vec::new();
+        let mut retired_errors = false;
         // One identity pass for the cycle (REVIEW-3a4 #6).
         let mut identities = crate::model::entry_identity::Memo::default();
         for path in names {
@@ -358,6 +369,15 @@ impl Core {
             }
             if before.is_none() && !now.contains_key(&path) {
                 self.graph.note_unsettled_read(&path, None);
+                // Do not mistake an inaccessible ancestor for deletion. This
+                // also rechecks a replacement arriving after the listing.
+                if matches!(fs::symlink_metadata(&path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+                {
+                    retired_errors |= self.graph.forget_unreadable(&path);
+                    unreadable.as_mut().unwrap().remove(&path);
+                    refusals.remove(&path);
+                    racy.remove(&path);
+                }
                 continue;
             }
             if !force
@@ -468,6 +488,7 @@ impl Core {
                 // refresh the conflicts panel, but never enter the page cache.
             } else if matches!(kind, ChangeKind::Removed) {
                 self.graph.note_unsettled_read(&path, None);
+                unreadable.as_mut().unwrap().remove(&path);
                 if let Some(entry) = self.graph.forget_file_internal(&path) {
                     pages.push((id.clone(), entry.kind, entry.name));
                 }
@@ -508,6 +529,7 @@ impl Core {
                         continue;
                     }
                     SyncFileResult::ReadFailed(error) => {
+                        let error = crate::IoError::from(error);
                         let value = after.unwrap();
                         // A delivered partial UTF-8 sequence or a permission
                         // change during the read is still in flux. Use §5.4's
@@ -522,10 +544,15 @@ impl Core {
                         let terminal = error.kind() == std::io::ErrorKind::InvalidData;
                         if settled {
                             self.graph.note_unsettled_read(&path, None);
-                            unreadable
-                                .as_mut()
-                                .unwrap()
-                                .insert(path.clone(), error.to_string());
+                            if let Some(error) = crate::model::unreadable_error(
+                                error.clone(),
+                                "Tine unreadable file producer=watch-read",
+                            ) {
+                                unreadable
+                                    .as_mut()
+                                    .unwrap()
+                                    .insert(path.clone(), error.to_string());
+                            }
                         } else {
                             self.graph
                                 .note_unsettled_read(&path, Some(error.to_string()));
@@ -580,6 +607,7 @@ impl Core {
         } else {
             false
         };
+        let unreadable_changed = unreadable_changed || retired_errors;
         drop(racy);
         drop(refusals);
         drop(snapshot);
@@ -659,6 +687,94 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    fn unreadable_without_a_page_entry(exact_notification: bool, repair: bool) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir_in(fs::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+        fs::create_dir(dir.path().join("journals")).unwrap();
+        let path = dir.path().join("journals/2026_10_26.md");
+        fs::write(&path, "- day\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read(&path).is_ok() {
+            eprintln!("permission probe skipped: process bypasses access controls");
+            return;
+        }
+        let store = crate::Store::open(
+            dir.path(),
+            crate::OpenOptions {
+                watch: crate::WatchMode::Poll,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0;
+        store.whole_graph_reconciled().unwrap();
+        store.watch.stop_background_for_test();
+        assert_eq!(store.whole_graph().unwrap().unreadable_files().len(), 1);
+        if repair {
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        } else {
+            fs::remove_file(&path).unwrap();
+        }
+        if exact_notification {
+            store
+                .watch
+                .core_for_load()
+                .reconcile(
+                    Some(&HashSet::from([path])),
+                    false,
+                    false,
+                    DiffTrigger::Test,
+                )
+                .unwrap();
+        } else {
+            store.refresh(crate::Depth::Stamps).unwrap();
+        }
+        let view = store.whole_graph().unwrap();
+        assert!(
+            view.unreadable_files().is_empty(),
+            "{:?}",
+            view.unreadable_files()
+        );
+        if repair {
+            assert_eq!(
+                store
+                    .page(&PageId::from("journals/2026_10_26.md"))
+                    .unwrap()
+                    .doc
+                    .blocks[0]
+                    .raw,
+                "day"
+            );
+        }
+        store.close();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stamps_retires_a_deleted_unreadable_file_without_a_page_entry() {
+        unreadable_without_a_page_entry(false, false);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn notification_retires_a_deleted_unreadable_file_without_a_page_entry() {
+        unreadable_without_a_page_entry(true, false);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stamps_clears_a_repaired_unreadable_file_without_a_page_entry() {
+        unreadable_without_a_page_entry(false, true);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn notification_clears_a_repaired_unreadable_file_without_a_page_entry() {
+        unreadable_without_a_page_entry(true, true);
+    }
 
     fn open() -> (tempfile::TempDir, Arc<crate::Store>) {
         // The store keys watcher state by its canonical root, as the watcher's

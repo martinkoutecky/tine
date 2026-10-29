@@ -160,6 +160,7 @@ export interface MessageArgs {
   "command-editor-bold": {};
   "command-editor-clear-block": {};
   "command-editor-collapse": {};
+  "command-editor-collapse-all": {};
   "command-editor-collapse-children": {};
   "command-editor-comment": {};
   "command-editor-copy-embed": {};
@@ -168,6 +169,7 @@ export interface MessageArgs {
   "command-editor-duplicate-block-above": {};
   "command-editor-edit-selected-block": {};
   "command-editor-expand": {};
+  "command-editor-expand-all": {};
   "command-editor-expand-children": {};
   "command-editor-follow-link": {};
   "command-editor-forward-kill-word": {};
@@ -192,6 +194,7 @@ export interface MessageArgs {
   "command-editor-select-block-up": {};
   "command-editor-select-embedding-block": {};
   "command-editor-strike-through": {};
+  "command-editor-toggle-open-blocks": {};
   "command-editor-toggle-undo-redo-mode": {};
   "command-editor-undo": {};
   "command-go-all-graphs": {};
@@ -2955,6 +2958,8 @@ export interface MessageArgs {
   "themes-default": {};
   "themes-details": {};
   "themes-details-screenshots": {};
+  "themes-font-not-installed": { "font": string | number };
+  "themes-fonts-and-block-line-height-from-a-theme-package": {};
   "themes-full": {};
   "themes-human-reviewed": {};
   "themes-install": {};
@@ -2980,13 +2985,16 @@ export interface MessageArgs {
   "themes-theme-packages-contain-only-whitelisted-color-tokens": {};
   "themes-theme-style": {};
   "themes-themes": {};
+  "themes-typography": {};
   "themes-typography-journal-headings-and-other-presentation-choices": {};
+  "themes-typography-selected": {};
   "themes-uninstall": {};
   "themes-uninstall-theme": {};
   "themes-uninstall-this-removes-the-theme-from": { "name": string | number };
   "themes-uninstalling": {};
   "themes-use-colors": {};
   "themes-use-style": {};
+  "themes-use-typography": {};
   "themes-validating": {};
   "themes-verifying": {};
   "themes-was-uninstalled": { "name": string | number };

@@ -61,6 +61,19 @@ it("keeps the caret row below the sticky parent pins", () => {
   revealCaret(f.editor, f.scroller);
   expect(f.scroller.scrollTop).toBe(1000 + (10 - (60 + 8)));
 });
+it("keeps a revealed caret below a wrapped sticky seen notice", () => {
+  const f = fixture(30);
+  f.scroller.style.scrollPaddingTop = "82px";
+  revealCaret(f.editor, f.scroller);
+  expect(f.scroller.scrollTop).toBe(1000 + 30 - 82 - 8);
+});
+it("reserves both the seen notice and nested pinned ancestors", () => {
+  const f = fixture(30, 2);
+  f.scroller.style.scrollPaddingTop = "82px";
+  f.scroller.style.setProperty("--seen-header-height", "82px");
+  revealCaret(f.editor, f.scroller);
+  expect(f.scroller.scrollTop).toBe(1000 + 30 - 82 - 60 - 8);
+});
 it("ignores pins whose ancestor row is still on screen", () => {
   const f = fixture(10, 2, false);
   expect(revealCaret(f.editor, f.scroller)).toBe(false); // caret row at 10 is inside 8..492
@@ -129,4 +142,49 @@ it("stops when the editor loses focus and when cancelled", () => {
   cancel();
   step(4);
   expect(g.scroller.scrollTop).toBe(1000);
+});
+
+it("GH #745: an image that loads after the frame cap re-reveals a caret it pushed out of view", () => {
+  const f = fixture(200);
+  revealCaretSettled(f.editor, f.scroller, 2, 3);
+  for (let i = 0; i < 3; i++) { f.setTop(200 + i); step(1); } // layout never settles: the cap fires
+  expect(f.scroller.scrollTop).toBe(1000); // visible, so the cap reveal did not move it
+  expect(frames.length).toBe(0);
+  f.setTop(700); // the late image lands above the editor and pushes the caret below the view
+  const img = document.createElement("img"); f.scroller.append(img);
+  img.dispatchEvent(new Event("load")); // does not bubble: only a capturing listener sees it
+  step(1);
+  expect(f.scroller.scrollTop).toBe(1000 + (700 + 20 - (500 - 8)));
+});
+it("GH #745: the late watch ends on user input, blur and cancel", () => {
+  for (const end of [(f: ReturnType<typeof fixture>) => f.scroller.dispatchEvent(new Event("wheel")), (f: ReturnType<typeof fixture>) => f.editor.blur()]) {
+    const f = fixture(200);
+    revealCaretSettled(f.editor, f.scroller);
+    step(2);
+    end(f);
+    f.setTop(700);
+    f.scroller.append(document.createElement("img"));
+    f.scroller.lastElementChild!.dispatchEvent(new Event("load"));
+    step(2);
+    expect(f.scroller.scrollTop).toBe(1000);
+  }
+  const g = fixture(200);
+  const cancel = revealCaretSettled(g.editor, g.scroller);
+  step(2); cancel(); g.setTop(700);
+  const img = document.createElement("img"); g.scroller.append(img); img.dispatchEvent(new Event("load"));
+  step(2);
+  expect(g.scroller.scrollTop).toBe(1000);
+});
+it("GH #745: the late watch expires", () => {
+  vi.useFakeTimers();
+  try {
+    const f = fixture(200);
+    revealCaretSettled(f.editor, f.scroller, 2, 40, 500);
+    step(2);
+    vi.advanceTimersByTime(600);
+    f.setTop(700);
+    const img = document.createElement("img"); f.scroller.append(img); img.dispatchEvent(new Event("load"));
+    step(2);
+    expect(f.scroller.scrollTop).toBe(1000);
+  } finally { vi.useRealTimers(); }
 });

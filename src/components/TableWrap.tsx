@@ -1,5 +1,12 @@
 import { onCleanup, onMount, type JSX } from "solid-js";
 import { listen, newResizeObserver, requestFrame } from "../windowRealm";
+import "./tableWrap.css";
+
+/** A table cell whose plain text is longer than this wraps (`md-cell-long`,
+ * tableWrap.css); shorter cells (numbers, short labels, verdicts) never do.
+ * One rule for Markdown/Org tables; query tables wrap in their box instead. */
+export const LONG_CELL_CHARS = 40;
+export const longCellClass = (text: string): string | undefined => (text.length > LONG_CELL_CHARS ? "md-cell-long" : undefined);
 
 /** Given measured geometry, return the viewport width and leftward offset:
  * preserve fitting content; center wider content on the text column within
@@ -14,13 +21,15 @@ export function tableBleedGeometry(normalLeft: number, normalWidth: number, natu
 
 /** Horizontal viewport for rendered tables. It observes only its content,
  * column and pane; cleanup releases observers and the pending animation frame.
- * Without a pane (exports/tests), the ordinary column scroll rule applies. */
+ * Without a pane (exports/tests), the ordinary column scroll rule applies.
+ * A table inside a query box or a sheet cell never bleeds: the box is its
+ * viewport (the wrap is 100% of it and scrolls inside it, tableWrap.css). */
 export function TableWrap(props: { children: JSX.Element }): JSX.Element {
   let el!: HTMLDivElement;
   onMount(() => {
     const parent = el.parentElement;
     const pane = el.closest<HTMLElement>(".main-content, .rs-item-body, .right-sidebar-body");
-    if (!parent || !pane || el.closest(".sheet-cell")) return;
+    if (!parent || !pane || el.closest(".sheet-cell") || el.closest(".query-block, .query-results-region")) return;
     const surface = el.firstElementChild as HTMLElement;
     const column = el.closest<HTMLElement>(".main-content-inner") ?? parent;
     let frame: (() => void) | undefined;

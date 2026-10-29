@@ -149,6 +149,9 @@ impl Unreadable {
             Err(error) if store_failed(&error) => Err(error),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => {
+                tine_core::diag_line::diagnostic_line(
+                    "Tine unreadable file producer=conflict-read",
+                );
                 self.files.insert(path.to_owned(), error.to_string());
                 Ok(None)
             }

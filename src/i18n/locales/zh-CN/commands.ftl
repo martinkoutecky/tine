@@ -35,6 +35,9 @@ command-go-keyboard-shortcuts = 前往键盘快捷键
 command-go-backward = 后退
 
 command-go-forward = 前进
+command-editor-toggle-open-blocks = 切换展开或折叠全部块
+command-editor-collapse-all = 折叠当前页面的全部块
+command-editor-expand-all = 展开当前页面的全部块
 
 command-tab-close = 关闭当前标签页
 

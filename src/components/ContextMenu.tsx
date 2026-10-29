@@ -23,7 +23,7 @@ import { setPageProperty } from "../document";
 import { carryDay } from "../carry";
 import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, blockExternalId, node as docNode } from "../document";
+import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedTrees, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, blockExternalId, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
 import { editOccurrence, removeOccurrence, replaceOccurrenceWithEmbed, replaceOccurrenceWithTargetText, type OwnedOccurrence } from "../refOccurrence";
@@ -1216,8 +1216,8 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
       label: numbered ? msg("context-menu-ui-remove-numbered-list") : msg("context-menu-ui-numbered-list"),
       run: () => mutate("number-selection", toggleOwnNumberedList),
     },
-    { label: msg("context-menu-ui-collapse-all"), run: () => mutate("collapse-selection", (target) => setCollapsedDeep(target, true)) },
-    { label: msg("context-menu-ui-expand-all"), run: () => mutate("expand-selection", (target) => setCollapsedDeep(target, false)) },
+    { label: msg("context-menu-ui-collapse-all"), run: () => setCollapsedTrees(ids, true) },
+    { label: msg("context-menu-ui-expand-all"), run: () => setCollapsedTrees(ids, false) },
     ...(tmplName
       ? [
           {

@@ -1,12 +1,13 @@
 // Shared browser/native fixture: top-level and nested sibling lists both window,
 // with loaded images above an editor near the end of a section.
-export const gh745Page = () => ({
+// `imageRows`: which rows carry the image (default 5 and 45).
+export const gh745Page = (imageRows = [5, 45]) => ({
   name: "GH745 outline", title: "GH745 outline", kind: "page", pre_block: null,
   blocks: Array.from({ length: 10 }, (_, section) => ({
     id: `section-${section}`, raw: `Section ${section}`, collapsed: false,
     children: Array.from({ length: 100 }, (_, row) => ({
       id: `row-${section}-${row}`, collapsed: false, children: [],
-      raw: `Section ${section} row ${row} text for structural editing${row === 5 || row === 45 ? "\n![loaded image](../assets/gh745.png)" : ""}`,
+      raw: `Section ${section} row ${row} text for structural editing${imageRows.includes(row) ? "\n![loaded image](../assets/gh745.png)" : ""}`,
     })),
   })),
 });

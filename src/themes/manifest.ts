@@ -1,7 +1,9 @@
 import { isPackageId, isPackageVersion } from "../packageIdentity";
 import { schemaGuards } from "../schemaGuards";
-export const THEME_API_VERSION = "0.2" as const;
-export const SUPPORTED_THEME_API_VERSIONS = ["0.1", THEME_API_VERSION] as const;
+import { TYPOGRAPHY_FIELDS, checkTypography, type ThemeTypography } from "./typography";
+export type { ThemeTypography } from "./typography";
+export const THEME_API_VERSION = "0.3" as const;
+export const SUPPORTED_THEME_API_VERSIONS = ["0.1", "0.2", THEME_API_VERSION] as const;
 
 export const THEME_TOKENS = [
   "--ls-active-primary-color",
@@ -60,6 +62,8 @@ export interface ThemeManifest {
   source: string;
   modes: Partial<Record<ThemeMode, ThemeTokens>>;
   presentation?: ThemePresentation;
+  /** API 0.3: local font stacks and the block line height (GH #760). */
+  typography?: ThemeTypography;
   screenshots: string[];
   portedFrom?: ThemePortProvenance;
   aiDevelopment?: "none" | "assisted" | "primary";
@@ -149,11 +153,25 @@ function parsePresentation(value: unknown): ThemePresentation | undefined {
   };
 }
 
+function parseTypography(value: unknown): ThemeTypography | undefined {
+  if (value === undefined) return undefined;
+  const obj = record(value, "typography");
+  knownKeys(obj, "typography", TYPOGRAPHY_FIELDS);
+  if (Object.keys(obj).length === 0) throw new ThemeManifestError("typography must not be empty");
+  const typography: ThemeTypography = {};
+  for (const field of TYPOGRAPHY_FIELDS) {
+    if (obj[field] === undefined) continue;
+    try { checkTypography(field, obj[field]); } catch (error) { throw new ThemeManifestError((error as Error).message); }
+    (typography as Record<string, unknown>)[field] = obj[field];
+  }
+  return typography;
+}
+
 export function parseThemeManifest(value: unknown): ThemeManifest {
   const obj = record(value, "theme manifest");
   knownKeys(obj, "theme manifest", [
     "schemaVersion", "id", "name", "version", "apiVersion", "description", "author", "license",
-    "source", "modes", "presentation", "screenshots", "portedFrom", "aiDevelopment",
+    "source", "modes", "presentation", "typography", "screenshots", "portedFrom", "aiDevelopment",
   ]);
   if (obj.schemaVersion !== 1) throw new ThemeManifestError("schemaVersion must be 1");
   if (!SUPPORTED_THEME_API_VERSIONS.includes(obj.apiVersion as ThemeApiVersion)) {
@@ -162,6 +180,9 @@ export function parseThemeManifest(value: unknown): ThemeManifest {
   const apiVersion = obj.apiVersion as ThemeApiVersion;
   if (apiVersion === "0.1" && obj.presentation !== undefined) {
     throw new ThemeManifestError("presentation requires theme API 0.2");
+  }
+  if (apiVersion !== "0.3" && obj.typography !== undefined) {
+    throw new ThemeManifestError("typography requires theme API 0.3");
   }
   const id = text(obj.id, "id", 64);
   if (!isPackageId(id)) throw new ThemeManifestError("id must be a lowercase dotted identifier");
@@ -192,6 +213,7 @@ export function parseThemeManifest(value: unknown): ThemeManifest {
       ...(modesObj.dark === undefined ? {} : { dark: parseTokens(modesObj.dark, "modes.dark") }),
     },
     ...(obj.presentation === undefined ? {} : { presentation: parsePresentation(obj.presentation) }),
+    ...(obj.typography === undefined ? {} : { typography: parseTypography(obj.typography) }),
     screenshots: obj.screenshots.map((url, index) => httpsUrl(url, `screenshots[${index}]`)),
     ...(obj.portedFrom === undefined ? {} : { portedFrom: parseProvenance(obj.portedFrom) }),
     ...(aiDevelopment === undefined ? {} : { aiDevelopment }),

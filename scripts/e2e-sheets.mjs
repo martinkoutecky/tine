@@ -396,6 +396,9 @@ try {
   // Assert the first value reaches the graph file while the second editor is open.
   const amountCell = await browser.$('.sheet-table .sheet-cell[data-row="0"][data-sheet-column-id="prop:severity"]');
   const adjacentCell = await browser.$('.sheet-table .sheet-cell[data-row="0"][data-sheet-column-id="prop:occurrence"]');
+  // The persistent temp-storage toast (red toasts stay until dismissed) sits bottom-right and, once the
+  // page above got shorter (UI-LP-FIX folded the Grouped-by summary), covered the neighbouring cell.
+  await browser.execute(() => document.querySelectorAll(".toast-stack .toast-close").forEach((b) => b.click()));
   await amountCell.scrollIntoView({ block: "center", inline: "nearest" });
   await amountCell.doubleClick();
   const amountInput = await amountCell.$("input.sheet-prop-input");

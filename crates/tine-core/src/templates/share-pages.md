@@ -2,6 +2,8 @@ icon:: 🔗
 
 - # Share pages
 	- Share a page, or the pages a query selects, in two ways. **Folder** writes a static site and read-only app into your graph folder. **Link** uploads an encrypted copy to a secret GitHub gist and gives you a link anyone can open in a browser. Both start from the same **Share** dialog and both leave a definition on the **Exports page**, so you can repeat or update them later.
+	- In the read-only app or a quick-share link, use a bullet's fold arrow to expand or collapse its children without changing the graph. Your viewing choices last while browsing between pages; reloading restores the original folds.
+	- The static HTML version starts with the original folds too. Click the arrow beside a folded bullet to open or close it; this also works with JavaScript turned off.
 - ## Start a share
 	- **Share** opens from the share icon in the top bar (in a narrow window it is **Share this page** in the **···** menu), the share icon beside a page title, **Share…** in a page's **⋯** menu and right-click menu, and **Share…** (or the share icon) on a query block. It shares the page you are looking at; from a query block it starts from that query.
 	- Choose **This page** to share just that page, or **A query starting at this page** to pick the pages with the visual query builder (edit the query and the live preview shows which pages it selects). **This page and its neighbours** is listed as coming with graph queries.

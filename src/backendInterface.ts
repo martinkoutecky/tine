@@ -478,6 +478,8 @@ export interface Backend {
   /** Explicit bounded subtree; ordinary resolution is intentionally shallow. */
   previewBlock(uuid: string, maxNodes: number): Promise<BlockPreview | null>;
   readAsset(name: string, maxBytes: number): Promise<Uint8Array>;
+  /** Native PDF range reads; browser/published backends retain their byte loader. */
+  pdfAssetSource?(name: string, maxBytes: number, bindingGeneration: number): Promise<import("./pdfAssetSource").PdfAssetSource>;
   /** Native range-aware URL for audio/video. Unlike `readAsset`, this never
    *  copies the whole media file through IPC. */
   streamAsset(name: string): Promise<string>;

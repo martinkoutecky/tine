@@ -4,7 +4,7 @@ import { render } from "solid-js/web";
 import { createSignal } from "solid-js";
 import { CollapseSurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { backend } from "../backend";
-import { extendSelectionTo, node, pageByName, resetStore, selectedIds, selectBlock, outdentBlock } from "../document";
+import { extendSelectionTo, node, pageByName, resetStore, selectedIds, selectBlock, outdentBlock, splitBlock, deleteBlock } from "../document";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { mainPaneRouter, resetTabsToJournals } from "../router";
 import { resetNearObserverForTests } from "../lazyObserve";
@@ -148,6 +148,32 @@ it("GH #745: outdenting a distant child retains previously visited windows above
     expect(node("window-1000")?.parent).toBeNull();
     expect(firstWindow.isConnected).toBe(true);
     expect(firstWindow.firstElementChild).toBe(spacer);
+  } finally { dispose(); }
+});
+
+it("GH #745: a structural edit inside a window keeps its other blocks, and the windows after it, mounted", async () => {
+  const { host, dispose } = await mount(2000);
+  try {
+    // 24-row windows: window-0 .. window-23 share the first window; row 5 lives in it.
+    const mountedRows = () => Array.from({ length: 30 }, (_, i) => host.querySelector(`[data-block-id="window-${i}"]`));
+    const windowsOf = () => Array.from(host.querySelectorAll("[data-outline-window]"));
+    for (const w of windowsOf()) WindowObserver.set(w, true);
+    const rows = mountedRows();
+    expect(rows.every(Boolean)).toBe(true);
+    const windowsBefore = windowsOf();
+    expect(windowsBefore.length).toBeGreaterThan(3);
+    // Enter in the middle of a full window grows it past GROUP; it must neither
+    // remount its other blocks nor shift every later window's boundary.
+    splitBlock("window-5", 4);
+    const after = mountedRows();
+    expect(after.filter((el, i) => el !== rows[i]).length).toBe(0);
+    const windowsAfter = windowsOf();
+    expect(windowsAfter.length).toBe(windowsBefore.length);
+    windowsBefore.forEach((w, i) => expect(windowsAfter[i]).toBe(w));
+    // A merge back is as quiet.
+    deleteBlock("window-6");
+    expect(mountedRows()[3]).toBe(rows[3]);
+    expect(windowsOf()[0]).toBe(windowsBefore[0]);
   } finally { dispose(); }
 });
 
