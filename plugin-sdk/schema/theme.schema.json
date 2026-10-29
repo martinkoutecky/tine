@@ -29,19 +29,31 @@
       }
     },
     "typography": {
-      "description": "API 0.3: local font stacks and the block line height. Family names only: no url(), @import, @font-face, selectors, escapes or variables. At most 8 families per stack; names are letters, digits, . _ - and single spaces (max 64 characters), bare or quoted; generic keywords (serif, sans-serif, monospace, system-ui, ...) and -apple-system / BlinkMacSystemFont are allowed. The checker (scripts/tine-theme.mjs) and the app enforce the exact grammar.",
+      "description": "API 0.3: local font stacks and the block line height. Family names only: no url(), @import, @font-face, selectors, escapes or variables. At most 8 families per stack; names are letters, digits, . _ - and single spaces (max 64 characters), bare or quoted, and plain spaces are the only whitespace; blockLineHeight is an even integer; generic keywords (serif, sans-serif, monospace, system-ui, ...) and -apple-system / BlinkMacSystemFont are allowed. The checker (scripts/tine-theme.mjs) and the app enforce the exact grammar.",
       "type": "object", "additionalProperties": false, "minProperties": 1,
       "properties": {
-        "bodyFont": { "type": "string", "minLength": 1, "maxLength": 240 },
-        "monoFont": { "type": "string", "minLength": 1, "maxLength": 240 },
-        "titleFont": { "type": "string", "minLength": 1, "maxLength": 240 },
-        "blockLineHeight": { "type": "integer", "minimum": 20, "maximum": 48 }
+        "bodyFont": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^ *(?:[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*|\"[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*\"|'[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*') *(?:, *(?:[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*|\"[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*\"|'[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*') *){0,7}$" },
+        "monoFont": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^ *(?:[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*|\"[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*\"|'[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*') *(?:, *(?:[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*|\"[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*\"|'[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*') *){0,7}$" },
+        "titleFont": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^ *(?:[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*|\"[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*\"|'[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*') *(?:, *(?:[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*|\"[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*\"|'[\\p{L}\\p{N}\\p{M}._-]+(?: [\\p{L}\\p{N}\\p{M}._-]+)*') *){0,7}$" },
+        "blockLineHeight": { "type": "integer", "minimum": 20, "maximum": 48, "multipleOf": 2 }
       }
     },
     "screenshots": { "type": "array", "maxItems": 6, "items": { "type": "string", "format": "uri", "pattern": "^https://" } },
     "portedFrom": { "$ref": "#/$defs/portedFrom" },
     "aiDevelopment": { "enum": ["none", "assisted", "primary"] }
   },
+  "allOf": [
+    {
+      "description": "typography needs API 0.3.",
+      "if": { "properties": { "apiVersion": { "enum": ["0.1", "0.2"] } }, "required": ["apiVersion"] },
+      "then": { "not": { "required": ["typography"] } }
+    },
+    {
+      "description": "presentation needs API 0.2 or later.",
+      "if": { "properties": { "apiVersion": { "const": "0.1" } }, "required": ["apiVersion"] },
+      "then": { "not": { "required": ["presentation"] } }
+    }
+  ],
   "$defs": {
     "portedFrom": {
       "type": "object", "additionalProperties": false,

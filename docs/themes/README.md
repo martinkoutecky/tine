@@ -78,9 +78,11 @@ download a font.
 | `bodyFont` | a font stack | Block text and the interface, and the block editor while you type |
 | `monoFont` | a font stack | Code blocks, inline code, query and diagnostic text, the code editor |
 | `titleFont` | a font stack | Page titles, heading blocks (also while editing) and the editorial journal title |
-| `blockLineHeight` | an integer, 20 to 48 (pixels) | The height of a block's first line; bullets, the editor and caret hit-testing follow it |
+| `blockLineHeight` | an even integer, 20 to 48 (pixels) | The height of a block's first line; bullets, the editor and caret hit-testing follow it. Even only, so the bullet centre stays on a whole pixel |
 
-A font stack is 1 to 8 comma-separated families, at most 240 characters. A family
+A font stack is 1 to 8 comma-separated families, at most 240 characters; the only
+whitespace is the plain space (a no-break space, U+2028 and the like are refused,
+not trimmed). A family
 is one of:
 
 - a name made of letters, digits, `.`, `_`, `-` and single spaces (at most 64
@@ -92,10 +94,15 @@ is one of:
 
 Anything else is rejected, including `url()`, `@import`, `@font-face`, `var()`,
 selectors, braces, semicolons, colons, comments, backslash escapes, quotes inside a
-name, CSS-wide keywords (`inherit`, `initial`, ...), empty families, fractional or
-out-of-range line heights, and unknown keys. End each stack with a generic family
+name, CSS-wide keywords (`inherit`, `initial`, ...), empty families, fractional,
+odd or out-of-range line heights, and unknown keys. End each stack with a generic family
 so a device without your font falls back sensibly. `tine-theme.mjs check` and the
-app use the same grammar (`src/themes/fontStack.mjs`).
+app use the same grammar (`src/themes/fontStack.mjs`); the JSON schema
+(`plugin-sdk/schema/theme.schema.json`) expresses as much of it as JSON Schema can,
+and the checker stays the authority.
+
+An older Tine (before theme API 0.3) keeps a 0.3 package, with a load warning, and
+does not apply its typography.
 
 Users choose typography apart from colors and style: **Use typography** on the
 installed row (and the Typography selector in Settings → Appearance → Themes). If

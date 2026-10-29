@@ -40,6 +40,13 @@ const PRESENT = { ...base, id: "page.tine.theme.shot-typography", name: "Shot ty
 const ABSENT = { ...base, id: "page.tine.theme.shot-missing", name: "Shot missing font", description: "A font this machine lacks.",
   typography: { bodyFont: `"${MISSING}", sans-serif` } };
 
+// The editorial-serif preset scopes its own serif editable face and a 30px line on
+// `.page-section` (themePresentation.css); a package's typography must win over both,
+// through --tine-editable-font-user and --tine-typography-line-height.
+const EDITORIAL = { ...base, id: "page.tine.theme.shot-editorial", name: "Shot editorial", description: "Editorial preset plus typography.",
+  presentation: { contentTypography: "editorial-serif", journalHeader: "editorial" },
+  typography: PRESENT.typography };
+
 const problems = [];
 const note = (message) => { problems.push(message); console.log("PROBLEM:", message); };
 const server = spawn("npx", ["vite", "preview", "--outDir", dist, "--port", String(PORT), "--strictPort"], { stdio: "ignore", detached: true });
@@ -229,12 +236,82 @@ async function run(browser, label, viewport, deviceScaleFactor) {
   await context.close();
 }
 
+async function runEditorial(browser, label, viewport, deviceScaleFactor) {
+  const context = await browser.newContext({ viewport, deviceScaleFactor });
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e).split("\n")[0]));
+  await page.goto(`http://localhost:${PORT}/`);
+  await page.waitForSelector(".ls-block", { timeout: 10000 });
+  await sleep(500);
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("DOM.enable");
+  await cdp.send("CSS.enable");
+
+  await openSettingsAppearance(page);
+  await installThemeFile(page, EDITORIAL);
+  await row(page, EDITORIAL.name).locator("button", { hasText: "Use style" }).click();
+  await sleep(400);
+  const styled = await page.evaluate(computed);
+  // The preset sets its 30px on .page-section, not :root: read the block, not the root token.
+  if (styled.content?.["line-height"] !== "30px") note(`${label}/editorial: the preset alone should give a 30px line, saw ${styled.content?.["line-height"]}`);
+  if (/Bookman/.test(styled.content?.["font-family"] ?? "")) note(`${label}/editorial: the preset alone already shows the package font`);
+  await row(page, EDITORIAL.name).locator("button", { hasText: "Use typography" }).click();
+  await sleep(400);
+  const during = await page.evaluate(computed);
+  if (during.content?.["line-height"] !== `${LINE_HEIGHT}px`) note(`${label}/editorial: block line-height is ${during.content?.["line-height"]}`);
+  if (!during.content?.["font-family"]?.includes(BODY)) note(`${label}/editorial: block text font is ${during.content?.["font-family"]}`);
+  await page.keyboard.press("Escape");
+  await sleep(300);
+  const painted = { block: await paintedFamilies(cdp, page, ".block-content"), title: await paintedFamilies(cdp, page, ".journal-title, .page-title") };
+  if (!painted.block?.some((name) => name.includes(BODY))) note(`${label}/editorial: block text painted with ${JSON.stringify(painted.block)}, not ${BODY}`);
+  if (!painted.title?.some((name) => name.includes(TITLE))) note(`${label}/editorial: title painted with ${JSON.stringify(painted.title)}, not ${TITLE}`);
+  const rows = await page.evaluate(measureBullets);
+  if (rows.length < 5) note(`${label}/editorial: only ${rows.length} measurable blocks`);
+  for (const r of rows) {
+    if (Math.abs(r.delta) > (r.heading ? 3 : 0.5)) note(`${label}/editorial: bullet ${r.delta.toFixed(2)}px off the first line centre on ${JSON.stringify(r.text)}`);
+  }
+  await dismissToasts(page);
+  await page.screenshot({ path: `${out}/editorial-page-${label}.png` });
+
+  const target = page.locator(".block-content").filter({ hasText: /\w{4}/ }).nth(2);
+  const staticBox = await target.boundingBox();
+  await target.click({ position: { x: 20, y: 8 } });
+  await page.locator("textarea.block-editor").first().waitFor({ timeout: 4000 });
+  await sleep(250);
+  const editor = page.locator("textarea.block-editor").first();
+  const editorBox = await editor.boundingBox();
+  const editorFamily = await editor.evaluate((el) => getComputedStyle(el).fontFamily);
+  if (!editorFamily.includes(BODY)) note(`${label}/editorial: the editor font-family is ${editorFamily} (the preset's serif won over the package)`);
+  if (/Iowan/.test(editorFamily)) note(`${label}/editorial: the editor still uses the preset's Iowan stack`);
+  if (staticBox && editorBox && Math.abs(staticBox.height - editorBox.height) > 1.5) note(`${label}/editorial: entering the editor changed the block height ${staticBox.height} -> ${editorBox.height}`);
+  if (staticBox && editorBox && Math.abs(staticBox.y - editorBox.y) > 1.5) note(`${label}/editorial: entering the editor moved the block ${staticBox.y} -> ${editorBox.y}`);
+  await dismissToasts(page);
+  await editor.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${out}/editorial-editing-${label}.png` });
+  await page.keyboard.press("Escape");
+  await sleep(200);
+
+  // Dropping only the typography returns the preset's own face and 30px line.
+  await openSettingsAppearance(page);
+  await page.locator('select[aria-label="Typography"]').selectOption("");
+  await sleep(400);
+  const after = await page.evaluate(computed);
+  if (after.content?.["line-height"] !== "30px") note(`${label}/editorial: after dropping typography the line is ${after.content?.["line-height"]}, expected the preset's 30px`);
+  if (after.content?.["font-family"] !== styled.content?.["font-family"]) note(`${label}/editorial: dropping typography did not restore the preset's block face`);
+  if (errors.length) note(`${label}/editorial: page errors ${JSON.stringify(errors)}`);
+  console.log(label, "editorial painted:", JSON.stringify(painted), "editor:", editorFamily.slice(0, 60), "max |delta|", Math.max(...rows.map((r) => Math.abs(r.delta))).toFixed(2));
+  await context.close();
+}
+
 try {
   await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
   await run(browser, "1x", { width: 1280, height: 900 }, 1);
   await run(browser, "2x", { width: 1280, height: 900 }, 2);
   await run(browser, "narrow", { width: 390, height: 844 }, 2);
+  await runEditorial(browser, "1x", { width: 1280, height: 900 }, 1);
+  await runEditorial(browser, "2x", { width: 1280, height: 900 }, 2);
   await browser.close();
 } finally {
   stop();

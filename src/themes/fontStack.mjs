@@ -10,12 +10,17 @@
  *  - a generic or system keyword (`serif`, `sans-serif`, `monospace`, `system-ui`,
  *    `ui-sans-serif`, `-apple-system`, `BlinkMacSystemFont`, ...), or
  *  - a name of words made of letters, digits, `.`, `_` and `-`, separated by single
- *    spaces (at most 64 characters), bare or inside one pair of matching quotes. */
+ *    spaces (at most 64 characters), bare or inside one pair of matching quotes.
+ * Only the plain space is whitespace; any other whitespace character is refused.
+ * A block line height is an EVEN integer from 20 to 48 (pixels). */
 
 export const FONT_STACK_MAX_LENGTH = 240;
 export const FONT_STACK_MAX_FAMILIES = 8;
 export const FONT_FAMILY_MAX_LENGTH = 64;
-/** Integer pixels; the block line box (bullet column, editor, hit-testing) is one token. */
+/** Even integer pixels; the block line box (bullet column, editor, hit-testing) is one
+ * token, and the bullet and embed glyphs sit at calc((height +- k) / 2), so an odd
+ * height would put them on a half pixel. Narrowing is the safe direction for a public
+ * format: loosening later is compatible, tightening is not (manager, 2026-10-29). */
 export const BLOCK_LINE_HEIGHT_MIN = 20;
 export const BLOCK_LINE_HEIGHT_MAX = 48;
 
@@ -34,11 +39,14 @@ export function parseFontStack(value) {
   if (typeof value !== "string") return { ok: false, error: "must be a text font stack" };
   if (value.length === 0 || value.length > FONT_STACK_MAX_LENGTH) return { ok: false, error: `must be 1 to ${FONT_STACK_MAX_LENGTH} characters` };
   if (/[\u0000-\u001f\u007f]/.test(value)) return { ok: false, error: "must not contain control characters" };
+  // Only the plain space separates words and pads commas; no other whitespace (no-break
+  // space, U+2028, ideographic space, BOM...) is trimmed away silently, it is refused.
+  if (/[\p{Z}\uFEFF]/u.test(value.replaceAll(" ", ""))) return { ok: false, error: "must use plain spaces only (no other whitespace characters)" };
   const parts = value.split(",");
   if (parts.length > FONT_STACK_MAX_FAMILIES) return { ok: false, error: `may name at most ${FONT_STACK_MAX_FAMILIES} families` };
   const families = [];
   for (const raw of parts) {
-    const token = raw.trim();
+    const token = raw.replace(/^ +| +$/g, "");
     if (token === "") return { ok: false, error: "has an empty family" };
     const quote = token[0] === '"' || token[0] === "'" ? token[0] : "";
     let name = token;
@@ -63,5 +71,5 @@ export function parseFontStack(value) {
 }
 
 export function isBlockLineHeight(value) {
-  return Number.isInteger(value) && value >= BLOCK_LINE_HEIGHT_MIN && value <= BLOCK_LINE_HEIGHT_MAX;
+  return Number.isInteger(value) && value % 2 === 0 && value >= BLOCK_LINE_HEIGHT_MIN && value <= BLOCK_LINE_HEIGHT_MAX;
 }

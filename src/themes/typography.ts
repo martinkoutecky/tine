@@ -19,7 +19,7 @@ export interface ThemeTypography {
   monoFont?: string;
   /** Page titles and heading blocks (rules below). */
   titleFont?: string;
-  /** Integer px height of a block's first line (`--ls-block-line-height`). */
+  /** Even integer px height (20 to 48) of a block's first line (`--ls-block-line-height`). */
   blockLineHeight?: number;
 }
 
@@ -31,7 +31,7 @@ const FONT_FIELDS = ["bodyFont", "monoFont", "titleFont"] as const;
 export function checkTypography(field: (typeof TYPOGRAPHY_FIELDS)[number], value: unknown): void {
   if (field === "blockLineHeight") {
     if (!isBlockLineHeight(value)) {
-      throw new Error(`typography.blockLineHeight must be an integer from ${BLOCK_LINE_HEIGHT_MIN} to ${BLOCK_LINE_HEIGHT_MAX}`);
+      throw new Error(`typography.blockLineHeight must be an even integer from ${BLOCK_LINE_HEIGHT_MIN} to ${BLOCK_LINE_HEIGHT_MAX}`);
     }
     return;
   }

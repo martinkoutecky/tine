@@ -22,11 +22,14 @@ height (local font names only, no CSS or downloads; a separate 'Use typography'
 button)." We will:
 
 - Add theme API 0.3 with one optional `typography` object: `bodyFont`, `monoFont`,
-  `titleFont` (font stacks) and `blockLineHeight` (integer px, 20 to 48). API 0.1 and
+  `titleFont` (font stacks) and `blockLineHeight` (an even integer px, 20 to 48: the bullet and embed glyph centres
+  are `calc((height +- k) / 2)`, so an odd height would sit them on a half pixel;
+  narrowing now is safe, tightening after publication would break packages). API 0.1 and
   0.2 packages stay valid and cannot declare it.
 - Define a font stack by a closed grammar (`src/themes/fontStack.mjs`): at most 8
   families, 240 characters; each a local name of letters, digits, `. _ -` and single
-  spaces, or a generic/system keyword. The app parser and `tine-theme.mjs check`
+  spaces, or a generic/system keyword; the only whitespace is the plain space (other
+  whitespace is refused, not trimmed). The app parser and `tine-theme.mjs check`
   import that one module. Tine rebuilds the CSS from the parsed families (names are
   re-quoted), never from the manifest string.
 - Map the fields onto existing public tokens (`--tine-content-font`,
@@ -48,4 +51,5 @@ or network surface is added. The grammar is public vocabulary: widening it
 line-box analysis. A user whose device lacks the font sees the fallback stack plus the
 hint, which is honest but cannot tell a near-match from the real face. The persisted
 composition record gains a `typography` key only when one is chosen, so a build that
-predates it ignores the key.
+predates it ignores the key. Such a build keeps a 0.3 package it cannot read, with a
+load warning (the same as the 0.2 bump), and does not apply its typography.

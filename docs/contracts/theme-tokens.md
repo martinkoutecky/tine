@@ -113,7 +113,7 @@ without a CHANGELOG entry; a custom.css that sets them is unsupported.
 | `--tine-main-content-max-width` | Set inline by Settings > Standard page width (`src/contentWidth.ts`); not a documented knob, use `--tine-content-width` |
 | `--tine-wide-content-max-width` | Same, for Wide mode |
 | `--tine-editable-font-user` | What you set `--tine-editable-font` to, copied at the root so the editorial typography preset can fall back to it before its own serif face (`src/styles/theme.css`, `src/styles/themePresentation.css`) |
-| `--tine-typography-line-height` | The block line height a theme package's API 0.3 `typography.blockLineHeight` declares (`px`), set by the host in the `#tine-theme` element and read as the fallback-carrying source of `--ls-block-line-height` (`src/styles/app.css`, `src/styles/themePresentation.css`, `src/themes/typography.ts`). To change the line box yourself in `custom.css`, set `--ls-block-line-height` |
+| `--tine-typography-line-height` | The block line height a theme package's API 0.3 `typography.blockLineHeight` declares (an even `px` value, 20 to 48), set by the host in the `#tine-theme` element and read as the fallback-carrying source of `--ls-block-line-height` (`src/styles/app.css`, `src/styles/themePresentation.css`, `src/themes/typography.ts`). To change the line box yourself in `custom.css`, set `--ls-block-line-height` |
 | `--tine-editable-emoji-font` | The emoji face of the editable stack, chosen per platform in `src/styles/editableEmoji.css` (crash guard) |
 
 ## 4. `logseq/custom.css` itself

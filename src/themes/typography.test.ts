@@ -40,6 +40,8 @@ const VALID: Array<{ what: string; typography: unknown }> = [
   { what: "a title font alone", typography: { titleFont: '"Iowan Old Style", Palatino, serif' } },
   { what: "a line height alone, at the lower bound", typography: { blockLineHeight: 20 } },
   { what: "a line height at the upper bound", typography: { blockLineHeight: 48 } },
+  { what: "an even line height inside the range", typography: { blockLineHeight: 28 } },
+  { what: "plain spaces padding the commas", typography: { bodyFont: '  "IBM Plex Sans"  ,   serif  ' } },
   { what: "bare multi-word names and single quotes", typography: { bodyFont: "Helvetica Neue, 'Segoe UI', Arial, sans-serif" } },
   { what: "a name with digits and a dot", typography: { bodyFont: '"M PLUS 1p", "Noto Sans CJK SC", system-ui' } },
   { what: "a non-Latin family name", typography: { bodyFont: '"游ゴシック", "PingFang SC", sans-serif' } },
@@ -66,6 +68,13 @@ const INVALID: Array<{ what: string; typography: unknown; code: string; mentions
   { what: "a newline", typography: { bodyFont: "Georgia,\nserif" }, code: "theme.typography-font" },
   { what: "a CSS-wide keyword", typography: { bodyFont: "inherit" }, code: "theme.typography-font" },
   { what: "a quoted CSS-wide keyword", typography: { bodyFont: '"initial", serif' }, code: "theme.typography-font" },
+  { what: "a no-break space between words", typography: { bodyFont: "Helvetica\u00a0Neue, serif" }, code: "theme.typography-font" },
+  { what: "a no-break space padding a family", typography: { bodyFont: "Georgia,\u00a0serif" }, code: "theme.typography-font" },
+  { what: "a line separator (U+2028)", typography: { bodyFont: "Georgia,\u2028serif" }, code: "theme.typography-font" },
+  { what: "a paragraph separator (U+2029) trailing", typography: { bodyFont: "Georgia, serif\u2029" }, code: "theme.typography-font" },
+  { what: "an ideographic space", typography: { bodyFont: "\u3000Georgia, serif" }, code: "theme.typography-font" },
+  { what: "an en space inside a quoted name", typography: { bodyFont: '"IBM\u2002Plex Sans"' }, code: "theme.typography-font" },
+  { what: "a byte-order mark", typography: { bodyFont: "\ufeffGeorgia, serif" }, code: "theme.typography-font" },
   { what: "an empty stack", typography: { bodyFont: "" }, code: "theme.typography-font" },
   { what: "an empty family (trailing comma)", typography: { bodyFont: "Georgia," }, code: "theme.typography-font" },
   { what: "an empty family (double comma)", typography: { bodyFont: "Georgia,, serif" }, code: "theme.typography-font" },
@@ -77,6 +86,10 @@ const INVALID: Array<{ what: string; typography: unknown; code: string; mentions
   { what: "a null stack", typography: { monoFont: null }, code: "theme.typography-font" },
   { what: "a line height below the range", typography: { blockLineHeight: 19 }, code: "theme.typography-line-height" },
   { what: "a line height above the range", typography: { blockLineHeight: 49 }, code: "theme.typography-line-height" },
+  { what: "an odd line height (27)", typography: { blockLineHeight: 27 }, code: "theme.typography-line-height" },
+  { what: "an odd line height (29)", typography: { blockLineHeight: 29 }, code: "theme.typography-line-height" },
+  { what: "the odd lower neighbour of the bound (21)", typography: { blockLineHeight: 21 }, code: "theme.typography-line-height" },
+  { what: "the odd upper neighbour of the bound (47)", typography: { blockLineHeight: 47 }, code: "theme.typography-line-height" },
   { what: "a fractional line height", typography: { blockLineHeight: 28.5 }, code: "theme.typography-line-height" },
   { what: "a line height with a unit", typography: { blockLineHeight: "28px" }, code: "theme.typography-line-height" },
   { what: "a unitless-ratio line height", typography: { blockLineHeight: 1.5 }, code: "theme.typography-line-height" },
@@ -152,9 +165,37 @@ describe("theme typography vocabulary (GH #760)", () => {
     const typography = schema.properties.typography;
     expect(typography.additionalProperties).toBe(false);
     expect(Object.keys(typography.properties).sort()).toEqual(["blockLineHeight", "bodyFont", "monoFont", "titleFont"]);
-    expect(typography.properties.blockLineHeight).toMatchObject({ type: "integer", minimum: 20, maximum: 48 });
+    expect(typography.properties.blockLineHeight).toMatchObject({ type: "integer", minimum: 20, maximum: 48, multipleOf: 2 });
     for (const field of ["bodyFont", "monoFont", "titleFont"]) {
       expect(typography.properties[field]).toMatchObject({ type: "string", minLength: 1, maxLength: 240 });
+    }
+  });
+
+  it("keeps the schema's name pattern and API gating honest (the checker stays the authority)", () => {
+    const schema = JSON.parse(fs.readFileSync("plugin-sdk/schema/theme.schema.json", "utf8")) as {
+      allOf: Array<{ if: { properties: { apiVersion: Record<string, unknown> } }; then: { not: { required: string[] } } }>;
+      properties: { typography: { properties: Record<string, { pattern: string }> } };
+    };
+    // typography needs 0.3, presentation needs 0.2 or later.
+    const gates = schema.allOf.map((gate) => [gate.if.properties.apiVersion, gate.then.not.required]);
+    expect(gates).toEqual([[{ enum: ["0.1", "0.2"] }, ["typography"]], [{ const: "0.1" }, ["presentation"]]]);
+    // The pattern never rejects a stack the grammar accepts, and rejects every
+    // stack the grammar rejects for a reason a pattern can state.
+    const pattern = new RegExp(schema.properties.typography.properties.bodyFont.pattern, "u");
+    for (const field of ["bodyFont", "monoFont", "titleFont"]) {
+      expect(schema.properties.typography.properties[field].pattern).toBe(schema.properties.typography.properties.bodyFont.pattern);
+    }
+    const NOT_EXPRESSIBLE = new Set(["a CSS-wide keyword", "a quoted CSS-wide keyword", "an overlong stack", "an overlong family name"]);
+    for (const { typography } of VALID) {
+      for (const stack of Object.entries(typography as Record<string, unknown>).filter(([k]) => k !== "blockLineHeight").map(([, v]) => v as string)) {
+        expect(pattern.test(stack), stack).toBe(true);
+      }
+    }
+    for (const { what, typography, code } of INVALID) {
+      if (code !== "theme.typography-font") continue;
+      const stack = (typography as Record<string, unknown>).bodyFont;
+      if (typeof stack !== "string" || NOT_EXPRESSIBLE.has(what)) continue;
+      expect(pattern.test(stack), what).toBe(false);
     }
   });
 });

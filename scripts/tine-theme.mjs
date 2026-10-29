@@ -137,7 +137,7 @@ export function checkTheme(file) {
           fail(report.errors, "theme.typography-field", `${key} is not a typography setting`);
         } else if (key === "blockLineHeight") {
           if (!isBlockLineHeight(setting)) {
-            fail(report.errors, "theme.typography-line-height", `blockLineHeight must be an integer from ${BLOCK_LINE_HEIGHT_MIN} to ${BLOCK_LINE_HEIGHT_MAX}`);
+            fail(report.errors, "theme.typography-line-height", `blockLineHeight must be an even integer from ${BLOCK_LINE_HEIGHT_MIN} to ${BLOCK_LINE_HEIGHT_MAX}`);
           }
         } else {
           const parsed = parseFontStack(setting);
