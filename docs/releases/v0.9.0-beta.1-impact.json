@@ -9,6 +9,295 @@
   "items": [
     {
       "section": "Added",
+      "text": "Expand or collapse bullets even in read-only exports, quick-share links and read-only pages. These viewing choices last while browsing; reloading restores the original folds without changing the graph. Static HTML exports keep the original folds too; click a folded block's arrow to open it, which works without JavaScript (UI-VIEW-FOLD, UI-VIEW-FOLD-STATIC).",
+      "userVisible": true,
+      "regressions": [
+        "UI-VIEW-FOLD",
+        "UI-VIEW-FOLD-STATIC"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-VIEW-FOLD: covered, fail-before proven; UI-VIEW-FOLD-STATIC: covered, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/Block.readOnlyFold.test.tsx",
+          "crates/tine-graph-features/src/render_tests.rs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Bundled Guide documents this capability; src/guideBeta090.test.ts guards its onboarding instructions. Existing accurate text is retained where no new instructions are needed.",
+        "refs": [
+          "crates/tine-core/src/templates/share-pages.md",
+          "src/guideBeta090.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Expand or collapse the current page from Commands, or press `t o` to toggle all blocks. Bulk folding uses one page edit and Undo step (#785).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH785-PAGE-FOLD"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-GH785-PAGE-FOLD: covered, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/pageCollapse.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Bundled Guide documents this capability; src/guideBeta090.test.ts guards its onboarding instructions. Existing accurate text is retained where no new instructions are needed.",
+        "refs": [
+          "crates/tine-core/src/templates/tips.md",
+          "src/guideBeta090.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Git on Android and iOS** (ADR 0078 slice 3): automatic commits, sync with **Sign in**, the line-ending repair and **Changed since you last looked** now work on phones as on a computer. Switching to another app saves and commits (at most once per interval, like every automatic commit) and, with **Commit and sync automatically**, pushes; coming back syncs at once. Tine never starts bringing in changes while in the background. On Android shared storage, a pull that renames a page by capitalization alone stops without changing anything.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "No dedicated catalog row identified for this capability; source and focused test references are substitute evidence, not a new runtime execution receipt.",
+        "refs": [
+          "src-tauri/src/owner/git_sync.rs",
+          "src-tauri/src/owner/owner_tests/git_sync_cycle_tests.rs",
+          "src-tauri/src/owner/git_sync/transport_tests.rs",
+          "src-tauri/src/owner/git_autocommit_tests.rs",
+          "src/components/GitAutocommitSetting.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Bundled Guide documents this capability; src/guideBeta090.test.ts guards its onboarding instructions. Existing accurate text is retained where no new instructions are needed.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md",
+          "src/guideBeta090.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Theme packages can set fonts and line height** (GH #760). A theme package written for theme API 0.3 can name its body, monospace and title fonts (fonts already installed on your device; no downloads or CSS) and a block line height (an even number of pixels from 20 to 48). Installed themes get a separate **Use typography** button next to Use colors and Use style, plus a **Typography** selector in Settings → Appearance to go back to Tine's own fonts; a missing first font is reported on the theme's row and the fallback fonts are used. Your `custom.css` still overrides them, and `tine-theme.mjs check` enforces the same rules.",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH760-THEME-TYPOGRAPHY"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-GH760-THEME-TYPOGRAPHY: covered, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/themes/typography.test.ts",
+          "src/themeGallery.typography.test.tsx",
+          "src/components/Settings.themeTypography.test.tsx",
+          "src/themes/fontAvailability.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Bundled Guide documents this capability; src/guideBeta090.test.ts guards its onboarding instructions. Existing accurate text is retained where no new instructions are needed.",
+        "refs": [
+          "crates/tine-core/src/templates/extend-tine.md",
+          "src/guideBeta090.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Git sync offers **Turn off line-ending conversion for this repository** when tracked bytes already match their index blobs. It changes only local `core.autocrlf`, leaves graph files untouched, and otherwise links to safe commit-and-checkout steps in the Guide.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "No dedicated catalog row identified for this capability; source and focused test references are substitute evidence, not a new runtime execution receipt.",
+        "refs": [
+          "src-tauri/src/owner/git_sync.rs",
+          "src-tauri/src/owner/owner_tests/git_sync_cycle_tests.rs",
+          "src-tauri/src/owner/git_sync/transport_tests.rs",
+          "src-tauri/src/owner/git_autocommit_tests.rs",
+          "src/components/GitAutocommitSetting.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Bundled Guide documents this capability; src/guideBeta090.test.ts guards its onboarding instructions. Existing accurate text is retained where no new instructions are needed.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md",
+          "src/guideBeta090.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Package-manager builds turn the updater off** (tine#187). A distribution package built with the compile-time variable `TINE_PACKAGED_BY=<name>` (for example `Nixpkgs`) never checks for updates, shows no update notification and offers no installer; Settings → About says the copy is packaged by that name and to update it there. Unset or empty keeps today's behaviour. See the README section \"Packaging Tine for a distribution\".",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH187-PACKAGER-NO-UPDATE-NAG"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. REG-GH187-PACKAGER-NO-UPDATE-NAG: covered, fail-before proven: with src/update.ts restored to the base, the four new package-manager cases in src/update.test.ts fail (checkForUpdateNow/startup/installer still reach the updater and toast); with src/components/AboutTab.tsx restored, the About packager case fails (update controls shown, no packager line); the Rust platform tests do not compile on the base (no packaged_by_name/gpu_env_for). Built smoke: TINE_PACKAGED_BY=Nixpkgs release binary, About shows the packager line and no controls (artifacts/updater-pm/about-packaged-by-nixpkgs.png).",
+        "refs": [
+          "tests/regressions/non-ui.json",
+          "src/update.test.ts",
+          "src/components/AboutTab.test.tsx",
+          "src-tauri/src/platform.rs",
+          "crates/tine-core/src/guide.rs"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Bundled Guide documents this capability; src/guideBeta090.test.ts guards its onboarding instructions. Existing accurate text is retained where no new instructions are needed.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md",
+          "src/guideBeta090.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Tine Beta has its own amber icon.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "No dedicated catalog row identified for this capability; source and focused test references are substitute evidence, not a new runtime execution receipt.",
+        "refs": [
+          "src-tauri/build.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "App icon identity changes require no Guide workflow or onboarding instruction.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Changed since you last looked** (git graphs, all platforms): a margin bar marks blocks other people or tools committed since you last left a page, a removed block leaves a marker that unfolds its text, and the page header counts the changes. Leaving the page marks it seen; **Mark page seen** is in the page actions menu and command palette; **Mark whole graph seen** is in the command palette and Settings → Graph; **Forget seen state** is in Settings → Graph. Your own commits never count, uncommitted edits are invisible, and the record stays on this device (ADR 0079). The notice stays at the top while you scroll, keeping Mark page seen reachable (UI-SEEN-STICKY).",
+      "userVisible": true,
+      "regressions": [
+        "UI-SEEN-STICKY",
+        "UI-SEEN-CHANGES-MARKS",
+        "UI-SEEN-CHANGES-LEAVE",
+        "UI-SEEN-CHANGES-ACTIONS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-SEEN-STICKY: covered, fail-before proven; UI-SEEN-CHANGES-MARKS: covered, fail-before proven; UI-SEEN-CHANGES-LEAVE: covered, fail-before proven; UI-SEEN-CHANGES-ACTIONS: covered, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/editor/caretReveal.test.ts",
+          "scripts/shot-ui-sticky.mjs",
+          "scripts/e2e-ui-sticky-selection.mjs",
+          "src/seen/marks.test.ts",
+          "src/document/seenSnapshot.test.ts",
+          "src/components/Page.seen.test.tsx",
+          "src/seen/seenState.test.ts",
+          "src/backend.seenDrop.test.ts",
+          "src/components/ContextMenu.test.tsx",
+          "src/components/SeenSettings.test.tsx",
+          "src/seen/commands.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Bundled Guide documents this capability; src/guideBeta090.test.ts guards its onboarding instructions. Existing accurate text is retained where no new instructions are needed.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md",
+          "src/guideBeta090.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
       "text": "Desktop: **Open in default app** beside the graph and global CSS editors in Settings, with matching command-palette actions. External global CSS edits now apply live across graph windows (GH #778).",
       "userVisible": true,
       "regressions": [
@@ -96,7 +385,7 @@
           "src-tauri/src/owner/lease.rs",
           "src-tauri/src/owner/owner_tests.rs",
           "src-tauri/src/owner/owner_tests/lifecycle_tests.rs",
-          "scripts/e2e-cli-writes.mjs (hosted Windows)",
+          "scripts/e2e-cli-writes.mjs",
           "src-tauri/tests/windows_cli.rs",
           "src-tauri/src/owner/client.rs"
         ]
@@ -171,7 +460,8 @@
           "src/document/host/wiring.ownerFlush.test.ts",
           "src/graph.ownerRename.test.ts",
           "crates/tine-store/src/page_host/binding_delete_tests.rs",
-          "scripts/cli-page-acceptance.mjs; scripts/e2e-cli-writes.mjs"
+          "scripts/cli-page-acceptance.mjs",
+          "scripts/e2e-cli-writes.mjs"
         ]
       },
       "docs": {
@@ -370,7 +660,7 @@
     },
     {
       "section": "Added",
-      "text": "**Automatic git commits** (queue cards hBpCy4/hBpb2k, ADR 0078 slice 1): a graph in a git repository can commit its changes automatically (Settings → Graph → Commit changes to git; desktop, off by default). Tine commits after a minute without edits, at most once per interval, on quit, and around renames, merges, deletes and backup restores; it never pushes or pulls.",
+      "text": "**Automatic git commits** (queue cards hBpCy4/hBpb2k, ADR 0078 slice 1): a graph in a git repository can commit its changes automatically (Settings → Graph → Commit changes to git; off by default). Tine commits after a minute without edits, at most once per interval, on quit, and around renames, merges, deletes and backup restores; it pushes and pulls only with a sync option (next entry).",
       "userVisible": true,
       "regressions": [
         "REG-AUTOCOMMIT-SYNCTHING-TEMP",
@@ -400,6 +690,41 @@
       "blog": {
         "status": "not-applicable",
         "reason": "Beta notes live in the changelog and prerelease; no blog post is prepared by this lane.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Git sync** (ADR 0078 slice 2): two more options, **Commit and sync on demand** (a **Sync now** button) and **Commit and sync automatically** (after each commit and once per interval), fetch the branch's upstream, bring the graph up to its newer commits without overwriting unsaved or outside edits, and push this device's commits. Tine never merges, rebases or force-pushes. Settings → Graph → Git shows the remote, the last sync and each problem in plain words with a way to fix it (copy the git command, open the folder, sign in again); a problem that persists also shows above the page. When both sides have new commits Tine stops and changes nothing; you merge in git. HTTPS remotes take a username and personal access token, kept in a private file on this device and never in the graph. Android and iOS support the same sync options.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "No dedicated catalog row identified for this capability; source and focused test references are substitute evidence, not a new runtime execution receipt.",
+        "refs": [
+          "src-tauri/src/owner/git_sync.rs",
+          "src-tauri/src/owner/owner_tests/git_sync_cycle_tests.rs",
+          "src-tauri/src/owner/git_sync/transport_tests.rs",
+          "src-tauri/src/owner/git_autocommit_tests.rs",
+          "src/components/GitAutocommitSetting.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Bundled Guide documents this capability; src/guideBeta090.test.ts guards its onboarding instructions. Existing accurate text is retained where no new instructions are needed.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md",
+          "src/guideBeta090.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
         "refs": []
       }
     },
@@ -1181,6 +1506,44 @@
     },
     {
       "section": "Changed",
+      "text": "`:feature/enable-journals? false` in `logseq/config.edn` shows the configured home page in the sidebar in place of Journals, as in Logseq. Each comma item of a property listed in `:property/separated-by-commas` is now a page link in page and block properties.",
+      "userVisible": true,
+      "regressions": [
+        "UI-LP-JOURNALS-OFF-HOME",
+        "UI-LP-COMMA-PROPERTY-LINKS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-LP-JOURNALS-OFF-HOME: covered, fail-before proven; UI-LP-COMMA-PROPERTY-LINKS: covered, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/Sidebar.journalsOff.test.tsx",
+          "crates/tine-core/src/config.rs",
+          "src/components/PagePropertyValue.commaKeys.test.tsx",
+          "crates/tine-core/src/model.rs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Bundled Guide documents this capability; src/guideBeta090.test.ts guards its onboarding instructions. Existing accurate text is retained where no new instructions are needed.",
+        "refs": [
+          "crates/tine-core/src/templates/where-things-are.md",
+          "src/guideBeta090.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
       "text": "Property keys link to their pages consistently in page headers, references, previews and query property lists, including after editing; Shift-click opens the key's page in the sidebar, and `:property-pages/enabled? false` keeps keys plain (GH #753).",
       "userVisible": true,
       "regressions": [
@@ -1895,6 +2258,381 @@
     },
     {
       "section": "Fixed",
+      "text": "The desktop formatting toolbar displays over the selection, including near the bottom of a long block, and moves below it when there is no room above (UI-SEL-TOOLBAR).",
+      "userVisible": true,
+      "regressions": [
+        "UI-SEL-TOOLBAR"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-SEL-TOOLBAR: covered, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "scripts/e2e-ui-sticky-selection.mjs",
+          "src/components/Block.mobileSelectionToolbar.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Bundled Guide documents this capability; src/guideBeta090.test.ts guards its onboarding instructions. Existing accurate text is retained where no new instructions are needed.",
+        "refs": [
+          "crates/tine-core/src/templates/tips.md",
+          "src/guideBeta090.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Mouse back/forward buttons also navigate on macOS; dragging with a side button does not navigate. macOS also accepts Cmd+[ and Cmd+] for history (#780).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH780-MOUSE-HISTORY"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-GH780-MOUSE-HISTORY: covered, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/mouseHistory.test.ts",
+          "src/keybindings.test.ts",
+          "src/keybindings.macHistory.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Bundled Guide documents this capability; src/guideBeta090.test.ts guards its onboarding instructions. Existing accurate text is retained where no new instructions are needed.",
+        "refs": [
+          "crates/tine-core/src/templates/where-things-are.md",
+          "src/guideBeta090.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Query and Markdown tables: a table in a query box or a sidebar item stays inside its box and scrolls there; long text cells wrap instead of cramming every column to a few letters, and numbers never split; a visible scrollbar strip shows when a table still overflows. Board column counts no longer touch their labels, table and board page links read as links, and the \"Grouped by\" breakdown above a board is folded behind its summary. Collapse all sits in the Linked/Unlinked References header row, the gap above Linked References is smaller, a stale count shows a small refresh icon instead of a stray \"·\", and an image in a reference breadcrumb renders at breadcrumb height (UI-LP-QUERY-TABLE-BOX, UI-LP-BOARD-CARDS, UI-LP-REFERENCES-HEADER, UI-LP-BREADCRUMB-IMAGE).",
+      "userVisible": true,
+      "regressions": [
+        "UI-LP-QUERY-TABLE-BOX",
+        "UI-LP-BOARD-CARDS",
+        "UI-LP-REFERENCES-HEADER",
+        "UI-LP-BREADCRUMB-IMAGE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-LP-QUERY-TABLE-BOX: covered, fail-before proven; UI-LP-BOARD-CARDS: covered, fail-before proven; UI-LP-REFERENCES-HEADER: covered, fail-before proven; UI-LP-BREADCRUMB-IMAGE: covered, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/QueryLayout.test.tsx",
+          "src/components/TableWrap.test.ts",
+          "src/components/QueryResultParts.test.tsx",
+          "src/components/ReferencesHeader.layout.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the existing interaction or improves rendering/performance without adding a user workflow; no additional Guide instructions are needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Scrolling the Journals feed keeps loading older days while you are editing a journal day. After some graph-wide changes (for example a sync bringing in many files) the feed could stop at its first three days until you clicked outside the journals (UI-JOURNAL-FEED-PAGING-WHILE-EDITING).",
+      "userVisible": true,
+      "regressions": [
+        "UI-JOURNAL-FEED-PAGING-WHILE-EDITING"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-JOURNAL-FEED-PAGING-WHILE-EDITING: covered, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/Page.feedPaging.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the existing interaction or improves rendering/performance without adding a user workflow; no additional Guide instructions are needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A first launch with a default journal template no longer sometimes opens Journals as \"Couldn't open this page: Journal feed read failed\" while today's template page is still being saved; Journals shows as soon as that save ends (GH #671, E2E-BASE-4).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH671-TEMPLATE-STARTUP-OWNER",
+        "UI-GH671-STARTUP-SAVE-DEFERRED",
+        "REG-GH671-FEED-DIAGNOSTICS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-GH671-TEMPLATE-STARTUP-OWNER: covered, fail-before proven; UI-GH671-STARTUP-SAVE-DEFERRED: covered, fail-before proven; REG-GH671-FEED-DIAGNOSTICS: covered, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "tests/regressions/non-ui.json",
+          "src/components/Page.feedFailure.test.tsx",
+          "scripts/e2e-gh671-journal-startup.mjs",
+          "src/components/Page.test.tsx",
+          "src/journalFeedDiagnostic.test.ts",
+          "src-tauri/src/flight.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the existing interaction or improves rendering/performance without adding a user workflow; no additional Guide instructions are needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "The horizontal scrollbar under a long-line code block is easy to grab (GH #787). It is now a 14px strip with a visible thumb in every theme (it was a few-pixel overlay bar hidden in the card's padding), and pressing it scrolls the card instead of opening the block's editor; presses on the code text still edit. Cards that scroll sideways are 14px taller. Touch devices keep their own scrollbar.",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH787-CODE-SCROLLBAR-GRAB"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-GH787-CODE-SCROLLBAR-GRAB: covered, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/editor/editTargets.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the existing interaction or improves rendering/performance without adding a user workflow; no additional Guide instructions are needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Every ancestor crumb in a block embed's breadcrumb opens that block, not just the page: click to go there, Shift-click for the sidebar, Ctrl/Cmd-click for a new tab, Alt-click for the other pane (GH #779).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH779-EMBED-CRUMBS-CLICKABLE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-GH779-EMBED-CRUMBS-CLICKABLE: covered, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/PageEmbed.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the existing interaction or improves rendering/performance without adding a user workflow; no additional Guide instructions are needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "On long pages with images, Enter, Backspace, Tab, Shift+Tab, moves and drags no longer remount the blocks around the edit: the touched window keeps its other blocks, windows after it keep their boundaries, an outdent that leaves the list long keeps it windowed, so no image flashes back to its placeholder and the view does not jump (GH #745). An image that finishes loading after the edit no longer leaves the caret off screen.",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH745-STRUCTURAL-EDIT-CARET-STAYS-VISIBLE",
+        "UI-GH745-OUTDENT-INDENT-IMAGE-VIEWPORT",
+        "UI-GH745-STRUCTURAL-EDIT-KEEPS-WINDOWS",
+        "UI-GH745-LATE-IMAGE-CARET-VISIBLE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-GH745-STRUCTURAL-EDIT-CARET-STAYS-VISIBLE: reproduced, fail-before proven; UI-GH745-OUTDENT-INDENT-IMAGE-VIEWPORT: fixing, fail-before proven; UI-GH745-STRUCTURAL-EDIT-KEEPS-WINDOWS: fixing, fail-before proven; UI-GH745-LATE-IMAGE-CARET-VISIBLE: fixing, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "scripts/e2e-gh745-structural-edit-viewport.mjs",
+          "src/editor/caretReveal.test.ts",
+          "scripts/check-gh745-outline-viewport.mjs",
+          "scripts/e2e-gh745-windows-probe.mjs",
+          "src/components/Page.windowing.test.tsx",
+          "src/components/BlockList.partition.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the existing interaction or improves rendering/performance without adding a user workflow; no additional Guide instructions are needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "While you scroll a PDF, Tine remembers the reading position once scrolling stops instead of at every page passed; the page indicator still follows live, and zoom, page jumps and closing are remembered at once (D-20261028-PDF9 item 4).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF09-SCROLL-IDLE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-PDF09-SCROLL-IDLE: covered, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/PdfViewer.scrollIdle.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the existing interaction or improves rendering/performance without adding a user workflow; no additional Guide instructions are needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Large graph PDFs load requested byte ranges through the read-only asset IPC, so opening one no longer copies the entire file into the webview first (D-20261028-PDF9 item 3).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF09-RANGE-LOAD"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-PDF09-RANGE-LOAD: covered, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/PdfViewer.range.test.tsx",
+          "src/components/pdfRangeTransport.test.ts",
+          "src/backend.pdfRanges.test.ts",
+          "src-tauri/src/commands/asset_ranges_tests.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the existing interaction or improves rendering/performance without adding a user workflow; no additional Guide instructions are needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "PDF page eviction releases decoded images and drawing data once no split view retains the page, reducing retained memory while reading scanned books (D-20261028-PDF9, item 1).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF09-PAGE-CLEANUP"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-PDF09-PAGE-CLEANUP: covered, fail-before proven",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/PdfViewer.pageCleanup.test.tsx",
+          "src/components/pdfPageCache.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the existing interaction or improves rendering/performance without adding a user workflow; no additional Guide instructions are needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
       "text": "Opening the right sidebar by a remapped shortcut keeps the main editor and caret when the sidebar shows the same block (UI-EDITOR-LATE-MOUNT).",
       "userVisible": true,
       "regressions": [
@@ -2309,6 +3047,41 @@
       "blog": {
         "status": "not-applicable",
         "reason": "Beta notes live in the changelog and prerelease; no blog post is prepared by this lane.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Automatic git commits and `--run` commits write the repository's index to disk durably before moving the branch, so a crash or power cut can no longer leave the old index under the new commit, where your next plain `git commit` would have undone Tine's (REG-GIT-INDEX-DURABLE-BEFORE-REF).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GIT-INDEX-DURABLE-BEFORE-REF"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. REG-GIT-INDEX-DURABLE-BEFORE-REF: fixing, fail-before On 87261c697 plus the before-ref-move test hook, both tests fail: the on-disk index still stages the old blob when the branch moves (artifacts/git-index-fsync/fail-before.log). An index-first mutant without the .git sync fails both on the sync assertion (fail-before-p1b-mutant.log).",
+        "refs": [
+          "tests/regressions/non-ui.json",
+          "src-tauri/src/owner/git_autocommit_tests.rs",
+          "src-tauri/src/owner/owner_tests/git_run_safety_tests.rs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Bundled Guide documents this capability; src/guideBeta090.test.ts guards its onboarding instructions. Existing accurate text is retained where no new instructions are needed.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md",
+          "src/guideBeta090.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
         "refs": []
       }
     },
@@ -2877,6 +3650,37 @@
       "blog": {
         "status": "not-applicable",
         "reason": "Beta notes live in the changelog and prerelease; no blog post is prepared by this lane.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Tine no longer warns \"Some page files couldn't be read\" about a file that was deleted or replaced while the graph was loading (REG-JOURNAL-HARDEN-GONE-BUILD; also affected stable 0.8.1).",
+      "userVisible": true,
+      "regressions": [
+        "REG-JOURNAL-HARDEN-GONE-BUILD"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. REG-JOURNAL-HARDEN-GONE-BUILD: covered, fail-before Proven on 5f278adcd: the on-demand build retains journals/2026_10_26.md with No such file or directory (os error 2). The failing parse function is identical on origin/master and v0.8.1. See RECEIPT-harden2.md.",
+        "refs": [
+          "tests/regressions/non-ui.json",
+          "crates/tine-store/src/model.rs::tests::a_file_gone_before_an_on_demand_build_is_not_unreadable"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the existing interaction or improves rendering/performance without adding a user workflow; no additional Guide instructions are needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
         "refs": []
       }
     },

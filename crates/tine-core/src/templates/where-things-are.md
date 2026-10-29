@@ -3,9 +3,10 @@ icon:: 🗺️
 - # Where things are
   - A short map of Tine's main places, so the recipes in this Guide make sense on first read: the page in the middle, the left sidebar, the tab strip, the right sidebar, and Settings and Help. Each place links to the workflow that teaches it — nothing here is a rulebook.
 - ## The middle: one route per pane
-  - Each pane shows the **page or PDF** its active tab points to. Tine opens on the **journal feed** — one continuous, editable list of days — and the **Journals** item in the left sidebar always takes you back to it.
+  - Each pane shows the **page or PDF** its active tab points to. Tine opens on the **journal feed** — one continuous, editable list of days — and the **Journals** item in the left sidebar takes you back to it. With `:feature/enable-journals? false` in `logseq/config.edn`, the sidebar shows your configured home page instead of Journals.
   - Everything you write is a **block** (one bullet). Blocks nest under other blocks to form the outline, and any block can carry a task, a date, a link, or its own id for references from elsewhere.
   - Press **Ctrl+K** at any time to jump to a page by name or to text inside any block.
+  - Mouse back and forward buttons navigate page history on desktop. On macOS, **Cmd+[** and **Cmd+]** also go back and forward; dragging with a side button does not navigate.
   - A page in a namespace has a **Hierarchy** section below its outline. Click its title, or focus it and press **Enter** or **Space**, to fold or expand the paths. It starts expanded and remembers your choice for that page until you switch graphs.
   - The reading column has a width cap. Press **t w** to toggle wide mode, which drops the cap; Settings → **Appearance** → **Advanced** holds **Standard page width** and **Wide page width** if you want your own numbers.
   - If one region of the screen — the page, the sidebar, a references section, or the conflict panel — fails to draw, that region shows a small card saying so, with a **Retry** button, instead of leaving the whole window blank. Your files on disk are not touched by it.
