@@ -32,7 +32,7 @@ Install/activate Emscripten 4.0.20 and source `emsdk_env.sh`, then run
 `TINE_PDFJS_EMSDK` may instead name its `upstream/` directory. Python 3 and
 Node.js 22.13+ must be available. The builder needs no CMake, Docker, network,
 or host C compiler. All intermediate output and the compiler cache stay in
-`artifacts/pdfjs5/decoder/`. A verified source/output hash enables reuse.
+`target/pdfjs-openjpeg/`. A verified source/output hash enables reuse.
 
 CI installs the pinned SDK before building. Flatpak materializes the SDK
 archive as a pinned manifest source for each Linux host architecture, then
@@ -42,7 +42,7 @@ the Flatpak Node executable. `npm run build` performs no download.
 To check a fresh reconstruction without reusing the output cache:
 
 ```sh
-node --input-type=module -e 'import {buildOpenjpeg} from "./scripts/build-pdfjs-openjpeg.mjs"; buildOpenjpeg({outDir:process.cwd()+"/artifacts/pdfjs5/repro",force:true})'
+node --input-type=module -e 'import {buildOpenjpeg} from "./scripts/build-pdfjs-openjpeg.mjs"; buildOpenjpeg({outDir:process.cwd()+"/target/pdfjs-openjpeg-repro",force:true})'
 ```
 
 Compare its `openjpeg.wasm` SHA-256 with the normal build. Native acceptance

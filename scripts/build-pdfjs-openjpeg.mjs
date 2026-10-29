@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { matchOpenjpegImports } from "./lib/pdfjs-openjpeg-abi.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-export const openjpegBuildDir = path.join(root, "artifacts/pdfjs5/decoder");
+export const openjpegBuildDir = path.join(root, "target/pdfjs-openjpeg");
 const vendor = path.join(root, "vendor/pdfjs-openjpeg");
 const sha = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
 const read = file => fs.readFileSync(file, "utf8");
