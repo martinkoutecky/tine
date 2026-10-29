@@ -1425,7 +1425,6 @@ html[data-system-insets="native-viewport"] {
   align-items: center;
   color: var(--text-muted);
   opacity: 0;
-  transition: opacity 0.1s;
 }
 .star-icon {
   width: 18px;
@@ -1447,7 +1446,6 @@ html[data-system-insets="native-viewport"] {
   align-items: center;
   color: var(--text-muted);
   opacity: 0;
-  transition: opacity 0.1s;
 }
 .share-icon {
   width: 18px;
@@ -1482,7 +1480,6 @@ html[data-system-insets="native-viewport"] {
   justify-content: center;
   color: var(--text-muted);
   opacity: 0;
-  transition: opacity 0.1s;
   font: inherit;
   font-size: 20px;
   line-height: 1;
@@ -1514,7 +1511,7 @@ html[data-system-insets="native-viewport"] {
   font-size: 12px;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.1s, background 0.1s, color 0.1s;
+  transition: background 0.1s, color 0.1s;
   -webkit-user-select: none;
   user-select: none;
 }
@@ -2658,10 +2655,12 @@ html[data-system-insets="native-viewport"] {
 .sync-merge-preblock select {
   margin: 0 4px;
 }
-/* Carry-over action buttons, right-aligned next to a journal title. */
+/* Carry-over action buttons, right-aligned next to a journal title. Like the other
+   title-row hover reveals (star, share, actions, tag table) they switch without an
+   opacity transition: a 0.1s fade flickered on WebKitGTK (the old opacity came back
+   for a frame or two as the transition ended; internal report 2026-10-29). */
 .page-carry-actions {
   opacity: 0;
-  transition: opacity 0.1s;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
@@ -2678,7 +2677,7 @@ html[data-system-insets="native-viewport"] {
   color: var(--text-muted);
   cursor: pointer;
   opacity: 1;
-  transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+  transition: color 0.12s, border-color 0.12s;
 }
 .page-title-row:hover .page-carry-actions,
 .page-title-row:focus-within .page-carry-actions {
