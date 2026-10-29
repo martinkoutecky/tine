@@ -144,18 +144,40 @@ const env = {
 // alone and in repeat runs (2026-10-29, 0.9.0-beta.1 candidate). Keep the
 // assertion exactly as strict, but when it fails leave the evidence that
 // distinguishes "count not yet 1", "wrong Settings tab" and "covered".
+async function settingsSnapshot(browser) {
+  return browser.execute(() => {
+    const text = (node) => (node?.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+    return {
+      title: document.title,
+      overlays: [...document.querySelectorAll(".modal-overlay")].map((node) => node.className),
+      settingsModal: Boolean(document.querySelector(".settings-modal")),
+      navItems: [...document.querySelectorAll(".settings-nav-item")].map((node) => `${text(node)}${node.classList.contains("active") ? "*" : ""}`),
+      pending: Boolean(document.querySelector(".settings-pane-pending")),
+      regionFailure: text(document.querySelector(".region-failure")),
+      pluginNav: [...document.querySelectorAll(".plugin-settings-nav button")].map((node) => text(node)),
+      detailPage: Boolean(document.querySelector(".plugin-detail-page")),
+      pane: text(document.querySelector(".settings-pane-body")),
+      toasts: [...document.querySelectorAll("[role=alert], .toast")].map((node) => text(node)),
+      active: document.activeElement ? `${document.activeElement.tagName}.${document.activeElement.className}` : null,
+    };
+  }).catch((inner) => ({ unreadable: String(inner) }));
+}
 async function openInstalledTab(browser, label) {
   try {
     await browser.$("button=Installed (1)").click();
   } catch (error) {
     const dir = process.env.E2E_ARTIFACT_DIR || TMP;
     fs.mkdirSync(dir, { recursive: true });
-    await browser.saveScreenshot(path.join(dir, `installed-tab-missing-${label}.png`)).catch(() => {});
-    const nav = await browser.execute(() => ({
-      tabs: [...document.querySelectorAll(".plugin-settings-nav button")].map((node) => (node.textContent ?? "").trim()),
-      settings: (document.querySelector(".settings")?.textContent ?? "").slice(0, 400),
-    })).catch((inner) => ({ unreadable: String(inner) }));
-    console.error(`installed-tab-missing in ${label} session: ${JSON.stringify(nav)}`);
+    const shot = await browser.saveScreenshot(path.join(dir, `installed-tab-missing-${label}.png`)).then(() => "saved", (inner) => `failed: ${String(inner)}`);
+    const handles = await browser.getWindowHandles().catch((inner) => `unreadable: ${String(inner)}`);
+    const current = await browser.getWindowHandle().catch((inner) => `unreadable: ${String(inner)}`);
+    const first = await settingsSnapshot(browser);
+    // Whether the panel is slow or never arrives: keep looking after the miss.
+    const started = Date.now();
+    const lateMs = await browser.waitUntil(async () => (await browser.$$(".plugin-settings-nav button").length) > 0, { timeout: 15_000, interval: 250 })
+      .then(() => Date.now() - started, () => null);
+    const late = await settingsSnapshot(browser);
+    console.error(`installed-tab-missing in ${label} session: ${JSON.stringify({ shot, handles, current, first, lateMs, late })}`);
     throw error;
   }
 }
