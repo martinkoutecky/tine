@@ -43,6 +43,23 @@ fn assumption_anchors_guards_tests_and_model_hash_exist() {
     );
     assert_eq!(supplement["cases"].as_array().unwrap().len(), 36);
 
+    // Every published model and scenario file matches its SHA256SUMS line
+    // (SB1-GITSYNC: storage-s3.qnt had drifted unnoticed), so an anchor in
+    // the s3.7 git-pull model names the reviewed bytes.
+    let quint = root.join("docs/storage-model/quint");
+    let sums = fs::read_to_string(quint.join("SHA256SUMS")).unwrap();
+    for line in sums.lines().filter(|line| !line.trim().is_empty()) {
+        let (sum, file) = line.split_once("  ").expect("sha256sum line");
+        let bytes = fs::read(quint.join(file)).unwrap();
+        assert_eq!(
+            format!("{:x}", Sha256::digest(bytes)),
+            sum,
+            "{file}: SHA256SUMS drift"
+        );
+    }
+    let git_model = fs::read_to_string(quint.join("storage-s37-gitpull.qnt")).unwrap();
+    assert!(sums.contains("  storage-s37-gitpull.qnt"));
+
     let source = fs::read_to_string(root.join("docs/storage-model/ASSUMPTIONS.md")).unwrap();
     let mut ids = BTreeSet::new();
     for line in source.lines().filter(|line| line.starts_with("| A-")) {
@@ -52,10 +69,13 @@ fn assumption_anchors_guards_tests_and_model_hash_exist() {
             unreachable!()
         };
         assert!(ids.insert(*id), "duplicate assumption {id}");
-        assert!(
-            model.contains(anchor.trim_matches('`')),
-            "{id}: missing model anchor {anchor}"
-        );
+        // `s37: ...` anchors name the s3.7 git-pull model (ADR 0078 §4).
+        let anchor = anchor.trim_matches('`');
+        let found = match anchor.strip_prefix("s37: ") {
+            Some(anchor) => git_model.contains(anchor),
+            None => model.contains(anchor),
+        };
+        assert!(found, "{id}: missing model anchor {anchor}");
         assert!(
             [
                 "guarded+tested",
@@ -111,6 +131,7 @@ fn assumption_anchors_guards_tests_and_model_hash_exist() {
         "A-REFS-GIVEN",
         "A-OPAQUE-TEXT",
         "A-PROGRESS",
+        "A-GIT-PULL",
     ]
     .into_iter()
     .collect();
