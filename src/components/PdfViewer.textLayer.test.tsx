@@ -124,6 +124,32 @@ describe("PdfViewer text layer ownership", () => {
     } finally { dispose(); }
   });
 
+  it("batches a first text layer's connected layout until its glyphs are ready", async () => {
+    const { host, dispose } = await mount();
+    try {
+      const container = host.querySelector<HTMLElement>(".textLayer")!;
+      expect(container.hidden).toBe(true);
+      expect(host.querySelector(".pdf-page > canvas")).not.toBeNull();
+      h.layers[0].finish(); await flush();
+      expect(container.hidden).toBe(false);
+    } finally { dispose(); }
+  });
+
+  it("keeps a newer text build hidden when a cancelled build completes late", async () => {
+    vi.useFakeTimers();
+    const { host, dispose } = await mount();
+    try {
+      const container = host.querySelector<HTMLElement>(".textLayer")!;
+      (host.querySelector('button[title="Zoom in"]') as HTMLButtonElement).click();
+      await vi.advanceTimersByTimeAsync(200); await flush();
+      expect(h.layers).toHaveLength(2);
+      h.layers[0].finish(); await flush();
+      expect(container.hidden).toBe(true);
+      h.layers[1].finish(); await flush();
+      expect(container.hidden).toBe(false);
+    } finally { dispose(); }
+  });
+
   it("cancels a pending text-layer render when the viewer is retired", async () => {
     const { dispose } = await mount();
     expect(h.layers).toHaveLength(1);

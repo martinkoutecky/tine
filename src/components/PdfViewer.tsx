@@ -967,15 +967,25 @@ export function PdfViewer(props: {
     pinTextScale(n, atScale, viewport.userUnit);
     const layer = new (pdfjs as any).TextLayer({ textContentSource: textContent, container: tl, viewport });
     textInflight[n] = layer;
+    // pdf.js 5 positions glyphs with CSS variables. Building them in a visible
+    // layer repeatedly resolves the growing tree in WebKit (notably when its
+    // measuring canvas changes font). Batch that layout until the text is ready;
+    // the completed page raster stays visible throughout.
+    tl.hidden = true;
     try {
       await layer.render();
     } catch (err) {
       // A superseded build cancels its layer; only the current build reports.
-      if (textInflight[n] === layer) delete textInflight[n];
       if (buildCurrent()) failPdf(errorMessage("Couldn't draw this PDF text", err));
       return;
+    } finally {
+      // A cancelled build may settle after its replacement started on this
+      // container. Only its current owner may expose the new glyphs.
+      if (textInflight[n] === layer) {
+        delete textInflight[n];
+        tl.hidden = false;
+      }
     }
-    if (textInflight[n] === layer) delete textInflight[n];
     if (!buildCurrent()) return;
     textLayerObjs[n] = layer;
     textScale[n] = atScale;
