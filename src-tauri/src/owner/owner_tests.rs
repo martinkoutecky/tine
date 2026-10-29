@@ -641,6 +641,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             "git_sync_line_endings",
             include_str!("git_sync/line_endings.rs"),
         ),
+        ("git_stale_lock", include_str!("git_stale_lock.rs")),
         ("git_sync_cycle", include_str!("git_sync_cycle.rs")),
         ("git_sync_http", include_str!("git_sync/http.rs")),
         ("lease", include_str!("lease.rs")),
@@ -673,7 +674,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 28, "scan every owner/*.rs file");
+    assert_eq!(files, 29, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];

@@ -14,7 +14,8 @@ const SYNCS: readonly GitPolicy[] = ["sync-on-demand", "sync-automatically"];
  *  sits in, how often, and whether it syncs them with the branch's upstream. The setting is per device and per graph
  *  (`tine-settings.json`); the backend applies it to the running worker at once. Shows the branch, the remote (read
  *  from the repository config), why Tine can't commit or sync, the last commit and sync, each sync
- *  problem with a way to fix it, an `index.lock` left held for a long time (Tine never removes it), and the sign-in
+ *  problem with a way to fix it, an `index.lock` left held for a long time (a stale one is offered for removal on
+ *  the person's click, GS-LOCK; Tine never removes a lock unasked), and the sign-in
  *  for an HTTPS remote (the token goes to a private file on this device). */
 export function GitAutocommitSetting(): JSX.Element {
   let alive = true;

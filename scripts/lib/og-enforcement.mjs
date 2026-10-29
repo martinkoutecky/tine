@@ -107,6 +107,10 @@ export const PINNED_FORMAT_COUNT = 35;
 // Writer sites Martin approved after the base, each with its ADR. Only an
 // approved format may add sites here; the count is exact, not a budget.
 export const APPROVED_WRITER_SITES = Object.freeze({
+  // Not a new format: one rename of an existing git file, `.git/index.lock`, aside to `tine-stale-index-<uuid>.lock`
+  // in the same gitdir before deleting it, on the person's "Remove the stale lock" click (ADR 0078 §1 slice 3).
+  // PENDING Martin's GS-LOCK answer: the branch batch/og-git-stale-lock must not integrate before it.
+  "src-tauri/src/owner/git_stale_lock.rs": { sites: 1, approval: "PENDING Martin GS-LOCK (tine-graph 'Tine Questions for Martin'); docs/adr/0078 §1 slice 3" },
   "src-tauri/src/owner/seen.rs": { sites: 1, approval: "Martin 2026-10-28 D-20261028-SG; seen design rev 2; docs/adr/0079" },
   "src-tauri/src/flight_store.rs": { sites: 3, approval: "og QUESTIONS Q5 2026-09-29; docs/adr/0058" },
   "src-tauri/src/concord_ledger.rs": { sites: 1, approval: "og QUESTIONS Q4 2026-09-29; docs/adr/0056" },
