@@ -1278,6 +1278,21 @@ try {
   await ensureMainWindow(browser);
   await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
   const pdfLink = browser.$(".pdf-link");
+  // A visible scan can conceal a multi-second JS fallback. Exercise the actual
+  // bundled decoder against the shipped WebView's WASM feature set (PDFJS5).
+  literalReceipt.decoder = await browser.execute(async () => {
+    const url = new URL("./pdfjs/wasm/openjpeg.wasm", document.baseURI).href;
+    const bytes = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", url); xhr.responseType = "arraybuffer";
+      xhr.onload = () => xhr.status === 200 || xhr.status === 0
+        ? resolve(xhr.response) : reject(new Error(`Decoder asset: HTTP ${xhr.status}`));
+      xhr.onerror = () => reject(new Error("Decoder asset could not be loaded"));
+      xhr.send();
+    });
+    return { url, bytes: bytes.byteLength, valid: WebAssembly.validate(bytes) };
+  });
+  if (!literalReceipt.decoder.valid) throw new Error("Bundled JPEG 2000 decoder is incompatible with this WebView; scans would use the slow JS fallback");
   try {
     await pdfLink.waitForExist({ timeout: 20_000 });
   } catch (error) {

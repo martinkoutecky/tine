@@ -34,6 +34,7 @@ export function isPdfPageRef(value: unknown): value is { num: number; gen: numbe
 // Resource ceilings are deliberately generous for books, scanned documents, and
 // architectural drawings, but bounded below the point where pdf.js/WebView canvas
 // allocations can take down the whole application.
+export { renderPdfPage } from "./pdfRenderTask";
 export const MAX_PDF_BYTES = 256 * 1024 * 1024;
 export const MAX_PDF_PAGES = 5000;
 export const MAX_PAGE_DIMENSION = 14_400; // PDF points: 200 inches at 72 dpi.

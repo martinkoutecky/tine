@@ -1,0 +1,201 @@
+From 02f1f41dbbf36b87bb30af44565e0058e0cd5179 Mon Sep 17 00:00:00 2001
+From: Calixte Denizet <calixte.denizet@gmail.com>
+Date: Sun, 14 Apr 2024 18:58:38 +0200
+Subject: [PATCH] Add support for buffer-based stream (see
+ https://github.com/uclouvain/openjpeg/pull/1212)
+
+---
+ src/lib/openjp2/openjpeg.c | 150 +++++++++++++++++++++++++++++++++++++
+ src/lib/openjp2/openjpeg.h |   8 ++
+ 2 files changed, 158 insertions(+)
+
+diff --git a/src/lib/openjp2/openjpeg.c b/src/lib/openjp2/openjpeg.c
+index 382d8f4f..dd776292 100644
+--- a/src/lib/openjp2/openjpeg.c
++++ b/src/lib/openjp2/openjpeg.c
+@@ -86,6 +86,156 @@ OPJ_BOOL OPJ_CALLCONV opj_set_error_handler(opj_codec_t * p_codec,
+     return OPJ_TRUE;
+ }
+ 
++/* ---------------------------------------------------------------------- */
++/* Buffer-based */
++
++static OPJ_SIZE_T
++opj_read_from_buffer(void* pdst, OPJ_SIZE_T len, opj_buffer_info_t* psrc)
++{
++    OPJ_SIZE_T n;
++
++    OPJ_BYTE* pcur = psrc->cur;
++    OPJ_BYTE* pend = psrc->buf + psrc->len;
++
++    assert(pend >= pcur);
++    n = (OPJ_SIZE_T)(pend - pcur);
++
++    if (n) {
++        if (n > len) {
++            n = len;
++        }
++
++        memcpy(pdst, psrc->cur, n);
++        psrc->cur += n;
++    } else {
++        n = (OPJ_SIZE_T) - 1;
++    }
++
++    return n;
++}
++
++static OPJ_SIZE_T
++opj_write_to_buffer(void* p_buffer, OPJ_SIZE_T p_nb_bytes,
++                    opj_buffer_info_t* p_source_buffer)
++{
++    OPJ_SIZE_T len, dist, n;
++
++    void* pbuf = p_source_buffer->buf;
++    void* pcur = p_source_buffer->cur;
++
++    assert(pcur >= pbuf);
++
++    len = p_source_buffer->len;
++
++    if (0 == len) {
++        len = 1;
++    }
++
++    dist = (OPJ_SIZE_T)(pcur - pbuf);
++
++    assert(dist <= len);
++    n = len - dist;
++
++    while (n < p_nb_bytes) {
++        len *= 2;
++        n = len - dist;
++    }
++
++    if (len != p_source_buffer->len) {
++        pbuf = opj_malloc(len);
++
++        if (0 == pbuf) {
++            return (OPJ_SIZE_T) - 1;
++        }
++
++        if (p_source_buffer->buf) {
++            memcpy(pbuf, p_source_buffer->buf, dist);
++            opj_free(p_source_buffer->buf);
++        }
++
++        p_source_buffer->buf = pbuf;
++        p_source_buffer->cur = pbuf + dist;
++        p_source_buffer->len = len;
++    }
++
++    memcpy(p_source_buffer->cur, p_buffer, p_nb_bytes);
++    p_source_buffer->cur += p_nb_bytes;
++
++    return p_nb_bytes;
++}
++
++static OPJ_OFF_T
++opj_skip_from_buffer(OPJ_OFF_T len, opj_buffer_info_t* psrc)
++{
++    OPJ_OFF_T n;
++
++    OPJ_BYTE* pcur = psrc->cur;
++    OPJ_BYTE* pend = psrc->buf + psrc->len;
++
++    assert(pend >= pcur);
++    n = (OPJ_OFF_T)(pend - pcur);
++
++    if (n) {
++        if (n > len) {
++            n = len;
++        }
++
++        psrc->cur += len;
++    } else {
++        n = (OPJ_OFF_T) - 1;
++    }
++
++    return n;
++}
++
++static OPJ_BOOL
++opj_seek_from_buffer(OPJ_OFF_T len, opj_buffer_info_t* psrc)
++{
++    OPJ_SIZE_T off = (OPJ_SIZE_T)len;
++
++    if (off > psrc->len) {
++        off = psrc->len;
++    }
++
++    psrc->cur = psrc->buf + off;
++
++    return OPJ_TRUE;
++}
++
++opj_stream_t* OPJ_CALLCONV
++opj_stream_create_buffer_stream(opj_buffer_info_t* psrc, OPJ_BOOL input)
++{
++    opj_stream_t* ps;
++
++    if (!psrc) {
++        return 0;
++    }
++
++    ps = opj_stream_default_create(input);
++
++    if (0 == ps) {
++        return 0;
++    }
++
++    opj_stream_set_user_data(ps, psrc, 0);
++    opj_stream_set_user_data_length(ps, psrc->len);
++
++    if (input)
++        opj_stream_set_read_function(
++            ps, (opj_stream_read_fn)opj_read_from_buffer);
++    else
++        opj_stream_set_write_function(
++            ps, (opj_stream_write_fn)opj_write_to_buffer);
++
++    opj_stream_set_skip_function(
++        ps, (opj_stream_skip_fn)opj_skip_from_buffer);
++
++    opj_stream_set_seek_function(
++        ps, (opj_stream_seek_fn)opj_seek_from_buffer);
++
++    return ps;
++}
++
+ /* ---------------------------------------------------------------------- */
+ 
+ static OPJ_SIZE_T opj_read_from_file(void * p_buffer, OPJ_SIZE_T p_nb_bytes,
+diff --git a/src/lib/openjp2/openjpeg.h b/src/lib/openjp2/openjpeg.h
+index 113481bb..edf30ae4 100644
+--- a/src/lib/openjp2/openjpeg.h
++++ b/src/lib/openjp2/openjpeg.h
+@@ -613,6 +613,11 @@ typedef struct opj_dparameters {
+ 
+ } opj_dparameters_t;
+ 
++typedef struct opj_buffer_info {
++    OPJ_BYTE* buf;
++    OPJ_BYTE* cur;
++    OPJ_SIZE_T len;
++} opj_buffer_info_t;
+ 
+ /**
+  * JPEG2000 codec V2.
+@@ -1264,6 +1269,9 @@ OPJ_API opj_stream_t* OPJ_CALLCONV opj_stream_create_file_stream(
+     OPJ_SIZE_T p_buffer_size,
+     OPJ_BOOL p_is_read_stream);
+ 
++OPJ_API opj_stream_t* OPJ_CALLCONV
++opj_stream_create_buffer_stream(opj_buffer_info_t*, OPJ_BOOL);
++
+ /*
+ ==========================================================
+    event manager functions definitions
+-- 
+2.39.3 (Apple Git-146)
+

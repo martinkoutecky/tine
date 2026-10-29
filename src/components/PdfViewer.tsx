@@ -47,7 +47,7 @@ import {
 import { PDF_THEME_KEY, MAX_PDF_PAGES, PDF_CANVAS_CACHE_PIXEL_BUDGET,
   PDF_CANVAS_CACHE_PAGE_CAP, storedPdfTheme, isPdfPageRef,
   isPdfAreaModifier, pageDimensionsError, safeCanvasSize, cropPdfArea,
-  errorMessage, type PendingArea, type PdfTarget } from "./pdfViewerPrimitives";
+  errorMessage, renderPdfPage, type PendingArea, type PdfTarget } from "./pdfViewerPrimitives";
 import { newIntersectionObserver, requestFrame, useOwnerWindow } from "../windowRealm";
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -634,7 +634,7 @@ export function PdfViewer(props: {
     canvas.style.width = "100%";
     canvas.style.height = "100%";
 
-    const task = page.render({
+    const task = renderPdfPage(page, {
       canvas,
       viewport,
       transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
