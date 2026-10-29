@@ -1,13 +1,13 @@
 import {
   activeSurface, clearFocusSurface, editingId, editingOwner, focusSurfaceFor,
 } from "../editorController";
-import { documentOf, isElementTag } from "../windowRealm";
+import { documentOf } from "../windowRealm";
 
 /** Arbitrate unscoped editors mounted in multiple occurrences of one block. */
 export function focusMountedEditor(
   id: string,
   surface: string,
-  editor: () => HTMLTextAreaElement,
+  editor: () => HTMLElement,
   focus: () => void,
 ): void {
   // The stamp covers siblings in one render flush. The active surface also
@@ -25,7 +25,7 @@ export function focusMountedEditor(
       const ref = editor();
       if (!ref.isConnected || editingId() !== id) return;
       const active = documentOf(ref).activeElement;
-      const taken = isElementTag(active, "textarea") && active.classList.contains("block-editor");
+      const taken = active?.matches('textarea.block-editor, [data-cm6-editor]');
       if (!taken) {
         focus();
         clearFocusSurface(id);

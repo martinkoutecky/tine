@@ -9,6 +9,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import { editorKind, editorSelector, scratchProfile } from "./lib/native-editor-bench.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const app = process.env.TINE_APP || path.join(root, "target/debug/tine");
@@ -33,15 +34,14 @@ fs.writeFileSync(embedSourceFile, embedSource.replace(PARENT, EMBED));
 const embedHostFile = path.join(graph, "pages", "Embed Host.md");
 fs.writeFileSync(embedHostFile, `- {{embed ((${EMBED}))}}\n  collapsed:: true\n- Page embed parent\n  - {{embed [[Page Body]]}}\n    collapsed:: true\n- [[Embed Host]]\n`);
 fs.writeFileSync(path.join(graph, "pages", "Page Body.md"), "- Embedded page body\n");
-const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(out, "data"),
-  XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"),
+const env = { ...process.env, ...scratchProfile(out), TINE_GRAPH: graph,
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const port = Number(process.env.E2E_DRIVER_PORT || 4874);
 const log = fs.openSync(path.join(out, "driver.log"), "w");
 const driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", webdriverServerArgs(port, port + 1, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"),
   { env, stdio: ["ignore", log, log], detached: true });
 const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
-  workingDiff: true, app, sha256: crypto.createHash("sha256").update(fs.readFileSync(app)).digest("hex"),
+  workingDiff: true, editor: editorKind, app, sha256: crypto.createHash("sha256").update(fs.readFileSync(app)).digest("hex"),
   journey: "Bound Collapse (one level) on a block whose only child is folded folds the block; bound Expand (one level) then opens only the block" };
 // The block's own property lines, up to its first child.
 const ownProps = (text, head) => {
@@ -77,7 +77,7 @@ try {
   const domId = await browser.execute(() => [...document.querySelectorAll("[data-block-id] > .block-main .block-content-wrapper")]
     .find(el => el.textContent.trim() === "Parent").closest("[data-block-id]").getAttribute("data-block-id"));
   await browser.$(`[data-block-id="${domId}"] > .block-main .block-content-wrapper`).click();
-  await browser.$(`[data-block-id="${domId}"] > .block-main textarea.block-editor`).waitForDisplayed({ timeout: 10000 });
+  await browser.$(`[data-block-id="${domId}"] > .block-main ${editorSelector}`).waitForDisplayed({ timeout: 10000 });
   await browser.keys(["Escape"]);
   stage = "Collapse (one level) folds the block once its child is folded";
   await browser.keys(["Control", "Alt", "k"]);
@@ -106,7 +106,7 @@ try {
       el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
     }, scope, text);
-    await browser.$(`${scope} textarea.block-editor`).waitForExist();
+    await browser.$(`${scope} ${editorSelector}`).waitForExist();
   };
   const visibleText = async (scope, text, expected) => browser.waitUntil(() => browser.execute((scope, text, expected) =>
     [...document.querySelectorAll(`${scope} .block-content`)].some(el => el.textContent.trim() === text && el.offsetParent) === expected,

@@ -3,12 +3,13 @@ import type { EditorView } from "@codemirror/view";
 import {
   beginPageHeaderEdit, blockHasFoldableBody, deleteBlock, indentBlock, insertOutlineAfter,
   mergeWithNext, mergeWithPrev, moveBlockFeed, moveItem, moveSelection, nextVisible,
-  nextVisibleOrExtend, node, outdentBlock, pageByName, prevVisible, selectBlock,
+  node, outdentBlock, pageByName, prevVisible, selectBlock,
   selectBlockSubtree, setCollapsed, splitBlock, withBlockMoving, withUndoUnit, type OutlineScope,
   removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter,
   setRaw,
 } from "../document";
-import { editingId, startEditing, type EditorSelection as CaretSelection } from "../editorController";
+import { captureEditIntent, editingId, startEditing, type EditorSelection as CaretSelection } from "../editorController";
+import { navigateJournalDown } from "./journalNavigation";
 import { isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
 import { guardedCommands } from "./cm6Commands";
 import { noticeMoveOutOfView } from "../moveNotice";
@@ -87,14 +88,16 @@ export function cm6Structure(ctx: StructureContext) {
     ctx.commit(v.state.doc.toString());
     void withBlockMoving(node(ctx.id).page, async () => {
       startEditing(ctx.id, s, null, editSurface());
+      const intentIsCurrent = captureEditIntent();
       const moving = ctx.scope && !ctx.scope.navOnly ? moveItem(ctx.id, dir) : moveBlockFeed(ctx.id, dir);
-      restore(v, s); // sibling reorders must retain the IME within the gesture
+      const active = () => v.dom.ownerDocument.activeElement;
+      if (intentIsCurrent() && (active() === v.contentDOM || active() === v.dom.ownerDocument.body)) restore(v, s);
       const moved = await moving;
       if (ctx.current() && moved !== false && moved !== "none") noticeMoveOutOfView(ctx.id, ctx.scope);
       await new Promise<void>(resolve => v.dom.ownerDocument.defaultView!.requestAnimationFrame(() => resolve()));
       // A DOM reorder can clear the browser range while retaining focus. CM's
       // observer reconciles that range on its frame; restore both state and DOM.
-      restore(v, s);
+      if (intentIsCurrent()) restore(v, s);
     }).catch(() => console.error("Block move failed"));
     return true;
   };
@@ -205,9 +208,8 @@ export function cm6Structure(ctx: StructureContext) {
       && pageByName(node(ctx.id).page)?.roots[0] === ctx.id) target = beginPageHeaderEdit(node(ctx.id).page);
     if (target) startEditing(target, { col, edge: forward ? "first" : "last" }, null, exiting ? null : navSurface());
     else if (forward && !ctx.scope) {
-      void nextVisibleOrExtend(ctx.id).then(id => {
-        if (id && ctx.current() && editingId() === ctx.id) startEditing(id, { col, edge: "first" }, null, navSurface());
-      });
+      void navigateJournalDown({ id: ctx.id, col, surface: navSurface(), editor: v.contentDOM,
+        current: editor => ctx.current() && editor === v.contentDOM });
     } else return false;
     return true;
   };

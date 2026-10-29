@@ -59,9 +59,16 @@ export function revealCaret(editor: HTMLTextAreaElement, scroller: HTMLElement |
   const row = textareaCaretRow(editor, caret ?? 0);
   if (!row) return false;
   const box = editor.getBoundingClientRect();
-  const view = scroller.getBoundingClientRect();
   const top = box.top + editor.clientTop + row.top - editor.scrollTop;
   const bottom = box.top + editor.clientTop + row.bottom - editor.scrollTop;
+  return revealCaretRect(editor, scroller, { top, bottom });
+}
+
+/** Both editor engines supply viewport coordinates; pane/pin policy has one owner. */
+export function revealCaretRect(editor: HTMLElement, scroller: HTMLElement | null, row: { top: number; bottom: number }): boolean {
+  if (!scroller || !editor.isConnected || !scroller.contains(editor) || documentOf(editor).activeElement !== editor) return false;
+  const { top, bottom } = row;
+  const view = scroller.getBoundingClientRect();
   const reservedTop = parseFloat(windowOf(scroller).getComputedStyle(scroller).scrollPaddingTop) || 0;
   const visibleTop = Math.max(view.top + scroller.clientTop + reservedTop, pinnedBottom(editor, scroller)) + MARGIN;
   const visibleBottom = view.top + scroller.clientTop + scroller.clientHeight - MARGIN;
@@ -88,6 +95,10 @@ export function revealCaret(editor: HTMLTextAreaElement, scroller: HTMLElement |
  * scroller, a blur, or the returned `cancel()` ends it: the user and any other
  * focus owner always win. */
 export function revealCaretSettled(editor: HTMLTextAreaElement, scroller: HTMLElement | null, stableFrames = 2, maxFrames = 40, lateMs = 10_000): () => void {
+  return watchCaretReveal(editor, scroller, () => revealCaret(editor, scroller), stableFrames, maxFrames, lateMs);
+}
+
+export function watchCaretReveal(editor: HTMLElement, scroller: HTMLElement | null, reveal: () => void, stableFrames = 2, maxFrames = 40, lateMs = 10_000): () => void {
   if (!scroller) return () => {};
   let stopped = false;
   let cancelFrame: (() => void) | undefined;
@@ -111,7 +122,7 @@ export function revealCaretSettled(editor: HTMLTextAreaElement, scroller: HTMLEl
       lateFrame = undefined;
       if (stopped) return;
       if (!editor.isConnected || documentOf(editor).activeElement !== editor) return stop();
-      revealCaret(editor, scroller);
+      reveal();
     });
   }
   function follow() {
@@ -132,7 +143,7 @@ export function revealCaretSettled(editor: HTMLTextAreaElement, scroller: HTMLEl
     same = now === last ? same + 1 : 0;
     last = now;
     if (same >= stableFrames || ++frames >= maxFrames) {
-      revealCaret(editor, scroller);
+      reveal();
       return follow();
     }
     cancelFrame = requestFrame(editor, tick);

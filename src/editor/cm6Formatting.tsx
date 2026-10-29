@@ -12,6 +12,7 @@ import { registerTransientLayer } from "../transientLayers";
 import { touchPrimary } from "../inputCapability";
 import { t } from "../i18n";
 import { guardedCommands } from "./cm6Commands";
+import { selectionToolbarPlacement } from "../components/block/selectionToolbarPlacement";
 
 const inlineCommands: Readonly<Record<string, InlineFormat>> = {
   "editor/bold": "bold", "editor/italics": "italic",
@@ -28,6 +29,14 @@ export function cm6Formatting(ctx: {
   const cap = useContext(CaptureCtx);
   const [selected, setSelected] = createSignal(false);
   const [overflow, setOverflow] = createSignal(false);
+  const placement = selectionToolbarPlacement(() => ctx.view()?.contentDOM, () => selected() && !touchPrimary(), () => {
+    const view = ctx.view();
+    if (!view) return null;
+    const s = view.state.selection.main;
+    const first = view.coordsAtPos(s.from, 1), last = view.coordsAtPos(Math.max(s.from, s.to - 1), -1);
+    return first && last ? { first, last } : null;
+  });
+  const mount = () => { const editor = ctx.view()?.contentDOM; if (editor) placement.follow(editor); };
   let overflowRef: HTMLDivElement | undefined;
   const layerId = `cm6-selection-overflow-${createUniqueId()}`;
   const current = () => ctx.current() && !!ctx.view()?.dom.isConnected && !ctx.view()!.compositionStarted;
@@ -91,6 +100,7 @@ export function cm6Formatting(ctx: {
     const hasSelection = !update.state.selection.main.empty;
     setSelected(hasSelection);
     if (!hasSelection) setOverflow(false);
+    if (update.selectionSet || update.docChanged) queueMicrotask(placement.position);
   };
   createEffect(() => {
     if (!overflow() || !selected()) return;
@@ -110,7 +120,7 @@ export function cm6Formatting(ctx: {
     classList={{ "sel-action-page-link": item.id === "page-link" }} title={item.title} aria-label={item.title}
     data-selection-action={item.id} onClick={() => action(item)}>{selectionActionLabel(item)}</button>;
   const Toolbar = () => <Show when={selected()}>
-    <div class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined}
+    <div ref={placement.toolbar} class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined}
       onPointerDown={event => event.preventDefault()} onMouseDown={event => event.preventDefault()}>
       <For each={essentialSelectionActions}>{item => button(item)}</For>
       <div class="sel-toolbar-secondary"><For each={secondarySelectionActions}>{item => button(item)}</For></div>
@@ -124,5 +134,5 @@ export function cm6Formatting(ctx: {
       </div></Show>
     </div>
   </Show>;
-  return { commands, keydown, changed, Toolbar };
+  return { commands, keydown, changed, mount, Toolbar };
 }

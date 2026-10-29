@@ -4,7 +4,9 @@ import { Annotation, Compartment, EditorSelection, EditorState, StateEffect, Sta
 import { Decoration, EditorView, keymap, type DecorationSet } from "@codemirror/view";
 import { defaultKeymap } from "@codemirror/commands";
 import { blockWritable, depthOf, isBlockMoving, node, pageByName, setRaw, type OutlineScope } from "../document";
-import { clearFocusSurface, editingId, editingOwner, endEdit, focusSurfaceFor, noteSurfaceFocused, registerHistoryEditorTarget, takeCaretFor, takeHistoryEditorSelectionFor } from "../editorController";
+import { captureEditIntent, editingId, editingOwner, endEdit, noteSurfaceFocused, registerHistoryEditorTarget, takeCaretFor, takeHistoryEditorSelectionFor } from "../editorController";
+import { focusMountedEditor } from "../editor/surfaceFocus";
+import { cm6CaretReveal } from "../editor/cm6CaretReveal";
 import { BUILTIN_HIDE, SHEET_CELL_HIDE } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
 import { editorCommitRecovery } from "../editor/commitRecovery";
@@ -252,15 +254,26 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         EditorView.domEventHandlers({
           focus: () => { noteSurfaceFocused(props.surface); return false; },
           blur: (event, v) => {
+            const intentIsCurrent = captureEditIntent();
             // Reorders can blur a retained editor; the structural gesture owns
             // its focus restoration. Palette actions still need embed context.
             const leave = () => {
-              if (!current() || editingId() !== props.id) return;
+              if (!current() || !intentIsCurrent() || editingId() !== props.id) return;
               commit(v.state.doc.toString());
               if (assets.holdsBlur() || isBlockMoving() || (event.relatedTarget as HTMLElement | null)?.closest?.(".date-picker")
                 || inPageFindPreservesEditorBlur()
                 || embedExit && (event.relatedTarget as HTMLElement | null)?.closest?.(".switcher")) return;
-              if (!v.hasFocus) endEdit("blur");
+              if (v.hasFocus) return;
+              const target = event.relatedTarget as HTMLElement | null;
+              const handoff = target?.matches('[data-cm6-editor]')
+                && target.getAttribute("data-cm6-editor") === props.id ? target : null;
+              const endIfCurrent = () => {
+                if (!intentIsCurrent() || editingId() !== props.id) return;
+                if (handoff?.isConnected && handoff.ownerDocument.activeElement === handoff) return;
+                endEdit("blur");
+              };
+              if (handoff) queueMicrotask(endIfCurrent);
+              else endIfCurrent();
             };
             // compositionend's pending DOM reconciliation owns its last flush.
             // A blur during preedit still commits the live buffer before exit.
@@ -295,6 +308,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       ] }),
     });
     completion.mount();
+    formatting.mount();
     onCleanup(registerHistoryEditorTarget({ blockId: props.id, owner: editingOwner(), surface: props.surface,
       selection: () => { const s = view!.state.selection.main, offset = codeView.mixed() ? code()!.open.length : 0; return { start: s.from + offset, end: s.to + offset }; },
       viewport: () => ({ editor: view!.contentDOM, scroller: nearestScrollableY(view!.contentDOM) }),
@@ -378,20 +392,12 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       view.dispatch({ selection: { anchor: Math.min(anchor, view.state.doc.length), head: Math.min(head, view.state.doc.length) }, scrollIntoView: true });
       view.focus();
     };
-    const focusSurface = focusSurfaceFor(props.id);
-    if (!focusSurface || focusSurface === props.surface) {
-      focusNow();
-      queueMicrotask(() => clearFocusSurface(props.id));
-    } else {
-      queueMicrotask(() => {
-        if (!view || !current() || !view.dom.isConnected || editingId() !== props.id) return;
-        const active = host.ownerDocument.activeElement;
-        if (!active?.closest('textarea.block-editor, [data-block-editor="cm6"]')) {
-          focusNow();
-          clearFocusSurface(props.id);
-        }
-      });
-    }
+    focusMountedEditor(props.id, props.surface, () => view!.contentDOM, () => {
+      if (current()) focusNow();
+    });
+    const caretReveal = cm6CaretReveal(view);
+    view.dispatch({ effects: StateEffect.appendConfig.of(caretReveal.extension) });
+    onCleanup(caretReveal.cancel);
     removeCommandBridge = registerFocusedEditorCommandBridge({
       blockId: props.id,
       blur: () => view?.contentDOM.blur(),

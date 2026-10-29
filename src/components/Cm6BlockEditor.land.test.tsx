@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { EditorView } from "@codemirror/view";
 import { Cm6BlockEditor } from "./Cm6BlockEditor";
@@ -12,6 +12,12 @@ import { installKeybindings } from "../keybindings";
 import * as clipboard from "../clipboard";
 
 let dispose: (() => void) | undefined;
+beforeEach(() => {
+  // These directly mount CM6 even in the default-off suite. jsdom has no
+  // Range layout; match the empty geometry used by the switch-on census.
+  if (!Range.prototype.getClientRects) Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+  if (!Range.prototype.getBoundingClientRect) Range.prototype.getBoundingClientRect = () => new DOMRect();
+});
 afterEach(() => {
   vi.restoreAllMocks();
   dispose?.(); dispose = undefined;

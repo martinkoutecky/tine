@@ -8,8 +8,8 @@ export async function navigateJournalDown(request: {
   id: string;
   col: number;
   surface: string | null;
-  editor: HTMLTextAreaElement;
-  current: (editor: HTMLTextAreaElement) => boolean;
+  editor: HTMLElement;
+  current: (editor: HTMLElement) => boolean;
 }): Promise<void> {
   const { id, col, surface, editor, current } = request;
   const intentIsCurrent = captureEditIntent();

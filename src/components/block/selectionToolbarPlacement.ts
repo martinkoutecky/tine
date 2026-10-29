@@ -6,7 +6,8 @@ import { listen, newResizeObserver, viewportOf } from "../../windowRealm";
 /** Desktop selection toolbar placement (UI-SEL-TOOLBAR): above the selection's
  * first line, below its last when there is no room, clamped to the pane and
  * below a sticky seen notice. `active` is false on touch or with no selection. */
-export function selectionToolbarPlacement(editor: () => HTMLTextAreaElement | undefined, active: () => boolean) {
+export function selectionToolbarPlacement(editor: () => HTMLElement | undefined, active: () => boolean,
+  selection?: () => { first: { top: number; bottom: number }; last: { top: number; bottom: number } } | null) {
   let toolbarRef: HTMLDivElement | undefined;
   const position = () => {
     const ref = editor();
@@ -22,8 +23,10 @@ export function selectionToolbarPlacement(editor: () => HTMLTextAreaElement | un
     const bottomEdge = Math.min(viewport.height, bounds?.bottom ?? viewport.height) - 4;
     toolbar.style.maxWidth = `${Math.max(0, rightEdge - leftEdge)}px`;
     const box = ref.getBoundingClientRect();
-    const line = textareaCaretLineRect(ref, ref.selectionStart) ?? box;
-    const end = textareaCaretLineRect(ref, Math.max(ref.selectionStart, ref.selectionEnd - 1)) ?? line;
+    const measured = selection?.();
+    const textarea = ref as HTMLTextAreaElement;
+    const line = selection ? measured?.first ?? box : textareaCaretLineRect(textarea, textarea.selectionStart) ?? box;
+    const end = selection ? measured?.last ?? line : textareaCaretLineRect(textarea, Math.max(textarea.selectionStart, textarea.selectionEnd - 1)) ?? line;
     const size = toolbar.getBoundingClientRect();
     const above = line.top - size.height - 4;
     const top = Math.max(topEdge, Math.min(above >= topEdge ? above : end.bottom + 4, bottomEdge - size.height));
@@ -43,7 +46,7 @@ export function selectionToolbarPlacement(editor: () => HTMLTextAreaElement | un
       queueMicrotask(position);
     },
     /** Call from the editor's onMount: follows scroll and editor resizing. */
-    follow: (ref: HTMLTextAreaElement) => {
+    follow: (ref: HTMLElement) => {
       onCleanup(listen(ref, "scroll", position, true));
       onCleanup(listen(ref, "resize", position));
       const observer = newResizeObserver(ref, position);
