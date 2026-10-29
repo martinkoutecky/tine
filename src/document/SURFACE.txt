@@ -116,6 +116,7 @@ moveSelectionItems
 nextVisible
 nextVisibleOrExtend
 node
+onBlockRawChanged  # why: outline window geometry keeps one raw-change listener per window, not one tracked computation per row (BIGLOAD-090b); batch-og-bigload-090b
 orderedListMarker
 outdentBlock
 outdentSelection
