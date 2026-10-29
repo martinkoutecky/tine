@@ -248,7 +248,9 @@ mod journal_guide_tests {
         // GH #796: where a plain click or Enter opens a Search-tab result is a setting.
         assert!(reference.contains("**Settings → Editor → Advanced → Search results open in**"));
         assert!(reference.contains("**New tab** is the default"));
-        assert!(tips.contains("**Settings → Editor → Advanced → Search results open in → This tab**"));
+        assert!(
+            tips.contains("**Settings → Editor → Advanced → Search results open in → This tab**")
+        );
     }
 
     #[test]
