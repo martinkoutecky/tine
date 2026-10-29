@@ -92,10 +92,10 @@ it("offers both steps for a single change and wraps back to it", async () => {
     expect(button(host, "next").textContent).toBe("Next change");
     button(host, "next").click();
     await vi.waitFor(() => expect(position(host)).toBe("1 of 1"));
-    expect(flashed(host)?.getAttribute("data-block-id")).toBe("seen-2");
+    await vi.waitFor(() => expect(flashed(host)?.getAttribute("data-block-id")).toBe("seen-2"));
     button(host, "previous").click();
     await vi.waitFor(() => expect(position(host)).toBe("1 of 1, wrapped around"));
-    expect(flashed(host)?.getAttribute("data-block-id")).toBe("seen-2");
+    await vi.waitFor(() => expect(flashed(host)?.getAttribute("data-block-id")).toBe("seen-2"));
     expect(editingId()).toBeNull();
   } finally { dispose(); }
 });
