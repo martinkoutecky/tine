@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { IDENTITIES, IDENTITY } from "./lib/app-identity.mjs";
+import { IDENTITIES, IDENTITY, SHIP } from "./lib/app-identity.mjs";
 import { BETA_TAG } from "./release-policy.mjs";
 import { assembleCandidate } from "./assemble-release-candidate.mjs";
 import {
@@ -35,6 +35,22 @@ for (const identity of Object.values(IDENTITIES)) {
 }
 const releaseWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/release.yml"), "utf8");
 const ciWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/ci.yml"), "utf8");
+// Desktop storage acceptance must execute the app's recovery/retirement
+// boundaries as well as store tests, and use the installed app-data volume.
+const windowsAppTests = ciWorkflow.match(/& \$exe backup::[^\n]*/)?.[0] ?? "";
+const macosAppTests = ciWorkflow.match(/cargo test --no-fail-fast -p tine --lib --features custom-protocol -- backup::[^\n]*/)?.[0] ?? "";
+for (const command of [windowsAppTests, macosAppTests]) {
+  for (const filter of ["root_identity::", "host_retirement::", "flight::tests::storage_report_is_copyable_and_private"]) {
+    assert.ok(command.includes(filter), `desktop app acceptance omits ${filter}: ${command}`);
+  }
+}
+for (const platform of ["Windows", "macOS"]) {
+  const step = ciWorkflow.split(`- name: ${platform} resolved app-data storage acceptance`)[1]?.split(/\n      - /)[0] ?? "";
+  assert.ok(step.includes("TINE_STORAGE_ACCEPT_ROOT"), `${platform} app-data cold recovery has no volume root`);
+  assert.ok(step.includes("TINE_HOST_FS_ROOT"), `${platform} app-data C6 has no volume root`);
+  assert.ok(step.includes("storage_acceptance_tests -- --ignored"), `${platform} omits cold recovery`);
+  assert.ok(step.includes("m3_c6_"), `${platform} omits C6 faults/admission/retry`);
+}
 const uiE2eWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/ui-e2e.yml"), "utf8");
 const flatpakWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/flatpak.yml"), "utf8");
 const flatpakMetadataWorkflow = fs.readFileSync(
@@ -125,9 +141,11 @@ assert.doesNotMatch(releaseWorkflow, /check-flatpak-/,
   "release.yml still does not run the manifest-source drift checks (they stay in ci)");
 assert.ok(!Object.keys(layout.updaterPlatforms).some((platform) => /flatpak/i.test(platform)),
   "the updater must not reference the Flatpak");
-assert.match(releaseWorkflow,
-  /\n  flatpak:\n    needs: preflight\n    uses: \.\/\.github\/workflows\/flatpak\.yml\n    with:\n      identity: experiment\n/,
-  "release.yml must call flatpak.yml as a parallel build job with the Beta identity");
+// The Flatpak lane builds the identity this tree ships (Beta on develop and release/X.Y
+// before the stable flip, the released identity after it).
+assert.ok(releaseWorkflow.includes(
+  `\n  flatpak:\n    needs: preflight\n    uses: ./.github/workflows/flatpak.yml\n    with:\n      identity: ${SHIP}\n`),
+  "release.yml must call flatpak.yml as a parallel build job with the shipped identity");
 assert.match(releaseWorkflow,
   /\n  stage-flatpak:\n    needs: \[preflight, flatpak\][\s\S]*?release-workflow-inputs\.mjs flatpak-x64[\s\S]*?stage-release-lane\.mjs flatpak-x64[\s\S]*?name: release-flatpak-x64/,
   "the Flatpak bundle must be named by the layout and staged like every other lane");

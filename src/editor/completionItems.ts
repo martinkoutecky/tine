@@ -4,7 +4,8 @@ import { graphEpoch } from "../graphSession";
 import { graphOwner, readOwned } from "../owned";
 import { msg } from "../i18n";
 import { pushToast } from "../toasts";
-import { applyTemplateVars, prepareTemplateVars } from "./templateVars";
+import { prepareTemplateVars } from "./templateVars";
+export { templateToOutline } from "./templateVars";
 
 export interface AcItem {
   label: string;
@@ -47,15 +48,6 @@ export async function getTemplates(): Promise<import("../types").TemplateDto[]> 
     if (owner()) pushToast(msg("editor-block-couldn-t-load-templates", { detail: String(error) }), "error");
   }
   return templateCache ?? [];
-}
-export function templateToOutline(
-  b: import("../types").BlockDto,
-  currentPage?: string
-): { raw: string; children: any[] } {
-  return {
-    raw: applyTemplateVars(b.raw, currentPage),
-    children: b.children.map((c) => templateToOutline(c, currentPage)),
-  };
 }
 
 

@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tine_store::{PageId, SaveBase, SaveOutcome, Store};
+use crate::{PageId, SaveBase, SaveOutcome, Store};
 
 fn scratch(label: &str) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -35,7 +35,7 @@ fn save_raw(store: &Store, id: &PageId, raw: &[&str]) -> SaveOutcome {
         })
         .collect();
     store.save(
-        tine_store::EditKind::ReplacePage,
+        crate::EditKind::ReplacePage,
         id,
         SaveBase::Existing(read.rev),
         &doc,
@@ -60,7 +60,7 @@ fn raws(store: &Store, id: &PageId) -> Vec<String> {
 /// the newer bytes (own save, and an external/Syncthing write alike).
 #[test]
 fn f1_custom_journal_format_reload_serves_disk_and_never_clobbers_newer_bytes() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     for (format, stem) in [
         ("dd-MM-yyyy", "24-06-2026"),
         ("yyyyMMdd", "20260624"),
@@ -126,14 +126,14 @@ fn f1_custom_journal_format_reload_serves_disk_and_never_clobbers_newer_bytes() 
 #[cfg(feature = "test-faults")]
 #[test]
 fn f2_crash_in_multi_page_undo_keeps_each_pages_old_bytes() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let root = scratch("f2");
     fs::write(root.join("pages/A.md"), "- old A\n").unwrap();
     fs::write(root.join("pages/B.md"), "- old B\n").unwrap();
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "c3s_content_loss::f2_undo_crash_worker",
+            "test_transactions::c3s_content_loss::f2_undo_crash_worker",
             "--nocapture",
         ])
         .env("TINE_C3S_ROOT", &root)
@@ -171,16 +171,16 @@ fn f2_crash_in_multi_page_undo_keeps_each_pages_old_bytes() {
 #[cfg(feature = "test-faults")]
 #[test]
 fn f2_completed_undo_restores_old_bytes_and_leaves_no_staged_copy() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let root = scratch("f2-ok");
     fs::write(root.join("pages/A.md"), "- old A\n").unwrap();
     fs::write(root.join("pages/B.md"), "- old B\n").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
     let entries = two_page_entries(&store);
-    store.inject_fault(tine_store::FaultPoint::Stage2MismatchAt(1));
+    store.inject_fault(crate::FaultPoint::Stage2MismatchAt(1));
     assert!(matches!(
         save_all(&store, &entries),
-        tine_store::TxOutcome::NotCommitted { step: 1, .. }
+        crate::TxOutcome::NotCommitted { step: 1, .. }
     ));
     assert_eq!(
         fs::read_to_string(root.join("pages/A.md")).unwrap(),
@@ -204,14 +204,14 @@ fn save_all(
         PageId,
         SaveBase,
         tine_core::model::PageDto,
-        Vec<tine_store::EditKind>,
+        Vec<crate::EditKind>,
     )],
-) -> tine_store::TxOutcome {
-    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+) -> crate::TxOutcome {
+    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
     for (id, base, doc, kinds) in entries {
         tx.save_page(kinds, id, base.clone(), doc);
     }
-    tx.commit()
+    tx.commit_internal()
 }
 
 #[cfg(feature = "test-faults")]
@@ -221,7 +221,7 @@ fn two_page_entries(
     PageId,
     SaveBase,
     tine_core::model::PageDto,
-    Vec<tine_store::EditKind>,
+    Vec<crate::EditKind>,
 )> {
     ["A", "B"]
         .into_iter()
@@ -234,7 +234,7 @@ fn two_page_entries(
                 id,
                 SaveBase::Existing(read.rev),
                 doc,
-                vec![tine_store::EditKind::ReplacePage],
+                vec![crate::EditKind::ReplacePage],
             )
         })
         .collect()
@@ -243,7 +243,7 @@ fn two_page_entries(
 #[cfg(feature = "test-faults")]
 #[test]
 fn f2_undo_crash_worker() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let Ok(root) = std::env::var("TINE_C3S_ROOT") else {
         return;
     };
@@ -251,8 +251,8 @@ fn f2_undo_crash_worker() {
     let entries = two_page_entries(&store);
     // An external writer changes B just before its write (an external-editor
     // race): B is refused unwritten and undo runs for A alone.
-    store.inject_fault(tine_store::FaultPoint::Stage2MismatchAt(1));
-    store.inject_fault(tine_store::FaultPoint::AbortAfterUndoWithdraw);
+    store.inject_fault(crate::FaultPoint::Stage2MismatchAt(1));
+    store.inject_fault(crate::FaultPoint::AbortAfterUndoWithdraw);
     let _ = save_all(&store, &entries);
     panic!("undo did not reach the withdraw abort point");
 }
@@ -262,7 +262,7 @@ fn f2_undo_crash_worker() {
 /// (pinned by `src/editor/leadingMarkerSplice.test.ts`).
 #[test]
 fn f3_extra_space_after_bullet_stays_in_the_block_raw() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let root = scratch("f3");
     fs::write(root.join("pages/T.md"), "-  TODO buy milk\n").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;

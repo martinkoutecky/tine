@@ -31,7 +31,7 @@ body {
      padding, putting every bullet 2px above the middle of its own first line. A
      typography preset retunes the token, not three rules. Integer px, not a
      unitless ratio: see `.block-content`. */
-  --ls-block-line-height: 26px;
+  --ls-block-line-height: var(--tine-typography-line-height, 26px);
   --ls-block-content-pad-y: 2px;
   /* Width of the sidebar's drag-to-resize strip, and of the gutter the sidebar
      reserves so that strip never lands on top of the scrollbar (GH #435). */
@@ -6914,8 +6914,9 @@ img.emoji {
 /* ---------------------------------------------------------- references */
 
 .linked-references {
-  margin-top: 40px;
-  padding-top: 12px;
+  /* UI-LP-FIX F7: the trailing-block target above already adds 30px of air. */
+  margin-top: 16px;
+  padding-top: 8px;
 }
 
 .references-header {
@@ -6932,6 +6933,7 @@ img.emoji {
 
 .references-header > button { margin-left: 0; }
 .references-header > button:first-of-type { margin-left: auto; }
+.references-header > .reference-bulk-controls ~ button:first-of-type { margin-left: 0; }
 
 .hierarchy-toggle {
   background: none;
@@ -7115,6 +7117,7 @@ img.emoji {
 }
 
 .references-count-stale {
+  display: inline-flex;
   color: var(--text-muted);
   opacity: 0.6;
 }
@@ -7166,7 +7169,7 @@ img.emoji {
   display: flex;
   justify-content: flex-end;
   gap: 6px;
-  margin: -2px 0 8px;
+  margin: 0 0 0 auto;
 }
 
 .reference-bulk-controls button,
@@ -7324,6 +7327,8 @@ img.emoji {
   padding: 4px 0 4px 12px;
 }
 .block-references-header {
+  display: flex;
+  align-items: center;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
@@ -7859,7 +7864,7 @@ html.tine-embed-shading-accent .embed-block {
 }
 .embed-page-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   min-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
 }
@@ -7867,6 +7872,8 @@ html.tine-embed-shading-accent .embed-block {
   flex: none;
   width: 14px;
   height: 14px;
+  /* GH #770: center on the first line, including when the page link wraps. */
+  margin-top: calc((var(--ls-block-line-height) - 14px) / 2);
   fill: currentColor;
   color: var(--text-muted);
 }
@@ -9005,25 +9012,7 @@ html.tine-embed-shading-accent .embed-block {
   border-radius: 9px;
   background: var(--bg-secondary);
 }
-.query-board-column h2 {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 0 0 8px;
-  font-size: 13px;
-}
-.query-board-count {
-  color: var(--text-muted);
-  font-weight: 400;
-}
-.query-board-card {
-  display: block;
-  width: 100%;
-  margin-top: 5px;
-  padding: 8px;
-  overflow-wrap: anywhere;
-  text-align: left;
-}
+/* board column heading, count and cards: query.css (F3/F4) */
 
 .query-advanced-overlay {
   align-items: center;
@@ -9126,5 +9115,17 @@ html.tine-embed-shading-accent .embed-block {
 }
 .root-recovery-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border-color); }
 .root-recovery-notice > span { min-width: 0; overflow-wrap: anywhere; }
+.owner-protection-notice { position: relative; flex-shrink: 0; max-height: 30vh; overflow: auto; padding: 6px 16px; background: var(--background-secondary); }
+.owner-protection-title { flex: 1 1 auto; font-weight: 500; }
+.owner-protection-explanation { min-width: 0; margin-top: 8px; }
+.owner-protection-explanation p { margin: 4px 0; }
+.owner-protection-notice code, .owner-protection-notice pre { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.owner-protection-notice details { min-width: 0; }
+.owner-protection-notice details[open] { flex-basis: 100%; }
+.owner-protection-notice summary { cursor: pointer; }
+/* Git sync's fixes (Settings → Graph → Git and its notice): the git command on its own line, wrapped and selectable. */
+.git-sync-fixes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.git-sync-fixes code { flex-basis: 100%; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.owner-protection-error { flex-basis: 100%; margin: 0; }
 .settings-backup-origin { display: block; color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
 .settings-backup-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }

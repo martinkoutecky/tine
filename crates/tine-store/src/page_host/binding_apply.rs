@@ -36,15 +36,28 @@ pub struct HostOp {
     pub kinds: Vec<EditKind>,
     /// The writer's contract for unsaved input on its pages.
     pub policy: Input,
-    /// `(receiver, source)`: the receiver's new bytes took the source's,
-    /// which the operation deletes; its writes publish in a rename's order
-    /// (the receiver, then the other pages, then the source's deletion).
-    /// One move per operation in P2.
-    pub moved: Option<(PageId, PageId)>,
+    /// Each `(receiver, source)`: the receiver's new bytes took the
+    /// source's, which the operation deletes; its writes publish in a
+    /// rename's order (the receivers, then the other pages, then the
+    /// sources' deletions). No page is in two moves (S2: a namespace rename
+    /// moves every page of the namespace in one operation).
+    pub moves: Vec<(PageId, PageId)>,
+    /// In-memory publication receipts, recorded at the guarded live rename,
+    /// before any later host action. Kept by admitted work even if its caller
+    /// times out. Only publications of this operation's bytes at its version
+    /// or later produce receipts. Admission refuses a path already in this
+    /// set under the same driver state that records publication, so a stale
+    /// retry must replan rather than publish that path again.
+    pub publications: Option<Arc<Mutex<BTreeSet<PageId>>>>,
     /// Transaction creation preconditions: page, optional DTO name, optional
     /// move source. In-memory admission metadata; no persisted format changes.
     /// Hand-built operations use an empty vector and the raw-create checks.
     pub(crate) creation_checks: Vec<(PageId, Option<String>, Option<crate::FileId>)>,
+    /// The planner's view (`Transaction::expect_view`, B2): admitted only
+    /// while no publication or config delivery has happened since, else the
+    /// feature replans (in-scope scenario: a sync service or an external
+    /// editor changed a page or `config.edn` since the plan). In memory only.
+    pub(crate) view: Option<(crate::GraphRev, Arc<tine_core::config::Config>)>,
 }
 
 /// Why a host operation did not apply, or did not finish.
@@ -75,6 +88,9 @@ pub enum ApplyRefusal {
     /// No answer or no publication within `OPERATION_WAIT`, or the host
     /// stopped: the operation may still complete.
     Uncertain,
+    /// A folded entry move may be live, but the whole rename did not
+    /// confirm completion. Retry an ordinary rename to the intended name.
+    SpellingIncomplete,
 }
 
 /// What one admission attempt came to.
@@ -97,6 +113,36 @@ impl PageHost {
     /// for the operation's answer and every page's publication, as
     /// `rename` does.
     pub fn apply(&self, op: HostOp) -> Result<(), ApplyRefusal> {
+        // Validate kinds at their admission owner, including before a
+        // folded wrapper can move an entry. The wrapper forwards them intact.
+        if op.kinds.is_empty() {
+            return Err(ApplyRefusal::Refused);
+        }
+        // A folding volume has one key for both spellings. Its content is
+        // an ordinary operation; the byte-preserving entry move runs on the
+        // driver before that operation is admitted (S3, no new draft record).
+        let mut spellings = Vec::new();
+        for (dst, src) in &op.moves {
+            let source = self.try_identify(src).ok_or(ApplyRefusal::Refused)?;
+            let target = self.try_identify(dst).ok_or(ApplyRefusal::Refused)?;
+            // A case-only move on a sensitive volume also needs the
+            // entry-first path: registering its source would otherwise make
+            // the absent destination an unproved folded collision. A real
+            // second entry (or a separately held destination) still refuses.
+            let sensitive_case_move = crate::file_kind::case_only(&src.file(), &dst.file())
+                && !target.2
+                && self
+                    .store
+                    .page_plan(None)
+                    .admission_slot(&dst.file(), None, Some(&src.file()))
+                    .is_ok();
+            if source.0 == target.0 || sensitive_case_move {
+                spellings.push((dst.clone(), src.clone(), source.0, source.1));
+            }
+        }
+        if !spellings.is_empty() {
+            return self.apply_spellings(op, spellings);
+        }
         let ended = || ApplyRefusal::Refused;
         let mut effects = BTreeMap::new();
         let mut spellings = BTreeMap::new();
@@ -133,19 +179,22 @@ impl PageHost {
         // A move deletes its source, planned from its bytes, and writes its
         // receiver; the host checks the same shape, so a refusal under its
         // state is only ever a changed page.
-        let moved = match &op.moved {
-            Some((dst, src)) => match (spellings.get(dst), spellings.get(src)) {
+        let mut moved = Vec::new();
+        let mut in_a_move = BTreeSet::new();
+        for (dst, src) in &op.moves {
+            match (spellings.get(dst), spellings.get(src)) {
                 (Some(dst), Some(src))
                     if dst != src
                         && matches!(effects.get(src), Some((None, Some(_))))
-                        && matches!(effects.get(dst), Some((Some(_), _))) =>
+                        && matches!(effects.get(dst), Some((Some(_), _)))
+                        && in_a_move.insert(dst.clone())
+                        && in_a_move.insert(src.clone()) =>
                 {
-                    Some((dst.clone(), src.clone()))
+                    moved.push((dst.clone(), src.clone()));
                 }
                 _ => return Err(ApplyRefusal::Refused),
-            },
-            None => None,
-        };
+            }
+        }
         // OG-RULES Rule 8 (A-K1): an operation records the edit kinds it names.
         if effects.is_empty() || op.kinds.is_empty() {
             return Err(ApplyRefusal::Refused);
@@ -156,6 +205,14 @@ impl PageHost {
         let shared = Arc::downgrade(&self.driver.shared);
         let effects = Arc::new(effects);
         let store = self.store.clone();
+        let publications = op.publications.clone();
+        let mut publication_names: BTreeMap<PageKey, Vec<PageId>> = BTreeMap::new();
+        for (page, key) in &spellings {
+            publication_names
+                .entry(key.clone())
+                .or_default()
+                .push(page.clone());
+        }
         let creations: Vec<_> = op
             .pages
             .iter()
@@ -189,11 +246,32 @@ impl PageHost {
             let shared = shared.clone();
             let store = store.clone();
             let creations = creations.clone();
+            let view = op.view.clone();
             let save_rules = save_rules.clone();
+            let publications = publications.clone();
+            let publication_names = publication_names.clone();
             let admit = move |state: &mut HostState| {
                 let host = &state.progress.host;
                 if !host.alive {
                     return Wait::Ready(Err(ApplyRefusal::Refused));
+                }
+                // The planner's receipt snapshot may predate an older
+                // Uncertain operation's publication and a window undo.
+                // Admission and guarded publication hold this same driver
+                // state, so an overlapping retry cannot admit stale work.
+                if publications.as_ref().is_some_and(|sink| {
+                    let paths = sink.lock().unwrap_or_else(|p| p.into_inner());
+                    publication_names
+                        .values()
+                        .flatten()
+                        .any(|page| paths.contains(page))
+                }) {
+                    return Wait::Ready(Err(ApplyRefusal::Changed));
+                }
+                if let Some((rev, config)) = &view {
+                    if store.changes.rev() != *rev || !Arc::ptr_eq(&store.config().config, config) {
+                        return Wait::Ready(Err(ApplyRefusal::Changed));
+                    }
                 }
                 let unsaved = retained::unsaved(host, &keys);
                 if !unsaved.is_empty() {
@@ -210,8 +288,7 @@ impl PageHost {
                     }
                 }
                 let (disposition, reply) = state.progress.with_host(|host| {
-                    let moved = moved.as_ref().map(|(d, s)| (d.as_str(), s.as_str()));
-                    let disposition = host.apply(&effects, moved);
+                    let disposition = host.apply(&effects, &moved);
                     let pending = disposition == Disposition::Pending;
                     if pending {
                         for (key, bytes, name, source) in &save_rules {
@@ -219,10 +296,19 @@ impl PageHost {
                                 .note_creation(key, bytes.clone(), name.clone(), source.clone());
                         }
                     }
-                    (
-                        disposition,
-                        pending.then(|| host.register_reply()).flatten(),
-                    )
+                    let reply = pending.then(|| host.register_reply()).flatten();
+                    if let (Some(id), Some(sink)) = (reply, publications.clone()) {
+                        host.order.watch_publications(
+                            id,
+                            sink,
+                            publication_names.clone(),
+                            effects
+                                .iter()
+                                .map(|(key, (bytes, _))| (key.clone(), bytes.clone()))
+                                .collect(),
+                        );
+                    }
+                    (disposition, reply)
                 });
                 if state.progress.host.lock_request.is_some() {
                     // It runs again under its path locks.
@@ -270,11 +356,11 @@ impl PageHost {
                             deadline = std::time::Instant::now() + OPERATION_WAIT;
                             continue;
                         }
-                        Err(ReserveRefusal::Unsaved(pages)) => {
+                        Err(FlushRefusal::Unsaved(pages)) => {
                             let page = pages.into_iter().next().expect("unsaved");
                             return Err(ApplyRefusal::Unsaved(page));
                         }
-                        Err(ReserveRefusal::Busy) => return Err(ApplyRefusal::Busy),
+                        Err(FlushRefusal::Busy) => return Err(ApplyRefusal::Busy),
                     }
                 }
                 Ok(Err(refusal)) => return Err(refusal),
@@ -312,10 +398,10 @@ impl PageHost {
         let deadline = std::time::Instant::now() + OPERATION_WAIT;
         self.flush(&keys, &keys, deadline)
             .map_err(|refusal| match refusal {
-                ReserveRefusal::Unsaved(pages) => {
+                FlushRefusal::Unsaved(pages) => {
                     ApplyRefusal::Unsaved(pages.into_iter().next().expect("unsaved"))
                 }
-                ReserveRefusal::Busy => ApplyRefusal::Busy,
+                FlushRefusal::Busy => ApplyRefusal::Busy,
             })
     }
 }
@@ -327,7 +413,7 @@ pub(in crate::page_host) fn creation_refusal(
     store: &crate::Store,
     creations: &[(crate::FileId, Option<String>, Option<crate::FileId>)],
 ) -> Option<ApplyRefusal> {
-    let tx = store.transaction(None);
+    let tx = store.page_plan(None);
     creations
         .iter()
         .any(|(file, name, source)| {

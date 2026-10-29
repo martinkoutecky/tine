@@ -13,6 +13,17 @@ describe("table layout onboarding", () => {
     const guide = source("../../crates/tine-core/src/templates/sheets.md");
     expect(guide).toContain("scroll horizontally only when wider than the pane");
     expect(guide).toContain("tables inside a sheet cell stay within that cell");
+    expect(guide).toContain("A table in a query box or a sidebar item never leaves its box");
+  });
+});
+
+describe("UI-LP-FIX onboarding", () => {
+  it("the Guide explains journals-off home and comma-separated property links", () => {
+    const tips = source("../../crates/tine-core/src/templates/tips.md");
+    expect(tips).toContain("`:feature/enable-journals? false`");
+    expect(tips).toContain("in place of **Journals**");
+    const queries = source("../../crates/tine-core/src/templates/queries.md");
+    expect(queries).toContain("Each comma item of those properties is also its own page link");
   });
 });
 

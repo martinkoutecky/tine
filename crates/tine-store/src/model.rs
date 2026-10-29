@@ -27,6 +27,8 @@ mod page_identity;
 mod page_parse;
 mod parse_depth;
 pub(crate) mod write_target;
+#[cfg(test)]
+pub(crate) use write_target::assert_checked_target;
 use write_target::path_uses_managed_alias;
 pub(crate) use write_target::{canonical_existing_ancestor, checked_write_target};
 pub(crate) mod shape_stats;
@@ -132,6 +134,21 @@ pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
     let bytes = read_parse_bytes(path)?;
     validate_parse_bytes_for_path(&bytes, path)?;
     String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+/// One classification boundary for automatic unreadable-file rows. A missing
+/// file is gone or being replaced, never unreadable. Producer labels use the
+/// public diagnostic sink's fixed strings: no paths or content enter logs.
+pub(crate) fn unreadable_error(
+    error: impl Into<crate::IoError>,
+    producer: &'static str,
+) -> Option<crate::IoError> {
+    let error = error.into();
+    if error.kind() == io::ErrorKind::NotFound {
+        return None;
+    }
+    tine_core::diag_line::diagnostic_line(producer);
+    Some(error)
 }
 
 pub(crate) fn read_parse_bytes(path: &Path) -> io::Result<Vec<u8>> {
@@ -449,6 +466,7 @@ pub(crate) struct Graph {
     live_journal_format: RwLock<Option<Arc<JournalFormat>>>,
     /// Launch/diff/save timings and load-pass accounting behind `Store::diagnostics`.
     pub(crate) diag: crate::launch_diag::DiagRecorder,
+    pub(crate) storage_diag: Arc<crate::storage_diag::StorageCounters>,
     #[cfg(test)]
     pub(crate) cache_publish_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     /// Between a name discovery's authority decision and its record.
@@ -2342,6 +2360,15 @@ enum PageParseFailure {
 }
 type PageParseResult = Result<Option<ParsedPage>, PageParseFailure>;
 
+impl PageParseFailure {
+    fn unreadable(path: String, error: io::Error, producer: &'static str) -> PageParseResult {
+        match unreadable_error(error, producer) {
+            Some(error) => Err(Self::Unreadable(path, error.to_string())),
+            None => Ok(None),
+        }
+    }
+}
+
 impl PageCacheBuild {
     fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -2839,6 +2866,7 @@ impl Graph {
 
     fn empty_with_config(root: PathBuf, config: Config, journal_format: JournalFormat) -> Graph {
         Graph {
+            storage_diag: crate::storage_diag::for_graph(&root),
             root_binding: Arc::new(crate::root_binding::RootBinding::new(&root)),
             assets_root: root.join("assets"),
             root,
@@ -3581,10 +3609,11 @@ impl Graph {
                     if e.kind == PageKind::Page {
                         name_failure = Some(io::Error::new(error.kind(), error.to_string()));
                     }
-                    Err(PageParseFailure::Unreadable(
+                    PageParseFailure::unreadable(
                         e.rel_path_str().to_owned(),
-                        error.to_string(),
-                    ))
+                        error,
+                        "Tine unreadable file producer=launch-read",
+                    )
                 }
             };
             let racy = stamp.as_ref().is_some_and(|stamp| stamp.racy_at(observed));
@@ -4189,7 +4218,11 @@ impl Graph {
         }
         let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
         self.ensure_write_target(&trash)?;
-        crate::directory_durability::create_dir_all_durable(&trash, &self.root)?;
+        crate::directory_durability::create_dir_all_durable(
+            &trash,
+            &self.root,
+            &self.root_binding,
+        )?;
         let name = path
             .file_name()
             .and_then(|value| value.to_str())
@@ -4205,7 +4238,17 @@ impl Graph {
             }
             Err(error) => return Err(error),
         }
-        let equal = matches(&staged).map_err(|error| match move_file_noreplace(&staged, path) {
+        // A comparison can run arbitrary I/O; recheck the original target
+        // before restoring displaced bytes through it.
+        let restore = || {
+            if path.starts_with(&self.assets_root) {
+                self.ensure_asset_write_target(path)?;
+            } else {
+                self.ensure_write_target(path)?;
+            }
+            move_file_noreplace(&staged, path)
+        };
+        let equal = matches(&staged).map_err(|error| match restore() {
             Ok(()) => error,
             Err(restore) => io::Error::new(
                 error.kind(),
@@ -4218,7 +4261,7 @@ impl Graph {
         if equal {
             return Ok(Withdrawal::Exact(staged));
         }
-        match move_file_noreplace(&staged, path) {
+        match restore() {
             Ok(()) => Ok(Withdrawal::ExternalLive),
             Err(_) if path.exists() => Ok(Withdrawal::ExternalRecovery(staged)),
             Err(error) => Err(io::Error::new(
@@ -4444,7 +4487,10 @@ impl Graph {
         if !self.disk_sourced(path) {
             return None;
         }
-        let entry = self.entry_for_path(path)?;
+        let Some(entry) = self.entry_for_path(path) else {
+            self.forget_unreadable(path);
+            return None;
+        };
         let cached_entry = self
             .with_cached(path, |row| row.map(|(entry, _)| entry.clone()))
             .flatten();
@@ -5161,13 +5207,41 @@ pub(crate) fn trash_stamp() -> String {
 /// Platform-native no-replace rename semantics ensure the source name and inode
 /// cannot be swapped between a check and an unlink.
 pub(crate) fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(dest);
     crate::no_replace::move_file_noreplace(src, dest)
+}
+
+pub(crate) fn remove_graph_file(path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(path);
+    fs::remove_file(path)
+}
+
+pub(crate) fn remove_graph_dir(path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(path);
+    fs::remove_dir(path)
+}
+
+pub(crate) fn create_graph_dir(path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(path);
+    fs::create_dir(path)
+}
+
+pub(crate) fn create_graph_dir_all(path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(path);
+    fs::create_dir_all(path)
 }
 
 /// Atomically publish a newly-created file without clobbering a destination that
 /// appeared after the caller's collision check. The payload is fsynced in a
 /// same-directory temp, then atomically renamed into the final name only if absent.
 pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(path);
     crate::atomic_file::atomic_write_new(path, bytes)
 }
 
@@ -5186,6 +5260,8 @@ pub(crate) fn atomic_write_with_check(
     bytes: &[u8],
     check: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(path);
     crate::atomic_file::atomic_write_with_check(
         path,
         bytes,
@@ -5210,6 +5286,8 @@ pub(crate) fn atomic_write_with_check(
 /// recovery: a sync writer that recreates the live name wins and the restore
 /// aborts instead of clobbering it.
 pub(crate) fn atomic_copy_new(src: &Path, dst: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(dst);
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     let dir = dst.parent().unwrap_or_else(|| Path::new("."));
@@ -5244,6 +5322,8 @@ pub(crate) fn atomic_copy_file_new(
     dst: &Path,
     max_bytes: u64,
 ) -> io::Result<()> {
+    #[cfg(test)]
+    write_target::assert_checked_target(dst);
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     let dir = dst.parent().unwrap_or_else(|| Path::new("."));
@@ -5434,6 +5514,76 @@ mod tests {
     use super::*;
 
     use crate::test_fixture_io::hosted;
+
+    #[test]
+    fn a_file_gone_before_an_on_demand_build_is_not_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("journals")).unwrap();
+        let path = dir.path().join("journals/2026_10_26.md");
+        fs::write(&path, "- day\n").unwrap();
+        let graph = Graph::open(dir.path());
+        // Retain the listing as a replacement between listing and read does.
+        assert_eq!(graph.list_pages_shared().len(), 1);
+        fs::remove_file(&path).unwrap();
+        graph.with_pages(|pages| assert!(pages.is_empty()));
+        assert!(
+            graph.reported_unreadable_pages().is_empty(),
+            "{:?}",
+            graph.reported_unreadable_pages()
+        );
+    }
+
+    #[test]
+    fn discovery_does_not_report_a_file_that_vanished_during_naming() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path());
+        let path = dir.path().join("pages/Gone.md");
+        graph.record_name_discovery(&path, Some(io::ErrorKind::NotFound.into()));
+        assert!(
+            graph.reported_unreadable_pages().is_empty(),
+            "{:?}",
+            graph.reported_unreadable_pages()
+        );
+    }
+
+    #[test]
+    fn listing_does_not_report_a_file_that_vanished_during_naming() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path());
+        graph.replace_discovery_errors(
+            None,
+            vec![(
+                crate::FileId::from("pages/Gone.md".to_owned()),
+                io::Error::from(io::ErrorKind::NotFound).into(),
+            )],
+        );
+        assert!(
+            graph.reported_unreadable_pages().is_empty(),
+            "{:?}",
+            graph.reported_unreadable_pages()
+        );
+    }
+
+    #[test]
+    fn launch_does_not_report_a_file_that_vanished_during_naming() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path());
+        assert!(graph.install_built(
+            PageCacheBuild::with_capacity(0),
+            (graph.cache_generation(), graph.held.epoch()),
+            false,
+            None,
+            Some(vec![(
+                crate::FileId::from("pages/Gone.md".to_owned()),
+                io::Error::from(io::ErrorKind::NotFound).into()
+            )])
+        ));
+        assert!(
+            graph.reported_unreadable_pages().is_empty(),
+            "{:?}",
+            graph.reported_unreadable_pages()
+        );
+    }
 
     fn delete(
         store: &std::sync::Arc<tine_store::Store>,
@@ -7670,9 +7820,12 @@ mod tests {
         let rev = store.read(&from, None).unwrap().1;
         store.inject_fault(crate::FaultPoint::MidStepIo);
         store.inject_fault(crate::FaultPoint::UndoLiveWrite);
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.move_file(&from, rev, &to, None);
-        assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::NotCommitted { .. }
+        ));
         assert_eq!(
             fs::read_to_string(dir.join("pages/Alpha.md")).unwrap(),
             original
@@ -10508,12 +10661,15 @@ mod tests {
         let store = loaded_store(&dir);
         store.inject_fault(crate::FaultPoint::TwinAfterPublish);
         store.inject_fault(crate::FaultPoint::UndoLiveWrite);
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.create(
             &crate::FileId::from("pages/Guide.md".to_owned()),
             crate::Content::Bytes(b"- bundled guide\n".to_vec()),
         );
-        assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::NotCommitted { .. }
+        ));
         assert_eq!(
             fs::read_to_string(dir.join("pages/Guide.md")).unwrap(),
             "external during undo"

@@ -57,6 +57,18 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-10-28, sweep-nav dossier / GH #785: `commands.registry` 126→129 and
+  `commands.palette` 71→74 for the explicitly requested localized **Expand all**,
+  **Collapse all**, and OG's remappable **t o** toggle. No new topbar control.
+- 2026-10-28, D-20261028-SG ("Changed since you last looked", ADR 0079): `commands.registry` 124→126
+  for the required **Mark page seen** and **Mark whole graph seen** commands. Both are
+  available only on a git graph that answered a seen read (never on Android/iOS), so the
+  jsdom palette count does not move; no key is bound.
+- 2026-10-26, D-20261026-778 (GH #778): `commands.registry` 122→124,
+  `commands.palette` 69→71, `settings.appearance.advanced` 12→14 for the
+  explicitly approved **Open in default app** actions for graph and global CSS,
+  beside the existing in-app Edit buttons and in the desktop command palette.
+  Both external actions are hidden on Android/iOS; no additional preference.
 - 2026-10-26, CM6 stage-2 Land brief (slice s1): `settings.editor.advanced`
   10→11 only for the Beta/development identity, for the explicitly requested
   default-off **Experimental: CodeMirror editor** switch. Stable remains at 10

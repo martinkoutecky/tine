@@ -190,6 +190,11 @@ impl<F: HostIo> Host<F> {
                         return Disposition::Waiting;
                     }
                     self.adopt_read(&key, bytes);
+                    // The base-revision guard ended this save without a
+                    // publication. Count the refusal, not each idle retry.
+                    self.storage_diag
+                        .failed
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     self.fs.page_finish(&key);
                     return Disposition::Applied;
                 }
@@ -200,6 +205,7 @@ impl<F: HostIo> Host<F> {
             },
             SavePhase::Rename if job.bytes.is_some() => match self.fs.page_rename(&key) {
                 Ok(()) => {
+                    self.order.renamed(&key, job.version, job.bytes.as_deref());
                     #[cfg(test)]
                     self.events.push(Event::Renamed {
                         page: key.clone(),
@@ -225,6 +231,7 @@ impl<F: HostIo> Host<F> {
                     None
                 }
                 Err(e) if e.completed => {
+                    self.order.renamed(&key, job.version, job.bytes.as_deref());
                     cause = Some(e);
                     #[cfg(test)]
                     self.events.push(Event::Renamed {
@@ -281,6 +288,7 @@ impl<F: HostIo> Host<F> {
                 }
                 match movement.result {
                     Ok(()) => {
+                        self.order.renamed(&key, job.version, job.bytes.as_deref());
                         #[cfg(test)]
                         self.events.push(Event::Renamed {
                             page: key.clone(),
@@ -318,6 +326,7 @@ impl<F: HostIo> Host<F> {
                         }
                     }
                     Err(e) if e.completed => {
+                        self.order.renamed(&key, job.version, job.bytes.as_deref());
                         cause = Some(e);
                         #[cfg(test)]
                         self.events.push(Event::Renamed {
@@ -374,6 +383,12 @@ impl<F: HostIo> Host<F> {
             }
         }
         if let Some(outcome) = result {
+            let counter = match outcome {
+                Outcome::Published => &self.storage_diag.published,
+                Outcome::Uncertain => &self.storage_diag.uncertain,
+                Outcome::Failed => &self.storage_diag.failed,
+            };
+            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.fs.page_finish(&key);
             let mut page = self.pages[&key].clone();
             if outcome == Outcome::Published {

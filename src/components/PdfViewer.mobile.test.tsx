@@ -65,6 +65,7 @@ function documentWithOnePage() {
       getViewport: vi.fn(({ scale }: { scale: number }) => ({ width: 612 * scale, height: 792 * scale })),
       getTextContent: vi.fn().mockResolvedValue({ items: [] }),
       render: vi.fn().mockReturnValue({ promise: Promise.resolve(), cancel: vi.fn() }),
+      cleanup: vi.fn(() => true),
     }),
     getOutline: vi.fn().mockResolvedValue([]),
     getDestination: vi.fn().mockResolvedValue(null),

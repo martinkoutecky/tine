@@ -21,6 +21,7 @@ use crate::state::GraphSlot;
 /// while the lock is still held; then the lock is released.
 pub(crate) struct Lease {
     endpoint: Option<Endpoint>,
+    endpoint_error: Option<OwnerError>,
     gate: Arc<Gate>,
     route: Option<Arc<Route>>,
     _lock: OwnerLock,
@@ -69,15 +70,19 @@ impl Claimed {
     /// lock (still the owner, so no second host) and opens no endpoint:
     /// no endpoint, no serving (§3.5).
     pub(crate) fn serve(self, hello: Hello, gate: Arc<Gate>, handler: Arc<dyn Handler>) -> Lease {
-        let endpoint = match Endpoint::bind(&self.paths.socket, hello, gate.clone(), handler) {
-            Ok(endpoint) => Some(endpoint),
-            Err(error) => {
-                crate::debug::diag_private("owner-endpoint-unavailable", &error.to_string());
-                None
-            }
-        };
+        let (endpoint, endpoint_error) =
+            match super::namespace::check_socket_path(&self.paths.socket)
+                .and_then(|()| Endpoint::bind(&self.paths.socket, hello, gate.clone(), handler))
+            {
+                Ok(endpoint) => (Some(endpoint), None),
+                Err(error) => {
+                    crate::debug::diag_private("owner-endpoint-unavailable", &error.to_string());
+                    (None, Some(error))
+                }
+            };
         Lease {
             endpoint,
+            endpoint_error,
             gate,
             route: None,
             _lock: self.lock,
@@ -98,13 +103,13 @@ impl Claimed {
 }
 
 impl Lease {
-    #[cfg(all(test, unix))]
+    #[cfg(all(test, any(unix, windows)))]
     pub(crate) fn pause_yielder_close(
         &self,
     ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
         self.endpoint.as_ref().unwrap().pause_yielder_close()
     }
-    #[cfg(all(test, unix))]
+    #[cfg(all(test, any(unix, windows)))]
     pub(crate) fn pause_next_accept(
         &self,
     ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
@@ -116,6 +121,10 @@ impl Lease {
 
     pub(crate) fn has_endpoint(&self) -> bool {
         self.endpoint.is_some()
+    }
+
+    pub(crate) fn endpoint_error(&self) -> Option<&OwnerError> {
+        self.endpoint_error.as_ref()
     }
 
     pub(crate) fn seal(&self, except: Option<u64>) {
@@ -197,22 +206,39 @@ pub(crate) fn claim_for_app(
     drafts: Drafts,
     bound: std::time::Duration,
     waiting: impl FnMut(&str),
+    unavailable: impl FnMut(&OwnerError),
 ) -> Result<Option<Claimed>, String> {
-    match claim(root, "app") {
+    app_claim_result(
+        claim(root, "app"),
+        root,
+        drafts,
+        bound,
+        waiting,
+        unavailable,
+    )
+}
+
+/// Keep the app's open policy separate from namespace discovery so refusals can
+/// be tested with disposable paths, without changing the account namespace.
+#[cfg(desktop)]
+fn app_claim_result(
+    claim: Claim,
+    root: &Path,
+    drafts: Drafts,
+    bound: std::time::Duration,
+    waiting: impl FnMut(&str),
+    mut unavailable: impl FnMut(&OwnerError),
+) -> Result<Option<Claimed>, String> {
+    match claim {
         Claim::Taken(claimed) => Ok(Some(claimed)),
         Claim::Failed(OwnerError::Unsupported) => Ok(None),
         Claim::Failed(error) => {
             crate::debug::diag_private("owner-lock-unavailable", &error.to_string());
+            unavailable(&error);
             Ok(None)
         }
         Claim::Held(paths) => {
-            #[cfg(target_os = "windows")]
-            {
-                let _ = (paths, drafts, bound, waiting);
-                Err(super::client::app_owner_refusal())
-            }
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
-            super::client::take_over(root, &paths, drafts, bound, waiting)
+            super::client::take_over(root, &paths, drafts, bound, waiting, unavailable)
         }
     }
 }
@@ -224,6 +250,7 @@ pub(crate) fn claim_for_app(
     _drafts: Drafts,
     _bound: std::time::Duration,
     _waiting: impl FnMut(&str),
+    _unavailable: impl FnMut(&OwnerError),
 ) -> Result<Option<Claimed>, String> {
     Ok(None)
 }
@@ -233,5 +260,43 @@ impl Claimed {
     #[cfg(desktop)]
     pub(crate) fn from_lock(lock: OwnerLock, paths: GraphPaths) -> Self {
         Self { lock, paths }
+    }
+}
+
+#[cfg(all(test, desktop))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn namespace_refusal_still_allows_the_app_to_open_without_a_lease() {
+        let data = tempfile::tempdir().unwrap();
+        let owners = data.path().join("owners-file");
+        std::fs::write(&owners, b"not a directory").unwrap();
+        let error = match Namespace::at(owners) {
+            Err(error @ OwnerError::Unsafe(_)) => error,
+            _ => panic!("a file cannot be an owner namespace"),
+        };
+        let diagnosis = error.to_string();
+        let mut reason = None;
+        let result = app_claim_result(
+            Claim::Failed(error),
+            data.path(),
+            Drafts {
+                app_data: data.path().display().to_string(),
+                graph_id: "test-graph".into(),
+            },
+            std::time::Duration::ZERO,
+            |_| panic!("a namespace refusal must not enter handover"),
+            |error| reason = Some(error.to_string()),
+        );
+        assert_eq!(
+            reason.as_deref(),
+            Some(diagnosis.as_str()),
+            "editable fallback must retain its actionable diagnosis"
+        );
+        assert!(
+            matches!(result, Ok(None)),
+            "the app must still open the graph"
+        );
     }
 }

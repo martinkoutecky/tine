@@ -35,7 +35,7 @@ describe("og campaign enforcement", () => {
   }, 30_000);
 
   it("pins persisted format count and low-level writer sites", () => {
-    expect(PINNED_FORMAT_COUNT).toBe(33);
+    expect(PINNED_FORMAT_COUNT).toBe(35);
     expect(PERSISTED_FORMATS).toEqual([
       "page-markdown", "page-org", "graph-config-edn", "graph-custom-css",
       "graph-assets", "asset-sidecar-edn", "asset-trash", "graph-trash",
@@ -52,6 +52,8 @@ describe("og campaign enforcement", () => {
       "share-inbox",
       "backup-zip-snapshot",
       "quick-share-records-json", "quick-share-account-json",
+      "git-credentials-json",
+      "seen-git-json",
     ]);
     expect(() => checkFormatCount()).not.toThrow();
     const { current, baseline } = writerCounts;
@@ -68,6 +70,8 @@ describe("og campaign enforcement", () => {
     expect(() => checkWriterSites({ "src-tauri/src/new.rs": 1 }, {})).toThrow(/Martin's approval/);
     expect(() => checkWriterSites({ "src-tauri/src/flight_store.rs": 4 }, {})).toThrow(/3 → 4 writer sites/);
     expect(writerSiteCounts("#[cfg(test)]\nmod tests {\n fs::write(foo, bar);\n}\nfs::write(path, bytes);\n")).toBe(1);
+    expect(writerSiteCounts("#[cfg(all(test, any(unix, windows)))]\nmod tests {\n fs::write(foo, bar);\n}\nfs::write(path, bytes);\n")).toBe(1);
+    expect(writerSiteCounts("fn f() {\n    #[cfg(all(test, unix))]\n    mod tests {\n        fs::write(foo, bar);\n    }\n    fs::write(path, bytes);\n}\n")).toBe(1);
     // The audited replace primitive is a writer site too (ADR 0070's checkpoint).
     expect(writerSiteCounts("crate::atomic_file::atomic_write_with_check(&path, &bytes, || Ok(()));\n")).toBe(1);
   });

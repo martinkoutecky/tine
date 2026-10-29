@@ -253,7 +253,8 @@ fn host_publication_witnesses_cover_exactly_the_five_shipped_targets() {
     let pinned = [
         // atomic_write_private adds two: its owner-only arm and refusal stub.
         ("src/atomic_file.rs", 5),
-        ("src/directory_durability.rs", 2),
+        // The Windows-only best-effort flush module adds a standalone arm.
+        ("src/directory_durability.rs", 3),
         ("src/no_replace.rs", 8),
     ];
     let found = pinned.map(|(file, _)| {
@@ -431,9 +432,9 @@ fn windows_no_replace_keeps_the_existing_destination() {
     let src_id = store.file_id(tine_store::Area::Pages, "source.md").unwrap();
     let dest_id = store.file_id(tine_store::Area::Pages, "dest.md").unwrap();
     let rev = store.read(&src_id, None).unwrap().1;
-    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(tine_store::EditKind::ReplacePage));
     tx.move_file(&src_id, rev, &dest_id, None);
-    assert!(matches!(tx.commit(), tine_store::TxOutcome::NotCommitted { .. }),
+    assert!(tx.plan().is_err(),
         "I-16: Windows no-replace must refuse an existing destination; exemplar no_replace.rs move_windows");
     assert_eq!(fs::read(&source).unwrap(), b"source");
     assert_eq!(fs::read(&dest).unwrap(), b"destination");

@@ -187,8 +187,11 @@ fn rename_publication_reopens_no_referrer() {
          (exemplar transaction/publication.rs): {few:?} vs {many:?}"
     );
     assert!(
-        many.stamps_by_path - few.stamps_by_path <= 28,
-        "GH #623/I-25: one metadata stamp per written referrer (the own-write check); \
+        // M3-1 adds exactly one post-directory-sync identity probe per save.
+        // Keep the own-write check at its later publication boundary as well.
+        many.stamps_by_path - few.stamps_by_path <= 2 * 28,
+        "GH #623/I-25: two metadata stamps per written referrer (post-sync identity \
+         and the own-write check); no additional payload open or hash; \
          the publication read's handle supplies the stamp it is compared with: \
          {few:?} vs {many:?}"
     );

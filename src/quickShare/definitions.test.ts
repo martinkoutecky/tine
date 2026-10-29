@@ -1,6 +1,7 @@
 // A quick share in the graph (D-20261018-Q1, D-20261018-QS3): starting a share writes `tine.share:: pending/<record
 // id>` onto the query block it started from, or a definition on the exports page; finishing it writes
-// `<login>/<gist_id>` (no key) in its place, or removes it; deleting or forgetting a share removes the property.
+// `<login>/<gist_id>` (no key) in its place, or removes it; deleting or forgetting a share removes the property, and
+// the whole definition when the share itself appended it to the Exports page (D-20261026-QSD).
 // Asserted on the bytes that reach the (fake) disk through the document layer's normal save.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "../render/parse";
@@ -14,6 +15,7 @@ import { doc } from "../document/model";
 import { bindTestHost } from "../document/host/wiring.test.support";
 import { installDiskHost } from "../diskHost.test.support";
 import type { BlockDto, PageDto, PageRead } from "../types";
+import { queryBlockRaw } from "../document/convert";
 import { finishSharePending, markSharePending, pendingRecordId, pendingShareMarkers, pendingValue, removeShareProperty, shareValue } from "./definitions";
 
 const ID = "Rec0rd-id_0123456789xy";
@@ -22,6 +24,7 @@ const PENDING = `pending/${ID}`;
 vi.mock("../exportsPage", async (original) => ({
   ...await original<typeof import("../exportsPage")>(),
   ensureExportsPage: vi.fn(async () => "Exports"),
+  locateExportsPages: vi.fn(async () => ["Exports"]),
 }));
 
 let counter = 0;
@@ -200,6 +203,16 @@ describe("finishSharePending", () => {
     expect(await finishSharePending(ID, "octo/0123456789abcdef0123")).toEqual([]);
   });
 
+  it("a share that was not created takes the definition it appended to the Exports page with it", async () => {
+    const exportsPage = page("Exports", [blk("{{query (or (property export) (property tine.share))}}"),
+      blk(`{{tine-query @page and name = 'A'}}\ntine.share:: ${PENDING}`)], "md", "tine/exports:: true\npublic:: false");
+    const disk = await bindDisk([exportsPage]);
+    answerShareQuery(disk, ["Exports"]);
+    expect(await finishSharePending(ID, null)).toEqual(["Exports"]);
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Exports.md")).toEqual(["{{query (or (property export) (property tine.share))}}"]);
+  });
+
   it("lists the graph's pending markers by record id with their pages", async () => {
     const notes = page("Notes", [blk(`{{query (task DONE)}}\ntine.share:: ${PENDING}`), blk("{{query (task NOW)}}\ntine.share:: octo/0123456789abcdef0123")]);
     const other = page("Other", [blk(`{{query (task TODO)}}\ntine.share:: ${PENDING}`)]);
@@ -231,12 +244,54 @@ describe("removeShareProperty", () => {
     expect(doc.pages).toHaveLength(0);
     expect((await removeShareProperty("abc")).sort()).toEqual(["Exports", "Notes"]);
     expect(await flushAll()).toBe(true);
+    // D-20261026-QSD: the definition the share appended to Exports goes whole; elsewhere only the property goes.
     expect(disk.raws("pages/Exports.md")).toEqual([
       "{{query (or (property export) (property tine.share))}}",
-      "{{tine-query @page and name = 'A'}}",
       "{{tine-query @page and name = 'B'}}\ntine.share:: octo/abcd",
     ]);
     expect(disk.raws("pages/Notes.md")).toEqual(["parent", "{{query (task TODO)}}\nexport:: site"]);
+  });
+
+  // D-20261026-QSD (Martin's test 10/26: Delete left the share's bullet on the Exports page).
+  it("deletes a definition only while it is exactly what the share appended to the Exports page", async () => {
+    const exportsPage = page("Exports", [
+      blk("{{query (or (property export) (property tine.share))}}"),
+      blk("{{tine-query @page and name = 'A'}}\ntine.share:: octo/g1"),
+      blk("{{tine-query @page and name = 'B'}} my note\ntine.share:: octo/g1"),
+      blk("{{tine-query @page and name = 'C'}}\nowner:: me\ntine.share:: octo/g1"),
+      blk("{{tine-query @page and name = 'D'}}\ntine.share:: octo/g1", [blk("a child")]),
+      blk("parent", [blk("{{tine-query @page and name = 'E'}}\ntine.share:: octo/g1")]),
+    ], "md", "tine/exports:: true\npublic:: false");
+    const notes = page("Notes", [blk("{{tine-query @page and name = 'A'}}\ntine.share:: octo/g1")]);
+    const disk = await bindDisk([exportsPage, notes]);
+    answerShareQuery(disk, ["Exports", "Notes"]);
+    expect((await removeShareProperty("g1")).sort()).toEqual(["Exports", "Notes"]);
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Exports.md")).toEqual([
+      "{{query (or (property export) (property tine.share))}}",
+      "{{tine-query @page and name = 'B'}} my note",
+      "{{tine-query @page and name = 'C'}}\nowner:: me",
+      "{{tine-query @page and name = 'D'}}", "a child",
+      "parent", "{{tine-query @page and name = 'E'}}",
+    ]);
+    // The same block on an ordinary page is the user's own query: it stays.
+    expect(disk.raws("pages/Notes.md")).toEqual(["{{tine-query @page and name = 'A'}}"]);
+  });
+
+  it("deletes an appended definition on an Org exports page too", async () => {
+    const raw = queryBlockRaw("{{tine-query @page and name = 'A'}}", [["tine.share", "octo/g1"]], "org");
+    const exportsPage = page("Exports", [blk("{{query (or (property export) (property tine.share))}}"),
+      { ...blk(raw), properties: [["tine.share", "octo/g1"]] }], "org",
+      "#+tine/exports: true\n#+public: false");
+    const disk = await bindDisk([exportsPage]);
+    // The engine's answer for an Org page (answerShareQuery reads Markdown property lines).
+    vi.spyOn(backend(), "parseQuery").mockResolvedValue({ query: { anchor: "block" }, view: {} } as never);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue({ anchor: "block", total: 1, exceeded: false, report: { supported: true },
+      groups: [{ page: "Exports", kind: "page", blocks: [{ ...exportsPage.blocks[1], properties: [["tine.share", "octo/g1"]] }] }] } as never);
+    expect(raw).toContain(":tine.share: octo/g1");
+    expect(await removeShareProperty("g1")).toEqual(["Exports"]);
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Exports.org")).toEqual(["{{query (or (property export) (property tine.share))}}"]);
   });
 
   it("a share no block names changes nothing", async () => {
@@ -276,4 +331,12 @@ describe("removeShareProperty", () => {
     await removal;
     expect(Object.values(doc.byId).find((n) => n.page === "B")!.raw).toBe("replacement graph\ntine.share:: octo/g1");
   });
+});
+
+it("the onboarding Guide says Delete takes the share's Exports definition and when the link stops working", async () => {
+  const { readFileSync } = await import("node:fs");
+  const guide = readFileSync("crates/tine-core/src/templates/share-pages.md", "utf8");
+  for (const detail of ["within about 5 minutes", "a definition the share added to the **Exports page** goes with it",
+    "only loses its `tine.share::` line", "fold arrow", "without changing the graph",
+    "reloading restores the original folds", "JavaScript turned off"]) expect(guide).toContain(detail);
 });

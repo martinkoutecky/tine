@@ -30,6 +30,7 @@ app-capture-couldn-t-be-saved-its-text = 无法保存快速记录，文本仍保
 app-tine-was-renamed-under-the-hood-so = Tine 的内部名称已更改，我们已迁移你的设置和备份。少数应用偏好（如快捷键）可能需要重新设置，抱歉给你带来不便！
 
 app-tine-could-not-write-its-usual-application-data = Tine 无法写入通常使用的应用数据文件夹，本次会话的设置和备份将保存在 { $fallbackDirectory }。修复原文件夹的权限后即可恢复正常位置。
+app-drafts-on-volatile-storage = Tine 正将应用数据保存在临时存储或内存存储中。其中未保存的草稿可能无法在重启后保留。请在重启设备前将编辑保存到图谱。
 
 app-quick-capture-could-not-connect-to-this = 快速记录无法连接到此图谱窗口。
 

@@ -73,7 +73,12 @@ where
         match load(&id)? {
             Loaded::Page(value) => out.push(value),
             Loaded::Gone => {}
-            Loaded::Unreadable(reason) => unreadable.push(format!("{}: {reason}", id.as_str())),
+            Loaded::Unreadable(reason) => {
+                tine_core::diag_line::diagnostic_line(
+                    "Tine unreadable file producer=journal-feed-read",
+                );
+                unreadable.push(format!("{}: {reason}", id.as_str()));
+            }
         }
         if out.len() == limit {
             break;
@@ -660,9 +665,9 @@ pub fn migrate_journal_filenames(
 /// error is the reason the proposal is skipped.
 fn migrate_one(store: &Store, entry: &FileId, to: &FileId) -> io::Result<()> {
     let (_, rev) = migration_source(store, entry)?;
-    tx_error(migration_transaction(store, entry, to, rev).commit())
-        .map(drop)
-        .map_err(migration_error)
+    let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+    tx.move_file(entry, rev, to, None);
+    tx_error(tx.commit()).map(drop).map_err(migration_error)
 }
 
 fn migration_error(error: io::Error) -> io::Error {
@@ -671,17 +676,6 @@ fn migration_error(error: io::Error) -> io::Error {
     } else {
         io::Error::other(format!("move refused: {error}"))
     }
-}
-
-fn migration_transaction<'a>(
-    store: &'a Store,
-    entry: &FileId,
-    to: &FileId,
-    rev: tine_store::FileRev,
-) -> tine_store::Transaction<'a> {
-    let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
-    tx.move_file(entry, rev, to, None);
-    tx
 }
 
 /// One eligible journal file's move to `to` as one host operation (DESIGN
@@ -698,8 +692,9 @@ fn migrate_hosted(
 ) -> io::Result<()> {
     let plan = || {
         let (_, rev) = migration_source(store, entry)?;
-        migration_transaction(store, entry, to, rev)
-            .plan()
+        let mut tx = store.page_plan(Some(tine_store::EditKind::RenamePage));
+        tx.move_file(entry, rev, to, None);
+        tx.plan()
             .map(Some)
             .map_err(crate::why_error)
             .map_err(migration_error)
@@ -826,13 +821,15 @@ pub fn trash_journal_file(store: &Store, host: &PageHost, name: &str) -> io::Res
             }
             Err(error) => return Err(store_error(error)),
         };
-        crate::retained::plan(crate::trash_transaction(store, &id, rev)).map(Some)
+        let mut tx = store.page_plan(Some(tine_store::EditKind::DeletePage));
+        tx.trash(&id, rev, tine_store::TrashIf::Any);
+        crate::retained::plan(tx).map(Some)
     };
     crate::retained::operation(
         host,
         Input::Flush,
         std::slice::from_ref(&page),
-        "moving the journal to trash",
+        "moving the journal to trash at logseq/.tine-trash/pages",
         "journal changed repeatedly during trash",
         crate::retained::unsaved,
         plan,

@@ -85,6 +85,10 @@ pub const GUIDE_TEMPLATES: &[GuideTemplate] = &[
         markdown: include_str!("templates/pdf.md"),
     },
     GuideTemplate {
+        title: "Features/Share pages",
+        markdown: include_str!("templates/share-pages.md"),
+    },
+    GuideTemplate {
         title: "Features/Plugins",
         markdown: include_str!("templates/plugins.md"),
     },
@@ -390,8 +394,10 @@ mod journal_guide_tests {
             "These actions switch to the new tab",
             "preview stays open while its **… → Page actions** menu is open",
             "keeps your current tab active and confirms **Opened in a new tab**",
-            "it is listed under **Tabs** in the left sidebar",
+            "it is listed under **Open tabs** in the left sidebar",
             "Block embed breadcrumbs",
+            // GH #779: the trail's parent crumbs are links.
+            "Each parent in the trail opens that block when you click it",
             // GH #417/#418: per-occurrence actions on references and embeds.
             "**Edit link** and **Remove reference**",
             // D-20261019-QC(5): OG's Replace with text / embed on a block reference.
@@ -414,6 +420,10 @@ mod journal_guide_tests {
             "for a page, **Open as page**",
             "Drag the sidebar's left edge to resize it",
             "Tabs stretch to fill the strip",
+            "**Open tabs** list in the left sidebar appears once a second tab is open",
+            "**Move out of group**",
+            "Closing a tab never closes the tabs nested under it",
+            "Use **Open tabs** in the left sidebar to switch tabs",
             "a tab zoomed into a block is named for that block",
             "anywhere onto another pane's tab bar to put it last there",
         ] {
@@ -924,13 +934,80 @@ mod rename_guide_tests {
         let files = include_str!("templates/files-external-edits-backups.md");
         for behavior in [
             "**Commit changes to git** → **Commit automatically**",
-            "Tine never pushes or pulls",
+            "Tine pushes and pulls only with a sync option",
+            "**Commit and sync on demand** and **Commit and sync automatically**",
+            "press **Sync now**",
+            "**Diverged** means this device and the remote both have commits",
+            "Tine then stops syncing and changes nothing",
+            "Merging inside Tine comes later",
+            "press **Sign in**",
+            "Tine keeps the token in a private file on this device",
+            "needs the graph folder to be the repository's top folder",
+            "On Android and iOS git works as on a computer",
+            "When you switch to another app, Tine saves your pages and commits them, at most once per interval",
+            "it never starts bringing in changes while in the background",
+            "When you come back to Tine, **Commit and sync automatically** syncs at once",
             "changes you staged elsewhere stay staged",
             "`index.lock`",
+            "from 1 to 1440 minutes",
+            "run `git init` on a computer, or use a git app on a phone",
+            "Tine never creates or clones a repository",
+            "the branch Tine commits to and the last commit",
+            "Last attempt failed",
+            "Git cleanup is waiting; commits continue. Tine will retry automatically.",
+            "adds `.syncthing.*` to the graph folder's `.gitignore` once",
+            "You can remove the line; Tine will not add it again",
+            "conflict copies (`*.sync-conflict-*`) are still committed",
         ] {
             assert!(
                 files.contains(behavior),
                 "missing git Guide text: {behavior}"
+            );
+        }
+    }
+
+    #[test]
+    fn seen_changes_are_documented() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for behavior in [
+            "## Git: what changed since you last looked",
+            "N changes since you last looked",
+            "It works only on git graphs",
+            "it compares **commits**, not files on disk",
+            "invisible until it is committed",
+            "Your own commits never count",
+            "A block was removed here",
+            "**Mark page seen**",
+            "**Mark whole graph seen**",
+            "**Forget seen state**",
+            "never in the graph and never synced",
+            "The journals feed, the sidebar, a zoomed block and references show no bars",
+        ] {
+            assert!(
+                files.contains(behavior),
+                "missing seen-changes Guide text: {behavior}"
+            );
+        }
+    }
+
+    #[test]
+    fn margin_comments_are_documented() {
+        let tips = include_str!("templates/tips.md");
+        for behavior in [
+            "- ## Comment on a passage — Ctrl+R",
+            "**Comment on selection**",
+            "**Comment on selected text**",
+            "**Settings > Editor > Your name**",
+            "**quoted text changed**",
+            "**Reply…**",
+            "`author:: <your name>`",
+            "**Ctrl/Cmd+Z** restores them together",
+            "On a narrow window, in a split pane or in the sidebar, comments stay in the outline as cards",
+            "zooming into a commented bullet also shows them there",
+        ] {
+            assert!(
+                tips.contains(behavior),
+                "missing margin-comment Guide text: {behavior}"
             );
         }
     }
@@ -1003,6 +1080,30 @@ mod rename_guide_tests {
         assert!(
             about.contains("settings-about-store-updates = Updates come from the Microsoft Store."),
             "the Guide quotes Settings → About's Store line; keep them in step"
+        );
+    }
+
+    #[test]
+    fn desktop_guide_says_a_package_manager_build_has_no_updater() {
+        // tine#187: a distribution package turns the updater off at build time.
+        let platforms = include_str!("templates/platforms-and-mobile.md");
+        for outcome in [
+            "**Installed from a distribution's package manager (for example Nixpkgs)?**",
+            "`TINE_PACKAGED_BY`",
+            "\"This copy of Tine is packaged by <name>. Update it there.\"",
+            "shows no update notification and offers no installer",
+        ] {
+            assert!(
+                platforms.contains(outcome),
+                "missing package-manager Guide outcome: {outcome}"
+            );
+        }
+        let about = include_str!("../../../src/i18n/locales/en/about.ftl");
+        assert!(
+            about.contains(
+                "about-packaged-by-update-there = This copy of { $product } is packaged by { $packager }. Update it there."
+            ),
+            "the Guide quotes Settings → About's packager line; keep them in step"
         );
     }
 
@@ -1316,9 +1417,9 @@ mod rename_guide_tests {
     #[test]
     fn share_guide_explains_the_dialog_the_review_and_the_exports_page() {
         // Share step 1 (docs/contracts/export-definitions.md): the Guide moves with the product.
-        let files = include_str!("templates/files-external-edits-backups.md");
+        let share = include_str!("templates/share-pages.md");
         for outcome in [
-            "- ## Share pages",
+            "- # Share pages",
             "the share icon in the top bar",
             "**Share…** in a page's **⋯** menu",
             "**This page**",
@@ -1348,15 +1449,26 @@ mod rename_guide_tests {
             "properties hidden from display",
             "Images and other files are not included",
             "it does not delete the gist",
+            "**Share this page** in the **···** menu",
+            "**Find shares on GitHub**",
+            "**Pending in this graph**",
+            "**Remove marker**",
+            "**Report abuse**",
+            "**Forget**",
         ] {
             assert!(
-                files.contains(outcome),
+                share.contains(outcome),
                 "share onboarding must explain {outcome}"
             );
         }
+        let files = include_str!("templates/files-external-edits-backups.md");
+        assert!(files.contains("- ## Share pages"));
+        assert!(files.contains("[[Features/Share pages]]"));
         let queries = include_str!("templates/queries.md");
         assert!(queries.contains("**Share…** in a query's **⋯** menu"));
-        assert!(queries.contains("**Share pages**"));
+        assert!(queries.contains("[[Features/Share pages]]"));
+        let index = include_str!("templates/guide.md");
+        assert!(index.contains("[[Features/Share pages]]"));
     }
 
     #[test]
@@ -1707,6 +1819,10 @@ mod customize_look_guide_tests {
         for needed in [
             "logseq/custom.css",
             "**Edit global CSS**",
+            "**Open in default app**",
+            "**Open custom.css in default app**",
+            "**Open global CSS (global.css) in default app**",
+            "Saves from your external editor apply live",
             "per-user config directory",
             "**Reload**",
             "**Ctrl+K**",
@@ -1735,6 +1851,11 @@ mod customize_look_guide_tests {
             "**Typographic replacements**",
             "It is **Off** by default",
             "**On (while reading)**",
+            // GH #773: individual tags and page links can be themed by name.
+            "a.tag[data-ref=\"ai-note\"]",
+            "lowercased page name",
+            "namespace",
+            "alias",
         ] {
             assert!(page.contains(needed), "the page must mention {needed}");
         }
@@ -1992,7 +2113,21 @@ mod og_20d_guide_tests {
                 "files, external edits, and backups",
             ],
             vec!["handover", "60", "timeout", "--stop"],
-            vec!["windows", "unsupported", "exit 5", "app", "opens"],
+            vec![
+                "windows",
+                "read and write",
+                "handover",
+                "--stop",
+                "named pipe",
+            ],
+            vec![
+                "tine.exe",
+                "path",
+                "paths with spaces",
+                "owner-unsafe",
+                "exit 5",
+            ],
+            vec!["busy pipe", "waits", "previous owner", "3 seconds"],
             vec!["android", "ios", "no command-line"],
             vec!["--json", "stdout", "tine.cli/1"],
             vec!["stderr", "exit", "diagnostics", "truncation"],
@@ -2019,6 +2154,11 @@ mod og_20d_guide_tests {
             "tine prop remove",
             "tine move",
             "tine delete",
+            "tine page create",
+            "tine page rename",
+            "tine page delete",
+            "tine ref BLOCK",
+            "tine embed BLOCK",
             "--rev",
         ] {
             assert!(cli.contains(command), "Guide must teach {command}");

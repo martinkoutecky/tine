@@ -303,14 +303,14 @@ mod tests {
 
         let mut doc = open_editor.doc.clone();
         doc.blocks[0].raw = "editor text".into();
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.save_page(
             &[crate::EditKind::ReplacePage],
             &id,
             SaveBase::Existing(open_editor.rev),
             &doc,
         );
-        match tx.commit() {
+        match tx.commit_internal() {
             TxOutcome::NotCommitted {
                 why: Why::Conflict { .. },
                 ..

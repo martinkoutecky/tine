@@ -42,7 +42,7 @@ import type {
   QueryPublicationPlan,
   PublicationReceipt,
 } from "./types";
-import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, GraphAccessInspection, TrayStatus, GitAutocommitStatus, GitPolicy } from "./backendTypes";
+import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, GraphAccessInspection, TrayStatus, GitAutocommitStatus, GitPolicy, GitSyncStatus } from "./backendTypes";
 import type { EditKinds } from "./editKind";
 import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import type { NativeTineLinks } from "./nativeTineLinks";
@@ -157,6 +157,9 @@ export interface Backend {
   pageOwed(session: number, paths: readonly string[] | null): Promise<OwedPage[] | null>;
   /** Retry crash-draft storage after the host reported it unavailable. */
   pageDraftsRetry(): Promise<void>;
+  /** Desktop semantic lease recovery; absent in browser/mobile backends. */
+  ownerProtectionStatus?(): Promise<import("./ownerProtection").OwnerProtectionIssue | null>;
+  retryOwnerProtection?(repair: boolean): Promise<import("./ownerProtection").OwnerProtectionIssue | null>;
   onPageMail(cb: (mail: PageMail) => void): Promise<() => void>;
   /** The graph being opened overlaps one that is still saving its pages (F6). */
   onGraphOpenWaiting(cb: (saving: string) => void): Promise<() => void>;
@@ -475,6 +478,8 @@ export interface Backend {
   /** Explicit bounded subtree; ordinary resolution is intentionally shallow. */
   previewBlock(uuid: string, maxNodes: number): Promise<BlockPreview | null>;
   readAsset(name: string, maxBytes: number): Promise<Uint8Array>;
+  /** Native PDF range reads; browser/published backends retain their byte loader. */
+  pdfAssetSource?(name: string, maxBytes: number, bindingGeneration: number): Promise<import("./pdfAssetSource").PdfAssetSource>;
   /** Native range-aware URL for audio/video. Unlike `readAsset`, this never
    *  copies the whole media file through IPC. */
   streamAsset(name: string): Promise<string>;
@@ -593,7 +598,8 @@ export interface Backend {
   onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;
   /** Native only: the graph owner asks the window to save the text typed on
    *  `page` before a command-line write (`src/document/host/ownerFlush.ts`). */
-  onOwnerFlushRequest?(cb: (request: { id: number; page: string; binding_generation: number }) => void): Promise<() => void>;
+  onOwnerFlushRequest?(cb: (request: { id: number; page: string; all?: boolean; binding_generation: number }) => void): Promise<() => void>;
+  onOwnerPageRenamed?(cb: (rename: import("./types").OwnerPageRename) => void): Promise<() => void>;
   /** The answer to `onOwnerFlushRequest`: whether that text is saved. */
   ownerFlushAnswer?(id: number, saved: boolean, bindingGeneration: number): Promise<void>;
   /** Watcher freshness (family 10), native only: a checkout-sized batch as one
@@ -618,10 +624,34 @@ export interface Backend {
    *  through the store's audited create when missing, never rewriting an
    *  existing one, then open it in the system editor. */
   editCustomCss(): Promise<void>;
+  editGlobalCss(): Promise<void>;
   /** Settings → Graph → Git (ADR 0078): the bound graph's autocommit status. */
   gitAutocommitStatus(): Promise<GitAutocommitStatus>;
+  /** Read only. pageKey is pageIdentityKey; path is graph-relative. currentText
+   * is the complete rendered page snapshot, including unsaved local edits.
+   * Re-read on page focus/visibility and external page-file changes. */
+  getPageChanges(pageKey: string, path: string, currentText: string): Promise<import("./backendTypes").SeenPageChanges>;
+  /** Call on leave, or explicitly from Mark page seen; never per edit. */
+  markPageSeen(pageKey: string, path: string): Promise<void>;
+  markGraphSeen(): Promise<void>;
+  /** Drop one page's seen baseline (by pageKey or recorded path); the page
+   * then inherits the graph baseline. Tine's own rename/merge/delete already
+   * do this in the backend. */
+  forgetSeenPage(pageKey: string, path: string): Promise<void>;
+  forgetSeenState(): Promise<void>;
   /** Set this device's autocommit policy for the bound graph; answers the new status. */
   setGitAutocommit(policy: GitPolicy, intervalMinutes: number): Promise<GitAutocommitStatus>;
+  /** "Sync now": commit pending changes, then one sync cycle on the graph's git thread. Answers at once. */
+  gitSyncNow(): Promise<GitAutocommitStatus>;
+  gitDisableLineEndings(): Promise<GitAutocommitStatus>;
+  /** A sync problem that persists, for the notice outside Settings; `null` when there is none. */
+  gitSyncNotice(): Promise<GitSyncStatus | null>;
+  /** Keep a token for the remote's HTTPS host on this device (never in the graph or settings). */
+  gitSignIn(username: string, token: string): Promise<GitAutocommitStatus>;
+  gitSignOut(): Promise<GitAutocommitStatus>;
+  /** Android/iOS: the app went to the background (`false`; commit, and push when syncing
+   *  automatically) or came back (`true`; commit and sync). Answers at once. */
+  gitAppLifecycle(foreground: boolean): Promise<void>;
   /** How many launch snapshots to keep. */
   getBackupKeep(): Promise<number>;
   setBackupKeep(keep: number): Promise<void>;
@@ -662,9 +692,9 @@ export interface Backend {
    *  warning (see `gpu.ts`). A silent driver fallback is detected in the webview
    *  (WebGL renderer); this just supplies why/where context for the message. */
   gpuEnv(): Promise<GpuEnv>;
-  /** The fallback app-data folder iff this launch had to relocate an unwritable
-   *  one (desktop Linux), delivered once; `null` otherwise. */
-  takeDataHomeFallbackNotice(): Promise<string | null>;
+  /** Once-per-launch app-data relocation and detected volatile-storage warning;
+   *  relocation is Linux-only, classification covers all five native targets. */
+  takeDataHomeFallbackNotice(): Promise<{ relocated_to: string | null; volatile: boolean } | null>;
   /** Experimental smooth-scrolling preference (Lenis), app-level, default off. */
   getSmoothScroll(): Promise<boolean>;
   setSmoothScroll(value: boolean): Promise<void>;

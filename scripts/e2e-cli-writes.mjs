@@ -9,6 +9,7 @@ import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 
 const gitHead = () => { try { return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(); } catch { return "unknown"; } };
 import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
@@ -24,8 +25,10 @@ const file = path.join(GRAPH, "pages/CLI.md");
 fs.writeFileSync(file, "- user\n- agent\n");
 const typingFile = path.join(GRAPH,"pages/Typing.md");
 fs.writeFileSync(typingFile,"- user\n- agent\n");
-fs.writeFileSync(path.join(GRAPH, "logseq/config.edn"), "{}\n");
-const env = { ...process.env, TAURI_WEBVIEW_AUTOMATION: "true", TINE_GRAPH: GRAPH, XDG_DATA_HOME: path.join(TMP,"data"), XDG_CONFIG_HOME: path.join(TMP,"config"), XDG_CACHE_HOME: path.join(TMP,"cache"), WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
+fs.writeFileSync(path.join(GRAPH, "pages/Referrer.md"), "- see [[CLI]]\n");
+fs.writeFileSync(path.join(GRAPH, "logseq/config.edn"), '{:default-home {:page "CLI"}}\n');
+const ownerFixture = installAccountHome(TMP, process.env.E2E_ARTIFACT_DIR || TMP);
+const env = { ...process.env, TAURI_WEBVIEW_AUTOMATION: "true", TINE_GRAPH: GRAPH, TINE_RUN: "", XDG_DATA_HOME: path.join(TMP,"data"), XDG_CONFIG_HOME: path.join(TMP,"config"), XDG_CACHE_HOME: path.join(TMP,"cache"), XDG_STATE_HOME: path.join(TMP,"state"), WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const port = Number(process.env.E2E_DRIVER_PORT || 4710);
 const native = Number(process.env.E2E_NATIVE_PORT || 4711);
 let driver, browser, serve;
@@ -68,6 +71,7 @@ try {
   await browser.$(".page-title, .ls-block").waitForExist({timeout:20_000});
   await openPageByName(browser,"CLI");
   assert.equal((await cli(["status"])).owner, "app");
+  await assertAppLease(ownerFixture);
   await browser.waitUntil(() => browser.execute(() => document.querySelector(".page")?.textContent.includes("agent before handover")), {timeout:15_000});
   assert.equal(fs.readFileSync(file,"utf8"), "- user\n- agent before handover\n");
   steps.push("handover: app owns graph and displays durable serve edit");
@@ -115,6 +119,31 @@ try {
     await waitForFileText(typingFile, text => text === "- user typing survives\n- agent alongside typing\n");
     steps.push("typing: stale refusal preserves user input; unrelated write succeeds");
   }
+  await openPageByName(browser,"CLI");
+  await cli(["page","rename","CLI","CLI renamed"]);
+  await browser.waitUntil(() => browser.execute(() => document.querySelector(".page-title")?.textContent.includes("CLI renamed")), {timeout:15_000});
+  fs.writeFileSync(path.join(TMP,"rename-source-dom.json"), JSON.stringify(await browser.execute(() => ({ title:document.querySelector(".page-title")?.textContent, text:document.querySelector(".page")?.textContent })),null,2));
+  assert(!fs.existsSync(file));
+  assert(fs.existsSync(path.join(GRAPH,"pages/CLI renamed.md")));
+  await openPageByName(browser,"Referrer");
+  await cli(["page","rename","CLI renamed","CLI final"]);
+  await browser.waitUntil(() => browser.execute(() => document.querySelector(".page")?.textContent.includes("CLI final")), {timeout:15_000});
+  fs.writeFileSync(path.join(TMP,"rename-referrer-dom.json"), JSON.stringify(await browser.execute(() => ({ title:document.querySelector(".page-title")?.textContent, text:document.querySelector(".page")?.textContent })),null,2));
+  assert.equal(fs.readFileSync(path.join(GRAPH,"pages/Referrer.md"),"utf8"),"- see [[CLI final]]\n");
+  steps.push("page rename: open source navigation and open referrer text follow host publication");
+  await openPageByName(browser,"CLI final");
+  fs.mkdirSync(path.join(GRAPH,"logseq/.tine-trash/pages"),{recursive:true});
+  fs.chmodSync(path.join(GRAPH,"logseq"),0o555);
+  let partial;
+  try { partial = await cli(["page","rename","CLI final","CLI partial"],8); }
+  finally { fs.chmodSync(path.join(GRAPH,"logseq"),0o755); }
+  assert.equal(partial.error.code,"uncertain");
+  assert.equal(partial.error.detail.admitted,true);
+  await browser.waitUntil(() => browser.execute(() => document.querySelector(".page-title")?.textContent.includes("CLI partial")), {timeout:15_000});
+  assert.equal(fs.readFileSync(path.join(GRAPH,"pages/Referrer.md"),"utf8"),"- see [[CLI partial]]\n");
+  assert(fs.readFileSync(path.join(GRAPH,"logseq/config.edn"),"utf8").includes('"CLI final"'));
+  fs.writeFileSync(path.join(TMP,"rename-partial-dom.json"), JSON.stringify(await browser.execute(() => ({ title:document.querySelector(".page-title")?.textContent, text:document.querySelector(".page")?.textContent })),null,2));
+  steps.push("partial rename: home config failure returns uncertain and the open source route follows known publication");
   fs.writeFileSync(path.join(TMP,"steps.json"),JSON.stringify(steps,null,2)+"\n");
   if (failures.length) throw new Error("native journey failure: " + failures.map(f => f.journey).join(", "));
   console.log(`PASS ${steps.join("; ")}`);

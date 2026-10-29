@@ -3,11 +3,11 @@
 //! page, never rebuilt by walking the graph. Counts the pages the alias
 //! relation examines to serve the first alias-reading query after one edit,
 //! on a small and on a 10k-page graph; the bound is the same for both.
-use std::fs;
-use std::time::Instant;
-use tine_store::{
+use crate::{
     cost_counters, Area, EditKind, PageId, SaveBase, SaveOutcome, Store, TrashIf, TxOutcome,
 };
+use std::fs;
+use std::time::Instant;
 
 /// Every 20th page declares an alias, so the relation is neither empty nor
 /// a rounding error of the graph.
@@ -47,7 +47,7 @@ fn read_aliases(store: &Store, alias: &str) -> usize {
     let view = store.whole_graph().unwrap();
     view.backlinks(alias).unwrap();
     match view.resolve(alias, false) {
-        tine_store::Resolved::Alias { owners } => owners.len(),
+        crate::Resolved::Alias { owners } => owners.len(),
         _ => 0,
     }
 }
@@ -141,9 +141,9 @@ fn run(pages: usize) -> Vec<(&'static str, u64)> {
                 let src = store.file_id(Area::Pages, "Page00060.md").unwrap();
                 let dst = store.file_id(Area::Pages, "Renamed60.md").unwrap();
                 let rev = store.read(&src, None).unwrap().1;
-                let mut tx = store.transaction(Some(EditKind::RenamePage));
+                let mut tx = store.page_plan(Some(EditKind::RenamePage));
                 tx.move_file(&src, rev, &dst, None);
-                assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
+                assert!(matches!(tx.commit_internal(), TxOutcome::Committed { .. }));
             },
             || read_aliases(&store, "al00060"),
         ),
@@ -156,9 +156,9 @@ fn run(pages: usize) -> Vec<(&'static str, u64)> {
             || {
                 let id = store.file_id(Area::Pages, "Page00080.md").unwrap();
                 let rev = store.read(&id, None).unwrap().1;
-                let mut tx = store.transaction(Some(EditKind::ReplacePage));
+                let mut tx = store.page_plan(Some(EditKind::ReplacePage));
                 tx.trash(&id, rev, TrashIf::Any);
-                assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
+                assert!(matches!(tx.commit_internal(), TxOutcome::Committed { .. }));
             },
             || read_aliases(&store, "al00080"),
         ),
@@ -171,7 +171,12 @@ fn run(pages: usize) -> Vec<(&'static str, u64)> {
 
 #[test]
 fn an_alias_edit_costs_the_edit_not_the_graph() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
+    if crate::test_transactions::isolated_cost_case(
+        "test_transactions::alias_edit_cost::an_alias_edit_costs_the_edit_not_the_graph",
+    ) {
+        return;
+    }
     let small = run(200);
     let large = run(10_000);
     for ((label, small), (_, large)) in small.iter().zip(&large) {

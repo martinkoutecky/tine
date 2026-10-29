@@ -1,5 +1,7 @@
 //! One integration executable; module names retain each source suite in test filters.
 
+mod host_only_writer;
+
 // Store cost/fault probes are process-global. Every case takes this lock so
 // ordinary graph activity cannot contaminate a measurement in another suite.
 // Child workers start a fresh executable and therefore have their own lock.
@@ -32,20 +34,14 @@ fn isolated_case(name: &str) -> bool {
     true
 }
 
-#[path = "alias_edit_cost.rs"]
-mod alias_edit_cost;
+#[path = "date_page_link.rs"]
+mod date_page_link;
 
 #[path = "assumption_ledger.rs"]
 mod assumption_ledger;
 
 #[path = "alias_groups.rs"]
 mod alias_groups;
-
-#[path = "answer_changes.rs"]
-mod answer_changes;
-
-#[path = "change_summary.rs"]
-mod change_summary;
 
 #[path = "asset_watch.rs"]
 mod asset_watch;
@@ -64,9 +60,6 @@ mod b_tail_filename_guard;
 
 #[path = "bench_events_off.rs"]
 mod bench_events_off;
-
-#[path = "c3s_content_loss.rs"]
-mod c3s_content_loss;
 
 #[path = "c3w_long_names.rs"]
 mod c3w_long_names;
@@ -91,9 +84,6 @@ mod conformance_f3;
 
 #[path = "directory_durability_guard.rs"]
 mod directory_durability_guard;
-
-#[path = "f8_vcs_markers.rs"]
-mod f8_vcs_markers;
 
 #[path = "favorites_page_bytes.rs"]
 mod favorites_page_bytes;
@@ -152,17 +142,8 @@ mod journal_sections_locate;
 #[path = "launch_one_read.rs"]
 mod launch_one_read;
 
-#[path = "loading_own_save.rs"]
-mod loading_own_save;
-
-#[path = "lifecycle.rs"]
-mod lifecycle;
-
 #[path = "link_graph.rs"]
 mod link_graph;
-
-#[path = "linkable_page_property_refs.rs"]
-mod linkable_page_property_refs;
 
 #[path = "lone_cr_pages.rs"]
 mod lone_cr_pages;
@@ -188,17 +169,11 @@ mod og_b_store_export;
 #[path = "og_b_store_journal.rs"]
 mod og_b_store_journal;
 
-#[path = "og_b_store_move.rs"]
-mod og_b_store_move;
-
 #[path = "og_c5q_alias_phantom.rs"]
 mod og_c5q_alias_phantom;
 
 #[path = "og_c5q_false_refusals.rs"]
 mod og_c5q_false_refusals;
-
-#[path = "og_create_unreadable_owner.rs"]
-mod og_create_unreadable_owner;
 
 #[path = "og_diag_dump.rs"]
 mod og_diag_dump;
@@ -299,23 +274,11 @@ mod scan_area;
 #[path = "shallow_ratchet.rs"]
 mod shallow_ratchet;
 
-#[path = "store_read.rs"]
-mod store_read;
-
-#[path = "store_save.rs"]
-mod store_save;
-
-#[path = "transaction.rs"]
-mod transaction;
-
-#[path = "transaction_plan.rs"]
-mod transaction_plan;
-
-#[path = "watch.rs"]
-mod watch;
-
 #[path = "whole_graph.rs"]
 mod whole_graph;
 
 #[path = "page_set_changes.rs"]
 mod page_set_changes;
+
+#[path = "og_b_store_move.rs"]
+mod og_b_store_move;

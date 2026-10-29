@@ -22,6 +22,8 @@ async function loadUpdate(opts: {
   version?: string;
   architecture?: string;
   packaging?: string;
+  /** The compile-time TINE_PACKAGED_BY name gpu_env() reports (tine#187). */
+  packagedBy?: string;
   packagingReject?: boolean;
   /** Successive gpu_env() answers (an Error rejects); the last one repeats. */
   packagingProbes?: Array<object | Error>;
@@ -53,6 +55,7 @@ async function loadUpdate(opts: {
     return {
       software_forced: false, appimage: false, flatpak: opts.packaging === "flatpak", packaged: opts.packaging === "msix",
       portable: opts.packaging === "portable",
+      packaged_by: opts.packagedBy ?? null,
     };
   });
   const getVersionMock = vi.fn(async () => opts.version ?? "0.5.3");
@@ -192,6 +195,72 @@ function offerFromChannel(running: string) {
 function mockLatest(version: string): void {
   channelVersion = version.replace(/^v/, "");
 }
+
+describe("package-manager builds (TINE_PACKAGED_BY, tine#187)", () => {
+  it("resolves a packager name above every other packaging answer", async () => {
+    const { update } = await loadUpdate({});
+    const none = { packaged: false, flatpak: false, portable: false };
+    expect(update.resolveUpdatePackaging({ ...none, packaged_by: "Nixpkgs" })).toBe("package-manager");
+    expect(update.resolveUpdatePackaging({ packaged: true, flatpak: true, portable: true, packaged_by: "Nixpkgs" })).toBe("package-manager");
+    expect(update.resolveUpdatePackaging({ packaged: null, packaged_by: "Nixpkgs" })).toBe("package-manager");
+    // Unset, null, empty and non-string leave today's answer.
+    for (const packaged_by of [undefined, null, "", "  ", 7]) {
+      expect(update.resolveUpdatePackaging({ ...none, packaged_by })).toBe("in-place");
+    }
+  });
+
+  it("never reads the release feed, toasts or installs, and the manual check says unavailable", async () => {
+    mockLatest("v0.6.0-beta.1");
+    const download = vi.fn(async () => {});
+    const { update, updaterCheckMock, pushToastMock, openExternalMock, getVersionMock, relaunchMock } = await loadUpdate({
+      packagedBy: "Nixpkgs", version: "0.5.3",
+      updaterUpdate: { version: "0.6.0-beta.1", close: vi.fn(async () => {}), download },
+    });
+    await update.checkForUpdate();
+    expect(await update.checkForUpdateNow()).toEqual({ kind: "unavailable" });
+    await update.installUpdateForTest("0.6.0-beta.1");
+    expect(await update.offerUpdate("0.6.0-beta.1", "0.5.3")).toEqual({ manual: false });
+    expect(updaterCheckMock).not.toHaveBeenCalled();
+    expect(getVersionMock).not.toHaveBeenCalled();
+    expect(download).not.toHaveBeenCalled();
+    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(openExternalMock).not.toHaveBeenCalled();
+    expect(pushToastMock).not.toHaveBeenCalled();
+  });
+
+  it("schedules no automatic check and does not even load the update preference", async () => {
+    const { update, getAppBoolMock } = await loadUpdate({ packagedBy: "Nixpkgs", autoUpdates: true });
+    const timer = vi.spyOn(globalThis, "setTimeout");
+    const cancel = update.scheduleAutomaticUpdateCheck();
+    try {
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+      expect(getAppBoolMock).not.toHaveBeenCalled();
+      expect(timer.mock.calls.filter(([, delay]) => delay === 3000)).toHaveLength(0);
+    } finally { cancel(); }
+  });
+
+  it("outranks Flatpak, portable and MSIX, and the About probe reports the name", async () => {
+    mockLatest("v0.6.0-beta.1");
+    for (const packaging of ["flatpak", "portable", "msix"]) {
+      const { update, updaterCheckMock, pushToastMock } = await loadUpdate({ packagedBy: "Nixpkgs", packaging });
+      await update.checkForUpdate();
+      expect(await update.checkForUpdateNow()).toEqual({ kind: "unavailable" });
+      expect(updaterCheckMock, packaging).not.toHaveBeenCalled();
+      expect(pushToastMock, packaging).not.toHaveBeenCalled();
+    }
+    expect(await (await loadUpdate({ packagedBy: "Nixpkgs" })).update.packagedBy()).toEqual({ name: "Nixpkgs" });
+    expect(await (await loadUpdate({})).update.packagedBy()).toBe("none");
+    // An unanswerable probe is "unknown", never a fabricated "none": the controls stay as they were.
+    expect(await (await loadUpdate({ packagingReject: true })).update.packagedBy()).toBe("unknown");
+  });
+
+  it("an unset packager changes nothing: the normal offer is still made", async () => {
+    mockLatest("v0.6.0-beta.1");
+    const { update, pushToastMock } = await loadUpdate({ version: "0.5.3" });
+    await update.checkForUpdate();
+    expect(toastCalls(pushToastMock).some(([, , options]) => options?.action?.label === "Install update")).toBe(true);
+  });
+});
 
 describe("update checks", () => {
   it("GH #618: OFF prevents automatic network checks but permits manual checks", async () => {

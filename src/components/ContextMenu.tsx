@@ -1,4 +1,5 @@
 import { PAGE_ICON_PROPERTIES, PAGE_ICON_PROPERTY } from "../pageIconImage";
+import { markPageSeenNow, seenAvailable, seenIdentityOf } from "../seen/seenState";
 import { pageIconPropertyInUse, readPageIconProperty } from "../pageIconBatch";
 import { focusOnMount } from "../focusOnMount";
 import { Rich } from "../i18n/Rich";
@@ -22,7 +23,7 @@ import { setPageProperty } from "../document";
 import { carryDay } from "../carry";
 import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, blockExternalId, node as docNode } from "../document";
+import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedTrees, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, blockExternalId, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
 import { editOccurrence, removeOccurrence, replaceOccurrenceWithEmbed, replaceOccurrenceWithTargetText, type OwnedOccurrence } from "../refOccurrence";
@@ -919,6 +920,8 @@ function PageMenu(props: {
           { id: "open-default-app", label: msg("context-menu-ui-open-with-default-app"), run: () => void runFileAction(false) },
         ]
       : []),
+    // "Changed since you last looked" (ADR 0079): only where a git read answered for this graph.
+    ...(seenAvailable() === true && seenIdentityOf(props.name) ? [{ id: "seen-mark", label: msg("seen-mark-page"), run: () => void markPageSeenNow(props.name) }] : []),
     // GH #338: a touch-first device has no Mod+F. The page header's menu opens
     // Find, whose bar holds the replace row (GH #208).
     ...(props.fileActions && touchPrimary() ? [{ id: "find-in-page", label: msg("context-menu-ui-find-in-page"), run: () => openInPageFind() }] : []),
@@ -1213,8 +1216,8 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
       label: numbered ? msg("context-menu-ui-remove-numbered-list") : msg("context-menu-ui-numbered-list"),
       run: () => mutate("number-selection", toggleOwnNumberedList),
     },
-    { label: msg("context-menu-ui-collapse-all"), run: () => mutate("collapse-selection", (target) => setCollapsedDeep(target, true)) },
-    { label: msg("context-menu-ui-expand-all"), run: () => mutate("expand-selection", (target) => setCollapsedDeep(target, false)) },
+    { label: msg("context-menu-ui-collapse-all"), run: () => setCollapsedTrees(ids, true) },
+    { label: msg("context-menu-ui-expand-all"), run: () => setCollapsedTrees(ids, false) },
     ...(tmplName
       ? [
           {

@@ -83,17 +83,15 @@ fn create_if_absent(
     bytes: &[u8],
 ) -> io::Result<bool> {
     let id = store.file_id(area, rel).map_err(store_error)?;
+    let Some(page) = store.as_page(&id) else {
+        let mut tx = store.transaction(None);
+        tx.create(&id, Content::Bytes(bytes.to_vec()));
+        return create_asset_if_absent(tx);
+    };
     let transaction = || {
-        let mut tx = if area == Area::Pages {
-            store.transaction(Some(tine_store::EditKind::ReplacePage))
-        } else {
-            store.transaction(None)
-        };
+        let mut tx = store.page_plan(Some(tine_store::EditKind::ReplacePage));
         tx.create(&id, Content::Bytes(bytes.to_vec()));
         tx
-    };
-    let Some(page) = store.as_page(&id) else {
-        return create_asset_if_absent(transaction());
     };
     let mut created = false;
     let plan = || match transaction().plan() {

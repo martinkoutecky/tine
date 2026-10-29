@@ -892,19 +892,6 @@ fn weak_graph_does_not_weaken_app_data_and_power_reverts_only_unsynced_names() {
     assert_eq!(h.pages["a.md"].buf, text("mine"));
     assert_eq!(h.fs.files["graph/a.md"].as_ref(), b"A");
 }
-
-#[test]
-fn retained_reservation_blocks_save_and_reconciles_undo_or_publication() {
-    let mut h = host();
-    open(&mut h, "a.md");
-    let keys = BTreeSet::from(["a.md".into()]);
-    assert_eq!(h.reserve(&keys), Disposition::Applied);
-    assert_eq!(h.start_save("a.md"), Disposition::Waiting);
-    h.fs.external("a.md", text("transaction"), true);
-    assert_eq!(h.release(&keys), Disposition::Applied);
-    assert_eq!(h.pages["a.md"].buf, text("transaction"));
-}
-
 /// The production files that name the page host surface: the census
 /// writers (STEP3 §7), the binding's host slot, restore and retirement, the
 /// page commands, the graph-window binding that starts the host and
@@ -925,6 +912,9 @@ const CENSUS_CALL_SITES: &[&str] = &[
     "src-tauri/src/page_commands.rs",
     "src-tauri/src/graph.rs",
     "src-tauri/src/owner/write.rs",
+    "src-tauri/src/owner/pages.rs",
+    // ADR 0078: audited HostOps, already in write_sites.toml.
+    "src-tauri/src/owner/git_pull.rs",
 ];
 
 /// Production `PageHost::start(` lines the census below saw.
@@ -1105,7 +1095,6 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
                     "PageRefusal",
                     "Reloaded",
                     "RenameRefusal",
-                    "Reservation",
                     "StopMode",
                     "StopState",
                     "Stopped",
@@ -1169,6 +1158,7 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
         ("binding_apply.rs", include_str!("binding_apply.rs")),
         ("binding_launch.rs", include_str!("binding_launch.rs")),
         ("binding_read.rs", include_str!("binding_read.rs")),
+        ("binding_spelling.rs", include_str!("binding_spelling.rs")),
         ("draft_worker.rs", include_str!("draft_worker.rs")),
         ("drafts.rs", include_str!("drafts.rs")),
         ("driver.rs", include_str!("driver.rs")),
@@ -1408,10 +1398,6 @@ fn rename_cost_retire_keeps_its_pages_busy_and_relaunch_preserves_owed() {
     for key in ["a.md", "b.md", "c.md"] {
         assert!(h.busy(key));
         assert_eq!(h.observe(key), Disposition::Waiting);
-        assert_eq!(
-            h.reserve(&BTreeSet::from([key.into()])),
-            Disposition::Waiting
-        );
     }
     drain(&mut h);
     assert!(h.fs.draft_files(true).is_empty());

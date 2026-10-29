@@ -6,9 +6,9 @@
 //! It is built on a private copy of the index taken under `index.lock`
 //! ([`IndexLock`]): the graph root's changes are staged into the copy, its
 //! tree is written, only the graph root's subtree goes into `HEAD`'s tree (a
-//! user's staged changes outside the graph are never committed), the branch
-//! moves by compare-and-swap while the lock is held, and the copy replaces
-//! the index. The graph root is matched as a literal path prefix, never as a
+//! user's staged changes outside the graph are never committed), the copy
+//! durably replaces the index, and then the branch moves by compare-and-swap,
+//! all while the lock is held. The graph root is matched as a literal path prefix, never as a
 //! pathspec pattern (a folder named `Notes [work]` is a glob).
 //!
 //! When (G9): when nothing was published for [`IDLE`] and the interval
@@ -17,10 +17,14 @@
 //! operation ([`around`]). One worker thread per graph root does the timed
 //! commits; libgit2 never runs on an async worker. Autocommits take the CLI
 //! runs' lock ([`RUN_LOCK`]), so they never fall between a run write's
-//! snapshot and its agent commit.
+//! snapshot and its agent commit. With a sync policy the same worker runs
+//! the sync cycles ([`super::git_sync_cycle`]): after each autocommit and on
+//! the interval when automatic, on "Sync now" either way.
 //!
-//! The graph's files are never written here: only `.git` objects, refs and
-//! the index. Repacking deletes only loose objects contained in the pack it
+//! Only `.git` objects, refs and the index are normally written here. The
+//! single graph-file exception (D-20261026-GI) appends `.syncthing.*` once
+//! to the root `.gitignore` through Store's guarded non-page transaction.
+//! Repacking deletes only loose objects contained in the pack it
 //! just wrote and fsynced (git's `prune-packed`), never unreachable ones.
 
 use std::collections::{HashMap, HashSet};
@@ -29,7 +33,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-use git2::{Oid, Repository, Status, StatusOptions};
+use git2::{Oid, Status, StatusOptions};
 use serde::Serialize;
 
 #[cfg(test)]
@@ -37,6 +41,8 @@ use super::git_run::IndexLock;
 use super::git_run::{
     open_repo_at, raw_content_conversion as converting, LockRefusal, Repo, CAS_ATTEMPTS, RUN_LOCK,
 };
+use super::git_sync::Credentials;
+use super::git_sync_cycle::SyncStatus;
 use crate::state::GraphSlot;
 
 /// No publication for this long before a timed autocommit (G9).
@@ -51,12 +57,17 @@ const TICK: Duration = Duration::from_secs(15);
 const REPACK_COMMITS: u32 = 50;
 /// Loose objects that trigger a repack regardless (git's `gc.auto` default).
 const REPACK_LOOSE_OBJECTS: usize = 6700;
-/// Busy cycles over this long before Settings names a stale `index.lock`.
+/// Failed maintenance must not run again on every commit/tick.
+const REPACK_RETRY: Duration = Duration::from_secs(10 * 60);
+/// Busy cycles over this long before Settings names a stale lock ([`held_lock`]).
 const STALE_LOCK_AFTER: Duration = Duration::from_secs(30 * 60);
 const STALE_LOCK_CYCLES: u32 = 3;
 /// The device-settings key (`tine-settings.json`), keyed by graph root.
 pub(crate) const SETTINGS_KEY: &str = "git_autocommit";
-const MESSAGE: &str = "Tine: autosave";
+pub(super) const MESSAGE: &str = "Tine: autosave";
+const SYNCTHING_IGNORE_CHECKED: &str = "git-syncthing-ignore-checked";
+const SYNCTHING_IGNORE_LINE: &[u8] = b".syncthing.*";
+static IGNORE_SETUP_LOCK: Mutex<()> = Mutex::new(());
 /// What the exit flush leaves an aborting commit to release its lock.
 const EXIT_GRACE: Duration = Duration::from_millis(500);
 
@@ -65,14 +76,31 @@ const EXIT_GRACE: Duration = Duration::from_millis(500);
 /// exit would leave `index.lock` behind).
 static EXITING: AtomicBool = AtomicBool::new(false);
 
-/// What Tine does with a git graph on this device (ADR 0078 §1). Slice 1
-/// offers `Off` and `Commit`; sync arrives with slice 2.
+/// The app is exiting ([`EXITING`]).
+pub(super) fn exiting() -> bool {
+    EXITING.load(Ordering::Acquire)
+}
+
+/// What Tine does with a git graph on this device (ADR 0078 §1). Both sync
+/// options also commit automatically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum Policy {
     #[default]
     Off,
     Commit,
+    SyncOnDemand,
+    SyncAutomatically,
+}
+
+impl Policy {
+    pub(crate) fn commits(self) -> bool {
+        self != Self::Off
+    }
+
+    pub(crate) fn syncs(self) -> bool {
+        matches!(self, Self::SyncOnDemand | Self::SyncAutomatically)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +158,86 @@ pub(crate) fn settings_into_json(json: &mut serde_json::Value, root: &Path, sett
 }
 
 // ---- the repository ------------------------------------------------------
+
+/// One durable attempt per device/graph, before any graph write. Marking first
+/// favours respecting a later removal over retrying after a crash or I/O error.
+/// A broader/parent git rule counts; staging remains the unconditional backstop.
+pub(crate) fn prepare_syncthing_ignore(
+    store: &tine_store::Store,
+    root: &Path,
+    app_data: &Path,
+) -> Result<bool, String> {
+    let _setup = IGNORE_SETUP_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if crate::settings::notice_dismissed(app_data, root, SYNCTHING_IGNORE_CHECKED) {
+        return Ok(false);
+    }
+    let repo = open_checked(root).map_err(|e| e.message())?;
+    let ignored = repo
+        .repo
+        .status_should_ignore(&repo.prefix.join(".syncthing.tine-ignore-check.tmp"))
+        .map_err(|e| e.to_string())?;
+    crate::settings::set_notice_at(app_data, root, SYNCTHING_IGNORE_CHECKED, true)?;
+    if ignored {
+        return Ok(false);
+    }
+    append_syncthing_ignore(store)?;
+    Ok(true)
+}
+
+/// Fixed non-page target; read exact bytes once, then create without replacing
+/// an occupied path or replace against that byte revision under Store's lock.
+fn append_syncthing_ignore(store: &tine_store::Store) -> Result<(), String> {
+    use tine_store::{Content, FileId, StoreError, TxOutcome};
+    let id = FileId::from(".gitignore".to_owned());
+    let (mut bytes, base) = match store.read(&id, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
+        Ok((bytes, rev)) => (bytes, Some(rev)),
+        Err(StoreError::NotFound) => (Vec::new(), None),
+        Err(error) => return Err(format!("{error:?}")),
+    };
+    // Use the first existing newline's style, preserving every original byte.
+    let newline: &[u8] = match bytes.iter().position(|b| *b == b'\n') {
+        Some(at) if at > 0 && bytes[at - 1] == b'\r' => b"\r\n",
+        _ => b"\n",
+    };
+    if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+        bytes.extend_from_slice(newline);
+    }
+    bytes.extend_from_slice(SYNCTHING_IGNORE_LINE);
+    bytes.extend_from_slice(newline);
+    let mut tx = store.transaction(None);
+    if let Some(base) = base {
+        tx.replace(&id, base, bytes);
+    } else {
+        tx.create(&id, Content::Bytes(bytes));
+    }
+    match tx.commit() {
+        TxOutcome::Committed { .. } => Ok(()),
+        other => {
+            crate::debug::diag_private("git-ignore-write-failed", format!("{other:?}"));
+            Err("the file changed or could not be safely written".into())
+        }
+    }
+}
+
+/// Keep this setup result on the existing Settings git status surface. A later
+/// no-op check must not erase the notice before the user can read it.
+pub(crate) fn report_ignore_setup(root: &Path, result: Result<bool, String>) {
+    if let Some(worker) = registry::get(root) {
+        let mut state = worker.state.lock().unwrap();
+        match result {
+            Ok(true) => {
+                state.last.syncthing_ignore_added =
+                    Some(root.join(".gitignore").display().to_string());
+                state.last.syncthing_ignore_failed = false;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                crate::debug::diag_private("git-ignore-setup-failed", error);
+                state.last.syncthing_ignore_failed = true;
+            }
+        }
+    }
+}
 
 /// Why the graph's repository cannot take an autocommit (ADR 0078 §1).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,8 +311,8 @@ fn lock_refused(refusal: LockRefusal) -> Unusable {
 }
 
 /// Open and check the repository holding `root` for autocommits.
-fn open_checked(root: &Path) -> Result<Repo, Unusable> {
-    match Repository::discover(root) {
+pub(super) fn open_checked(root: &Path) -> Result<Repo, Unusable> {
+    match super::git_run::discover(root) {
         Err(error) if error.code() == git2::ErrorCode::NotFound => {
             return Err(Unusable::NotARepository)
         }
@@ -223,7 +331,7 @@ fn open_checked(root: &Path) -> Result<Repo, Unusable> {
 /// `working-tree-encoding` changes what the repository should hold: committing
 /// the working tree's bytes would bypass it (an encrypted file pushed in
 /// clear), so those refuse.
-fn check_config(repo: &Repo) -> Result<(), Unusable> {
+pub(super) fn check_config(repo: &Repo) -> Result<(), Unusable> {
     let config = repo.repo.config().map_err(failed)?;
     let flag = |key: &str| config.get_bool(key).ok();
     // Representative graph paths, so Settings can say so up front;
@@ -272,9 +380,14 @@ fn prefix_of(repo: &Repo) -> String {
     repo.prefix.to_string_lossy().replace('\\', "/")
 }
 
+pub(super) fn syncthing_temp(path: &[u8]) -> bool {
+    path.split(|b| *b == b'/')
+        .any(|part| part.starts_with(b".syncthing."))
+}
+
 /// One of Tine's own in-flight atomic-save temp files
 /// (`.{name}.{pid}.{seq}{tag}.tmp`, `tine_store::atomic_file::temp_path`).
-fn tine_temp(path: &str) -> bool {
+pub(super) fn tine_temp(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
     let Some(stem) = name.strip_suffix(".tmp") else {
         return false;
@@ -298,6 +411,10 @@ pub(crate) enum Outcome {
     Committed(Oid),
     /// Nothing under the graph root differed from `HEAD`.
     Clean,
+    /// A pull is half applied: what differs from `HEAD` is the fetched
+    /// upstream's, so committing it would be a false local change (s3.7 P3,
+    /// [`super::git_pull::defers_autocommit`]).
+    PullPending,
 }
 
 /// Commit every change under the graph root with `message`, holding the CLI
@@ -308,8 +425,11 @@ pub(crate) fn commit_now(root: &Path, message: &str) -> Result<Outcome, Unusable
 }
 
 /// [`commit_now`] for a caller that already holds [`RUN_LOCK`].
-fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
+pub(super) fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
     let repo = open_checked(root)?;
+    if super::git_pull::defers_autocommit(&repo) {
+        return Ok(Outcome::PullPending);
+    }
     let prefix = prefix_of(&repo);
     for _ in 0..CAS_ATTEMPTS {
         if EXITING.load(Ordering::Acquire) {
@@ -322,6 +442,9 @@ fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
         let tip = repo.tip().map_err(|e| Unusable::Failed(e.message))?;
         let tip_tree = tip.as_ref().map(|c| c.tree()).transpose().map_err(failed)?;
         stage(&repo, &prefix, &mut lock.index)?;
+        repo.guard
+            .check_git(&repo.repo, &repo.branch)
+            .map_err(failed)?;
         let staged = lock.index.write_tree_to(&repo.repo).map_err(failed)?;
         let tree = if prefix.is_empty() {
             staged
@@ -341,6 +464,9 @@ fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
         let tree = repo.repo.find_tree(tree).map_err(failed)?;
         let user = repo.user();
         let parents: Vec<&git2::Commit<'_>> = tip.iter().collect();
+        repo.guard
+            .check_git(&repo.repo, &repo.branch)
+            .map_err(failed)?;
         let oid = repo
             .repo
             .commit(None, &user, &user, message, &tree, &parents)
@@ -348,12 +474,15 @@ fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
         if EXITING.load(Ordering::Acquire) {
             return Err(Unusable::Quitting);
         }
+        // The index durably names the commit's blobs before the branch moves
+        // to it (s3.7 P1/P1b); a lost compare-and-swap leaves them staged,
+        // which the next attempt commits.
+        lock.install()
+            .map_err(|e| Unusable::Failed(format!("the index could not be written: {e}")))?;
         if repo
             .advance(tip.as_ref().map(|c| c.id()), oid, "tine: autocommit")
             .map_err(failed)?
         {
-            lock.install()
-                .map_err(|e| Unusable::Failed(format!("the index could not be written: {e}")))?;
             return Ok(Outcome::Committed(oid));
         }
     }
@@ -362,13 +491,30 @@ fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusable> {
 
 /// Stage every change git sees under the graph root into `index` (a copy):
 /// new and modified regular files with their exact bytes, deletions removed.
-/// Ignored files, untracked nested repositories, symlinks and Tine's own
-/// temp files are left out. A file `.gitattributes` filters or re-encodes
-/// refuses the whole commit (git-lfs, git-crypt: its raw bytes must not be
+/// Ignored files, untracked nested repositories, symlinks, Tine's own temp
+/// files and Syncthing's in-flight copies are left out. A file `.gitattributes`
+/// filters or re-encodes refuses the whole commit (git-lfs, git-crypt: its raw bytes must not be
 /// committed). A file the user untracked with `git rm --cached` but did not
 /// ignore is added back: G5 commits every change git sees, and `.gitignore`
 /// is how a file stays out.
 fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusable> {
+    let graph_start = if prefix.is_empty() {
+        0
+    } else {
+        prefix.len() + 1
+    };
+    // A copied index can already contain a temp staged by another git program.
+    // Removing it here also retires old tracked temps without touching disk.
+    let temps: Vec<Vec<u8>> = index
+        .iter()
+        .filter(|e| under(&e.path, prefix) && syncthing_temp(&e.path[graph_start..]))
+        .map(|e| e.path)
+        .collect();
+    for path in temps {
+        let path = std::str::from_utf8(&path)
+            .map_err(|_| Unusable::Failed("a Syncthing temp path is not UTF-8".into()))?;
+        index.remove_path(Path::new(path)).map_err(failed)?;
+    }
     let workdir = repo
         .repo
         .workdir()
@@ -400,7 +546,7 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
         let Ok(path) = std::str::from_utf8(path) else {
             continue;
         };
-        if tine_temp(path) {
+        if tine_temp(path) || syncthing_temp(&path.as_bytes()[graph_start..]) {
             continue;
         }
         if EXITING.load(Ordering::Acquire) {
@@ -430,12 +576,18 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
                 let io = |e: std::io::Error| Unusable::Failed(format!("{path}: {e}"));
                 // Streamed: an asset is never held in memory whole.
                 let mut file = std::fs::File::open(&full).map_err(io)?;
+                repo.guard
+                    .check_git(&repo.repo, &repo.branch)
+                    .map_err(failed)?;
                 let mut writer = repo.repo.blob_writer(None).map_err(failed)?;
                 let size =
                     copy_unless_exiting(&mut file, &mut writer).map_err(|e| match e.kind() {
                         std::io::ErrorKind::Interrupted => Unusable::Quitting,
                         _ => io(e),
                     })?;
+                repo.guard
+                    .check_git(&repo.repo, &repo.branch)
+                    .map_err(failed)?;
                 let id = writer.commit().map_err(failed)?;
                 let old_mode = index.get_path(Path::new(path), 0).map(|e| e.mode);
                 index
@@ -571,12 +723,20 @@ fn loose_objects(objects: &Path) -> Vec<Oid> {
 /// `prune-packed`). Existing packs are never rewritten, so a repack costs
 /// what was added since the last one, not the history (review N1).
 /// Unreachable loose objects are packed too, not dropped. Returns how many
-/// were deleted; `Ok(0)` when skipped (a `git gc` is running, or the
+/// were deleted; `Ok(None)` when skipped (a `git gc` is running, or the
 /// repository is not SHA-1).
-pub(crate) fn repack(repo: &Repository) -> Result<usize, String> {
+#[cfg(test)]
+fn repack(repo: &git2::Repository) -> Result<Option<usize>, String> {
+    let checked = open_checked(repo.workdir().unwrap()).map_err(|e| e.message())?;
+    repack_guarded(&checked)
+}
+
+fn repack_guarded(checked: &Repo) -> Result<Option<usize>, String> {
+    let repo = &checked.repo;
+    let guard = &checked.guard;
     let gitdir = repo.path();
     if gitdir.join("gc.pid").exists() {
-        return Ok(0);
+        return Ok(None);
     }
     if repo
         .config()
@@ -584,21 +744,27 @@ pub(crate) fn repack(repo: &Repository) -> Result<usize, String> {
         .and_then(|c| c.get_string("extensions.objectformat").ok())
         .is_some_and(|f| !f.eq_ignore_ascii_case("sha1"))
     {
-        return Ok(0);
+        return Ok(None);
     }
     let objects = gitdir.join("objects");
     let pack_dir = objects.join("pack");
+    guard.check_path(&pack_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&pack_dir).map_err(|e| e.to_string())?;
     let loose = loose_objects(&objects);
     if loose.is_empty() {
-        return Ok(0);
+        return Ok(Some(0));
     }
+    // libgit2 1.9.7's indexer fsyncs both files on their writable creation
+    // handles, unmaps/closes the pack, then renames it into place. Enable
+    // that guarantee here too, including for callers outside open_repo_at.
+    super::git_run::configure_libgit2();
     let mut builder = repo.packbuilder().map_err(|e| e.to_string())?;
     for oid in &loose {
         builder
             .insert_object(*oid, None)
             .map_err(|e| e.to_string())?;
     }
+    guard.check_path(&pack_dir).map_err(|e| e.to_string())?;
     builder.write(&pack_dir, 0o444).map_err(|e| e.to_string())?;
     let name = builder
         .name()
@@ -606,44 +772,46 @@ pub(crate) fn repack(repo: &Repository) -> Result<usize, String> {
         .ok_or("the pack has no name")?
         .to_string();
     let idx = pack_dir.join(format!("pack-{name}.idx"));
-    for file in [pack_dir.join(format!("pack-{name}.pack")), idx.clone()] {
-        let pack_file =
-            std::fs::File::open(&file).map_err(|e| format!("{}: {e}", file.display()))?;
-        pack_file
-            .sync_all()
-            .map_err(|e| format!("{}: {e}", file.display()))?;
-    }
-    sync_dir(&pack_dir)?;
+    // Do not reopen the final read-only files for sync_all: on Windows
+    // FlushFileBuffers requires GENERIC_WRITE and fails with Access denied.
+    // builder.write already made their contents durable before publishing.
+    sync_dir(&pack_dir, guard)?;
     let packed = idx_oids(&std::fs::read(&idx).map_err(|e| e.to_string())?)?;
     let mut removed = 0;
     for oid in loose.iter().filter(|oid| packed.contains(oid.as_bytes())) {
         let hex = oid.to_string();
         let file = objects.join(&hex[..2]).join(&hex[2..]);
-        if remove_object(&file).is_ok() {
+        if remove_object(&file, guard).is_ok() {
             removed += 1;
         }
     }
     for byte in 0..=255u8 {
-        let _ = std::fs::remove_dir(objects.join(format!("{byte:02x}")));
+        let dir = objects.join(format!("{byte:02x}"));
+        guard.check_path(&dir).map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_dir(dir);
     }
-    Ok(removed)
+    Ok(Some(removed))
 }
 
 /// Delete a loose object file. git writes them read-only, which on Windows
 /// refuses the unlink until the attribute is cleared (as git-for-windows
 /// does).
-fn remove_object(file: &Path) -> std::io::Result<()> {
+fn remove_object(file: &Path, guard: &super::git_run::GitMutationGuard) -> std::io::Result<()> {
+    guard.check_path(file)?;
     #[cfg(windows)]
     {
         let mut permissions = std::fs::metadata(file)?.permissions();
         #[allow(clippy::permissions_set_readonly_false)]
         permissions.set_readonly(false);
+        guard.check_path(file)?;
         std::fs::set_permissions(file, permissions)?;
     }
+    guard.check_path(file)?;
     std::fs::remove_file(file)
 }
 
-fn sync_dir(dir: &Path) -> Result<(), String> {
+fn sync_dir(dir: &Path, guard: &super::git_run::GitMutationGuard) -> Result<(), String> {
+    guard.check_path(dir).map_err(|e| e.to_string())?;
     tine_store::directory_durability::sync_directory_entry(dir)
         .map_err(|e| format!("{}: {e}", dir.display()))
 }
@@ -685,7 +853,7 @@ pub(crate) fn around<T, E>(
     verb: impl FnOnce() -> String,
     op: impl FnOnce() -> Result<T, E>,
 ) -> Result<T, E> {
-    if registry::settings(root).policy != Policy::Commit {
+    if !registry::settings(root).policy.commits() {
         return op();
     }
     let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -704,14 +872,21 @@ pub(crate) fn around<T, E>(
 /// What Settings shows about the last attempt.
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 pub(crate) struct LastAttempt {
+    /// One setup event, retained for this worker's lifetime so Settings can
+    /// disclose the changed file even when opened after the initial bind.
+    pub(crate) syncthing_ignore_added: Option<String>,
+    pub(crate) syncthing_ignore_failed: bool,
+    /// Maintenance waits for retry; this is separate from a commit refusal.
+    pub(crate) repack_deferred: bool,
     /// Unix seconds of the last autocommit this process made.
     pub(crate) committed_at: Option<i64>,
     pub(crate) commit: Option<String>,
     /// The last refusal (`Unusable::code`) and its message.
     pub(crate) refused: Option<(String, String)>,
-    /// `index.lock` stayed held through several cycles: probably left by a
-    /// crash. Settings names it; Tine never deletes it.
+    /// A lock ([`held_lock`]) stayed held through several cycles: probably
+    /// left by a crash. Settings names it; Tine never deletes it.
     pub(crate) stale_lock: Option<String>,
+    pub(crate) sync: SyncStatus,
 }
 
 mod registry {
@@ -727,11 +902,25 @@ mod registry {
     pub(super) struct WorkerState {
         pub(super) settings: GitSettings,
         pub(super) slot: Weak<GraphSlot>,
+        pub(super) store: Option<Arc<tine_store::Store>>,
         pub(super) flush: bool,
         /// Bumped after every flush the worker finished.
         pub(super) flushed: u64,
         pub(super) last: LastAttempt,
+        /// "Sync now" was asked for.
+        pub(super) sync_requested: bool,
+        /// The app went to the background ([`backgrounded`]).
+        pub(super) background: bool,
+        /// The app came back to the foreground ([`foregrounded`]): sync at
+        /// once, commit only on cadence.
+        pub(super) foreground: bool,
+        /// The app is in the background: set by [`backgrounded`] (or at start,
+        /// when the app is away then), cleared by [`foregrounded`]; no
+        /// automatic or requested cycle (fetch, pull) starts meanwhile.
+        pub(super) away: bool,
+        pub(super) credentials: Option<Arc<dyn Credentials>>,
         pub(super) commits_since_repack: u32,
+        pub(super) repack_not_before: Option<Instant>,
         pub(super) running: bool,
         /// The worker left the registry; a new bind makes a new one.
         pub(super) retired: bool,
@@ -791,8 +980,13 @@ mod registry {
 }
 
 /// Start (or retarget) the autocommit worker of `slot`'s graph root with
-/// `settings` read from the device settings at bind.
-pub(crate) fn start_worker(slot: &Arc<GraphSlot>, settings: GitSettings) {
+/// `settings` read from the device settings at bind, and the device's git
+/// tokens for its sync cycles.
+pub(crate) fn start_worker(
+    slot: &Arc<GraphSlot>,
+    settings: GitSettings,
+    credentials: Arc<dyn Credentials>,
+) {
     let worker = loop {
         let (worker, fresh) = registry::get_or_insert(&slot.root_key);
         let mut state = worker.state.lock().unwrap();
@@ -802,12 +996,15 @@ pub(crate) fn start_worker(slot: &Arc<GraphSlot>, settings: GitSettings) {
             continue;
         }
         state.slot = Arc::downgrade(slot);
+        state.store = Some(slot.store.clone());
         state.settings = settings;
+        state.credentials = Some(credentials.clone());
         if !fresh && state.running {
             worker.wake.notify_all();
             return;
         }
         state.running = true;
+        state.away = lifecycle::app_away(&slot.root_key);
         drop(state);
         break worker;
     };
@@ -831,10 +1028,50 @@ pub(crate) fn set_settings(root: &Path, settings: GitSettings) {
     }
 }
 
+/// "Sync now": the worker commits pending changes, then runs one sync cycle.
+/// `false` when the graph has no worker.
+pub(crate) fn request_sync(root: &Path) -> bool {
+    let Some(worker) = registry::get(root) else {
+        return false;
+    };
+    let mut state = worker.state.lock().unwrap();
+    state.sync_requested = true;
+    state.last.sync.running = true;
+    worker.wake.notify_all();
+    true
+}
+
+/// The lock a commit keeps finding held: `index.lock`, or the lock a git
+/// program (or Tine, ended by the OS mid-commit) left on `HEAD`, the branch
+/// or the packed refs. Tine names it and never removes it (ADR 0078 §1).
+pub(crate) fn held_lock(root: &Path) -> Option<String> {
+    let repo = super::git_run::discover(root).ok()?;
+    let mut locks = vec![
+        repo.path().join("index.lock"),
+        repo.path().join("HEAD.lock"),
+    ];
+    if let Some(branch) = repo
+        .find_reference("HEAD")
+        .ok()
+        .and_then(|head| head.symbolic_target().ok().flatten().map(str::to_owned))
+    {
+        locks.push(repo.commondir().join(format!("{branch}.lock")));
+    }
+    locks.push(repo.commondir().join("packed-refs.lock"));
+    let held = locks.into_iter().find(|lock| lock.exists())?;
+    Some(held.display().to_string())
+}
+
 pub(crate) fn last_attempt(root: &Path) -> LastAttempt {
     registry::get(root)
         .map(|w| w.state.lock().unwrap().last.clone())
         .unwrap_or_default()
+}
+
+/// The worker retains the original store through its final commit on unbind.
+/// Never recapture the graph identity after a folder replacement.
+pub(super) fn bound_store(root: &Path) -> Option<Arc<tine_store::Store>> {
+    registry::get(root).and_then(|worker| worker.state.lock().unwrap().store.clone())
 }
 
 /// App exit (G9 "at once on quit"): ask every worker for an autocommit and
@@ -844,11 +1081,14 @@ pub(crate) fn last_attempt(root: &Path) -> LastAttempt {
 /// sure none is left when the process ends (review N2).
 pub(crate) fn flush_all(budget: Duration) {
     let deadline = Instant::now() + budget.saturating_sub(EXIT_GRACE);
+    // The quit commit is local and comes first: no network step starts, and
+    // one in flight is cancelled rather than waited on.
+    super::git_sync_cycle::stop_network();
     let workers = registry::all();
     let mut waits = Vec::new();
     for worker in &workers {
         let mut state = worker.state.lock().unwrap();
-        if state.settings.policy == Policy::Commit && state.running {
+        if state.settings.policy.commits() && state.running {
             state.flush = true;
             waits.push((worker.clone(), state.flushed));
             worker.wake.notify_all();
@@ -891,14 +1131,33 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
     let mut busy_since: Option<(Instant, u32)> = None;
     let mut checked_loose = false;
     let started = Instant::now();
+    // When the next automatic sync cycle is due (`None`: at once), and
+    // whether failures are backing it off (then a commit does not bring it
+    // forward: no retry loop while diverged or offline).
+    let mut sync_after: Option<Instant> = None;
+    let mut backing_off = false;
     loop {
-        let (settings, flush, slot) = {
+        let (settings, flush, slot, sync_now, background, foreground, away) = {
             let mut state = worker.state.lock().unwrap();
-            if !state.flush {
+            // A sync the person asked for while the app is away waits for
+            // the foreground (review r2 FU1): no fetch or pull starts away.
+            let asked = state.sync_requested && !state.away;
+            if !state.flush && !asked && !state.background && !state.foreground {
                 state = worker.wake.wait_timeout(state, TICK).unwrap().0;
             }
             let flush = std::mem::take(&mut state.flush);
-            (state.settings, flush, state.slot.upgrade())
+            let sync_now = !state.away && std::mem::take(&mut state.sync_requested);
+            let background = std::mem::take(&mut state.background);
+            let foreground = std::mem::take(&mut state.foreground);
+            (
+                state.settings,
+                flush,
+                state.slot.upgrade(),
+                sync_now,
+                background,
+                foreground,
+                state.away,
+            )
         };
         let ending = ended(slot.as_ref());
         let rev = slot
@@ -913,7 +1172,9 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
             }
             last_rev = rev;
         }
-        let commit = settings.policy == Policy::Commit && !EXITING.load(Ordering::Acquire);
+        let commit = settings.policy.commits() && !EXITING.load(Ordering::Acquire);
+        // "Sync now" commits pending changes first, whatever the cadence.
+        let sync_now = sync_now && settings.policy.syncs();
         let due = changed_at.is_some_and(|at| at.elapsed() >= IDLE)
             && last_commit.is_none_or(|at| at.elapsed() >= settings.interval);
         // At bind: changes made while Tine was closed are committed after
@@ -922,7 +1183,17 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
             && changed_at.is_none()
             && rev.is_some()
             && started.elapsed() >= IDLE;
-        if commit && (flush || ending || due || first) {
+        // Backgrounded: commit what is pending (nothing committed yet this
+        // binding counts as pending), but no more often than the interval
+        // (D-20261026-GC: at most one autocommit per interval, the lever on
+        // its unit cost). Edits the interval holds back are already saved;
+        // they commit when the interval allows, or at the next launch.
+        let background_commit = background
+            && (last_commit.is_none()
+                || (changed_at.is_some()
+                    && last_commit.is_some_and(|at| at.elapsed() >= settings.interval)));
+        let mut committed = false;
+        if commit && (flush || ending || due || first || sync_now || background_commit) {
             let outcome = commit_now(&root, MESSAGE);
             let mut state = worker.state.lock().unwrap();
             match &outcome {
@@ -932,6 +1203,7 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
                     state.last.stale_lock = None;
                     changed_at = None;
                     if let Outcome::Committed(oid) = done {
+                        committed = true;
                         last_commit = Some(Instant::now());
                         state.last.committed_at = Some(chrono::Utc::now().timestamp());
                         state.last.commit = Some(oid.to_string());
@@ -945,9 +1217,7 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
                         let (since, cycles) = busy_since.get_or_insert((Instant::now(), 0));
                         *cycles += 1;
                         if *cycles >= STALE_LOCK_CYCLES && since.elapsed() >= STALE_LOCK_AFTER {
-                            state.last.stale_lock = Repository::discover(&root)
-                                .ok()
-                                .map(|r| r.path().join("index.lock").display().to_string());
+                            state.last.stale_lock = held_lock(&root);
                         }
                     } else {
                         busy_since = None;
@@ -961,12 +1231,33 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
                     }
                 }
             }
-            let repack_due = state.commits_since_repack >= REPACK_COMMITS;
+            let repack_due =
+                state.commits_since_repack >= REPACK_COMMITS || state.last.repack_deferred;
             drop(state);
             if outcome.is_ok() && (repack_due || !checked_loose) {
                 checked_loose = true;
                 maybe_repack(&worker, &root, repack_due);
             }
+        }
+        let automatic = settings.policy == Policy::SyncAutomatically
+            && !away
+            && (foreground
+                || (committed && !backing_off)
+                || sync_after.is_none_or(|at| Instant::now() >= at));
+        let live = !flush && !ending && !EXITING.load(Ordering::Acquire);
+        if live && background && settings.policy == Policy::SyncAutomatically {
+            // The full cycle (with its pull) waits for the foreground.
+            if let Some((delay, backoff)) = sync_on_worker(&worker, settings.interval, true) {
+                sync_after = Some(Instant::now() + delay);
+                backing_off = backoff;
+            }
+        } else if live && !background && (sync_now || automatic) {
+            if let Some((delay, backoff)) = sync_on_worker(&worker, settings.interval, false) {
+                sync_after = Some(Instant::now() + delay);
+                backing_off = backoff;
+            }
+        } else if sync_now || !settings.policy.syncs() {
+            worker.state.lock().unwrap().last.sync.running = false;
         }
         if flush || ending {
             let mut state = worker.state.lock().unwrap();
@@ -984,17 +1275,79 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
     }
 }
 
+/// One sync cycle on this thread, or with `background` only the push of what
+/// the remote lacks; answers when the next automatic one is due and whether
+/// that is a back-off (`None`: the graph is unbinding, or nothing to push).
+fn sync_on_worker(
+    worker: &registry::Worker,
+    interval: Duration,
+    background: bool,
+) -> Option<(Duration, bool)> {
+    let (slot, credentials) = {
+        let mut state = worker.state.lock().unwrap();
+        state.last.sync.running = true;
+        let credentials = state
+            .credentials
+            .clone()
+            .unwrap_or_else(|| Arc::new(super::git_sync::NoCredentials));
+        (state.slot.upgrade(), credentials)
+    };
+    let Some(slot) = slot.filter(|s| !ended(Some(s))) else {
+        worker.state.lock().unwrap().last.sync.running = false;
+        return None;
+    };
+    let cycle = if background {
+        super::git_sync_cycle::push_pending(&slot, &credentials)
+    } else {
+        Some(super::git_sync_cycle::cycle(&slot, &credentials))
+    };
+    let Some(cycle) = cycle else {
+        worker.state.lock().unwrap().last.sync.running = false;
+        return None;
+    };
+    // The transport refuses in words, the pull with its `conversion` code.
+    let line_endings = (cycle.code == "conversion" || cycle.message.contains("conversion"))
+        .then(|| super::git_sync::line_endings::probe(&slot.root_key));
+    drop(slot);
+    let mut state = worker.state.lock().unwrap();
+    let delay = state.last.sync.record(&cycle, interval);
+    state.last.sync.line_endings = line_endings;
+    Some((delay, cycle.backs_off()))
+}
+
 fn maybe_repack(worker: &registry::Worker, root: &Path, due: bool) {
-    let Ok(repo) = Repository::discover(root) else {
+    if worker
+        .state
+        .lock()
+        .unwrap()
+        .repack_not_before
+        .is_some_and(|at| Instant::now() < at)
+    {
+        return;
+    }
+    let Ok(repo) = open_checked(root) else {
         return;
     };
-    if !due && loose_object_count(&repo.path().join("objects")) < REPACK_LOOSE_OBJECTS {
+    if !due && loose_object_count(&repo.repo.path().join("objects")) < REPACK_LOOSE_OBJECTS {
         return;
     }
     let _run = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    match repack(&repo) {
-        Ok(_) => worker.state.lock().unwrap().commits_since_repack = 0,
-        Err(error) => crate::debug::diag_private("git-repack-failed", error),
+    match repack_guarded(&repo) {
+        Ok(Some(_)) => {
+            let mut state = worker.state.lock().unwrap();
+            state.commits_since_repack = 0;
+            state.last.repack_deferred = false;
+            state.repack_not_before = None;
+        }
+        deferred => {
+            let mut state = worker.state.lock().unwrap();
+            state.last.repack_deferred = true;
+            state.repack_not_before = Some(Instant::now() + REPACK_RETRY);
+            drop(state);
+            if let Err(error) = deferred {
+                crate::debug::diag_private("git-repack-failed", error);
+            }
+        }
     }
 }
 
@@ -1003,7 +1356,8 @@ fn maybe_repack(worker: &registry::Worker, root: &Path, due: bool) {
 /// What Settings → Graph → Git shows.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct GitStatus {
-    /// Git features exist on this platform (desktop in slice 1).
+    /// Git features exist here: always in the app (all five targets, slice 3);
+    /// the browser mock and a published graph send `false`.
     pub(crate) available: bool,
     /// The graph is inside a git work tree.
     pub(crate) repository: bool,
@@ -1013,6 +1367,14 @@ pub(crate) struct GitStatus {
     pub(crate) policy: Policy,
     pub(crate) interval_minutes: u32,
     pub(crate) last: LastAttempt,
+    /// The tracked remote (read from the repository config), when sync can
+    /// run here.
+    pub(crate) remote: Option<super::git_sync::Remote>,
+    /// Why the sync options are refused (`code`, message), when they are.
+    pub(crate) sync_unusable: Option<(String, String)>,
+    pub(crate) line_endings: Option<super::git_sync::line_endings::Probe>,
+    /// The username this device signed in with for the remote's host.
+    pub(crate) signed_in: Option<String>,
 }
 
 pub(crate) fn git_status(root: &Path, settings: GitSettings) -> GitStatus {
@@ -1038,6 +1400,19 @@ pub(crate) fn git_status(root: &Path, settings: GitSettings) -> GitStatus {
             Some((error.code().to_string(), error.message())),
         ),
     };
+    let (remote, sync_unusable) = match (&unusable, repository) {
+        (Some(why), _) => (None, Some(why.clone())),
+        (None, false) => (None, None),
+        (None, true) => match super::git_sync::remote(root) {
+            Ok(remote) => (Some(remote), None),
+            Err(super::git_sync::Outcome::Refused(why)) => (None, Some(("refused".into(), why))),
+            Err(other) => (None, Some(("refused".into(), format!("{other:?}")))),
+        },
+    };
+    let line_endings = sync_unusable
+        .as_ref()
+        .filter(|(code, why)| code == "conversion" || why.contains("conversion"))
+        .map(|_| super::git_sync::line_endings::probe(root));
     GitStatus {
         available: true,
         repository,
@@ -1046,9 +1421,23 @@ pub(crate) fn git_status(root: &Path, settings: GitSettings) -> GitStatus {
         policy: settings.policy,
         interval_minutes: (settings.interval.as_secs() / 60) as u32,
         last: last_attempt(root),
+        remote,
+        sync_unusable,
+        line_endings,
+        signed_in: None,
     }
 }
+
+#[path = "git_lifecycle.rs"]
+mod lifecycle;
+pub(crate) use lifecycle::{backgrounded, foregrounded};
+#[cfg(test)]
+use lifecycle::{backgrounded_at, foregrounded_at};
 
 #[cfg(test)]
 #[path = "git_autocommit_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "git_mobile_tests.rs"]
+mod mobile_tests;

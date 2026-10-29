@@ -15,7 +15,7 @@ import { bindHost, resetStore, flushAll, createPage, journalTemplatePage, demoJo
 import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
-import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
+import { resetPaneLayoutToSingle, removePageTargetAcrossPanes, rewritePageTargetAcrossPanes } from "./panes";
 import { journalTitle, localDayKey, setJournalTitleFormat, appNow } from "./journal";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
 import { resetPageIndex } from "./pageIndex";
@@ -445,9 +445,15 @@ async function reportLegacyDrafts(): Promise<void> {
  *  rewrites `[[refs]]` across many files through the self-write guard. The
  *  document intent refreshes the loaded pages it touched (GH #535). Refresh the
  *  app's navigation and graph-derived views, then navigate to the new name. */
-export function refreshAfterRename(from: string, to: string, exactTarget?: PageTarget): void {
+export function refreshAfterRename(from: string, to: string, exactTarget?: PageTarget, preserveRoutes = false): void {
   if (exactTarget) {
-    removePageTargetAcrossPanes(exactTarget);
+    if (preserveRoutes) {
+      // A CLI rename has no initiating control to reopen the destination.
+      // Keep every pane on the renamed page, including name-only routes.
+      const destination = { name: to, pageKind: exactTarget.pageKind };
+      rewritePageTargetAcrossPanes(exactTarget, destination);
+      rewritePageTargetAcrossPanes({ name: from, pageKind: exactTarget.pageKind }, destination);
+    } else removePageTargetAcrossPanes(exactTarget);
     renamePageInNavigation(exactTarget, { name: to, pageKind: exactTarget.pageKind });
   } else {
     renamePageInNavigation(from, to);

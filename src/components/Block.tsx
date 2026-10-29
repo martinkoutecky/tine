@@ -1,4 +1,5 @@
 import { shortcutKey } from "../shortcutKey";
+import { bindCollapseCommandSurface } from "../collapseCommandSurface";
 import { msg, t as translate } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
 import { stickyParents } from "../stickyParents";
@@ -41,17 +42,18 @@ import { rangeInLiteral } from "../editor/inlineLiteral";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
+import { navigateJournalDown } from "../editor/journalNavigation";
+import { focusMountedEditor } from "../editor/surfaceFocus";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
-  clearFocusSurface,
   editingId,
   editingOwner,
+  captureEditIntent,
   editingSurface,
   endEdit,
-  focusSurfaceFor,
   noteSurfaceFocused,
   registerHistoryEditorTarget,
   startEditing,
@@ -86,10 +88,12 @@ import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { youtubeTimestampMacroFor, insertYoutubeTimestamp } from "./youtubeTimestampEdit";
 import { Rendered, detectMacro } from "./Rendered";
+import { SeenRemoved, useSeenRow } from "../seen/SeenHeader";
 import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecorationStyle, threadLineSettings, type ThreadLineDecoration } from "./block/rowChrome";
 import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
 import { ResultWriteTargetContext, liveWriteTarget } from "./queryResultIdentity";
+import { toggleViewFold, viewFoldSurface } from "./block/readOnlyFold";
 import { pushToast } from "../toasts";
 import { copyBlockLink } from "./blockLinkCopy";
 import { editorAssets } from "../editor/editorAssets";
@@ -111,6 +115,7 @@ import {
   textareaCaretLineRect,
 } from "../editor/caretRows";
 import { revealCaretColumn, revealCaretSettled } from "../editor/caretReveal";
+import { selectionToolbarPlacement } from "./block/selectionToolbarPlacement";
 import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, isEditorEmpty, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
 import { editorCommitRecovery } from "../editor/commitRecovery";
@@ -138,7 +143,7 @@ import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, rendered
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
-import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
+import { blockFirstLine, formatForBlockId, isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
 import { commentFromEditor, replyOnEnter } from "../commentActions";
 import { AuthorChip, CommentActions, CommentComposer, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
@@ -212,7 +217,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const surfaceKey = useContext(SurfaceContext);
   const outlineScope = useContext(OutlineScopeContext);
   const collapseSurface = useContext(CollapseSurfaceContext);
+  const viewCollapseSurface = () => viewFoldSurface(props.id, collapseSurface);
   const bulletOpen = useContext(BulletOpenContext);
+  const seenRow = useSeenRow(props.id);
   const editing = () => {
     if (editingId() !== props.id) return false;
     const owner = editingOwner();
@@ -230,7 +237,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     return !surfaceKey.startsWith("ref:") && !surfaceKey.startsWith("embed:");
   };
   const storedFolded = () => storedFold(props.id); // `collapsed::`, else a query's authored `:collapsed? true` (GH #619 Q8)
-  const collapsed = () => collapseSurface?.collapsed(props.id, storedFolded()) ?? storedFolded();
+  bindCollapseCommandSurface(props.id, collapseSurface, outlineScope, editing);
+  const collapsed = () => viewCollapseSurface()?.collapsed(props.id, storedFolded()) ?? storedFolded();
   const fmt = createMemo(() => pageByName(node().page)?.format ?? "md");
   const blockFacets = createMemo<Facets>(() => {
     const n = node();
@@ -337,6 +345,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           selected: isSelected(props.id),
           // Marks the row being edited; drives dim-mode's active-block spotlight.
           editing: editing(),
+          "seen-changed": seenRow.changed(),
         }}
         onContextMenu={(e) => {
           // GH #726: a nested result/embed row owns its menu (contextMenuPolicy).
@@ -349,13 +358,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         <div class="block-controls">
           <span
             class="collapse-toggle"
-            classList={{ "has-children": hasFoldableBody(), disabled: readOnly() }}
-            aria-disabled={readOnly() ? "true" : undefined}
-            onClick={() => {
-              if (readOnly()) return;
-              if (collapseSurface) collapseSurface.toggle(props.id, collapsed());
-              else toggleCollapse(props.id);
-            }}
+            classList={{ "has-children": hasFoldableBody() }}
+            onClick={() => toggleViewFold(props.id, viewCollapseSurface(), collapsed())}
           >
             <Show when={hasFoldableBody()}>
               <svg viewBox="0 0 24 24" class="triangle">
@@ -441,6 +445,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         </div>
         <MarginMarker parentId={props.id} comments={marginComments()} />
       </div>
+      <SeenRemoved first={props.id} />
 
       <Show when={showRefs()}>
         <div class="block-references">
@@ -467,7 +472,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           </Match>
           <Match when={true}>
             <div class="block-children-container">
-              <CollapseAllBorder id={props.id} readOnly={readOnly()} surface={collapseSurface} />
+              <CollapseAllBorder id={props.id} readOnly={readOnly()} surface={viewCollapseSurface()} />
               <div class="block-children">
                 <For {...blockListProps(outlineChildren)} />
               </div>
@@ -476,6 +481,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         </Switch>
       </Show>
       <Show when={commentClasses()["comment-card"]}><CommentComposer id={props.id} surface={surfaceKey} /></Show>
+      <SeenRemoved after={props.id} />
     </div>
   );
 }
@@ -497,11 +503,6 @@ const SHEET_CELL_BLOCKED_EDITOR_COMMANDS = new Set([
 
 // Block editor for `props.id`. Inside quick capture, CaptureCtx repurposes
 // Enter/Escape when autocomplete is closed to commit or dismiss the capture.
-/** A host whose whole body is `{{embed ((uuid))}}`: the block-embed shape whose
- *  macro host is suppressed and whose folded root ends at the host (GH #642). */
-export function isBlockEmbedMacro(m: ReturnType<typeof detectMacro>): boolean {
-  return m?.kind === "embed" && /^embed\s*\(\([^)]+\)\)\s*$/i.test(m.inner);
-}
 
 export function Editor(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
   if (cm6EditorEnabled()) return <Cm6BlockEditor id={props.id} surface={useContext(SurfaceContext)} scope={useContext(OutlineScopeContext)} propertySession={props.propertySession} />;
@@ -1006,6 +1007,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const [hasSel, setHasSel] = createSignal(false);
   const [selectionOverflowOpen, setSelectionOverflowOpen] = createSignal(false);
   let selectionOverflowRef: HTMLDivElement | undefined;
+  const selToolbar = selectionToolbarPlacement(() => ref, () => !touchPrimary() && hasSel());
   const updateSel = () => {
     if (!editorMounted || !ref.isConnected || !node()) return;
     codeView.syncSelection(ref);
@@ -1013,6 +1015,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     setHasSel(selected);
     if (!selected) setSelectionOverflowOpen(false);
     closeAutocompleteIfOutside();
+    queueMicrotask(selToolbar.position);
   };
   // OG `close-autocomplete-if-outside` (editor.cljs, on click and keyup): page,
   // tag and block search end once the caret leaves their reference; a stale
@@ -1035,6 +1038,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // editor that owns focus.
     owner.addEventListener("selectionchange", syncNativeSelection, true);
     onCleanup(() => owner.removeEventListener("selectionchange", syncNativeSelection, true));
+    selToolbar.follow(ref);
   });
   createEffect(() => {
     if (!selectionOverflowOpen() || !hasSel()) return;
@@ -1564,31 +1568,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       focused: () => !!ref && documentOf(ref).activeElement === ref,
     });
     onCleanup(unregisterHistoryTarget);
-    // If this block is rendered in several surfaces at once (main pane + sidebar),
-    // an unscoped edit (split / keyboard nav) mounts an editor in each. Only the
-    // surface that was stamped (the one that had the caret) focuses; the others
-    // must NOT steal it. `want === undefined` means "no constraint" → focus as
-    // usual (the normal single-surface case — unchanged behaviour).
-    const want = focusSurfaceFor(props.id);
-    if (want === undefined || want === surfaceKey) {
-      focusNow();
-      // Clear AFTER this synchronous render flush, so sibling instances mounting
-      // in the same flush still see the stamp and stand down.
-      queueMicrotask(() => clearFocusSurface(props.id));
-    } else {
-      // Another surface owns the caret. Safety net against a stale stamp pointing
-      // at a surface that doesn't actually render this block: if nothing has taken
-      // focus by the next microtask, take it ourselves so the caret never vanishes.
-      queueMicrotask(() => {
-        if (!ref.isConnected || editingId() !== props.id) return;
-        const ae = documentOf(ref).activeElement;
-        const taken = isElementTag(ae, "textarea") && ae.classList.contains("block-editor");
-        if (!taken) {
-          focusNow();
-          clearFocusSurface(props.id);
-        }
-      });
-    }
+    focusMountedEditor(props.id, surfaceKey, () => ref, focusNow);
     resizeNow();
     onCleanup(revealCaretSettled(ref, nearestScrollableY(ref)));
     // A split can change the editor's wrapping width after this mount-time
@@ -1786,18 +1766,19 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     commit(ref.value);
     void withBlockMoving(docNode(props.id)?.page ?? "", async () => {
       startEditing(props.id, selection, null, editSurface());
+      const intentIsCurrent = captureEditIntent();
       // A sibling reorder happens synchronously (a feed move's own sync part)
       // and keeps this textarea. Restore it in the same gesture: waiting a
       // frame lets Android dismiss the IME despite the later focus.
       const move = outlineScope && !outlineScope.navOnly ? moveItem(props.id, dir) : moveBlockFeed(props.id, dir);
-      if (ref === movedEditor && movedEditor.isConnected && editingId() === props.id
+      if (intentIsCurrent() && ref === movedEditor && movedEditor.isConnected && editingId() === props.id
         && (documentOf(movedEditor).activeElement === movedEditor
           || documentOf(movedEditor).activeElement === documentOf(movedEditor).body)) restore();
       const moved = await move;
       // GH #641: a move this surface cannot show says where the block went.
       if (moved !== false && moved !== "none") noticeMoveOutOfView(props.id, outlineScope);
       await nextFrame(ref);
-      if (documentOf(ref).activeElement !== ref) restore();
+      if (intentIsCurrent() && documentOf(ref).activeElement !== ref) restore();
     }).catch(() => console.error("Block move failed"));
     return true;
   };
@@ -2585,9 +2566,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           if (!outlineScope) {
             e.preventDefault();
             commit(raw);
-            void nextVisibleOrExtend(props.id).then((n) =>
-              n && startEditing(n, { col, edge: "first" }, null, navigationSurface())
-            );
+            void navigateJournalDown({
+              id: props.id, col, surface: navigationSurface(), editor: ref,
+              current: origin => editorMounted && ref === origin && docNode(props.id) === shownNode,
+            });
           }
         }
       }
@@ -2643,19 +2625,32 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
       return;
     }
-    exitEditOnBlur();
+    const target = e.relatedTarget;
+    const sameBlockEditor = isElementTag(target, "textarea")
+      && target.classList.contains("block-editor")
+      && target.closest("[data-block-id]")?.getAttribute("data-block-id") === props.id;
+    exitEditOnBlur(sameBlockEditor ? target : undefined);
   };
 
   // A real exit (clicking elsewhere, Escape, Enter→new block, another Tine window
   // taking focus): move any SCHEDULED/DEADLINE planning line to its canonical
   // position (OG layout) as we commit — type-anywhere-while-editing,
   // normalize-on-exit (M1c). The editor is closing, so there is no caret to preserve.
-  const exitEditOnBlur = () => {
+  const exitEditOnBlur = (handoff?: HTMLTextAreaElement) => {
+    const intentIsCurrent = captureEditIntent();
     const calcExit = isCalc();
-    commit(calcExit || codeShown() ? ref.value : normalizePlanning(ref.value, pageFmt()), calcExit ? { calc: true } : undefined);
-    finishPageHeaderEdit(props.id);
-    // Only clear if no other block grabbed editing focus.
-    if (editingId() === props.id) endEdit("blur");
+    commit(calcExit || codeShown() || handoff ? ref.value : normalizePlanning(ref.value, pageFmt()), calcExit ? { calc: true } : undefined);
+    if (!handoff) finishPageHeaderEdit(props.id);
+    const endIfCurrent = () => {
+      // Blur precedes the destination's focus event. Let it record the active
+      // surface before deciding whether this occurrence still owns the exit.
+      if (!intentIsCurrent() || editingId() !== props.id) return;
+      if (handoff?.isConnected && documentOf(handoff).activeElement === handoff) return;
+      if (handoff) finishPageHeaderEdit(props.id);
+      endEdit("blur");
+    };
+    if (handoff) queueMicrotask(endIfCurrent);
+    else endIfCurrent();
   };
 
   // When the window regains focus, re-focus this block's editor and restore the
@@ -2926,7 +2921,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         </div>
       </Show>
       <Show when={hasSel()}>
-        <div class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined} onMouseDown={(e) => e.preventDefault()}>
+        <div ref={selToolbar.toolbar} class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined} onMouseDown={(e) => e.preventDefault()}>
           <For each={essentialSelectionActions}>{(action) => (
             <button
               classList={{ "sel-action-page-link": action.id === "page-link" }}

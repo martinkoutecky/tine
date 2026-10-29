@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use tine_core::sync_diff::{DiffRow, RowKind};
 use tine_graph_features::conflicts;
-use tine_store::{FaultPoint, Input, PageHost, PageId, Store};
+use tine_store::{FaultPoint, PageHost, PageId, Store};
 
 const CONFIG: &str = "{:journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n";
 const WINNER: &str = "pages/Foo.md";
@@ -203,9 +203,7 @@ fn fold_changed_meanwhile(
     let store = open(&root);
     let host = PageHost::start_for_tests(&store, app_data.path()).unwrap();
     let review = fold.review(&store);
-    let held = host
-        .reserve(|| vec![PageId::from(fold.pair().0)], Input::Refuse)
-        .expect("nothing unsaved");
+    let held = host.pause_for_tests(&[PageId::from(fold.pair().0)]);
     let result = std::thread::scope(|scope| {
         let (done, finished) = mpsc::channel();
         let (store, host, review) = (&store, &host, &review);
@@ -460,9 +458,7 @@ fn a_marker_page_changed_after_the_plan_is_never_overwritten() {
     let store = open(&root);
     let host = PageHost::start_for_tests(&store, app_data.path()).unwrap();
     let review = marker_review(&store);
-    let held = host
-        .reserve(|| vec![PageId::from(MARKED)], Input::Refuse)
-        .expect("nothing unsaved");
+    let held = host.pause_for_tests(&[PageId::from(MARKED)]);
     let result = std::thread::scope(|scope| {
         let (done, finished) = mpsc::channel();
         let (store, host, review) = (&store, &host, &review);

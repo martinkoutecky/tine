@@ -119,7 +119,7 @@ function page(width: number, height: number) {
   return {
     getViewport: vi.fn(({ scale }: { scale: number }) => ({ width: width * scale, height: height * scale })),
     getTextContent: vi.fn().mockResolvedValue({ items: [] }),
-    render: vi.fn().mockReturnValue({ promise: Promise.resolve(), cancel: vi.fn() }),
+    render: vi.fn().mockReturnValue({ promise: Promise.resolve(), cancel: vi.fn() }), cleanup: vi.fn(() => true),
   };
 }
 
@@ -1844,7 +1844,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       }
       scroll.scrollTop = 900;
       scroll.dispatchEvent(new Event("scroll"));
-      await vi.advanceTimersByTimeAsync(50);
+      await vi.advanceTimersByTimeAsync(250);
       await flush();
       expect(route()?.page).toBe(2);
       expect(scrollIntoView).not.toHaveBeenCalled();

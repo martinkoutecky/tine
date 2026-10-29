@@ -1,7 +1,7 @@
 //! I-12/I-25: every publisher uses the same bounded native answer signal.
+use crate::{Area, EditKind, PageId, SaveBase, Store, TxOutcome};
 use serde_json::{json, Value};
 use std::fs;
-use tine_store::{Area, EditKind, PageId, SaveBase, Store, TxOutcome};
 const ONE: &str = "00000000-0000-4000-8000-000000000001";
 const TWO: &str = "00000000-0000-4000-8000-000000000002";
 fn fixture() -> (tempfile::TempDir, Store) {
@@ -22,9 +22,9 @@ fn save_one(
     doc: &tine_core::model::PageDto,
     kind: EditKind,
 ) -> TxOutcome {
-    let mut tx = store.transaction(Some(kind));
+    let mut tx = store.page_plan(Some(kind));
     tx.save_page(&[kind], id, base, doc);
-    tx.commit()
+    tx.commit_internal()
 }
 fn save(store: &Store, raw: &str) -> Value {
     let id = PageId::from("pages/A.md");
@@ -46,7 +46,7 @@ fn save(store: &Store, raw: &str) -> Value {
 /// Each publication carries final counts for the targets it changed, so read
 /// publications until `target` reaches `count` and report whether any of them
 /// changed the inventory.
-fn settled(sub: &tine_store::Subscription, target: &str, count: u64) -> (bool, Value) {
+fn settled(sub: &crate::Subscription, target: &str, count: u64) -> (bool, Value) {
     let mut inventory = false;
     for _ in 0..64 {
         let signal = serde_json::to_value(sub.recv().unwrap()).unwrap();
@@ -62,7 +62,7 @@ fn counts(signal: &Value, expected: Value) {
 }
 #[test]
 fn save_signals_are_bounded_and_match_the_publication() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let (_dir, store) = fixture();
     let sub = store.subscribe();
     let text = save(&store, "after");
@@ -103,7 +103,7 @@ fn save_signals_are_bounded_and_match_the_publication() {
 }
 #[test]
 fn create_delete_and_rename_publish_both_answers() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let (_dir, store) = fixture();
     let new = PageId::from("pages/New.md");
     let mut dto = store.page(&PageId::from("pages/A.md")).unwrap().doc;
@@ -122,22 +122,22 @@ fn create_delete_and_rename_publish_both_answers() {
     assert_eq!(created["inventoryChanged"], true);
     counts(&created, json!({ONE:1}));
     let renamed = store.file_id(Area::Pages, "Renamed.md").unwrap();
-    let mut tx = store.transaction(Some(EditKind::RenamePage));
+    let mut tx = store.page_plan(Some(EditKind::RenamePage));
     tx.move_file(&new.file(), store.page(&new).unwrap().rev, &renamed, None);
-    let TxOutcome::Committed { change, .. } = tx.commit() else {
+    let TxOutcome::Committed { change, .. } = tx.commit_internal() else {
         panic!("rename refused");
     };
     let moved = serde_json::to_value(change).unwrap();
     assert_eq!(moved["summary"]["full"], true);
     assert_eq!(moved["inventoryChanged"], true);
     counts(&moved, json!({}));
-    let mut tx = store.transaction(Some(EditKind::DeletePage));
+    let mut tx = store.page_plan(Some(EditKind::DeletePage));
     tx.trash(
         &renamed,
         store.page(&PageId::from(renamed.as_str())).unwrap().rev,
-        tine_store::TrashIf::Any,
+        crate::TrashIf::Any,
     );
-    let TxOutcome::Committed { change, .. } = tx.commit() else {
+    let TxOutcome::Committed { change, .. } = tx.commit_internal() else {
         panic!("delete refused");
     };
     let deleted = serde_json::to_value(change).unwrap();
@@ -148,7 +148,7 @@ fn create_delete_and_rename_publish_both_answers() {
 }
 #[test]
 fn external_single_and_bulk_changes_publish_final_target_counts() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let (dir, store) = fixture();
     let sub = store.subscribe();
     fs::write(
@@ -156,7 +156,7 @@ fn external_single_and_bulk_changes_publish_final_target_counts() {
         format!("alias:: Outside\n- (({ONE}))\n"),
     )
     .unwrap();
-    store.refresh(tine_store::Depth::Stamps).unwrap();
+    store.refresh(crate::Depth::Stamps).unwrap();
     let (inventory, single) = settled(&sub, ONE, 1);
     assert_eq!(single["summary"]["full"], true, "alias changes are full");
     assert!(inventory);
@@ -168,7 +168,7 @@ fn external_single_and_bulk_changes_publish_final_target_counts() {
         )
         .unwrap();
     }
-    store.refresh(tine_store::Depth::Stamps).unwrap();
+    store.refresh(crate::Depth::Stamps).unwrap();
     let (inventory, bulk) = settled(&sub, TWO, 40);
     assert!(inventory);
     counts(&bulk, json!({TWO:40}));
@@ -179,7 +179,7 @@ fn external_single_and_bulk_changes_publish_final_target_counts() {
         )
         .unwrap();
     }
-    store.refresh(tine_store::Depth::Stamps).unwrap();
+    store.refresh(crate::Depth::Stamps).unwrap();
     let (_, removed) = settled(&sub, TWO, 0);
     assert_eq!(removed["inventoryChanged"], false);
     counts(&removed, json!({TWO:0}));

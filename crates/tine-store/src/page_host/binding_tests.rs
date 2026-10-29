@@ -1,14 +1,26 @@
 //! The graph binding (STEP3 §3): its bookkeeping beside a model host, and
 //! its command path against a real Store with the driver thread running.
 use super::*;
+
+#[test]
+fn m4_b2_a_blocked_orphan_is_evicted_when_its_obligation_ends() {
+    let mut u = Unit::new();
+    u.book.own(["b.md".to_string()], &u.progress.host);
+    u.progress.host.vehicle_debt.insert("b.md".into());
+    assert!(evicted(&u.collect()).is_empty());
+    u.progress.host.vehicle_debt.clear();
+    assert_eq!(evicted(&u.collect()), ["b.md"]);
+}
 use crate::page_host::io::Phase;
 use crate::page_host::model_fs::{Fault, ModelFs};
 use crate::page_host::tests::{edit, open as open_page, risk, saved, send, text};
-use crate::page_host::ReserveRefusal;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+
+#[path = "s36_creation_tests.rs"]
+mod s36_creation_tests;
 
 struct Frozen;
 impl Clock for Frozen {
@@ -206,6 +218,49 @@ type Kinds = Arc<Mutex<Vec<(PageKey, Vec<EditKind>)>>>;
 fn recording(kinds: &Kinds) -> impl FnMut(&str, &[EditKind]) + Send + 'static {
     let kinds = kinds.clone();
     move |page, taken| kinds.lock().unwrap().push((page.into(), taken.to_vec()))
+}
+
+#[test]
+fn bound_page_saves_reach_store_diagnostics() {
+    let live = Live::new(&[("pages/a.md", "- one\n"), ("pages/b.md", "- bee\n")]);
+    assert_eq!(
+        live.store.diagnostics()["storage"]["pageSaves"]["published"],
+        0
+    );
+    assert_eq!(
+        live.store.diagnostics()["storage"]["pageSaves"]["failedOrRefused"],
+        0
+    );
+
+    let (key, page) = live.open("pages/a.md");
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    live.until_indexed(&key, "- two\n");
+    assert_eq!(live.disk(&key), "- two\n");
+    assert_eq!(
+        live.store.diagnostics()["storage"]["pageSaves"]["published"],
+        1
+    );
+
+    // Fail before publication and keep retries failing until the assertion.
+    // The report must expose the real host's failures, not a separate counter.
+    let (key, page) = live.open("pages/b.md");
+    live.faults(Phase::PageTemp, 100);
+    let id = live
+        .submit(&key, "- unsaved\n", page.version, None)
+        .unwrap();
+    live.answer(&key, id);
+    live.wait(&key, "failed save", |mail| mail.notice.save_error);
+    assert_eq!(live.disk(&key), "- bee\n");
+    let report = live.store.diagnostics();
+    assert_eq!(report["storage"]["pageSaves"]["published"], 1);
+    assert!(
+        report["storage"]["pageSaves"]["failedOrRefused"]
+            .as_u64()
+            .unwrap()
+            >= 1
+    );
+    live.host.stop();
 }
 
 impl Live {
@@ -999,146 +1054,6 @@ fn a_switch_aborts_when_neither_the_save_nor_the_draft_can_be_written() {
     live.host.stop();
 }
 
-// ---- STEP3 §7: retained writers ----
-
-impl Live {
-    /// A retained transaction's write of `body` over `key`'s `old` bytes.
-    fn transaction(&self, key: &str, old: &str, body: &str) {
-        let mut tx = self.store.transaction(None);
-        let dto = self.dto(key, body);
-        let base = crate::SaveBase::Existing(FileRev::from_bytes(old.as_bytes()));
-        tx.save_page(&[EditKind::SaveBlock], &PageId::from(key), base, &dto);
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
-    }
-}
-
-/// Q3 (REVIEW-3), first trace: the referrer is flushed at v2, then a
-/// submit applies v3 before the reservation. The input contract is checked
-/// under the final reservation: a refusing writer refuses, a flush-first
-/// writer gets the page only once v3 is saved.
-#[test]
-fn q3_input_applied_before_the_reservation_is_found_under_it() {
-    let live = Live::new(&[("pages/r.md", "- one\n")]);
-    live.submits_wait();
-    let (key, page) = live.open("pages/r.md");
-    let id = live.submit(&key, "- v2\n", page.version, None).unwrap();
-    let v2 = live.answer(&key, id).answer.unwrap().version;
-    live.until_published(&[(key.clone(), v2, None)]);
-    let id = live.submit(&key, "- v3\n", v2, None).unwrap();
-    live.answer(&key, id);
-    let discover = || vec![PageId::from("pages/r.md")];
-    assert_eq!(
-        live.host.reserve(discover, Input::Refuse).unwrap_err(),
-        ReserveRefusal::Unsaved(BTreeSet::from([PageId::from(key.clone())])),
-        "Q3: a typed page that is not at risk still has unsaved input"
-    );
-    let reservation = live.host.reserve(discover, Input::Flush).unwrap();
-    assert_eq!(live.disk(&key), "- v3\n", "flushed before the write");
-    live.transaction(&key, "- v3\n", "- rewritten\n");
-    drop(reservation);
-    let page = live.wait(&key, "observed", |mail| {
-        mail.page
-            .as_ref()
-            .is_some_and(|p| p.disk == Some(token("- rewritten\n")))
-    });
-    assert!(!page.page.unwrap().conflict);
-    live.host.stop();
-}
-
-/// Q3 (REVIEW-3), second trace: discovery grows under the reservation to
-/// a page with unsaved input that was never in the first set.
-#[test]
-fn q3_a_page_discovered_under_the_reservation_is_checked_too() {
-    let live = Live::new(&[("pages/a.md", "- a\n"), ("pages/r.md", "- r\n")]);
-    live.submits_wait();
-    let (key, page) = live.open("pages/r.md");
-    let id = live.submit(&key, "- typed\n", page.version, None).unwrap();
-    live.answer(&key, id);
-    let mut round = 0;
-    let discover = || {
-        round += 1;
-        let mut pages = vec![PageId::from("pages/a.md")];
-        if round > 1 {
-            pages.push(PageId::from("pages/r.md"));
-        }
-        pages
-    };
-    assert_eq!(
-        live.host.reserve(discover, Input::Refuse).unwrap_err(),
-        ReserveRefusal::Unsaved(BTreeSet::from([PageId::from(key.clone())]))
-    );
-    assert!(
-        retained(&live.host).is_empty(),
-        "a refused reservation is withdrawn"
-    );
-    live.host.stop();
-}
-
-/// The retained keys, read through the driver's queue: after every
-/// reservation release sent before it.
-fn retained(host: &PageHost) -> BTreeSet<PageKey> {
-    let read = host
-        .driver
-        .shared
-        .read(|state| state.progress.host.retained.clone());
-    read.unwrap()
-}
-
-/// A-R1, REVIEW-3a2 R1 probe 2: discovery names A, then panics when it
-/// runs again under the fenced reservation; the unwind withdraws A.
-#[test]
-fn a_rediscovery_panic_withdraws_the_reservation() {
-    let live = Live::new(&[("pages/a.md", "- a\n")]);
-    let mut round = 0;
-    let discover = || {
-        round += 1;
-        assert!(round == 1, "the rediscovery panics");
-        vec![PageId::from("pages/a.md")]
-    };
-    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        live.host.reserve(discover, Input::Flush)
-    }));
-    assert!(unwound.is_err());
-    let retained = retained(&live.host);
-    assert!(
-        retained.is_empty(),
-        "A-R1: a rediscovery panic leaked the reservation: {retained:?}"
-    );
-    live.host.stop();
-}
-
-/// E90 (REVIEW-3a3): a reservation dropped while its host's state is
-/// poisoned under it returns without a second panic, which during an
-/// unwind would abort the app. The poison lands just before the drop's
-/// lock, past where a separate `is_poisoned` check would have looked.
-#[test]
-fn a_reservation_dropped_on_a_poisoned_host_does_not_panic() {
-    let live = Live::new(&[("pages/a.md", "- a\n")]);
-    let reservation = live
-        .host
-        .reserve(|| vec![PageId::from("pages/a.md")], Input::Refuse)
-        .unwrap();
-    let shared = Arc::clone(&live.host.driver.shared);
-    retained::BEFORE_RELEASE.with(|hook| {
-        *hook.borrow_mut() = Some(Box::new(move || {
-            let poisoner = std::thread::spawn(move || {
-                let _state = shared.state_for_tests();
-                panic!("E90 test: poison the host state");
-            });
-            assert!(poisoner.join().is_err());
-        }))
-    });
-    let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(reservation)));
-    // Torn down before the assertion: a failure's unwind would meet the
-    // failed host's panicking teardown and abort the binary.
-    drop_failed(live);
-    assert!(
-        dropped.is_ok(),
-        "E90: dropping a reservation on a poisoned host panicked; exemplar binding_retained.rs \
-         Reservation::drop (a notice)"
-    );
-}
-
 /// REVIEW-3a4 #2 under (G) as amended 2026-10-11: a failed first
 /// publication of an unchanged file leaves its row, derived from the bytes
 /// the Open read read; a file changed behind the index is withheld
@@ -1212,104 +1127,6 @@ fn an_external_write_after_the_hold_is_published_by_the_open_read() {
     );
     live.host.stop();
 }
-
-/// Q6 (REVIEW-3), second boundary: publication P fails and awaits retry;
-/// a retained writer reserves the page and commits T, which publishes its
-/// own index; P's retry must never overwrite T, and the release's
-/// observation leaves the index at T.
-#[test]
-fn q6_a_failed_publication_never_overwrites_a_retained_transaction() {
-    let live = Live::new(&[("pages/a.md", "- one\n")]);
-    let (key, page) = live.open("pages/a.md");
-    live.index_faults(u32::MAX);
-    let id = live.submit(&key, "- p\n", page.version, None).unwrap();
-    live.answer(&key, id);
-    live.until_disk(&key, "- p\n");
-    let reservation = live
-        .host
-        .reserve(|| vec![PageId::from("pages/a.md")], Input::Flush)
-        .unwrap();
-    live.index_faults(0);
-    live.transaction(&key, "- p\n", "- t\n");
-    live.until_indexed(&key, "- t\n");
-    // Past P's retry backoff, with the driver woken throughout (any wake
-    // source does): the retry waits for the release.
-    let until = Instant::now() + Duration::from_millis(1500);
-    while Instant::now() < until {
-        live.host.driver.shared.with_state_for_tests(|_| {});
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    assert_eq!(
-        live.indexed(&key),
-        Some(content_rev("- t\n")),
-        "Q6: P's retry overwrote the retained transaction's index"
-    );
-    drop(reservation);
-    live.wait(&key, "observed", |mail| {
-        mail.page
-            .as_ref()
-            .is_some_and(|p| p.disk == Some(token("- t\n")))
-    });
-    settle();
-    assert_eq!(live.indexed(&key), Some(content_rev("- t\n")));
-    live.host.stop();
-}
-
-/// V2 (REVIEW-3a): the release's observation of a retained transaction
-/// fails; until an observation succeeds, P's old due retry still must not
-/// overwrite the transaction's index. Once the read recovers, the page's
-/// publications flow again.
-#[test]
-fn v2_a_failed_release_observation_keeps_the_handover_protection() {
-    let live = Live::new(&[("pages/a.md", "- one\n")]);
-    let (key, page) = live.open("pages/a.md");
-    live.index_faults(u32::MAX);
-    let id = live.submit(&key, "- p\n", page.version, None).unwrap();
-    live.answer(&key, id);
-    live.until_disk(&key, "- p\n");
-    let reservation = live
-        .host
-        .reserve(|| vec![PageId::from("pages/a.md")], Input::Flush)
-        .unwrap();
-    live.index_faults(0);
-    live.transaction(&key, "- p\n", "- t\n");
-    live.until_indexed(&key, "- t\n");
-    settle();
-    live.faults(super::io::Phase::Read, 1_000_000);
-    drop(reservation);
-    let until = Instant::now() + Duration::from_millis(1500);
-    while Instant::now() < until {
-        live.host.driver.shared.with_state_for_tests(|_| {});
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    assert_eq!(
-        live.indexed(&key),
-        Some(content_rev("- t\n")),
-        "V2: P's retry overwrote the retained transaction's index after a failed observation"
-    );
-    live.host.driver.shared.with_state_for_tests(|state| {
-        state
-            .progress
-            .host
-            .fs
-            .faults
-            .remove(&super::io::Phase::Read);
-    });
-    let page = live.wait(&key, "observed", |mail| {
-        mail.page
-            .as_ref()
-            .is_some_and(|p| p.disk == Some(token("- t\n")))
-    });
-    settle();
-    assert_eq!(live.indexed(&key), Some(content_rev("- t\n")));
-    let id = live
-        .submit(&key, "- after\n", page.page.unwrap().version, None)
-        .unwrap();
-    live.answer(&key, id);
-    live.until_indexed(&key, "- after\n");
-    live.host.stop();
-}
-
 /// V3 (REVIEW-3a): an own save of P publishes P while the last observation
 /// is still A; an honest external writer restores A before the host ever
 /// observes P. Adopting A must publish A, although it equals the old
@@ -1551,37 +1368,6 @@ fn a2_a_twin_is_a_binding_notice_until_a_later_save_publishes() {
         assert_eq!(notice.twin, None, "A2: a later publication clears it");
     }
 }
-
-/// A2 (REVIEW-3a), schedule (c): a retained writer releases and the
-/// release's observation fails three times running: the window gets a
-/// typed notice, and it clears once the read succeeds.
-#[test]
-fn a2_a_failing_release_observation_is_a_notice_that_clears_on_recovery() {
-    let live = Live::new(&[("pages/a.md", "- one\n")]);
-    let (key, _) = live.open("pages/a.md");
-    let reservation = live
-        .host
-        .reserve(|| vec![PageId::from("pages/a.md")], Input::Flush)
-        .unwrap();
-    live.transaction(&key, "- one\n", "- t\n");
-    live.faults(super::io::Phase::Read, 1_000_000);
-    drop(reservation);
-    live.wait(&key, "the third failed read is reported", |mail| {
-        mail.notice.observe_error
-    });
-    live.host.driver.shared.with_state_for_tests(|state| {
-        state
-            .progress
-            .host
-            .fs
-            .faults
-            .remove(&super::io::Phase::Read);
-    });
-    let mail = live.wait(&key, "the report clears", |mail| !mail.notice.observe_error);
-    assert!(mail.page.is_some_and(|p| p.disk == Some(token("- t\n"))));
-    live.host.stop();
-}
-
 /// A4 (REVIEW-3a): another thread holds page A's path lock while the driver
 /// owes A an observation; page B's save falls due meanwhile and must run.
 /// The driver yields A's step and retries it, without blocking on A's
@@ -2280,7 +2066,10 @@ fn s9_draft_status_names_recovered_and_unsaved_pages() {
         host,
         ..
     } = live;
-    assert!(host.stop_finish().is_ok());
+    // Ready is a snapshot: a background save retry can start before the
+    // finish command runs. Use the complete stop API, which retries that
+    // readiness race without dropping the host or its draft custody.
+    assert!(host.stop_saved(id, StopMode::Switch).is_ok());
     assert_eq!(
         fs::read_to_string(root.join("pages/a.md")).unwrap(),
         "- one\n"
@@ -2490,23 +2279,6 @@ fn m4_b2_an_open_overtaken_by_a_reload_is_evicted_after_release() {
     assert!(evicted(&u.collect()).contains(&"b.md"));
     assert!(!u.book.owned().contains("b.md"));
 }
-
-/// M4 B2: an orphan whose eviction is blocked (vehicle debt, an unobserved
-/// release) stays a candidate: it is evicted once the obligation ends,
-/// though nothing about the key changes on the host.
-#[test]
-fn m4_b2_a_blocked_orphan_is_evicted_when_its_obligation_ends() {
-    let mut u = Unit::new();
-    u.book.own(["b.md".to_string()], &u.progress.host);
-    u.progress.host.vehicle_debt.insert("b.md".into());
-    u.book.handover.insert("b.md".into());
-    assert!(evicted(&u.collect()).is_empty());
-    u.progress.host.vehicle_debt.clear();
-    assert!(evicted(&u.collect()).is_empty(), "still handed over");
-    u.book.handover.clear();
-    assert_eq!(evicted(&u.collect()), ["b.md"]);
-}
-
 /// PERF-FIXES D4: opening a page whose bytes the index already holds changes
 /// no derived state, so it leaves a written launch checkpoint clean. Before
 /// the fix each open published the page as a change and restarted the

@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tine_store::host_faults::{abort_before, Phase};
-use tine_store::{Input, OpenOptions, PageHost, PageId, Store};
+use tine_store::{OpenOptions, PageHost, PageId, Store};
 
 /// The host phases a killed merge stops before, by boundary.
 const KILLS: [Phase; 2] = [Phase::PageRename, Phase::TrashMove];
@@ -46,9 +46,7 @@ fn k1_merge_race_worker() {
         abort_before(KILLS[boundary.parse::<usize>().unwrap()], 0);
     }
     let host = PageHost::start_for_tests(&graph, Path::new(&app_data)).unwrap();
-    let held = host
-        .reserve(|| vec![PageId::from("pages/B.md")], Input::Refuse)
-        .expect("nothing unsaved");
+    let held = host.pause_for_tests(&[PageId::from("pages/B.md")]);
     std::thread::scope(|scope| {
         let merge = scope.spawn(|| {
             tine_graph_features::pages::merge_pages(&graph, &host, "pages/A.md", "pages/B.md")

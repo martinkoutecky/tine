@@ -34,6 +34,7 @@ const CLASSIFIED: Record<string, string> = {
   "src/components/DeepLinkGraphChoice.tsx#choice": "a pending choice among known graph roots for an external link (paths, not graph content); the chosen target is re-resolved through the graph-switch door, which refuses a missing page or block",
   "src/components/TabBar.tsx#currentTabDropTarget": "tab drop target (pane/tab ids, not graph content)",
   "src/document/model.ts#collapseEpochState": "a counter compared for equality by embed folds, never written back to a graph; cleared by resetStore (clearCollapseEpochs)",
+  "src/components/block/readOnlyFold.ts#view": "presentation-only folds of read-only pages, never written to a graph; the accessor checks graphEpoch and clearOnBindingInvalidated drops them",
   "src/document/edits/selection.ts#selAnchor": "cleared by clearOnBindingInvalidated",
   "src/document/edits/selection.ts#selFocus": "cleared by clearOnBindingInvalidated",
   "src/editorController.ts#editingId": "resetStore ends the edit (endEdit \"graph-switch\")",
@@ -139,6 +140,7 @@ const COLLECTION_RULE = "I-21: module Map/Set state must end with its graph or h
   + "The existing collection baseline may only shrink";
 const BOUNDED_COLLECTIONS: Record<string, string> = {
   "src/editorController.ts#editEntryGuards": "one guard per mounted native property input; FieldCell registers on mount and its Solid cleanup removes it on commit, cancel or unmount; captureResultDraft still guards the write's binding",
+  "src/themes/fontAvailability.ts#memo": "one answer per leading font family of an installed theme row (at most 3 per theme, 32 themes), cleared at MEMO_LIMIT=256; device-level font presence, no graph state",
   "src/inputCapability.ts#watched": "one entry per media-query string asked (pointer: coarse, any-pointer: coarse); app-lifetime, no graph state",
   "src/assetCache.ts#cache": "MAX_CACHE_ENTRIES=128 / MAX_CACHE_BYTES=128MiB retained LRU, plus pending mounted reads",
   "src/assetCache.ts#liveEntries": "active asset leases only; last release deletes the evicted entry; clearAssetBlobCache ends graph reuse",
@@ -146,6 +148,7 @@ const BOUNDED_COLLECTIONS: Record<string, string> = {
   "src/components/pdfHighlightState.ts#sessions": "one entry per PDF with a mounted view or unresolved highlight work (keyed by ownership generation, so never reused across graphs); deleted once viewless and idle, and when the binding retires",
   "src/render/seededFacets.ts#seeded": "one reference-counted entry per loaded-node raw; resetStore releases owners and clears",
   "src/render/seededFacets.ts#owners": "one observer per loaded node; releases on raw change, replacement, deletion and resetStore",
+  "src/seen/displayed.ts#displayed": "one entry per routed page showing seen marks (keyed by page identity; dropped on leave, rename, merge and delete); a leaf module so backend.ts can drop entries without an import cycle, so the binding clear lives in src/seen/seenState.ts (clearOnBindingInvalidated -> clearDisplayed) and each entry holds only the binding owner",
   "src/changeKeys.ts#invalidators": "one permanent callback per importing cache module, no graph payload",
   "src/i18n/index.ts#bundles": "one Fluent bundle per shipped UI locale (the generated LOCALES registry), app-lifetime; not graph state",
   "src/i18n/index.ts#loading": "one in-flight catalog load per shipped UI locale; deleted when the load settles",

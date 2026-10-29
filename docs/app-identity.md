@@ -13,6 +13,15 @@ prerelease and never becomes GitHub's `latest` release.
 
 The internal switch key remains `experiment`. Its Beta identity is new: the
 former experiment identity never shipped, so there is no migration from it.
+
+Beta uses amber `#e8890c` masters (`docs/app-icon-beta.svg` and
+`docs/app-icon-beta-macos.svg`), with only the background fill changed from the
+stable masters. Regenerate with `node scripts/render-beta-icons.mjs` (Playwright
+Chromium and Python Pillow required); it uses the shared renderer, Tauri icon
+tooling and macOS ICNS renderer, and skips iOS outputs. No Beta iOS app is shipped;
+the stable iOS set remains untouched.
+`docs/app-icon-nightly.svg` is reserved for a possible nightly identity and is unused.
+
 Desktop seeding still reads only stable Tine's compatible settings and leaves
 stable data intact. The local deploy destination remains `~/research/tine-og`.
 Beta release versions use `X.Y.0-beta.N` (N = 1–999), with the Android code
@@ -26,8 +35,8 @@ remain accepted for the current campaign build and stable tooling.
 ```json
 { "ship": "experiment",
   "identities": {
-    "release":    { "identifier": "page.tine.Tine",   "productName": "Tine",    "androidApplicationId": "page.tine.app", "deployName": "tine" },
-    "experiment": { "identifier": "page.tine.TineBeta", "productName": "Tine Beta", "androidApplicationId": "page.tine.beta",  "deployName": "tine-og" } } }
+    "release":    { "identifier": "page.tine.Tine",   "productName": "Tine",    "androidApplicationId": "page.tine.app", "deployName": "tine", "iconDirectory": "icons" },
+    "experiment": { "identifier": "page.tine.TineBeta", "productName": "Tine Beta", "androidApplicationId": "page.tine.beta",  "deployName": "tine-og", "iconDirectory": "icons-beta" } } }
 ```
 
 To flip it, run `node scripts/set-app-identity.mjs release` (or
@@ -36,6 +45,8 @@ To flip it, run `node scripts/set-app-identity.mjs release` (or
 | Derived place | How |
 |---|---|
 | `src-tauri/tauri.conf.json` `identifier`, `productName`, main window `title` | rewritten by the script; `src-tauri/build.rs` refuses to compile when they disagree with the switch |
+| Desktop bundle/window/tray icons and Linux runtime desktop icons | `iconDirectory` selects the bundle icon list and `build.rs` emits `TINE_ICON_DIRECTORY` for embedded Linux PNGs |
+| Android launcher/adaptive icons | the derived Gradle `tineIconDirectory` adds Beta resources to both build types, overriding the stable main resources only for Beta |
 | Rust code (`app_identity.rs`, `linux_window_identity.rs`, the seed) | `build.rs` emits `TINE_APP_IDENTIFIER`, `TINE_PRODUCT_NAME` and `TINE_RELEASE_IDENTIFIER` |
 | Release filenames (`scripts/release-layout.mjs`) | derive from `productName`; whitespace becomes `-` for GitHub assets, while `sourceAssets` names Tauri outputs verbatim |
 | Android `applicationId` (`src-tauri/gen/android/app/build.gradle.kts`) | rewritten by the script; the Kotlin `namespace` stays `page.tine.app` |
@@ -162,10 +173,12 @@ staging dir, fsyncs it, and renames it into place.
 - In a release build it is a no-op (`APP_IDENTIFIER == RELEASE_IDENTIFIER`).
 - Only on desktop. Mobile app data is private to each application id.
 
-**Delete it when the switch ships `release`.** Remove the file, its `_tests.rs`,
-the `mod` line and the one call in `lib::run()`, and its
-`APPROVED_WRITER_SITES` entry in `scripts/lib/og-enforcement.mjs`.
-`src/appIdentity.guard.test.ts` fails until you do.
+**Delete it when the switch ships `release`** (done in 0.7.0 and again in
+0.8.0). Remove the file, its `_tests.rs`, the `mod` line and the one call in
+`lib::run()`, and its rows in the portable host-path allowlist
+(`src-tauri/src/portable.rs`) and the regression row's test list; point the
+updater endpoint at the stable address. `src/appIdentity.guard.test.ts` fails
+until you do.
 
 About, update notifications and copied version information derive their app name
 from the same switch through `src/appIdentity.ts`. **Copy version** preserves

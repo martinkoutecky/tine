@@ -8,7 +8,6 @@ import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
 import { bindingOwner, graphOwner, latestOwner, readOwned, writeOwned } from "../owned";
-import { errorFamily } from "../errorFamily";
 import { writeClipboardText } from "../clipboard";
 import { activePane, requestBlockReferences } from "../ui";
 import { focusedRouter } from "../panes";
@@ -23,10 +22,13 @@ import { touchCapable } from "../inputCapability";
 import { pdfTakesOverPane } from "../viewportClass";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { acquirePdfHighlightState } from "./pdfHighlightState";
-import { acquirePdfDocument, type OpenPdfDocument } from "./pdfDocumentShare";
+import { acquirePdfDocument } from "./pdfDocumentShare";
+import { openPdfDocument } from "./pdfOpenDocument";
+import { createPdfPageCache } from "./pdfPageCache";
 import { pdfTextSelection, type PdfTextSelection } from "./pdfSelection";
 import { createPdfFind } from "./pdfFind";
 import { createPdfTiles, PDF_TILE_PIXEL_BUDGET } from "./pdfTiles";
+import { createPdfViewState } from "./pdfViewState";
 import { pdfProbe } from "./pdfProbe";
 import { createPdfPinch } from "./pdfPinch";
 import { createWheelZoomAccumulator, highestPriorityPage, PDF_PREFETCH_PAGES, PDF_ZOOM_SETTLE_MS } from "./pdfRenderQueue";
@@ -40,7 +42,7 @@ import {
   trackPdfMutation,
   type PdfOwnership,
 } from "../pdfOwnership";
-import { PDF_THEME_KEY, MAX_PDF_BYTES, MAX_PDF_PAGES, PDF_CANVAS_CACHE_PIXEL_BUDGET,
+import { PDF_THEME_KEY, MAX_PDF_PAGES, PDF_CANVAS_CACHE_PIXEL_BUDGET,
   PDF_CANVAS_CACHE_PAGE_CAP, storedPdfTheme, isPdfPageRef,
   isPdfAreaModifier, pageDimensionsError, safeCanvasSize, cropPdfArea,
   errorMessage, type PendingArea, type PdfTarget } from "./pdfViewerPrimitives";
@@ -109,7 +111,6 @@ export function PdfViewer(props: {
   let pageInputFocused = false;
   let scrollRaf: (() => void) | undefined;
   let viewStateReady = false;
-  let viewStateBaseline: { page: number; scale: number } | null = null;
   const [theme, setTheme] = createSignal<PdfTheme>(storedPdfTheme());
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [outlineOpen, setOutlineOpen] = createSignal(false);
@@ -177,12 +178,11 @@ export function PdfViewer(props: {
   // estimate until first render), so opening a long PDF doesn't parse every page
   // dict before first paint.
   const dimsKnown = new Set<number>();
-  // Rendered pages in recency order (LRU). Admission is governed primarily by
-  // actual aggregate backing-store pixels, with a page count as a secondary
-  // guard. The wrapper stays sized and re-renders on scroll-back.
+  // LRU canvas admission uses both backing pixels and a page count guard.
   const lru: number[] = [];
   const canvasPixels: Record<number, number> = {};
-  const tilePages: Record<number, pdfjs.PDFPageProxy> = {};
+  const pageCache = createPdfPageCache();
+  const tilePages = pageCache.pages;
   const pdfTiles = createPdfTiles((error) => failPdf(errorMessage("Couldn't render this PDF tile", error)));
   // Actual backing-store scale used for each rendered page. This can be lower
   // than devicePixelRatio for an unusually large page, keeping canvas memory
@@ -352,13 +352,9 @@ export function PdfViewer(props: {
   const fitWidthScale = () => (dims[1] ? clampScale((scrollRef.clientWidth - 32) / dims[1].w) : 1);
   const fitHeightScale = () => (dims[1] ? clampScale((scrollRef.clientHeight - 24) / dims[1].h) : 1);
 
-  const scheduleViewState = (page: number, nextScale: number) => {
-    if (!isPdfOwnershipCurrent(owner)) return;
-    if (!viewStateReady || !Number.isFinite(nextScale) || nextScale <= 0) return;
-    if (viewStateBaseline?.page === page && viewStateBaseline?.scale === nextScale) return;
-    viewStateBaseline = { page, scale: nextScale };
-    props.onViewState?.(viewStateBaseline);
-  };
+  const viewState = createPdfViewState(() => ({ page: curPage(), scale: scale() }),
+    (state) => props.onViewState?.(state),
+    () => viewStateReady && isPdfOwnershipCurrent(owner));
 
   function failPdf(message: string) {
     detachHighlightPrepare(); // a failed document lends no geometry to siblings
@@ -367,6 +363,7 @@ export function PdfViewer(props: {
     io = null;
     clearTimeout(zoomTimer);
     clearTimeout(textTimer);
+    viewState.cancel();
     findController.cancel();
     releaseAllCanvases();
     pdfTiles.reset();
@@ -388,7 +385,6 @@ export function PdfViewer(props: {
     layoutGeneration += 1;
     releaseAllCanvases();
     pdfTiles.reset();
-    for (const key of Object.keys(tilePages)) delete tilePages[Number(key)];
     scrollRef.innerHTML = "";
     for (const k of Object.keys(pageEls)) delete pageEls[Number(k)];
     for (const k of Object.keys(textLayers)) delete textLayers[Number(k)];
@@ -576,7 +572,7 @@ export function PdfViewer(props: {
     }
     if (disposed || layoutGeneration !== layout || renderGeneration[n] !== generation
       || scale() !== s || pageEls[n] !== wrap) return;
-    tilePages[n] = page;
+    pageCache.retain(n, page);
     const viewport = page.getViewport({ scale: s });
     // First time we touch this page, learn its real unscaled size and correct the
     // wrapper if the page-1 estimate was off (non-uniform PDF).
@@ -725,6 +721,7 @@ export function PdfViewer(props: {
     }
     setCurPage(page);
     setPageField(String(page));
+    viewState.publish(page, scale()); // explicit navigation is already a committed intent
     pageEls[page]?.scrollIntoView({ block: "start" });
 
     if (!highlight) {
@@ -835,7 +832,6 @@ export function PdfViewer(props: {
   }
   function freePage(n: number) {
     pdfTiles.releasePage(n);
-    delete tilePages[n];
     renderGeneration[n] = (renderGeneration[n] ?? 0) + 1;
     tasks[n]?.cancel();
     delete tasks[n];
@@ -861,9 +857,11 @@ export function PdfViewer(props: {
     delete textBuildScale[n];
     textGeneration[n] = (textGeneration[n] ?? 0) + 1;
     pendingText.delete(n);
+    pageCache.release(n);
   }
   function releaseAllCanvases() {
     for (const page of Object.keys(canvasPixels)) freePage(Number(page));
+    pageCache.clear();
     lru.length = 0;
   }
 
@@ -1066,6 +1064,7 @@ export function PdfViewer(props: {
   }
 
   function cancelOwnedWork() {
+    viewState.flush();
     disposed = true;
     if (!pdfDoc) releaseDocument(); // a load still under way stops with its last view
     pinch.cancel();
@@ -1092,32 +1091,8 @@ export function PdfViewer(props: {
 
   // Reads and parses the PDF once for every view of it in this graph binding;
   // owned by the binding, not by this view, since a sibling may outlive it.
-  const openSharedDocument: OpenPdfDocument = async (adopt) => {
-    // The binding, not the display epoch: a repaint must not fail a load a
-    // sibling view is about to join.
-    const loadOwner = bindingOwner(() => isPdfOwnershipCurrent(owner));
-    let bytes: Uint8Array;
-    try {
-      const result = await readOwned(loadOwner, backend().readAsset(props.filename, MAX_PDF_BYTES));
-      if (result.kind === "stale") return { kind: "error", message: "This graph was closed while the PDF was loading." };
-      bytes = result.value;
-    } catch (err) {
-      return { kind: "error", message: errorFamily(err) === "asset-too-large"
-        ? "This PDF is larger than 256 MiB and can't be opened safely."
-        : errorMessage("Couldn't read this PDF asset", err) };
-    }
-    if (!bytes.length) return { kind: "error", message: "Couldn't read this PDF asset: file is empty" };
-    if (bytes.byteLength > MAX_PDF_BYTES) return { kind: "error", message: "This PDF is larger than 256 MiB and can't be opened safely." };
-    const task = pdfjs.getDocument({ data: bytes });
-    adopt.task(task);
-    try {
-      const doc = await task.promise;
-      adopt.document(doc);
-      return { kind: "ok", doc };
-    } catch (err) {
-      return { kind: "error", message: errorMessage("Couldn't load this PDF", err) };
-    }
-  };
+  const openSharedDocument = openPdfDocument(backend(), props.filename, binding.backendGeneration,
+    bindingOwner(() => isPdfOwnershipCurrent(owner)));
 
   onMount(async () => {
     const loadOwner = graphOwner(() => !disposed && isPdfOwnershipCurrent(owner));
@@ -1147,6 +1122,7 @@ export function PdfViewer(props: {
       return;
     }
     pdfDoc = opened.doc;
+    void opened.failure?.then((message) => { if (loadOwner()) failPdf(message); });
     if (!Number.isSafeInteger(pdfDoc.numPages) || pdfDoc.numPages < 1 || pdfDoc.numPages > MAX_PDF_PAGES) {
       failPdf(`This PDF reports an unsafe page count (${pdfDoc.numPages}); at most ${MAX_PDF_PAGES} pages can be displayed.`);
       return;
@@ -1185,9 +1161,8 @@ export function PdfViewer(props: {
     const requestedPage = navigation.page ?? restoredPage ?? 1;
     await navigateToTarget({ ...navigation, page: requestedPage });
     if (disposed) return;
-    viewStateBaseline = { page: curPage(), scale: scale() };
     viewStateReady = true;
-    props.onViewState?.(viewStateBaseline);
+    viewState.publish(curPage(), scale());
     setReady(true);
   });
 
@@ -1210,7 +1185,7 @@ export function PdfViewer(props: {
   createEffect(on(scale, onZoom, { defer: true }));
   createEffect(on(
     () => [curPage(), scale()] as const,
-    ([page, nextScale]) => scheduleViewState(page, nextScale),
+    ([page, nextScale]) => viewState.changed(page, nextScale),
     { defer: true }
   ));
   // Repaint highlight overlays whenever the set changes (rendered pages only).
@@ -1605,6 +1580,7 @@ export function PdfViewer(props: {
 
   const closeSafely = async () => {
     if (await drainPdfWork()) {
+      viewState.publish(curPage(), scale());
       if (props.onClose) props.onClose();
       else void focusedRouter().closePdf();
     }
@@ -1672,6 +1648,7 @@ export function PdfViewer(props: {
     setCurPage(n);
   };
   const onScroll = () => {
+    viewState.scroll();
     const top = scrollRef.scrollTop;
     if (top !== lastScrollTop) {
       // A move of more than a viewport is a jump (outline, page field, link,

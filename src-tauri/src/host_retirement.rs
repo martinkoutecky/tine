@@ -280,7 +280,7 @@ mod tests {
     };
     use std::sync::atomic::AtomicBool;
     use std::sync::{mpsc, Barrier, Mutex, RwLock};
-    use tine_store::{EditKind, Input, PageHost, PageId, PageMail, Store};
+    use tine_store::{EditKind, PageHost, PageId, PageMail, Store};
 
     #[test]
     fn l9_retiring_source_refuses_draft_recovery() {
@@ -519,10 +519,9 @@ mod tests {
         slot.store.page_of(&page, body.as_bytes()).unwrap().doc
     }
 
-    fn hold(slot: &GraphSlot) -> tine_store::Reservation {
+    fn hold(slot: &GraphSlot) -> Box<dyn Send> {
         running(slot, |host| {
-            host.reserve(|| vec![PageId::from("pages/a.md")], Input::Refuse)
-                .unwrap()
+            Box::new(host.pause_for_tests(&[PageId::from("pages/a.md")]))
         })
     }
 
@@ -688,7 +687,7 @@ mod tests {
     /// A retiring host whose page input is admitted but held: it cannot stop
     /// until `reservation` drops. Bound as `graph-1` in `graphs`, then
     /// released.
-    fn retiring(f: &Fixture, graphs: &RwLock<GraphRegistry>) -> tine_store::Reservation {
+    fn retiring(f: &Fixture, graphs: &RwLock<GraphRegistry>) -> Box<dyn Send> {
         let slot = f.bind(&mut graphs.write().unwrap(), "graph-1");
         let window = window(&slot);
         let reservation = hold(&slot);
@@ -959,7 +958,7 @@ mod tests {
     }
 
     /// Tear down a state whose graph-2 adopted `f`'s host.
-    fn close_reopened(f: &Fixture, state: &AppState, reservation: tine_store::Reservation) {
+    fn close_reopened(f: &Fixture, state: &AppState, reservation: Box<dyn Send>) {
         drop(reservation);
         assert!(state.graphs.write().unwrap().remove("graph-2").is_none());
         let retirement = state.graphs.read().unwrap().retirement.clone();

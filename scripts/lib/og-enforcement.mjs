@@ -48,7 +48,9 @@ export function currentFiles(root) {
 // Inline Rust test modules can occur near the start of a very large file.
 // Remove each complete top-level module, preserving production code after it.
 export function productionSource(source) {
-  return source.replace(/#\[cfg\(test\)\]\s*mod\s+\w+\s*\{[\s\S]*?^\}/gm, "");
+  // `#[cfg(test)]` and `#[cfg(all(test, …))]` modules, nested ones included:
+  // the block ends at the closing brace with the module's own indentation.
+  return source.replace(/^([ \t]*)#\[cfg\((?:test|all\(test\b[^\]]*)\)\]\s*mod\s+\w+\s*\{[\s\S]*?^\1\}/gm, "");
 }
 
 /** Production lines: inline `#[cfg(test)] mod` blocks do not count. */
@@ -96,11 +98,16 @@ export const PERSISTED_FORMATS = Object.freeze([
   "backup-zip-snapshot",
   // Martin 2026-10-18 (D-20261018-Q1 S1: Rule 8 approval of quick share's device-local records); docs/adr/0076.
   "quick-share-records-json", "quick-share-account-json",
+  // PENDING Martin: GIT-CRED (ADR 0078 open question 2) and its Rule 8 approval; not to integrate before.
+  "git-credentials-json",
+  // D-20261028-SG, seen design rev 2; docs/adr/0079.
+  "seen-git-json",
 ]);
-export const PINNED_FORMAT_COUNT = 33;
+export const PINNED_FORMAT_COUNT = 35;
 // Writer sites Martin approved after the base, each with its ADR. Only an
 // approved format may add sites here; the count is exact, not a budget.
 export const APPROVED_WRITER_SITES = Object.freeze({
+  "src-tauri/src/owner/seen.rs": { sites: 1, approval: "Martin 2026-10-28 D-20261028-SG; seen design rev 2; docs/adr/0079" },
   "src-tauri/src/flight_store.rs": { sites: 3, approval: "og QUESTIONS Q5 2026-09-29; docs/adr/0058" },
   "src-tauri/src/concord_ledger.rs": { sites: 1, approval: "og QUESTIONS Q4 2026-09-29; docs/adr/0056" },
   "src-tauri/src/drafts.rs": { sites: 1, approval: "og QUESTIONS Q6 2026-09-29; docs/adr/0061" },

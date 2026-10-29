@@ -52,13 +52,13 @@ writer.
 Reproduce the oracle from a clean scratch master worktree:
 
 ```sh
-rtk git -C <master-checkout> worktree add --detach test-results/master-ddf408c ddf408c55
-rtk cp scripts/og-master-page-oracle.rs test-results/master-ddf408c/crates/tine-core/examples/og_diff_pages.rs
-rtk cargo run --quiet --release --manifest-path test-results/master-ddf408c/Cargo.toml -p tine-core --example og_diff_pages -- scripts/fixtures/og-differential-pages.json > scripts/fixtures/og-master-pages-golden.json
-rtk cp scripts/og-master-rename-oracle.rs test-results/master-ddf408c/crates/tine-core/examples/og_rename_oracle.rs
-rtk cargo run --quiet --release --manifest-path test-results/master-ddf408c/Cargo.toml -p tine-core --example og_rename_oracle -- scripts/fixtures/og-rename-input.json > scripts/fixtures/og-master-rename-golden.json
-rtk cargo test -p tine-core --test integration og_differential_pages::
-rtk cargo test -p tine-store --test integration og_differential_rename::
+git -C <master-checkout> worktree add --detach test-results/master-ddf408c ddf408c55
+cp scripts/og-master-page-oracle.rs test-results/master-ddf408c/crates/tine-core/examples/og_diff_pages.rs
+cargo run --quiet --release --manifest-path test-results/master-ddf408c/Cargo.toml -p tine-core --example og_diff_pages -- scripts/fixtures/og-differential-pages.json > scripts/fixtures/og-master-pages-golden.json
+cp scripts/og-master-rename-oracle.rs test-results/master-ddf408c/crates/tine-core/examples/og_rename_oracle.rs
+cargo run --quiet --release --manifest-path test-results/master-ddf408c/Cargo.toml -p tine-core --example og_rename_oracle -- scripts/fixtures/og-rename-input.json > scripts/fixtures/og-master-rename-golden.json
+cargo test -p tine-core --test integration og_differential_pages::
+cargo test -p tine-store --test integration og_differential_rename::
 ```
 
 For other rename scenarios, use the same scratch worktree's real

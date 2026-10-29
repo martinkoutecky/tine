@@ -993,7 +993,11 @@ fn approved_external_assets_restore_keeps_recovery_on_target() {
         .unwrap();
     assert_eq!(fs::read(assets.join("new.edn")).unwrap(), b"new");
     assert!(!assets.join("old.edn").exists());
-    assert!(report.recovery[1].starts_with(assets.join(".tine-restore-recovery")));
+    assert!(report.recovery[1].starts_with(
+        fs::canonicalize(&assets)
+            .unwrap()
+            .join(".tine-restore-recovery")
+    ));
     assert_eq!(
         fs::read(report.recovery[1].join("old.edn")).unwrap(),
         b"old"

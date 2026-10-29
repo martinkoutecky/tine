@@ -1,6 +1,31 @@
 {
   "schemaVersion": 1,
+  "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-query-layout.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"On a synthetic graph a query table lies inside its query box in the main pane and the right sidebar, board counts are separated from their labels, table and card page links read as links, Collapse all is in the Linked References header row, an image in a reference breadcrumb is small, comma-separated property values are page links, and with journals off the sidebar leads to the configured home page instead of Journals.","blocking":false,"authority":"D-20261028-UILP; UI-LP-QUERY-TABLE-BOX, UI-LP-BOARD-CARDS, UI-LP-REFERENCES-HEADER, UI-LP-BREADCRUMB-IMAGE, UI-LP-JOURNALS-OFF-HOME, UI-LP-COMMA-PROPERTY-LINKS"}],
+      "acceptableVariations": ["Exact pixels, column widths, fonts, scrollbar thickness, theme colours and window size may vary; only containment, separation and presence are asserted."],
+      "nonRequirements": ["No pixel comparison, no journals-off behaviour beyond the sidebar item and home route, no Windows/macOS/mobile certification."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-sweep-nav.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Mouse back/forward follows routed-page history without navigating after a drag; Commands and t o fold a 60-block page durably, while the bullet menu folds one subtree.","blocking":false,"authority":"GH #780, #785; UI-GH780-MOUSE-HISTORY; UI-GH785-PAGE-FOLD"}],
+      "acceptableVariations": ["Menu layout, save latency, page geometry and native event sequences may vary."],
+      "nonRequirements": ["No exact pixels, complete boundary enumeration, hosted macOS/Windows device acceptance or release burn-in."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-owner-protection.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"An intentional owner namespace refusal leaves a graph editable with a persistent actionable warning. Permission repair acquires a real lease and removes the warning. Automatic retry hands over a CLI host started after external repair.","blocking":false,"authority":"D-20261027-OF; UI-OWNER-PROTECTION-RECOVERY; REG-OWNER-FALLBACK-RETRY"}],
+      "acceptableVariations": ["Warning layout, wording, save latency and retry scheduling may vary. Kernel ownership and durable text determine success."],
+      "nonRequirements": ["No real account namespace, external graph, exact pixels, retry boundary enumeration, Windows/macOS runtime certification or mobile device acceptance."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-parity-09.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A tagged-page section stays folded after returning to its tab; Shift-clicking a calendar day opens a sidebar journal; a query ancestor link navigates; Backspace removes an emptied embedded child of a folded source and Undo restores it.","blocking":false,"authority":"GH #739, #740, #743, #766; UI-PARITY09-TAGGED-FOLD, UI-PARITY09-CALENDAR-SIDEBAR, UI-PARITY09-EMBED-BACKSPACE"}],
+      "acceptableVariations": ["Layout, tab order, journal title format and save latency may vary."],
+      "nonRequirements": ["No exact pixels, external PDF support or certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-folder-exports.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Re-export from the Exports overview reviews the recorded folder in Replace mode, changes nothing before confirmation, updates its durable snapshot and retains the old leaf in recovery. Update all can update that folder with quick share unavailable.","blocking":true,"authority":"UI-FOLDER-EXPORT-UPDATE; folder exports lane manager decisions 2026-10-26; docs/contracts/export-definitions.md"}],
       "acceptableVariations": ["Dialog layout, save latency, recovery folder name and styling may vary."],
@@ -32,6 +57,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-root-identity.mjs": {
+      "setup": "Uses the shared account-home fixture across crash/relaunch; asserts a held app lease after each graph opens.",
       "contracts": [
         {"class":"exact-safety-interoperability","userOutcome":"A graph moved while open is never recreated by a save; typed input remains in real device drafts. Reopening at the new location offers explicit recovery, Not now preserves custody and returns at the next open, and recovery publishes the kept input through ordinary save checks.","blocking":true,"authority":"Martin RD4/RD5; L9-01/L9-02 approved design sections 2b/2c"},
         {"class":"stateful-ux","userOutcome":"Backups from an earlier location name that path in Backups. Declining restore changes nothing; accepting restores verified bytes with a current safety snapshot and leaves original zip bytes unchanged.","blocking":true,"authority":"Martin RD6; approved root-identity design"}
@@ -130,7 +156,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-gh745-structural-edit-viewport.mjs": {
-      "contracts":[{"class":"core-operation","userOutcome":"On a long windowed page with images above, after a block is scrolled from the bottom of the viewport to the top with the wheel and then edited structurally (Enter at the start or middle, Backspace merging into an image block, Delete merge, Tab and Shift+Tab including level 2 to 1 and back with NESTED=1, a multi-block paste), the caret is still on screen and the view has moved only as far as showing the caret needs (GH #745).","blocking":true}],
+      "contracts":[{"class":"core-operation","userOutcome":"On a long windowed page with images above, after a block is scrolled from the bottom of the viewport to the top with the wheel and then edited structurally (Enter at the start or middle, Backspace merging into an image block, Delete merge, Tab and Shift+Tab including level 2 to 1 and back with NESTED=1, a multi-block paste), the caret is still on screen and the view has moved only as far as showing the caret needs, and on the flat page no structural key replaces any outline window shell (GH #745).","blocking":true}],
       "acceptableVariations":["Exactly where in the viewport the caret row lands, a few lines of extra scroll for a merged block that grew, and animation or settle timing may vary while the caret row is visible and the view did not jump by most of a screen."],
       "nonRequirements":["WebView2 (Chromium) focus centring, covered by the unit test of the reveal rule rather than by this journey; mobile and the right sidebar."],
       "stability":"burn-in"
@@ -172,6 +198,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-cli-writes.mjs": {
+      "setup": "App, serve and CLI share the disposable account home even under HOME_OVERLAY; asserts the app's kernel lease after serve-to-app handover.",
       "contracts": [
         { "class": "exact-safety-interoperability", "userOutcome": "A CLI edit made while the user types flushes input before resolving its handle: an obsolete handle refuses stale, the user's typed text survives, and an edit to another block succeeds with the editor open.", "blocking": true, "authority": "Tine CLI v0 Spec §3" },
         { "class": "core-operation", "userOutcome": "A CLI edit to a page open in the real app appears in its window without navigation and reaches the guarded page file.", "blocking": true, "authority": "Tine CLI v0 Spec §3" },
@@ -187,8 +214,14 @@
       "nonRequirements":["The more-than-five truncation and the Copy contents (unit-tested), and native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-code-scrollbar.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A real pointer press on the horizontal scrollbar under a long-line code block, then a drag, scrolls the card on the first try and never opens the block's editor; a click on the code text still does (GH #787).","blocking":true}],
+      "acceptableVariations":["Scrollbar thickness, thumb shape, colours and the card's height may vary while a press anywhere on the visible bar strip drag-scrolls the card."],
+      "nonRequirements":["Native certification outside Linux WebKitGTK (macOS overlay scrollbars are covered by the same geometry but unmeasured), and touch devices, which scroll by swipe."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-sidebar-crumbs.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"A nested block opened in the right sidebar is titled with its page, an ellipsis and its nearest three ancestors rendered inline; clicking an ancestor crumb swaps that card to the ancestor without writing the page.","blocking":true},{"class":"stateful-ux","userOutcome":"With Block embed breadcrumbs on, a block embed shows its page and nearest three ancestors in a muted, smaller trail that starts at the embedded bullet (GH #440).","blocking":true}],
+      "contracts": [{"class":"core-operation","userOutcome":"A nested block opened in the right sidebar is titled with its page, an ellipsis and its nearest three ancestors rendered inline; clicking an ancestor crumb swaps that card to the ancestor without writing the page.","blocking":true},{"class":"stateful-ux","userOutcome":"With Block embed breadcrumbs on, a block embed shows its page and nearest three ancestors in a muted, smaller trail that starts at the embedded bullet, and each ancestor crumb opens that block (plain click: its page; Shift: the sidebar) (GH #440, #779).","blocking":true}],
       "acceptableVariations":["Separator glyphs, truncation and styling may vary while the page, ancestor order and swap agree."],
       "nonRequirements":["Modifier destinations of crumbs (component-level), and native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
@@ -221,6 +254,18 @@
       "contracts": [{"class":"stateful-ux","userOutcome":"In a graph that is a git repository, Settings → Graph names the branch and turns on Commit automatically; renaming a page then commits a pending edit made by another program as \"Tine: autosave\" and the rename as its own commit, leaving the work tree clean.","blocking":true}],
       "acceptableVariations":["Commit timing and Settings layout may vary while both commits land in this order with these subjects."],
       "nonRequirements":["Interval-driven commits (covered by Rust tests), push or pull, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-git-sync.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"In a graph that is a git clone of a local bare repository, Settings → Graph names the remote and turns on Commit and sync on demand; an edit followed by Sync now pushes Tine's autosave commit; a commit pushed from a second clone reaches the open page through Sync now; when both sides have new commits Sync now changes neither the graph nor the remote, Settings names the divergence with the git command to merge, and the notice outside Settings appears; for an HTTPS remote Sign in keeps the token only in an owner-only app-data file.","blocking":true,"authority":"ADR 0078 slice 2; D-20261028-SG; D-20261027-OF"}],
+      "acceptableVariations":["Sync timing, Settings layout and notice wording may vary while each cycle ends with the named result and the repositories hold these commits."],
+      "nonRequirements":["Automatic sync on the interval (covered by Rust tests), HTTPS transport against a real host (covered by the transport's TLS fixture tests), Concord merging, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-seen-changes.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"In a git graph with two authors, another author's committed edit shows a margin bar on exactly that block, a removed block leaves a marker that unfolds its text, and the page header counts both; the repository owner's own commit never counts. An edit and save in Tine causes no re-read. Leaving the page and restarting keep it cleared; Page actions → Mark page seen clears a later change; Settings → Graph offers Mark whole graph seen and Forget seen state.","blocking":true,"authority":"D-20261028-SG; ADR 0079"}],
+      "acceptableVariations":["Bar color, marker wording, header placement and re-read latency may vary while the same blocks are marked, counted and cleared."],
+      "nonRequirements":["Exact pixels, merge-commit histories or the 200-commit fallback (Rust tests), Android and iOS (testers' device runs after 0.9.0-beta.1, D-20261028-GM) or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
     "scripts/e2e-sw-r2-polish2.mjs": {
@@ -713,6 +758,12 @@
       "nonRequirements": ["No screenshots, geometry, row order, or bundle file names are asserted."],
       "stability": "stable"
     },
+    "scripts/e2e-view-fold.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Readers expand and collapse authored folds in the built quick-share and published viewers, keep choices across page navigation, and restore original folds on reload without mutation requests. Static HTML opens and closes child folds with JavaScript disabled.", "blocking": false }],
+      "acceptableVariations": ["Arrow styling, page layout and bundle filenames can change."],
+      "nonRequirements": ["Exact pixels, native desktop launch, or deployed G1 attestation."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-outline-guide.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "The outline guide toggles collapsible descendants in one accessible action and preserves the parent state.", "blocking": true }],
       "acceptableVariations": ["Guide visual treatment and control placement may evolve."],
@@ -845,6 +896,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-rename.mjs": {
+      "setup": "Direct and suite launches use the shared disposable account-home fixture and assert the app's kernel lease after the graph opens.",
       "contracts": [
         { "class": "core-operation", "userOutcome": "Renaming a page updates the real graph and keeps linked-reference behavior coherent.", "blocking": true },
         { "class": "core-operation", "userOutcome": "A page whose title:: differs from its filename is found and renamed by its title: the file moves to the new title's name, title:: and every [[title]] reference are rewritten, and the filename is not offered as a separate page.", "blocking": true },
@@ -984,6 +1036,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-host-saves.mjs": {
+      "setup": "Direct and suite launches use one shared disposable account-home fixture across crash/relaunch and assert the app's kernel lease after each graph opens.",
       "contracts": [
         { "class": "exact-safety-interoperability", "userOutcome": "Text typed into a block reaches the page file while the editor is still open, with no blur or navigation.", "blocking": true, "authority": "STEP3-DESIGN section 4 (og-s3 step 3b)" },
         { "class": "exact-safety-interoperability", "userOutcome": "A file changed outside Tine while the page holds unsaved input shows the page's conflict panel; Keep mine writes the user's text over it and Take disk keeps the file's text, and in both cases the page then keeps saving.", "blocking": true, "authority": "STEP3-DESIGN section 9" },
@@ -998,6 +1051,12 @@
       "contracts": [{"class":"core-operation","userOutcome":"A brand-new fileless page opened in the right sidebar through a link or page menu offers an editable first bullet; typing creates the page file and a dragged subtree moves from its source into the new page. Search-created pages remain editable there too (GH #524).","blocking":true}],
       "acceptableVariations": ["First-bullet styling, editor layout, menu placement and save latency."],
       "nonRequirements": ["Exact pixels or DOM structure; native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    }
+    ,"scripts/e2e-ui-sticky-selection.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"The seen notice stays clickable at the pane top after scrolling a routed page; a desktop toolbar follows the first selected line near the bottom of a long block, including after scrolling.","blocking":true}],
+      "acceptableVariations": ["Toolbar may flip below when there is no room above; dimensions, wrapping and theme colors may vary."],
+      "nonRequirements": ["OG has no selection toolbar. Mobile retains the docked toolbar. Native platforms other than Linux WebKitGTK require separate acceptance."],
       "stability":"burn-in"
     }
   }

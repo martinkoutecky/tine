@@ -257,6 +257,7 @@ describe("namespace links follow the gesture contract (GH #207)", () => {
         expect(el?.textContent?.trim()).toContain("ns");
         return el!;
       });
+      expect(head.getAttribute("data-ref")).toBe("ns");
       openPage("Elsewhere", "page");
       let before = tabsCount();
       auxMiddle(head);
@@ -269,6 +270,7 @@ describe("namespace links follow the gesture contract (GH #207)", () => {
       expect(sidebarPageNames()).toContain("ns");
 
       const node = m.root.querySelector<HTMLElement>(".ns-macro-node .page-ref")!;
+      expect(node.getAttribute("data-ref")).toBe("ns/a");
       expect(node.textContent?.trim()).toContain("a");
       before = tabsCount();
       auxMiddle(node);

@@ -2,7 +2,6 @@
 use super::super::endpoint::LifecycleBoundary;
 use super::*;
 use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -117,7 +116,7 @@ fn i_b_yield_waits_for_accepted_registration_and_closes_all_peers() {
     let mut status = graph.connect();
     let mut peers = Vec::new();
     for _ in 0..3 {
-        let mut peer = UnixStream::connect(graph.paths().socket).unwrap();
+        let mut peer = RawStream::connect(graph.paths().socket).unwrap();
         // Idle after hello, using an unbuffered byte reader so no reply
         // bytes can hide the closure we check below.
         let hello = json!({"tine":"cli", "protocol":1, "version":"x",
@@ -144,7 +143,7 @@ fn i_b_yield_waits_for_accepted_registration_and_closes_all_peers() {
         _ => {}
     });
     let finished = serving.run();
-    let mut mid_hello = UnixStream::connect(graph.paths().socket).unwrap();
+    let mut mid_hello = RawStream::connect(graph.paths().socket).unwrap();
     mid_hello.write_all(b"{\"tine\":").unwrap();
     accepted.recv_timeout(Duration::from_secs(2)).unwrap();
     let (done, reply) = mpsc::channel();
@@ -216,7 +215,7 @@ fn i_c_yielding_transport_is_closed_when_serve_returns_and_unlocks() {
         _ => {}
     });
     let finished = serving.run();
-    let mut peer = UnixStream::connect(graph.paths().socket).unwrap();
+    let mut peer = RawStream::connect(graph.paths().socket).unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     writeln!(
         peer,
@@ -224,7 +223,7 @@ fn i_c_yielding_transport_is_closed_when_serve_returns_and_unlocks() {
         json!({"tine":"cli", "protocol":1, "version":"x", "graph":graph.root.display().to_string()})
     )
     .unwrap();
-    let read_line = |peer: &mut UnixStream| {
+    let read_line = |peer: &mut RawStream| {
         let mut line = Vec::new();
         loop {
             let mut byte = [0];

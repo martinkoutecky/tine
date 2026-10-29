@@ -3,6 +3,43 @@ use super::*;
 use crate::owner::git_run::lock_test_hook;
 use std::path::Path;
 
+#[cfg(not(target_os = "android"))]
+#[test]
+fn sb1_run_refuses_the_root_replaced_since_store_open() {
+    let graph = Graph::new();
+    let original = repo(&graph);
+    let original_objects = objects(&original);
+    let slot = graph.slot();
+    let run = crate::owner::git_run::run_of(&json!({"run": begin(&slot)}))
+        .unwrap()
+        .unwrap();
+    let moved = graph.root.with_extension("moved");
+    std::fs::rename(&graph.root, &moved).unwrap();
+    std::fs::create_dir(&graph.root).unwrap();
+    Repository::init(&graph.root).unwrap();
+    let error = crate::owner::git_run::commit_write(
+        &slot,
+        &run,
+        &tine_store::PageId::from("pages/a.md"),
+        "Edit",
+        None,
+        Some(b"- retained input\n"),
+    )
+    .err()
+    .expect("detached run refuses before any repository mutation");
+    assert!(
+        error.message.contains("GraphRootMoved"),
+        "{}",
+        error.message
+    );
+    assert!(!graph.root.join(".git/index").exists());
+    assert!(objects(&Repository::open(&graph.root).unwrap()).is_empty());
+    assert_eq!(
+        objects(&Repository::open(&moved).unwrap()),
+        original_objects
+    );
+}
+
 fn objects(repo: &Repository) -> Vec<git2::Oid> {
     let mut ids = Vec::new();
     repo.odb()
@@ -228,4 +265,51 @@ fn autocommit_checkout_uses_the_same_branch_ownership_rule() {
     assert_eq!(repo.refname_to_id("refs/heads/other").unwrap(), tip);
     assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), index);
     assert_eq!(disk(&graph, "pages/a.md"), "- pending changes\n");
+}
+
+/// s3.7 P1/P1b: a run's commit stages its blob in the on-disk index, and
+/// syncs `.git` after the rename, before its branch moves; otherwise a crash
+/// or power cut could leave the old index under the new `HEAD`, and the
+/// user's next plain `git commit` would record a reversion of the agent's
+/// write.
+#[test]
+fn run_commit_index_is_durable_before_the_branch_moves() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let repo = repo(&graph);
+    let run = begin(&slot);
+    let address = handle(&slot, "a", 0);
+    let gitdir = repo.path().to_path_buf();
+    let seen = std::rc::Rc::new(std::cell::Cell::new(None));
+    let record = seen.clone();
+    let _ = tine_store::directory_durability::take_synced_directories();
+    lock_test_hook::install_before_ref_move(move || {
+        record.set(Some(lock_test_hook::durable_entry(&gitdir, "pages/a.md")));
+    });
+    let reply = edit(&slot, &address, "agent text", Some(&run));
+    assert_eq!(reply["git"]["committed"], true, "{reply}");
+    assert_eq!(reply["git"]["index"], "synced", "{reply}");
+    let (staged, synced) = seen.take().expect("the branch moved");
+    let committed = head(&repo)
+        .tree()
+        .unwrap()
+        .get_path(Path::new("pages/a.md"))
+        .unwrap()
+        .id();
+    assert_eq!(
+        staged,
+        Some(committed),
+        "the index is installed before the ref move"
+    );
+    // Unix: a real `.git` fsync. Windows: the graph folders' entry sync, with
+    // identity checks and no directory flush (D-20261028-WDD, ADR 0078 §2);
+    // the census row for `IndexLock::install` pins `sync_directory_witness`,
+    // never the private (flushing) variant.
+    #[cfg(unix)]
+    assert!(synced, "`.git` is fsynced before the ref move");
+    #[cfg(windows)]
+    assert!(
+        synced,
+        "`.git`'s entry sync (no directory flush on Windows) runs before the ref move"
+    );
 }

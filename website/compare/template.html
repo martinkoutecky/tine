@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tine vs Logseq — where it's at today</title>
+<meta name="description" content="An honest, feature-by-feature comparison of Tine and Logseq: where Tine is at parity, where it's scoped, where it goes further, and what it deliberately doesn't do.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Tine vs Logseq — where it's at today">
+<meta property="og:description" content="An honest, feature-by-feature comparison of Tine and Logseq.">
+<style>
+  /* Page-specific: the comparison tables + status legend. */
+  .cmp-intro { max-width: 760px; margin: 0 auto; }
+  .cmp-section { max-width: var(--maxw); margin: 0 auto; padding: 0 clamp(1rem, 4vw, 2rem); }
+  .legend { display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; justify-content: center; margin: 1.4rem 0 0; font-size: .9rem; color: var(--ink-soft); }
+  .legend span { white-space: nowrap; }
+  .g { font-weight: 800; font-variant-emoji: text; }
+  .g-yes { color: var(--accent-deep); }
+  .g-part { color: #c2410c; }
+  .g-no { color: var(--ink-faint); }
+  .g-add { color: #7c3aed; }
+  /* "available only via a community plugin" (Logseq) — a small pill, not a glyph. */
+  .plug { display: inline-block; font-size: .68rem; font-weight: 700; line-height: 1;
+    padding: .22em .5em; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--bg-tint); color: var(--ink-soft); text-transform: lowercase;
+    letter-spacing: .02em; white-space: nowrap; }
+
+  .qa { max-width: 820px; margin: 2rem auto 0; display: grid; gap: .7rem; }
+  .qa-item { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius); padding: .9rem 1.1rem; box-shadow: var(--shadow); }
+  .qa-q { font-weight: 700; color: var(--ink); }
+  .qa-a { color: var(--ink-soft); margin-top: .25rem; }
+
+  h2.cmp-h { font-size: 1.5rem; margin: 2.6rem 0 .3rem; }
+  .cmp-h-lede { color: var(--ink-faint); margin: 0 0 1rem; font-size: .95rem; }
+  .tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+  table.cmp { border-collapse: collapse; width: 100%; font-size: .94rem; background: var(--card); }
+  table.cmp th, table.cmp td { text-align: left; padding: .55rem .8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.cmp thead th { font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-faint); background: var(--bg-tint); }
+  table.cmp col.c-feat { width: 26%; } table.cmp col.c-og, table.cmp col.c-tine { width: 9%; }
+  table.cmp td.st { text-align: center; white-space: nowrap; }
+  table.cmp tr:last-child td { border-bottom: 0; }
+  table.cmp td.feat { font-weight: 600; color: var(--ink); }
+  table.cmp td.note { color: var(--ink-soft); }
+  .notdoing { max-width: 820px; margin: 1rem auto 0; }
+  .notdoing li { margin: .35rem 0; color: var(--ink-soft); }
+  .notdoing b { color: var(--ink); }
+  .asof { text-align: center; color: var(--ink-faint); font-size: .88rem; margin-top: 2.5rem; }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <a class="brand" href="index.html" aria-label="Tine — home">
+    <svg class="mark" width="34" height="34" viewBox="0 0 64 80" aria-hidden="true">
+      <g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none">
+        <path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/>
+        <path d="M16 36 H48"/><path d="M32 36 V70"/>
+      </g>
+    </svg>
+    <span class="brand-word">Tine</span>
+  </a>
+  <nav class="nav-links">
+    <a href="guide/">Try it live</a>
+    <a href="index.html#features">Features</a>
+    <a href="index.html#mobile">Mobile</a>
+    <a href="compare.html" aria-current="page">vs Logseq</a>
+    <a href="blog/">Blog</a>
+    <a href="index.html#community">Community</a>
+    <a class="nav-heart" href="index.html#support">♥ Support</a>
+    <a class="nav-cta" href="https://github.com/martinkoutecky/tine/releases">Download</a>
+  </nav>
+</header>
+
+<main id="top">
+  <section class="wrap">
+    <div class="cmp-intro">
+      <p class="eyebrow">Honest status · not marketing</p>
+      <h1>Tine vs Logseq, <span class="accent">today</span></h1>
+      <p class="lede">A feature-by-feature comparison, grounded in linked evidence. Logseq file graphs, Logseq DB, and Obsidian are separate columns; similar features need not use the same syntax.</p>
+      <p class="cmp-h-lede">Each Tine cell links to a Guide example or test. Other tools link to their own documentation with the date checked. Unknown means this comparison has no verified primary source for that cell; it does not mean the feature is absent.</p>
+    </div>
+  </section>
+  <section class="band">
+    <div class="band-inner cmp-section">
+{{TABLES}}
+      <p class="asof">Generated for Tine v{{VERSION}} from verifiable comparison data. Competitor dates appear beside each source.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <svg class="mark" width="26" height="26" viewBox="0 0 64 80" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none">
+          <path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/>
+          <path d="M16 36 H48"/><path d="M32 36 V70"/>
+        </g>
+      </svg>
+      <span>Tine</span>
+    </div>
+    <nav class="foot-links">
+      <a href="https://github.com/martinkoutecky/tine">GitHub</a>
+      <a href="https://github.com/martinkoutecky/tine/releases">Releases</a>
+      <a href="index.html">Home</a>
+      <a href="plugins.html">Plugins</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="https://github.com/martinkoutecky/tine/discussions">Community</a>
+      <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0</a>
+    </nav>
+    <p class="foot-note">
+      Tine is an independent reimplementation, not a fork — original Rust + SolidJS, no Logseq
+      source. It targets Logseq's on-disk format and adapts parts of Logseq's outliner CSS, so it is
+      a derivative work and is released under the same license.
+      <a href="https://logseq.com">Logseq</a> is © its authors. Tine is <strong>not
+      affiliated with or endorsed by Logseq.</strong>
+    </p>
+    <p class="foot-copy">© 2026 Martin Koutecký · Built as a faster, file-compatible companion to Logseq.</p>
+  </div>
+</footer>
+
+</body>
+</html>

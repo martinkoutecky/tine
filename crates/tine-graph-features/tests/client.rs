@@ -159,8 +159,8 @@ fn source_scan_guard_clients_touch_no_path() {
             ".join(",
             "tine_store::model",
         ] {
-            if matches!(name, "config" | "render") && forbidden == ".join(" {
-                continue; // EDN, rendered text and embedded JavaScript join strings.
+            if matches!(name, "config" | "render" | "pages") && forbidden == ".join(" {
+                continue; // EDN, rendered text, page error messages and embedded JavaScript join strings.
             }
             if name == "guide" && forbidden == "std::path" {
                 continue; // Public API accepts the device parent folder for graph creation.
@@ -241,8 +241,8 @@ fn guide_creation_writes_the_bundled_templates_and_chooses_a_folder() {
     let tree = expected_demo_tree();
     assert_eq!(
         tree.len(),
-        27 + 2,
-        "27 Guide pages, config.edn and the screenshot"
+        28 + 2,
+        "28 Guide pages, config.edn and the screenshot"
     );
     for name in [
         "pages/Welcome to Tine.md",

@@ -180,21 +180,22 @@ fn y2_marker_resolution_of_a_long_page_stages_its_recovery_copy() {
     let title = "漢".repeat(84);
     let rel = format!("pages/{title}.md");
     fs::write(root.join(&rel), MARKED).unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let id = PageId::from(rel.as_str());
     let rev = store.read(&id.file(), None).unwrap().1;
-    let mut tx = store.transaction(Some(EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(EditKind::ReplacePage));
     tx.save_page(
         &[EditKind::ReplacePage],
         &id,
         SaveBase::ResolvingMarkers(rev),
         &dto(&title, "mine"),
     );
-    let outcome = tx.commit();
-    assert!(
-        matches!(outcome, TxOutcome::Committed { .. }),
-        "{outcome:?}"
-    );
+    store
+        .stage_marker_copy(&id.file(), MARKED.as_bytes())
+        .unwrap();
+    let app = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(&store, app.path()).unwrap();
+    host.apply(tx.plan().unwrap()).unwrap();
     assert_eq!(fs::read_to_string(root.join(&rel)).unwrap(), "- mine\n");
     let copies = names(&root.join("logseq/.tine-trash/conflicts"));
     assert_eq!(copies.len(), 1, "{copies:?}");

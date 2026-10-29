@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use tine_core::pdf::{self, Highlight};
 use tine_graph_features::pdf as features_pdf;
-use tine_store::{Input, PageHost, PageId, Store};
+use tine_store::{PageHost, PageId, Store};
 
 const CONFIG: &str = "{:file/name-format :triple-lowbar}\n";
 
@@ -257,9 +257,7 @@ fn while_held(
     write: impl FnOnce() -> std::io::Result<Vec<Highlight>> + Send,
     during: impl FnOnce(),
 ) {
-    let reservation = host
-        .reserve(|| vec![PageId::from(held)], Input::Refuse)
-        .expect("nothing unsaved");
+    let reservation = host.pause_for_tests(&[PageId::from(held)]);
     let before = fs::read_to_string(root.join(held)).ok();
     std::thread::scope(|scope| {
         let (done, finished) = mpsc::channel();

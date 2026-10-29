@@ -775,7 +775,7 @@ fn save_new_page_while_initial_load_is_pending() {
 fn list_pages_memo_reflects_new_and_deleted_pages() {
     let root = mk("listmemo");
     std::fs::write(root.join("pages").join("A.md"), "- a\n").unwrap();
-    let store = store_at(&root);
+    let store = Arc::new(store_at(&root));
     let names = |store: &Store| {
         let mut v: Vec<String> = store
             .whole_graph()
@@ -821,15 +821,19 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
     let (_, rev) = store
         .read(&tine_store::PageId::from("pages/A.md").file(), None)
         .unwrap();
-    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(tine_store::EditKind::ReplacePage));
     tx.trash(
         &tine_store::PageId::from("pages/A.md").file(),
         rev,
         tine_store::TrashIf::Any,
     );
     assert!(matches!(
-        tx.commit(),
-        tine_store::TxOutcome::Committed { .. }
+        {
+            let app = tempfile::tempdir().unwrap();
+            let host = tine_store::PageHost::start_for_tests(&store, app.path()).unwrap();
+            host.apply(tx.plan().unwrap())
+        },
+        Ok(())
     ));
     assert!(
         !names(&store).contains(&"A".to_string()),
@@ -936,7 +940,7 @@ fn trash_journal_file_errors_when_trash_path_is_file_and_keeps_source() {
     assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock, "{err}");
     assert_eq!(
         err.to_string(),
-        "“journals/2026_06_20.md” could not be written; moving the journal to trash finishes once it can be."
+        "“journals/2026_06_20.md” could not be written; moving the journal to trash at logseq/.tine-trash/pages finishes once it can be."
     );
     assert!(journal.is_file(), "source journal survives");
     assert_eq!(

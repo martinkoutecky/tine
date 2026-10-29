@@ -15,7 +15,6 @@ import { openPage, openPageInNewTab, openInNewTab } from "../router";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openRefTarget } from "../blockRefActions";
 import { editOccurrence, occurrenceEditable, removeOccurrence, createShownOccurrence, useOccurrenceOwner } from "../refOccurrence";
-import { isJournalTitle } from "../journal";
 import { openPageInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { changed, changedAny, pageChangeKey } from "../changeKeys";
@@ -30,7 +29,8 @@ import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
 import { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
 export { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
-import { resolvedTarget } from "../pageIndex";
+import { linkPageKind, resolvedTarget } from "../pageIndex";
+import { pageIdentityKey } from "../pageIdentity";
 import { pageIcon } from "../pageIconBatch";
 import { PageIcon } from "../components/PageIcon";
 import { coarseSpanAttrs, literalSpanAttrs, rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset, type SpanDomAttrs } from "./spans";
@@ -348,7 +348,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // WebKitGTK paints color-emoji webfonts blank. Reactive + batched + cached per
   // graph; an icon-less graph costs one IPC and no re-render (see pageIconBatch).
   const icon = () => (isGuidePageName(targetName()) ? null : pageIcon(targetName()));
-  const kind = (): PageKind => (isGuidePageName(targetName()) ? "page" : isJournalTitle(targetName()) ? "journal" : "page");
+  const kind = (): PageKind => (isGuidePageName(targetName()) ? "page" : linkPageKind(targetName()));
   // Deliberate Martin-approved OG divergence (master fd1fd6e1c): a missing page
   // link signals a blank destination. Tags are exempt: a tag whose page has no
   // file is ordinary Logseq usage, and dimming them would mark most tags in a
@@ -407,6 +407,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
       <a
         ref={anchorEl}
         class={props.tag ? "tag" : "page-ref"}
+        data-ref={pageIdentityKey(props.name)}
         data-missing-page={missing() ? "" : undefined}
         {...(props.spanAttrs ?? {})}
         // Suppress the browser defaults the destinations replace: shift-range

@@ -132,6 +132,7 @@ persistBlockRefTarget
 pinPageWhileDrafting  # why: a draft outside the block editor (sheet prop cell) pins the page its commit writes, so eviction cannot drop it (K17a); batch15a
 prevVisible
 promotePagePreamble
+queryBlockRaw  # why: quick-share Delete recognises the definition appendQueryBlock wrote (D-20261026-QSD); batch-og-qs-delete-definition
 queryWorkspacePage
 readPageProperties  # why: list every page property for the GH #164 properties editor; batch14q5
 readPageProperty
@@ -158,14 +159,17 @@ retireFeedPages  # why: releases measured offscreen journal documents through th
 revealNode
 sameLiveDraft  # why: a live resolution applies only to the exact draft the user reviewed (og 8e); batch21a
 sanitizeOutlineIdsForPaste  # why: prevent off-screen ID collisions in ordinary paste; batch05
+seenPageSnapshot  # why: "changed since you last looked" sends the page's unsaved-inclusive text to the git read and maps block paths back to runtime ids (ADR 0079); batch-og-seen-ui
 selectBlock
 selectBlockSubtree  # why: Ctrl/Cmd+A escalation from the editor (GH #262); batch17a
 selectedIds
 selectionMarkdown
+selectionScope  # why: one-level fold commands resolve the selected occurrence's collapse surface instead of its source (GH #768); batch-fix-gh768
 setBlockProperty
 setCollapsed
 setCollapsedDeep
 setCollapsedDescendants
+setCollapsedTrees  # why: GH #785 batches page and selected subtree folding into one save notification per page; batch-sweep-nav
 setFeedExtender
 setHeading
 setPageProperty

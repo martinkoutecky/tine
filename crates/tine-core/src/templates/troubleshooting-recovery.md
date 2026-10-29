@@ -35,7 +35,7 @@ icon:: 🛟
 	- 1. Set `TINE_DEBUG=1` in the environment when you launch Tine, reproduce the problem, then quit.
 	- 2. By default the log is `tine-debug.log` in your platform's temporary folder (portable Windows Tine: in `tine-data\<app id>\local\logs` beside `Tine.exe`); `TINE_DEBUG_LOG=/path` overrides it.
 	- 3. What you should see: a timestamped trace covering the environment, startup milestones, and any panic with a backtrace. It records no note content — send that file with your report.
-	- 4. On Linux, if the window never appears at all, launch once with `TINE_GPU=0`: a rare GPU/WebKitGTK rendering failure then falls back to software rendering.
+	- 4. On Linux, Tine automatically disables WebKitGTK's DMABUF renderer when an NVIDIA driver older than version 610 (or of unknown version) is loaded, to avoid a blank window. Newer NVIDIA drivers and other drivers keep the default rendering path. If the window still stays blank or never appears, launch once with `TINE_GPU=0` to request the software rendering fallback. An explicit `WEBKIT_DISABLE_DMABUF_RENDERER` value takes precedence; `TINE_GPU=1` opts out of the automatic NVIDIA workaround.
 - ## Tine could not open your last graph
 	- Meaning: at launch Tine tried to reopen the graph you last used and failed. The Welcome screen shows **Tine could not open your last graph** with the graph's path and the reason.
 	- 1. **Try again** — attempt the same open again. This is safe to repeat.

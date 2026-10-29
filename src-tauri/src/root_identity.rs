@@ -1,6 +1,56 @@
 //! Device-local namespaces follow a validated relocation, never graph content.
+#[cfg(test)]
+#[path = "root_identity_m4_environment_tests.rs"]
+mod m4_environment_tests;
+
 use std::path::{Path, PathBuf};
 use std::{fs, io};
+
+static CONTAINER_CHANGE: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+pub(crate) fn container_change() -> &'static str {
+    CONTAINER_CHANGE.get().copied().unwrap_or("unknown")
+}
+
+// Use the existing last-graph setting before this launch remembers any graph.
+// A cloud graph, missing setting or unrecognizable path supplies no evidence.
+pub(crate) fn capture_container_change(app: &tauri::AppHandle) {
+    #[cfg(target_os = "ios")]
+    {
+        use tauri::Manager;
+        let previous = crate::settings::last_graph_path(app);
+        let current = app.path().document_dir().ok();
+        let token = compare_container_paths(previous.as_deref(), current.as_deref());
+        let _ = CONTAINER_CHANGE.set(token);
+    }
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "windows",
+        target_os = "android"
+    ))]
+    {
+        let _ = app;
+        let _ = CONTAINER_CHANGE.set("not-applicable");
+    }
+}
+
+#[cfg(any(test, target_os = "ios"))]
+fn compare_container_paths(previous: Option<&str>, current: Option<&Path>) -> &'static str {
+    match (
+        previous.and_then(|p| container_parts(Path::new(p))),
+        current.and_then(container_parts),
+    ) {
+        (Some((prefix, id, _)), Some((next_prefix, next_id, _))) if prefix == next_prefix => {
+            if id == next_id {
+                "unchanged"
+            } else {
+                "changed"
+            }
+        }
+        _ => "unknown",
+    }
+}
 
 #[cfg(test)]
 thread_local! { static CENSUS_READ_DIRS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
@@ -10,35 +60,36 @@ fn census_entries(dir: &Path) -> io::Result<fs::ReadDir> {
     fs::read_dir(dir)
 }
 
+fn container_parts(path: &Path) -> Option<(Vec<String>, uuid::Uuid, Vec<String>)> {
+    if !path.is_absolute() {
+        return None;
+    }
+    // Reject traversal before Path::components can normalize it.
+    if path
+        .to_str()?
+        .split('/')
+        .any(|part| part == "." || part == "..")
+    {
+        return None;
+    }
+    let parts = path
+        .components()
+        .map(|part| part.as_os_str().to_str().map(str::to_owned))
+        .collect::<Option<Vec<_>>>()?;
+    let at = parts
+        .windows(3)
+        .position(|p| p == ["Containers", "Data", "Application"])?;
+    let id = parts.get(at + 3)?;
+    if id.len() != 36 || parts.get(at + 4)? != "Documents" {
+        return None;
+    }
+    let uuid = uuid::Uuid::parse_str(id).ok()?;
+    Some((parts[..at].to_vec(), uuid, parts[at + 5..].to_vec()))
+}
+
 /// Pure validator is tested on the host; only iOS may authorize it in production.
 pub(crate) fn is_container_rebase(old: &Path, new: &Path) -> bool {
-    fn split(path: &Path) -> Option<(Vec<String>, uuid::Uuid, Vec<String>)> {
-        if !path.is_absolute() {
-            return None;
-        }
-        // Reject traversal before Path::components can normalize it.
-        if path
-            .to_str()?
-            .split('/')
-            .any(|part| part == "." || part == "..")
-        {
-            return None;
-        }
-        let parts = path
-            .components()
-            .map(|part| part.as_os_str().to_str().map(str::to_owned))
-            .collect::<Option<Vec<_>>>()?;
-        let at = parts
-            .windows(3)
-            .position(|p| p == ["Containers", "Data", "Application"])?;
-        let id = parts.get(at + 3)?;
-        if id.len() != 36 || parts.get(at + 4)? != "Documents" {
-            return None;
-        }
-        let uuid = uuid::Uuid::parse_str(id).ok()?;
-        Some((parts[..at].to_vec(), uuid, parts[at + 5..].to_vec()))
-    }
-    match (split(old), split(new)) {
+    match (container_parts(old), container_parts(new)) {
         (Some((a, id, rel)), Some((b, next, other))) => a == b && id != next && rel == other,
         _ => false,
     }
@@ -142,7 +193,8 @@ fn rename_empty_target_with_sync(
 
 /// Each independent rename can be retried after a partial failure. No vehicle,
 /// v1 draft or sealed archive is decoded or rewritten here.
-pub(crate) fn relocate_namespaces(data: &Path, old: &Path, new: &Path) {
+pub(crate) fn relocate_namespaces(data: &Path, old: &Path, new: &Path) -> bool {
+    let mut draft_adopted = false;
     let a = crate::settings::host_graph_id(old);
     let b = crate::settings::host_graph_id(new);
     let ba = crate::backup::root_backup_id(old);
@@ -182,7 +234,11 @@ pub(crate) fn relocate_namespaces(data: &Path, old: &Path, new: &Path) {
         ));
     }
     for (old, new, drafts) in steps {
-        match rename_empty_target(&old, &new, drafts) {
+        let result = rename_empty_target(&old, &new, drafts);
+        if drafts && matches!(&result, Ok(NamespaceMove::Moved { .. })) {
+            draft_adopted = true;
+        }
+        match result {
             Err(e)
             | Ok(NamespaceMove::Moved {
                 durability_error: Some(e),
@@ -224,6 +280,7 @@ pub(crate) fn relocate_namespaces(data: &Path, old: &Path, new: &Path) {
     {
         crate::debug::diag_private("graph-relocation-step-failed", e);
     }
+    draft_adopted
 }
 
 pub(crate) fn relocate_if_idle(
@@ -231,7 +288,7 @@ pub(crate) fn relocate_if_idle(
     old: &Path,
     new: &Path,
     registry: &crate::state::GraphRegistry,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if registry.draft_namespace_held(
         &crate::settings::host_graph_id(old),
         &crate::settings::host_graph_id(new),
@@ -239,8 +296,7 @@ pub(crate) fn relocate_if_idle(
     ) {
         return Err("draft-recovery-owner-held".into());
     }
-    relocate_namespaces(data, old, new);
-    Ok(())
+    Ok(relocate_namespaces(data, old, new))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
@@ -324,7 +380,12 @@ pub(crate) fn orphan_owner_lock(id: &str) -> Result<Option<crate::owner::lock::O
     } // Cross-process sandbox exclusion; the registry also excludes local hosts.
 }
 
-pub(crate) fn adopt_namespace(data: &Path, id: &str, root: &Path) -> Result<(), String> {
+pub(crate) fn adopt_namespace(
+    data: &Path,
+    id: &str,
+    root: &Path,
+    moved: impl FnOnce(),
+) -> Result<(), String> {
     if !valid_graph_id(id) {
         return Err("invalid draft namespace".into());
     }
@@ -338,7 +399,11 @@ pub(crate) fn adopt_namespace(data: &Path, id: &str, root: &Path) -> Result<(), 
     if !census_empty(&new).map_err(|e| e.to_string())? {
         return Err("draft-recovery-current-unsaved".into());
     }
-    adoption_result(rename_empty_target(&old, &new, true))
+    let result = rename_empty_target(&old, &new, true);
+    if matches!(&result, Ok(NamespaceMove::Moved { .. })) {
+        moved();
+    }
+    adoption_result(result)
 }
 
 fn adoption_result(result: io::Result<NamespaceMove>) -> Result<(), String> {
@@ -370,7 +435,31 @@ pub(crate) fn recover_namespace(
     ) {
         return Err("draft-recovery-owner-held".into());
     }
-    adopt_namespace(data, id, &target.root_key)
+    adopt_namespace(data, id, &target.root_key, || {
+        target
+            .store
+            .record_draft_namespace_adoption(tine_store::DraftAdoptionReason::UserRecovery);
+    })
+}
+
+// Keep the command's desktop lease check ahead of every recovery side effect.
+// The caller still serializes graph opens/retirement with graph_load.
+fn with_current_recovery_lease<T>(
+    slot: &crate::state::GraphSlot,
+    recover: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    if slot
+        .owner
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_none()
+    {
+        return Err("draft-recovery-lock-unavailable".into());
+    }
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let _ = slot;
+    recover()
 }
 
 #[tauri::command]
@@ -407,30 +496,23 @@ pub(crate) async fn recover_orphan_drafts(
         // Serialize graph opens, host retirement/adoption and namespace rename.
         let state = app.state::<crate::state::AppState>();
         let _load = state.graph_load.lock().unwrap();
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-        if slot
-            .owner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_none()
-        {
-            return Err("draft-recovery-lock-unavailable".into());
-        }
-        let _old = orphan_owner_lock(&id)?;
-        let known = crate::settings::read_settings_value(&app)
-            .and_then(|json| json.get("known_graphs").and_then(|v| v.as_array()).cloned())
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|g| g["path"].as_str().map(str::to_owned))
-            .collect::<Vec<_>>();
-        if !find_orphans(&data, &slot.root_key, &known)
-            .iter()
-            .any(|orphan| orphan.id == id)
-        {
-            return Err("draft-recovery-no-longer-available".into());
-        }
-        crate::backup::restore_hosted(&slot.host, consumed_last_id, || {
-            recover_namespace(&data, &id, &slot, &state.graphs.read().unwrap())
+        with_current_recovery_lease(&slot, || {
+            let _old = orphan_owner_lock(&id)?;
+            let known = crate::settings::read_settings_value(&app)
+                .and_then(|json| json.get("known_graphs").and_then(|v| v.as_array()).cloned())
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|g| g["path"].as_str().map(str::to_owned))
+                .collect::<Vec<_>>();
+            if !find_orphans(&data, &slot.root_key, &known)
+                .iter()
+                .any(|orphan| orphan.id == id)
+            {
+                return Err("draft-recovery-no-longer-available".into());
+            }
+            crate::backup::restore_hosted(&slot.host, consumed_last_id, || {
+                recover_namespace(&data, &id, &slot, &state.graphs.read().unwrap())
+            })
         })
     })
     .await
@@ -439,7 +521,83 @@ pub(crate) async fn recover_orphan_drafts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_container_evidence_uses_existing_paths_without_exporting_them() {
+        // Reuse the validator fixture's absolute host spelling on Windows too.
+        let (a, b) = roots();
+        let a = a.parent().unwrap().to_str().unwrap();
+        let b = b.parent().unwrap().to_str().unwrap();
+        assert_eq!(
+            compare_container_paths(Some(&format!("{a}/PrivateGraph")), Some(Path::new(b))),
+            "changed"
+        );
+        assert_eq!(
+            compare_container_paths(Some(&format!("{a}/PrivateGraph")), Some(Path::new(a))),
+            "unchanged"
+        );
+        assert_eq!(compare_container_paths(None, Some(Path::new(a))), "unknown");
+        assert_eq!(
+            compare_container_paths(Some("/iCloud/PrivateGraph"), Some(Path::new(a))),
+            "unknown"
+        );
+        assert_eq!(compare_container_paths(Some(a), None), "unknown");
+    }
     use std::fs;
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn recovery_without_current_lease_refuses_before_adopting_any_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = dir.path().join("graph");
+        fs::create_dir(&graph).unwrap();
+        let store = std::sync::Arc::new(
+            tine_store::Store::open(&graph, Default::default())
+                .unwrap()
+                .0,
+        );
+        let root = tine_store::Store::canonical_root(&graph).unwrap();
+        let slot = std::sync::Arc::new(crate::state::GraphSlot::new(store, root));
+        assert!(slot.owner.lock().unwrap().is_none());
+        let data = dir.path().join("app");
+        let id = crate::settings::host_graph_id(&dir.path().join("old-graph"));
+        let source = data.join("drafts-v2").join(&id);
+        let target = data
+            .join("drafts-v2")
+            .join(crate::settings::host_graph_id(&slot.root_key));
+        fs::create_dir_all(source.join("trash-custody")).unwrap();
+        fs::write(source.join("vehicle"), b"irreplaceable draft").unwrap();
+        fs::write(source.join("trash-custody/marker"), b"retained custody").unwrap();
+        let registry = crate::state::GraphRegistry::default();
+        let entered = std::cell::Cell::new(false);
+        assert_eq!(
+            with_current_recovery_lease(&slot, || {
+                entered.set(true);
+                recover_namespace(&data, &id, &slot, &registry)
+            }),
+            Err("draft-recovery-lock-unavailable".into())
+        );
+        assert!(
+            !entered.get(),
+            "refuse before owner acquisition, host stop or adoption"
+        );
+        assert_eq!(
+            fs::read(source.join("vehicle")).unwrap(),
+            b"irreplaceable draft"
+        );
+        assert_eq!(
+            fs::read(source.join("trash-custody/marker")).unwrap(),
+            b"retained custody"
+        );
+        assert!(!target.exists(), "no target namespace was adopted");
+        // Control: these very same bytes are otherwise eligible for adoption.
+        recover_namespace(&data, &id, &slot, &registry).unwrap();
+        assert_eq!(
+            fs::read(target.join("vehicle")).unwrap(),
+            b"irreplaceable draft"
+        );
+        assert!(!source.exists());
+    }
+
     #[test]
     fn moved_namespace_with_failed_sync_reports_unwitnessed_durability() {
         let data = tempfile::tempdir().unwrap();
@@ -462,8 +620,11 @@ mod tests {
         );
     }
     fn roots() -> (PathBuf, PathBuf) {
-        (PathBuf::from("/private/var/mobile/Containers/Data/Application/11111111-1111-1111-1111-111111111111/Documents/g"),
-         PathBuf::from("/private/var/mobile/Containers/Data/Application/22222222-2222-2222-2222-222222222222/Documents/g"))
+        // This iOS-shaped validator fixture must also be absolute according
+        // to the Windows host's Path semantics when its app filter runs.
+        let prefix = if cfg!(windows) { "C:" } else { "" };
+        (PathBuf::from(format!("{prefix}/private/var/mobile/Containers/Data/Application/11111111-1111-1111-1111-111111111111/Documents/g")),
+         PathBuf::from(format!("{prefix}/private/var/mobile/Containers/Data/Application/22222222-2222-2222-2222-222222222222/Documents/g")))
     }
     #[test]
     fn orphan_census_is_bounded_by_device_namespaces_including_empty_subdirectories() {
@@ -516,19 +677,27 @@ mod tests {
         fs::create_dir_all(target.join("unreadable")).unwrap();
         fs::write(target.join("unreadable/kept"), b"unreadable input").unwrap();
         assert_eq!(
-            adopt_namespace(data.path(), &id, new).unwrap_err(),
+            adopt_namespace(data.path(), &id, new, || {}).unwrap_err(),
             "draft-recovery-current-unsaved"
         );
         assert!(source.join("vehicle").exists());
         fs::remove_file(target.join("unreadable/kept")).unwrap();
-        adopt_namespace(data.path(), &id, new).unwrap();
+        let moves = std::cell::Cell::new(0);
+        adopt_namespace(data.path(), &id, new, || moves.set(moves.get() + 1)).unwrap();
+        assert_eq!(moves.get(), 1);
+        assert!(adopt_namespace(data.path(), &id, new, || moves.set(moves.get() + 1)).is_err());
+        assert_eq!(
+            moves.get(),
+            1,
+            "an unavailable namespace is not an adoption"
+        );
         assert_eq!(fs::read(target.join("vehicle")).unwrap(), b"draft bytes");
         assert_eq!(
             fs::read(target.join("trash-custody/marker")).unwrap(),
             b"custody bytes"
         );
         assert!(!source.exists());
-        assert!(adopt_namespace(data.path(), "../escape", new).is_err());
+        assert!(adopt_namespace(data.path(), "../escape", new, || {}).is_err());
     }
     #[test]
     fn old_graph_id_uses_the_same_owner_lock_as_the_host() {
@@ -608,8 +777,8 @@ mod tests {
             b"sealed",
         )
         .unwrap();
-        relocate_namespaces(data.path(), &a, &b);
-        relocate_namespaces(data.path(), &a, &b);
+        assert!(relocate_namespaces(data.path(), &a, &b));
+        assert!(!relocate_namespaces(data.path(), &a, &b));
         assert_eq!(
             fs::read(data.path().join("drafts-v2").join(new).join("vehicle")).unwrap(),
             b"typed"
@@ -636,7 +805,7 @@ mod tests {
             fs::create_dir_all(&dir).unwrap();
             fs::write(dir.join("vehicle"), text).unwrap();
         }
-        relocate_namespaces(data.path(), &a, &b);
+        assert!(!relocate_namespaces(data.path(), &a, &b));
         for (root, text) in [(&a, "old"), (&b, "new")] {
             assert_eq!(
                 fs::read_to_string(
@@ -656,6 +825,9 @@ mod tests {
         let graph = tempfile::tempdir().unwrap();
         let old = graph.path().join("old");
         fs::create_dir(&old).unwrap();
+        // Record the spelling the store compares against (a verbatim prefix on
+        // Windows, the resolved temp alias on macOS).
+        let old = fs::canonicalize(&old).unwrap();
         let id = crate::settings::host_graph_id(&old);
         let dir = data.path().join("drafts-v2").join(&id);
         fs::create_dir_all(&dir).unwrap();

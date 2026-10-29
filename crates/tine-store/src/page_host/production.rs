@@ -35,6 +35,9 @@ pub(super) struct ProductionIo {
     paths: BTreeMap<String, PathBuf>,
     /// `HostIo::take_stamp`'s stamps, per page key until taken.
     stamps: BTreeMap<String, crate::watch::Stamp>,
+    /// Publication metadata survives watcher stamp handoff until page_finish.
+    /// None means the post-rename read could not establish an identity.
+    publications: BTreeMap<String, Option<crate::watch::Stamp>>,
     /// Each page key's current graph-relative spelling (STEP3 §2): a key
     /// resolved through a case alias at registration, or moved by the alias
     /// spelling move (Q4). The one table (B1); the store's held index reads
@@ -125,6 +128,7 @@ impl ProductionIo {
             changes: vec![],
             paths: BTreeMap::new(),
             stamps: BTreeMap::new(),
+            publications: BTreeMap::new(),
             spellings: Default::default(),
             quarantines: BTreeMap::new(),
             directories: BTreeMap::new(),
@@ -242,21 +246,26 @@ impl ProductionIo {
     fn graph_directory(&mut self, dir: &Path) -> IoResult<()> {
         self.check_path(dir)?;
         if !self.directories.contains_key(dir) {
+            #[cfg(test)]
+            crate::model::assert_checked_target(dir);
             let creation = durability::DirectoryCreation::new(dir, &self.graph).map_err(failure)?;
             self.directories.insert(dir.to_path_buf(), creation);
         }
-        self.directories
-            .get_mut(dir)
-            .unwrap()
-            .finish(|dir| {
-                // Each created directory's parent sync counts (I-25).
-                #[cfg(feature = "test-faults")]
-                crate::cost_counters::fsync();
-                durability::sync_directory_entry(dir)
-            })
-            .map_err(failure)?;
-        self.directories.remove(dir);
-        Ok(())
+        let creation = self.directories.get_mut(dir).unwrap();
+        let result = creation.finish(&self.root_binding, |dir| {
+            // Each created directory's parent sync counts (I-25).
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::fsync();
+            durability::sync_directory_entry(dir)
+        });
+        // Retain both recorded parent debt and missing-component obligations,
+        // including after a re-plan fails before its first mkdir. These survive
+        // Discard/Close and retries until paid or the graph adapter closes;
+        // no directory handle is held.
+        if result.is_ok() || !creation.has_sync_debt() {
+            self.directories.remove(dir);
+        }
+        result.map_err(failure)
     }
 }
 
@@ -568,6 +577,7 @@ impl HostIo for ProductionIo {
     fn page_finish(&mut self, page: &str) {
         self.page_temps.remove(page);
         self.creates.remove(page);
+        self.publications.remove(page);
     }
 
     fn read_page(&mut self, page: &str) -> IoResult<Text> {
@@ -602,6 +612,8 @@ impl HostIo for ProductionIo {
         if let Some(graph) = &self.marks {
             graph.transaction_note_page(&target, bytes);
         }
+        #[cfg(test)]
+        crate::model::assert_checked_target(&target);
         let prepared = temp(&target, bytes).map_err(failure)?;
         self.page_temps.insert(page.into(), prepared);
         Ok(())
@@ -616,6 +628,8 @@ impl HostIo for ProductionIo {
             operation: None,
             os_error: None,
         })?;
+        #[cfg(test)]
+        crate::model::assert_checked_target(&self.page_path(page));
         prepared
             .publish(self.creates.get(page).copied().unwrap_or(false))
             .map_err(failure)?;
@@ -628,6 +642,7 @@ impl HostIo for ProductionIo {
             .ok()
             .and_then(|_| read_observed(&path).ok())
             .and_then(|(_, s)| s);
+        self.publications.insert(page.into(), stamp.clone());
         self.stamp(page, stamp);
         Ok(())
     }
@@ -640,7 +655,29 @@ impl HostIo for ProductionIo {
         let path = self.page_path(page);
         // Sync acts on the parent, not the page. graph_sync checks that
         // directory and the root witness once at the actual sync boundary.
-        let result = self.graph_sync(super::io::Phase::PageSync, path.parent().unwrap());
+        let result = self
+            .graph_sync(super::io::Phase::PageSync, path.parent().unwrap())
+            .and_then(|witness| {
+                if let Some(published) = self.publications.get(page) {
+                    // One metadata call, no payload read/hash. Parent loss or
+                    // replacement after rename must take the Uncertain path,
+                    // including a platform's tolerated/no-op directory sync.
+                    let current = crate::watch::stamp_metadata(&path);
+                    if !published
+                        .as_ref()
+                        .zip(current.as_ref())
+                        .is_some_and(|(expected, actual)| expected.same_metadata(actual))
+                    {
+                        return Err(IoFailure {
+                            completed: true,
+                            ..failure(io::Error::other(
+                                "published page changed before directory sync completed",
+                            ))
+                        });
+                    }
+                }
+                Ok(witness)
+            });
         if result.is_ok() {
             self.creation_rules.remove(page);
         }
@@ -685,6 +722,8 @@ impl HostIo for ProductionIo {
             let target = self.trash.join(payload);
             self.check_path(&source)?;
             self.check_path(&target)?;
+            #[cfg(test)]
+            crate::model::assert_checked_target(&target);
             crate::no_replace::move_file_noreplace(&source, &target).map_err(|error| {
                 let collision = error.kind() == io::ErrorKind::AlreadyExists;
                 IoFailure {

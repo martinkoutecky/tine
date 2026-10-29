@@ -53,8 +53,6 @@ pub(super) enum Owner {
     Watcher,
     /// The driver's publication consumer, in host event order.
     Consumer,
-    /// A retained writer's reservation: its transaction publishes.
-    Reservation,
 }
 
 /// A watcher read or a released reservation the driver must observe (§5, §7).
@@ -177,7 +175,6 @@ impl<F: HostIo, C: Clock> State<F, C> {
                 Disposition::Waiting => {}
                 _ => {
                     self.observe.remove(&key);
-                    self.book.handover.remove(&key);
                     self.book.observe_errors.remove(&key);
                     return Disposition::Applied;
                 }
@@ -1064,6 +1061,17 @@ fn deliver<F: HostIo, C: Clock>(
         // Collect again: an eviction or a notice may now be due.
         let mut state = shared.state.lock().unwrap();
         let now = state.progress.clock.now_ms();
+        for (publication, indexing) in &results {
+            if matches!(indexing, Indexing::Indexed) {
+                if let Some((version, _)) = &publication.own {
+                    state
+                        .progress
+                        .host
+                        .order
+                        .indexed(&publication.key, *version);
+                }
+            }
+        }
         state.book.record(results, now);
         state.wake();
     }

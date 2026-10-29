@@ -149,6 +149,9 @@ impl Unreadable {
             Err(error) if store_failed(&error) => Err(error),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => {
+                tine_core::diag_line::diagnostic_line(
+                    "Tine unreadable file producer=conflict-read",
+                );
                 self.files.insert(path.to_owned(), error.to_string());
                 Ok(None)
             }
@@ -747,7 +750,7 @@ fn fold_pair(
         )
     };
     let transaction = |fold: &Folded, include_source: bool| {
-        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(tine_store::EditKind::ReplacePage));
         tx.save_page(
             &[
                 tine_store::EditKind::ReplacePage,
@@ -770,7 +773,7 @@ fn fold_pair(
         }
         let mut op = crate::retained::plan(transaction(&fold, copy.is_some()))?;
         if let Some(source) = &copy {
-            op.moved = Some((page.clone(), source.clone()));
+            op.moves.push((page.clone(), source.clone()));
         }
         Ok(Some(op))
     };
@@ -1097,7 +1100,7 @@ pub fn resolve_vcs_marker_conflict(
         Ok((content, rev, merged))
     };
     let transaction = |rev, merged: &PageDto| {
-        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(tine_store::EditKind::ReplacePage));
         tx.save_page(
             &[tine_store::EditKind::ReplacePage],
             &page,

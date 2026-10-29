@@ -148,18 +148,21 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         assert!(calls(body(CONCORD, name), route), "OG-RULES Rule 8: {name} changed its page-write route; exemplar src-tauri/src/commands/concord.rs");
     }
     let destinations = [
-        // A rename's transaction is `commit_rename` (a retained rename under
-        // the page host's reservation; a single page's rename is the host's).
-        (PAGES, "rename_page_after_inventory", "commit_rename("),
+        // A rename's transaction is `rename_transaction`: a rename of
+        // several pages plans it as a host operation (`multi_rename`), a
+        // case-only spelling moves run on the host driver
+        // (`commit_rename`); a single page's rename is the host's.
+        (PAGES, "rename_page_after_inventory", "multi_rename("),
+        (PAGES, "multi_rename", "rename_transaction("),
         (
             PAGES,
-            "commit_rename",
-            "transaction(Some(tine_store::EditKind::RenamePage))",
+            "rename_transaction",
+            "page_plan(Some(tine_store::EditKind::RenamePage))",
         ),
         (
             PAGES,
             "rename_file_to_page",
-            "transaction(Some(tine_store::EditKind::RenamePage))",
+            "page_plan(Some(tine_store::EditKind::RenamePage))",
         ),
         (
             PAGES,
@@ -169,7 +172,7 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         (
             GUIDE,
             "create_if_absent",
-            "transaction(Some(tine_store::EditKind::ReplacePage))",
+            "page_plan(Some(tine_store::EditKind::ReplacePage))",
         ),
         // The migration's transaction is `migrate_one`, one per eligible
         // proposal (under a page host's reservation of its two pages).
@@ -177,17 +180,12 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         (
             JOURNALS,
             "migrate_one",
-            "migration_transaction(",
+            "tx.move_file(",
         ),
         (
             JOURNALS,
             "migrate_hosted",
-            "migration_transaction(",
-        ),
-        (
-            JOURNALS,
-            "migration_transaction",
-            "transaction(Some(tine_store::EditKind::RenamePage))",
+            "page_plan(Some(tine_store::EditKind::RenamePage))",
         ),
         (
             FEATURES,
@@ -197,7 +195,7 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         (
             JOURNALS,
             "trash_journal_file",
-            "crate::trash_transaction(",
+            "page_plan(Some(tine_store::EditKind::DeletePage))",
         ),
         (
             FEATURES,
@@ -238,6 +236,7 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         (JOURNALS, "trash_journal_file", "crate::retained::plan("),
         (PAGES, "rename_file_to_page", "crate::retained::plan("),
         (PAGES, "merge_pages", "crate::retained::plan("),
+        (PAGES, "multi_rename", "crate::retained::plan("),
         (CONFLICTS, "fold_pair", "crate::retained::plan("),
         (
             CONFLICTS,

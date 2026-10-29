@@ -10,6 +10,10 @@ use std::sync::Arc;
 
 const CUSTODY: &str = "draft/trash-custody/";
 
+#[path = "model_env.rs"]
+mod environment;
+pub(super) use environment::{Dir, DirKind, Env, EnvStep, Escape, Fold, RootState};
+
 /// The trash directory chain's own entries, outermost first: `logseq` in the
 /// graph root, `.tine-trash` in it, and `pages` in that. A payload is
 /// reachable after a power cut only while every one of them survives.
@@ -27,21 +31,18 @@ pub(super) enum Fault {
     /// The call's first `k` system calls complete and the next one fails, as
     /// an error there or a process or power cut between the two.
     Cut(usize),
+    /// A classified I/O error, before the phase or after k modeled calls.
+    Errno(std::io::ErrorKind, Option<usize>),
     RootGone(usize),
     RootReplaced(usize),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum RootState {
-    #[default]
-    Bound,
-    Gone,
-    Replaced(u64),
-}
-
 #[derive(Clone, Debug, Default)]
 pub(super) struct ModelFs {
-    pub root: RootState,
+    pub env: Env,
+    pub escapes: Vec<Escape>,
+    pub env_schedule: BTreeMap<Phase, (usize, EnvStep)>,
+    pub env_fault: Option<(usize, EnvStep)>,
     pub detached: BTreeMap<String, Arc<[u8]>>,
     pub root_fault: Option<(usize, RootState)>,
     pub graph_io: bool,
@@ -66,8 +67,13 @@ pub(super) struct ModelFs {
     /// Trash chain entries created by this process whose parent sync is still
     /// owed (the adapter's retained `DirectoryCreation`; lost at a crash).
     pub owed: Vec<String>,
+    pub(super) owed_identities: BTreeMap<String, Vec<(String, u64)>>,
+    pub(super) replan_directories: bool,
+    pub(super) publication_epochs: BTreeMap<String, u64>,
     /// System calls left before an injected `Fault::Cut` fails the next one.
     pub budget: Option<usize>,
+    pub budget_kind: Option<std::io::ErrorKind>,
+    pub observed_errno: Option<std::io::ErrorKind>,
     /// Durable draft entries as last reported by `draft_changes`.
     pub reported: BTreeMap<String, Arc<[u8]>>,
     /// Adapter memory (STEP3 §2), lost at a crash. A model entry is named by
@@ -98,6 +104,9 @@ pub(super) struct Cut {
 impl ModelFs {
     pub fn external(&mut self, page: &str, bytes: Text, durable: bool) {
         let key = format!("graph/{page}");
+        if bytes.is_some() {
+            self.env.seed_dirs(&self.env.parent(&key));
+        }
         set(&mut self.files, &key, bytes.clone());
         if durable {
             set(&mut self.stable, &key, bytes);
@@ -222,8 +231,15 @@ impl ModelFs {
     pub fn crash(&mut self) {
         self.files.retain(|key, _| !key.starts_with("temp/"));
         self.faults.clear();
+        self.env_schedule.clear();
+        self.env_fault = None;
+        self.root_fault = None;
+        self.budget_kind = None;
         self.publications.clear();
+        self.publication_epochs.clear();
         self.owed.clear();
+        self.owed_identities.clear();
+        self.replan_directories = false;
         self.spellings.clear();
         self.down = false;
         self.chain_witnessed = false;
@@ -277,6 +293,7 @@ impl ModelFs {
         effect: impl FnOnce(&mut Self) -> IoResult<T>,
     ) -> IoResult<T> {
         self.calls.push(phase);
+        self.env_fault = self.env_schedule.remove(&phase);
         self.graph_io = matches!(
             phase,
             Phase::Read
@@ -303,7 +320,27 @@ impl ModelFs {
             });
         }
         let fault = self.faults.get_mut(&phase).and_then(VecDeque::pop_front);
-        match fault {
+        let result = match fault {
+            Some(Fault::Errno(kind, at)) => {
+                if let Some(calls) = at {
+                    self.budget = Some(calls);
+                    self.budget_kind = Some(kind);
+                    let result = effect(self);
+                    assert!(
+                        self.budget.take().is_none(),
+                        "errno fault did not land: {phase:?}/{calls}"
+                    );
+                    result
+                } else {
+                    self.observed_errno = Some(kind);
+                    Err(IoFailure {
+                        kind: ErrorKind::Io,
+                        completed: false,
+                        operation: None,
+                        os_error: None,
+                    })
+                }
+            }
             Some(Fault::RootGone(calls)) => {
                 self.root_fault = Some((calls, RootState::Gone));
                 let result = effect(self);
@@ -341,8 +378,7 @@ impl ModelFs {
                 assert!(landed, "{phase:?} makes at most {calls} system calls here");
                 result
             }
-            other => {
-                let result = effect(self)?;
+            other => effect(self).and_then(|result| {
                 if matches!(other, Some(Fault::After)) {
                     Err(IoFailure {
                         kind: ErrorKind::Io,
@@ -353,8 +389,14 @@ impl ModelFs {
                 } else {
                     Ok(result)
                 }
-            }
-        }
+            }),
+        };
+        assert!(
+            self.env_fault.is_none(),
+            "environment fault did not land: {phase:?}/{:?}",
+            self.env_fault
+        );
+        result
     }
 
     /// One system call of the current HostIo call; fails once a cut's budget
@@ -364,6 +406,8 @@ impl ModelFs {
         match &mut self.budget {
             Some(0) => {
                 self.budget = None;
+                self.observed_errno =
+                    Some(self.budget_kind.take().unwrap_or(std::io::ErrorKind::Other));
                 Err(IoFailure {
                     kind: ErrorKind::Io,
                     completed: false,
@@ -382,29 +426,24 @@ impl ModelFs {
     /// Root faults can land between modeled syscalls. Existing graph entries
     /// belong to the detached epoch; only app-data drafts remain at this root.
     fn root_step(&mut self) -> IoResult<()> {
+        match self.env_fault.take() {
+            Some((0, step)) => self.apply_env(step),
+            Some((left, step)) => self.env_fault = Some((left - 1, step)),
+            None => {}
+        }
         match self.root_fault {
             Some((0, next)) => {
                 self.root_fault = None;
-                self.root = next;
-                let graph_key = |key: &str| {
-                    key.starts_with("graph/")
-                        || key.starts_with("dir/")
-                        || key.starts_with("trash/")
-                        || key.starts_with("temp/page/")
-                };
-                self.detached.extend(
-                    self.files
-                        .iter()
-                        .filter(|(key, _)| graph_key(key))
-                        .map(|(key, bytes)| (key.clone(), bytes.clone())),
-                );
-                self.files.retain(|key, _| !graph_key(key));
-                self.stable.retain(|key, _| !graph_key(key));
+                self.apply_env(match next {
+                    RootState::Gone => EnvStep::RootGone,
+                    RootState::Replaced(_) => EnvStep::RootReplaced,
+                    RootState::Bound => unreachable!(),
+                });
             }
             Some((left, next)) => self.root_fault = Some((left - 1, next)),
             None => {}
         }
-        if self.graph_io && self.root != RootState::Bound {
+        if self.graph_io && self.env.root != RootState::Bound {
             Err(IoFailure {
                 kind: ErrorKind::Io,
                 completed: false,
@@ -429,9 +468,110 @@ impl ModelFs {
 
     /// A graph directory sync: durable where the witness is.
     fn sync_entry(&mut self, key: &str) {
-        if !self.weak_graph {
+        if !self.weak_graph && (self.files.contains_key(key) || self.stable.contains_key(key)) {
+            self.record_mutation(key);
             set(&mut self.stable, key, self.files.get(key).cloned());
         }
+    }
+
+    /// The physical publication, separated from its adapter check so the
+    /// escape oracle can be tested against an omitted-check mutant.
+    pub fn publish_page(&mut self, page: &str) {
+        let key = format!("graph/{page}");
+        let temp = format!("temp/page/{page}");
+        self.record_mutation(&temp);
+        let bytes = self.files.remove(&temp);
+        self.publications.insert(page.into(), bytes.clone());
+        self.publication_epochs
+            .insert(page.into(), self.epochs.get(page).copied().unwrap_or(0));
+        self.record_mutation(&key);
+        set(&mut self.files, &key, bytes);
+        self.volatile.remove(&key);
+        self.issue(page, None);
+    }
+
+    fn directory_identity(&self, entry: &str) -> Vec<(String, u64)> {
+        let mut path = entry.strip_prefix("dir/").unwrap();
+        let mut ids = Vec::new();
+        // Production retains the entry and its immediate parent, not a
+        // stronger identity guard on every ancestor (the root checks itself).
+        for _ in 0..2 {
+            if path.is_empty() {
+                break;
+            }
+            if let Some(dir) = self.env.dirs.get(path) {
+                ids.push((path.into(), dir.epoch));
+            }
+            path = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+        }
+        ids
+    }
+
+    fn owe_directory(&mut self, dir: String) {
+        self.owed_identities
+            .insert(dir.clone(), self.directory_identity(&dir));
+        self.owed.push(dir);
+    }
+
+    fn check_creation_parent(&mut self, dir: &str) -> IoResult<()> {
+        self.check_parent(dir)?;
+        // Unlike containment, mkdir needs an existing immediate parent. The
+        // model combines the native parent check and mkdir into one step.
+        if !self.env.contains(&self.env.parent(dir), true) {
+            self.replan_directories = true;
+            return Err(IoFailure {
+                kind: ErrorKind::Io,
+                completed: false,
+                operation: None,
+                os_error: None,
+            });
+        }
+        Ok(())
+    }
+
+    fn retry_directories(&mut self) {
+        if !self.replan_directories {
+            return;
+        }
+        self.replan_directories = false;
+        let old = std::mem::take(&mut self.owed);
+        self.owed_identities.clear();
+        let mut entries = BTreeSet::new();
+        for dir in old {
+            let mut path = dir.strip_prefix("dir/").unwrap();
+            while !path.is_empty() {
+                if self.env.dirs.contains_key(path) {
+                    entries.insert(format!("dir/{path}"));
+                }
+                path = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+            }
+        }
+        for dir in entries {
+            self.files
+                .entry(dir.clone())
+                .or_insert_with(|| Arc::from(&b""[..]));
+            self.owe_directory(dir);
+        }
+    }
+
+    fn settle_directories(&mut self) -> IoResult<()> {
+        while let Some(dir) = self.owed.first().cloned() {
+            self.call()?;
+            self.check_parent(&dir)?;
+            if self.owed_identities.get(&dir) != Some(&self.directory_identity(&dir)) {
+                self.replan_directories = true;
+                return Err(IoFailure {
+                    kind: ErrorKind::Io,
+                    completed: false,
+                    operation: None,
+                    os_error: None,
+                });
+            }
+            self.sync_entry(&dir);
+            self.owed.remove(0);
+            self.owed_identities.remove(&dir);
+        }
+        Ok(())
     }
 }
 
@@ -459,6 +599,12 @@ impl HostIo for ModelFs {
 
     fn spell(&mut self, key: &str, spelling: &str) {
         self.spellings.insert(key.into(), spelling.into());
+        let parent = spelling.rsplit_once('/').map_or("", |(p, _)| p).to_owned();
+        let graph = format!("graph/{key}");
+        self.env.parents.insert(graph.clone(), parent.clone());
+        if self.files.contains_key(&graph) {
+            self.env.seed_dirs(&parent);
+        }
     }
 
     /// The graph launch's best-effort source-directory syncs: every page's
@@ -466,29 +612,76 @@ impl HostIo for ModelFs {
     /// becomes durable where the witness is. Trash payload names are left
     /// alone: making them durable here would also claim their data.
     fn graph_launch(&mut self, pages: &BTreeSet<String>) {
-        if !self.weak_graph {
+        if !self.weak_graph && self.env.root == RootState::Bound {
             self.sourced.extend(pages.iter().cloned());
             for dir in CHAIN {
-                self.sync_entry(dir);
+                if self.check_parent(dir).is_ok() {
+                    self.sync_entry(dir);
+                }
             }
         }
     }
 
     fn page_finish(&mut self, page: &str) {
         self.files.remove(&format!("temp/page/{page}"));
+        self.publication_epochs.remove(page);
     }
 
     fn read_page(&mut self, page: &str) -> IoResult<Text> {
         self.run(Phase::Read, |fs| {
             fs.root_step()?;
-            Ok(fs.files.get(&format!("graph/{page}")).cloned())
+            fs.check_parent(&format!("graph/{page}"))?;
+            Ok(fs.alpha(page, false))
         })
     }
 
     fn page_temp(&mut self, page: &str, bytes: &Text) -> IoResult<()> {
         self.run(Phase::PageTemp, |fs| {
             fs.root_step()?;
-            set(&mut fs.files, &format!("temp/page/{page}"), bytes.clone());
+            fs.retry_directories();
+            let key = format!("temp/page/{page}");
+            fs.check_parent(&key)?;
+            let parent = fs.env.parent(&key);
+            // Same mkdir + retained parent-sync obligations as the trash
+            // chain, now exercised by absent nested-page fixtures too.
+            let mut current = String::new();
+            for component in parent.split('/').filter(|c| !c.is_empty()) {
+                if !current.is_empty() {
+                    current.push('/');
+                }
+                current.push_str(component);
+                if fs.env.dirs.contains_key(&current) {
+                    continue;
+                }
+                fs.call()?;
+                let dir = format!("dir/{current}");
+                fs.check_creation_parent(&dir)?;
+                if !fs.env.contains(&current, false) {
+                    return Err(IoFailure {
+                        kind: ErrorKind::Io,
+                        completed: false,
+                        operation: Some("WriteTargetEscapes"),
+                        os_error: None,
+                    });
+                }
+                fs.record_mutation(&dir);
+                fs.env.dirs.insert(
+                    current.clone(),
+                    Dir {
+                        epoch: 0,
+                        kind: DirKind::Real,
+                    },
+                );
+                fs.files.insert(dir.clone(), Arc::from(&b""[..]));
+                fs.owe_directory(dir);
+            }
+            fs.settle_directories()?;
+            if !parent.is_empty() {
+                fs.call()?;
+                fs.check_parent(&key)?;
+            }
+            fs.record_mutation(&key);
+            set(&mut fs.files, &key, bytes.clone());
             Ok(())
         })
     }
@@ -496,11 +689,26 @@ impl HostIo for ModelFs {
     fn page_rename(&mut self, page: &str) -> IoResult<()> {
         self.run(Phase::PageRename, |fs| {
             fs.root_step()?;
-            let bytes = fs.files.remove(&format!("temp/page/{page}"));
-            fs.publications.insert(page.into(), bytes.clone());
-            set(&mut fs.files, &format!("graph/{page}"), bytes);
-            fs.volatile.remove(&format!("graph/{page}"));
-            fs.issue(page, None);
+            fs.check_parent(&format!("graph/{page}"))?;
+            if fs.case_alias(page).is_some() {
+                return Err(IoFailure {
+                    kind: ErrorKind::Collision,
+                    completed: false,
+                    operation: None,
+                    os_error: None,
+                });
+            }
+            // A directory replacement can remove a prepared temp's epoch.
+            // Native PreparedWrite cannot publish a missing temporary either.
+            if !fs.files.contains_key(&format!("temp/page/{page}")) {
+                return Err(IoFailure {
+                    kind: ErrorKind::Io,
+                    completed: false,
+                    operation: None,
+                    os_error: None,
+                });
+            }
+            fs.publish_page(page);
             Ok(())
         })
     }
@@ -508,15 +716,41 @@ impl HostIo for ModelFs {
     fn page_sync(&mut self, page: &str) -> IoResult<Witness> {
         self.run(Phase::PageSync, |fs| {
             fs.root_step()?;
-            if fs.weak_graph {
-                return Ok(Witness::Unsupported);
+            fs.check_parent(&format!("graph/{page}"))?;
+            // Missing directories are I/O failure, never Unsupported.
+            if !fs
+                .env
+                .contains(&fs.env.parent(&format!("graph/{page}")), true)
+            {
+                return Err(IoFailure {
+                    kind: ErrorKind::Io,
+                    completed: true,
+                    operation: None,
+                    os_error: None,
+                });
             }
             let key = format!("graph/{page}");
             let current = fs.files.get(&key).cloned();
+            if let Some(epoch) = fs.publication_epochs.get(page) {
+                if fs.publications.get(page) != Some(&current)
+                    || *epoch != fs.epochs.get(page).copied().unwrap_or(0)
+                {
+                    return Err(IoFailure {
+                        kind: ErrorKind::Io,
+                        completed: true,
+                        operation: None,
+                        os_error: None,
+                    });
+                }
+            }
+            if fs.weak_graph {
+                return Ok(Witness::Unsupported);
+            }
             // Model dirSync L421: stable advances only when the path still
             // contains the job's synced payload. External durable writes have
             // already advanced stable in external().
             if fs.publications.get(page) == Some(&current) {
+                fs.record_mutation(&key);
                 set(&mut fs.stable, &key, current);
             }
             Ok(Witness::Durable)
@@ -543,14 +777,19 @@ impl HostIo for ModelFs {
         _bytes: &Text,
         _source: Option<&str>,
     ) -> IoResult<Option<String>> {
-        Ok(self.owners.get(page).cloned())
+        Ok(self
+            .case_alias(page)
+            .or_else(|| self.owners.get(page).cloned()))
     }
 
     fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult {
         let removed = self.files.get(&format!("graph/{page}")).cloned();
         let result = self.run(Phase::TrashMove, |fs| {
             fs.root_step()?;
+            fs.retry_directories();
             let source = format!("graph/{page}");
+            fs.check_parent(&source)?;
+            fs.check_parent(&format!("trash/{page}/{payload}"))?;
             if !fs.files.contains_key(&source) {
                 fs.publications.insert(page.into(), None);
                 return Ok(());
@@ -562,17 +801,24 @@ impl HostIo for ModelFs {
                     continue;
                 }
                 fs.call()?;
+                fs.check_creation_parent(dir)?;
+                fs.record_mutation(dir);
+                fs.env.dirs.insert(
+                    dir.strip_prefix("dir/").unwrap().into(),
+                    Dir {
+                        epoch: 0,
+                        kind: DirKind::Real,
+                    },
+                );
                 fs.files.insert(dir.into(), Arc::from(&b""[..]));
                 fs.order.insert(dir.into(), fs.next_order());
-                fs.owed.push(dir.into());
+                fs.owe_directory(dir.into());
             }
-            while let Some(dir) = fs.owed.first().cloned() {
-                fs.call()?;
-                fs.sync_entry(&dir);
-                fs.owed.remove(0);
-            }
+            fs.settle_directories()?;
             fs.call()?;
             let key = format!("trash/{page}/{payload}");
+            fs.check_parent(&source)?;
+            fs.check_parent(&key)?;
             if fs.files.contains_key(&key) {
                 return Err(IoFailure {
                     kind: ErrorKind::Collision,
@@ -581,6 +827,8 @@ impl HostIo for ModelFs {
                     os_error: None,
                 });
             }
+            fs.record_mutation(&source);
+            fs.record_mutation(&key);
             let bytes = fs.files.remove(&source);
             fs.publications.insert(page.into(), None);
             set(&mut fs.files, &key, bytes);
@@ -601,6 +849,7 @@ impl HostIo for ModelFs {
         self.run(Phase::TrashSync, |fs| {
             fs.root_step()?;
             let key = format!("trash/{page}/{payload}");
+            fs.check_parent(&key)?;
             if !fs.files.contains_key(&key) {
                 return Ok(Witness::Durable); // R-PURGE: nothing left to keep
             }
@@ -610,10 +859,12 @@ impl HostIo for ModelFs {
             // name), then each ancestor's sync makes its child chain entry
             // durable, up to the graph root.
             fs.call()?;
+            fs.check_parent(&key)?;
             fs.sync_entry(&key);
             if !fs.chain_witnessed {
                 for dir in CHAIN.iter().rev() {
                     fs.call()?;
+                    fs.check_parent(dir)?;
                     fs.sync_entry(dir);
                 }
                 fs.chain_witnessed = !fs.weak_graph;
@@ -658,6 +909,7 @@ impl HostIo for ModelFs {
 
     fn custody_markers(&mut self) -> Result<Vec<(String, Vec<u8>)>, String> {
         self.run(Phase::CustodyList, |fs| {
+            fs.root_step()?;
             let temps: Vec<_> = fs
                 .files
                 .keys()
@@ -718,6 +970,7 @@ impl HostIo for ModelFs {
 
     fn draft_temp(&mut self, name: &str, bytes: &[u8]) -> IoResult<()> {
         self.run(Phase::DraftTemp, |fs| {
+            fs.root_step()?;
             fs.files
                 .insert(format!("temp/draft/{name}"), Arc::from(bytes));
             Ok(())
@@ -726,6 +979,7 @@ impl HostIo for ModelFs {
 
     fn draft_rename(&mut self, name: &str) -> IoResult<()> {
         self.run(Phase::DraftRename, |fs| {
+            fs.root_step()?;
             let key = format!("draft/{name}");
             if fs.files.contains_key(&key) {
                 return Err(IoFailure {
@@ -751,6 +1005,7 @@ impl HostIo for ModelFs {
 
     fn draft_unlink(&mut self, name: &str) -> IoResult<()> {
         self.run(Phase::DraftUnlink, |fs| {
+            fs.root_step()?;
             // Missing is readable absence only. The worker still must sync.
             fs.files.remove(&format!("draft/{name}"));
             Ok(())
@@ -759,6 +1014,7 @@ impl HostIo for ModelFs {
 
     fn draft_sync(&mut self) -> IoResult<Witness> {
         self.run(Phase::DraftSync, |fs| {
+            fs.root_step()?;
             fs.sync_dir("draft/");
             Ok(Witness::Durable)
         })
@@ -766,6 +1022,7 @@ impl HostIo for ModelFs {
 
     fn quarantine(&mut self, name: &str) -> IoResult<()> {
         self.run(Phase::Quarantine, |fs| {
+            fs.root_step()?;
             let source = format!("draft/{name}");
             if let Some(bytes) = fs.files.remove(&source) {
                 fs.files.insert(format!("unreadable/{name}"), bytes);

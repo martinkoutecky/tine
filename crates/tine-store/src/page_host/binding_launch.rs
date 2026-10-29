@@ -45,6 +45,38 @@ impl PageHost {
         Self::start(store, app_data, "test-graph", |_, _| {}, |_| {})
     }
 
+    /// Pause work on selected pages while still accepting requests.
+    /// This test scheduler guard never grants permission to write pages.
+    /// Dropping it resumes progress; retirement also waits for the guard.
+    #[cfg(any(test, feature = "test-faults"))]
+    pub fn pause_for_tests(&self, pages: &[PageId]) -> impl Send {
+        struct Pause {
+            shared: std::sync::Weak<driver::Shared<ProductionIo, SystemClock>>,
+            keys: BTreeSet<PageKey>,
+        }
+        impl Drop for Pause {
+            fn drop(&mut self) {
+                if let Some(shared) = self.shared.upgrade() {
+                    let keys = std::mem::take(&mut self.keys);
+                    shared.notify(move |state| {
+                        for key in keys {
+                            state.progress.host.paused_for_tests.remove(&key);
+                        }
+                    });
+                }
+            }
+        }
+        let keys = self.register_all(pages.to_vec()).expect("live test host");
+        let paused = keys.clone();
+        let _ = self.driver.shared.call(move |state| {
+            state.progress.host.paused_for_tests.extend(paused);
+        });
+        Pause {
+            shared: Arc::downgrade(&self.driver.shared),
+            keys,
+        }
+    }
+
     /// The host holds nothing and owes nothing: no page, job, draft worker,
     /// durable draft, queued request, owed observation or index ownership. A cost test waits
     /// for it so it measures an operation through its cleanup (M4).
@@ -118,21 +150,30 @@ impl PageHost {
         io.marks = Some(graph.clone());
         io.store = Arc::downgrade(store);
         let mut host = Host::new(io, BTreeMap::new());
+        host.storage_diag = graph.storage_diag.clone();
         host.stop();
         let mut recovered = Vec::new();
         let keys = host.recovered_keys();
         for key in keys.iter().cloned() {
             let id = PageId::from(super::super::production::key_base(&key));
-            // Refuse disk resolution through a retargeted folder, but register
-            // the logical key so launch keeps recovering its text and draft.
-            let spelling = if graph
-                .ensure_write_target(&graph.root.join(id.as_str()))
-                .is_ok()
-            {
-                store.disk_spelling(&id).unwrap_or(id)
-            } else {
-                id
-            };
+            // Check the original folder before resolving the leaf: a folder
+            // retargeted while stopped must not redirect recovery. The old
+            // leaf itself can be a case alias after an entry-first move;
+            // checking it before resolution rejects the alias and leaves the
+            // draft registered at an unwritable old spelling (S3 B2).
+            let path = graph.root.join(id.as_str());
+            let spelling = path
+                .parent()
+                .filter(|parent| graph.ensure_write_target(parent).is_ok())
+                .and_then(|_| store.disk_spelling(&id))
+                .filter(|spelling| {
+                    graph
+                        .ensure_write_target(&graph.root.join(spelling.as_str()))
+                        .is_ok()
+                })
+                // Even a refused resolution keeps its logical key, text
+                // and draft; the actual save still checks its target.
+                .unwrap_or(id);
             let lock = graph.page_lock(&graph.root.join(spelling.as_str()));
             host.register(key.clone(), spelling.as_str(), lock);
             recovered.push((key, spelling));

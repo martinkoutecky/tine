@@ -139,6 +139,17 @@ export interface RenameDone {
   home_page?: string | null;
 }
 
+/** An owner-side rename uses the same refresh as the window's own rename. */
+export interface OwnerPageRename {
+  old: string;
+  name: string;
+  /** Null for a reference-only source or fileless namespace parent. */
+  path: string | null;
+  kind: PageKind;
+  report: RenameDone;
+  binding_generation: number;
+}
+
 /** One page file a rename or merge wrote. */
 export interface RenameTouchedPage {
   /** Graph-relative path before the rename: the loaded page's `id`. */
@@ -558,6 +569,12 @@ export interface GraphMeta {
   /** config.edn `:ref/linked-references-collapsed-threshold` (OG default 100; 0 = always collapsed). */
   linked_references_collapsed_threshold: number;
   default_journal_template: string | null;
+  /** `:feature/enable-journals?`; absent means enabled, as in OG. False swaps the
+   *  sidebar's Journals entry for the configured home page. */
+  enable_journals?: boolean;
+  /** Normalized property keys whose comma items render as page links (OG
+   *  `separated-by-commas?`); absent = the built-ins alias/aliases/tags. */
+  linkable_property_keys?: string[];
   /** config.edn `:default-home {:page "..."}`; absent/null = no home page. */
   default_home?: string | null;
   favorites: string[];

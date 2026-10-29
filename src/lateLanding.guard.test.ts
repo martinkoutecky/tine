@@ -112,6 +112,8 @@ const BOUNDARIES = new Set(["readOwned", "readOwnedResource", "writeOwned", "ser
 // Durable backend operations are classified by interface verb, including names
 // such as rename and paste that a write-prefix expression cannot recognize.
 const DURABLE_BACKEND_METHODS = new Set([
+  "markPageSeen", "markGraphSeen", "forgetSeenPage", "forgetSeenState",
+  "retryOwnerProtection",
   "approveExternalAssets", "forgetKnownGraph", "installPlugin", "uninstallPlugin", "setPluginEnabled",
   "storePluginRegistryCache", "setSystemBarAppearance", "createGraph", "copyGuideIntoGraph",
   // The page host's writes: each takes or drops page text, a delete, or makes a save due.
@@ -119,12 +121,12 @@ const DURABLE_BACKEND_METHODS = new Set([
   "setGuideAnnounced", "renamePage", "publishHtml", "publishQuery", "publishLive", "setFavorites",
   "setPreferredWorkflow", "setDefaultHome", "setTimetrackingEnabled", "setShowBrackets", "setDocModeEnterForNewBlock",
   "setLogicalOutdenting", "setPreferredFormat", "setJournalTitleFormat", "setDefaultJournalTemplate",
-  "setStartOfWeek", "editAssetExternal", "editCustomCss", "trashAsset", "emptyAssetTrash", "trashJournalFile",
+  "setStartOfWeek", "editAssetExternal", "editCustomCss", "editGlobalCss", "trashAsset", "emptyAssetTrash", "trashJournalFile",
   "applyJournalFilenameMigrations",
   "mergePages", "renameFileToPage", "resolveSyncConflict", "resolveVcsMarkerConflict", "resolveDuplicateJournalDay", "trashSyncConflict", "saveAsset",
   "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard", "copyAssetFileToClipboard",
   "writeHighlights", "savePdfAreaImage", "rollbackPdfAreaImage",
-  "setBackupKeep", "setGitAutocommit", "setCaptureEnterFiles", "setWatchMode", "restoreBackup", "recoverOrphanDrafts", "deleteOldBackups",
+  "setBackupKeep", "setGitAutocommit", "gitSyncNow", "gitDisableLineEndings", "gitSignIn", "gitSignOut", "gitAppLifecycle", "setCaptureEnterFiles", "setWatchMode", "restoreBackup", "recoverOrphanDrafts", "deleteOldBackups",
   "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck", "setUiLocale",
   "debugLog", "diagnosticFrontendEvent", "diagnosticTimingEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
   "saveGraphVerificationReport", "addDefenderExclusion", "dismissDefenderHint",
@@ -138,6 +140,9 @@ const DURABLE_BACKEND_METHODS = new Set([
 // transient OS controls, or graph-binding controls. Adding a method requires
 // an explicit durable/non-durable decision in the census test below.
 const NON_DURABLE_BACKEND_METHODS = new Set([
+  "getPageChanges",
+  "ownerProtectionStatus",
+  "onOwnerPageRenamed",
   "createGraphVerification", "cancelGraphVerification", "onGraphVerificationProgress",
   "graphBindingGeneration", "inspectGraphAccess", "loadGraph", "openGraphWindow", "startupGraphPath",
   "captureTarget", "bindCaptureGraph", "captureReceipt", "listKnownGraphs", "revealKnownGraph", "appPlatform", "listInstalledPlugins",
@@ -155,12 +160,12 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "readCustomCss", "openExternal", "openAsset", "openGraphFile", "openPageFile", "detectMediaEditor", "listOrphanAssets",
   "assetTrashStats", "listJournalConflicts", "listJournalFilenameMigrations", "readJournalFile", "getPageByPath", "listSyncConflicts",
   "syncConflictDiff", "duplicateJournalDiff", "conflictInventory", "vcsMarkerConflictDiff", "liveConflictDiff", "onConflictsChanged", "search", "runGraphSearch", "quickSwitch", "captureQuickSwitch",
-  "listTemplates", "resolveBlock", "resolveBlocks", "previewBlock", "readAsset", "streamAsset",
+  "listTemplates", "resolveBlock", "resolveBlocks", "previewBlock", "readAsset", "pdfAssetSource", "streamAsset",
   "readLocalImage", "readClipboardImage", "clipboardFiles", "readTextFile", "confirm", "pickFolder", "readCssFile", "saveCssFile", "revealExport",
   // prepareGraphFolder: iOS container check + iCloud download before a graph
   // bind; it writes no graph data (master 027b5ae15).
   "pickGraphFolder", "prepareGraphFolder", "pickFile", "capturePhoto", "startRecording", "stopRecording", "cancelRecording",
-  "openPdf", "readHighlights", "onGraphChanged", "onGraphChangedBulk", "onGraphWatchStatus", "onGraphRescanComplete", "rescanGraphNow", "onGraphConfigChanged", "onCustomCssChanged", "onAssetChanged", "onOwnerFlushRequest", "ownerFlushAnswer", "getBackupKeep", "gitAutocommitStatus", "getCaptureEnterFiles", "getLinkFirstMatch",
+  "openPdf", "readHighlights", "onGraphChanged", "onGraphChangedBulk", "onGraphWatchStatus", "onGraphRescanComplete", "rescanGraphNow", "onGraphConfigChanged", "onCustomCssChanged", "onAssetChanged", "onOwnerFlushRequest", "ownerFlushAnswer", "getBackupKeep", "gitAutocommitStatus", "gitSyncNotice", "getCaptureEnterFiles", "getLinkFirstMatch",
   "getWatchMode", "listBackups", "orphanDrafts", "loadSession", "loadWorkspaces", "localClock", "gpuEnv", "getSmoothScroll",
   "getAppBool", "getAppString", "listSpellcheckDictionaries", "debugInfo",
   "diagnosticReport", "defenderHint", "appArchitecture", "watcherLatencyRecent", "takeDataHomeFallbackNotice",

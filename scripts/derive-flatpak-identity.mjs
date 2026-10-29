@@ -70,6 +70,7 @@ export function deriveFlatpak({ root = ROOT, identity, date, version }) {
     "    sources:\n      - type: dir\n        path: ..\n      - cargo-sources.json\n      - node-sources.json\n";
   if (!released) {
     manifest = manifest
+      .replaceAll(`src-tauri/${stable.iconDirectory}/`, `src-tauri/${target.iconDirectory}/`)
       .replaceAll(`flatpak/${stableId}.desktop`, `${installDir}/${stableId}.desktop`)
       .replaceAll(`flatpak/${stableId}.metainfo.xml`, `${installDir}/${stableId}.metainfo.xml`);
     manifest = swap(manifest, "manifest");

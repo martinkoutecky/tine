@@ -6,7 +6,7 @@ use tine_core::config::FileNameFormat;
 
 /// One page file's reference rewrite, computed by the shared rewriter
 /// (`tine_core::refs::rename_rewrite`) from the bytes the caller read and
-/// passed to [`Transaction::rewrite_refs`]. It never leaves the transaction:
+/// passed to [`PagePlan::rewrite_refs`]. It never leaves the transaction:
 /// callers only learn whether the rewrite changes the file.
 ///
 /// Freshness: preflight still stages the file under the base-revision guard

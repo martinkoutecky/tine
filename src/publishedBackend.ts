@@ -258,6 +258,9 @@ function firstMappedSpan(text: string, needle: string): { start: number; end: nu
 /** Methods declared optional on `Backend`; a published export leaves them
  *  absent so the browser fallbacks in `backend.ts` take over. */
 const OPTIONAL_METHODS = new Set([
+  "pdfAssetSource", // Native asset IPC only; published PDFs use the browser byte loader.
+  "ownerProtectionStatus",
+  "retryOwnerProtection",
   // Device-local graph relocation/recovery has no namespace in a published site.
   "orphanDrafts",
   "recoverOrphanDrafts",
@@ -269,7 +272,12 @@ const OPTIONAL_METHODS = new Set([
   "tineLinks",
   // CLI slice 2: only a native window answers its graph owner's flush requests.
   "onOwnerFlushRequest",
+  "onOwnerPageRenamed",
   "ownerFlushAnswer",
+  // GX4 S2/S4: change subscriptions. A snapshot never changes, so readers fall
+  // back to the publication key; refusing them blanked every query and board.
+  "registerUnlinkedReference",
+  "registerQuerySubscription",
 ]);
 
 /** Build the snapshot backend. `load` is awaited lazily by every method. */
@@ -821,6 +829,14 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async gitAutocommitStatus() {
       return { available: false };
     },
+    async gitSyncNotice() {
+      return null;
+    },
+    async gitAppLifecycle() {},
+    async getPageChanges() {
+      return { available: false, reason: "Git is not available in a published graph.", head_commit: null,
+        baseline_commit: null, current_text_sha256: "", identity_known: false, unattributed: false, blocks: [], removed: [] };
+    },
     async getBackupKeep() {
       return 0;
     },
@@ -1032,6 +1048,9 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "takeIdentifierMigrationNotice",
   "takeDataHomeFallbackNotice",
   "gitAutocommitStatus",
+  "gitSyncNotice",
+  "gitAppLifecycle",
+  "getPageChanges",
   "getBackupKeep",
   "listBackups",
   "getCaptureEnterFiles",
@@ -1121,8 +1140,6 @@ export const PUBLISHED_REFUSED_METHODS = [
   "pagePrintHtml",
   "queryExplainEmpty",
   "taggedPages",
-  "registerUnlinkedReference",
-  "registerQuerySubscription",
   "runQuery",
   "exportQuerySubtrees",
   "runAdvancedQuery",
@@ -1141,6 +1158,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "openPageFile",
   "openGraphFile",
   "editCustomCss",
+  "editGlobalCss",
   "editAssetExternal",
   "trashAsset",
   "emptyAssetTrash",
@@ -1180,6 +1198,14 @@ export const PUBLISHED_REFUSED_METHODS = [
   "rollbackPdfAreaImage",
   "setBackupKeep",
   "setGitAutocommit",
+  "gitSyncNow",
+  "gitDisableLineEndings",
+  "gitSignIn",
+  "gitSignOut",
+  "markPageSeen",
+  "markGraphSeen",
+  "forgetSeenPage",
+  "forgetSeenState",
   "setCaptureEnterFiles",
   "setWatchMode",
   "restoreBackup",

@@ -282,7 +282,7 @@ Kind `written`. Write replies carry no page text.
 | `git.committed` | boolean | optional | yes | `true`: the write's bytes are committed. `false`: the file is saved but not committed (`git.error`, `git.message` say why: `refused:git` for a repository error, `refused:git-busy` when the branch kept moving) |
 | `git.commit` | string | optional | no | the agent commit's id |
 | `git.snapshot` | string | nullable | yes | the commit of the user's uncommitted edits to the file, made first under the user's git identity; `null` when `HEAD` already had the bytes the write started from |
-| `git.index` | string | optional | yes | the committed file's index entry: `synced` (now matches the commit; changed under git's `index.lock` protocol, so a concurrent `git add` is never overwritten), `staged-kept` (the user had other content staged for the file; left staged, nothing of it lost), `busy` (the index was locked or conflicted; untouched, so `git status` may show the file changed until git refreshes) |
+| `git.index` | string | optional | yes | the committed file's index entry: `synced` (now matches the commit; changed under git's `index.lock` protocol, so a concurrent `git add` is never overwritten), `staged-kept` (the user had other content staged for the file; left staged, nothing of it lost). The index is installed before the branch moves; an index that cannot be written refuses the commit (`git.committed: false`, the file saved), never a moved branch over a stale index |
 
 Read by the text output: `name`, `rev`, `blocks`, `more`, `git`.
 
@@ -350,6 +350,7 @@ branch. A same-branch concurrent commit still uses compare-and-swap retries.
 | --- | --- | --- |
 | `refused:git` naming a conversion attribute | repository content conversion, including git-crypt plaintext disclosure | use Git's own conversion workflow; no page, ref, index or raw object is changed by the refused run write |
 | `git.committed: false` naming a changed branch | concurrent honest terminal checkout between repository open and index locking | inspect the saved page and active branch before starting another write; neither branch nor the new branch's index is changed by the refused commit |
+| `git.committed: false`, "the index could not be written" | disk error or full disk while the index is installed, before the branch moves (s3.7 P1/P1b) | the file is saved and the branch is unmoved, so no stale index sits under a new `HEAD`; the index is the old one or already stages the write, and the next commit records it |
 
 - **`run.begin`**: kind `run`; `run` (the id, `r<hex seconds>-<8 hex>`), `branch`. Text: the id.
 - **`run.show RUN`**: kind `run-commits`; `run`, `commits` (newest first: `commit`, `agent` (boolean; `false` =
@@ -381,6 +382,87 @@ branch. A same-branch concurrent commit still uses compare-and-swap retries.
 
 Only commits within 10 minutes before the run's begin time and at most 20,000 first-parent commits back are
 searched.
+
+### `page.create`
+
+`tine page create NAME` creates an empty page through the owner's guarded save,
+with EditKind `create-page`. It creates no blocks, so there is no `author::` to
+add. An existing page, alias or file refuses as `refused:page-exists`. Its payload
+and text are the `block.edit` / `written` fields above (`blocks: []`, `more: 0`).
+An absent page cannot match `--rev` (`stale`). `--run` uses the existing commits.
+
+### `page.rename`
+
+`tine page rename OLD NEW` calls the app's rename operation, including references,
+namespaces, titles and the home page. A sole alias resolves to its canonical page.
+A reference-only source or fileless namespace parent uses the same operation:
+references and physical descendants move without creating a placeholder page.
+A destination owned by a file or alias refuses as `refused:page-exists`; merging
+requires confirmation in the app. Duplicate source claimants return `ambiguous`.
+The window saves typed text first and receives the app's rename report to refresh
+navigation and rewritten pages. A graph-wide rename cannot use the existing
+single-file revision guard or run commits: `--rev` or `--run` (including `TINE_RUN`)
+refuses as `refused:rename-options` before any change. An error from the app's I/O
+adapter whose admission cannot be proved returns `uncertain` with
+`detail.admitted: null`; inspect disk and any rollback diagnostic before retrying.
+If page/referrer publication succeeded but the separate home-page config update
+failed, it returns `uncertain` with `detail.admitted: true` and `detail.report`
+containing the known applied page changes (`home_page: null`). The window receives
+that report too. This error is a partial outcome, never a no-change refusal;
+inspect the home-page configuration before retrying.
+
+| field | type | presence | disclosure | meaning |
+|---|---|---|---|---|
+| `schema` | string | always | no | `"tine.cli/1"` |
+| `kind` | string | always | no | `"page-renamed"` |
+| `old` | string | always | no | canonical file title, or trimmed source name for a fileless source |
+| `name` | string | always | no | requested destination title, trimmed |
+| `report` | `tine_graph_features::pages::RenameReport` | always | no | app operation report |
+| `report.outcome` | string | always | no | `renamed` or `unchanged` |
+| `report.touched` | array | always | no | old paths and whether they moved |
+| `report.skipped_conflicted_referrers` | array of string | always | yes | referrers carrying VCS markers left unchanged; text prints each path |
+| `report.home_page` | string | nullable | no | new home-page title when changed |
+
+### `page.delete`
+
+`tine page delete NAME --yes` (alias `--force`) uses the host's delete operation,
+including graph trash and its checked-byte guard. Without confirmation it refuses
+as `refused:confirmation`. A missing page is `not-found`, duplicate identities
+are `ambiguous`, a stale `--rev` is `stale`, and read-only pages refuse. A pending
+admitted deletion returns `unwritten`, `superseded` or `uncertain`, never success
+before publication. `--run` commits the deletion.
+
+| field | type | presence | disclosure | meaning |
+|---|---|---|---|---|
+| `schema` | string | always | no | `"tine.cli/1"` |
+| `kind` | string | always | no | `"page-deleted"` |
+| `page` | string | always | no | deleted graph-relative file path |
+| `name` | string | always | no | canonical page title |
+| `broken_refs` | integer | always | yes | indexed linked page referrers plus block references broken by removing the page; text always prints the count |
+| `git` | object | optional | no | run commit result, with the same disclosures as `written.git` |
+
+### `ref` / `embed`
+
+`tine ref BLOCK` prints `((uuid))`; `tine embed BLOCK` prints
+`{{embed ((uuid))}}`. They ensure a durable lazy block id with the same property
+editor as Copy block ref, through `save-block`. They insert no blocks and preserve
+attribution. Handles, `--rev`, `--run` and failures follow block writes. Duplicate
+ids within one page refuse as `stale` with candidate handles; ids claimed by
+multiple pages refuse as `ambiguous`. The text is the reusable syntax alone, plus any run
+commit disclosure; success means the id is written to disk.
+
+| field | type | presence | disclosure | meaning |
+|---|---|---|---|---|
+| `schema` | string | always | no | `"tine.cli/1"` |
+| `kind` | string | always | no | `"ref"` or `"embed"` |
+| `page` | string | always | no | target's graph-relative file path |
+| `name` | string | always | no | target's page title |
+| `rev` | string | always | no | written page revision |
+| `blocks` | array of string | always | no | target's full handle |
+| `more` | integer | always | no | `0` (one target) |
+| `uuid` | string | always | no | persisted block id |
+| `text` | string | always | no | reusable reference or embed syntax |
+| `git` | object | optional | no | run commit result, with the same disclosures as `written.git` |
 
 ## The text outline
 
@@ -472,9 +554,9 @@ owner newer than this `tine`) exits `1`, like `internal`.
 | `protocol` | 5 | the owner speaks another protocol version |
 | `owner-mismatch` | 5 | the endpoint belongs to another graph (hash collision) |
 | `owner-start` | 5 | `tine serve` did not come up, or the owner's endpoint does not answer, or the owner stopped answering a read |
-| `owner-unsafe` | 5 | the owner namespace or endpoint path is not safe to use |
+| `owner-unsafe` | 5 | the owner namespace or endpoint path is unsafe: on a shared Windows machine another account pre-created or loosened the directory, or occupied the pipe name (a lingering predecessor name is retried for 3 s first) |
 | `owner-lock` | 5 | the owner lock call itself failed (not contention) |
-| `unsupported` | 5 | no owner endpoint on this platform yet (Windows, slice 1a) |
+| `unsupported` | 5 | no CLI owner on this platform (iOS/Android and unshipped targets) |
 | `stale` | 6 | a write's page or block changed: `--rev` no longer matches, a handle no longer resolves (or resolves to several blocks), or the page changed twice while the write ran. Not admitted; read again |
 | `refused` | 6 | the owner refused; `detail.reason` says why (below). Nothing changed |
 | `draft-failed` | 7 | a write was admitted but its draft could not be saved (disk full, app-data error); nothing changed |
@@ -483,12 +565,57 @@ owner newer than this `tine`) exits `1`, like `internal`.
 | `uncertain` | 8 | admitted, outcome unknown (the connection was lost after the request was sent; `tine serve --stop`) |
 | `internal` | 1 | an owner bug or unnamed failure; the message leads with a diagnostic id |
 
-Windows still has no CLI endpoint, but the app now takes the account-wide graph
-owner lock under Known Folder LocalAppData/tine/owners. Another holder refuses
-the app open through the existing app-owner error; no Windows handover is
-attempted. Lock errors retain the diagnosed fail-open policy. Linux/macOS keep
-their existing lock and endpoint; iOS/Android rely on one process per sandboxed
-app. See `docs/storage-contract.md` (L9-01/L9-02).
+Linux, macOS and Windows support all graph commands against the app or `tine serve`,
+including automatic serve startup, app handover and `serve --stop`. Windows uses
+the account-wide lock under Known Folder LocalAppData/tine-owners (resolved through
+`SHGetKnownFolderPath(FOLDERID_LocalAppData)`) and the local-only
+pipe `\\.\pipe\tine-<user-sid>-<16-hex-graph-hash>`. The owners directory is
+created with an explicit protected DACL. Existing directories may
+have inherited or unprotected DACLs: both explicit and inherited ACEs are checked
+on every use. The owner must be the current user, SYSTEM or Administrators; reparse
+points, null DACLs, unknown ACE types, and grants of write, delete, delete-child,
+WRITE_DAC or WRITE_OWNER to anyone outside those principals refuse. Safe inherited
+directories keep their ACLs; no permissions are repaired. New lock files also
+get an explicit private protected DACL; existing lock files keep theirs. An
+inherit-only CREATOR OWNER ACE is also safe on directories. The pipe
+grants access only to the current user, rejects remote clients, and its first
+instance retries an occupied name for 3 s while holding the owner lock, allowing
+a predecessor's handles to drain, then refuses it. A busy pipe is waited on up to
+the caller's I/O deadline; it is never reported as no owner. Before sending a hello
+the client checks the connected pipe's owner and protected DACL. Unsafe permissions or pipe creation
+conflicts report `owner-unsafe` (exit 5). Same-account processes are trusted.
+Framing, caps, deadlines, custody checks, the 60 s handover bound and the rule that
+a timeout never permits takeover are shared with Unix. On desktop, a namespace or
+lock failure keeps the graph editable without a lease, with a persistent,
+non-dismissible warning naming single-writer protection and the command line,
+the cause, recovery instructions, Retry now, and copyable diagnostics. An owned,
+non-symlink Unix owners directory can be explicitly tightened to mode 0700;
+the repair preserves existing lock inodes. Foreign directories, symlinks and
+Windows DACLs are never repaired by this action. The app retries every 3 seconds
+after an attempt finishes, through the same custody-checked handover (up to
+60 seconds per attempt); a newly started `serve` must yield and release its
+lock before the app claims it. A timeout or refusal leaves the warning and
+unleased editing in place. Successful acquisition clears the warning.
+
+Lock discovery does not apply the Unix socket pathname limit. Missing Unix state
+parents are requested with mode 0700; existing parent permissions are preserved.
+An overlong account home therefore still permits the app to hold its durable
+account-wide lock. Endpoint binding then fails separately, retaining the lease;
+CLI discovery reports `owner-unsafe` (exit 5) with the endpoint pathname limit
+before attempting to start another host. There is no alternate temporary or
+environment-dependent lock namespace. A bind failure after acquisition keeps
+the lock and does not enter the unleased retry path. iOS/Android
+have no CLI and rely on one process per sandboxed app.
+Failed arbitration remains a limit: two hosts may overlap from the failed claim
+until acquisition/handover succeeds, including its wait. Persistent failure or
+handover refusal can make that interval indefinite. Revision guards and durable
+publication remain, but do not replace cross-process owner serialization.
+See `docs/storage-contract.md` (L9-01/L9-02).
+
+The client bounds each reply frame at 60 s, including `serve --stop`; partial
+bytes do not restart that deadline. A timeout leaves admitted work and the owner
+lease with the owner. Reads may retry within their retry window; a write or stop
+whose reply is lost reports `uncertain` (exit 8) and is never resent automatically.
 
 **Refusal reasons** (`detail.reason`, and `refused:<reason>` in the text):
 
@@ -505,6 +632,9 @@ app. See `docs/storage-contract.md` (L9-01/L9-02).
 | `store` | the store refused the save plan |
 | `cross-page` | `move` between two pages (not supported yet) |
 | `broken-ref` | `add` content names a `((uuid))` no block has (`detail.uuid`) |
+| `page-exists` | page creation or rename would replace an existing file or alias |
+| `confirmation` | `page delete` needs `--yes` or `--force` |
+| `rename-options` | graph-wide `page rename` cannot use the single-file `--rev` guard or run commits |
 | `git` | a run verb or `--run` write: the graph's git repository cannot take the run's commits (none, bare, a merge/rebase in progress, a detached HEAD, an ignored file, a libgit2 error) |
 | `git-busy` | a `--run` write while another git command holds the index (before any change), or inside a `git` object: the branch kept moving while a run write committed |
 | `merge` | `run.revert`: a page's Concord merge refused it (nothing changed); inside a page entry, the same for a page that changed between the check and its write |

@@ -125,7 +125,7 @@ fn takes_store(sig: &syn::Signature) -> bool {
     sig.inputs.iter().any(|input| match input {
         syn::FnArg::Typed(t) => idents(&t.ty)
             .iter()
-            .any(|t| t == "Store" || t == "Transaction"),
+            .any(|t| t == "Store" || t == "Transaction" || t == "PagePlan"),
         syn::FnArg::Receiver(_) => false,
     })
 }
@@ -406,7 +406,11 @@ fn surface(src: &Path) -> Surface {
                         match it {
                             ImplItem::Fn(f) if is_pub(&f.vis) && !is_cfg_test(&f.attrs) => {
                                 let key = format!("{module}::{ty}::{}", f.sig.ident);
-                                if ty == "Store" || ty == "Transaction" || takes_store(&f.sig) {
+                                if ty == "Store"
+                                    || ty == "Transaction"
+                                    || ty == "PagePlan"
+                                    || takes_store(&f.sig)
+                                {
                                     s.ops.insert(key.clone());
                                 }
                                 if carries_path(&f.sig) {
@@ -892,6 +896,10 @@ fn public_paths_are_only_inputs_and_handoffs() {
             "app-data backup directory outside any graph handed to the OS for sync; the weak/strong answer gates backup pruning",
         ),
         (
+            "directory_durability::sync_private_directory",
+            "app-data namespace adoption directory outside any graph handed to the OS for the private Windows flush",
+        ),
+        (
             "store::Store::create_graph",
             "user-chosen parent input; created root to user",
         ),
@@ -927,6 +935,18 @@ fn public_paths_are_only_inputs_and_handoffs() {
         (
             "store::Store::path_for_os_handoff",
             "validated file path to OS",
+        ),
+        (
+            "root_binding::BoundDirectory::new",
+            "host-selected graph or Git metadata directory input for an OS identity witness",
+        ),
+        (
+            "root_binding::BoundDirectory::root",
+            "bound Git metadata scope handed to the host's OS mutation guard",
+        ),
+        (
+            "root_binding::BoundDirectory::check_path",
+            "host-selected OS mutation target checked within its bound Git metadata scope",
         ),
         (
             "store::ConfigState.asset_trash_location",
@@ -1261,10 +1281,6 @@ const RULE5_DOCS: &[(&str, &str)] = &[
     (
         "struct page_host::PageHost",
         "names the window generation every command carries, a protocol field; nothing answers it",
-    ),
-    (
-        "struct page_host::Reservation",
-        "lists the host steps a reservation fences (open, load, save, draft); no state is returned",
     ),
     (
         "fn store::Store::diagnostics",

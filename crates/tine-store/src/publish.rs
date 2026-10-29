@@ -115,6 +115,8 @@ struct PublishStage {
     root: Dir,
     dir: Dir,
     identity: FileIdentity,
+    #[cfg(test)]
+    scope: Option<crate::model::write_target::CheckedScope>,
 }
 
 // The stage may be moved to `publish` on success. A failed emit or commit
@@ -123,6 +125,8 @@ struct StageCleanup {
     path: PathBuf,
     root: Dir,
     identity: FileIdentity,
+    #[cfg(test)]
+    scope: Option<crate::model::write_target::CheckedScope>,
 }
 
 impl StageCleanup {
@@ -131,6 +135,8 @@ impl StageCleanup {
             path: stage.path.clone(),
             root: stage.root.try_clone()?,
             identity: identity_from_path(&stage.path)?,
+            #[cfg(test)]
+            scope: stage.scope.clone(),
         })
     }
 }
@@ -141,7 +147,14 @@ impl Drop for StageCleanup {
             return;
         }
         if let Some(name) = self.path.file_name() {
-            let _ = self.root.remove_dir_all(name);
+            #[cfg(test)]
+            let _checked = self.scope.as_ref().map(|scope| scope.enter());
+            let _ = remove_publish_stage(
+                &self.root,
+                name,
+                #[cfg(test)]
+                self.scope.as_ref().map(|_| self.path.as_path()),
+            );
         }
     }
 }
@@ -178,6 +191,8 @@ impl SiteWriter {
     /// empty components, `.`, and `..` are refused; writing the same name
     /// twice returns `AlreadyExists`. Cost O(bytes).
     pub fn write(&mut self, rel: &str, bytes: &[u8]) -> Result<(), IoError> {
+        #[cfg(test)]
+        let _checked = self.stage.scope.as_ref().map(|scope| scope.enter());
         write_publish_stage_file(&self.stage, rel, bytes).map_err(IoError::from)?;
         self.files += 1;
         Ok(())
@@ -239,7 +254,12 @@ impl Store {
                 "store closed",
             )));
         }
-        let stage = reserve_publish_stage_at(&parent).map_err(failed)?;
+        let stage = reserve_publish_stage_at(
+            &parent,
+            #[cfg(test)]
+            false,
+        )
+        .map_err(failed)?;
         let _cleanup = StageCleanup::new(&stage).map_err(failed)?;
         let mut writer = SiteWriter { stage, files: 0 };
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| emit(&mut writer))) {
@@ -259,6 +279,7 @@ impl Store {
             root,
             dir,
             identity,
+            ..
         } = writer.stage;
         crate::directory_durability::sync_directory_entry(&path).map_err(failed)?;
         drop(dir);
@@ -272,7 +293,10 @@ impl Store {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(failed(error)),
         }
-        crate::model::move_file_noreplace(&path, &out).map_err(failed)?;
+        // This explicitly selected destination is outside the graph. Its
+        // parent capability and stage identity are the guards, rather than
+        // the graph-root mutation wrapper's containment witness.
+        crate::no_replace::move_file_noreplace(&path, &out).map_err(failed)?;
         if !identity_from_path(&out).is_ok_and(|current| current == identity) {
             return Err(failed(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -349,14 +373,30 @@ impl Store {
                     validate_leaf(folder)?;
                     let parent = self.graph.root.join("published-queries");
                     self.graph.ensure_write_target(&parent)?;
-                    crate::directory_durability::create_dir_all_durable(&parent, &self.graph.root)?;
+                    #[cfg(test)]
+                    crate::model::assert_checked_target(&parent);
+                    crate::directory_durability::create_dir_all_durable(
+                        &parent,
+                        &self.graph.root,
+                        &self.graph.root_binding,
+                    )?;
                     crate::directory_durability::sync_directory_entry(&self.graph.root)?;
                     parent.join(folder)
                 }
                 None => self.graph.root.join("publish"),
             };
             self.graph.ensure_write_target(&out)?;
-            let stage = reserve_publish_stage_at(out.parent().unwrap())?;
+            // The reserved sibling stage is bound to the same parent. RG7
+            // keeps that capability scope, independently of later leaf checks.
+            #[cfg(test)]
+            crate::model::assert_checked_target(&out);
+            #[cfg(test)]
+            self.graph.ensure_write_target(out.parent().unwrap())?;
+            let stage = reserve_publish_stage_at(
+                out.parent().unwrap(),
+                #[cfg(test)]
+                true,
+            )?;
             Ok::<_, io::Error>((out, stage))
         })();
         let (out, stage) = setup.map_err(|cause| PublishFailed {
@@ -522,13 +562,19 @@ fn dir_identity(dir: &Dir, _path: &Path) -> io::Result<FileIdentity> {
 
 #[cfg(test)]
 fn reserve_publish_stage(graph: &Graph) -> io::Result<PublishStage> {
-    reserve_publish_stage_at(&graph.root)
+    graph.ensure_write_target(&graph.root)?;
+    reserve_publish_stage_at(&graph.root, true)
 }
 
-fn reserve_publish_stage_at(parent: &Path) -> io::Result<PublishStage> {
+fn reserve_publish_stage_at(
+    parent: &Path,
+    #[cfg(test)] graph_local: bool,
+) -> io::Result<PublishStage> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let root = Dir::open_ambient_dir(parent, ambient_authority())?;
+    #[cfg(test)]
+    let scope = graph_local.then(|| crate::model::write_target::CheckedScope::capture(parent));
     for _ in 0..128 {
         let name = format!(
             ".tine-publish-stage-{}-{}",
@@ -536,6 +582,10 @@ fn reserve_publish_stage_at(parent: &Path) -> io::Result<PublishStage> {
             SEQ.fetch_add(1, Ordering::Relaxed)
         );
         let path = parent.join(&name);
+        #[cfg(test)]
+        if graph_local {
+            crate::model::assert_checked_target(&path);
+        }
         match root.create_dir(&name) {
             Ok(()) => {
                 let dir = root.open_dir(&name)?;
@@ -545,6 +595,8 @@ fn reserve_publish_stage_at(parent: &Path) -> io::Result<PublishStage> {
                     root,
                     dir,
                     identity,
+                    #[cfg(test)]
+                    scope,
                 });
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
@@ -571,6 +623,10 @@ fn write_publish_stage_file(stage: &PublishStage, name: &str, bytes: &[u8]) -> i
             "static-publish output name must be one file",
         ));
     }
+    #[cfg(test)]
+    if stage.scope.is_some() {
+        crate::model::assert_checked_target(&stage.path.join(relative));
+    }
     publish_stage_write_race_hook(stage)?;
     // All generation is relative to the directory handle reserved above. A
     // rename plus symlink/junction replacement of the ambient stage pathname
@@ -581,6 +637,10 @@ fn write_publish_stage_file(stage: &PublishStage, name: &str, bytes: &[u8]) -> i
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     {
+        #[cfg(test)]
+        if stage.scope.is_some() {
+            crate::model::assert_checked_target(&stage.path.join(parent));
+        }
         stage.dir.create_dir_all(parent)?;
     }
     let mut file = stage.dir.open_with(relative, &options)?;
@@ -594,6 +654,18 @@ fn write_publish_stage_file(stage: &PublishStage, name: &str, bytes: &[u8]) -> i
         parent = dir.parent();
     }
     Ok(())
+}
+
+fn remove_publish_stage(
+    root: &Dir,
+    name: &std::ffi::OsStr,
+    #[cfg(test)] graph_target: Option<&Path>,
+) -> io::Result<()> {
+    #[cfg(test)]
+    if let Some(target) = graph_target {
+        crate::model::assert_checked_target(target);
+    }
+    root.remove_dir_all(name)
 }
 
 #[cfg(test)]
@@ -656,6 +728,8 @@ fn reserve_publish_recovery(graph: &Graph, root: &Dir) -> io::Result<PublishReco
     let recovery_rel = Path::new("logseq").join(".tine-trash").join("conflicts");
     let recovery = graph.root.join(&recovery_rel);
     graph.ensure_write_target(&recovery)?;
+    #[cfg(test)]
+    crate::model::assert_checked_target(&recovery);
     root.create_dir_all(&recovery_rel)?;
     let recovery_root = root.open_dir(&recovery_rel)?;
     for rel in [
@@ -675,6 +749,8 @@ fn reserve_publish_recovery(graph: &Graph, root: &Dir) -> io::Result<PublishReco
             "{stamp}-{}__previous-publish",
             SEQ.fetch_add(1, Ordering::Relaxed)
         );
+        #[cfg(test)]
+        crate::model::assert_checked_target(&recovery.join(&name));
         match recovery_root.create_dir(&name) {
             Ok(()) => {
                 crate::directory_durability::sync_directory_entry(&recovery)?;
@@ -709,6 +785,7 @@ fn commit_publish_stage_report(
         root,
         dir,
         identity,
+        ..
     } = stage;
     // Windows refuses to rename a directory while this capability is open.
     // Every file is already synced and the stable identity above survives the
@@ -749,7 +826,7 @@ fn commit_publish_stage_report(
             let recovery =
                 reserve_publish_recovery(graph, &graph_dir).map_err(|error| (error, None))?;
             publish_recovery_race_hook(&recovery).map_err(|error| (error, None))?;
-            root.rename(leaf, &recovery.dir, "previous")
+            rename_publish_entry(&root, leaf, &recovery, "previous")
                 .map_err(|error| (error, None))?;
             let previous = recovery.path.join("previous");
             let retired = recovery
@@ -782,6 +859,9 @@ fn commit_publish_stage_report(
         .map(|recovery| recovery.path.join("previous"));
 
     publication_pause("before-install");
+    graph
+        .ensure_write_target(out)
+        .map_err(|error| (error, previous_kept.clone()))?;
     if let Err(error) = crate::model::move_file_noreplace(&path, out) {
         // The previous site stays complete in conflict recovery. Avoid a
         // compare-then-replace restoration that could clobber a late winner.
@@ -802,7 +882,7 @@ fn commit_publish_stage_report(
     // retained separately and is not overwritten during automatic recovery.
     let bad = reserve_publish_recovery(graph, &graph_dir)
         .map_err(|error| (error, previous_kept.clone()))?;
-    let _ = root.rename(leaf, &bad.dir, "invalid-stage");
+    let _ = rename_publish_entry(&root, leaf, &bad, "invalid-stage");
     Err((
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -810,6 +890,86 @@ fn commit_publish_stage_report(
         ),
         previous_kept,
     ))
+}
+
+fn rename_publish_entry(
+    root: &Dir,
+    leaf: &std::ffi::OsStr,
+    recovery: &PublishRecovery,
+    name: &str,
+) -> io::Result<()> {
+    #[cfg(test)]
+    crate::model::assert_checked_target(&recovery.path.join(name));
+    root.rename(leaf, &recovery.dir, name)
+}
+
+#[cfg(test)]
+mod rg7_tests {
+    use super::*;
+    use crate::model::write_target::clear_checked_target;
+
+    #[test]
+    fn rg7_unchecked_publish_capability_mutations_panic_before_io() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path());
+        clear_checked_target();
+        assert!(std::panic::catch_unwind(|| reserve_publish_stage_at(dir.path(), true)).is_err());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+
+        let stage = reserve_publish_stage(&graph).unwrap();
+        for name in ["index.html", "app/nested.html"] {
+            clear_checked_target();
+            assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                write_publish_stage_file(&stage, name, b"new")
+            }))
+            .is_err());
+            assert!(!stage.path.join(name).exists());
+        }
+        clear_checked_target();
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| remove_publish_stage(
+                &stage.root,
+                stage.path.file_name().unwrap(),
+                Some(&stage.path)
+            )))
+            .is_err()
+        );
+        assert!(stage.path.is_dir());
+
+        let recovery = reserve_publish_recovery(&graph, &stage.root).unwrap();
+        fs::create_dir(dir.path().join("publish")).unwrap();
+        for name in ["previous", "invalid-stage"] {
+            clear_checked_target();
+            assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                rename_publish_entry(
+                    &stage.root,
+                    std::ffi::OsStr::new("publish"),
+                    &recovery,
+                    name,
+                )
+            }))
+            .is_err());
+            assert!(dir.path().join("publish").is_dir());
+            assert!(!recovery.path.join(name).exists());
+        }
+    }
+
+    #[test]
+    fn rg7_publish_cleanup_keeps_its_bound_scope_after_another_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path());
+        let stage = reserve_publish_stage(&graph).unwrap();
+        let cleanup = StageCleanup::new(&stage).unwrap();
+        graph
+            .ensure_write_target(&dir.path().join("unrelated"))
+            .unwrap();
+        let path = stage.path.clone();
+        // Match callback teardown: close the stage capability before cleanup
+        // removes the directory (required by Windows sharing semantics).
+        drop(stage);
+        drop(cleanup);
+        assert!(!path.exists());
+    }
 }
 
 // Process-level interruption/race hooks are compiled only for fixture tests.
@@ -904,7 +1064,10 @@ mod tests {
                 writer.write("index.html", b"first")
             })
             .unwrap();
-        assert_eq!(first.site, outside.join("selected"));
+        assert_eq!(
+            first.site,
+            fs::canonicalize(&outside).unwrap().join("selected")
+        );
         assert_eq!(fs::read(first.site.join("index.html")).unwrap(), b"first");
         assert!(!base.join("selected").exists());
         assert!(store

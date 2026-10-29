@@ -1,0 +1,43 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tine-page-delete 1  "delete " 
+.SH NAME
+tine\-page\-delete \- Delete a page to graph trash and report broken references
+.SH SYNOPSIS
+\fBtine page delete\fR [\fB\-\-yes\fR] [\fB\-\-debug\fR] [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-\-run\fR] [\fB\-\-author\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.SH DESCRIPTION
+Delete a page to graph trash and report broken references
+.SH OPTIONS
+.TP
+\fB\-\-yes\fR
+Confirm deletion without an interactive prompt
+.TP
+\fB\-\-debug\fR
+Enable diagnostic logging for the desktop app
+.TP
+\fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
+The graph. Defaults to $TINE_GRAPH, else the graph folder around the current directory
+.TP
+\fB\-\-json\fR
+Print the typed result (schema tine.cli/1) as JSON
+.TP
+\fB\-\-rev\fR \fI<REV>\fR
+Write only if the page is still at this rev (as `page show` prints it); required for a bare PAGE/POS without a fingerprint
+.TP
+\fB\-\-run\fR \fI<RUN>\fR
+Commit this write to the graph\*(Aqs git repository as part of RUN (from `tine run begin`)
+.RS
+May also be specified with the \fBTINE_RUN\fR environment variable. 
+.RE
+.TP
+\fB\-\-author\fR \fI<AUTHOR>\fR
+Author on created blocks and on the run\*(Aqs commits (default: agent)
+.RS
+May also be specified with the \fBTINE_AUTHOR\fR environment variable. 
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+

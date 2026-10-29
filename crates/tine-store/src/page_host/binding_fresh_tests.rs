@@ -582,24 +582,25 @@ impl Run<'_> {
                 } else {
                     body(&mut self.r, rel.starts_with("pages/"))
                 };
-                let reserved = live.host.reserve(|| vec![id.clone()], Input::Flush);
-                let outcome = match &reserved {
-                    Ok(_) => match fs::read(root.join(&rel)) {
-                        Ok(old) => {
-                            let dto = live.dto(&rel, &text);
-                            let mut tx = live.store.transaction(None);
-                            let base = crate::SaveBase::Existing(FileRev::from_bytes(&old));
-                            tx.save_page(&[EditKind::SaveBlock], &id, base, &dto);
-                            format!("{:?}", tx.commit())
+                let outcome = match fs::read(root.join(&rel)) {
+                    Ok(old) => {
+                        let dto = live.dto(&rel, &text);
+                        let mut tx = live.store.page_plan(None);
+                        let base = crate::SaveBase::Existing(FileRev::from_bytes(&old));
+                        tx.save_page(&[EditKind::SaveBlock], &id, base, &dto);
+                        match tx.plan() {
+                            Ok(mut op) => {
+                                op.policy = Input::Flush;
+                                format!("{:?}", live.host.apply(op))
+                            }
+                            Err(why) => format!("plan refused: {why:?}"),
                         }
-                        Err(error) => format!("no file: {error}"),
-                    },
-                    Err(refusal) => format!("reservation refused: {refusal:?}"),
+                    }
+                    Err(error) => format!("no file: {error}"),
                 };
-                drop(reserved);
                 self.note(
-                    "retained transaction",
-                    format!("retained transaction {rel} {text:?}: {outcome}"),
+                    "host operation",
+                    format!("host operation {rel} {text:?}: {outcome}"),
                 );
             }
             20 => {
@@ -717,12 +718,6 @@ impl Run<'_> {
                     if let Some(due) = state.progress.next_deadline() {
                         unsettled.push(format!("timed work due at {due} ms"));
                     }
-                    // A retained transaction's index stands, and later
-                    // publications of its page wait, until the host has
-                    // read the released bytes (V2).
-                    if !state.book.handover.is_empty() {
-                        unsettled.push(format!("handover {:?}", state.book.handover));
-                    }
                     if !state.book.retry.is_empty() || state.book.delivering {
                         let retry: Vec<_> = state.book.retry.keys().collect();
                         unsettled.push(format!(
@@ -830,7 +825,6 @@ impl Run<'_> {
             .filter(|key| !state.progress.host.pages.contains_key(*key))
             .collect();
         out.push_str(&format!("\nowned, not held: {unheld:?}"));
-        out.push_str(&format!("\nhandover: {:?}", state.book.handover));
         out
     }
 
@@ -1061,9 +1055,9 @@ fn a_store_retitle_moves_the_live_page_list() {
             .page_dto_for_bytes(&path, body.as_bytes())
             .unwrap()
             .unwrap();
-        let mut tx = store.transaction(None);
+        let mut tx = store.page_plan(None);
         tx.save_page(&[EditKind::SaveBlock], &PageId::from(rel), base, &dto);
-        tx.commit()
+        tx.commit_internal()
     };
     let old = crate::SaveBase::Existing(FileRev::from_bytes(b"- a\n"));
     let retitled = save("pages/a.md", old, "title:: Renamed\n\n- a\n");

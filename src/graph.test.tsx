@@ -172,7 +172,7 @@ async function loadHarness(
   }));
   vi.doMock("./editor/templateVars", () => ({ applyTemplateVars, prepareTemplateVars }));
   vi.doMock("./warmCache", () => ({ waitForWarmCache }));
-  vi.doMock("./pageIndex", () => ({ resetPageIndex }));
+  vi.doMock("./pageIndex", () => ({ resetPageIndex, linkPageKind: () => "page" }));
   vi.doMock("./lsShim", () => ({ CUSTOM_CSS_STYLE_ID: "test-css", ensureLsShimStyle: vi.fn() }));
   vi.doMock("./themeGallery", () => ({ ensureThemeStyle: vi.fn() }));
   vi.doMock("./platform", () => ({ isMobile: () => platform !== "desktop", platformKind: vi.fn(async () => platform) }));

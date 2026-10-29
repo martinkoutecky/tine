@@ -1,8 +1,138 @@
 //! Guarded atomic moves, including case-only spelling changes.
 use super::*;
-use unicode_normalization::UnicodeNormalization;
 
-impl Transaction<'_> {
+impl PagePlan<'_> {
+    /// The spelling preflight holds the write set's path locks and writer.
+    pub(crate) fn verify_spelling_input(
+        &self,
+        file: &FileId,
+        bytes: Option<&[u8]>,
+    ) -> Result<(), Why> {
+        self.verify(file, bytes, 0)
+    }
+
+    /// The host driver holds the page's path lock and store writer. Keep the
+    /// same old-byte recovery copy as a rewritten transaction rename.
+    pub(crate) fn retain_spelling_bytes(&self, from: &FileId, bytes: &[u8]) -> Result<(), Why> {
+        self.verify(from, Some(bytes), 0)?;
+        self.write_trash_copy(&self.trash_id(from), bytes)?;
+        Ok(())
+    }
+
+    /// Host driver's byte-preserving spelling move. The caller holds the
+    /// store writer and the source key's path lock, and has refused unsaved
+    /// input. Reuse the transaction's target checks and durable move recipe;
+    /// no content is written and no transaction is committed here.
+    pub(crate) fn respell_entry(
+        &self,
+        from: &FileId,
+        to: &FileId,
+        bytes: &[u8],
+    ) -> (bool, Result<(), Why>) {
+        let mut undo = Undo {
+            kind: UndoKind::Rename,
+            src: from.clone(),
+            dst: Some(to.clone()),
+            trash: None,
+            old: None,
+            new: None,
+            new_rev: None,
+            opaque_rev: None,
+            created: false,
+            moved: false,
+        };
+        let result = (|| {
+            let src = self.path(from)?;
+            let dst = self.spelled_path(to)?;
+            // Same-file equality alone accepts symlinks and hard links;
+            // only an unlisted folded spelling or an absent case-only
+            // destination on a sensitive volume is eligible.
+            let absent_case_destination =
+                case_only(Path::new(from.as_str()), Path::new(to.as_str()))
+                    && matches!(fs::symlink_metadata(&dst),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound);
+            if !self.destination_is_source_spelling(from, to)? && !absent_case_destination {
+                return Err(Why::Conflict {
+                    file: to.clone(),
+                    disk: disk_rev(&dst),
+                });
+            }
+            self.verify(from, Some(bytes), 0)?;
+            self.publish_move(&mut undo, &src, &dst).map_err(failed)
+        })();
+        // The provider may accept rename while retaining the source casing.
+        // Only a fresh directory listing can justify following the target;
+        // a sync failure can still leave that observed move live.
+        let moved = self.spelling_moved(from, to);
+        let result = result.and_then(|()| {
+            if moved {
+                Ok(())
+            } else {
+                Err(failed(io::Error::other(
+                    "could not confirm the destination spelling",
+                )))
+            }
+        });
+        (moved, result)
+    }
+
+    fn spelling_moved(&self, from: &FileId, to: &FileId) -> bool {
+        self.spelled_path(to).ok().is_some_and(|dst| {
+            let src = self.store.graph.root.join(from.as_str());
+            self.spelling_entries
+                .borrow_mut()
+                .remove(dst.parent().unwrap());
+            matches!(self.listed_path(&dst), Ok(Some(_)))
+                && matches!(self.listed_path(&src), Ok(None))
+        })
+    }
+
+    /// Publish an unheld entry's spelling change after the driver moved it.
+    /// Reuse final-file observation, including its exact listing checks:
+    /// on a folding volume reading the old spelling still opens the new
+    /// entry, and must not publish a ghost source row. No writes or undo.
+    pub(crate) fn publish_respelled_entry(
+        &self,
+        from: &FileId,
+        to: &FileId,
+        bytes: &[u8],
+    ) -> Result<(), Why> {
+        let plan = Prepared {
+            src: from.clone(),
+            dst: Some(to.clone()),
+            old: Some(bytes.to_vec()),
+            new: Some(bytes.to_vec()),
+            saved_page: None,
+            opaque_rev: None,
+        };
+        let before = BTreeMap::from([
+            (from.as_str().to_owned(), Some(bytes.to_vec())),
+            (to.as_str().to_owned(), None),
+        ]);
+        let starting = self.store.graph.cache_generation();
+        let publication = self.publish_final_files(
+            &[plan],
+            &[],
+            &before,
+            false,
+            &mut Rollback::default(),
+            &[],
+            &[],
+        );
+        if publication.changed_any && self.store.graph.cache_generation() == starting {
+            let root = &self.store.graph.root;
+            self.store
+                .graph
+                .transaction_bump_generation(&[&root.join(from.as_str()), &root.join(to.as_str())]);
+        }
+        self.store
+            .publish_own(publication.published_own, publication.observations);
+        match publication.publication_errors.into_iter().next() {
+            Some((_, error)) => Err(Why::Failed(error)),
+            None => Ok(()),
+        }
+    }
+
     // OS handoff canonicalizes an existing final component. A move must keep
     // the requested spelling while retaining that door's target validation.
     pub(super) fn spelled_path(&self, file: &FileId) -> Result<PathBuf, Why> {
@@ -24,7 +154,9 @@ impl Transaction<'_> {
             .is_some_and(|dst| case_only(Path::new(plan.src.as_str()), Path::new(dst.as_str())))
     }
 
-    // Preserve case while treating filesystem NFC/NFD spellings as equivalent.
+    // Physical directory spellings are exact. Folding these keys would merge
+    // coexisting NFC/NFD files on sensitive volumes and hide normalization-only
+    // self-alias renames on APFS. The resolver/same_file probe decides aliases.
     pub(super) fn listed_path(&self, path: &Path) -> io::Result<Option<PathBuf>> {
         let parent = path.parent().unwrap();
         let mut entries = self.spelling_entries.borrow_mut();
@@ -33,14 +165,14 @@ impl Transaction<'_> {
                 .map(|entry| {
                     entry.map(|entry| {
                         let name = entry.file_name();
-                        (spelling_key(&name), name)
+                        (name.clone(), name)
                     })
                 })
                 .collect::<io::Result<BTreeMap<_, _>>>()?;
             entries.insert(parent.to_path_buf(), names);
         }
         Ok(entries[parent]
-            .get(&spelling_key(path.file_name().unwrap()))
+            .get(path.file_name().unwrap())
             .map(|name| parent.join(name)))
     }
 
@@ -96,6 +228,26 @@ impl Transaction<'_> {
         // resolution while still executing the real plain rename and listing.
         let alias_refusal =
             case_only(src, dst) && fault(self.store, FaultPoint::CaseMoveAliasRefusal);
+        if case_only(src, dst) {
+            // A folding resolver returns the source's existing spelling for
+            // dst. Check the bound parent and source identity, then retain
+            // the requested leaf. Only the source's unlisted alias may differ
+            // from that leaf; ordinary target containment remains strict.
+            self.check_write_target(src)?;
+            self.check_write_target(dst.parent().unwrap())?;
+            let (existing, resolved) = crate::model::canonical_existing_ancestor(dst)?;
+            if existing == dst
+                && resolved != dst
+                && !self.source_spelling_alias(src, dst, &resolved)?
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "spelling destination is not the source alias",
+                ));
+            }
+        } else {
+            self.check_write_target(dst)?;
+        }
         let result = if alias_refusal {
             Err(io::Error::from(io::ErrorKind::AlreadyExists))
         } else {
@@ -113,11 +265,13 @@ impl Transaction<'_> {
                 return Err(error);
             }
             if !fault(self.store, FaultPoint::CaseMoveAliasNoop) {
-                crate::atomic_file::rename_replace(src, dst).map_err(crate::platform_step::at(
+                rename_spelling_replace(src, dst).map_err(crate::platform_step::at(
                     "rename source over its folded alias",
                 ))?;
-                undo.created = true;
             }
+            // The fault models a provider returning Ok from rename_replace
+            // while silently keeping the old directory spelling.
+            undo.created = true;
         } else {
             undo.created = true;
         }
@@ -130,6 +284,10 @@ impl Transaction<'_> {
                     "case rename did not publish the destination spelling",
                 ));
             }
+        }
+        #[cfg(feature = "test-faults")]
+        if fault(self.store, FaultPoint::AbortBeforeMoveSync) {
+            std::process::abort();
         }
         sync_move_dirs(self.store, src, dst)?;
         #[cfg(feature = "test-faults")]
@@ -177,6 +335,7 @@ impl Transaction<'_> {
                 crate::directory_durability::create_dir_all_durable(
                     parent,
                     self.store.graph.creation_bound(parent),
+                    &self.store.graph.root_binding,
                 )
                 .map_err(failed)?;
             }
@@ -208,6 +367,7 @@ impl Transaction<'_> {
             crate::directory_durability::create_dir_all_durable(
                 parent,
                 self.store.graph.creation_bound(parent),
+                &self.store.graph.root_binding,
             )
             .map_err(failed)?;
         }
@@ -274,6 +434,7 @@ impl Transaction<'_> {
             )));
         }
         self.arm_directory_sync_fault();
+        self.check_write_target(&dst).map_err(failed)?;
         if let Err(error) = atomic_write_with_check(&dst, new, || {
             if fs::read(&dst)? == old {
                 Ok(())
@@ -315,25 +476,180 @@ impl Transaction<'_> {
     }
 }
 
-pub(super) fn case_only(src: &Path, dst: &Path) -> bool {
-    src != dst
-        && src.parent() == dst.parent()
-        && src
-            .file_name()
-            .and_then(|s| s.to_str())
-            .zip(dst.file_name().and_then(|s| s.to_str()))
-            .is_some_and(|(from, to)| tine_core::refs::same_page(from, to))
+fn rename_spelling_replace(src: &Path, dst: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    crate::model::assert_checked_target(dst);
+    crate::atomic_file::rename_replace(src, dst)
 }
 
-fn spelling_key(name: &std::ffi::OsStr) -> std::ffi::OsString {
-    name.to_str()
-        .map(|name| name.nfc().collect::<String>().into())
-        .unwrap_or_else(|| name.to_os_string())
-}
+pub(super) use crate::file_kind::case_only_paths as case_only;
 
 #[cfg(test)]
 mod spelling_tests {
     use super::*;
+
+    #[test]
+    fn rg7_unchecked_folded_spelling_replace_panics_before_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("old.md");
+        let dst = dir.path().join("Old.md");
+        fs::write(&src, b"kept").unwrap();
+        crate::model::write_target::clear_checked_target();
+        assert!(std::panic::catch_unwind(|| rename_spelling_replace(&src, &dst)).is_err());
+        assert_eq!(fs::read(src).unwrap(), b"kept");
+        assert_eq!(
+            fs::read_dir(dir.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect::<Vec<_>>(),
+            [std::ffi::OsString::from("old.md")]
+        );
+    }
+
+    #[test]
+    fn a_case_move_keeps_the_requested_leaf_when_its_alias_resolves_to_the_source() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        let src = dir.path().join("pages/old.md");
+        fs::write(&src, b"- body\n").unwrap();
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let src = store.graph.root.join("pages/old.md");
+        let dst = store.graph.root.join("pages/Old.md");
+        let tx = store.page_plan(None);
+        let mut undo = Undo {
+            kind: UndoKind::Rename,
+            src: FileId::from("pages/old.md".to_owned()),
+            dst: Some(FileId::from("pages/Old.md".to_owned())),
+            trash: None,
+            old: None,
+            new: None,
+            new_rev: None,
+            opaque_rev: None,
+            created: false,
+            moved: false,
+        };
+        crate::model::write_target::with_folding_alias(&dst, &src, || {
+            assert_eq!(
+                crate::model::canonical_existing_ancestor(&dst).unwrap().1,
+                src
+            );
+            assert!(
+                store.graph.ensure_write_target(&dst).is_err(),
+                "ordinary containment must stay strict"
+            );
+            store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
+            tx.publish_move(&mut undo, &src, &dst).unwrap();
+        });
+        assert_eq!(fs::read(&dst).unwrap(), b"- body\n");
+        assert!(tx.listed_path(&src).unwrap().is_none());
+        assert_eq!(tx.listed_path(&dst).unwrap(), Some(dst));
+    }
+
+    #[test]
+    fn a_provider_accepting_rename_without_changing_case_does_not_move_the_host() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        fs::write(dir.path().join("pages/old.md"), "- body\n").unwrap();
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let from = FileId::from("pages/old.md".to_owned());
+        let to = FileId::from("pages/Old.md".to_owned());
+        let tx = store.page_plan(None);
+        let mut undo = Undo {
+            kind: UndoKind::Rename,
+            src: from.clone(),
+            dst: Some(to.clone()),
+            trash: None,
+            old: None,
+            new: None,
+            new_rev: None,
+            opaque_rev: None,
+            created: false,
+            moved: false,
+        };
+        store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
+        store.inject_fault(FaultPoint::CaseMoveAliasNoop);
+        // The store's canonical root, as production passes it: on Windows the
+        // tempdir path can be an 8.3 short name (`RUNNER~1`) outside the binding.
+        let src = store.graph.root.join(from.as_str());
+        let dst = store.graph.root.join(to.as_str());
+        let published = tx.publish_move(&mut undo, &src, &dst);
+        assert!(published.is_err());
+        assert!(
+            undo.created,
+            "the provider returned success from rename_replace; publish_move: {published:?}"
+        );
+        // Exercise the same post-call observation used by respell_entry.
+        assert!(!tx.spelling_moved(&from, &to));
+        assert!(tx.listed_path(&src).unwrap().is_some());
+        assert!(tx.listed_path(&dst).unwrap().is_none());
+        store.close();
+    }
+
+    #[test]
+    fn spelling_retains_verified_old_bytes_before_any_rewrite() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        fs::write(dir.path().join("pages/old.md"), "- original\n").unwrap();
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let from = FileId::from("pages/old.md".to_owned());
+        let tx = store.page_plan(None);
+        assert!(tx.retain_spelling_bytes(&from, b"- stale\n").is_err());
+        assert!(!dir.path().join("logseq/.tine-trash").exists());
+        tx.retain_spelling_bytes(&from, b"- original\n").unwrap();
+        assert_eq!(
+            fs::read(dir.path().join("pages/old.md")).unwrap(),
+            b"- original\n"
+        );
+        let copies: Vec<_> = fs::read_dir(dir.path().join("logseq/.tine-trash/pages"))
+            .unwrap()
+            .map(|e| fs::read(e.unwrap().path()).unwrap())
+            .collect();
+        assert_eq!(copies, [b"- original\n"]);
+        store.close();
+    }
+
+    /// The host spelling command may run after an unopened source returned
+    /// to disk ownership. Its final-file publication must update the paths
+    /// synchronously, without waiting for a watcher or a fresh metadata scan.
+    #[test]
+    fn spelling_entry_publication_updates_unheld_paths_before_reply() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        fs::write(dir.path().join("pages/old.md"), "title:: Old\n- body\n").unwrap();
+        let store = Store::open(
+            dir.path(),
+            crate::OpenOptions {
+                watch: crate::WatchMode::Poll,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0;
+        store.whole_graph().unwrap();
+        let root = &store.graph.root;
+        let src = root.join("pages/old.md");
+        let dst = root.join("pages/Old.md");
+        assert!(store.snapshot_knows(&src));
+        {
+            let _writer = store.writer.lock().unwrap();
+            let lock = store.graph.page_lock(&src);
+            let _guard = lock.lock().unwrap();
+            // Fixture for the byte-preserving entry syscall: on Linux the
+            // two spellings are distinct, so respell admission itself skips.
+            fs::rename(&src, &dst).unwrap();
+            store
+                .page_plan(None)
+                .publish_respelled_entry(
+                    &FileId::from("pages/old.md".to_owned()),
+                    &FileId::from("pages/Old.md".to_owned()),
+                    b"title:: Old\n- body\n",
+                )
+                .unwrap();
+        }
+        assert!(store.snapshot_knows(&dst));
+        assert!(!store.snapshot_knows(&src));
+        store.close();
+    }
 
     #[cfg(unix)]
     #[test]
@@ -343,7 +659,7 @@ mod spelling_tests {
         fs::write(dir.path().join("pages/sub/old.md"), "- body\n").unwrap();
         std::os::unix::fs::symlink("sub/old.md", dir.path().join("pages/Old.md")).unwrap();
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
-        let tx = store.transaction(None);
+        let tx = store.page_plan(None);
         let dest = store.file_id(Area::Pages, "Old.md").unwrap();
         assert_eq!(
             tx.spelled_path(&dest).unwrap(),
@@ -355,21 +671,88 @@ mod spelling_tests {
     }
 
     #[test]
-    fn directory_spelling_preserves_case_but_accepts_normalized_unicode() {
+    fn sb1_directory_spelling_keeps_normalization_distinct_entries_separate() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
-        fs::write(dir.path().join("pages/CAFE\u{301}.md"), "- body\n").unwrap();
+        let nfd = dir.path().join("pages/Ku\u{30a}n\u{30c}.md");
+        let nfc = dir.path().join("pages/Kůň.md");
+        fs::write(&nfd, "- nfd\n").unwrap();
+        if nfc.exists() {
+            assert!(same_file::is_same_file(&nfd, &nfc).unwrap());
+            return; // This volume cannot hold normalization-distinct entries.
+        }
+        fs::write(&nfc, "- nfc\n").unwrap();
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
-        let tx = store.transaction(None);
-        let desired = dir.path().join("pages/CAFÉ.md");
-        assert_eq!(
-            tx.listed_path(&desired).unwrap(),
-            Some(dir.path().join("pages/CAFE\u{301}.md"))
-        );
-        assert_eq!(
-            tx.listed_path(&dir.path().join("pages/café.md")).unwrap(),
-            None
-        );
+        let tx = store.page_plan(None);
+        assert_eq!(tx.listed_path(&nfd).unwrap(), Some(nfd.clone()));
+        assert_eq!(tx.listed_path(&nfc).unwrap(), Some(nfc.clone()));
+        assert_eq!(fs::read(nfd).unwrap(), b"- nfd\n");
+        assert_eq!(fs::read(nfc).unwrap(), b"- nfc\n");
+        store.close();
+    }
+
+    #[test]
+    fn sb1_unicode_self_aliases_allow_spelling_moves() {
+        for (from, to) in [
+            ("Kůň", "kůň"),
+            ("Kůň", "Ku\u{30a}n\u{30c}"),
+            ("ß", "SS"),
+            ("I", "ı"),
+            ("İ", "i\u{307}"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            fs::create_dir(dir.path().join("pages")).unwrap();
+            let source = format!("pages/{from}.md");
+            let target = format!("pages/{to}.md");
+            fs::write(dir.path().join(&source), b"- body\n").unwrap();
+            let store = Store::open(dir.path(), Default::default()).unwrap().0;
+            let src = store.graph.root.join(&source);
+            let dst = store.graph.root.join(&target);
+            let tx = store.page_plan(None);
+            // Linux fixture for an actual folding resolver: the unlisted
+            // destination resolves to the source, independently of page_key.
+            assert!(
+                tx.source_spelling_alias(&src, &dst, &src).unwrap(),
+                "{from} -> {to}"
+            );
+            let mut undo = Undo {
+                kind: UndoKind::Rename,
+                src: FileId::from(source.clone()),
+                dst: Some(FileId::from(target.clone())),
+                trash: None,
+                old: None,
+                new: None,
+                new_rev: None,
+                opaque_rev: None,
+                created: false,
+                moved: false,
+            };
+            crate::model::write_target::with_folding_alias(&dst, &src, || {
+                store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
+                tx.publish_move(&mut undo, &src, &dst).unwrap();
+            });
+            assert!(tx.spelling_moved(&FileId::from(source), &FileId::from(target)));
+            assert_eq!(fs::read(&dst).unwrap(), b"- body\n");
+            store.close();
+        }
+    }
+
+    #[test]
+    fn sb1_unicode_listed_hard_link_is_not_a_self_alias() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        let src = dir.path().join("pages/ß.md");
+        let dst = dir.path().join("pages/SS.md");
+        fs::write(&src, b"- kept\n").unwrap();
+        if dst.exists() {
+            return; // A full-folding volume cannot hold both directory entries.
+        }
+        fs::hard_link(&src, &dst).unwrap();
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let tx = store.page_plan(None);
+        assert_eq!(tx.source_spelling_alias(&src, &dst, &dst).unwrap(), false);
+        assert_eq!(fs::read(src).unwrap(), b"- kept\n");
+        assert_eq!(fs::read(dst).unwrap(), b"- kept\n");
         store.close();
     }
 }

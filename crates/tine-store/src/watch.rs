@@ -23,9 +23,11 @@ mod test_drain;
 use runtime::run;
 pub(crate) use runtime::RACY_FOLLOW_UP;
 mod stamp;
-pub(crate) use stamp::{stamp_from_metadata, stamp_metadata, RACY_WINDOW};
 #[cfg(test)]
-use stamp::{STAMPS_BY_PATH, STAMP_HASHES};
+pub(crate) use stamp::STAMPS_BY_PATH;
+#[cfg(test)]
+use stamp::STAMP_HASHES;
+pub(crate) use stamp::{stamp_from_metadata, stamp_metadata, RACY_WINDOW};
 
 pub(crate) use launch::{Baseline, Deferred};
 
@@ -156,6 +158,30 @@ fn directory_identity(path: &Path) -> Option<u128> {
     }
 }
 
+fn record_walk_error(
+    unreadable: &mut HashMap<PathBuf, String>,
+    path: PathBuf,
+    error: std::io::Error,
+) {
+    if let Some(error) =
+        crate::model::unreadable_error(error, "Tine unreadable file producer=watch-listing")
+    {
+        unreadable.insert(path, error.to_string());
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn a_watch_listing_read_of_a_vanished_file_is_not_unreadable() {
+    let mut errors = HashMap::new();
+    record_walk_error(
+        &mut errors,
+        PathBuf::from("journals/gone.md"),
+        std::io::ErrorKind::NotFound.into(),
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
 fn collect_dir(
     root: &Path,
     dir: &Path,
@@ -170,7 +196,7 @@ fn collect_dir(
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => {
-                unreadable.insert(directory, error.to_string());
+                record_walk_error(unreadable, directory, error);
                 continue;
             }
         };
@@ -178,7 +204,7 @@ fn collect_dir(
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
-                    unreadable.insert(directory.clone(), error.to_string());
+                    record_walk_error(unreadable, directory.clone(), error);
                     continue;
                 }
             };
@@ -186,7 +212,7 @@ fn collect_dir(
             let kind = match entry.file_type() {
                 Ok(kind) => kind,
                 Err(error) => {
-                    unreadable.insert(path, error.to_string());
+                    record_walk_error(unreadable, path, error);
                     continue;
                 }
             };
@@ -2009,14 +2035,17 @@ mod tests {
             let read = store.page(&id).unwrap();
             let mut doc = read.doc;
             doc.blocks[0].raw = format!("edit {round}");
-            let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+            let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
             tx.save_page(
                 &[crate::EditKind::ReplacePage],
                 &id,
                 crate::SaveBase::Existing(read.rev),
                 &doc,
             );
-            assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+            assert!(matches!(
+                tx.commit_internal(),
+                crate::TxOutcome::Committed { .. }
+            ));
             std::thread::sleep(Duration::from_millis(600));
         }
         assert_eq!(

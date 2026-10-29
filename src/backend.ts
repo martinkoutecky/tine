@@ -51,7 +51,7 @@ import type {
   QueryPublicationPlan,
   PublicationReceipt,
 } from "./types";
-import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, TrayStatus, GitAutocommitStatus, GitPolicy } from "./backendTypes";
+import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, TrayStatus, GitAutocommitStatus, GitPolicy, GitSyncStatus } from "./backendTypes";
 import { dbg } from "./debug";
 import type { EditKinds } from "./editKind";
 import { mockBackend } from "./mock";
@@ -82,7 +82,7 @@ export type { Backend } from "./backendInterface";
 import type { Backend, ConfirmOptions } from "./backendInterface";
 
 
-export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, GitAutocommitStatus, GitPolicy } from "./backendTypes";
+export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, GitAutocommitStatus, GitPolicy, GitSyncStatus, GitRemote } from "./backendTypes";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange } from "./backendTypes";
 import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed } from "./document";
 
@@ -92,6 +92,7 @@ export function isTauri(): boolean {
 
 export { QueryPrintRefusedError, queryPrintRefusal } from "./queryPrintRefusal";
 import { queryPrintRefusal } from "./queryPrintRefusal";
+import { dropDisplayedFor } from "./seen/displayed";
 
 /** Commands whose timing would only describe the diagnostics channel. */
 const DIAGNOSTIC_COMMANDS = new Set([
@@ -208,6 +209,8 @@ class TauriBackend implements Backend {
     if (result.kind !== "focused_existing") this.bindingGeneration = result.binding_generation;
     return result;
   }
+  ownerProtectionStatus() { return this.call<import("./ownerProtection").OwnerProtectionIssue | null>("owner_protection_status"); }
+  retryOwnerProtection(repair: boolean) { return this.call<import("./ownerProtection").OwnerProtectionIssue | null>("retry_owner_protection", { repair }); }
   orphanDrafts() {
     return this.call<{ id: string; old_root: string | null }[]>("orphan_drafts");
   }
@@ -362,6 +365,7 @@ class TauriBackend implements Backend {
     return this.call<PageRefusal | null>("page_close", { session, id, key });
   }
   pageDelete(session: number, name: string, kind: PageKind, expectedPath?: string) {
+    dropDisplayedFor({ name }); // the backend drops the page's seen record; a mark on leave would recreate it
     return this.call<PageOperation>("page_delete", { session, name, kind, expectedPath });
   }
   pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number) {
@@ -416,6 +420,8 @@ class TauriBackend implements Backend {
     return this.call<RefGroup[]>("block_referrers", { uuid });
   }
   renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]) {
+    dropDisplayedFor({ name: old });
+    if (mergeInto) dropDisplayedFor({ name: mergeInto });
     return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto, unsavedPaths });
   }
   publishHtml() {
@@ -608,6 +614,11 @@ class TauriBackend implements Backend {
     const buf = await this.call<ArrayBuffer>("read_asset", { name, maxBytes });
     return new Uint8Array(buf);
   }
+  async pdfAssetSource(name: string, maxBytes: number, bindingGeneration: number) {
+    const info = await this.assetCall<import("./pdfAssetSource").PdfAssetInfo>("stat_asset", { name, maxBytes }, bindingGeneration);
+    return { length: info.length, read: async (begin: number, end: number) => new Uint8Array(
+      await this.assetCall<ArrayBuffer>("read_asset_range", { name, maxBytes, begin, end, version: info.version }, bindingGeneration)) };
+  }
   async streamAsset(name: string) {
     const path = await this.call<string>("stream_asset_path", { name });
     return this.convertFileSrc(path, "tine-media");
@@ -659,9 +670,12 @@ class TauriBackend implements Backend {
     return this.call<import("./types").PageRead | null>("get_page_by_path", { path });
   }
   mergePages(src: string, dst: string) {
+    dropDisplayedFor({ name: src });
+    dropDisplayedFor({ name: dst });
     return this.call<void>("merge_pages", { src, dst });
   }
   renameFileToPage(path: string, newName: string) {
+    dropDisplayedFor({ path });
     return this.call<void>("rename_file_to_page", { path, newName });
   }
   listSyncConflicts() {
@@ -858,7 +872,8 @@ class TauriBackend implements Backend {
     return (await import("@tauri-apps/api/event")).listen<T>(event, (e) => cb(e.payload));
   }
   onGraphChanged(cb: (c: GraphChange) => void) { return this.on("graph-changed", cb); }
-  onOwnerFlushRequest(cb: (request: { id: number; page: string; binding_generation: number }) => void) { return this.on("owner-flush-request", cb); }
+  onOwnerFlushRequest(cb: (request: { id: number; page: string; all?: boolean; binding_generation: number }) => void) { return this.on("owner-flush-request", cb); }
+  onOwnerPageRenamed(cb: (rename: import("./types").OwnerPageRename) => void) { return this.on("owner-page-renamed", cb); }
   ownerFlushAnswer(id: number, saved: boolean, bindingGeneration: number) { return this.call<void>("owner_flush_answer", { id, saved, bindingGeneration }); }
   onGraphChangedBulk(cb: (bulk: { changes: GraphChange[]; binding_generation?: number; answers?: GraphAnswersChange | null }) => void) { return this.on("graph-changed-bulk", cb); }
   async onGraphWatchStatus(cb: (status: { refused: boolean; message: string; binding_generation?: number }) => void) {
@@ -871,11 +886,45 @@ class TauriBackend implements Backend {
   onGraphConfigChanged(cb: (change: GraphConfigChange) => void) { return this.on("graph-config-changed", cb); }
   onCustomCssChanged(cb: (change: CustomCssChange) => void) { return this.on("graph-custom-css-changed", cb); }
   editCustomCss() { return this.call<void>("edit_custom_css"); }
+  editGlobalCss() { return this.call<void>("edit_global_css"); }
   gitAutocommitStatus() {
     return this.call<GitAutocommitStatus>("git_autocommit_status");
   }
+  getPageChanges(pageKey: string, path: string, currentText: string) {
+    return this.call<import("./backendTypes").SeenPageChanges>("get_page_changes", { pageKey, path, currentText });
+  }
+  markPageSeen(pageKey: string, path: string) {
+    return this.call<void>("mark_page_seen", { pageKey, path });
+  }
+  markGraphSeen() {
+    return this.call<void>("mark_graph_seen");
+  }
+  forgetSeenPage(pageKey: string, path: string) {
+    return this.call<void>("forget_seen_page", { pageKey, path });
+  }
+  forgetSeenState() {
+    return this.call<void>("forget_seen_state");
+  }
   setGitAutocommit(policy: GitPolicy, intervalMinutes: number) {
     return this.call<GitAutocommitStatus>("set_git_autocommit", { policy, intervalMinutes });
+  }
+  gitSyncNow() {
+    return this.call<GitAutocommitStatus>("git_sync_now");
+  }
+  gitDisableLineEndings() {
+    return this.call<GitAutocommitStatus>("git_disable_line_endings");
+  }
+  gitSyncNotice() {
+    return this.call<GitSyncStatus | null>("git_sync_notice");
+  }
+  gitSignIn(username: string, token: string) {
+    return this.call<GitAutocommitStatus>("git_sign_in", { username, token });
+  }
+  gitSignOut() {
+    return this.call<GitAutocommitStatus>("git_sign_out");
+  }
+  gitAppLifecycle(foreground: boolean) {
+    return this.call<void>("git_app_lifecycle", { foreground });
   }
   getBackupKeep() {
     return this.call<number>("get_backup_keep");
@@ -924,7 +973,7 @@ class TauriBackend implements Backend {
     return this.call<GpuEnv>("gpu_env");
   }
   takeDataHomeFallbackNotice() {
-    return this.call<string | null>("take_data_home_fallback_notice");
+    return this.call<{ relocated_to: string | null; volatile: boolean } | null>("take_data_home_fallback_notice");
   }
   debugInfo() {
     return this.call<DebugInfo>("debug_info");

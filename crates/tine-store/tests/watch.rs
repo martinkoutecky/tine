@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
 
 #[cfg(unix)]
-use tine_store::LoadError;
-use tine_store::{
+use crate::LoadError;
+use crate::{
     Area, Change, ChangeKind, OpenOptions, Origin, Store, Subscription, SubscriptionEnd, WatchMode,
 };
 
@@ -68,7 +68,7 @@ impl Fixture {
     }
 
     fn changes(&self) -> Vec<Change> {
-        self.store.refresh(tine_store::Depth::Stamps).unwrap();
+        self.store.refresh(crate::Depth::Stamps).unwrap();
         let mut changes = Vec::new();
         while let Some(change) = self.subscription.try_recv().unwrap() {
             changes.push(change);
@@ -102,7 +102,7 @@ fn one(fixture: &Fixture, rel: &str, kind: ChangeKind) {
 
 #[test]
 fn atomic_page_save_temp_events_stay_incremental() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("atomic", &[]);
     graph.write("pages/.One.md.123.7.tmp", "- new\n");
     std::fs::rename(
@@ -115,7 +115,7 @@ fn atomic_page_save_temp_events_stay_incremental() {
 
 #[test]
 fn unknown_path_event_requests_full_scan_only_for_its_owner() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("directory", &[]);
     graph.write("pages/new-directory/New.md", "- new\n");
     one(&graph, "pages/new-directory/New.md", ChangeKind::Created);
@@ -123,7 +123,7 @@ fn unknown_path_event_requests_full_scan_only_for_its_owner() {
 
 #[test]
 fn pending_paths_are_dispatched_only_to_the_owning_graph() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let a = Fixture::new("owner-a", &[]);
     let b = Fixture::new("owner-b", &[]);
     a.write("pages/One.md", "- one\n");
@@ -134,7 +134,7 @@ fn pending_paths_are_dispatched_only_to_the_owning_graph() {
 
 #[test]
 fn collect_page_files_descends_subdirectories() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("nested-list", &[]);
     graph.write("pages/top.md", "- top\n");
     graph.write("pages/Archive/mid.org", "* mid\n");
@@ -159,7 +159,7 @@ fn collect_page_files_descends_subdirectories() {
 #[cfg(unix)]
 #[test]
 fn collect_page_files_does_not_follow_page_symlinks() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     use std::os::unix::fs::symlink;
     let graph = Fixture::new("page-link", &[]);
     let outside = graph.root.with_extension("outside.md");
@@ -171,7 +171,7 @@ fn collect_page_files_does_not_follow_page_symlinks() {
 
 #[test]
 fn incremental_create_top_level_file_matches_full_diff() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("create-top", &[("pages/Seed.md", "- seed\n")]);
     graph.write("pages/New.md", "- new\n");
     one(&graph, "pages/New.md", ChangeKind::Created);
@@ -179,7 +179,7 @@ fn incremental_create_top_level_file_matches_full_diff() {
 
 #[test]
 fn incremental_create_is_identified_as_inventory_change() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("inventory", &[("pages/Seed.md", "- seed\n")]);
     graph.write("pages/New.md", "- new\n");
     one(&graph, "pages/New.md", ChangeKind::Created);
@@ -187,7 +187,7 @@ fn incremental_create_is_identified_as_inventory_change() {
         .store
         .whole_graph()
         .unwrap()
-        .inventory(tine_store::InventoryScope::All)
+        .inventory(crate::InventoryScope::All)
         .0
         .iter()
         .any(|entry| entry.name == "New"));
@@ -195,7 +195,7 @@ fn incremental_create_is_identified_as_inventory_change() {
 
 #[test]
 fn incremental_create_nested_file_matches_full_diff() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("create-nested", &[("pages/Seed.md", "- seed\n")]);
     graph.write("pages/sub/New.md", "- nested\n");
     one(&graph, "pages/sub/New.md", ChangeKind::Created);
@@ -203,7 +203,7 @@ fn incremental_create_nested_file_matches_full_diff() {
 
 #[test]
 fn incremental_modify_len_change_matches_full_diff() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("modify-len", &[("pages/Edit.md", "- one\n")]);
     graph.write("pages/Edit.md", "- one\n- two\n");
     one(&graph, "pages/Edit.md", ChangeKind::Modified);
@@ -211,7 +211,7 @@ fn incremental_modify_len_change_matches_full_diff() {
 
 #[test]
 fn incremental_modify_same_len_mtime_change_matches_full_diff() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("modify-same-len", &[("pages/Edit.md", "- alpha\n")]);
     // Setting times needs write access on Windows (FILE_WRITE_ATTRIBUTES).
     let file = std::fs::File::options()
@@ -220,7 +220,7 @@ fn incremental_modify_same_len_mtime_change_matches_full_diff() {
         .unwrap();
     file.set_modified(SystemTime::now() - Duration::from_secs(5))
         .unwrap();
-    graph.store.refresh(tine_store::Depth::Stamps).unwrap();
+    graph.store.refresh(crate::Depth::Stamps).unwrap();
     while graph.subscription.try_recv().unwrap().is_some() {}
     graph.write("pages/Edit.md", "- bravo\n");
     one(&graph, "pages/Edit.md", ChangeKind::Modified);
@@ -228,7 +228,7 @@ fn incremental_modify_same_len_mtime_change_matches_full_diff() {
 
 #[test]
 fn explicit_event_reconciles_even_when_snapshot_metadata_is_equal() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::with_mode(
         "explicit-same-meta",
         &[("pages/Edit.md", "- alpha\n")],
@@ -264,7 +264,7 @@ fn explicit_event_reconciles_even_when_snapshot_metadata_is_equal() {
 
 #[test]
 fn incremental_remove_top_level_file_matches_full_diff() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("remove-top", &[("pages/Delete.md", "- old\n")]);
     std::fs::remove_file(graph.path("pages/Delete.md")).unwrap();
     one(&graph, "pages/Delete.md", ChangeKind::Removed);
@@ -272,7 +272,7 @@ fn incremental_remove_top_level_file_matches_full_diff() {
 
 #[test]
 fn incremental_remove_nested_file_matches_full_diff() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("remove-nested", &[("pages/sub/Delete.md", "- old\n")]);
     std::fs::remove_file(graph.path("pages/sub/Delete.md")).unwrap();
     one(&graph, "pages/sub/Delete.md", ChangeKind::Removed);
@@ -280,7 +280,7 @@ fn incremental_remove_nested_file_matches_full_diff() {
 
 #[test]
 fn incremental_rename_within_pages_matches_full_diff() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("rename", &[("pages/Old.md", "- old\n")]);
     std::fs::rename(graph.path("pages/Old.md"), graph.path("pages/New.md")).unwrap();
     let mut changes = graph.file_changes();
@@ -296,7 +296,7 @@ fn incremental_rename_within_pages_matches_full_diff() {
 
 #[test]
 fn incremental_rename_across_tree_matches_full_diff() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("rename-area", &[("pages/Old.md", "- old\n")]);
     std::fs::rename(
         graph.path("pages/Old.md"),
@@ -316,7 +316,7 @@ fn incremental_rename_across_tree_matches_full_diff() {
 
 #[test]
 fn incremental_burst_union_matches_full_diff() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new(
         "burst",
         &[
@@ -341,7 +341,7 @@ fn incremental_burst_union_matches_full_diff() {
 
 #[test]
 fn reconcile_pending_need_full_uses_full_scan_branch() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("full-branch", &[]);
     graph.write("pages/new-folder/Nested.md", "- found\n");
     one(&graph, "pages/new-folder/Nested.md", ChangeKind::Created);
@@ -349,17 +349,15 @@ fn reconcile_pending_need_full_uses_full_scan_branch() {
 
 #[test]
 fn own_commit_publishes_once_without_external_echo() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::with_mode("own", &[], WatchMode::Notify);
     std::thread::sleep(Duration::from_millis(100));
     let id = graph.store.file_id(Area::Pages, "Own.md").unwrap();
-    let mut tx = graph
-        .store
-        .transaction(Some(tine_store::EditKind::ReplacePage));
-    tx.create(&id, tine_store::Content::Bytes(b"- own\n".to_vec()));
+    let mut tx = graph.store.page_plan(Some(crate::EditKind::ReplacePage));
+    tx.create(&id, crate::Content::Bytes(b"- own\n".to_vec()));
     assert!(matches!(
-        tx.commit(),
-        tine_store::TxOutcome::Committed { .. }
+        tx.commit_internal(),
+        crate::TxOutcome::Committed { .. }
     ));
     let first = graph.subscription.recv().unwrap();
     assert_eq!(first.origin, Origin::Own);
@@ -372,20 +370,18 @@ fn own_commit_publishes_once_without_external_echo() {
 
 #[test]
 fn own_config_commit_reloads_format_and_sets_config_changed() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("own-config", &[]);
     std::fs::create_dir_all(graph.path("logseq")).unwrap();
     let id = graph.store.file_id(Area::Meta, "config.edn").unwrap();
-    let mut tx = graph
-        .store
-        .transaction(Some(tine_store::EditKind::ReplacePage));
+    let mut tx = graph.store.page_plan(Some(crate::EditKind::ReplacePage));
     tx.create(
         &id,
-        tine_store::Content::Bytes(b"{:preferred-format :org}\n".to_vec()),
+        crate::Content::Bytes(b"{:preferred-format :org}\n".to_vec()),
     );
     assert!(matches!(
-        tx.commit(),
-        tine_store::TxOutcome::Committed { .. }
+        tx.commit_internal(),
+        crate::TxOutcome::Committed { .. }
     ));
     let change = graph.subscription.recv().unwrap();
     assert_eq!(change.origin, Origin::Own);
@@ -396,14 +392,14 @@ fn own_config_commit_reloads_format_and_sets_config_changed() {
     assert_eq!(graph.store.config().preferred_format.ext(), "org");
     assert!(graph
         .store
-        .journal_id(tine_store::Day(20260925))
+        .journal_id(crate::Day(20260925))
         .as_str()
         .ends_with(".org"));
 }
 
 #[test]
 fn external_touch_publishes_touched() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("touch", &[("pages/Edit.md", "- same\n")]);
     std::fs::File::options()
         .write(true)
@@ -416,7 +412,7 @@ fn external_touch_publishes_touched() {
 
 #[test]
 fn config_edit_via_scan_refresh_publishes_and_updates_config() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("config", &[]);
     graph.write("logseq/config.edn", "{:preferred-format :org}\n");
     let changes = graph.changes();
@@ -446,7 +442,7 @@ fn config_edit_via_scan_refresh_publishes_and_updates_config() {
 #[cfg(unix)]
 #[test]
 fn scan_refresh_refuses_an_unsafe_configured_page_directory() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     use std::os::unix::fs::symlink;
     let graph = Fixture::new("unsafe-config", &[]);
     let outside = graph.root.with_extension("outside");
@@ -454,7 +450,7 @@ fn scan_refresh_refuses_an_unsafe_configured_page_directory() {
     symlink(&outside, graph.path("linked-pages")).unwrap();
     graph.write("logseq/config.edn", "{:pages-directory \"linked-pages\"}\n");
     assert!(matches!(
-        graph.store.refresh(tine_store::Depth::Stamps),
+        graph.store.refresh(crate::Depth::Stamps),
         Err(LoadError::Failed { .. })
     ));
     assert_eq!(graph.store.config().pages_dir, "pages");
@@ -463,7 +459,7 @@ fn scan_refresh_refuses_an_unsafe_configured_page_directory() {
 
 #[test]
 fn close_ends_blocked_recv_with_closed() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("closed-subscription", &[]);
     let subscription = graph.store.subscribe();
     let waiting = std::thread::spawn(move || subscription.recv());
@@ -476,7 +472,7 @@ fn close_ends_blocked_recv_with_closed() {
 
 #[test]
 fn second_subscribe_ends_first() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("replace-subscription", &[]);
     let first = graph.store.subscribe();
     let second = graph.store.subscribe();
@@ -486,7 +482,7 @@ fn second_subscribe_ends_first() {
 
 #[test]
 fn subscribe_then_view_preserves_startup_and_later_changes() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let root = std::env::temp_dir().join(format!(
         "tine-subscribe-start-{}-{:?}",
         std::process::id(),
@@ -507,7 +503,7 @@ fn subscribe_then_view_preserves_startup_and_later_changes() {
     store.whole_graph().unwrap();
     let subscription = store.subscribe();
     std::fs::write(root.join("pages/A.md"), "- between subscribe and view\n").unwrap();
-    store.refresh(tine_store::Depth::Stamps).unwrap();
+    store.refresh(crate::Depth::Stamps).unwrap();
     let view = store.whole_graph().unwrap();
     let startup: Vec<_> = std::iter::from_fn(|| subscription.try_recv().unwrap()).collect();
     assert!(startup.iter().any(|change| change
@@ -516,7 +512,7 @@ fn subscribe_then_view_preserves_startup_and_later_changes() {
         .any(|(id, _, _)| id.as_str() == "pages/A.md")));
     assert!(startup.iter().all(|change| change.graph_rev <= view.rev()));
     std::fs::write(root.join("pages/A.md"), "- new content\n").unwrap();
-    store.refresh(tine_store::Depth::Stamps).unwrap();
+    store.refresh(crate::Depth::Stamps).unwrap();
     let later = subscription.try_recv().unwrap().expect("later publication");
     assert!(later.graph_rev > view.rev());
     store.close();
@@ -526,20 +522,20 @@ fn subscribe_then_view_preserves_startup_and_later_changes() {
 
 #[test]
 fn scan_refresh_keeps_journal_day_index_current() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("day-index", &[]);
     graph.write("journals/2026_09_25.org", "* day\n");
     graph.changes();
     assert_eq!(
-        graph.store.journal_id(tine_store::Day(20260925)).as_str(),
+        graph.store.journal_id(crate::Day(20260925)).as_str(),
         "journals/2026_09_25.org"
     );
     let view = graph.store.whole_graph().unwrap();
     assert!(
-        matches!(view.resolve("Sep 25th, 2026", true), tine_store::Resolved::Existing { id, .. } if id.as_str() == "journals/2026_09_25.org")
+        matches!(view.resolve("Sep 25th, 2026", true), crate::Resolved::Existing { id, .. } if id.as_str() == "journals/2026_09_25.org")
     );
     assert!(view
-        .inventory(tine_store::InventoryScope::All)
+        .inventory(crate::InventoryScope::All)
         .0
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));
@@ -554,7 +550,7 @@ fn scan_refresh_keeps_journal_day_index_current() {
 
 #[test]
 fn notify_with_one_missing_directory_falls_back_to_polling() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-watch-partial-{}-{}",
@@ -596,7 +592,7 @@ fn notify_with_one_missing_directory_falls_back_to_polling() {
         "missing notify directory must be recovered by polling"
     );
     assert_eq!(
-        store.journal_id(tine_store::Day(20260925)).as_str(),
+        store.journal_id(crate::Day(20260925)).as_str(),
         "journals/2026_09_25.org"
     );
     store.close();
@@ -607,12 +603,12 @@ fn notify_with_one_missing_directory_falls_back_to_polling() {
 #[cfg(unix)]
 #[test]
 fn unreadable_subdirectory_keeps_its_pages_until_access_returns() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     use std::os::unix::fs::PermissionsExt;
     let graph = Fixture::new("unreadable-subdir", &[("pages/nested/Kept.md", "- live\n")]);
     let nested = graph.path("pages/nested");
     std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0)).unwrap();
-    graph.store.refresh(tine_store::Depth::Stamps).unwrap();
+    graph.store.refresh(crate::Depth::Stamps).unwrap();
     let mut changes = Vec::new();
     while let Some(change) = graph.subscription.try_recv().unwrap() {
         changes.push(change);
@@ -626,7 +622,7 @@ fn unreadable_subdirectory_keeps_its_pages_until_access_returns() {
     let view = graph.store.whole_graph().unwrap();
     assert!(matches!(
         view.resolve("Kept", false),
-        tine_store::Resolved::Existing { .. }
+        crate::Resolved::Existing { .. }
     ));
     assert!(view
         .unreadable_files()
@@ -637,7 +633,7 @@ fn unreadable_subdirectory_keeps_its_pages_until_access_returns() {
 
 #[test]
 fn external_changes_during_initial_load_publish_after_ready() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-watch-loading-{}-{}",

@@ -1,7 +1,6 @@
 //! Module map: debug startup logging; state graph lock; watcher external changes;
 //! graph open/create/warm cache; backup snapshots; settings/session prefs;
 //! spellcheck WebKit integration; platform OS bridges; commands thin IPC.
-
 #[cfg(target_os = "android")]
 mod android_clipboard;
 mod android_folder_picker;
@@ -46,6 +45,8 @@ mod host_slot_guard_tests;
 mod i18n_shell;
 #[cfg(target_os = "ios")]
 mod ios_folder_picker;
+#[cfg(target_os = "linux")]
+mod linux_gpu;
 mod linux_inline_preedit;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
@@ -57,6 +58,7 @@ mod migrate_identifier;
 mod native_integrations;
 mod native_mouse_history;
 mod owner;
+mod owner_protection;
 mod page_backlinks;
 mod page_commands;
 mod pdf_crop_rollback;
@@ -72,6 +74,7 @@ mod quick_share;
 mod quit_signal;
 mod root_identity;
 mod search_workspace;
+mod seen;
 mod settings;
 mod share_inbox;
 mod spellcheck;
@@ -83,8 +86,6 @@ mod tray;
 mod watcher;
 mod workspace_windows;
 mod youtube_identity;
-use css_files::{read_css_file, save_css_file};
-
 use backup::{delete_old_backups, get_backup_keep, list_backups, restore_backup, set_backup_keep};
 use commands::{
     apply_journal_filename_migrations, asset_trash_stats, block_ref_counts, block_referrers,
@@ -95,13 +96,13 @@ use commands::{
     list_journal_conflicts, list_journal_filename_migrations, list_orphan_assets, list_templates,
     load_workspaces, merge_pages, open_asset, open_graph_file, open_page_file, open_pdf,
     page_alias_group, page_icons, page_inventory, page_modified, page_print_html, preview_block,
-    publish_html, query_facets, quick_switch, read_asset, read_custom_css, read_highlights,
-    read_journal_file, read_local_image, read_text_file, register_unlinked_reference,
-    rename_file_to_page, rename_page, resolve_block, resolve_blocks, resolve_page,
-    run_graph_search, save_asset, save_pdf_area_image, save_workspaces, search,
+    publish_html, query_facets, quick_switch, read_asset, read_asset_range, read_custom_css,
+    read_highlights, read_journal_file, read_local_image, read_text_file,
+    register_unlinked_reference, rename_file_to_page, rename_page, resolve_block, resolve_blocks,
+    resolve_page, run_graph_search, save_asset, save_pdf_area_image, save_workspaces, search,
     set_default_journal_template, set_doc_mode_enter_for_new_block, set_guide_announced,
     set_journal_title_format, set_logical_outdenting, set_preferred_format, set_preferred_workflow,
-    set_show_brackets, set_start_of_week, set_timetracking_enabled, stream_asset_path,
+    set_show_brackets, set_start_of_week, set_timetracking_enabled, stat_asset, stream_asset_path,
     tine_open_devtools, trash_asset, trash_journal_file, write_highlights,
 };
 use concord::{
@@ -109,6 +110,7 @@ use concord::{
     merge_live_conflict, resolve_duplicate_journal_day, resolve_sync_conflict,
     resolve_vcs_marker_conflict, sync_conflict_diff, trash_sync_conflict, vcs_marker_conflict_diff,
 };
+use css_files::{edit_global_css, read_css_file, save_css_file};
 use debug::{
     debug_header, debug_info, debug_init, debug_log, diag, diag_private, install_panic_logger,
 };
@@ -693,17 +695,10 @@ pub fn run() {
     data_home::ensure_usable(app_identity::APP_IDENTIFIER);
     migrate_identifier::run_early();
 
-    // GPU/DMABUF rendering is ON by default (smoother scrolling — that's the point
-    // of Tine). On the rare GPU/compositor combo where WebKitGTK's DMABUF renderer
-    // aborts ("Could not create default EGL display: EGL_BAD_PARAMETER"), set
-    // TINE_GPU=0 to fall back to software compositing. Linux-only.
+    // Configure rendering before GTK/WebKit initializes. NVIDIA needs the
+    // DMABUF workaround by default; explicit user overrides take precedence.
     #[cfg(target_os = "linux")]
-    if std::env::var("TINE_GPU").as_deref() == Ok("0")
-        && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
-    {
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-        diag("TINE_GPU=0 → set WEBKIT_DISABLE_DMABUF_RENDERER=1 (software compositing)");
-    }
+    linux_gpu::configure();
 
     // TEMPORARY (docs/app-identity.md): an experiment build with no graph of its
     // own starts from the released Tine's config. Before the Builder, because
@@ -900,7 +895,6 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_opener::init());
 
     let builder = linux_inline_preedit::configure(builder);
-
     builder
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
@@ -960,13 +954,19 @@ pub fn run() {
             next_window: AtomicU64::new(1),
         })
         .setup(move |app| {
+            root_identity::capture_container_change(app.handle());
             // After the single-instance plugin: a forwarded second launch has
             // already exited and cannot rotate the primary's diagnostics.
             // Tauri's app-data path is the sandbox-private home on mobile too.
             if let Ok(dir) = app.path().app_data_dir() {
+                data_home::classify_at_launch(&dir);
+                settings::note_app_data(&dir);
                 flight::persist_init(dir.join("diagnostics"));
             }
             diag("setup() begin");
+            if let Err(error) = css_files::install_global_css_watcher(app.handle()) {
+                debug::diag_private("global-css-watch", error);
+            }
             // The persisted Spotlight index may hold a graph this launch never binds.
             spotlight::launched(app.handle());
             #[cfg(target_os = "linux")]
@@ -1039,6 +1039,8 @@ pub fn run() {
             migrate_identifier::take_identifier_migration_notice,
             load_graph,
             root_identity::orphan_drafts,
+            owner_protection::owner_protection_status,
+            owner_protection::retry_owner_protection,
             root_identity::recover_orphan_drafts,
             delete_old_backups,
             inspect_graph_access,
@@ -1141,6 +1143,7 @@ pub fn run() {
             set_start_of_week,
             read_custom_css,
             read_css_file,
+            edit_global_css,
             save_css_file,
             commands::reveal_export,
             edit_custom_css,
@@ -1187,6 +1190,8 @@ pub fn run() {
             preview_block,
             read_asset,
             stream_asset_path,
+            stat_asset,
+            read_asset_range,
             read_local_image,
             read_text_file,
             import_asset,
@@ -1264,7 +1269,18 @@ pub fn run() {
             tine_open_devtools,
             tray::tray_apply,
             git_settings::git_autocommit_status,
-            git_settings::set_git_autocommit
+            git_settings::set_git_autocommit,
+            git_settings::git_sync_now,
+            git_settings::git_disable_line_endings,
+            git_settings::git_sync_notice,
+            git_settings::git_sign_in,
+            git_settings::git_sign_out,
+            git_settings::git_app_lifecycle,
+            seen::get_page_changes,
+            seen::mark_page_seen,
+            seen::mark_graph_seen,
+            seen::forget_seen_page,
+            seen::forget_seen_state
         ])
         .build(context)
         .expect("error while building tauri application")

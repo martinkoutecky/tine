@@ -9,6 +9,7 @@ import { ASSET_INGRESS_MAX_BYTES } from "./clipboardImage";
 import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
 import { mockQuickShareCommands } from "./mockQuickShare";
+import { mockGitCommands } from "./mockGit";
 import { mockPageHost } from "./mockPageHost";
 import { createMockCaptureReceipts } from "./mockCaptureReceipts";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PageModified, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
@@ -1513,15 +1514,11 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async onAssetChanged(): Promise<() => void> { return () => {}; },
     async onGraphConfigChanged(): Promise<() => void> { return () => {}; },
     async onCustomCssChanged(): Promise<() => void> { return () => {}; },
+    async editGlobalCss(): Promise<void> {},
     async editCustomCss(): Promise<void> {
       // no OS editor in the browser mock
     },
-    async gitAutocommitStatus() {
-      return { available: false };
-    },
-    async setGitAutocommit(): Promise<never> {
-      throw new Error("git is not available in the browser mock");
-    },
+    ...mockGitCommands,
     async getBackupKeep(): Promise<number> {
       return 12;
     },
@@ -1578,7 +1575,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async gpuEnv(): Promise<GpuEnv> {
       return { software_forced: false, appimage: false, flatpak: false, packaged: false, portable: false };
     },
-    async takeDataHomeFallbackNotice(): Promise<string | null> {
+    async takeDataHomeFallbackNotice() {
       return null;
     },
     async getSmoothScroll(): Promise<boolean> {

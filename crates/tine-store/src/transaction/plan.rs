@@ -2,7 +2,7 @@
 use super::*;
 use crate::{HostEffect, HostExpected, HostOp, Input};
 
-impl Transaction<'_> {
+impl PagePlan<'_> {
     /// Prepare this transaction as a page-host operation without publishing
     /// or writing anything. Runs commit's preflight and stages its guarded old
     /// bytes and serialized effects. Non-page effects belong in a separate,
@@ -10,7 +10,8 @@ impl Transaction<'_> {
     /// move from a non-page source stages only its page destination; the caller
     /// must retire the source after Applied in its own revision-guarded transaction.
     /// Other non-page steps are refused.
-    pub fn plan(self) -> Result<HostOp, Why> {
+    pub fn plan(mut self) -> Result<HostOp, Why> {
+        self.for_host = true;
         self.await_reference_publication();
         let _writer = self.store.writer.lock().unwrap();
         let names = self.preflight_names().map_err(|(_, why)| why)?;
@@ -28,8 +29,10 @@ impl Transaction<'_> {
             pages: Vec::new(),
             kinds: self.kinds.clone(),
             policy: Input::Refuse,
-            moved: None,
+            moves: Vec::new(),
+            publications: None,
             creation_checks: Vec::new(),
+            view: self.view.clone(),
         };
         for (step, prepared) in self.steps.iter().zip(prepared) {
             let page = self.store.as_page(&prepared.src);
@@ -54,11 +57,6 @@ impl Transaction<'_> {
                     .store
                     .as_page(&dst)
                     .ok_or_else(|| Why::Refused(Refusal::InvalidTarget(dst.as_str().into())))?;
-                if op.moved.is_some() {
-                    return Err(Why::Refused(Refusal::InvalidTarget(
-                        "one move per host operation".into(),
-                    )));
-                }
                 let bytes = new.ok_or_else(|| {
                     Why::Refused(Refusal::InvalidTarget(
                         "a host operation requires staged page bytes".into(),
@@ -72,7 +70,7 @@ impl Transaction<'_> {
                     HostExpected::Absent,
                 ));
                 if let Some(page) = page {
-                    op.moved = Some((destination, page.clone()));
+                    op.moves.push((destination, page.clone()));
                     op.pages.push((page, HostEffect::Delete, expected));
                 }
             } else {

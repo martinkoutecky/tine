@@ -349,6 +349,11 @@ pub(super) fn apply_refused(refusal: ApplyRefusal, page: &PageId) -> ErrorBody {
             "the write applied, then a later edit replaced it before it was saved",
             json!(true),
         ),
+        ApplyRefusal::SpellingIncomplete => with_page(
+            "uncertain",
+            "the file name may already be changed; the text change is not confirmed. Save or discard pending edits, then rename again to the intended name. If the page already shows that name, check its text before retrying",
+            Value::Null,
+        ),
         ApplyRefusal::Uncertain => {
             let mut body = ErrorBody::new(
                 "uncertain",
@@ -377,7 +382,7 @@ pub(super) fn outline_refused(
     )
 }
 
-fn host_failed(message: String) -> ErrorBody {
+pub(super) fn host_failed(message: String) -> ErrorBody {
     if message == crate::state::STALE_BINDING {
         busy()
     } else {
@@ -421,7 +426,6 @@ pub(super) fn write_page_with_create(
     })
 }
 
-#[cfg(desktop)]
 thread_local! {
     /// The git run the current write verb belongs to (set by the verb
     /// dispatcher for the duration of one verb), with the verb's commit subject.
@@ -431,7 +435,6 @@ thread_local! {
 
 /// Run `verb` with its writes committed to the graph's git repository as
 /// part of `run` (CLI slice 3, D-20261019-CL1).
-#[cfg(desktop)]
 pub(super) fn in_run<T>(
     run: Option<super::git_run::RunCtx>,
     subject: &str,
@@ -450,18 +453,17 @@ pub(super) fn in_run<T>(
 
 /// Commit a successful write when it belongs to a run. A commit that fails
 /// does not undo the saved write: the reply says so under `git`.
-#[cfg(desktop)]
-fn commit_if_in_run(
+pub(super) fn commit_if_in_run(
     slot: &GraphSlot,
     page: &PageId,
     old: Option<&[u8]>,
-    new: &[u8],
+    new: Option<&[u8]>,
     reply: &mut Value,
 ) {
     let Some((run, subject)) = RUN.with(|r| r.borrow().clone()) else {
         return;
     };
-    let git = match super::git_run::commit_write(slot, &run, page, &subject, old, Some(new)) {
+    let git = match super::git_run::commit_write(slot, &run, page, &subject, old, new) {
         Ok(done) => done.to_json(),
         Err(error) => json!({
             "committed": false,
@@ -484,7 +486,6 @@ pub(super) fn write_page_from_bytes(
     create: bool,
     mut compute: impl FnMut(&PageDto, &PageId, &[u8]) -> Result<Planned, ErrorBody>,
 ) -> Result<Value, ErrorBody> {
-    #[cfg(desktop)]
     if RUN.with(|r| r.borrow().is_some()) {
         super::git_run::check_page(slot, page)?;
     }
@@ -514,6 +515,13 @@ pub(super) fn write_page_from_bytes(
             ));
         }
         let absent = read.bytes.is_none();
+        if !absent && kind == EditKind::CreatePage {
+            return Err(refused(
+                "page-exists",
+                Some(page),
+                "a file already owns this page; nothing changed",
+            ));
+        }
         let bytes = read.bytes.unwrap_or_else(|| std::sync::Arc::from(&b""[..]));
         let current = slot
             .store
@@ -565,7 +573,7 @@ pub(super) fn write_page_from_bytes(
             }
         }
         let planned = compute(&current.doc, &read.page, &bytes)?;
-        let mut tx = slot.store.transaction(Some(kind));
+        let mut tx = slot.store.page_plan(Some(kind));
         tx.save_page(
             &[kind],
             &read.page,
@@ -628,14 +636,12 @@ pub(super) fn write_page_from_bytes(
                         absent,
                     );
                 }
-                #[allow(unused_mut)]
                 let mut reply = written(&read.page, &reparsed.doc, &reparsed.rev, &planned.changed);
-                #[cfg(desktop)]
                 commit_if_in_run(
                     slot,
                     &read.page,
                     (!absent).then_some(&bytes[..]),
-                    &new_bytes,
+                    Some(&new_bytes),
                     &mut reply,
                 );
                 return Ok(reply);

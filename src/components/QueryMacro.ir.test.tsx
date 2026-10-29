@@ -26,7 +26,7 @@ import { Block } from "./Block";
 import { initParser } from "../render/parse";
 import { backend, QueryPrintRefusedError } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import { blockProperty, resetStore, setRaw } from "../document";
+import { blockProperty, redo, resetStore, setRaw, undo } from "../document";
 import { doc, setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import type { RefGroup } from "../types";
 import type { ExplainEmptyResult, ParsedQuery, Query, QueryResult, ViewSettings } from "../editor/queryIr";
@@ -39,6 +39,7 @@ import { applyChangeSummary } from "../changeSummary";
 import { noteQueryInput, QUERY_QUIET_MS } from "../querySubscription";
 import { resetQueryTextOpenForTests } from "../navSettings";
 import { startEditing } from "../editorController";
+import { publishedBackend } from "../publishedBackend";
 
 // These component fixtures do not bind a page host. Their source edits update
 // the working set; native coverage exercises actual publication and the epoch
@@ -164,6 +165,24 @@ it("a newly mounted query uses its registration snapshot while a publication eve
     expect(run).toHaveBeenCalledTimes(1);
     expect(first.root.querySelector(".query-count")?.textContent).toBe("1");
   } finally { second?.dispose(); first.dispose(); host.registerQuerySubscription = original; }
+});
+
+// A 0.9 regression: the published export refused this optional registration, so
+// every {{query}} and board in an exported site showed "Query couldn't be loaded".
+it("a query in a published export renders its rows without a change subscription", async () => {
+  bumpGraphEpoch();
+  load("{{query (task TODO)}}");
+  const host = backend(); const original = host.registerQuerySubscription;
+  const published = publishedBackend(async () => { throw new Error("snapshot unused"); });
+  host.registerQuerySubscription = published.registerQuerySubscription;
+  vi.spyOn(host, "parseQuery").mockResolvedValue({ query: { anchor: "block", filter: { kind: "true" },
+    source: { kind: "og", original: "(task TODO)", og_options: "" } }, view: {} });
+  vi.spyOn(host, "queryRun").mockResolvedValue(blockRunResult(groups()));
+  const { root, dispose } = mount(() => <Block id="query" />);
+  try {
+    await vi.waitFor(() => expect(root.querySelector(".query-count")?.textContent).toBe("1"));
+    expect(root.textContent).not.toContain("read-only published export");
+  } finally { dispose(); host.registerQuerySubscription = original; }
 });
 
 it.each(["(and)", "(sort-by created-at)"])("restores the empty state after removing the last builder condition (%s)", async (blank) => {
@@ -494,6 +513,81 @@ async function openSheet(root: HTMLElement): Promise<HTMLElement> {
 }
 
 describe("Q4b: Display saves through the query block", () => {
+  it("excludes flashcard built-ins from default Logseq table columns (GH #749)", async () => {
+    load("{{query (task TODO)}}\nquery-table:: true");
+    const parse = backend().parseQuery.bind(backend());
+    vi.spyOn(backend(), "parseQuery").mockImplementation(async (...args) => ({ ...await parse(...args), legacy_table: true }));
+    const result = groups();
+    result[0].blocks[0].raw = "TODO flashcard\ncard-ease-factor:: 2.5\nowner:: Ada";
+    result[0].blocks[0].properties = [["card-ease-factor", "2.5"], ["owner", "Ada"]];
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(result));
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".query-table")).not.toBeNull());
+      expect([...root.querySelectorAll(".query-table th")].map(th => th.textContent?.trim()))
+        .toEqual(["Content", "Page", "owner"]);
+      await openCalmQuery(root, "View");
+      expect([...root.querySelectorAll('[aria-label="Columns"] input[aria-label]')]
+        .map(input => input.getAttribute("aria-label"))).toEqual(["block", "page", "owner"]);
+    } finally { dispose(); }
+  });
+
+  it.each(["query-table:: true", ""])("toggles Logseq table properties in OG's persisted form (GH #749, %s)", async property => {
+    const raw = `{{query (task TODO)${property ? "" : " table"}}}${property ? `\n${property}` : ""}`;
+    load(raw);
+    // The browser preview parser does not implement legacy_table; supply the
+    // wire flag covered by tine-store's d7_legacy_table_spelling_reaches_the_wire_query_door.
+    const parse = backend().parseQuery.bind(backend());
+    vi.spyOn(backend(), "parseQuery").mockImplementation(async (...args) => ({ ...await parse(...args), legacy_table: true }));
+    const result = groups();
+    result[0].blocks[0].properties = [["owner", "Ada"], ["status", "active"], ["id", "row-id"], ["template", "sample"]];
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(result));
+    const print = vi.spyOn(backend(), "printQuery");
+    let mounted = mount(() => <Block id="query" />);
+    const headers = () => [...mounted.root.querySelectorAll(".query-table th")].map(th => th.textContent?.replace(/[▲▼]/g, "").trim());
+    const toggle = (field: string) => mounted.root.querySelector<HTMLInputElement>(`[aria-label="Columns"] input[aria-label="${field}"]`)!.click();
+    try {
+      await vi.waitFor(() => expect(headers()).toContain("owner"));
+      await openCalmQuery(mounted.root, "View");
+      expect(mounted.root.querySelector('[aria-label="Columns"] input[aria-label="owner"]')).not.toBeNull();
+      expect([...mounted.root.querySelectorAll('[aria-label="Columns"] input[aria-label]')]
+        .map(input => input.getAttribute("aria-label"))).toEqual(["block", "page", "owner", "status"]);
+      [...mounted.root.querySelectorAll<HTMLButtonElement>('[aria-label="Columns"] button')]
+        .find(button => button.textContent === "Select all")!.click();
+      expect(blockProperty("query", "query-properties")).toBeNull();
+      expect(blockProperty("query", "tine.columns")).toBeNull();
+      toggle("owner");
+      await vi.waitFor(() => expect(blockProperty("query", "query-properties")).toBe("[:block :page :status]"));
+      expect(headers()).not.toContain("owner");
+      expect(blockProperty("query", "tine.columns")).toBeNull();
+      expect(blockProperty("query", "tine.view")).toBeNull();
+      expect(doc.byId.query.raw).toContain(raw);
+      expect(print).not.toHaveBeenCalled();
+      undo();
+      expect(blockProperty("query", "query-properties")).toBeNull();
+      expect(headers()).toContain("owner");
+      redo();
+      expect(blockProperty("query", "query-properties")).toBe("[:block :page :status]");
+      const release = tryFreezeGraphRewrite();
+      expect(release).not.toBeNull();
+      try {
+        toggle("owner");
+        expect(blockProperty("query", "query-properties")).toBe("[:block :page :status]");
+      } finally { release?.(); }
+      mounted.dispose();
+      mounted = mount(() => <Block id="query" />);
+      await vi.waitFor(() => expect(headers()).toContain("status"));
+      expect(headers()).not.toContain("owner");
+      await openCalmQuery(mounted.root, "View");
+      toggle("owner");
+      await vi.waitFor(() => expect(blockProperty("query", "query-properties")).toBe("[:block :page :status :owner]"));
+      expect(headers()).toContain("owner");
+      for (const field of ["block", "page", "status", "owner"]) toggle(field);
+      await vi.waitFor(() => expect(blockProperty("query", "query-properties")).toBeNull());
+      expect(headers()).toContain("owner"); // OG removes an empty selection, restoring defaults.
+    } finally { mounted.dispose(); }
+  });
+
   it("adding a count does not persist an unchosen grouping", async () => {
     load(TQL_MACRO);
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));

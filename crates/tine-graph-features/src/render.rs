@@ -537,11 +537,15 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
                 let page = unescape(page);
                 if publish_page_allowed(ctx, &page) {
                     out.push_str(&format!(
-                        "<a class=\"ref\" href=\"{}.html\">",
-                        page_slug(ctx, &page)
+                        "<a class=\"ref\" href=\"{}.html\" data-ref=\"{}\">",
+                        page_slug(ctx, &page),
+                        esc_attr(&tine_core::refs::page_key(&page))
                     ));
                 } else {
-                    out.push_str("<span class=\"ref ref-outside\">");
+                    out.push_str(&format!(
+                        "<span class=\"ref ref-outside\" data-ref=\"{}\">",
+                        esc_attr(&tine_core::refs::page_key(&page))
+                    ));
                     inert_link_closures += 1;
                 }
                 strip_brackets = true;
@@ -553,11 +557,15 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
                 let page = unescape(page);
                 if publish_page_allowed(ctx, &page) {
                     out.push_str(&format!(
-                        "<a class=\"tag\" href=\"{}.html\">",
-                        page_slug(ctx, &page)
+                        "<a class=\"tag\" href=\"{}.html\" data-ref=\"{}\">",
+                        page_slug(ctx, &page),
+                        esc_attr(&tine_core::refs::page_key(&page))
                     ));
                 } else {
-                    out.push_str("<span class=\"tag tag-outside\">");
+                    out.push_str(&format!(
+                        "<span class=\"tag tag-outside\" data-ref=\"{}\">",
+                        esc_attr(&tine_core::refs::page_key(&page))
+                    ));
                     inert_link_closures += 1;
                 }
                 continue;
@@ -1238,8 +1246,9 @@ fn render_query_with_title(
         render_query_groups(graph, &groups, &mut out, ctx, depth);
         for page in &pages {
             out.push_str(&format!(
-                "<li><a class=\"ref\" href=\"{}.html\">{}</a></li>",
+                "<li><a class=\"ref\" href=\"{}.html\" data-ref=\"{}\">{}</a></li>",
                 esc(&page_slug(ctx, &page.name)),
+                esc_attr(&tine_core::refs::page_key(&page.name)),
                 esc(&page.name)
             ));
         }
@@ -1374,8 +1383,9 @@ fn render_namespace(graph: &RenderGraph<'_>, ns: &str, ctx: &Ctx) -> String {
     );
     for c in &children {
         out.push_str(&format!(
-            "<li><a class=\"ref\" href=\"{}.html\">{}</a></li>",
+            "<li><a class=\"ref\" href=\"{}.html\" data-ref=\"{}\">{}</a></li>",
             page_slug(ctx, c),
+            esc_attr(&tine_core::refs::page_key(c)),
             esc(c)
         ));
     }
@@ -1398,8 +1408,9 @@ fn publish_file_allowed(ctx: &Ctx, page: &str, path: &str) -> bool {
 
 fn render_page_embed_doc(page: &str, doc: &doc::Document, ctx: &Ctx, depth: u8) -> String {
     let mut out = format!(
-        "<div class=\"embed page-embed\"><a class=\"embed-title ref\" href=\"{}.html\">{}</a><ul>",
+        "<div class=\"embed page-embed\"><a class=\"embed-title ref\" href=\"{}.html\" data-ref=\"{}\">{}</a><ul>",
         page_slug(ctx, page),
+        esc_attr(&tine_core::refs::page_key(page)),
         esc(page)
     );
     for b in &doc.roots {
@@ -1484,7 +1495,12 @@ fn render_block(
     // authored IDs. Emitting the `<li id>` and the search-index entry in the SAME place
     // keeps the HTML anchor and the index in lock-step.
     let anchor = anchors.get(b);
-    let class = if ord.marker().is_some() {
+    let view_fold = ctx.pages.is_some() && !b.children.is_empty();
+    let class = if view_fold && ord.marker().is_some() {
+        " class=\"outline-parent ol-item\""
+    } else if view_fold {
+        " class=\"outline-parent\""
+    } else if ord.marker().is_some() {
         " class=\"ol-item\""
     } else {
         ""
@@ -1506,7 +1522,20 @@ fn render_block(
     // canonical render_html; a `# heading` block is wrapped in `<span class="heading-text
     // h{n}">` by render_html itself, so the export markup matches the app) → trailer facets
     // (SCHEDULED/DEADLINE, block properties). Macros in the body are expanded via `ctx`.
-    out.push_str(if b.marker() == Some("DONE") {
+    // Static parents disclose from their own row. Leaves and print keep the
+    // original markup; every static child stays in the document and index.
+    if view_fold {
+        out.push_str(if b.collapsed() {
+            "<details class=\"outline-fold\">"
+        } else {
+            "<details class=\"outline-fold\" open>"
+        });
+    }
+    out.push_str(if view_fold && b.marker() == Some("DONE") {
+        "<summary class=\"b done\">"
+    } else if view_fold {
+        "<summary class=\"b\">"
+    } else if b.marker() == Some("DONE") {
         "<div class=\"b done\">"
     } else {
         "<div class=\"b\">"
@@ -1558,7 +1587,7 @@ fn render_block(
             }
         }
     }
-    out.push_str("</div>");
+    out.push_str(if view_fold { "</summary>" } else { "</div>" });
     // A sheet owner's `tine.*` view configuration is chrome (it drove the layout
     // above), not a property chip; every other block keeps all its properties.
     let mut props = b.properties();
@@ -1594,7 +1623,9 @@ fn render_block(
     // A collapsed block hides its children on screen; the print export expands them
     // by default (a PDF usually wants the whole page), but the dialog can keep them
     // folded to match what's visible.
-    if opts.expand_collapsed || !b.collapsed() {
+    // Static pages keep every child in the HTML and let readers disclose it
+    // without a script. Print retains its expand/omit policy.
+    if view_fold || opts.expand_collapsed || !b.collapsed() {
         let mut emit = render_sheets::Emit {
             ctx,
             slug,
@@ -1626,6 +1657,9 @@ fn render_block(
             }
             out.push_str("</ul>");
         }
+    }
+    if view_fold {
+        out.push_str("</details>");
     }
     out.push_str("</li>");
 }
@@ -1934,7 +1968,7 @@ const APP_JS: &str = r#"(function () {
   var blocks = window.__tineBlocks || [];
 
   function esc(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
   function basename(p) {
     var parts = String(p).split('/');
@@ -1952,7 +1986,7 @@ const APP_JS: &str = r#"(function () {
     var lis = items.map(function (p) {
       var file = p.slug + '.html';
       var cls = basename(file) === here ? ' class="active"' : '';
-      return '<li><a href="' + file + '"' + cls + '>' + esc(p.title) + '</a></li>';
+      return '<li><a href="' + file + '" data-ref="' + esc(p.ref) + '"' + cls + '>' + esc(p.title) + '</a></li>';
     }).join('');
     return '<div class="sec"><h3>' + esc(title) + '</h3><ul>' + lis + '</ul></div>';
   }
@@ -2309,13 +2343,15 @@ pub(crate) fn publish_graph(
             ""
         };
         index_list.push_str(&format!(
-            "<li><a class=\"ref\" href=\"{}\">{}</a>{}</li>",
+            "<li><a class=\"ref\" href=\"{}\" data-ref=\"{}\">{}</a>{}</li>",
             file,
+            esc_attr(&tine_core::refs::page_key(name)),
             esc(name),
             tag
         ));
         sidebar_pages.push(json!({
             "title": *name,
+            "ref": tine_core::refs::page_key(name),
             "slug": slug,
             "journal": journal,
             "favorite": favorites.contains(*name),
@@ -2390,6 +2426,18 @@ mod tests {
     }
 
     #[test]
+    fn static_references_expose_normalized_css_names() {
+        let h = render_body(
+            "#AI-Note [[Parent/Elias]] [writer]([[Other/Page]])",
+            &no_refs(),
+        );
+        assert!(h.contains("data-ref=\"ai-note\""), "{h}");
+        assert!(h.contains("data-ref=\"parent/elias\""), "{h}");
+        assert!(h.contains("data-ref=\"other/page\""), "{h}");
+        assert!(!h.contains("data-ref=\"writer\""), "{h}");
+    }
+
+    #[test]
     fn slugify() {
         assert_eq!(slug("Foo Bar"), "foo-bar");
         assert_eq!(slug("n-fold IP"), "n-fold-ip");
@@ -2448,13 +2496,13 @@ mod tests {
         let h = render_body("see [[Foo Bar]] and **bold** and `x` and #tag", &no_refs());
         // page ref → `.html` link, brackets dropped (the decorator); #tag → page link.
         assert!(
-            h.contains("<a class=\"ref\" href=\"foo-bar.html\">Foo Bar</a>"),
+            h.contains("<a class=\"ref\" href=\"foo-bar.html\" data-ref=\"foo bar\">Foo Bar</a>"),
             "{h}"
         );
         assert!(h.contains("<strong>bold</strong>"), "{h}");
         assert!(h.contains("class=\"inline-code\">x</code>"), "{h}");
         assert!(
-            h.contains("<a class=\"tag\" href=\"tag.html\">#tag</a>"),
+            h.contains("<a class=\"tag\" href=\"tag.html\" data-ref=\"tag\">#tag</a>"),
             "{h}"
         );
     }

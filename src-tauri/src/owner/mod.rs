@@ -18,19 +18,27 @@ pub(crate) mod arena;
 #[cfg(desktop)]
 pub(crate) mod client;
 pub(crate) mod endpoint;
-#[cfg(desktop)]
 pub(crate) mod git_autocommit;
-#[cfg(desktop)]
+pub(crate) mod git_identity;
+pub(crate) mod git_pull;
 pub(crate) mod git_run;
+pub(crate) mod git_sync;
+pub(crate) mod git_sync_cycle;
 pub(crate) mod lease;
 pub(crate) mod lock;
 pub(crate) mod namespace;
+mod pages;
+pub(crate) mod seen;
 #[cfg(desktop)]
 pub(crate) mod serve;
 #[cfg(desktop)]
 pub(crate) mod terminal;
 pub(crate) mod verbs;
 pub(crate) mod window;
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+mod windows_security;
 pub(crate) mod wire;
 pub(crate) mod write;
 
@@ -52,9 +60,11 @@ pub(crate) enum OwnerError {
     /// The owner speaks another protocol, or is not this graph's owner.
     Protocol(String),
     Mismatch(String),
-    /// No owner endpoint on this platform yet (Windows, slice 1a), or none
-    /// at all (iOS, Android: no command line). Built only on those targets.
-    #[cfg_attr(any(target_os = "linux", target_os = "macos"), allow(dead_code))]
+    /// No command line (iOS, Android), or an unshipped target.
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "macos", target_os = "windows"),
+        allow(dead_code)
+    )]
     Unsupported,
 }
 
@@ -80,7 +90,7 @@ impl std::fmt::Display for OwnerError {
             | Self::Protocol(m)
             | Self::Mismatch(m) => f.write_str(m),
             Self::Unsupported => {
-                f.write_str("the command line cannot reach a graph's owner on this platform yet")
+                f.write_str("the command line cannot reach a graph's owner on this platform")
             }
         }
     }

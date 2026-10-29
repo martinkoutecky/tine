@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { For, Show, createResource, createSignal, type JSX } from "solid-js";
+import { For, Show, createEffect, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { changed } from "../changeKeys";
 import { referenceKey } from "../referenceKeys";
@@ -11,6 +11,7 @@ import { ResourceFailure } from "./ResourceFailure";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createCollapsedRevision } from "../collapsedRevision";
 import { StaleReferenceCount } from "./StaleReferenceCount";
+import { sectionOverride, setSectionOverride } from "../referenceSectionState";
 
 /** OG page.cljs tagged-pages: list pages whose page tags contain this name or,
  * unlike OG (GH #715), any name in its alias group, the same group Linked
@@ -21,7 +22,8 @@ import { StaleReferenceCount } from "./StaleReferenceCount";
  * discarded. Published exports have no live query engine and omit the section. */
 export function TaggedPages(props: { name: string }): JSX.Element {
   const owners = {};
-  const [collapsed, setCollapsed] = createSignal(false);
+  const [collapsed, setCollapsed] = createSignal(sectionOverride("tagged", props.name) ?? false);
+  createEffect(() => setCollapsed(sectionOverride("tagged", props.name) ?? false));
   const freshness = createCollapsedRevision(() => changed(referenceKey("tags", props.name)), collapsed, () => props.name);
   const [answer, { refetch }] = createResource(
     () => isPublishedExport() ? null : freshness.revision(),
@@ -41,7 +43,11 @@ export function TaggedPages(props: { name: string }): JSX.Element {
     <ResourceFailure of={answer} what="tagged pages" onRetry={() => void refetch()} />
     <Show when={rows()?.pages.length}>
       <section class="tagged-pages linked-references">
-        <button type="button" class="references-header" aria-expanded={!collapsed()} onClick={() => setCollapsed(!collapsed())}>
+        <button type="button" class="references-header" aria-expanded={!collapsed()} onClick={() => {
+          const value = !collapsed();
+          setSectionOverride("tagged", props.name, value);
+          setCollapsed(value);
+        }}>
           <ReferenceDisclosure collapsed={collapsed()} />{t("tagged-pages-heading", { name: props.name })}
           <span class="references-count"> {rows()?.pages.length}</span><StaleReferenceCount stale={freshness.stale()} />
         </button>

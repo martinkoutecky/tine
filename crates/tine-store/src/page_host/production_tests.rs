@@ -12,13 +12,16 @@ use std::path::{Path, PathBuf};
 
 #[path = "production_guard_tests.rs"]
 mod guard_tests;
+#[path = "storage_acceptance_tests.rs"]
+mod storage_acceptance_tests;
 
 struct Fixture {
-    root: tempfile::TempDir,
     graph: PathBuf,
     app: PathBuf,
     trash: PathBuf,
     host: Host<ProductionIo>,
+    // Drop native handles before removing the sandbox, including on Windows.
+    root: tempfile::TempDir,
 }
 
 impl Fixture {
@@ -28,6 +31,13 @@ impl Fixture {
         } else {
             tempfile::tempdir().unwrap()
         };
+        Self::in_empty_root(root)
+    }
+
+    /// Only initialize a fresh directory owned by this fixture.
+    fn in_empty_root(root: tempfile::TempDir) -> Self {
+        assert!(fs::symlink_metadata(root.path()).unwrap().is_dir());
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
         let graph = root.path().join("graph");
         let app = root.path().join("app");
         let trash = graph.join("logseq/.tine-trash/pages");
@@ -121,6 +131,88 @@ impl Fixture {
         ));
         self.drain();
     }
+
+    /// End all host/adapter custody before enumerating survivors in a new host.
+    fn cold_reopen(self) -> Self {
+        let Self {
+            graph,
+            app,
+            trash,
+            host,
+            root,
+        } = self;
+        drop(host);
+        let io = ProductionIo::attach(&graph, &app, "test-graph", &trash);
+        let locks = ["a.md", "b.md", "c.md"]
+            .into_iter()
+            .map(|key| (key.into(), Arc::new(Mutex::new(()))))
+            .collect();
+        let mut host = Host::new(io, locks);
+        host.stop();
+        assert!(matches!(
+            host.launch(),
+            Disposition::Applied | Disposition::Pending
+        ));
+        let mut reopened = Self {
+            graph,
+            app,
+            trash,
+            host,
+            root,
+        };
+        reopened.drain();
+        reopened
+    }
+}
+
+#[test]
+fn storage_diagnostics_count_outcomes_and_recovery() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "private page content");
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    f.edit("a.md", "private unsaved content");
+    f.host
+        .fs
+        .faults
+        .insert(Phase::PageSync, [io::ErrorKind::Other].into());
+    assert_eq!(f.save("a.md"), Outcome::Uncertain);
+    draft_after_failed_save(&mut f, "a.md");
+    let report = f.host.storage_diag.snapshot();
+    assert_eq!(
+        report["pageSaves"],
+        serde_json::json!({
+            "published": 1, "uncertain": 1, "failedOrRefused": 1
+        })
+    );
+    assert_eq!(report["draftsWritten"], 1);
+    assert_eq!(report["draftsRecovered"], 0);
+    f.restart();
+    assert_eq!(f.host.storage_diag.snapshot()["draftsRecovered"], 1);
+    let text = report.to_string();
+    assert!(!text.contains("a.md"));
+    assert!(!text.contains("private"));
+    assert!(!text.contains(f.graph.to_str().unwrap()));
+}
+
+#[test]
+fn storage_diagnostics_count_base_revision_refusal_once() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "my unsaved edits");
+    fs::write(f.graph.join("a.md"), b"external change").unwrap();
+    assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
+    f.host.advance_save();
+    f.host.advance_save();
+    assert!(f.host.job.is_none());
+    assert!(f.host.pages["a.md"].conflict);
+    assert_eq!(
+        f.host.storage_diag.snapshot()["pageSaves"]["failedOrRefused"],
+        1
+    );
+    assert_eq!(f.host.start_save("a.md"), Disposition::Disabled);
+    assert_eq!(
+        f.host.storage_diag.snapshot()["pageSaves"]["failedOrRefused"],
+        1
+    );
 }
 
 #[test]
@@ -134,6 +226,77 @@ fn replace_and_create_publish_through_the_real_host() {
     assert_eq!(f.save("c.md"), Outcome::Published);
     assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"created");
     assert!(f.host.fs.draft_files(true).is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn m3_partial_replan_refusal_retains_root_sync_until_restoration() {
+    let mut f = Fixture::new();
+    f.host.fs.spell("c.md", "new/deep/c.md");
+    f.edit("c.md", "- retained input\n");
+    crate::directory_durability::take_synced_directories();
+
+    // Create new, then move it before deep's parent check: root sync is owed.
+    let root = f.graph.clone();
+    crate::directory_durability::BEFORE_CREATE_CHECK.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            crate::directory_durability::BEFORE_CREATE_CHECK.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move || {
+                    fs::rename(root.join("new"), root.join("old-new")).unwrap();
+                }));
+            });
+        }));
+    });
+    assert_ne!(f.save("c.md"), Outcome::Published);
+    assert!(f.host.pages["c.md"].risk);
+    assert!(crate::directory_durability::take_synced_directories().is_empty());
+
+    // The re-plan has only missing components. Refuse an outside substitution
+    // before its first mkdir can record parent debt; custody must still survive.
+    let outside = f.root.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    let root = f.graph.clone();
+    let link_to = outside.clone();
+    crate::directory_durability::BEFORE_CREATE_CHECK.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            std::os::unix::fs::symlink(link_to, root.join("new")).unwrap();
+        }));
+    });
+    assert_ne!(f.save("c.md"), Outcome::Published);
+    assert!(f.host.pages["c.md"].risk);
+    assert!(crate::directory_durability::take_synced_directories().is_empty());
+    assert!(!outside.join("deep").exists());
+
+    // End interference, restore the first created ancestor, and retry through
+    // the same host and original root binding, without reopening the graph.
+    fs::remove_file(f.graph.join("new")).unwrap();
+    fs::rename(f.graph.join("old-new"), f.graph.join("new")).unwrap();
+    let outcome = f.save("c.md");
+    let synced = crate::directory_durability::take_synced_directories();
+    eprintln!(
+        "restored host: outcome={outcome:?}; clean={}; risk={}; synced={synced:?}",
+        f.host.pages["c.md"].clean(),
+        f.host.pages["c.md"].risk
+    );
+    assert_eq!(outcome, Outcome::Published);
+    assert!(f.host.pages["c.md"].clean());
+    assert!(!f.host.pages["c.md"].risk);
+    assert_eq!(
+        fs::read(f.graph.join("new/deep/c.md")).unwrap(),
+        b"- retained input\n"
+    );
+    assert!(
+        synced.contains(&f.graph),
+        "published without ever paying original root debt"
+    );
+    assert_eq!(
+        synced,
+        [
+            f.graph.clone(),
+            f.graph.join("new"),
+            f.graph.join("new/deep")
+        ]
+    );
 }
 
 #[test]
@@ -350,7 +513,6 @@ fn graph_unsupported_is_distinct_and_does_not_refuse_betas_tolerated_set() {
         io::ErrorKind::Unsupported,
         io::ErrorKind::InvalidInput,
         io::ErrorKind::PermissionDenied,
-        io::ErrorKind::NotFound,
     ] {
         let mut f = Fixture::new();
         crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(kind)));
@@ -365,6 +527,26 @@ fn graph_unsupported_is_distinct_and_does_not_refuse_betas_tolerated_set() {
         assert!(f.host.pages["a.md"].clean());
         assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), b"mine");
     }
+}
+
+#[test]
+fn missing_directory_sync_is_an_uncertain_save_not_unsupported() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
+    for _ in 0..3 {
+        f.host.advance_save();
+    }
+    crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::NotFound)));
+    f.host.advance_save();
+    assert!(f.host.pages["a.md"].risk);
+    assert!(f.host.events.iter().any(|event| matches!(
+        event,
+        Event::SaveOutcome {
+            outcome: Outcome::Uncertain,
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -1761,8 +1943,10 @@ fn an_old_spelling_draft_and_custody_marker_recover_through_the_entry_spelling()
 /// old-spelling draft does not recover a separate `Foo.md` after a crash.
 /// On a folding volume no distinct `foo.md` can exist: the target reads as
 /// the source's own entry, so the two-key rename refuses and writes nothing
-/// (a case-only move there is the single-key alias respell, tested by
-/// `a_request_queued_before_a_spelling_move_applies_to_the_same_page_after_it`).
+/// (a case-only move there is the driver's single-key spelling command;
+/// binding tests `a_folded_move_operation_keeps_its_key_and_rewrites_referrers`
+/// and `a_spelling_move_with_pending_input_is_refused_and_preserves_input_and_spelling`
+/// cover its success and pending-input refusal).
 #[test]
 fn a_case_only_rename_to_a_distinct_entry_is_a_two_key_host_rename() {
     let mut f = Fixture::new();
@@ -1797,43 +1981,6 @@ fn a_case_only_rename_to_a_distinct_entry_is_a_two_key_host_rename() {
     assert_eq!(spelled(&f.graph, "foo.md"), ["foo.md"]);
     assert!(trash_holds(&f, b"edited"));
 }
-
-/// STEP3 §2: a request queued before the alias spelling move applies to the
-/// same page after it, and the page's I/O follows the new spelling. The
-/// move is case-only, so on a folding volume it is the alias respell; on
-/// every volume the listed spelling must actually change.
-#[test]
-fn a_request_queued_before_a_spelling_move_applies_to_the_same_page_after_it() {
-    let mut f = Fixture::new();
-    f.send("a.md", RequestKind::Open);
-    let version = f.host.pages["a.md"].version;
-    let request = Request {
-        id: f.host.last_admitted + 1,
-        generation: f.host.generation,
-        page: "a.md".into(),
-        kind: RequestKind::Submit {
-            bytes: text("typed"),
-            version,
-            resolve: None,
-        },
-    };
-    assert_eq!(f.host.admit(request), Disposition::Applied);
-    // The retained writer: reserve, move the entry, respell, release.
-    let keys = BTreeSet::from(["a.md".to_string()]);
-    assert_eq!(f.host.reserve(&keys), Disposition::Applied);
-    fs::rename(f.graph.join("a.md"), f.graph.join("A.md")).unwrap();
-    f.host.respell("a.md", "A.md", Arc::new(Mutex::new(())));
-    assert_eq!(f.host.release(&keys), Disposition::Applied);
-    let page = &f.host.pages["a.md"];
-    assert!(!page.conflict && page.buf == text("A"), "{page:?}");
-    assert_eq!(f.host.dequeue(), Disposition::Pending);
-    assert_eq!(f.host.apply_request(), Disposition::Applied);
-    assert_eq!(f.host.pages["a.md"].buf, text("typed"));
-    assert_eq!(f.save("a.md"), Outcome::Published);
-    assert_eq!(fs::read(f.graph.join("A.md")).unwrap(), b"typed");
-    assert_eq!(spelled(&f.graph, "a.md"), ["A.md"]);
-}
-
 fn twin_events(f: &Fixture) -> Vec<String> {
     f.host
         .events

@@ -36,9 +36,10 @@ const EXEMPLAR: &str = "page_host/mod.rs set_page (marks the key before the writ
 const WRITERS: &[(&str, &[&str], &str)] = &[
     (
         "pages",
-        &["mod.rs::set_page", "mod.rs::stop"],
+        &["mod.rs::set_page", "mod.rs::stop", "binding_spelling.rs::apply_spellings"],
         "held pages: set_page marks its key; stop clears them as it ends liveness, which \
-         rebuilds Progress's sets",
+         rebuilds Progress's sets; apply_spellings mutates only HostOp.pages planning metadata, \
+         then delegates to PageHost::apply, never the host's page table",
     ),
     (
         "drafts",

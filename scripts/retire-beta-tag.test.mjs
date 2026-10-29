@@ -5,13 +5,15 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { IDENTITY } from "./lib/app-identity.mjs";
+import { IDENTITIES } from "./lib/app-identity.mjs";
+// The bridge serves Tine Beta installs whichever identity this tree ships.
+const IDENTITY = IDENTITIES.experiment;
 import { ZSYNC_ARCHES, zsyncAssetName } from "./pages-beta-manifest.mjs";
 import { releaseLayout } from "./release-layout.mjs";
 import { bridgeNotes } from "./retire-beta-tag.mjs";
 
 test("the bridge page links the new Beta's release and its direct downloads", () => {
-  const notes = bridgeNotes("owner/repo", "v0.8.0-beta.3", releaseLayout("0.8.0-beta.3"));
+  const notes = bridgeNotes("owner/repo", "v0.8.0-beta.3", releaseLayout("0.8.0-beta.3", IDENTITY));
   assert.match(notes, /\[v0\.8\.0-beta\.3\]\(https:\/\/github\.com\/owner\/repo\/releases\/tag\/v0\.8\.0-beta\.3\)/);
   for (const suffix of ["_universal.dmg", "_x64-setup.exe", "_arm64-setup.exe", "_x86-setup.exe", "_amd64.AppImage", "_aarch64.AppImage"]) {
     assert.match(notes, new RegExp(`\\(https://github\\.com/owner/repo/releases/download/v0\\.8\\.0-beta\\.3/[^)]*${suffix.replaceAll(".", "\\.")}\\)`), suffix);
@@ -35,7 +37,7 @@ const bridgeFiles = ["latest.json", ...ZSYNC_ARCHES.map((arch) => zsyncAssetName
 const uploaded = (data, id) => ({ id, state: "uploaded", data });
 
 function legacyState() {
-  const layout = releaseLayout(target.slice(1));
+  const layout = releaseLayout(target.slice(1), IDENTITY);
   const base = `https://github.com/${repository}/releases/download/${target}/`;
   const files = Object.fromEntries(layout.platformAssets.map((name) => [name, "app"]));
   files["latest.json"] = JSON.stringify({ version: target.slice(1), platforms: Object.fromEntries(

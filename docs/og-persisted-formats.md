@@ -1,6 +1,6 @@
 # og persisted-format census (batch 5b)
 
-The pinned count is **33 durable layouts** in `scripts/lib/og-enforcement.mjs`.
+The pinned count is **35 durable layouts** in `scripts/lib/og-enforcement.mjs`.
 Several rows share a low-level writer. A format means a byte layout or durable
 directory convention, not each JSON key or filename. Temporary files used for
 atomic publication have the same payload as their final name.
@@ -17,6 +17,7 @@ atomic publication have the same payload as their final name.
 | Asset trash | `logseq/.tine-trash/assets/` | `crates/tine-graph-features/src/assets.rs:205`; `crates/tine-store/src/store.rs:1635` |
 | Graph trash | `logseq/.tine-trash/`, retired page/config bytes; entries are `<stamp>__[<reason>__]<name>`, a long name's stem cut to fit 255 bytes (`atomic_file.rs::prefixed_name`, C3Y) | `crates/tine-store/src/transaction.rs::trash_id`, `transaction/move_file.rs::publish_move` (case-only temporary recovery); `crates/tine-store/src/model.rs:5163` |
 | Device settings JSON | app data `tine-settings.json` | `src-tauri/src/settings.rs:18`, `:84`; `src-tauri/src/device_io.rs:149` |
+| Seen git baseline JSON | app data `seen-git/<session-id>.json`: version 1, first-open commit/time and per-page path/seen commit/time; null commit is an unborn empty-tree baseline; disposable, never in a graph (D-20261028-SG, ADR 0079) | `src-tauri/src/owner/seen.rs` `save` via `device_io::atomic_write`; initialization once, then leave/mark only when baseline differs; 0 per edit |
 | Graph session JSON | app data `sessions/<graph-id>.json` (legacy `tine-session.json`) | `src-tauri/src/settings.rs:329`, `:347`, `:526`, `:544` |
 | Workspace registry JSON | app data `sessions/<graph-id>-workspaces.json` | `src-tauri/src/settings.rs:361`, `:425`, `:442`, `:479` |
 | Backup page copy | schema-2 snapshot `journals/`, `pages/` (configured roots only), original Markdown/Org bytes; no longer written since og-B, still listed and restored | `src-tauri/src/backup/restore.rs` `read_verified_dir_files` (read) |
@@ -40,6 +41,7 @@ atomic publication have the same payload as their final name.
 | Share inbox | app-owned `share-inbox/` (iOS App Group container, Android `filesDir`), never under a graph root: per item `<id>/item.json` + resource files (native producers, published by one directory rename from `.tmp-<id>/`) and `<id>/prepared.json` (bound graph, frozen day, shaped block, imported assets, armed revision, written flag); removed after ingest, leaving an empty `.committed-<id>` tombstone pruned after 30 days (Android redelivery check); Android also keeps a `.receiving-<id>` summary marker only while copying a share (a leftover one is reported at the next start, then deleted); unreadable items kept as `.rejected-<id>/` (ADR 0073; Martin 2026-10-10 (Rule 8 new persisted format: share-inbox)) | `src-tauri/src/share_inbox.rs` `prepare` and `commit` (tombstone), both via `device_io::atomic_write`; producers `src-tauri/ios-app/Shared/ShareInbox.swift`, Android `ShareIntake.kt` (`InboxWriter`, `deliver`) via `NativeIntegrationsPlugin.kt` |
 | Quick share records JSON | app data `quick-shares.json`: `{"v":1,"shares":[{"share_id","state","account_id","login","gist_id"?,"created_at","title","pages","key"}]}`, this device's shares with each link's key (secret), owner-only 0600 from creation, rewritten whole; never in a graph, not synced (ADR 0076; Martin 2026-10-18, D-20261018-Q1 S1) | `src-tauri/src/quick_share/records.rs` `Records::update_shares` → `device_io::atomic_write_private` → `crates/tine-store/src/atomic_file.rs` `atomic_write_private` |
 | Quick share account JSON | app data `quick-share-account.json`: `{"v":1,"login","account_id","token","scopes","connected_at"}`, the GitHub OAuth token (secret), owner-only 0600 from creation; deleted on Disconnect (ADR 0076; Martin 2026-10-18, D-20261018-Q1 S1) | `src-tauri/src/quick_share/records.rs` `Records::store_account` → `atomic_write_private` |
+| Git credentials JSON | app data `git-credentials.json`: `{"v":1,"accounts":[{"origin","username","token","signed_in_at"}]}`, one HTTPS token (secret) per remote origin `https://host[:port]`, owner-only 0600 from creation, rewritten whole; deleted with the last Sign out; never in a graph, the repository config or the webview settings; an unreadable or newer file reads as signed out (ADR 0078 §5; **pending Martin: GIT-CRED, ADR 0078 open question 2**) | `src-tauri/src/owner/git_sync/credentials.rs` `Tokens::write` → `device_io::atomic_write_private` |
 
 Opening a graph PDF reads its existing primary or active legacy sidecar without
 creating, rewriting or moving graph files. The first highlight or annotation

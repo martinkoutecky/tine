@@ -64,6 +64,7 @@ struct Owner {
 
 #[derive(Default)]
 struct Mutations {
+    git_metadata: bool,
     owner: String,
     implementation: String,
     host_impl: bool,
@@ -221,6 +222,14 @@ impl<'ast> Visit<'ast> for Mutations {
                     | "temp"
                     | "remove_present"
                     | "sync_move_dirs"
+                    | "create_graph_dir"
+                    | "create_graph_dir_all"
+                    | "remove_graph_file"
+                    | "remove_graph_dir"
+                    | "remove_publish_stage"
+                    | "rename_publish_entry"
+                    | "remove_restore_temp"
+                    | "rename_spelling_replace"
             ) || (parent == "PreparedWrite"
                 && matches!(method, "with_hooks" | "publish"))
                 || (parent == "DirectoryCreation" && method == "new");
@@ -237,7 +246,20 @@ impl<'ast> Visit<'ast> for Mutations {
 
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
         let method = node.method.to_string();
-        if (method == "write" && !node.args.is_empty())
+        if (self.git_metadata
+            && matches!(
+                method.as_str(),
+                "blob"
+                    | "blob_writer"
+                    | "commit"
+                    | "write_tree_to"
+                    | "reference"
+                    | "reference_matching"
+                    | "write"
+                    | "set_bool"
+                    | "set_multivar"
+            ))
+            || (method == "write" && !node.args.is_empty())
             || matches!(
                 method.as_str(),
                 "write_all"
@@ -455,7 +477,12 @@ fn inventory() -> BTreeMap<(String, String), Owner> {
             let source = fs::read_to_string(&file).unwrap();
             let syntax =
                 syn::parse_file(&source).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
-            let mut scan = Mutations::default();
+            let mut scan = Mutations {
+                git_metadata: file.ends_with("owner/git_run.rs")
+                    || file.ends_with("owner/git_autocommit.rs")
+                    || file.ends_with("owner/git_sync/line_endings.rs"),
+                ..Mutations::default()
+            };
             scan.visit_file(&syntax);
             for (name, owner) in scan.owners {
                 if !owner.operations.is_empty() {
@@ -746,6 +773,8 @@ fn census_detects_raw_handle_and_crate_primitives_and_respects_cfg() {
             rename_noreplace_dir(); rename_replace(); create_dir_all_durable();
             create_dir_all_with_sync(); atomic_copy_new(); atomic_copy_file_new();
             graph.withdraw_file_to_conflict_if(); prepared.publish();
+            create_graph_dir(); create_graph_dir_all(); remove_graph_file(); remove_graph_dir();
+            remove_publish_stage(); rename_publish_entry(); remove_restore_temp(); rename_spelling_replace();
         }
         #[cfg(test)] mod tests { fn hidden() { std::fs::write("a", b"b"); } }
         #[cfg(feature = "test-faults")] impl Hidden { fn hidden() { std::fs::write("a", b"b"); } }
@@ -757,7 +786,7 @@ fn census_detects_raw_handle_and_crate_primitives_and_respects_cfg() {
     let mut scan = Mutations::default();
     scan.visit_file(&planted);
     assert_eq!(scan.owners["rogue"].operations["fs::write"], 1);
-    assert_eq!(scan.owners["wrappers"].operations.len(), 14);
+    assert_eq!(scan.owners["wrappers"].operations.len(), 22);
     assert_eq!(scan.owners["shipped"].operations["fs::create_dir_all"], 1);
     assert!(!scan.owners.keys().any(|name| name.contains("hidden")));
 }

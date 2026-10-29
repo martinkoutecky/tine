@@ -9,7 +9,7 @@ use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use tine_graph_features::guide;
-use tine_store::{Input, PageHost, PageId, Store};
+use tine_store::{PageHost, PageId, Store};
 
 const CONFIG: &str = "{:file/name-format :triple-lowbar}\n";
 
@@ -104,10 +104,7 @@ fn a_guide_page_that_appears_after_the_plan_is_never_overwritten() {
     let _integration_guard = crate::integration_lock();
     let (name, rel) = first_copy();
     let g = hosted(&[]);
-    let held = g
-        .host
-        .reserve(|| vec![PageId::from(rel.as_str())], Input::Refuse)
-        .expect("nothing unsaved");
+    let held = g.host.pause_for_tests(&[PageId::from(rel.as_str())]);
     std::thread::scope(|scope| {
         let (done, finished) = mpsc::channel();
         let (store, host) = (&*g.store, &g.host);
@@ -192,10 +189,7 @@ fn a_guide_twin_that_arrives_after_the_plan_is_reported_skipped() {
     let _integration_guard = crate::integration_lock();
     let (name, rel) = first_copy();
     let g = hosted(&[]);
-    let held = g
-        .host
-        .reserve(|| vec![PageId::from(rel.as_str())], Input::Refuse)
-        .expect("nothing unsaved");
+    let held = g.host.pause_for_tests(&[PageId::from(rel.as_str())]);
     let twin = Path::new(&rel).with_extension("org");
     std::thread::scope(|scope| {
         let (done, finished) = mpsc::channel();

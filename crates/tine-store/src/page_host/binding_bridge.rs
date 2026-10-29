@@ -56,7 +56,6 @@ impl Sink for Bridge {
                 crate::cost_counters::host_publication_probes(1);
                 let started = crate::bench_events::enabled().then(std::time::Instant::now);
                 let indexing = match owner(&publication.key) {
-                    Owner::Reservation => Indexing::Reserved,
                     #[cfg(test)]
                     _ if self.fault() => Indexing::Failed,
                     _ if index(store, &publication) => Indexing::Indexed,

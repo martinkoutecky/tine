@@ -28,7 +28,7 @@ import { QueryBuilder, createQueryRegistryAccess, type BuilderSession } from "./
 import { CrossingNotice } from "./CrossingNotice";
 import { SearchResultRow } from "./SearchResultRow";
 import { editEdnTitle, readEdnOptions } from "../editor/edn";
-import { columnKey, compareCells, hostColumns, hostSort, type TableSort } from "./legacyQueryTable";
+import { columnKey, compareCells, defaultHostColumns, hostColumns, hostSort, type TableSort } from "./legacyQueryTable";
 import { queryMacroExtent, queryMacroExtents, type MacroExtent } from "../editor/queryMacro";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
 import {
@@ -633,15 +633,32 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     if (crossing) setCrossed(blockId, boundedFeature(argument), startedInSheet);
     return true;
   };
-  /** Display uses the same guarded print and undo unit as a filter edit. */
+  /** Display edits share the guarded property/undo paths; filter changes also print. */
   const applyDisplay = (view: ViewSettings): Promise<boolean> => {
+    // OG table columns belong to the host's query-properties, not tine.columns.
+    // Keep the authored macro and its legacy table presentation intact.
+    if (legacyTable()) {
+      const { columns: before, ...rest } = displayView();
+      const { columns: after, ...nextRest } = view;
+      if (JSON.stringify(rest) === JSON.stringify(nextRest)) {
+        if (JSON.stringify(before) === JSON.stringify(after)) return Promise.resolve(true);
+        const id = props.blockId;
+        if (!id || isPublishedExport() || !blockWritable(id)) return Promise.resolve(false);
+        const columns = [...new Set(after ?? [])];
+        withUndoUnit(`query:columns:${id}`, [docNode(id)!.page], () => {
+          setBlockProperty(id, "query-properties", columns.length ? `[${columns.map(c => `:${c}`).join(" ")}]` : null);
+        });
+        return Promise.resolve(true);
+      }
+    }
     // Display rows can disappear or be replaced after their guarded save.
     // Keep focus on the panel's stable completion control before that happens.
     const panel = queryEl?.querySelector<HTMLElement>(".qc-panel");
     if (panel?.contains(panel.ownerDocument.activeElement)) panel.querySelector<HTMLElement>(".qc-done")?.focus();
     const current = reading();
-    if (current && view.view !== current.view.view
-      && JSON.stringify({ ...view, view: undefined }) === JSON.stringify({ ...current.view, view: undefined })) {
+    const displayedView = displayView();
+    if (current && view.view !== displayedView.view
+      && JSON.stringify({ ...view, view: undefined }) === JSON.stringify({ ...displayedView, view: undefined })) {
       setQueryView(view.view ?? "list");
       return Promise.resolve(true);
     }
@@ -761,11 +778,15 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   };
   const showBuilder = () => !!props.blockId && !isAdvanced() && !!builderSession();
   const [paneStale, setPaneStale] = createSignal(false);
-  const effectiveDefaultColumns = createMemo(() => reading()?.query.anchor === "page"
+  const legacyDefaultColumns = createMemo(() => !legacyTable() ? [] : defaultHostColumns(groups().flatMap(group =>
+    group.blocks.flatMap(block => (block.properties ?? []).map(([key]) => key)))));
+  const effectiveDefaultColumns = createMemo(() => legacyTable() ? legacyDefaultColumns() : reading()?.query.anchor === "page"
     ? [...new Set((pageRows() ?? []).flatMap(row => row.properties.map(([key]) => key)))]
     : queryBlockColumns(groups()));
   const displayView = (): ViewSettings => {
     const view = reading()?.view ?? {};
+    if (legacyTable()) return { ...view, columns: props.blockId
+      ? hostColumns(blockProperty(props.blockId, "query-properties")) ?? legacyDefaultColumns() : legacyDefaultColumns() };
     return { ...view, columns: view.columns?.length || props.blockId && blockProperty(props.blockId, "tine.columns") !== null
       ? view.columns : undefined };
   };
@@ -806,9 +827,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const cols = createMemo(() => {
     const named = hostCols();
     if (named) return named;
-    const keys = new Set<string>();
-    for (const r of rows()) for (const k of Object.keys(r.props)) keys.add(k);
-    return ["block", "page", ...keys];
+    return legacyDefaultColumns();
   });
   const cell = cellText;
   const sorted = createMemo(() => {

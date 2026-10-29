@@ -289,8 +289,8 @@ fn rev(root: &Path, rel: &str) -> crate::FileRev {
     crate::FileRev::from_file(&root.join(rel)).unwrap()
 }
 
-fn commit(tx: crate::Transaction<'_>, what: &str) {
-    match tx.commit() {
+fn commit(tx: crate::PagePlan<'_>, what: &str) {
+    match tx.commit_internal() {
         crate::TxOutcome::Committed { .. } => {}
         _ => panic!("{what}: transaction not committed"),
     }
@@ -405,7 +405,7 @@ fn incremental_run(root: &Path) -> (String, Vec<String>) {
     let mut step = |label: &str| check(&store, root, label, &probes, &mut log, &mut mismatches);
     step("open");
 
-    let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
     tx.create(
         &crate::PageId::from(probe_rel.to_owned()).file(),
         crate::Content::Bytes(
@@ -433,7 +433,7 @@ fn incremental_run(root: &Path) -> (String, Vec<String>) {
     let map = crate::RenameMap(vec![(target.clone(), renamed.clone())]);
     let from = format!("pages/{target}.md");
     let to = format!("pages/{renamed}.md");
-    let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
     tx.move_file(
         &crate::PageId::from(from.clone()).file(),
         rev(root, &from),
@@ -466,7 +466,7 @@ fn incremental_run(root: &Path) -> (String, Vec<String>) {
     });
     step("edit away the last owner of a Han name");
 
-    let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
     tx.trash(
         &crate::PageId::from(to.clone()).file(),
         rev(root, &to),
@@ -475,7 +475,7 @@ fn incremental_run(root: &Path) -> (String, Vec<String>) {
     commit(tx, "delete renamed page");
     step("delete the renamed page");
 
-    let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
     tx.trash(
         &crate::PageId::from(probe_rel.to_owned()).file(),
         rev(root, probe_rel),
@@ -635,7 +635,7 @@ fn random_alias_edits_equal_a_fresh_build() {
                     let rel = format!("pages/Twin {fresh_page}.md");
                     let claimed = ["Page 1", "Page 2", "Page 3"][next(3)];
                     let alias = POOL[next(POOL.len())];
-                    let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+                    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
                     tx.create(
                         &crate::PageId::from(rel.clone()).file(),
                         crate::Content::Bytes(
@@ -679,7 +679,7 @@ fn random_alias_edits_equal_a_fresh_build() {
                     fresh_page += 1;
                     let rel = format!("pages/Created {fresh_page}.md");
                     let alias = POOL[next(POOL.len())];
-                    let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+                    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
                     tx.create(
                         &crate::PageId::from(rel.clone()).file(),
                         crate::Content::Bytes(
@@ -693,7 +693,7 @@ fn random_alias_edits_equal_a_fresh_build() {
                 5 => {
                     fresh_page += 1;
                     let to = format!("pages/Moved {fresh_page}.md");
-                    let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+                    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
                     tx.move_file(
                         &crate::PageId::from(target.clone()).file(),
                         rev(root, &target),
@@ -706,7 +706,7 @@ fn random_alias_edits_equal_a_fresh_build() {
                     format!("rename {target} to {to}")
                 }
                 _ if live.len() > 3 => {
-                    let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+                    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
                     tx.trash(
                         &crate::PageId::from(target.clone()).file(),
                         rev(root, &target),
@@ -790,7 +790,7 @@ fn split_own_external_publication_equals_a_fresh_build() {
     doc.pre_block = Some("alias:: intendedb".into());
     store.inject_fault(crate::FaultPoint::Stage2MismatchAt(1));
     store.inject_fault(crate::FaultPoint::UndoWithdrawalIo);
-    let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
     tx.create(
         &crate::PageId::from("pages/A.md").file(),
         crate::Content::Bytes(b"alias:: newa\n\n- A\n".to_vec()),
@@ -802,7 +802,7 @@ fn split_own_external_publication_equals_a_fresh_build() {
         &doc,
     );
     assert!(matches!(
-        tx.commit(),
+        tx.commit_internal(),
         crate::TxOutcome::NotCommitted { step: 1, .. }
     ));
     assert_eq!(

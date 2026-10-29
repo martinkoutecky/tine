@@ -32,8 +32,8 @@ try {
   await browser.$(".app-container").waitForExist({ timeout: 30_000 });
   for (const name of Object.keys(sources)) {
     await openPageByName(browser, name);
-    await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".main-content .prop-row .page-ref")].map(a => a.textContent).join("|") === "eng|exec|founder"), { timeout: 15_000, timeoutMsg: `${name}: three separately rendered tags` });
-    const links = await browser.$$(".main-content .prop-row .page-ref");
+    await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".main-content .prop-row .prop-value .page-ref")].map(a => a.textContent).join("|") === "eng|exec|founder"), { timeout: 15_000, timeoutMsg: `${name}: three separately rendered tags` });
+    const links = await browser.$$(".main-content .prop-row .prop-value .page-ref");
     await links[0].click();
     await browser.waitUntil(() => browser.execute(() => document.querySelector(".main-content")?.textContent.includes("Engineering destination")), { timeout: 15_000, timeoutMsg: `${name}: clicking eng opens its own page` });
     await browser.waitUntil(() => browser.execute((source) => [...document.querySelectorAll(".main-content .linked-references:not(.tagged-pages) .reference-page")].some(page => page.textContent === source), name), { timeout: 15_000, timeoutMsg: `${name}: eng backlink includes source` });

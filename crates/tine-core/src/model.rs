@@ -795,6 +795,12 @@ pub struct PageDto {
     #[serde(default)]
     pub guide: bool,
 }
+fn default_true() -> bool {
+    true
+}
+fn default_linkable_property_keys() -> Vec<String> {
+    crate::query::atom::linkable_property_keys(crate::query::atom::ParseConfig::default_ref())
+}
 /// OG's default when `:ref/linked-references-collapsed-threshold` is absent.
 fn default_linked_references_collapsed_threshold() -> u32 {
     crate::config::DEFAULT_LINKED_REFERENCES_COLLAPSED_THRESHOLD
@@ -873,6 +879,19 @@ pub struct GraphMeta {
     pub enable_search_remove_accents: bool,
     /// `:ui/show-brackets?` effective value; default true.
     pub show_brackets: bool,
+    /// `:feature/enable-journals?` effective value; default true. False turns
+    /// the sidebar's Journals entry into the configured home page (OG
+    /// `container.cljs` `home-nav`).
+    #[serde(default = "default_true")]
+    pub enable_journals: bool,
+    /// Normalized keys whose value renders each comma item as a page link: OG's
+    /// `separated-by-commas?` (built-in `alias`/`aliases`/`tags` plus
+    /// `:property/separated-by-commas`) minus the keys whose references are not
+    /// parsed (`:ignored-page-references-keywords`, unparsed built-ins). One
+    /// answerer with the index (`query::atom`), so a key the index counts as a
+    /// reference is a link on screen (F12).
+    #[serde(default = "default_linkable_property_keys")]
+    pub linkable_property_keys: Vec<String>,
     /// `:shortcut/doc-mode-enter-for-new-block?` effective value; default false.
     pub doc_mode_enter_for_new_block: bool,
     /// `:editor/logical-outdenting?` effective value; default false.
@@ -981,6 +1000,10 @@ impl GraphMeta {
             enable_timetracking: config.enable_timetracking,
             enable_search_remove_accents: config.enable_search_remove_accents,
             show_brackets: config.show_brackets,
+            enable_journals: config.enable_journals,
+            linkable_property_keys: crate::query::atom::linkable_property_keys(
+                &crate::query::atom::ParseConfig::from_config(config),
+            ),
             doc_mode_enter_for_new_block: config.doc_mode_enter_for_new_block,
             logical_outdenting: config.logical_outdenting,
             logbook_with_second_support: config.logbook.with_second_support,
@@ -995,6 +1018,30 @@ impl GraphMeta {
 mod property_key_meta_tests {
     use super::GraphMeta;
     use crate::{config::Config, date::JournalFormat};
+
+    #[test]
+    fn journals_switch_and_comma_linked_keys_reach_the_frontend() {
+        let meta = |edn: &str| {
+            GraphMeta::from_config(
+                "graph".into(),
+                &Config::parse(edn),
+                &JournalFormat::default(),
+            )
+        };
+        assert!(meta("{}").enable_journals);
+        assert!(!meta("{:feature/enable-journals? false}").enable_journals);
+        assert_eq!(
+            meta("{}").linkable_property_keys,
+            ["alias", "aliases", "tags"]
+        );
+        let configured = meta(
+            "{:property/separated-by-commas #{:technique :Area} :ignored-page-references-keywords #{:tags :area}}",
+        );
+        assert_eq!(
+            configured.linkable_property_keys,
+            ["alias", "aliases", "technique"]
+        );
+    }
 
     #[test]
     fn property_page_link_policy_reaches_the_frontend() {

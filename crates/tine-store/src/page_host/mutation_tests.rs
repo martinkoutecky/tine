@@ -1,181 +1,5 @@
 use super::*;
 use sha2::{Digest, Sha256};
-
-#[test]
-fn review_f7_missing_backend_refusal_guards_are_called_directly() {
-    // Neither the scenario decoder nor the oracle is involved in these calls.
-    let mut h = host();
-    h.fs.inject(Phase::Read, [Fault::Before]);
-    assert_eq!(h.load("a.md"), Disposition::Refused);
-    assert!(h.pages.is_empty());
-    open(&mut h, "a.md");
-    let pages = h.pages.clone();
-    h.fs.inject(Phase::Read, [Fault::Before]);
-    assert_eq!(h.observe("a.md"), Disposition::Refused);
-    assert_eq!(h.pages, pages);
-    assert_eq!(
-        h.reserve(&BTreeSet::from(["unknown.md".into()])),
-        Disposition::Refused
-    );
-    assert_eq!(
-        h.release(&BTreeSet::from(["a.md".into()])),
-        Disposition::Refused
-    );
-    assert!(h.retained.is_empty());
-
-    let mut h = host();
-    assert_eq!(
-        send(
-            &mut h,
-            "a.md",
-            RequestKind::Submit {
-                bytes: text("unheld"),
-                version: 0,
-                resolve: None
-            }
-        ),
-        Disposition::Refused
-    );
-    assert!(!h.receive("a.md").unwrap().answer.unwrap().took);
-    assert!(h.pages.is_empty());
-
-    for missing in ["a.md", "b.md"] {
-        let mut h = host();
-        open(&mut h, if missing == "a.md" { "b.md" } else { "a.md" });
-        let files = h.fs.files.clone();
-        let source_version = h_version(&h, "a.md");
-        let receiver_version = h_version(&h, "b.md");
-        assert_eq!(
-            send(
-                &mut h,
-                "a.md",
-                RequestKind::Move {
-                    receiver: "b.md".into(),
-                    source_text: text("new source"),
-                    receiver_text: text("new receiver"),
-                    source_version,
-                    receiver_version
-                }
-            ),
-            Disposition::Refused
-        );
-        assert!(h.worker.is_none());
-        assert_eq!(h.fs.files, files);
-        for key in ["a.md", "b.md"] {
-            assert!(!h.receive(key).unwrap().answer.unwrap().took);
-        }
-    }
-    for stale_source in [true, false] {
-        let mut h = host();
-        open(&mut h, "a.md");
-        open(&mut h, "b.md");
-        let pages = h.pages.clone();
-        let sv = h.pages["a.md"].version;
-        let rv = h.pages["b.md"].version;
-        assert_eq!(
-            send(
-                &mut h,
-                "a.md",
-                RequestKind::Move {
-                    receiver: "b.md".into(),
-                    source_text: text("new source"),
-                    receiver_text: text("new receiver"),
-                    source_version: if stale_source { sv + 1 } else { sv },
-                    receiver_version: if stale_source { rv } else { rv + 1 }
-                }
-            ),
-            Disposition::Refused
-        );
-        assert_eq!(h.pages, pages);
-        assert!(h.worker.is_none());
-    }
-
-    let mut h = host();
-    assert_eq!(h.load("c.md"), Disposition::Applied);
-    assert_eq!(h.delete("c.md"), Disposition::Refused);
-    assert_eq!(h.delete("unknown.md"), Disposition::Disabled);
-    assert_eq!(
-        h.rename_with("c.md", "a.md", &BTreeSet::new(), |b, _, _| Ok(b.clone())),
-        Disposition::Refused
-    );
-    assert!(h.worker.is_none());
-
-    for failure_site in ["discovery", "moving", "referrer"] {
-        let mut h = host();
-        if failure_site == "discovery" {
-            open(&mut h, "b.md");
-        }
-        assert_eq!(
-            h.rename_with(
-                "a.md",
-                "c.md",
-                &BTreeSet::from(["b.md".into()]),
-                |b, key, moving| {
-                    if (failure_site == "moving" && moving)
-                        || (failure_site != "moving" && key == "b.md")
-                    {
-                        Err(())
-                    } else {
-                        Ok(b.clone())
-                    }
-                }
-            ),
-            Disposition::Refused
-        );
-        assert!(h.worker.is_none());
-        assert_eq!(h.fs.files["graph/a.md"].as_ref(), b"A");
-        assert!(h.pages.values().all(Page::clean));
-    }
-    for fail_source in [true, false] {
-        let mut h = host();
-        if !fail_source {
-            assert_eq!(h.load("a.md"), Disposition::Applied);
-        }
-        h.fs.inject(Phase::Read, [Fault::Before]);
-        assert_eq!(
-            h.rename_with(
-                "a.md",
-                "c.md",
-                &BTreeSet::from(["b.md".into()]),
-                |b, _, _| Ok(b.clone())
-            ),
-            Disposition::Refused
-        );
-        assert!(h.worker.is_none());
-        assert!(h.pages.values().all(Page::clean));
-    }
-
-    let mut h = host();
-    assert_eq!(h.switch_ready(0), Disposition::Applied);
-    assert_eq!(
-        h.admit(Request {
-            id: 1,
-            generation: h.generation,
-            page: "a.md".into(),
-            kind: RequestKind::Open
-        }),
-        Disposition::Refused
-    );
-    assert!(h.queue.is_empty());
-
-    let mut h = host();
-    h.stop();
-    let record = Record {
-        page: "unknown.md".into(),
-        wseq: 1,
-        version: 1,
-        base: Base::Known(None),
-        bytes: text("recover"),
-    };
-    h.fs.draft_temp("p-unknown.draft", &drafts::encode(&[record]))
-        .unwrap();
-    h.fs.draft_rename("p-unknown.draft").unwrap();
-    assert_eq!(h.launch(), Disposition::Refused);
-    assert!(!h.alive);
-    assert!(h.pages.is_empty());
-    assert!(h.fs.files.contains_key("draft/p-unknown.draft"));
-}
-
 fn h_version(h: &Host<ModelFs>, key: &str) -> u64 {
     h.pages.get(key).map_or(0, |p| p.version)
 }
@@ -340,6 +164,290 @@ fn draft_phase_failures_preserve_whether_the_file_step_completed() {
 }
 
 #[test]
+fn review_f7_missing_backend_refusal_guards_are_called_directly() {
+    // Neither the scenario decoder nor the oracle is involved in these calls.
+    let mut h = host();
+    h.fs.inject(Phase::Read, [Fault::Before]);
+    assert_eq!(h.load("a.md"), Disposition::Refused);
+    assert!(h.pages.is_empty());
+    open(&mut h, "a.md");
+    let pages = h.pages.clone();
+    h.fs.inject(Phase::Read, [Fault::Before]);
+    assert_eq!(h.observe("a.md"), Disposition::Refused);
+    assert_eq!(h.pages, pages);
+    let mut h = host();
+    assert_eq!(
+        send(
+            &mut h,
+            "a.md",
+            RequestKind::Submit {
+                bytes: text("unheld"),
+                version: 0,
+                resolve: None
+            }
+        ),
+        Disposition::Refused
+    );
+    assert!(!h.receive("a.md").unwrap().answer.unwrap().took);
+    assert!(h.pages.is_empty());
+
+    for missing in ["a.md", "b.md"] {
+        let mut h = host();
+        open(&mut h, if missing == "a.md" { "b.md" } else { "a.md" });
+        let files = h.fs.files.clone();
+        let source_version = h_version(&h, "a.md");
+        let receiver_version = h_version(&h, "b.md");
+        assert_eq!(
+            send(
+                &mut h,
+                "a.md",
+                RequestKind::Move {
+                    receiver: "b.md".into(),
+                    source_text: text("new source"),
+                    receiver_text: text("new receiver"),
+                    source_version,
+                    receiver_version
+                }
+            ),
+            Disposition::Refused
+        );
+        assert!(h.worker.is_none());
+        assert_eq!(h.fs.files, files);
+        for key in ["a.md", "b.md"] {
+            assert!(!h.receive(key).unwrap().answer.unwrap().took);
+        }
+    }
+    for stale_source in [true, false] {
+        let mut h = host();
+        open(&mut h, "a.md");
+        open(&mut h, "b.md");
+        let pages = h.pages.clone();
+        let sv = h.pages["a.md"].version;
+        let rv = h.pages["b.md"].version;
+        assert_eq!(
+            send(
+                &mut h,
+                "a.md",
+                RequestKind::Move {
+                    receiver: "b.md".into(),
+                    source_text: text("new source"),
+                    receiver_text: text("new receiver"),
+                    source_version: if stale_source { sv + 1 } else { sv },
+                    receiver_version: if stale_source { rv } else { rv + 1 }
+                }
+            ),
+            Disposition::Refused
+        );
+        assert_eq!(h.pages, pages);
+        assert!(h.worker.is_none());
+    }
+
+    let mut h = host();
+    assert_eq!(h.load("c.md"), Disposition::Applied);
+    assert_eq!(h.delete("c.md"), Disposition::Refused);
+    assert_eq!(h.delete("unknown.md"), Disposition::Disabled);
+    assert_eq!(
+        h.rename_with("c.md", "a.md", &BTreeSet::new(), |b, _, _| Ok(b.clone())),
+        Disposition::Refused
+    );
+    assert!(h.worker.is_none());
+
+    for failure_site in ["discovery", "moving", "referrer"] {
+        let mut h = host();
+        if failure_site == "discovery" {
+            open(&mut h, "b.md");
+        }
+        assert_eq!(
+            h.rename_with(
+                "a.md",
+                "c.md",
+                &BTreeSet::from(["b.md".into()]),
+                |b, key, moving| {
+                    if (failure_site == "moving" && moving)
+                        || (failure_site != "moving" && key == "b.md")
+                    {
+                        Err(())
+                    } else {
+                        Ok(b.clone())
+                    }
+                }
+            ),
+            Disposition::Refused
+        );
+        assert!(h.worker.is_none());
+        assert_eq!(h.fs.files["graph/a.md"].as_ref(), b"A");
+        assert!(h.pages.values().all(Page::clean));
+    }
+    for fail_source in [true, false] {
+        let mut h = host();
+        if !fail_source {
+            assert_eq!(h.load("a.md"), Disposition::Applied);
+        }
+        h.fs.inject(Phase::Read, [Fault::Before]);
+        assert_eq!(
+            h.rename_with(
+                "a.md",
+                "c.md",
+                &BTreeSet::from(["b.md".into()]),
+                |b, _, _| Ok(b.clone())
+            ),
+            Disposition::Refused
+        );
+        assert!(h.worker.is_none());
+        assert!(h.pages.values().all(Page::clean));
+    }
+
+    let mut h = host();
+    assert_eq!(h.switch_ready(0), Disposition::Applied);
+    assert_eq!(
+        h.admit(Request {
+            id: 1,
+            generation: h.generation,
+            page: "a.md".into(),
+            kind: RequestKind::Open
+        }),
+        Disposition::Refused
+    );
+    assert!(h.queue.is_empty());
+
+    let mut h = host();
+    h.stop();
+    let record = Record {
+        page: "unknown.md".into(),
+        wseq: 1,
+        version: 1,
+        base: Base::Known(None),
+        bytes: text("recover"),
+    };
+    h.fs.draft_temp("p-unknown.draft", &drafts::encode(&[record]))
+        .unwrap();
+    h.fs.draft_rename("p-unknown.draft").unwrap();
+    assert_eq!(h.launch(), Disposition::Refused);
+    assert!(!h.alive);
+    assert!(h.pages.is_empty());
+    assert!(h.fs.files.contains_key("draft/p-unknown.draft"));
+}
+
+#[test]
+fn switch_checks_job_and_representation_worker_after_confirmation() {
+    let mut h = host();
+    open(&mut h, "a.md");
+    edit(&mut h, "a.md", "dirty");
+    risk(&mut h, "a.md");
+    draft(&mut h, "a.md");
+    assert_eq!(h.switch_ready(h.last_admitted), Disposition::Applied);
+    assert_eq!(h.start_save("a.md"), Disposition::Pending);
+    assert_eq!(h.switch_finish(), Disposition::Waiting);
+
+    let mut h = host();
+    assert_eq!(
+        h.rename_with("a.md", "c.md", &BTreeSet::new(), |bytes, _, _| Ok(
+            bytes.clone()
+        )),
+        Disposition::Pending
+    );
+    for _ in 0..4 {
+        h.advance_draft();
+    }
+    // RENAME-COST L2: an edit's refresh retires the operation vehicle; its
+    // copy of a's record is a representation phase.
+    edit(&mut h, "c.md", "edited");
+    assert_eq!(h.begin_draft("c.md"), Disposition::Pending);
+    for _ in 0..4 {
+        h.advance_draft();
+    }
+    assert!(h.worker.is_some());
+    assert!(h.worker.as_ref().unwrap().application.is_none());
+    assert_eq!(h.switch_ready(h.last_admitted), Disposition::Applied);
+    assert_eq!(h.switch_finish(), Disposition::Waiting);
+}
+
+#[test]
+fn load_observe_and_draft_guard_dispositions_are_independent() {
+    let mut h = host();
+    assert_eq!(h.load("unknown.md"), Disposition::Disabled);
+    assert_eq!(h.observe("a.md"), Disposition::Disabled);
+    assert_eq!(h.load("a.md"), Disposition::Applied);
+    assert_eq!(h.load("a.md"), Disposition::Disabled);
+    h.stop();
+    assert_eq!(h.load("a.md"), Disposition::Disabled);
+    assert_eq!(h.observe("a.md"), Disposition::Disabled);
+    assert_eq!(h.begin_draft("a.md"), Disposition::Waiting);
+
+    let mut h = host();
+    assert_eq!(h.delete("a.md"), Disposition::Pending);
+    assert_eq!(h.load("b.md"), Disposition::Waiting);
+    assert_eq!(h.begin_draft("b.md"), Disposition::Waiting);
+}
+
+#[test]
+fn an_unchanged_dirty_or_busy_referrer_is_left_out_of_a_rename() {
+    let refs = BTreeSet::from(["b.md".into()]);
+    let unchanged = |bytes: &Text, _: &str, _: bool| Ok(bytes.clone());
+    let changes = |bytes: &Text, key: &str, moving: bool| {
+        Ok(if key == "b.md" && !moving {
+            text("B renamed")
+        } else {
+            bytes.clone()
+        })
+    };
+    for state in ["dirty", "saving"] {
+        let setup = || {
+            let mut h = host();
+            open(&mut h, "b.md");
+            match state {
+                "dirty" => edit(&mut h, "b.md", "B typed"),
+                "saving" => {
+                    edit(&mut h, "b.md", "B typed");
+                    assert_eq!(h.start_save("b.md"), Disposition::Pending);
+                }
+                _ => unreachable!(),
+            }
+            h
+        };
+        let mut h = setup();
+        let page = h.pages["b.md"].clone();
+        let job = h.job.as_ref().map(|job| job.page.clone());
+        assert_eq!(
+            h.rename_with("a.md", "c.md", &refs, unchanged),
+            Disposition::Pending,
+            "{state}"
+        );
+        let operation = &h.worker.as_ref().unwrap().pages;
+        assert_eq!(
+            *operation,
+            BTreeSet::from(["a.md".into(), "c.md".into()]),
+            "{state}"
+        );
+        assert_eq!(h.pages["b.md"], page, "{state}");
+        assert_eq!(h.job.as_ref().map(|job| job.page.clone()), job, "{state}");
+        assert!(!h.logical_drafts().contains_key("b.md"), "{state}");
+        // Absent source, references only: an empty effective set is the
+        // model's disabled step, never an applied operation (the source's
+        // visible load is the model's load step).
+        let mut h = setup();
+        let before = (h.pages["b.md"].clone(), h.fs.files.clone());
+        assert_eq!(
+            h.rename_with("c.md", "a.md", &refs, unchanged),
+            Disposition::Refused,
+            "{state}"
+        );
+        assert!(h.worker.is_none(), "{state}");
+        let after = (h.pages["b.md"].clone(), h.fs.files.clone());
+        assert_eq!(after, before, "{state}");
+        assert!(h.pages.get("c.md").is_none_or(Page::clean), "{state}");
+        // The negative neighbour: the rewrite changes the referrer.
+        let mut h = setup();
+        assert_eq!(
+            h.rename_with("a.md", "c.md", &refs, changes),
+            Disposition::Refused,
+            "{state}"
+        );
+        assert!(h.worker.is_none(), "{state}");
+    }
+}
+
+#[test]
 fn operation_envelopes_and_unrelated_worker_are_refused_without_changes() {
     for (source, target, refs, dead) in [
         ("unknown.md", "c.md", BTreeSet::new(), false),
@@ -408,49 +516,6 @@ fn refs_only_rerun_excludes_a_held_target_that_references_the_source() {
     drain(&mut h);
     assert_eq!(h.pages["a.md"].buf, text("[[C]]"));
 }
-
-#[test]
-fn switch_checks_job_representation_worker_and_reservation_after_confirmation() {
-    let mut h = host();
-    open(&mut h, "a.md");
-    edit(&mut h, "a.md", "dirty");
-    risk(&mut h, "a.md");
-    draft(&mut h, "a.md");
-    assert_eq!(h.switch_ready(h.last_admitted), Disposition::Applied);
-    assert_eq!(h.start_save("a.md"), Disposition::Pending);
-    assert_eq!(h.switch_finish(), Disposition::Waiting);
-
-    let mut h = host();
-    assert_eq!(
-        h.rename_with("a.md", "c.md", &BTreeSet::new(), |bytes, _, _| Ok(
-            bytes.clone()
-        )),
-        Disposition::Pending
-    );
-    for _ in 0..4 {
-        h.advance_draft();
-    }
-    // RENAME-COST L2: an edit's refresh retires the operation vehicle; its
-    // copy of a's record is a representation phase.
-    edit(&mut h, "c.md", "edited");
-    assert_eq!(h.begin_draft("c.md"), Disposition::Pending);
-    for _ in 0..4 {
-        h.advance_draft();
-    }
-    assert!(h.worker.is_some());
-    assert!(h.worker.as_ref().unwrap().application.is_none());
-    assert_eq!(h.switch_ready(h.last_admitted), Disposition::Applied);
-    assert_eq!(h.switch_finish(), Disposition::Waiting);
-
-    let mut h = host();
-    assert_eq!(
-        h.reserve(&BTreeSet::from(["a.md".into()])),
-        Disposition::Applied
-    );
-    assert_eq!(h.switch_ready(0), Disposition::Applied);
-    assert_eq!(h.switch_finish(), Disposition::Waiting);
-}
-
 #[test]
 fn switch_checks_same_version_base_refresh_and_later_same_bytes() {
     for changed_base in [false, true] {
@@ -608,30 +673,6 @@ fn admission_rejects_each_invalid_envelope_without_custody_changes() {
     assert_eq!(h.admit(Request { id: 2, ..valid }), Disposition::Refused);
     assert!(h.queue.is_empty());
 }
-
-#[test]
-fn load_observe_and_draft_guard_dispositions_are_independent() {
-    let mut h = host();
-    assert_eq!(h.load("unknown.md"), Disposition::Disabled);
-    assert_eq!(h.observe("a.md"), Disposition::Disabled);
-    assert_eq!(h.load("a.md"), Disposition::Applied);
-    assert_eq!(h.load("a.md"), Disposition::Disabled);
-    h.stop();
-    assert_eq!(h.load("a.md"), Disposition::Disabled);
-    assert_eq!(h.observe("a.md"), Disposition::Disabled);
-    assert_eq!(h.begin_draft("a.md"), Disposition::Waiting);
-
-    let mut h = host();
-    let keys = BTreeSet::from(["c.md".into()]);
-    assert_eq!(h.reserve(&keys), Disposition::Applied);
-    assert_eq!(h.load("c.md"), Disposition::Waiting);
-    assert_eq!(h.begin_draft("c.md"), Disposition::Waiting);
-    assert_eq!(h.release(&keys), Disposition::Applied);
-    assert_eq!(h.delete("a.md"), Disposition::Pending);
-    assert_eq!(h.load("b.md"), Disposition::Waiting);
-    assert_eq!(h.begin_draft("b.md"), Disposition::Waiting);
-}
-
 #[test]
 fn dequeue_cannot_overwrite_custody_and_apply_waits_for_later_save() {
     let mut h = host();
@@ -852,28 +893,6 @@ fn a_persistent_trash_collision_fails_the_save_on_the_third() {
     assert!(!h.fs.files.contains_key("graph/a.md"));
     assert_eq!(custody_entries(&h), 0);
 }
-
-#[test]
-fn release_reconciles_fresh_versions_and_failed_reads_keep_reservations() {
-    let mut h = host();
-    open(&mut h, "a.md");
-    let keys = BTreeSet::from(["a.md".into()]);
-    let version = h.version;
-    assert_eq!(h.reserve(&keys), Disposition::Applied);
-    h.fs.external("a.md", text("external"), true);
-    h.fs.inject(Phase::Read, [Fault::Before]);
-    assert_eq!(h.release(&keys), Disposition::Waiting);
-    assert_eq!(h.retained, keys);
-    assert_eq!(h.switch_request(), Disposition::Waiting);
-    assert_eq!(h.release(&keys), Disposition::Applied);
-    assert!(h.retained.is_empty());
-    assert_eq!(h.version, version + 1);
-    assert_eq!(h.pages["a.md"].version, h.version);
-    assert_eq!(h.pages["a.md"].buf, text("external"));
-    assert_eq!(h.delete("a.md"), Disposition::Pending);
-    assert_eq!(h.switch_request(), Disposition::Waiting);
-}
-
 #[test]
 fn switch_confirmation_checks_both_admitted_and_applied_watermarks() {
     let mut h = host();
@@ -930,86 +949,6 @@ fn custody_entries(h: &Host<ModelFs>) -> usize {
         .filter(|k| k.starts_with("draft/trash-custody/"))
         .count()
 }
-
-/// R3a/R5 (A-W1): a caller referrer that is dirty or busy, and whose
-/// buffer the rewrite leaves unchanged, is not part of the rename. The
-/// operation runs over its effective set (the endpoints), and the referrer
-/// keeps its buffer, version, risk, save job and reservation; nothing of it
-/// is drafted or written. A referrer whose bytes the rewrite changes still
-/// refuses while dirty (saving or not) and waits while only busy.
-#[test]
-fn an_unchanged_dirty_or_busy_referrer_is_left_out_of_a_rename() {
-    let refs = BTreeSet::from(["b.md".into()]);
-    let unchanged = |bytes: &Text, _: &str, _: bool| Ok(bytes.clone());
-    let changes = |bytes: &Text, key: &str, moving: bool| {
-        Ok(if key == "b.md" && !moving {
-            text("B renamed")
-        } else {
-            bytes.clone()
-        })
-    };
-    for state in ["dirty", "saving", "reserved"] {
-        let setup = || {
-            let mut h = host();
-            open(&mut h, "b.md");
-            match state {
-                "dirty" => edit(&mut h, "b.md", "B typed"),
-                "saving" => {
-                    edit(&mut h, "b.md", "B typed");
-                    assert_eq!(h.start_save("b.md"), Disposition::Pending);
-                }
-                _ => assert_eq!(h.reserve(&refs), Disposition::Applied),
-            }
-            h
-        };
-        let mut h = setup();
-        let page = h.pages["b.md"].clone();
-        let job = h.job.as_ref().map(|job| job.page.clone());
-        assert_eq!(
-            h.rename_with("a.md", "c.md", &refs, unchanged),
-            Disposition::Pending,
-            "{state}"
-        );
-        let operation = &h.worker.as_ref().unwrap().pages;
-        assert_eq!(
-            *operation,
-            BTreeSet::from(["a.md".into(), "c.md".into()]),
-            "{state}"
-        );
-        assert_eq!(h.pages["b.md"], page, "{state}");
-        assert_eq!(h.job.as_ref().map(|job| job.page.clone()), job, "{state}");
-        assert_eq!(h.retained.contains("b.md"), state == "reserved", "{state}");
-        assert!(!h.logical_drafts().contains_key("b.md"), "{state}");
-        // Absent source, references only: an empty effective set is the
-        // model's disabled step, never an applied operation (the source's
-        // visible load is the model's load step).
-        let mut h = setup();
-        let before = (h.pages["b.md"].clone(), h.fs.files.clone());
-        assert_eq!(
-            h.rename_with("c.md", "a.md", &refs, unchanged),
-            Disposition::Refused,
-            "{state}"
-        );
-        assert!(h.worker.is_none(), "{state}");
-        let after = (h.pages["b.md"].clone(), h.fs.files.clone());
-        assert_eq!(after, before, "{state}");
-        assert!(h.pages.get("c.md").is_none_or(Page::clean), "{state}");
-        // The negative neighbour: the rewrite changes the referrer.
-        let mut h = setup();
-        let expected = if state == "reserved" {
-            Disposition::Waiting
-        } else {
-            Disposition::Refused
-        };
-        assert_eq!(
-            h.rename_with("a.md", "c.md", &refs, changes),
-            expected,
-            "{state}"
-        );
-        assert!(h.worker.is_none(), "{state}");
-    }
-}
-
 /// RO3 (a) review F2: a power cut may lose a deleted page's data only when
 /// another program wrote it unflushed (R-UNFLUSHED). Tine's own saved bytes
 /// survive every cut once custody completed. Fails if `cuts()` lists stable

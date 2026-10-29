@@ -89,3 +89,4 @@ see the project `CLAUDE.md`.
 | [0075](0075-margin-dialogue-comments.md) | Margin dialogue: a comment is an ordinary child block with `quote::`; the anchor is re-derived, never stored | Proposed |
 | [0076](0076-quick-share-device-records.md) | Quick share keeps its account and share keys in two private app-data files | Proposed |
 | [0077](0077-unlinked-mentions-count-code-text.md) | Unlinked mentions count text inside code, math and other literal regions (supersedes 0043's code-exclusion rule; matches OG) | Accepted |
+| [0080](0080-theme-typography-local-fonts.md) | Theme API 0.3 lets a package name local fonts and a block line height (closed grammar, no CSS, no downloads) | Accepted |

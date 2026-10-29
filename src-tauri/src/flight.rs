@@ -717,6 +717,22 @@ fn build_diagnostic_report(
     }
 }
 
+fn graph_diagnostics(store: &tine_store::Store) -> Value {
+    let mut report = store.diagnostics();
+    // No launch-by-launch container path is persisted. The remembered graph
+    // can predate the previous launch (e.g. a launch that never opened a graph),
+    // so expose that useful comparison separately without claiming more.
+    report["storage"]["iosAppContainerPathChangedSincePreviousLaunch"] =
+        json!(if std::env::consts::OS == "ios" {
+            "unknown"
+        } else {
+            "not-applicable"
+        });
+    report["storage"]["iosAppContainerComparedWithLastRememberedGraph"] =
+        json!(crate::root_identity::container_change());
+    report
+}
+
 /// Launch timings and graph-shape statistics of every open graph (GH #623):
 /// reporters cannot share a graph, so the dump carries the numbers that
 /// diagnose its performance instead. Statistics only, built by
@@ -734,7 +750,7 @@ async fn collect_graph_diagnostics(app: &tauri::AppHandle) -> (Option<usize>, Ve
     let graphs = tauri::async_runtime::spawn_blocking(move || {
         slots
             .iter()
-            .map(|(_, slot)| slot.store.diagnostics())
+            .map(|(_, slot)| graph_diagnostics(&slot.store))
             .collect::<Vec<_>>()
     })
     .await
@@ -991,6 +1007,59 @@ mod tests {
         assert_eq!(parsed["runtime"]["retainedAcrossRuns"], false);
         assert!(!report.text.contains("/home/"), "{}", report.text);
         assert!(!report.text.contains("secret"), "{}", report.text);
+    }
+
+    #[test]
+    fn storage_report_is_copyable_and_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let secret = "Secret SB2 medical page";
+        std::fs::create_dir(dir.path().join("pages")).unwrap();
+        std::fs::write(
+            dir.path().join("pages").join(format!("{secret}.md")),
+            "- private note body",
+        )
+        .unwrap();
+        let store = tine_store::Store::open(dir.path(), Default::default())
+            .unwrap()
+            .0;
+        let _ = store.whole_graph();
+        store.record_draft_namespace_adoption(tine_store::DraftAdoptionReason::UserRecovery);
+        let report = build_diagnostic_report(
+            Some(1),
+            vec![graph_diagnostics(&store)],
+            String::new(),
+            String::new(),
+            crate::defender::Realtime::NotApplicable,
+        );
+        let parsed: Value = serde_json::from_str(&report.text).unwrap();
+        let storage = &parsed["graphs"][0]["storage"];
+        assert_eq!(storage["pageSaves"]["uncertain"], 0);
+        assert_eq!(storage["draftNamespaceAdoptions"]["userRecovery"], 1);
+        assert_eq!(storage["backendClass"], "unclassified");
+        assert_eq!(
+            storage["iosAppContainerComparedWithLastRememberedGraph"],
+            crate::root_identity::container_change()
+        );
+        assert_eq!(
+            storage["iosAppContainerPathChangedSincePreviousLaunch"],
+            if std::env::consts::OS == "ios" {
+                "unknown"
+            } else {
+                "not-applicable"
+            }
+        );
+        assert!(!report.text.contains(secret));
+        assert!(!report.text.contains("private note body"));
+        assert!(!report.text.contains(dir.path().to_str().unwrap()));
+        store.close();
+        let reopened = tine_store::Store::open(dir.path(), Default::default())
+            .unwrap()
+            .0;
+        assert_eq!(
+            reopened.diagnostics()["storage"]["draftNamespaceAdoptions"]["userRecovery"],
+            1
+        );
+        reopened.close();
     }
 
     #[test]

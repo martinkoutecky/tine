@@ -1,4 +1,4 @@
-# og plain-file storage contract
+# Development plain-file storage contract
 
 The graph files are the durable record. A save compares the caller's revision with
 the current file, then publishes whole bytes through a synced temporary file.
@@ -139,8 +139,8 @@ temporary-file creation, and again immediately before publication or trash.
 Trash destinations and directory syncs use the same boundary. Recovered draft
 registration checks containment before resolving a disk spelling; an unsafe or
 uncheckable target keeps its logical key and draft, and its I/O fails untouched.
-An honest folder move followed by a symlink replacement (audit L8-01) therefore
-cannot redirect queued input or a recovered draft outside the graph. Uncheckable
+An honest folder move followed by a symlink replacement (audit L8-01) detected
+at these boundaries cannot redirect queued input or a recovered draft outside the graph. Uncheckable
 paths fail for retry; paths proved outside refuse access. Path identity remains
 an assumption between the final check and the OS call: the accepted R1 window
 also includes a folder retarget in those microseconds.
@@ -151,7 +151,10 @@ identity at open/attach. The shared graph write-target guard checks that witness
 external-assets writes also check the graph binding. Linux compares device/inode
 and statx birth time when both sides supply one; macOS/iOS compare device/inode
 (APFS/HFS+ birth time moves back when an earlier mtime is set). No directory
-descriptor is retained, so an open graph does not prevent eject/unmount. Because
+descriptor is retained by either the root binding or a directory-creation plan.
+A failed mkdir that created nothing leaves no plan after the attempt; Discard,
+Close and host quiescence retain no graph-directory handles (Linux regression).
+These mechanisms do not pin a volume against eject/unmount. Because
 nothing pins the root inode, filesystems that reissue inode numbers after
 eviction (SMB/CIFS, FUSE without stable numbers; a failed statfs counts too),
 classified once at open by statfs, compare device and birth time only. A
@@ -172,20 +175,95 @@ A bound root retains its existing target/symlink admission checks. This fallback
 adds a root probe only to failed target lookups, with no successful-edit I/O.
 Graph directory creation takes an existing graph/approved-assets bound, never
 creates that bound, and creates missing descendants one level at a time.
+For a missing chain only (REG-M2-DIRCREATE-BOUND), every platform rechecks the
+graph's original open-time root binding and the actual parent's canonical
+containment immediately before each path-based `create_dir`. Each new entry
+queues its parent for sync, with process-local identity witnesses for both the
+created entry and that parent. Before each path-based sync the same checks run,
+and both identities are checked before and after sync using RootBinding's
+existing platform policy (REG-M3-SYNC-AFTER-PARENT-LOSS).
+The graph adapter retains a failed plan across Discard, page Close and retries
+while it has recorded parent debt or missing components. Re-planning after an
+explicit non-durable result replaces stale witnesses with current-chain
+obligations: existing entries record parent debt; missing components owe it
+once created or encountered as AlreadyExists after restoration. A refusal
+before the first replacement mkdir cannot dispose of that plan. Only a
+successful finish or an empty pair of obligation queues permits removal;
+closing the adapter also ends this process-local custody. This is not a
+persistent debt journal or retention by the one-shot helpers.
+No plan holds directory handles or requires read access to ancestors merely
+to create a folder. A stable,
+contained replacement parent first reports the old creation non-durable. The
+next attempt re-plans the target and syncs the entire current directory chain,
+including existing replacement entries. It does not acknowledge detached debt
+or loop forever on its stale witness. A missing ancestor detected at the
+pre-mkdir check or mkdir also requests this re-plan, even while descendants
+remain to be created or a previous re-plan is interrupted. The failed attempt
+retains its current queues; a retry requesting re-planning constructs both
+replacement queues before installing them. Retaining a missing component
+ensures that restoration of an earlier ancestor still records and pays its
+parent sync. Once interference ends, a stable contained chain can complete
+through the original identity and containment guards. Re-planning
+still uses the original root binding and checks containment; restoring the
+original identity also allows a retry after a containment refusal.
+Detected root detachment fails as `GraphRootMoved`; an outside parent or an
+inspection/filesystem error fails as I/O. Input stays in host/device-draft
+custody. The two M2 plan-to-finish schedules leave the replacement root/outside
+target untouched on identity-checking test filesystems. Existing directories
+add zero creation binding/containment probes. An ordinary existing-page save
+adds one post-sync file metadata probe, independent of page size.
+Linux/macOS/iOS retain their existing stat/statfs identity policy, Windows its
+delete-sharing `FILE_ID_INFO` policy, and Android its vanish-only policy: no
+new directory inode comparison is imposed on shared storage. Android cannot detect a
+same-path replacement root; relaxed SMB/FUSE identities also retain the limits
+above. A directory-sync `NotFound` is a real error, never `Unsupported`.
+The other Unix directory-fsync tolerances, strict app-data sync and Windows's
+existing no-op directory sync are unchanged. App-data creation binds its chosen
+existing ancestor for that attempt; graph callers supply the binding from open.
+These boundaries are tested against the model, not proven for native directories.
+Residuals on Linux/macOS/iOS/Android and Windows: the identity and containment
+probes are sequential, so swaps between probes also remain possible. An ancestor
+replaced by an outside symlink/reparse redirect, or moved, after its last relevant check can redirect
+the path-based create outside the bound. Retained-debt checks detect a changed
+entry/parent under the platform identity policy; a swap and restoration between
+the sequential probes can still evade them. Entry-witness capture immediately
+after mkdir can itself race with substitution. Neither identity nor containment
+checking is atomic with creation or sync. Windows retains this check-then-`CreateDirectoryW`
+window as well. Initial open-time binding capture can itself race with root
+replacement, and weak identities may not distinguish it. There is no fresh
+creation-time root capture that substitutes for the original graph binding.
+No full native no-escape or original-parent sync guarantee covers these windows.
 Restore's capability path checks the same binding before reserving recovery and
 before moving or publishing each file. ModelFs has Gone/Replaced epochs and
 syscall-boundary root faults; native tests replay phase-boundary root moves.
 Reopening also refuses to adopt a retiring Store whose binding is detached:
 it waits for that host's draft-preserving stop, then captures a fresh witness.
-The accepted final check-to-OS-call race remains; this is not handle-relative
-publication or native power-cut proof. A normal existing-page host save adds six
+The accepted final check-to-OS-call race for file publication remains; directory
+creation's platform limits are above. This is not handle-relative
+file publication or native power-cut proof. A normal existing-page host save adds six
 root metadata probes, independent of text size: before directory creation,
 temp creation, base read, publication, the publication stamp read and directory
-sync. Only the duplicate page-path check immediately before the directory-sync
+sync, plus one file metadata probe after sync (seven path metadata/identity
+probes versus six before M3, for both 1 and 60 blocks). The publication read
+already captures the file's handle stamp; the new probe compares time, size,
+identity and change time against it without reading or hashing bytes. A missing,
+unreadable or changed publication witness returns Uncertain, retaining input
+risk for drafting/retry and watcher reconciliation. This check also runs after
+Unsupported sync and Windows's no-op sync; it adds no Windows directory flush.
+Windows file stamps use creation time as their identity witness, not the full
+directory FILE_ID_INFO. Publication-stamp capture after rename can itself race
+with external substitution; weak/reused stamps and a substitution restored
+between sync and the final probe remain residuals. Android's directory debt remains
+vanish-only: same-path directory replacement with a surviving file stamp is not
+detected. These are bounded checks tested against the model, not a proof of
+original-parent flush or native power-loss durability.
+Only the duplicate page-path check immediately before the directory-sync
 guard was removed; the remaining boundaries can be separated by scheduling or
-I/O and do not reuse a stale witness. Linux uses one `std::fs::metadata`
-(statx, with std's stat fallback) per probe, Apple uses one stat; Windows uses one
-identity open/query. The ignored `l9_measure_per_save_root_checks` test measures
+I/O and do not reuse a stale witness. Each Linux root check uses one
+`std::fs::metadata` (statx, with std's stat fallback), Apple uses one stat;
+Windows uses one identity open/query per root check. The final file probe uses
+`symlink_metadata` and the existing per-platform watcher stamp producer.
+The ignored `l9_measure_per_save_root_checks` test measures
 the running platform: ~1.4 µs per check on Linux (statx); on hosted Windows
 (run 40145619007) 20.2 µs per check, 121 µs for the six checks of a save.
 
@@ -219,14 +297,51 @@ sync reports “moved, durability not witnessed”, rebinds the relaunched host 
 warns the user to keep it open; it is distinct from a rename that did not happen.
 
 Linux and macOS use the existing account owner namespace; Windows now uses
-SHGetKnownFolderPath(FOLDERID_LocalAppData)/tine/owners, independent of the
+SHGetKnownFolderPath(FOLDERID_LocalAppData)/tine-owners, independent of the
 environment and app identifier, with the existing exclusive LockFileEx lock.
-Its directories inherit the account Known Folder ACL; the owners directory and
-its tine parent must be real directories without reparse attributes. This cheap
-check supplies honest-instance exclusion; it is not a new checked-DACL endpoint.
-The Windows endpoint remains unsupported. Contention refuses open through the
-same translated app-owner error as Unix; lock errors still diagnose and open without a
-lease. Single-instance forwarding is not exclusion. iOS and Android retain
+Its owners directory is created with a current-user protected
+DACL. New lock files also have an explicit private protected DACL; existing files
+keep theirs. Existing inherited or unprotected directory DACLs also pass when safe.
+Every use checks current-user/SYSTEM/Administrators ownership, no reparse attributes, a
+non-null DACL, and no explicit or inherited grants of write, delete, delete-child,
+WRITE_DAC or WRITE_OWNER outside those principals (an inherit-only CREATOR OWNER
+ACE is also safe). Unknown ACE types and unsafe
+directories refuse `owner-unsafe`; their ACLs are never repaired in place.
+Windows exposes a local-only, current-user pipe named by account SID and graph
+hash, with first-instance squatting refusal after a 3 s retry under the owner lock
+for draining predecessor handles, and a client-side security check before sending
+graph data. Busy pipes wait within the caller's I/O deadline rather than reporting
+no owner. Contention with serve follows the same custody-checked
+handover, seal-before-unlock order and 60 s app-open bound as Unix; contention
+with an app refuses through the translated app-owner error. Namespace/lock
+errors keep editing available without a lease and display a persistent,
+non-dismissible warning naming single-writer protection, command-line access,
+the reason and a fix. It offers Retry now and diagnostic copying; Unix may
+explicitly repair mode 0700 on an owned non-symlink owners directory, keeping
+all existing lock inodes. Other access failures offer platform instructions;
+Windows DACLs, foreign-owned directories and symlinks are never repaired by the
+app. The app retries every 3 seconds after each attempt through the existing
+handover (at most 60 seconds per attempt). A CLI owner that appeared since the
+failure must yield and actually release its lock; timeout/refusal never grants
+ownership. Acquisition clears the warning. Retries serialize per binding and
+recheck the running host and revocation before attaching; a late claim is
+released after a graph switch or adoption.
+
+The account namespace remains deterministic and durable. Newly created Unix
+state parents request mode 0700 without changing existing parents. Unix socket
+length is checked at endpoint use, after lock discovery, so a long account home
+cannot prevent exclusion. Endpoint bind failure retains the lease; the CLI
+reports its endpoint limit separately. No `/tmp` or environment fallback splits
+the lock namespace. **Limit (D-20261027-OF):** while a claim fails, two hosts may
+overlap until claim/handover succeeds, including handover waits. Persistent
+failure or refusal leaves this window unbounded. The graph stays editable with
+the warning; revision guards and durable publication cannot supply missing
+owner serialization. Proof: owner namespace/lease tests,
+`src-tauri/src/owner_protection.rs` lifecycle tests, and
+`scripts/e2e-owner-protection.mjs` (disposable account home, editable fallback,
+permission repair, and automatic takeover of a CLI incumbent).
+Single-instance forwarding
+is not exclusion. iOS and Android retain
 Unsupported: one process per app with per-app sandboxed app data. A five-target
 guard pins desktop locks versus mobile sandbox exclusion, supplemented by the
 in-process registry/retirement guard on every target. Stable and Beta
@@ -303,9 +418,21 @@ zero additional checkpoint bytes or files per edit.
 `whole_graph_reconciled()` never serves the checkpoint: it waits for the launch
 diff, for graph-wide destructive operations and for a one-shot lookup that
 missed in the checkpoint (a cold-start `tine://` link, GH #181). The public operation
-surface is 49 operations: the methods of `Store` and `Transaction` plus every
+surface is 57 operations: the methods of `Store`, `Transaction` and `PagePlan` plus every
 public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
+A git pull adds `PagePlan::replace_page_bytes` (ADR 0078 §4): a host
+operation's revision-guarded raw-bytes page replacement, with the page input
+checks of `create` and no round trip, since Tine serializes nothing.
+SB2 diagnostics adds one memory-only operation to record a device-local draft
+namespace adoption with a closed reason. The read-only `diagnostics()` snapshot
+cannot capture moves performed by the app between report requests. Save
+outcomes and draft writes/recoveries are counted at their existing host
+boundaries; these counters add no per-save I/O or persisted record. The copyable
+report exposes only counts and fixed tokens, never graph paths, page names or
+content. The iOS comparison against the last remembered graph is distinct from
+the exact previous-launch question, which remains unknown without a persisted
+launch-by-launch container path.
 GX4 S4 extends the existing mounted-reader registration operation with a typed
 dependency parameter: an unlinked target, a resolved query/source, the registry,
 or a conservative full dependency. The one lifetime-bound operation registers
@@ -388,7 +515,7 @@ never from rereading every page's preamble. Proof:
 `crates/tine-graph-features/tests/br3_page_open_before_ready.rs`.
 
 While a page host holds a page (STEP3 §5, amendment A-V4), its publication
-consumer, or a reservation's transaction, is the page's only index writer
+consumer is the page's only index writer
 (R13). Invariant (G) (A-H2): every installed row about a held page (its
 cache document, revision, anchor, file time, error rows, listing entry and
 claimants, and the published snapshot's roots) comes from the bytes that
@@ -535,48 +662,11 @@ once the write succeeds. The order is memory only:
 - No chaining: an operation over any page of a running order waits until
   that order ends. A deletion answers `Waiting`. A rename waits up to
   `OPERATION_WAIT` (10 s) and is then refused `Busy`, changing nothing.
-  A retained writer (§7: a merge, a namespace or spelling move) waits for
-  its reservation, holding no lock, as for a busy page (REVIEW-3b-P2b R2);
-  writers over other pages are not held up. Its wait over a rename still
-  finishing is bounded (M6): `OPERATION_WAIT` after the writer started, one
-  deadline across its rediscoveries and flushes, it is refused `Busy`
-  ("Another rename of these pages is still finishing; try again in a
-  moment.") with nothing reserved. A wait that ends while the host is asking it
-  takes that ask's outcome, waiting for it up to `ASK_GRACE` (1 s): an ask
-  that admits is the caller's answer; one that does not admit is dropped,
-  and the caller is refused `Busy`, never told `Uncertain` about an
-  operation that will not run (CI 38436208770; proof `driver_tests.rs`
-  `an_unadmitted_ask_across_the_deadline_is_withdrawn_not_late`,
-  `an_answer_given_across_the_deadline_reaches_the_caller`). A rename
-  still finishing is a running
-  order, or a rename's operation from its admission: before its order
-  installs (its draft still being made durable) and, for a
-  references-only rename (the source has no file), through its operation
-  until its pages are handed back. A deletion and every other busy page are
-  waited for, unbounded. Every wait and check of the reservation (the
-  fence, the input check after a rediscovery, and the flush, which a rename
-  admitted meanwhile can take over) carries that deadline (REVIEW-3b-P2b-2
-  N1), and a rename holding any page of the writer's set bounds it, even
-  while the flush waits on another page of the set (REVIEW-3b-P2b-3;
-  `a_flush_over_a_mixed_set_is_told_busy_when_a_rename_holds_its_clean_page`).
-  A retained writer waiting on a rename gets an answer within
-  `OPERATION_WAIT`, except while the host is inside a disk operation; a
-  stuck disk call delays it until that call returns. Data safety is
-  unaffected. Accepted residual: REVIEW-3b-P2b-3 N1-entry (acquiring the
-  host's state mutex, at entry or after a condition wait, is not bounded;
-  `reserve` and the retained writers retire in the next storage step, when
-  the page host becomes the only page writer). A host that cannot answer, at entry or during any wait (its driver
-  ended, its state is poisoned, or it is down), also answers `Busy`, never
-  a panic, with every page it had fenced released (a poisoned host keeps
-  no state to release them from or to serve them; proof
-  `binding_order_tests.rs` `a_flush_handed_to_a_rename_is_told_busy_after_the_bound`,
-  `a_writer_entering_a_poisoned_host_is_told_busy`,
-  `a_writer_entering_an_ended_driver_is_told_busy`,
-  `a_host_down_after_the_fence_refuses_busy_and_releases_the_pages`; shape
-  guard `the_reserve_path_has_no_unchecked_lock_or_bare_wait`).
-  Scenario: the destination's save keeps failing (disk error), the
-  operation's draft keeps failing (app-data disk error), or a referrer is
-  conflicted (an external editor or sync delivery changed it).
+  Feature writers run as host operations too. Admission holds no caller-side
+  reservation: it compares the planned bytes and context under the path locks.
+  Admission is bounded by `OPERATION_WAIT`; the caller waits on a reply channel.
+  The save-first flush retains its existing wait policy: a running rename
+  bounds the wait, while other busy pages wait for their save.
 - A Discard of the destination before its witness cancels the rename in
   memory: the source takes its disk bytes again and is never trashed, and
   newer input typed into it stays. The caller hears `Superseded`.
@@ -1029,6 +1119,18 @@ measured) at ~1.3 GiB for a run that writes.
 
 ## I-8 refusal scenarios
 
+`git_disable_line_endings` (D-20261028-CRLF, ADR 0078 §4; all five targets since slice 3) repairs a sync
+refusal only after a raw blob hash of every tracked regular working file equals
+its index oid; missing/unreadable/nonregular paths and gitlinks refuse, with a
+count and sample. Attribute conversion also refuses. The owner holds `RUN_LOCK`
+and `index.lock` across the repeated check and libgit2's repository-local
+`core.autocrlf=false` config write. Both config and config.lock pass the existing
+bound metadata containment guard. No graph, index, ref, global or system config
+changes. A crash leaves conversion on or off; sync continues refusing conversion
+while it is on. This is an existing Git config key, not a new Tine persisted
+format or page-writer path. A converted checkout links to the Guide's
+commit-first, clean-status, local-config and re-checkout steps instead.
+
 Each row below is keyed by the source file, owning function and refusal family.
 The count is the number of production constructions or save-adapter outcomes;
 the source guard fails when an unreviewed site appears. These scenarios involve
@@ -1050,9 +1152,10 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::apply::InvalidTarget` | 1 | A generated unique candidate is no longer a valid target after a concurrent change; refuse that candidate. |
 | `transaction.rs::apply::RepeatedFile` | 1 | A unique candidate collides with another step after planning; refuse rather than overwrite. |
 | `transaction.rs::apply::Undecodable` | 2 | Imported bytes fail UTF-8 validation after staging; remove the stage and keep the original. |
+| `transaction.rs::prepare_steps::InvalidTarget` | 1 | A non-page transaction receives a page source or destination through a dynamic file ID, including a configured page directory or a unique candidate. Refuse the whole transaction before any mutation; page changes require a host plan. |
 | `transaction.rs::preflight_names::Closed` | 1 | A graph is closed while a queued save or plan waits; refuse its old binding. |
 | `transaction.rs::preflight_names::RepeatedFile` | 1 | A multi-step action names one file twice; refuse before any write or operation. |
-| `transaction.rs::plan::InvalidTarget` | 6 | A plugin or frontend defect passes a non-page effect, a read-only expectation or an unsupported shape to a page host planner (the existing host supports one move), or imported oversized page bytes cannot be staged within the existing parse cap; refuse before publication and keep every source. A byte-preserving non-page-to-page move stages only the page destination; its source cleanup belongs in a separate guarded transaction (§3.1c C2, P3 re-review rescue correction). |
+| `transaction.rs::plan::InvalidTarget` | 5 | A plugin or frontend defect passes a non-page effect, a read-only expectation or an unsupported shape to a page host planner, or imported oversized page bytes cannot be staged within the existing parse cap; refuse before publication and keep every source. A byte-preserving non-page-to-page move stages only the page destination; its source cleanup belongs in a separate guarded transaction (§3.1c C2, P3 re-review rescue correction). |
 | `transaction.rs::rewrite::Undecodable` | 1 | Sync makes a referrer invalid UTF-8 before rename rewrite; keep that file and refuse the rename. |
 | `transaction.rs::rewrite_move::Undecodable` | 2 | Sync leaves a title-owned move source or its rewritten bytes invalid UTF-8; refuse the rename before moving the file or publishing a new title. |
 | `transaction.rs::refuse_read_only_org::ReadOnly` | 1 | An Org referrer is not round-trip editable (malformed imported Org); keep its bytes instead of rewriting it, whether preflight computes the rewrite or reuses one prepared by the rename planner (GH #623). |
@@ -1079,17 +1182,21 @@ by I-9's typed failure paths.
 
 | Owner / operation family | In-scope scenario and required response |
 |---|---|
+| `src-tauri::owner` Windows namespace and pipe (`owner-unsafe`, L9-01/L9-02) | On a shared machine another account pre-created or loosened the directory, or occupied the pipe name, and could replace the lock or answer graph requests. Refuse CLI ownership with `owner-unsafe`; the app may open with a diagnostic and no endpoint. A lingering predecessor pipe name is retried for 3 s while holding the owner lock before refusal; a busy pipe waits within the caller's I/O deadline and never means no owner. Proof: `owner/windows_security.rs` directory and connected-pipe checks, `owner/windows.rs` busy-client, predecessor-release and persistent-squatter tests (Windows CI). |
 | `tine-store::model` path and graph acquisition | A configured graph or asset directory is retargeted, malformed, or resolves outside the approved root after sync or external editing; refuse reads and writes through that path. |
 | `tine-store::root_binding::RootBinding::check` (R-ROOT-MOVED, L9-02) | The user, file manager, sync/cloud client or unmounted volume moves, removes or replaces the directory bound at open. Linux/macOS/iOS use stat identity (Linux adds birth time when both sides supply it; SMB/FUSE filesystems compare device and birth time only, since their inode numbers change after eviction); Windows uses file id. Android deliberately uses vanish-only until FUSE identity is device-verified, so same-path directory replacement is not caught there. Fail detected detachment as `GraphRootMoved`, keep input in host/device-draft custody, show the sticky moved/kept/reopen notice. Shared write-target guards and restore's capability path check the binding. Proof: `production_guard_tests.rs` root cases, `root_binding.rs::l9_platform_policy_pins_android_vanish_only_and_stat_identity`, `root_binding.rs::l9_stat_identity_ignores_unstable_inode_numbers_and_one_sided_birth`, `tests/transaction.rs::l9_all_transaction_entry_paths_refuse_a_detached_graph`, `restore.rs::l9_restore_refuses_a_replaced_root_before_reserving_recovery`, ModelFs root schedules and native replay. Device acceptance limits remain above. |
 | `root_identity::is_container_rebase` (L9-01) | Plugin or web content nominates another graph's old namespace. Only iOS may authorize relocation, and only absolute paths with identical prefix and Documents-relative suffix, different valid container UUIDs, and no traversal qualify. Desktop/Android ignore the argument with a diagnostic. Proof: `only_the_container_uuid_can_change`, frontend `graph.test.tsx` rebase forwarding. |
 | `root_identity::recover_orphan_drafts`, desktop owner claim (L9-01) | Concurrent honest instances or in-process retiring hosts still hold the source or target draft namespace. Desktop recovery requires the current lease and takes the old key's existing owner lock, refusing contention or lock errors. All five targets exclude bound registry slots and HostRetirement entries for both namespaces, exempting only the current target under its saved-stop barrier; iOS relocation skips while either namespace is held. Mobile sandboxing supplies cross-process exclusion only. Recovery stops the current host before renaming into an empty census. Windows open contention uses the existing app-owner error with no handover endpoint. Proof: `old_graph_id_uses_the_same_owner_lock_as_the_host`, `adoption_requires_an_empty_target_and_moves_the_whole_census`, `host_retirement.rs::l9_retiring_source_refuses_draft_recovery`, `l9_recovery_and_relocation_exclude_both_bound_and_retiring_namespaces`, five-target guards and `owner/lock.rs` exclusion tests. |
+| `tine-store::directory_durability::DirectoryCreation` (REG-M2-DIRCREATE-BOUND; M2-1/M2-2) | A sync client, file manager, disconnected/remounted volume or concurrent honest instance moves/replaces the graph root or a directory parent after planning. Before every path-based mkdir, recheck the original graph binding using its existing platform policy and the actual parent's canonical containment. Detected root detachment fails as `GraphRootMoved`; an outside parent or inspection error fails as I/O, keeping input in host/device-draft custody. The planned replacement root and outside symlink target stay untouched in the M2 regressions on identity-checking test filesystems. Retryable path-based sync debt is retained; no directory handles persist. Android's vanish-only root policy cannot detect same-path replacement. Initial capture, final check-to-create and parent rename/check-to-sync residuals remain explicit above and in A-ROOT-BOUND/A-PATH-IDENTITY. Proof: `conformance_environment_tests.rs::m2_finding_c1_replaced_root_between_directory_plan_and_finish`, `m2_finding_c2_symlink_between_directory_plan_and_finish`, the `directory_durability.rs` dircreate tests, and `binding_root_tests.rs` permission/Discard/Close regressions. |
 | `tine-store::store` read, scan and handoff | Graph close revokes queued requests; a symlink, non-file (for the asset opener: neither file nor directory), or escaped path appears after the caller selected it, or sync retargets `assets/`; refuse stale bytes and OS handoff. A failed initial parse withholds an unpublished view. |
 | `tine-store::model::configured_hidden` scope (og T2, master `hidden_parse_failed_closed`) | A torn or hand-broken `config.edn` (sync-service delivery, an external-editor race or crash) leaves `:hidden` malformed or over its limits (unterminated vector, bad string escape, over 256 entries or 64 KiB, nesting over 32): graph-text scope hides all graph text instead of reading "nothing hidden", which would list, index, snapshot and export text the owner excluded. Recovery is fixing `config.edn`; the watcher's config reload restores the scope. A snapshot taken meanwhile holds no graph text and records `hidden_parse_failed_closed`, so its restore retires none (proof `crates/tine-store/tests/store_read.rs` `malformed_hidden_value_hides_all_graph_text`, `src-tauri/src/backup/restore.rs` `failed_closed_hidden_snapshot_records_scope_and_retires_nothing`). A missing `:hidden`, or a non-vector value, hides nothing (OG). |
 | `tine-store::page_host` request answers (step 3b, `Refusal`) | A submit or Discard for a page the host does not hold (`NotHeld`; a frontend or plugin defect, or a request from an earlier window state): refuse and change nothing. A Discard whose disk read fails (`ReadFailed`, SPEC-s2 §4.11 "discard failed"; a disk error), including the read of a running rename's source that the Discard would revert: refuse whole, change neither page, keep the rename's order (proof `crates/tine-store/src/page_host/command_tests.rs` `an_answer_that_did_not_take_its_request_names_why`, `a_discard_whose_partner_source_read_fails_changes_nothing`). A move whose versions are no longer current (`Stale`; newer input in this window raced it): refuse both pages. A move whose receiver draft cannot be written (`DraftFailed`; a full disk or an app-data disk error): refuse and change nothing. |
 | `tine-store::page_host` operations (step 3b P2b, `RenameRefusal`, `PageOperation`) | An operation's draft cannot be written (a full disk or an app-data disk error): the rename, merge move or deletion answers `DraftFailed`, nothing changed on disk or in memory, no order is installed and no reply slot is left (proof `binding_order_tests.rs` `a_rename_whose_draft_fails_changes_nothing`). An operation over a running rename's pages is `Waiting` or `Busy` (above, "Rename order"). A page the rename would rewrite has unsaved input (`Unsaved`; an honest edit in this window races it) or cannot be rewritten (`Unwritable`; malformed imported Org or non-UTF-8 bytes): refuse before anything changes. |
 | `tine-store::page_host` trash custody (A4, `HostIo::trash_sync`) | A deleted page's trash name cannot be made durable: the payload's stat or a trash-chain directory sync fails (a disk error, R-STORAGE-ERROR). The next saves of that page fail while its custody is owed, so a recreation never lands before the deletion's trash name is durable. The third consecutive failure escapes: the save goes ahead with a sticky error, and the unfinished custody stays as debt that launch retries. Discard never waits for custody (proof `crates/tine-store/src/page_host/production_tests.rs` `unsyncable_trash_escapes_after_three_failures_and_never_blocks_discard`, `scheduler.rs` `failing_custody_fails_saves_until_the_three_failure_escape`). |
 | `tine-store::page_host::delete` target (step 3b, `page_host/binding.rs`) | Web content, a plugin or a frontend defect passes `page_delete` a path that is not a page file of this graph (outside the root, not a graph text file): refuse before the deletion is registered or anything is written, as `page_open_checks::InvalidTarget` does for an open (proof `crates/tine-graph-features/tests/page_delete_missing.rs` `a_delete_outside_the_graph_refuses_without_writes`). |
-| `tine-store::page_host::apply` (host-only-writer P2, `HostOp`, `ApplyRefusal`) | A feature's planned write runs as one host operation, admitted only if every page still holds the bytes the feature planned from (`Expected`). A page that no longer does, or that the host cannot read (`Changed`; the window, an external editor or a sync service changed the file since the plan): refuse whole, change nothing, and the feature replans (`retry_on_conflict`). An absent destination's name slot is rechecked on the driver under the operation's path locks, using the transaction's claimant/twin and unreadable-owner rules (raw create checks the filename, CreateNew save also checks the DTO name, move exempts its own source). An arriving claim refuses `Changed` before the inner `Host::apply`; no operation or draft is recorded. This binding refusal is an s33 pre-admission stutter: the one-path-per-page model, its `opApply` conformance and pins are unchanged. C3 is proven by the real Guide API regressions for an arriving twin and an unreadable owner. Unsaved input on a page (`Unsaved`; an honest edit in this window races the writer): a `Refuse` writer refuses naming the page; a `Flush` writer saves it first and refuses only when that save cannot complete (a conflict or a persistent disk error). Store reads answer saved bytes, so a `Flush` feature saves its pages' input before it plans (`PageHost::flush_input`, `tine-graph-features::retained::operation`): a page that exists only as typed input would otherwise plan as absent. The save-first wait is a reservation's flush wait: past `OPERATION_WAIT` only a page a rename holds refuses `Busy`. A path that is not a page of this graph or reaches outside it through a symlink, a page named twice, or a move that is not one (`Refused`; a plugin or frontend defect, or an imported graph holding a symlinked folder): refuse before the operation is admitted or anything is written (pages named earlier in the operation may already be registered; registration writes nothing). A path that only collides with a registered entry, unproved, is `Changed` (an external rename or case-variant twin since the plan). Not admitted within `OPERATION_WAIT` (`Busy`; another operation, reservation, rename or path lock holds its pages, as above); after a flush the admission gets a whole `OPERATION_WAIT` again. A draft that cannot be written (`DraftFailed`; a full disk or an app-data disk error): nothing changed. After admission it answers as a rename does (`Unwritten`, `Superseded`, `Uncertain`). A deleted page keeps its bytes in the graph trash, as every host deletion does (proof `crates/tine-store/src/page_host/binding_apply_tests.rs`; physical random lockstep for current/stale plans, absent/present effects and claimed creates: `crates/tine-store/src/page_host/scheduler_random_tests.rs` `scheduler_random_walks_with_faults_and_disabled_actions`). |
+| `tine-store::page_host::apply` (host-only-writer P2, `HostOp`, `ApplyRefusal`) | A feature's planned write runs as one host operation, admitted only if every page still holds the bytes the feature planned from (`Expected`). A page that no longer does, or that the host cannot read (`Changed`; the window, an external editor or a sync service changed the file since the plan): refuse whole, change nothing, and the feature replans (`retry_on_conflict`). A publication or config delivery after the planner's bound view also refuses Changed before admission (B2), even if the planned page bytes are unchanged. An absent destination's name slot is rechecked on the driver under the operation's path locks, using the transaction's claimant/twin and unreadable-owner rules (raw create checks the filename, CreateNew save also checks the DTO name, move exempts its own source). An arriving claim refuses `Changed` before the inner `Host::apply`; no operation or draft is recorded. This binding refusal is an s33 pre-admission stutter: the one-path-per-page model, its `opApply` conformance and pins are unchanged. C3 is proven by the real Guide API regressions for an arriving twin and an unreadable owner. Unsaved input on a page (`Unsaved`; an honest edit in this window races the writer): a `Refuse` writer refuses naming the page; a `Flush` writer saves it first and refuses only when that save cannot complete (a conflict or a persistent disk error). Store reads answer saved bytes, so a `Flush` feature saves its pages' input before it plans (`PageHost::flush_input`, `tine-graph-features::retained::operation`): a page that exists only as typed input would otherwise plan as absent. The save-first wait is the host's flush wait: past `OPERATION_WAIT` only a page a rename holds refuses `Busy`. A path that is not a page of this graph or reaches outside it through a symlink, a page named twice, or a move that is not one (`Refused`; a plugin or frontend defect, or an imported graph holding a symlinked folder): refuse before the operation is admitted or anything is written (pages named earlier in the operation may already be registered; registration writes nothing). A path that only collides with a registered entry, unproved, is `Changed` (an external rename or case-variant twin since the plan). Not admitted within `OPERATION_WAIT` (`Busy`; another operation, rename or path lock holds its pages, as above); after a flush the admission gets a whole `OPERATION_WAIT` again. A draft that cannot be written (`DraftFailed`; a full disk or an app-data disk error): nothing changed. After admission it answers as a rename does (`Unwritten`, `Superseded`, `Uncertain`). Exception for folded case moves (S3): before any entry move the driver checks the write set's clean input, expected bytes and bound view/config and retains verified old bytes in trash using the existing no-replace copy recipe; a refusal can leave a harmless recovery copy. A withdrawn copy wait reports Busy; a late/ended copy wait reports Uncertain. Each guarded byte-preserving entry move runs first, under its path lock, rechecking clean input, old bytes and view/config; only a fresh listing can advance host spelling. The content HostOp then repeats full admission at the new spelling. Once entry work starts, every failed or unanswered move or content operation reports SpellingIncomplete, including a later Changed, Unsaved, Busy or DraftFailed. The file name may already be changed; the text change is not confirmed. Save or discard pending edits, then rename again to the intended name; if already displayed, check the text. No automatic entry completion is promised; unchanged names are always no-ops. A deleted page keeps its bytes in the graph trash, as every host deletion does (proof `crates/tine-store/src/page_host/binding_apply_tests.rs`; physical random lockstep for current/stale plans, absent/present effects and claimed creates: `crates/tine-store/src/page_host/scheduler_random_tests.rs` `scheduler_random_walks_with_faults_and_disabled_actions`). |
+| `src-tauri::owner::git_pull::pull` (ADR 0078 §4 rev 2, storage model s3.7) | Multi-device divergence delivered through git: a fetched upstream commit `U` that fast-forwards `HEAD` = `H`. Before writing, refuse by name (`pull-refused`, nothing written): a symbolic link, submodule, type or mode change (or a new executable file under `core.filemode`), a file that becomes a folder or the reverse, a path Tine does not write or in its own `logseq/.tine-*` folders, a path git would convert on checkout, a staged index entry other than `H`'s or `U`'s blob (another git program's staged change), an ignored local file where `U` adds one, a folder or link in the way. All host operations are planned and non-page transactions validated read-only before the first write; publication repeats their guards. A refusal discovered after any publication (including a foreign staged blob under `index.lock`, or on a later retry) is `pull-stopped`, naming the path and saying files were already updated; resolve the named obstacle in git, then retry. A graph inside a bigger work tree, eol conversion, sparse checkout and a mid-merge repository refuse sync (`refused`). Hold and retry next cycle (`pull-held`), possibly after earlier operations updated files: a pulled page has unsaved input (`Unsaved`, an honest edit racing the pull), a file no longer holds its `H` bytes (an external editor or sync service; the next cycle's autocommit records it and the pull is `diverged`), another operation, `index.lock` or `gc.pid` holds the pages or the repository. Pages go through one host operation per rename plus one for the rest (`HostOp`, `Input::Refuse`, row above); other files through revision-guarded transactions. Anything that stops after the first write (`pull-incomplete`: `Unwritten`, `Superseded`, `Uncertain`, `DraftFailed`, a failed write, a failed durability barrier, a crash or quit) leaves `HEAD` at `H`, the index at `H` or `U`, never `HEAD` ahead of the index (P1, P1b); the next cycle resumes, skipping paths already at `U` and re-syncing them before the index install (P2). The host records P4 at guarded publication, including publications after an Uncertain caller answer. Admission checks the shared receipt set under the same driver state as publication, also before a case-only entry move: a receipt arriving after planning refuses stale work without writing that path. The next cycle replans and skips it; this Changed answer need not imply divergence. A byte-preserving entry move already publishes its destination, so a receipted pull omits that destination from the subsequent content operation. Case-only candidates use the store's Unicode fold, retaining the actual alias/absence proof and guarded no-replace publication. An admitted pull pins `H`, `U` and its branch in memory until completion; pull and every autocommit's P3 test use that target even after a newer fetch. A force push replacing the pending target stops as `diverged` and retains that provenance. Until it lands every autocommit skips while each path differing from `H` holds its pinned `U` blob or was applied by this process (P3, P4), so a half-applied pull is never committed as a local change. Stated limit (D-20261028-GU): a pulled path edited back to exactly its `H` bytes, then a crash or graph switch before the ref moves, is overwritten by the resume; that text stays in git history as `H`'s blob. A lost ref compare-and-swap or captured-branch change is `diverged`; a race may leave earlier file updates in place. Pulled deletions keep their bytes in the graph trash. Proof: `src-tauri/src/owner/owner_tests/git_pull_tests.rs` (qGit* scenarios, each repair with fail-before evidence). |
+| `src-tauri::owner::git_sync_cycle::cycle` and the sync worker (ADR 0078 §3–§5, slice 2) | Multi-device divergence and sync delivery through a git remote, a remote that cannot be reached or turns down the token, a crash or quit mid-sync. One cycle (fetch, the pull above, push) runs on the binding's git thread, each step under `RUN_LOCK`; it changes the graph only through the pull. Fetch, pull or push `diverged` (both sides have new commits, or a push is rejected): stop, change nothing in the graph or on the remote (push never forces), and back off; the user merges in git. Network failure, an `auth-required` answer and a refused repository or remote configuration back off too (doubling from the interval, at most an hour); held and busy rows retry at the next cycle; `pull-incomplete` resumes there; `pull-stopped` (files already updated) waits for the user to fix the named path in git, then backs off like `diverged`. Quit starts no network step and cancels one in flight before the bounded quit autocommit. On Android and iOS (slice 3) the app leaving the foreground (the OS may then end the process without warning, a power cut or kill mid-write) first saves the pages, then commits what is pending unless the last autocommit is less than an interval old (the D-20261026-GC cap of one autocommit per interval, ≤ 6 an hour at the default; held-back edits are saved and commit at the next allowed moment or the next launch) and, under `sync-automatically`, pushes what the remote lacks (`push_pending`; never a fetch or pull in the background: the away state the background edge sets holds off every automatic cycle, and a requested one, until the foreground edge clears it; a worker that starts while the app is away starts away; a background edge a newer foreground edge overtook is dropped); coming back to the foreground runs a sync cycle at once without forcing a commit (its pre-pull autocommit is outside the cap, as every pre-pull commit is). A process ended mid-commit or mid-push leaves every object, ref and the index readable (libgit2 publishes each by lock file and rename, fsync on), but may leave `index.lock` (a push holds it only for its local checks, never across the network transfer) or a commit's branch lock (`refs/heads/<branch>.lock`): Tine never removes either, so commits and pushes wait as `busy` and Settings names the lock actually held (`held_lock`) after three busy cycles or 30 minutes (stated limit; proof `src-tauri/src/owner/git_mobile_tests.rs` `a_commit_or_push_the_os_ends_leaves_the_repository_whole`, 13 SIGKILLs per run on Linux and on the Android emulator's shared storage). Android shared storage reports another owner for every file (MediaProvider FUSE), so libgit2's repository-owner check (`safe.directory`) is off on Android only. Accepted under the storage trust model (manager, 2026-10-28): Tine does not defend against an attacker with write access to the account or filesystem, which is the only attacker that check stops; no in-scope threat needs it. A device token file (`git-credentials.json`) that cannot be read or comes from a newer Tine (disk error, a torn write by another program, an external editor, a newer Tine on the same app data) reads as signed out; signing in writes a fresh one; tokens are re-obtainable from the host. Proof: `src-tauri/src/owner/owner_tests/git_sync_cycle_tests.rs`, `src-tauri/src/owner/git_sync_cycle.rs` tests, `src-tauri/src/owner/git_sync/credentials.rs` tests. |
 | `tine-store::watch` reconcile | A graph closes, its root disappears, or an external config edit changes directory layout; stop reconciliation rather than publishing a false view. |
 | `tine-store::watch` OS watch setup (og 22a) | The OS refuses live file notifications for the graph (inotify's per-user watch limit is spent by other apps, a network or FUSE mount without events, a root replaced while open); degrade to a 3-second poll that runs the same reconcile, retry the live watch every cycle, and report the refusal and its restoration (`Subscription::observe_watch_status`, `graph-watch-refused` / `graph-watch-restored`, flight event `watcher.refused`). The graph is never silently stale (I-9). |
 | `tine-store::transaction` undo of a replaced file | Disk full, a disk error, or a crash while rolling back a failed multi-file save (C3 L07): undo stages the file's pre-transaction bytes as a `tx-old` conflict-trash copy before it withdraws the transaction's bytes, and removes that copy once the old bytes are back live. If the copy cannot be written it withdraws nothing, leaves the transaction's bytes live and reports the file in `undo_failed` (proof `c3s_content_loss.rs`). |
@@ -1100,10 +1207,10 @@ by I-9's typed failure paths.
 | `tine-graph-features::pages::rename_page_after_inventory` unreadable page (og C3W W2) | Malformed imported or sync-delivered content (non-UTF-8, over the size or outline-depth cap) in a page the rename must move or rewrite: the rename refuses naming the file, before anything is written, instead of skipping it while rewriting its referrers (proof `crates/tine-graph-features/tests/c3w_rename_unreadable.rs`). |
 | `tine-store::restore` source, destination and recovery | A selected snapshot source changes type or length, a live/recovery path is retargeted, or an external writer creates the destination; refuse publication and retain displaced bytes in recovery. A whole-graph restore (og-B, ADR 0062) takes graph text only as `Area::Graph` inside the graph-text scope the snapshot recorded, and a configured-roots restore never takes `Area::Graph`: a malformed or mixed snapshot refuses before any live file moves (proof `crates/tine-store/tests/restore.rs` `graph_restore_refuses_text_outside_its_recorded_scope`). It retires only unlisted live text inside that recorded scope, into `<restore-id>/graph/`, so text a later `:hidden` edit exposed is never displaced by a snapshot that could not have held it. Power loss after the replacement is published must not lose a retired file (its only copy can be an external editor's edit newer than the safety snapshot): the recovery root, every directory created for it, and each retired entry are synced before the replacement is published, and a real directory-sync failure (disk error) stops the restore with its recovery locations reported (proof `crates/tine-store/tests/restore.rs` `restore_makes_the_recovery_tree_durable_before_publishing_replacements`). Transactions that move, trash or create into a directory they create sync every created entry the same way (`directory_durability::create_dir_all_durable`). Two inputs that would be one file at their actual destination (a snapshot taken where `Pic.edn` and `pic.edn` were two files, restored where that destination directory folds case, for example a case-insensitive external assets target under a case-sensitive graph root; on Apple volumes also Unicode normalization) refuse before any recovery area is reserved: otherwise the second copy retires the first restored file or fails after the graph changed (`refuse_destination_aliases`; proof `a_pair_aliasing_only_at_the_assets_target_refuses_before_mutation`, `the_same_pair_on_case_sensitive_destinations_restores_both`). |
 | `tine-store::publish` staged site | An external writer retargets output or stage paths or wins the destination name; refuse replacement and retain the previous site. |
-| `tine-graph-features::pages` rename, rescue, merge and delete | A referrer carrying VCS conflict markers (an external merge or sync left it mid-conflict) is skipped, not rewritten, and reported (`skipped_conflicted_referrers`; R-VCS-MARKERS). Sync or an external editor changes a revision, creates a twin, occupies a destination, or makes Org non-round-tripping; refuse the affected transaction or host operation and retain source bytes. A rescue also refuses a name already carried by a retained non-portable legacy filename (`pages/A:B.md` from OG on Linux/macOS), which OG would load as a second file for that page. Delete refuses a stale path if an external editor changed its title or replaced its claimant; confirmed file absence succeeds without writes (GH #620). A rename commits every step only in the view and config it was planned in (`Transaction::expect_view`): sync or an external editor delivering a referrer or `config.edn` between plan and commit makes the attempt replan, within the existing four attempts, then `WouldBlock` (A-W1 B2; proof `crates/tine-graph-features/src/pages_snapshot_tests.rs`). |
+| `tine-graph-features::pages` rename, rescue, merge and delete | A referrer carrying VCS conflict markers (an external merge or sync left it mid-conflict) is skipped, not rewritten, and reported (`skipped_conflicted_referrers`; R-VCS-MARKERS). Sync or an external editor changes a revision, creates a twin, occupies a destination, or makes Org non-round-tripping; refuse the affected transaction or host operation and retain source bytes. A rescue also refuses a name already carried by a retained non-portable legacy filename (`pages/A:B.md` from OG on Linux/macOS), which OG would load as a second file for that page. Delete refuses a stale path if an external editor changed its title or replaced its claimant; confirmed file absence succeeds without writes (GH #620). A rename commits every step only in the view and config it was planned in (`Transaction::expect_view`; a rename of several pages is a host operation that carries that view and is admitted only in it, else refused `Changed`): sync or an external editor delivering a referrer or `config.edn` between plan and commit makes the attempt replan, within the existing four attempts, then `WouldBlock` (A-W1 B2; proofs `crates/tine-graph-features/src/pages_snapshot_tests.rs`, `crates/tine-store/tests/transaction_plan.rs` `a_view_bound_operation_refuses_after_a_config_delivery`). The home page in `config.edn` is written after the pages, in its own transaction: a failure there leaves the renamed pages and the home setting on the old name, and is reported. |
 | `tine-graph-features::conflicts` resolve | A sync conflict winner or copy changes or disappears during resolution, or an Org member is not editable; preserve both sides and require retry. A sync copy that changes after the winner's operation applied is kept. The winner holds the reviewed merge, and a retry re-reviews. Sync-service delivery (Syncthing or Dropbox) after the review can trigger this refusal. The copy's transaction guard now runs after the host operation. A `"merged"` row whose reviewed Concord-ledger base (`merge_base_rev`) is gone or different at apply time (sync delivery or an honest concurrent instance moved the ledger, or the ledger became unreadable) refuses with `merge base changed since the review` and writes nothing; every other decision never reads the base, so a ledger failure refuses nothing else (ADR 0056). |
 | `tine-graph-features::live_conflict` merge (og 8e; read-only: the window submits the merged page through its page host with the reviewed disk revision, STEP3 R6) | The file changed after the review (external-editor race, sync-service delivery, an honest concurrent instance), including a file that reappeared after an `absent` review: the merge refuses with `live conflict changed on disk` and the resolver refreshes its review; a submit whose reviewed revision is no longer the disk's leaves the page conflicted, and its save's base-revision guard writes nothing. The draft stays in the editor and in the page host's drafts. A `"merged"` row whose reviewed ledger base (named by its sha256) is no longer retained refuses with `merge base changed since the review`; other decisions never read the base. An Org file on disk that does not round-trip refuses (malformed imported content). Missing or unknown row choices keep both sides (L9-03). The shared native resolving-submit boundary copies the reviewed disk bytes into conflict trash before admission, using Concord's durable no-replace helper; a recovery-copy error refuses before publication and keeps the draft (L9-04). This also covers whole-page Keep mine. An absent disk revision needs no copy. A late refusal may leave an extra recovery copy. |
-| `tine-graph-features::retained` census writers under a page host (STEP3 §7, R6) | With the binding's running page host (every graph window binding runs one). Each writer keeps today's input rule (Q3), checked at host admission or under its final reservation. A refusing writer (sync-copy and duplicate-day fold, VCS-marker resolve, an interrupted title completion) meets a hosted page with unsaved input as today's changed-on-disk refusal (an honest edit in this instance races the writer as an external editor would) and writes nothing; a refusal names each page by its current spelling (a host key is opaque, REVIEW-3a5). A flush-first writer (rename, merge, rescue, journal migration and trash, PDF highlights, the Guide copy) saves that input first, and refuses naming the page only when its save cannot complete (a conflict or a persistent disk error), as today's stuck pages refuse. A writer fences only the pages it writes (A-R3): a journal migration runs each still-eligible proposal on its own and skips one whose page cannot be saved, naming it, while the others migrate; a rename reserves the referrers it rewrites, not one it leaves byte-identical (unchanged, or carrying VCS conflict markers). Moving a journal to trash and merging two pages (P2), and rescuing a stray file to a page, migrating a journal filename and creating a Guide page (P3), are host operations (`HostOp`). Each builds the store transaction it replaced, and calls `Transaction::plan` inside a read-only planner. Move metadata comes only from a move_file step or a feature's explicit post-plan declaration of content transfer (merge, fold, PDF migration), validated against the effects at admission; effect count never establishes a move. Creation checks remain those of the original transaction step, independent of that declaration. Unique allocations reserve names chosen by preceding unique steps in the transaction. Planning shares commit's preflight (target, claimant, unreadable owner, twin, nesting, markers, round-trip firewalls and serialization), stages the old bytes, preserves `Why`, and publishes nothing. Non-page effects stay outside the operation; `Store::as_page` decides page-ness. A byte-preserving move from a non-page source plans only its page destination using the move's staged bytes and slot checks; other non-page steps are refused by `plan`. `Store::page_bytes` has been removed. A page changed since the plan is refused `Changed`, and the writer replans (row above). A rescue and a migration move bytes unchanged. The target is written over no file, then the source is deleted from the planned bytes, in a rename's order. A crash between them completes at relaunch. A non-page rescue source (including a sync-conflict file) instead stays outside the operation: its destination is staged unchanged by the original move preflight, including invalid UTF-8, without raw-create content validation, and its source is trashed only after Applied, guarded by the read revision. Uncertain keeps the source; a crash before cleanup keeps both copies. A target that appeared since the plan (sync delivery, an external editor or a saved window draft) is never overwritten. The rescue refuses `AlreadyExists` when its claimant check sees it. The migration skips the proposal with its transaction refusal. Each proposal is its own operation; one that cannot run is skipped with its reason while the others migrate. A Guide page is created over no file (`Expected::Absent`). A file or folder at its path, including one that appears after the plan through an external editor or sync delivery, is reported skipped and never written. Guide assets stay their own transactions. The sync-copy and duplicate-day folds are host operations too (P3). A sync copy is trashed after the fold's operation applied, guarded by the bytes it read. A copy changed since is kept, and the resolve refuses as changed on disk. The sync-copy trash fences nothing: the copy is not a page. Writing PDF highlights is a host operation too (P3). The sidecar EDN holds the highlight data and is not a page. It is saved first in its own guarded transaction outside the planner. The read-only planner reads the annotation page bytes before checking that the saved sidecar revision still holds; if another saver changed it, it returns to the outer loop to redo the merge and sidecar save, including on a page replan. A later saver that replaces both sidecar and page invalidates the staged page base at planning or admission. Then the annotation page and any migrated legacy-key page's deletion run as one host operation, planned from the page bytes and ordered as a move when migrating. The operation names and admits the page under the spelling the plan resolves, including an encoded file name. A refused or unfinished page operation returns its error with the sidecar saved. A subsequent successful save can add missing annotation blocks from highlights retained in the sidecar. If a deletion reaches the sidecar but the process crashes before recording the page operation, a later save may no longer have the baseline needed to remove that annotation; automatic deletion catch-up is not guaranteed. The legacy sidecar and deleted crops are retired best effort after the operation applies. Resolving a file's VCS conflict markers is a host operation too (P3). It is planned from the marker bytes with the resolving parse. A copy of those bytes is staged into the conflict trash outside the read-only planner, before the operation. A refused operation leaves one harmless extra copy there; the file is unchanged. A page changed since the plan is refused under the `Refuse` policy and never overwritten. With no running host (the slot is off: the host failed to start, or to relaunch after a restore, on a disk error) every one of these writers refuses "The graph isn't open right now. Reopen it, then try again." and writes nothing (host-only-writer S1; proof `src-tauri/src/host_off_refusal_tests.rs`). A non-page target (a Guide asset, a journal entry `Store::as_page` does not name) is its own guarded transaction with no fence. A single page's rename is the host's operation: an Org page that does not round-trip refuses as today; a page the admitted operation could not yet write (disk error) is reported, and the operation finishes once it can. The host admits it only while the planning view and config are current, else the rename replans (B2). Its final pages are the referrers whose bytes the rename changes, held buffers included, which the planner may not list: a held referrer the rename leaves byte-identical (it already says the new name, or carries VCS conflict markers, which the report lists as skipped) is not one of them: its unsaved input or a writer holding it neither blocks nor refuses the rename, and it is not written (A-W1 R3, R4). A writer over a page of a rename still finishing (its destination's save or its draft keeps failing on a disk error, or a referrer is conflicted by an external editor or sync delivery) is refused `WouldBlock` "Another rename of these pages is still finishing; try again in a moment." once `OPERATION_WAIT` has passed since it started, with nothing written or reserved; other busy pages are waited for (M6; proof `crates/tine-graph-features/tests/retained_over_running_rename.rs`, `binding_order_tests.rs` `a_retained_writer_over_an_unapplied_rename_is_told_busy_after_the_bound`). Proof `crates/tine-graph-features/tests/retained_host.rs`, `crates/tine-store/src/page_host/binding_rename_tests.rs`, `crates/tine-graph-features/tests/host_moves.rs`, `crates/tine-graph-features/tests/guide_host_op.rs`, `crates/tine-graph-features/tests/pdf_host.rs`, `crates/tine-graph-features/tests/host_op_conflicts.rs`. |
+| `tine-graph-features::retained` census writers under a page host (STEP3 §7, R6) | With the binding's running page host (every graph window binding runs one). Each writer keeps today's input rule (Q3), checked at host admission. A refusing writer (sync-copy and duplicate-day fold, VCS-marker resolve, an interrupted title completion) meets a hosted page with unsaved input as today's changed-on-disk refusal (an honest edit in this instance races the writer as an external editor would) and writes nothing; a refusal names each page by its current spelling (a host key is opaque, REVIEW-3a5). A flush-first writer (rename, merge, rescue, journal migration and trash, PDF highlights, the Guide copy) saves that input first, and refuses naming the page only when its save cannot complete (a conflict or a persistent disk error), as today's stuck pages refuse. A host operation admits only the pages it writes (A-R3): a journal migration runs each still-eligible proposal on its own and skips one whose page cannot be saved, naming it, while the others migrate; a rename writes the referrers it rewrites, not one it leaves byte-identical (unchanged, or carrying VCS conflict markers). Moving a journal to trash and merging two pages (P2), rescuing a stray file to a page, migrating a journal filename and creating a Guide page (P3), and renaming several pages (a namespace, a merge or a reference-only rename; S2) are host operations (`HostOp`); a case-only spelling move first keeps verified old bytes in recoverable trash, then a non-drafted driver command moves the entry under its key path lock, rechecking clean input, expected bytes, view/config and the unlisted folded alias (S3). The content HostOp repeats admission at the resulting spelling. Once entry work starts, an unfinished move or content step reports SpellingIncomplete: the filename may have changed while the text update is unconfirmed. No persisted spelling intent or automatic entry completion is promised. Save or discard pending edits, then retry the intended rename; home is updated only after both steps succeed. An operation carries any number of moves, no page in two: receivers publish first, then the other pages, then the sources' deletions. The model checks one move per operation; N-move ordering is an implementation obligation pinned by `page_host::order::tests::one_move_gates_as_before`, `several_moves_order_receivers_then_others_then_sources` and `a_discarded_receiver_cancels_its_own_move`. Each builds the store transaction it replaced, and calls `PagePlan::plan` inside a read-only planner. Move metadata comes only from a move_file step or a feature's explicit post-plan declaration of content transfer (merge, fold, PDF migration), validated against the effects at admission; effect count never establishes a move. Creation checks remain those of the original transaction step, independent of that declaration. Unique allocations reserve names chosen by preceding unique steps in the transaction. Planning shares commit's preflight (target, claimant, unreadable owner, twin, nesting, markers, round-trip firewalls and serialization), stages the old bytes, preserves `Why`, and publishes nothing. Non-page effects stay outside the operation; `Store::as_page` decides page-ness. A byte-preserving move from a non-page source plans only its page destination using the move's staged bytes and slot checks; other non-page steps are refused by `plan`. `Store::page_bytes` has been removed. A page changed since the plan is refused `Changed`, and the writer replans (row above). A rescue and a migration move bytes unchanged. The target is written over no file, then the source is deleted from the planned bytes, in a rename's order. A crash between them completes at relaunch. A non-page rescue source (including a sync-conflict file) instead stays outside the operation: its destination is staged unchanged by the original move preflight, including invalid UTF-8, without raw-create content validation, and its source is trashed only after Applied, guarded by the read revision. Uncertain keeps the source; a crash before cleanup keeps both copies. A target that appeared since the plan (sync delivery, an external editor or a saved window draft) is never overwritten. The rescue refuses `AlreadyExists` when its claimant check sees it. The migration skips the proposal with its transaction refusal. Each proposal is its own operation; one that cannot run is skipped with its reason while the others migrate. A Guide page is created over no file (`Expected::Absent`). A file or folder at its path, including one that appears after the plan through an external editor or sync delivery, is reported skipped and never written. Guide assets stay their own transactions. The sync-copy and duplicate-day folds are host operations too (P3). A sync copy is trashed after the fold's operation applied, guarded by the bytes it read. A copy changed since is kept, and the resolve refuses as changed on disk. The sync-copy trash fences nothing: the copy is not a page. Writing PDF highlights is a host operation too (P3). The sidecar EDN holds the highlight data and is not a page. It is saved first in its own guarded transaction outside the planner. The read-only planner reads the annotation page bytes before checking that the saved sidecar revision still holds; if another saver changed it, it returns to the outer loop to redo the merge and sidecar save, including on a page replan. A later saver that replaces both sidecar and page invalidates the staged page base at planning or admission. Then the annotation page and any migrated legacy-key page's deletion run as one host operation, planned from the page bytes and ordered as a move when migrating. The operation names and admits the page under the spelling the plan resolves, including an encoded file name. A refused or unfinished page operation returns its error with the sidecar saved. A subsequent successful save can add missing annotation blocks from highlights retained in the sidecar. If a deletion reaches the sidecar but the process crashes before recording the page operation, a later save may no longer have the baseline needed to remove that annotation; automatic deletion catch-up is not guaranteed. The legacy sidecar and deleted crops are retired best effort after the operation applies. If the page operation fails or remains pending while an old-key sidecar remains, the fixed LEGACY_SIDECAR_LEFT diagnostic reports it without retiring it early. Resolving a file's VCS conflict markers is a host operation too (P3). It is planned from the marker bytes with the resolving parse. A copy of those bytes is staged into the conflict trash outside the read-only planner, before the operation. A refused operation leaves one harmless extra copy there; the file is unchanged. A page changed since the plan is refused under the `Refuse` policy and never overwritten. With no running host (the slot is off: the host failed to start, or to relaunch after a restore, on a disk error) every one of these writers refuses "The graph isn't open right now. Reopen it, then try again." and writes nothing (host-only-writer S1; proof `src-tauri/src/host_off_refusal_tests.rs`). A non-page target (a Guide asset, a journal entry `Store::as_page` does not name) is its own guarded transaction with no fence. A single page's rename is the host's operation: an Org page that does not round-trip refuses as today; a page the admitted operation could not yet write (disk error) is reported, and the operation finishes once it can. The host admits it only while the planning view and config are current, else the rename replans (B2). Its final pages are the referrers whose bytes the rename changes, held buffers included, which the planner may not list: a held referrer the rename leaves byte-identical (it already says the new name, or carries VCS conflict markers, which the report lists as skipped) is not one of them: its unsaved input or a writer holding it neither blocks nor refuses the rename, and it is not written (A-W1 R3, R4). A rename over a page of a rename still finishing (its destination's save or its draft keeps failing on a disk error, or a referrer is conflicted by an external editor or sync delivery) is refused `WouldBlock` "Another rename of these pages is still finishing; try again in a moment." once `OPERATION_WAIT` has passed since it started, with nothing admitted; other busy pages are waited for (M6; proof `crates/tine-graph-features/tests/retained_over_running_rename.rs`, `binding_apply_tests.rs`). Proof `crates/tine-graph-features/tests/retained_host.rs`, `crates/tine-store/src/page_host/binding_rename_tests.rs`, `crates/tine-graph-features/tests/host_moves.rs`, `crates/tine-graph-features/tests/guide_host_op.rs`, `crates/tine-graph-features/tests/pdf_host.rs`, `crates/tine-graph-features/tests/host_op_conflicts.rs`. |
 | `tine-graph-features::journals` migration and trash | A journal disappears or changes after selection; refuse that item and leave other journals intact. |
 | `tine-graph-features::conflicts::trash_copy` non-page writer | A sync copy changed since the review (Syncthing or Dropbox delivery after the review): refuse and keep the copy. For a fold, this guard runs after the winner's host operation applied. The winner holds the reviewed merge, and a retry re-reviews. Sync copies are not pages and need no page fence. |
 | `tine-graph-features::pdf` highlight and sidecar | Sidecar or notes bytes change concurrently, a malformed imported sidecar appears, or Org notes cannot round-trip; retain the source and refuse or retry within the bounded loop. With a page host the annotation page is a host operation. A page changed since the plan is refused `Changed`, and the writer replans (the window, an external editor or a sync service changed it). If the saved sidecar changed, the page replan returns to the outer merge and guarded sidecar-save loop; it does not reuse stale merged highlights. |
@@ -1125,6 +1232,36 @@ by I-9's typed failure paths.
 | `src::document::host` transfers (L9-07, F4) | An unfinished or malformed page-header draft cannot serialize. With a host, refuse before moving or roll back all endpoints, including their invalid header input; never fall back to independent page saves. Every rollback at this boundary reports the invalid header, conflict or inability to save the move, including callers without preflight. Independent saves are only for the no-host case. Menus, keyboard, drag/drop, journal carry and undo/redo share this boundary. Proof `src/document/host/l9Transfer.test.ts`. |
 | `src::quickCaptureReceiver` retry (L9-08, F1–F3) | A save backoff, lost acknowledgement, graph-window reload or graph switch can follow an insertion. The sender retains the request id and original snapshot across transport and manual retries. A native process-memory claim precedes insertion; pending claims survive WebView reload and are not evicted by the 100 completed-id cap. A live receiver retries only its landed destination's guarded save. When reload/rebinding prevents proof of the old attempt, acknowledge a distinct uncertain/previous-graph state, keep scratch and retry identity (including on Escape), and tell the user to check that graph before capturing again; never silently reinsert. A proved refusal before insertion releases the claim and permits a new snapshot. After success, subtract matching submitted prefixes by node identity, retaining new nodes and additions. Rewritten non-prefix input stays with a reminder that the earlier capture is saved; IME subtraction waits for composition end. Scratch and claims last only for the running process. No new persisted record or graph write path. Proof `src/capture.followups.test.tsx`, `src/capture.keptText.test.tsx`, `src/App.capture.test.tsx`, `src-tauri/src/capture_receipts.rs`. |
 | `src::document::host` window writes (step 3b P2b: the page host is the only writer of page edits; the frontend save engine is gone) | An alias draft (a page with no file whose name became an alias, L13) lands in its owner only while the owner is open in the host, idle and not conflicted, and no editor is open on it (an IME composition is DOM-local input the store does not hold yet); otherwise it stays, unsaved and listed. The landing is recorded when the owner's live text receives the copy, before submission and publication are proved; if either fails, the draft stays recoverable. A retry after an unproved publication or a mid-save edit replaces the landed copy instead of appending the draft again; when the owner's text no longer holds that copy (an external editor or sync client changed the owner meanwhile) the landing refuses, says so, and keeps the draft (proof `src/document/save/aliasDraft.test.ts`, `src/document/save/aliasDraftRetry.test.ts`; audit L9-05). A watcher observation of a page with unsaved input conflicts in the host; the conflict lifts when the file provably returns to the baseline the editor loaded (an external editor's temp+rename or a mid-delivery sync gap), and the frozen edit is saved against it (og I1c, master c68c0b6e7; proof `src/document/conflictLift.test.ts`). |
+
+M3 fault evidence for the `tine-store::page_host::apply` I-8 row:
+`native_environment_tests.rs#m3_c6_draft_failed_matches_i8_host_apply_row`
+replays StorageFull, Other (EIO class), PermissionDenied and ReadOnlyFilesystem
+at draft temp/rename/sync on ModelFs and the native adapter. A refused operation
+answers DraftFailed, changes no held page or graph bytes and installs no order.
+Failed saves are I-9 error returns, not new counted I-8 refusal sites:
+`m3_c6_errno_classes_keep_sticky_failure_and_admitted_input` checks the failed
+outcome/cause, at-risk input, durable draft retention, reattach and repaired
+retry. `m3_c6_errno_notice_stays_sticky_until_publication_on_both_backends`
+also runs the actual notice policy through three failures, durable drafting,
+idle reconciliation and successful-publication clearing on both backends.
+C3/C4 parent loss before the base guard conflicts rather than publishing
+stale recreation. Directory behavior is tested against the model; M3-1/M3-2
+are active regressions for post-publication currentness and retained sync debt,
+with cold draft/repaired retry and current-chain re-planning checks. Android's
+vanish-only directory policy excludes the native M3-2 replacement case (see
+ASSUMPTIONS.md A-DIRSYNC). Transactions
+have only bounded C2/C3 escape checks and retain `oracle=false` in the mutation
+ledger. No native power-loss refinement is claimed.
+
+The CLI passes `None` as the session to `PageHost::delete`, capturing the current
+binding session when that method begins, after the owner's window flush and
+checked-byte read. A reload after this capture and before admission refuses;
+a reload between the flush/read and the call is already part of the newly
+captured session and does not by itself refuse. An explicit window caller
+carrying the previous session would refuse in that interleaving. Checked-byte,
+dirty-input, locking and settle checks still apply. It adds no deletion writer
+or recovery format; the owner flushes the window's canonical page name before
+reading the bytes it passes as `checked`.
 
 Before conflicted deletion (FU1), the window freezes page edits and drains its
 debounced and in-flight submits through the existing host client, with a five-second
@@ -1160,14 +1297,48 @@ request identity while keeping all scratch text. It writes nothing; the user is
 told to remove anything already saved in the previous graph before filing the
 new snapshot. Ordinary retries keep the old identity and cannot reinsert it.
 
-The writer census distinguishes read-only operation planners from reservation
-and restore write closures. Transaction construction and `plan` are read-only;
-a commit or non-page write in a planner fails the guard, including through a
-helper or a writer exemption. Imported helpers and aliases are resolved across
-modules; an unresolved free call receiving a Store/Transaction parameter fails
-the planner guard. The negative fixtures cover inline and named
-planners, direct, imported and helper-mediated commits, and keep protected write closures
-and edit-kind checks meaningful.
+Page writers construct a `PagePlan` through `Store::page_plan`. Its only public
+consuming operation is `plan()`: a feature crate cannot commit it. The public
+`Transaction` has no page-save or reference-rewrite methods, and preflight
+refuses any mutating file step whose dynamically resolved source or destination
+is a page. Read-only page expectations remain allowed. Both builders use the
+same revision, containment, claimant and content preflight. Direct page commits
+are crate-private and used by internal regression fixtures; host publication
+remains the production page writer. Restore and demo graph creation retain
+their documented exceptions. Compile-fail doctests keep the public separation
+checked; the former writer call-graph census is retired. The operation-kind
+check remains.
+
+RG7 records the last successful containment-checked path per thread under
+`#[cfg(test)]` only. A failed check clears the witness. A mutation target must
+equal or descend from the checked scope. Coverage is explicit:
+
+- Atomic graph writes, copies and no-replace moves, and direct host publication.
+- Graph-local static-publication stage directory creation, nested directories
+  and file writes; retirement and invalid-stage capability renames; final
+  no-replace installation; and stage cleanup removal.
+- Restore recovery and live directory creation, retirement (including its
+  fallback recovery copy), temporary file creation/write, no-replace publication
+  and temporary cleanup. Restore retains its stopped-host exception.
+- Folded spelling `rename_replace`, transaction undo cleanup, asset-trash file
+  and directory removals, and new-graph root/scaffold/seed directory creation.
+
+Test-only scope witnesses captured from a checked directory follow its bound
+capability through publication callbacks, restore's graph/approved-assets
+switches and delayed cleanup. Entering such a scope temporarily reinstates that
+captured witness; it cannot create a witness without a successful check. The
+test build checks capability parent scopes separately where an ordinary checked
+leaf cannot authorize a sibling stage or temporary file. These probes, scope
+fields, state, calls and branches are absent from non-test builds. No production
+I/O, fsync count or durability recipe is added by RG7.
+
+Unchecked-call tests cover atomic mutations, directory creation and removal,
+publication stage create/write/retire/cleanup, restore create/copy/retire/publish
+and folded replacement; assertions panic before the mutation. Checked targets,
+descendants and delayed capability cleanup have positive coverage. Explicit
+external exports are outside RG7's graph scope: their selected outside-graph
+parent capability, create-only installation and stage identity remain their
+guards, including their stage writes and cleanup.
 
 Watcher reconciliation distinguishes a successful page read, an intentionally
 excluded nonregular or escaped path, and a failed read. A successful read can
@@ -1368,12 +1539,27 @@ delete boundaries, counting the recovery files and their exact bytes.
 
 ## Case-only page moves (GH #609)
 
-`Transaction::move_file` accepts a destination spelling that resolves to its
+`PagePlan::move_file` plans a destination spelling that resolves to its
 unique source, but refuses a separately listed destination entry even when it
 is a hard link to the same inode (external-editor/sync-delivery collision).
-The feature layer uses the ordinary RenamePage transaction for filename,
-explicit title, references, namespace descendants and config home spelling.
+The feature layer plans a RenamePage host operation for title, references
+and namespace descendants; config home spelling is its guarded post step.
 Identity stays normalized; there is no second page entity for a casing change.
+On a folding volume each same-key move first changes the entry, then runs
+a content Write at the destination over the source's expected bytes.
+Before moving any entry the driver checks clean input and expected bytes
+for the write set, its bound view/config, and keeps a
+verified old-byte copy in graph trash when the text changes, under the page
+path locks and store writer, using the existing durable no-replace recipe.
+A later refusal can leave a harmless recovery copy. A
+non-drafted driver command moves the entry under its key's path lock,
+rechecking clean input, bytes, config and the folded alias. It keeps the
+key, held page and queued requests, and moves the spelling and lock handle.
+The single-page alias branch refuses unsaved input; namespace renames keep
+their existing flush policy. Several folded entries use this same command
+in turn before the shared content operation, which repeats full admission
+at the observed destination spellings. The model has no spelling
+concept; these commands add no draft kind or model claim.
 
 Case-only moves first try the existing atomic no-replace primitive on Linux,
 Windows, macOS, Android and iOS. Only an already-exists refusal permits an
@@ -1384,15 +1570,21 @@ alias, one plain `std::fs::rename` uses the atomic-write path's platform rename
 (rename(2) / MoveFileExW with REPLACE_EXISTING). A separately listed entry,
 including a hardlinked twin, stays an ordinary collision. After a case move,
 a fresh directory listing must contain the destination spelling and omit the
-source spelling (NFC/NFD normalization is accepted); failure uses transaction
-undo. These checks defend external-editor/sync-delivery collisions and a
+source spelling (NFC/NFD normalization is accepted). The transaction helper
+uses undo; the host command retains old content and reports uncertainty
+on a move/sync failure, following the new spelling if the entry moved.
+The host decides whether it moved from a fresh listing containing the
+destination and omitting the source, including when the syscall returned
+success but a provider silently kept the source case. It never follows a
+spelling solely because rename returned success.
+These checks defend external-editor/sync-delivery collisions and a
 filesystem/provider silently retaining the old spelling.
 
-Before the atomic rename, the source is live; after it, original bytes are
+For the transaction helper, before the atomic rename, the source is live; after it, original bytes are
 live at the new spelling. There is no intermediate Trash-only window or
 manual page restoration step. After the existing atomic rewrite, updated
 title/reference bytes are live there. Retrying after the rename finishes an
-old explicit title in place, through `Transaction::rewrite_refs` with
+old explicit title in place, through `PagePlan::rewrite_refs` with
 `TitleRebind::Own` under the same revision guard; `move_file` onto its own
 source names one file twice and is refused (`RepeatedFile`). An I/O failure attempts ordinary transaction undo;
 failed undo keeps live or recoverable bytes. Changed directories use the
@@ -1401,7 +1593,49 @@ the folded-alias fallback uses the same replacement/durability policy as
 atomic writes. The existing check-to-rename race with honest external writers
 and flag-refusal fallback policy remain.
 
-Unit cost: one namespace rename instead of two for case-only moves; no staging
+For the host path the order is entry first, then content. Before the move,
+the source holds all original bytes. After the atomic move but before its
+directory sync, a process crash leaves whole original bytes at the new
+spelling; a power loss may retain either spelling under the existing sync
+policy. After sync but before content admission, the new filename holds
+the old text. Relaunch indexes whichever spelling survived: the page key
+is case-insensitive on a folding volume, so the page stays reachable.
+An explicit old title still displays the old name: an ordinary rename from
+that name to the intended name completes title and referrers in place via
+the existing interrupted-title rebind path. During content, ordinary durable
+drafts own recovery; relaunch completes recorded content. After content,
+the new filename and text agree. A titleless page already displays its new
+filename-derived name after the move; old-case references still reach that
+same identity. An unchanged title is always a silent no-op and never
+normalizes legitimate case or Unicode spelling, including namespace children.
+There is no persisted spelling intent or automatic entry completion. Home
+stays on its old spelling unless both steps succeed; a crash before the
+separate guarded config post step can retain old home casing.
+Recovery resolves a draft key's leaf to its current disk spelling before
+checking that leaf as a write target and acquiring its path lock. It first
+checks the original parent, so a folder retargeted while stopped cannot
+redirect recovery. Checking the old leaf first would reject a legitimate
+case alias and park the draft at an unwritable spelling.
+
+| Host crash boundary | Relaunch and ordinary recovery |
+| --- | --- |
+| After move sync, before content drafting | New filename and original bytes. An explicit old title permits old → intended to complete title/referrers in place. A titleless page already displays the new filename name; old-case links still resolve, and unchanged confirmation does nothing. No automatic reference-case repair is promised in this gap. |
+| During content after a durable draft | Draft keys retain their identity but resolve to the moved disk spelling; normal guarded saves complete the recorded content on relaunch. If an explicit title still displays old, old → intended is an ordinary retry; unchanged confirmation remains a no-op. |
+| Between namespace entry moves | Mixed entry spelling and original content until content begins. With an explicit old parent title, retry old → intended rebinds moved titles and moves remaining entries. With a titleless parent already moved, it displays the intended name and unchanged confirmation is a no-op; remaining children require individual renames. Move order follows sorted paths (the parent first with triple-lowbar; a child can precede it with legacy `%2F`). |
+
+Pure entry moves lose no bytes at either name and use the existing sync
+recipe. Content pays the normal HostOp draft/publication cost and retains
+the same old-byte trash copy as the transaction rename. No new draft record
+or transport is needed. Every failure once an entry command starts, including
+a later content admission refusal, reports `SpellingIncomplete`: the file
+name may already be changed; the text change is not confirmed. Save or discard
+pending edits, then rename again to the intended name; if already displayed,
+check the text. No user text is lost: the entry move preserves all bytes,
+old bytes have trash custody before replacement, and content uses the normal
+draft and guarded save path. Case-sensitive moves keep their ordinary drafted completion
+message, including when their names differ only by case.
+
+Transaction-helper unit cost: one namespace rename instead of two for case-only moves; no staging
 directory, added payload copy or retained record on success. If content changes,
 the existing rename old-byte trash copy remains O(page bytes), on both 1-block
 and 60-block pages; no sync transport. Process-abort tests exercise before
@@ -1446,8 +1680,7 @@ held pages), so an exact count cannot include it. Named remaining
 dimensions, walked per step and not bounded by these proofs: the window's
 subscribed pages S (retirement candidates per poll, quiet notices per
 collection), queued requests Q (checked per retirement candidate), surfaced
-draft errors E (checked per visited page), and a released retained writer's
-handover keys, rechecked per step until each is observed (follow-up F1). The frontend matches touched paths against loaded
+draft errors E (checked per visited page). The frontend matches touched paths against loaded
 pages once; it still reloads only clean rewritten pages and discards moved pages.
 
 Unit cost (step 3b P2b, a single page's rename through the page host, Q-P2b-2;
@@ -1477,7 +1710,7 @@ preflight base-revision stage, the final pre-rename guard inside
 `atomic_write_with_check`, and the publication read. The planner names only
 the renamed page's own files (`WholeGraph::inventory(InventoryScope::FilesAtOrUnder)`), not the
 whole-graph inventory. It queues each unmoved, marker-free referrer with
-`Transaction::rewrite_refs` and the text it read; the call reports whether the
+`PagePlan::rewrite_refs` and the text it read; the call reports whether the
 rewrite (`tine_core::refs::rename_rewrite`, the one rewriter both the planner
 and the store use) changes it, queues nothing for an unchanged non-title
 referrer, and keeps a changing rewrite in the queued step. Moved and
@@ -1515,7 +1748,10 @@ can make the host's unchanged-observation publication stamp the absent
 source again (`Bridge::index` → `note_own_observed`): it has no successful
 whole-file read to bill as `observation_reads`, and its stamp is not made
 on the watcher thread, so `stamps_by_path` alone does not isolate publication.
-The one-stamp-per-written-referrer bound is unchanged. The separate live
+M3-1 adds one post-directory-sync identity probe per written referrer, so the
+publication bound is now two metadata stamps per referrer: that probe and the
+existing own-write check at its later boundary. Payload read/hash bounds are
+unchanged. The separate live
 echo check (`rename_io::rename_watcher_echo_cost_is_linear_in_written_files`)
 retains 60/600-page graphs and the same watcher read/stamp bounds.
 The live-watcher rename cost tests measure through an acknowledged drain

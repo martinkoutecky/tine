@@ -64,6 +64,7 @@ import { AlwaysAskSetting } from "./AlwaysAskSetting";
 import { ContentWidthFields } from "./ContentWidthFields";
 import { QueryExportLimitSetting } from "./QueryExportLimitSetting";
 import { GitAutocommitSetting } from "./GitAutocommitSetting";
+import { SeenSettings } from "./SeenSettings";
 import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
 import { LanguageSetting } from "./LanguageSetting";
@@ -333,6 +334,7 @@ export function Settings(): JSX.Element {
                 <HomePageSetting />
                 <GraphPublish /><QueryExportLimitSetting />
                 <GitAutocommitSetting />
+                <SeenSettings />
               </Show>
               <Show when={tab() === "sharing" && sharingAvailable()}>
                 <QuickShareSettings />

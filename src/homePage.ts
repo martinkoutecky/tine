@@ -7,7 +7,8 @@ import { msg } from "./i18n";
 // for a missing page.
 import { backend } from "./backend";
 import { graphMeta } from "./graphSession";
-import { isJournalTitle } from "./journal";
+import { allPages, linkPageKind, resolvedTarget } from "./pageIndex";
+import { pageIdentityKey } from "./ui";
 import { readOwned } from "./owned";
 import { focusedSurfaceOwner } from "./focusedSurface";
 import { focusedRouter } from "./panes";
@@ -18,6 +19,27 @@ import { pushToast } from "./toasts";
  *  untrimmed and drops only blank ones); null when none. O(1), no I/O. */
 export function configuredHomePage(): string | null {
   return graphMeta()?.default_home?.trim() || null;
+}
+
+/** The page the sidebar's home entry shows INSTEAD of Journals: set only when the
+ *  graph turned journals off (`:feature/enable-journals? false`) and its
+ *  `:default-home` page exists (OG `container.cljs` `home-nav`: `(and page (not
+ *  (enable-journals?)))`, `get-default-home-if-valid`). Journals stay on offer
+ *  otherwise, so a graph with journals off and no valid home is not left with no
+ *  way into them. While the page inventory has not loaded the page is taken as
+ *  valid (no Journals flash on startup). O(1), no I/O. */
+export function journalsReplacementHome(): string | null {
+  if (graphMeta()?.enable_journals !== false) return null;
+  const name = configuredHomePage();
+  if (!name) return null;
+  if (allPages() === undefined) return name;
+  const target = resolvedTarget(name, linkPageKind(name));
+  return target && target.kind !== "absent" ? name : null;
+}
+
+/** True when `routeName` names the home page `journalsReplacementHome` shows. */
+export function isHomeRouteName(routeName: string, home: string): boolean {
+  return pageIdentityKey(routeName) === pageIdentityKey(home);
 }
 
 /** What a home navigation did: `opened` the configured page; `unresolved` —
@@ -52,7 +74,7 @@ export async function openConfiguredHomePage(): Promise<HomeOutcome> {
   try {
     // A journal-titled home (OG resolves any page entity) opens that journal;
     // the classifier is the one `[[links]]` and favorites use.
-    const kind = isJournalTitle(name) ? "journal" : "page";
+    const kind = linkPageKind(name);
     const read = await readOwned(owner, backend().getPage(name, kind));
     if (read.kind === "stale") return "stale";
     if (!read.value) return "unresolved";

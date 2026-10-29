@@ -56,6 +56,8 @@ import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeU
 installAliasDraftRouteHandler((name, kind) => openPage(name, kind));
 import { pushToast } from "./toasts";
 import { RootRecoveryNotice } from "./components/RootRecoveryNotice";
+import { OwnerProtectionNotice } from "./components/OwnerProtectionNotice";
+import { GitSyncNotice } from "./components/GitSyncNotice";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
@@ -66,6 +68,7 @@ import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { openPublishedPermalink, publishedPermalinkForWorkspace, replacePublishedPermalink } from "./publishedPermalink";
 import { maybeShowDefenderHint } from "./defenderHint";
+import { maybeShowSyncthingIgnoreNotice } from "./gitIgnoreNotice";
 import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owned, type Owner } from "./owned";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
@@ -109,6 +112,7 @@ import { createAndroidRootCloseCoordinator, exitAndroidActivity, installAndroidB
 import { appBackAvailable, dispatchAppBack } from "./appBack";
 import { installEdgeSwipe } from "./edgeSwipe";
 import { createSafeCloseCoordinator } from "./safeClose";
+import { leaveAllSeenPages } from "./seen/seenState";
 import { openUnsavedRecovery } from "./unsavedRecovery";
 import { UnsavedRecovery } from "./components/UnsavedRecovery";
 import { currentPdfOwnership, drainPdfWork } from "./pdfOwnership";
@@ -116,6 +120,7 @@ import { hlsPageName } from "./pdf";
 import type { InvalidRoute } from "./routeTypes";
 import { installBackgroundFlush } from "./backgroundFlush";
 import { installSessionActivity } from "./sessionActivity";
+import { gitLifecycleEdge } from "./gitLifecycle";
 import { initSettingsLayout } from "./settingsLayout";
 import { initCodeDisplay } from "./codeDisplay";
 import { initStickyParents } from "./stickyParents";
@@ -154,6 +159,7 @@ export const safeClose = createSafeCloseCoordinator({
   recordDiscard: (reason) => recordDiagnostic("close_discarded_unsaved", { closeReason: reason, pages: unsavedPageCount() }),
   // The page host keeps a crash-recovery copy of every page it took and has
   // not saved; the close only persists the session layout.
+  markPagesSeen: leaveAllSeenPages,
   flushSession,
   setTransition: setGraphTransitioning,
   notifyPdfFailure: () => {
@@ -573,18 +579,23 @@ export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen(
 export function App(): JSX.Element {
   // Every graph window mounts App and owns its own page-host client. Split panes
   // share it; the capture mini-window owns only an unsaved scratch page.
+  const flushEverything = async () => {
+    const [pagesSaved, cssSaved] = await Promise.all([flushAll(), flushCssEditor()]);
+    return pagesSaved && cssSaved;
+  };
   onMount(() => onCleanup(installBackgroundFlush({
     endEdit: () => endEdit("graph-switch"),
-    flushAll: async () => {
-      const [pagesSaved, cssSaved] = await Promise.all([flushAll(), flushCssEditor()]);
-      return pagesSaved && cssSaved;
-    },
+    flushAll: flushEverything,
     closeInFlight: safeClose.inFlight,
   })));
   // GH #426: on mobile an OS reap of a hidden app is not an unclean exit.
+  // ADR 0078 slice 3: the same edges commit and sync git graphs.
   onMount(() => onCleanup(installSessionActivity({
     isMobile: isMobilePlatform,
-    setActive: (active) => void recordSessionActive(active),
+    setActive: (active) => {
+      void recordSessionActive(active);
+      void gitLifecycleEdge(active, flushEverything);
+    },
   })));
   let openCalendarJump = () => {};
   // The page the focused pane shows, when it is one the user can share (not the bundled Guide).
@@ -770,11 +781,16 @@ export function App(): JSX.Element {
     try {
       const result = await readOwned(ownedWhen(() => alive), backend().takeDataHomeFallbackNotice());
       if (result.kind === "stale" || !result.value) return;
-      pushToast(
-        msg("app-tine-could-not-write-its-usual-application-data", { fallbackDirectory: result.value }),
-        "warn",
-        { sticky: true },
-      );
+      if (result.value.relocated_to) {
+        pushToast(
+          msg("app-tine-could-not-write-its-usual-application-data", { fallbackDirectory: result.value.relocated_to }),
+          "warn",
+          { sticky: true },
+        );
+      }
+      if (result.value.volatile) {
+        pushToast(msg("app-drafts-on-volatile-storage"), "warn", { sticky: true });
+      }
     } catch {
       dbg("data-home notice unavailable");
     }
@@ -784,6 +800,12 @@ export function App(): JSX.Element {
   // reason the cold load was slow. The backend answers false everywhere else.
   createEffect(on(() => graphMeta()?.root, (root) => {
     if (root) void maybeShowDefenderHint();
+  }));
+
+  // D-20261026-GI: once, tell the user that git autocommit added `.syncthing.*`
+  // to the graph's .gitignore (Settings → Git shows the same line).
+  createEffect(on(() => graphMeta()?.root, (root) => {
+    if (root) void maybeShowSyncthingIgnoreNotice(root);
   }));
 
   // The updater owns preference loading, automatic scheduling and cancellation.
@@ -1277,6 +1299,8 @@ export function App(): JSX.Element {
             </Show>
           </div>
         </header>
+        <FailureBoundary region="Single-writer protection"><OwnerProtectionNotice /></FailureBoundary>
+        <FailureBoundary region="The git sync notice"><GitSyncNotice /></FailureBoundary>
         <FailureBoundary region="The conflict notice"><ConflictBar /></FailureBoundary>
         <Show when={refreshingFromDisk()}><div class="focus-refresh-status" role="status" aria-live="polite">{t("app-refreshing-changes-from-disk")}</div>
         </Show>

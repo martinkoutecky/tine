@@ -694,12 +694,7 @@ mod tests {
         let canonical = Store::canonical_root(&root).unwrap();
         let mut old = GraphSlot::new(store.clone(), canonical.clone());
         let host = tine_store::PageHost::start_for_tests(&store, &app_data).unwrap();
-        let reservation = host
-            .reserve(
-                || vec![tine_store::PageId::from("pages/a.md")],
-                tine_store::Input::Refuse,
-            )
-            .unwrap();
+        let reservation = host.pause_for_tests(&[tine_store::PageId::from("pages/a.md")]);
         *old.host.get_mut().unwrap() = PageHostSlot::Running(host);
         let old = Arc::new(old);
         let mut registry = GraphRegistry::default();

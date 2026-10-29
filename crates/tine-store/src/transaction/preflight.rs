@@ -3,7 +3,7 @@
 use super::*;
 use tine_core::model::Format;
 
-impl<'a> Transaction<'a> {
+impl<'a> PagePlan<'a> {
     pub(super) fn preflight_names(&self) -> Result<Vec<FileId>, (usize, Why)> {
         if self.store.is_closed() {
             return Err((0, Why::Refused(Refusal::Closed)));
@@ -56,6 +56,21 @@ impl<'a> Transaction<'a> {
                 )))
             })
             .map_err(|why| (index, why))?;
+            // File IDs and configured directories are dynamic. The public
+            // commit builder may inspect pages, but may never mutate one.
+            if self.non_page && !matches!(step, Step::Expect { .. }) {
+                for file in std::iter::once(&next.src).chain(next.dst.iter()) {
+                    if self.store.as_page(file).is_some() {
+                        return Err((
+                            index,
+                            Why::Refused(Refusal::InvalidTarget(format!(
+                                "page changes require a page-host plan: {}",
+                                file.as_str()
+                            ))),
+                        ));
+                    }
+                }
+            }
             if matches!(step, Step::Unique { .. }) {
                 allocated.insert(next.src.clone());
             }
@@ -223,8 +238,14 @@ impl<'a> Transaction<'a> {
                 expected,
                 bytes,
             } => {
-                if self.page(file) || file.as_str().starts_with("logseq/.tine-") {
+                // A page replacement is a host-operation plan's
+                // (`replace_page_bytes`); a direct commit refuses it.
+                let page = self.page(file);
+                if (page && !self.for_host) || file.as_str().starts_with("logseq/.tine-") {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
+                }
+                if page {
+                    validation::page_bytes(file, bytes)?;
                 }
                 let old = self.stage(file, expected)?;
                 if file.as_str() == "logseq/config.edn" {
@@ -374,7 +395,7 @@ fn refuse_marker_rewrite(old: &[u8], new: &[u8], format: Format) -> Result<(), W
 /// A page save's checks by precondition (STEP3 §3.2). The transaction's
 /// preflight composes them; the page host runs each where its precondition
 /// holds, so none is added and none runs where it did not before.
-impl Transaction<'_> {
+impl PagePlan<'_> {
     /// Every page save, whatever its base: Guide-ephemeral, page target and
     /// nesting depth.
     pub(crate) fn page_save_target(&self, file: &FileId, doc: &PageDto) -> Result<(), Why> {

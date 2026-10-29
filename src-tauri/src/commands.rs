@@ -276,10 +276,10 @@ mod result_bridge_budget_tests {
         );
     }
 }
-
 mod asset_ingress;
+mod asset_ranges;
 pub(crate) use asset_ingress::decode_asset_b64;
-
+pub(crate) use asset_ranges::{read_asset_range, stat_asset};
 /// The whole name inventory: physical pages and journals, aliases, and names
 /// that are only referenced. A thin adapter over `WholeGraph::inventory`; the
 /// frontend caches it in `pageIndex.ts` and keeps no other name map.
@@ -570,6 +570,7 @@ pub(crate) async fn rename_page(
     expected_path: Option<String>,
     merge_into: Option<String>,
     unsaved_paths: Option<Vec<String>>,
+    app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<tine_graph_features::pages::RenameReport, String> {
     let slot = slot_for_context(&state)?;
@@ -597,6 +598,7 @@ pub(crate) async fn rename_page(
                 .map_err(|e| e.to_string())
             },
         )
+        .inspect(|report| crate::seen::page_renamed(&app, &slot, &old, report))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -940,22 +942,27 @@ pub(crate) async fn read_custom_css(state: GraphContext<'_>) -> Result<String, S
 /// editor hand-off, so they refuse before touching the graph. Rust owns the path;
 /// the WebView supplies none. Cost: O(path components) plus one small create.
 #[tauri::command]
-pub(crate) async fn edit_custom_css(state: GraphContext<'_>) -> Result<(), String> {
+pub(crate) async fn edit_custom_css(
+    app: tauri::AppHandle,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
     #[cfg(not(desktop))]
     {
-        let _ = state;
+        let _ = (app, state);
         Err(
             "custom.css opens in a desktop editor; edit logseq/custom.css in the graph folder"
                 .into(),
         )
     }
     #[cfg(desktop)]
-    with_config_store(&state, move |store| {
-        let path = tine_graph_features::custom_css::ensure_custom_css(store)
-            .map_err(|error| error.to_string())?;
-        open_page_source_with_os(&path, false)
-    })
-    .await
+    {
+        let path = with_config_store(&state, move |store| {
+            tine_graph_features::custom_css::ensure_custom_css(store)
+                .map_err(|error| error.to_string())
+        })
+        .await?;
+        crate::css_files::open_css_with_os(app, path).await
+    }
 }
 
 #[tauri::command]
@@ -2205,6 +2212,7 @@ pub(crate) async fn get_page_by_path(
 pub(crate) async fn merge_pages(
     src: String,
     dst: String,
+    app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
@@ -2222,6 +2230,7 @@ pub(crate) async fn merge_pages(
                 .map_err(graph_write_error_to_wire)
             },
         )
+        .inspect(|()| crate::seen::page_gone(&app, &slot, None, &[src.as_str()]))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2254,6 +2263,7 @@ fn graph_write_wire_keeps_rollback_incomplete_family() {
 pub(crate) async fn rename_file_to_page(
     path: String,
     new_name: String,
+    app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
@@ -2271,6 +2281,7 @@ pub(crate) async fn rename_file_to_page(
                 .map_err(|error| error.to_string())
             },
         )
+        .inspect(|()| crate::seen::page_gone(&app, &slot, None, &[path.as_str()]))
     })
     .await
     .map_err(|error| error.to_string())?

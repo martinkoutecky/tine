@@ -390,12 +390,14 @@ pub(crate) async fn load_graph(
                 &worker_label,
                 Some(binding_generation),
             )?;
-            tine_graph_features::guide::copy_guide_into_graph(
+            // A local, so the host guard drops before `slot` (E0597).
+            let copied = tine_graph_features::guide::copy_guide_into_graph(
                 &slot.store,
                 slot.host_slot()?.running()?,
                 "Tine Guide",
             )
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string());
+            copied
         })
         .await
         .map_err(|error| format!("iOS Guide-copy probe worker failed: {error}"))?
@@ -518,6 +520,7 @@ fn claim_owner(
     app: &tauri::AppHandle,
     window_label: &str,
     root_key: &Path,
+    failure: &mut Option<crate::owner::OwnerError>,
 ) -> Result<Option<crate::owner::lease::Claimed>, String> {
     let Ok(app_data) = app.path().app_data_dir() else {
         // `start_host` refuses this open with the reason.
@@ -529,20 +532,26 @@ fn claim_owner(
     };
     // The window hears each change of serve's progress (§4.5), not only the start.
     let mut told: Option<String> = None;
-    crate::owner::lease::claim_for_app(root_key, drafts, OWNER_HANDOVER_WAIT, |progress| {
-        if told.as_deref() == Some(progress) {
-            return;
-        }
-        if told.is_none() {
-            crate::debug::diag("graph-open-waits-for-the-command-line-owner");
-        }
-        told = Some(progress.to_string());
-        let _ = app.emit_to(
-            window_label,
-            "graph-open-owner-waiting",
-            progress.to_string(),
-        );
-    })
+    crate::owner::lease::claim_for_app(
+        root_key,
+        drafts,
+        OWNER_HANDOVER_WAIT,
+        |progress| {
+            if told.as_deref() == Some(progress) {
+                return;
+            }
+            if told.is_none() {
+                crate::debug::diag("graph-open-waits-for-the-command-line-owner");
+            }
+            told = Some(progress.to_string());
+            let _ = app.emit_to(
+                window_label,
+                "graph-open-owner-waiting",
+                progress.to_string(),
+            );
+        },
+        |error| *failure = Some(error.clone()),
+    )
 }
 
 /// How long an open waits for an overlapping graph that is still saving.
@@ -624,6 +633,8 @@ fn load_graph_with_relocation(
             (slot, meta, lease.map(Owner::Adopted))
         }
         None => {
+            #[cfg(target_os = "ios")]
+            let mut draft_namespace_adopted = false;
             // Only a fresh open may move namespaces, after the retirement
             // wait and before owner claim/host attachment. A live local host
             // of either namespace makes relocation skip without blocking open.
@@ -637,8 +648,11 @@ fn load_graph_with_relocation(
                             &root_key,
                             &state.graphs.read().unwrap(),
                         );
-                        if let Err(error) = relocation {
-                            crate::debug::diag_private("graph-relocation-owner-held", error);
+                        match relocation {
+                            Ok(adopted) => draft_namespace_adopted = adopted,
+                            Err(error) => {
+                                crate::debug::diag_private("graph-relocation-owner-held", error)
+                            }
                         }
                     }
                 } else {
@@ -667,9 +681,17 @@ fn load_graph_with_relocation(
                 ),
             }?;
             let mut slot = GraphSlot::new(store, root_key);
+            #[cfg(target_os = "ios")]
+            if draft_namespace_adopted {
+                slot.store.record_draft_namespace_adoption(
+                    tine_store::DraftAdoptionReason::AppContainerMove,
+                );
+            }
             // The owner lock before the host (CLI PROTOCOL §3.2); a
             // command-line owner yields first (§4).
-            let claimed = claim_owner(app, window_label, &slot.root_key)?;
+            let mut failure = None;
+            let claimed = claim_owner(app, window_label, &slot.root_key, &mut failure)?;
+            *slot.owner_failure.get_mut().unwrap() = failure;
             // On failure the dropped slot closes the Store, and the dropped
             // claim releases the lock.
             let host = start_host(app, window_label, &slot.store, &slot.root_key)?;
@@ -714,8 +736,10 @@ fn load_graph_with_relocation(
         window_label.to_string(),
         slot.binding_generation,
     ));
+    crate::owner_protection::start_retry(app, &slot);
     crate::watcher::start_slot_events(app.clone(), window_label.to_string(), &slot);
     backup_async(app.clone(), slot.clone());
+    crate::seen::bound(app, &slot);
     crate::git_settings::bound(app, &slot);
     // The graph is bound above; a settings write that fails (disk full, EIO)
     // must not return early, or `open_graph_window` skips its cleanup and the

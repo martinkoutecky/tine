@@ -1,24 +1,27 @@
 //! The owner endpoint end to end, in process: a real Store and page host,
 //! a real socket, the client's handshake and calls (CLI PROTOCOL §2–5),
 //! and the app lease through retirement and adoption (§3.1–3.2).
-// The endpoint is Unix-only in slice 1a (PROTOCOL §10: Windows has none yet).
-#![cfg(unix)]
+// Shared protocol and lifecycle tests run on all three desktop transports.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tine_store::{Input, PageHost, PageId, Store};
+use tine_store::{PageHost, PageId, Store};
 
 use super::client::{dial, Conn, Failure};
 use super::endpoint::{After, Endpoint, Gate, Handler, YieldRequest};
 use super::lease::{hello, Claimed};
 use super::lock::OwnerLock;
 use super::namespace::GraphPaths;
+#[cfg(windows)]
+use super::windows::Stream as RawStream;
 use super::wire::{ErrorBody, Request};
 use super::OwnerError;
 use crate::state::{GraphRegistry, GraphSlot, PageHostSlot};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream as RawStream;
 
 const UUID: &str = "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f";
 
@@ -28,9 +31,20 @@ mod lifecycle;
 #[path = "owner_tests/proof.rs"]
 mod proof;
 
+#[path = "owner_tests/page_tests.rs"]
+mod page_tests;
+
 #[cfg(desktop)]
 #[path = "owner_tests/git_run_tests.rs"]
 mod git_run;
+
+#[cfg(desktop)]
+#[path = "owner_tests/git_pull_tests.rs"]
+mod git_pull;
+
+#[cfg(desktop)]
+#[path = "owner_tests/git_sync_cycle_tests.rs"]
+mod git_sync_cycle;
 
 struct Graph {
     _dir: tempfile::TempDir,
@@ -89,7 +103,14 @@ impl Graph {
     fn paths(&self) -> GraphPaths {
         GraphPaths {
             lock: self.owners.join("g.lock"),
+            #[cfg(unix)]
             socket: self.owners.join("g.sock"),
+            #[cfg(windows)]
+            socket: super::windows_security::pipe_name(&format!(
+                "{:016x}",
+                crate::settings::graph_hash(&self.root)
+            ))
+            .unwrap(),
             start_log: self.owners.join("g.start.log"),
         }
     }
@@ -223,6 +244,7 @@ fn the_read_verbs_answer_over_the_socket() {
 }
 
 /// GH #771: on macOS an accepted socket inherits the listener's O_NONBLOCK.
+#[cfg(unix)]
 #[test]
 fn an_accepted_connection_is_made_blocking() {
     use std::os::unix::io::AsRawFd;
@@ -300,7 +322,7 @@ fn an_oversized_or_malformed_line_is_answered_and_closed() {
 /// Write `bytes`, half-close, and read whatever comes back.
 fn raw(socket: &Path, bytes: &[u8]) -> String {
     use std::io::{Read, Write};
-    let mut stream = std::os::unix::net::UnixStream::connect(socket).unwrap();
+    let mut stream = RawStream::connect(socket).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
@@ -327,6 +349,23 @@ fn closing_the_endpoint_removes_its_path_and_drops_its_connections() {
 }
 
 #[test]
+fn a_successor_can_listen_while_a_closed_client_handle_still_exists() {
+    let graph = Graph::new();
+    let slot = Arc::new(graph.slot());
+    let (first, _gate) = endpoint(&graph, slot.clone());
+    let mut old = graph.connect();
+    drop(first);
+    assert!(matches!(
+        old.call("pages", Value::Null),
+        Err(Failure::Lost(_))
+    ));
+    let (_next, _gate) = endpoint(&graph, slot);
+    assert!(graph.connect().call("pages", Value::Null).is_ok());
+    drop(old);
+}
+
+#[test]
+#[cfg(unix)]
 fn a_dead_owners_socket_path_is_replaced_by_the_next_holder() {
     let graph = Graph::new();
     // A crashed owner leaves its path; the lock went with the process.
@@ -357,9 +396,9 @@ fn the_app_lease_follows_the_host_through_retirement_and_adoption() {
 
     // A reservation keeps the host from stopping until it is adopted.
     let reservation = match &*old.host.read().unwrap() {
-        PageHostSlot::Running(host) => host
-            .reserve(|| vec![PageId::from("pages/a.md")], Input::Refuse)
-            .unwrap(),
+        PageHostSlot::Running(host) => {
+            Box::new(host.pause_for_tests(&[PageId::from("pages/a.md")]))
+        }
         _ => panic!("no host"),
     };
     assert!(registry.remove("graph-1").is_none(), "retiring");
@@ -452,9 +491,67 @@ fn serve_yields_only_into_its_own_draft_namespace() {
     assert_eq!(gate.state(), "stopping", "admits nothing more");
 }
 
+#[test]
+fn app_handover_takes_the_lock_only_after_serve_stops_and_closes() {
+    let graph = Graph::new();
+    let serving = lifecycle::Serving::new(&graph);
+    let slot = serving.slot.clone();
+    let finished = serving.run();
+    let claimed = super::client::take_over(
+        &graph.root,
+        &graph.paths(),
+        super::wire::Drafts {
+            app_data: graph.app_data.display().to_string(),
+            graph_id: "test-graph".into(),
+        },
+        Duration::from_secs(5),
+        |_| {},
+        |_| {},
+    )
+    .unwrap()
+    .expect("app took ownership");
+    finished.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(!matches!(
+        &*slot.host.read().unwrap(),
+        PageHostSlot::Running(_)
+    ));
+    assert!(OwnerLock::try_take(&graph.paths().lock, "other")
+        .unwrap()
+        .is_none());
+    assert!(dial(&graph.paths().socket, &graph.root).unwrap().is_none());
+    drop(claimed);
+    assert!(OwnerLock::try_take(&graph.paths().lock, "next")
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+#[cfg(unix)]
+fn long_namespace_retains_the_owner_lock_without_a_command_endpoint() {
+    let graph = Graph::new();
+    let data = tempfile::tempdir().unwrap();
+    let owners = data.path().join("d".repeat(120));
+    let paths = super::namespace::Namespace::at(owners)
+        .unwrap()
+        .graph(Path::new("/g"))
+        .unwrap();
+    let lock = OwnerLock::try_take(&paths.lock, "app").unwrap().unwrap();
+    let slot = Arc::new(graph.slot());
+    let lease = super::lease::Claimed::from_lock(lock, paths.clone()).serve_app(&slot);
+    assert!(!lease.has_endpoint());
+    assert!(matches!(
+        lease.endpoint_error(),
+        Some(OwnerError::Unsafe(_))
+    ));
+    assert!(OwnerLock::try_take(&paths.lock, "serve").unwrap().is_none());
+    drop(lease);
+    assert!(OwnerLock::try_take(&paths.lock, "serve").unwrap().is_some());
+}
+
 /// §1: the namespace is a private directory of this account, and a path
 /// the socket cannot bind is refused before anything binds it.
 #[test]
+#[cfg(unix)]
 fn the_namespace_is_private_and_fits_a_socket_path() {
     use super::namespace::Namespace;
     use std::os::unix::fs::PermissionsExt;
@@ -480,10 +577,8 @@ fn the_namespace_is_private_and_fits_a_socket_path() {
 
     let deep = dir.path().join("d".repeat(120));
     let namespace = Namespace::at(deep).unwrap();
-    assert!(matches!(
-        namespace.graph(Path::new("/g")),
-        Err(OwnerError::Unsafe(_))
-    ));
+    let paths = namespace.graph(Path::new("/g")).unwrap();
+    assert!(super::namespace::check_socket_path(&paths.socket).is_err());
 }
 
 /// AGENTS.md §2: a platform `cfg` family names every shipped target. The
@@ -519,10 +614,7 @@ fn the_namespace_names_every_shipped_target() {
     }
 }
 
-/// PROTOCOL §6: the endpoint is the command line's alone. No Tauri command
-/// in the owner module, and the app's invoke handler names nothing of it,
-/// so neither the webview nor a plugin (whose capabilities are semantic
-/// verbs, ADR 0052) can reach the endpoint.
+/// PROTOCOL §6: no owner Tauri commands or invoke handlers expose the CLI endpoint to a webview/plugin (ADR 0052).
 #[test]
 fn the_endpoint_has_no_webview_or_plugin_door() {
     for (name, source) in [
@@ -535,16 +627,36 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             "git_autocommit_tests",
             include_str!("git_autocommit_tests.rs"),
         ),
+        ("git_identity", include_str!("git_identity.rs")),
+        ("git_lifecycle", include_str!("git_lifecycle.rs")),
+        ("git_mobile_tests", include_str!("git_mobile_tests.rs")),
+        ("git_pull", include_str!("git_pull.rs")),
         ("git_run", include_str!("git_run.rs")),
+        ("git_sync", include_str!("git_sync.rs")),
+        (
+            "git_sync_credentials",
+            include_str!("git_sync/credentials.rs"),
+        ),
+        (
+            "git_sync_line_endings",
+            include_str!("git_sync/line_endings.rs"),
+        ),
+        ("git_sync_cycle", include_str!("git_sync_cycle.rs")),
+        ("git_sync_http", include_str!("git_sync/http.rs")),
         ("lease", include_str!("lease.rs")),
         ("lock", include_str!("lock.rs")),
         ("mod", include_str!("mod.rs")),
         ("namespace", include_str!("namespace.rs")),
+        ("pages", include_str!("pages.rs")),
+        ("seen", include_str!("seen.rs")),
+        ("seen_tests", include_str!("seen_tests.rs")),
         ("serve", include_str!("serve.rs")),
         ("terminal", include_str!("terminal.rs")),
         ("verbs", include_str!("verbs.rs")),
         ("window", include_str!("window.rs")),
         ("wire", include_str!("wire.rs")),
+        ("windows", include_str!("windows.rs")),
+        ("windows_security", include_str!("windows_security.rs")),
         ("write", include_str!("write.rs")),
     ] {
         assert!(
@@ -552,7 +664,6 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             "owner/{name}.rs: no Tauri command may reach the owner endpoint (PROTOCOL §6)"
         );
     }
-    // Every owner file is scanned: a new one joins the list above.
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/owner");
     let files = std::fs::read_dir(dir)
         .unwrap()
@@ -562,7 +673,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 17, "scan every owner/*.rs file");
+    assert_eq!(files, 28, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];
@@ -669,31 +780,39 @@ fn a_yield_closes_the_other_connections_before_it_replies() {
 /// and each request with `reply` (or never, when `None`).
 fn fake_owner(socket: &Path, hello: Value, reply: Option<Value>) {
     use std::io::{BufRead, BufReader, Write};
+    #[cfg(unix)]
     let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(stream) = stream else { return };
-            let hello = hello.clone();
-            let reply = reply.clone();
-            std::thread::spawn(move || {
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                let mut writer = stream;
-                let mut line = String::new();
+    #[cfg(windows)]
+    let listener = super::windows::Listener::bind(socket).unwrap();
+    std::thread::spawn(move || loop {
+        let stream = match listener.accept() {
+            Ok((stream, _)) => stream,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            Err(_) => return,
+        };
+        let hello = hello.clone();
+        let reply = reply.clone();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut writer = stream;
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                return;
+            }
+            let _ = writeln!(writer, "{hello}");
+            loop {
+                line.clear();
                 if reader.read_line(&mut line).unwrap_or(0) == 0 {
                     return;
                 }
-                let _ = writeln!(writer, "{hello}");
-                loop {
-                    line.clear();
-                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
-                        return;
-                    }
-                    if let Some(reply) = &reply {
-                        let _ = writeln!(writer, "{reply}");
-                    }
+                if let Some(reply) = &reply {
+                    let _ = writeln!(writer, "{reply}");
                 }
-            });
-        }
+            }
+        });
     });
 }
 
@@ -716,13 +835,17 @@ fn the_client_checks_the_owners_hello_and_each_replys_id() {
         dial(&socket, &graph.root),
         Err(OwnerError::Mismatch(_))
     ));
-    std::fs::remove_file(&socket).unwrap();
+    // Use separate graph endpoints: Windows pipe names stay occupied while
+    // the fake owner's accept thread lives, rather than an unlinkable path.
+    let second = Graph::new();
+    let socket = second.paths().socket;
     fake_owner(&socket, owner_hello(&root, None), None);
     assert!(matches!(
         dial(&socket, &graph.root),
         Err(OwnerError::Protocol(_))
     ));
-    std::fs::remove_file(&socket).unwrap();
+    let third = Graph::new();
+    let socket = third.paths().socket;
     fake_owner(
         &socket,
         owner_hello(&root, Some("serve")),
@@ -765,14 +888,79 @@ fn a_wedged_owner_cannot_hold_the_handover_past_its_bound() {
             app_data: "a".into(),
             graph_id: "g".into(),
         };
-        let result =
-            super::client::take_over(&root, &paths, drafts, Duration::from_secs(2), |_| {});
+        let result = super::client::take_over(
+            &root,
+            &paths,
+            drafts,
+            Duration::from_secs(2),
+            |_| {},
+            |_| {},
+        );
         let _ = done.send(result.is_err());
     });
     assert_eq!(
         finished.recv_timeout(Duration::from_secs(15)),
         Ok(true),
         "the handover outlived its bound"
+    );
+}
+
+#[test]
+fn timed_out_owner_retries_wait_for_outstanding_io_workers() {
+    use std::io::{BufRead, BufReader, Write};
+    let graph = Graph::new();
+    let paths = graph.paths();
+    let held = OwnerLock::try_take(&paths.lock, "serve").unwrap().unwrap();
+    #[cfg(unix)]
+    let listener = std::os::unix::net::UnixListener::bind(&paths.socket).unwrap();
+    #[cfg(windows)]
+    let listener = super::windows::Listener::bind(&paths.socket).unwrap();
+    let hello = owner_hello(&graph.root.display().to_string(), Some("serve"));
+    let (requested, requests) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = loop {
+            match listener.accept() {
+                Ok(connection) => break connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("accept: {error}"),
+            }
+        };
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        writeln!(stream, "{hello}").unwrap();
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        assert!(line.contains("owner.yield"));
+        requested.send(()).unwrap();
+        released.recv_timeout(Duration::from_secs(5)).unwrap();
+    });
+    let attempt = || {
+        super::client::take_over(
+            &graph.root,
+            &paths,
+            super::wire::Drafts {
+                app_data: "a".into(),
+                graph_id: "g".into(),
+            },
+            Duration::ZERO,
+            |_| {},
+            |_| {},
+        )
+    };
+    assert!(attempt().is_err());
+    requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    let blocked = (0..4)
+        .all(|_| matches!(attempt(), Err(message) if message.contains("previous owner handover")));
+    release.send(()).unwrap();
+    server.join().unwrap();
+    drop(held);
+    assert!(
+        blocked,
+        "a timed-out handover must retain its worker reservation until I/O finishes"
     );
 }
 

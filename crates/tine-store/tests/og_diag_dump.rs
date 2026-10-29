@@ -94,6 +94,9 @@ fn the_dump_never_names_the_graph() {
     let mut found = Vec::new();
     strings(&store.diagnostics(), &mut found);
     let closed = [
+        "since-launch",
+        "process-since-launch",
+        "unclassified",
         "ready",
         "loading",
         "failed",
@@ -117,6 +120,21 @@ fn the_dump_never_names_the_graph() {
             "unexpected string value {text:?}"
         );
     }
+}
+
+#[test]
+fn storage_outcomes_are_present_without_page_names() {
+    let _integration_guard = crate::integration_lock();
+    let (dir, store) = fixture();
+    let report = store.diagnostics();
+    assert_eq!(report["storage"]["pageSaves"]["uncertain"], 0);
+    assert_eq!(report["storage"]["draftsWritten"], 0);
+    assert_eq!(report["storage"]["draftsRecovered"], 0);
+    let text = report.to_string();
+    for private in [SECRET_NAME, SECRET_BODY, dir.path().to_str().unwrap()] {
+        assert!(!text.contains(private));
+    }
+    store.close();
 }
 
 #[test]

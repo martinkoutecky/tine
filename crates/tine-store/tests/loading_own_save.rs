@@ -8,9 +8,9 @@ use std::path::Path;
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
+use crate::{EditKind, PageHost, PageId, PageOperation, Store};
 use tine_core::date::JournalDate;
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
-use tine_store::{EditKind, PageHost, PageId, PageOperation, Store};
 
 fn answer(mail: &mpsc::Receiver<serde_json::Value>, id: u64) -> serde_json::Value {
     loop {
@@ -200,22 +200,22 @@ fn own_saves_while_loading_match_a_fresh_open_on_the_anonymized_graph() {
         read_only: false,
         guide: false,
     };
-    let mut tx = store.transaction(Some(EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(EditKind::ReplacePage));
     tx.save_page(
         &[EditKind::ReplacePage],
         &PageId::from(rel.as_str()),
-        tine_store::SaveBase::CreateNew,
+        crate::SaveBase::CreateNew,
         &journal,
     );
     tx.save_page(
         &[EditKind::ReplacePage],
         &PageId::from(edited.as_str()),
-        tine_store::SaveBase::Existing(read.rev.clone()),
+        crate::SaveBase::Existing(read.rev.clone()),
         &doc,
     );
     assert!(matches!(
-        tx.commit(),
-        tine_store::TxOutcome::Committed { change: None, .. }
+        tx.commit_internal(),
+        crate::TxOutcome::Committed { change: None, .. }
     ));
     assert_eq!(builds(&store), 0, "the saves built the graph while loading");
     fs::remove_file(&hold).unwrap();

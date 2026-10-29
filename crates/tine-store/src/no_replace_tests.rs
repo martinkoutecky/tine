@@ -39,10 +39,10 @@ fn gh538_create_save_and_rename_work_where_the_flag_is_refused() {
     let a = store.file_id(Area::Pages, "A.md").unwrap();
     let b = store.file_id(Area::Pages, "B.md").unwrap();
     let rev = store.read(&a, None).unwrap().1;
-    let mut tx = store.transaction(Some(EditKind::RenamePage));
+    let mut tx = store.page_plan(Some(EditKind::RenamePage));
     tx.move_file(&a, rev, &b, None);
     assert!(
-        matches!(tx.commit(), TxOutcome::Committed { .. }),
+        matches!(tx.commit_internal(), TxOutcome::Committed { .. }),
         "GH #538: a page rename must succeed on flag-refusing storage"
     );
     assert_eq!(
@@ -69,10 +69,10 @@ fn gh538_create_save_and_rename_work_where_the_flag_is_refused() {
         read_only: false,
         guide: false,
     };
-    let mut tx = store.transaction(Some(EditKind::CreatePage));
+    let mut tx = store.page_plan(Some(EditKind::CreatePage));
     tx.save_page(&[EditKind::CreatePage], &created, SaveBase::CreateNew, &doc);
     assert!(
-        matches!(tx.commit(), TxOutcome::Committed { .. }),
+        matches!(tx.commit_internal(), TxOutcome::Committed { .. }),
         "GH #538: page creation must succeed on flag-refusing storage"
     );
     assert!(fs::read_to_string(root.join("pages/New.md"))
@@ -92,9 +92,12 @@ fn gh538_occupied_destination_is_still_refused_where_the_flag_is_refused() {
     let dest = store.file_id(Area::Pages, "dest.md").unwrap();
     let rev = store.read(&src, None).unwrap().1;
     let _refused = Refused::on();
-    let mut tx = store.transaction(Some(EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(EditKind::ReplacePage));
     tx.move_file(&src, rev, &dest, None);
-    assert!(matches!(tx.commit(), TxOutcome::NotCommitted { .. }));
+    assert!(matches!(
+        tx.commit_internal(),
+        TxOutcome::NotCommitted { .. }
+    ));
     assert_eq!(fs::read(root.join("pages/source.md")).unwrap(), b"source");
     assert_eq!(
         fs::read(root.join("pages/dest.md")).unwrap(),

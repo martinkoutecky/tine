@@ -781,8 +781,9 @@ mod image_copy_tests {
 /// — when Tine is painting on the CPU. Speed is the whole pitch, and a silent
 /// software-rendering fallback makes scrolling feel sluggish; better to say so.
 /// `software_forced` is true only when we *know* GPU compositing is off because
-/// an env var disabled it: TINE_GPU=0 (we then set WEBKIT_DISABLE_DMABUF_RENDERER
-/// just above in `main`), or the user set WEBKIT_DISABLE_DMABUF_RENDERER /
+/// an env var disabled it: the Linux startup policy sets
+/// WEBKIT_DISABLE_DMABUF_RENDERER for TINE_GPU=0 or an NVIDIA driver older than 610 (GH #777),
+/// or the user set WEBKIT_DISABLE_DMABUF_RENDERER /
 /// WEBKIT_DISABLE_COMPOSITING_MODE themselves. A *silent* driver/EGL fallback
 /// (DMABUF requested but EGL init failed) does NOT show up here — that's detected
 /// in the webview from the WebGL renderer string (llvmpipe/swrast ⇒ software).
@@ -801,6 +802,21 @@ pub(crate) struct GpuEnv {
     /// A portable Windows instance (GH #719): it updates by download, since the
     /// updater's installer would install a second, per-user copy.
     portable: bool,
+    /// The distribution that built this copy, from the compile-time variable
+    /// `TINE_PACKAGED_BY` (tine#187; README, "Packaging Tine for a distribution"). Set means a
+    /// package manager owns updates: the updater never checks, notifies or
+    /// installs, and About names this packager.
+    packaged_by: Option<String>,
+}
+
+/// The packager's name as shown to the user: whitespace trimmed, control
+/// characters dropped, at most 64 characters. Empty means "not packaged by a
+/// package manager". Separated from `option_env!` (fixed at compile time) so a
+/// test can drive it.
+pub(crate) fn packaged_by_name(raw: Option<&str>) -> Option<String> {
+    let name: String = raw?.chars().filter(|c| !c.is_control()).take(64).collect();
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// Package identity is a runtime property, shared by Store and sideloaded MSIX.
@@ -839,6 +855,11 @@ pub(crate) fn in_flatpak(flatpak_id_set: bool, flatpak_info_present: bool) -> bo
 
 #[tauri::command]
 pub(crate) fn gpu_env() -> GpuEnv {
+    gpu_env_for(option_env!("TINE_PACKAGED_BY"))
+}
+
+/// `gpu_env` with the compile-time packager name injected.
+fn gpu_env_for(packaged_by: Option<&str>) -> GpuEnv {
     let set = |k: &str| std::env::var_os(k).is_some();
     GpuEnv {
         software_forced: set("WEBKIT_DISABLE_DMABUF_RENDERER")
@@ -851,6 +872,7 @@ pub(crate) fn gpu_env() -> GpuEnv {
             std::path::Path::new("/.flatpak-info").exists(),
         ),
         portable: crate::portable::active(),
+        packaged_by: packaged_by_name(packaged_by),
     }
 }
 
@@ -1479,6 +1501,43 @@ fn parse_comm_ppid(stat: &str) -> Option<(&str, u32)> {
     let _state = fields.next()?;
     let ppid: u32 = fields.next()?.parse().ok()?;
     Some((comm, ppid))
+}
+
+#[cfg(test)]
+mod packaged_by_tests {
+    use super::{gpu_env_for, packaged_by_name};
+
+    /// tine#187: a package-manager build names its packager; unset and blank
+    /// stay today's behaviour (None), and the name is bounded and printable.
+    #[test]
+    fn the_packager_name_is_trimmed_bounded_and_blank_means_none() {
+        assert_eq!(packaged_by_name(None), None);
+        assert_eq!(packaged_by_name(Some("")), None);
+        assert_eq!(packaged_by_name(Some("  \t\n ")), None);
+        assert_eq!(
+            packaged_by_name(Some("Nixpkgs")).as_deref(),
+            Some("Nixpkgs")
+        );
+        assert_eq!(
+            packaged_by_name(Some("  Nix\npkgs ")).as_deref(),
+            Some("Nixpkgs")
+        );
+        assert_eq!(
+            packaged_by_name(Some(&"x".repeat(200))).map(|n| n.len()),
+            Some(64)
+        );
+    }
+
+    /// The value reaches the frontend under the name update.ts reads.
+    #[test]
+    fn gpu_env_carries_the_packager_to_the_frontend() {
+        let packaged = serde_json::to_value(gpu_env_for(Some("Nixpkgs"))).unwrap();
+        assert_eq!(packaged["packaged_by"], "Nixpkgs");
+        let plain = serde_json::to_value(gpu_env_for(None)).unwrap();
+        assert!(plain["packaged_by"].is_null());
+        let blank = serde_json::to_value(gpu_env_for(Some(" "))).unwrap();
+        assert!(blank["packaged_by"].is_null());
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]

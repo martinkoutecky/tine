@@ -3,6 +3,39 @@
 use super::super::apply::{ApplyRefusal, Effect, Expected, HostOp};
 use super::*;
 
+/// Replacement for a_request_queued_before_a_spelling_move_applies_to_the_same_page_after_it:
+/// the driver refuses unsaved input rather than handing it to an external writer.
+#[test]
+fn a_spelling_move_with_pending_input_is_refused_and_preserves_input_and_spelling() {
+    let live = Live::new(&[("pages/old.md", "- old\n")]);
+    let src = PageId::from("pages/old.md");
+    let dst = PageId::from("pages/Old.md");
+    let (key, page) = live.open(src.as_str());
+    let pause = live.host.pause_for_tests(&[src.clone()]);
+    let id = live
+        .submit(&key, "- pending\n", page.version, None)
+        .unwrap();
+    assert_eq!(
+        live.host
+            .move_spelling(src.clone(), dst, key.clone(), bytes("- old\n"), None, None),
+        Err(ApplyRefusal::Unsaved(src.clone()))
+    );
+    assert_eq!(live.host.spelling(&key), src);
+    assert_eq!(live.disk(&key), "- old\n");
+    assert_eq!(
+        fs::read_dir(live.root.join("pages"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect::<Vec<_>>(),
+        [std::ffi::OsString::from("old.md")]
+    );
+    drop(pause);
+    live.answer(&key, id);
+    live.until_disk("pages/old.md", "- pending\n");
+    assert_eq!(live.host.spelling(&key).as_str(), "pages/old.md");
+    live.host.stop();
+}
+
 #[path = "binding_delete_tests.rs"]
 mod delete_tests;
 #[path = "binding_l8_tests.rs"]
@@ -49,6 +82,62 @@ fn bytes(text: &str) -> Arc<[u8]> {
     Arc::from(text.as_bytes())
 }
 
+#[test]
+fn an_uncertain_admitted_apply_records_its_later_publication() {
+    let live = Live::new(&[("pages/a.md", "- old\n")]);
+    let sink = Arc::new(Mutex::new(BTreeSet::new()));
+    let mut planned = op(
+        vec![(
+            "pages/a.md",
+            Effect::Write(bytes("- pulled\n")),
+            Expected::Bytes(bytes("- old\n")),
+        )],
+        Input::Refuse,
+    );
+    planned.publications = Some(sink.clone());
+    // Pause the real draft worker after admission until settle's production
+    // deadline expires. No fabricated receipt or reply stands in for it.
+    live.pause(true);
+    assert_eq!(live.host.apply(planned), Err(ApplyRefusal::Uncertain));
+    assert!(sink.lock().unwrap().is_empty());
+    assert_eq!(live.disk("pages/a.md"), "- old\n");
+    live.pause(false);
+    live.until_disk("pages/a.md", "- pulled\n");
+    // The same driver transition records the sink before exposing the file
+    // to a later command; synchronize with that driver before checking it.
+    live.host.driver.shared.with_state_for_tests(|_| ());
+    assert_eq!(
+        *sink.lock().unwrap(),
+        BTreeSet::from([PageId::from("pages/a.md")])
+    );
+    live.host.stop();
+}
+
+#[test]
+fn a_window_save_back_to_h_does_not_erase_the_publication_receipt() {
+    let live = Live::new(&[("pages/a.md", "- old\n")]);
+    let sink = Arc::new(Mutex::new(BTreeSet::new()));
+    let mut planned = op(
+        vec![(
+            "pages/a.md",
+            Effect::Write(bytes("- pulled\n")),
+            Expected::Bytes(bytes("- old\n")),
+        )],
+        Input::Refuse,
+    );
+    planned.publications = Some(sink.clone());
+    assert_eq!(live.host.apply(planned), Ok(()));
+    let (key, page) = live.open("pages/a.md");
+    let request = live.submit(&key, "- old\n", page.version, None).unwrap();
+    live.answer(&key, request);
+    live.until_disk("pages/a.md", "- old\n");
+    assert_eq!(
+        *sink.lock().unwrap(),
+        BTreeSet::from([PageId::from("pages/a.md")])
+    );
+    live.host.stop();
+}
+
 fn op(pages: Vec<(&str, Effect, Expected)>, policy: Input) -> HostOp {
     HostOp {
         creation_checks: Vec::new(),
@@ -58,8 +147,585 @@ fn op(pages: Vec<(&str, Effect, Expected)>, policy: Input) -> HostOp {
             .collect(),
         kinds: vec![EditKind::InsertBlocks],
         policy,
-        moved: None,
+        moves: Vec::new(),
+        publications: None,
+        view: None,
     }
+}
+
+/// A save's directory sync precedes its index delivery. A merge cannot
+/// report success while that delivery is failing (or waiting for the writer).
+#[test]
+fn a_merge_waits_for_its_deleted_sources_index_publication() {
+    let source = "pages/MiXeD1.md";
+    let destination = "pages/Next Space1.md";
+    let live = Live::new(&[(source, "- source\n"), (destination, "- kept\n")]);
+    live.store.watch.stop_background_for_test();
+    let mut planned = op(
+        vec![
+            (source, Effect::Delete, Expected::Bytes(bytes("- source\n"))),
+            (
+                destination,
+                Effect::Write(bytes("- kept\n- source\n")),
+                Expected::Bytes(bytes("- kept\n")),
+            ),
+        ],
+        Input::Refuse,
+    );
+    planned.moves = vec![(PageId::from(destination), PageId::from(source))];
+    live.index_faults(10_000);
+    std::thread::scope(|scope| {
+        let host = &live.host;
+        let (sent, received) = mpsc::channel();
+        scope.spawn(move || sent.send(host.apply(planned)).unwrap());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let synced = live
+                .host
+                .driver
+                .shared
+                .read(|state| {
+                    state
+                        .book
+                        .retry
+                        .get("pages/MiXeD1.md")
+                        .is_some_and(|retry| {
+                            retry.publication.bytes.is_none() && retry.publication.own.is_some()
+                        })
+                })
+                .unwrap();
+            if synced {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the merge never synced its files"
+            );
+            std::thread::yield_now();
+        }
+        assert!(!live.root.join(source).exists(), "the bytes already merged");
+        assert!(
+            live.store
+                .whole_graph()
+                .unwrap()
+                .corpus()
+                .pages
+                .iter()
+                .any(|p| p.name == "MiXeD1"),
+            "the index delivery is still pending"
+        );
+        let early = received.recv_timeout(Duration::from_millis(300));
+        // Release the fault before asserting, so a failed test can join its caller.
+        live.index_faults(0);
+        assert!(
+            matches!(early, Err(mpsc::RecvTimeoutError::Timeout)),
+            "merge returned before its index publication: {early:?}"
+        );
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Ok(())
+        );
+    });
+    let view = live.store.whole_graph().unwrap();
+    let corpus = view.corpus();
+    assert!(!corpus.pages.iter().any(|p| p.name == "MiXeD1"));
+    assert_eq!(
+        corpus
+            .pages
+            .iter()
+            .find(|p| p.name == "Next Space1")
+            .unwrap()
+            .document
+            .roots
+            .len(),
+        2
+    );
+    live.host.stop();
+}
+
+/// The ordinary writer-contention branch needs no index error: the driver
+/// revisits the caller while the completed save's delivery is deferred.
+#[test]
+fn a_delete_waits_for_its_index_while_the_store_writer_is_busy() {
+    let source = "pages/MiXeD1.md";
+    let live = Live::new(&[(source, "- source\n")]);
+    live.store.watch.stop_background_for_test();
+    let (key, page) = live.open(source);
+    live.until_published(&[(key, page.version, None)]);
+    let (ready, at_delivery) = mpsc::channel();
+    let (resume, resumed) = mpsc::channel();
+    *live.host.launch.kinds.lock().unwrap() = Box::new(move |_, _| {
+        ready.send(()).unwrap();
+        resumed.recv_timeout(Duration::from_secs(5)).unwrap();
+    });
+    std::thread::scope(|scope| {
+        let host = &live.host;
+        let (sent, received) = mpsc::channel();
+        scope.spawn(move || {
+            sent.send(host.delete(None, &PageId::from(source), Some(b"- source\n")))
+                .unwrap();
+        });
+        at_delivery.recv_timeout(Duration::from_secs(5)).unwrap();
+        // The kinds sink runs after the disk witness, before taking the
+        // store writer: hold it so that this exact publication is deferred.
+        let writer = live.store.writer.lock().unwrap();
+        resume.send(()).unwrap();
+        assert!(live
+            .host
+            .driver
+            .shared
+            .read(|state| state.book.delivering)
+            .unwrap());
+        assert!(!live.root.join(source).exists());
+        assert_eq!(live.indexed(source), Some(content_rev("- source\n")));
+        let early = received.recv_timeout(Duration::from_millis(300));
+        drop(writer);
+        assert!(
+            matches!(early, Err(mpsc::RecvTimeoutError::Timeout)),
+            "delete returned before its deferred index publication: {early:?}"
+        );
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(5)).unwrap(),
+            PageOperation::Applied
+        );
+    });
+    assert!(live.store.whole_graph().unwrap().corpus().pages.is_empty());
+    live.host.stop();
+}
+
+fn folded_op(old: &str) -> HostOp {
+    let mut planned = op(
+        vec![
+            ("pages/old.md", Effect::Delete, Expected::Bytes(bytes(old))),
+            (
+                "pages/Old.md",
+                Effect::Write(bytes("title:: Old\n- [[Old]]\n")),
+                Expected::Absent,
+            ),
+            (
+                "pages/Ref.md",
+                Effect::Write(bytes("- [[Old]]\n")),
+                Expected::Bytes(bytes("- [[old]]\n")),
+            ),
+        ],
+        Input::Refuse,
+    );
+    planned.kinds = vec![EditKind::RenamePage];
+    planned
+        .moves
+        .push((PageId::from("pages/Old.md"), PageId::from("pages/old.md")));
+    planned
+}
+
+/// Enter the folding wrapper explicitly on Linux's sensitive tmpfs. This
+/// proves its entry-first/content protocol; native alias discovery remains
+/// covered by the folding-volume tests below on macOS/Windows.
+#[test]
+fn folded_wrapper_records_both_paths_with_and_without_an_edit() {
+    for (from, to) in [
+        ("pages/old.md", "pages/Old.md"),
+        ("pages/é.md", "pages/É.md"),
+    ] {
+        for edited in [false, true] {
+            let live = Live::new(&[(from, "- old\n")]);
+            let src = PageId::from(from);
+            let dst = PageId::from(to);
+            let (key, spelling, ..) = live.host.try_identify(&src).unwrap();
+            let sink = Arc::new(Mutex::new(BTreeSet::new()));
+            let new = if edited { "- edited\n" } else { "- old\n" };
+            let mut planned = op(
+                vec![
+                    (
+                        src.as_str(),
+                        Effect::Delete,
+                        Expected::Bytes(bytes("- old\n")),
+                    ),
+                    (dst.as_str(), Effect::Write(bytes(new)), Expected::Absent),
+                ],
+                Input::Refuse,
+            );
+            planned.moves.push((dst.clone(), src.clone()));
+            planned.publications = Some(sink.clone());
+            planned.kinds = vec![EditKind::RenamePage];
+            assert_eq!(
+                live.host.apply_spellings(
+                    planned,
+                    vec![(dst.clone(), src.clone(), key.clone(), spelling)]
+                ),
+                Ok(())
+            );
+            assert_eq!(
+                fs::read(live.root.join(dst.as_str())).unwrap(),
+                new.as_bytes()
+            );
+            assert_eq!(*sink.lock().unwrap(), BTreeSet::from([src, dst]));
+            assert!(
+                live.kinds
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|(page, kinds)| { page == &key && kinds.contains(&EditKind::RenamePage) }),
+                "entry-only completion must still report its edit kinds"
+            );
+            live.host.stop();
+        }
+    }
+}
+
+#[test]
+fn a_receipted_spelling_is_not_moved_by_a_stale_retry() {
+    for receipted in ["pages/é.md", "pages/É.md"] {
+        let live = Live::new(&[("pages/é.md", "- old\n")]);
+        let src = PageId::from("pages/é.md");
+        let dst = PageId::from("pages/É.md");
+        let mut planned = op(
+            vec![
+                (
+                    src.as_str(),
+                    Effect::Delete,
+                    Expected::Bytes(bytes("- old\n")),
+                ),
+                (
+                    dst.as_str(),
+                    Effect::Write(bytes("- old\n")),
+                    Expected::Absent,
+                ),
+            ],
+            Input::Refuse,
+        );
+        planned.moves.push((dst.clone(), src.clone()));
+        planned.publications = Some(Arc::new(Mutex::new(BTreeSet::from([PageId::from(
+            receipted,
+        )]))));
+        assert_eq!(
+            live.host.apply(planned),
+            Err(ApplyRefusal::SpellingIncomplete)
+        );
+        let listed: BTreeSet<_> = fs::read_dir(live.root.join("pages"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(listed.contains(&std::ffi::OsString::from("é.md")));
+        assert!(!listed.contains(&std::ffi::OsString::from("É.md")));
+        assert_eq!(fs::read(live.root.join(src.as_str())).unwrap(), b"- old\n");
+        live.host.stop();
+    }
+}
+
+/// Drive the entry-first postcondition on every filesystem: retain the old
+/// key, move its real entry, then admit content through the new spelling.
+#[test]
+fn entry_first_retained_key_crash_worker() {
+    let Ok(root) = std::env::var("TINE_S3_RETAINED_KEY_ROOT") else {
+        return;
+    };
+    let app = std::env::var("TINE_S3_RETAINED_KEY_APP").unwrap();
+    let phase = match std::env::var("TINE_S3_RETAINED_KEY_PHASE")
+        .unwrap()
+        .as_str()
+    {
+        "rename" => Phase::PageRename,
+        "sync" => Phase::PageSync,
+        _ => unreachable!(),
+    };
+    super::super::faults::abort_before(phase, 0);
+    let store = Arc::new(Store::open(Path::new(&root), Default::default()).unwrap().0);
+    let host = PageHost::start_for_tests(&store, Path::new(&app)).unwrap();
+    let src = PageId::from("pages/old.md");
+    let dst = PageId::from("pages/Old.md");
+    let (key, spelling, ..) = host.try_identify(&src).unwrap();
+    host.try_register(&key, &spelling).unwrap();
+    let graph = store.graph.clone();
+    let lock = graph.page_lock(&graph.root.join(dst.as_str()));
+    host.driver
+        .shared
+        .call_writer(&store.writer, move |state| {
+            fs::rename(graph.root.join(src.as_str()), graph.root.join(dst.as_str())).unwrap();
+            let host = &mut state.progress.host;
+            host.fs.spell(&key, dst.as_str());
+            host.locks.insert(key, lock);
+        })
+        .unwrap();
+    let result = host.apply(op(
+        vec![(
+            "pages/Old.md",
+            Effect::Write(bytes("title:: Old\n- [[Old]]\n")),
+            Expected::Bytes(bytes("title:: old\n- [[old]]\n")),
+        )],
+        Input::Refuse,
+    ));
+    panic!("content did not reach {phase:?}: {result:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn entry_first_retained_key_draft_recovers_through_disk_alias() {
+    for phase in ["rename", "sync"] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("graph");
+        let app = dir.path().join("app");
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/old.md"), "title:: old\n- [[old]]\n").unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "page_host::binding::tests::apply_tests::entry_first_retained_key_crash_worker",
+                "--nocapture",
+            ])
+            .env("TINE_S3_RETAINED_KEY_ROOT", &root)
+            .env("TINE_S3_RETAINED_KEY_APP", &app)
+            .env("TINE_S3_RETAINED_KEY_PHASE", phase)
+            .output()
+            .unwrap();
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(output.status.signal(), Some(6), "{output:?}");
+        let records = super::super::drafts::scan(
+            fs::read_dir(app.join("drafts-v2/test-graph"))
+                .unwrap()
+                .filter_map(|entry| {
+                    let path = entry.unwrap().path();
+                    Some((
+                        path.file_name()?.to_str()?.to_owned(),
+                        fs::read(&path).ok()?,
+                    ))
+                })
+                .collect(),
+        );
+        assert_eq!(
+            records.logical["pages/old.md"].bytes,
+            Some(bytes("title:: Old\n- [[Old]]\n"))
+        );
+        // As in page_title_identity's alias fixture, a same-directory link
+        // supplies Linux with the folding volume's old-path lookup. A native
+        // folding volume already provides it, without a link.
+        let alias = !root.join("pages/old.md").exists();
+        if alias {
+            std::os::unix::fs::symlink("Old.md", root.join("pages/old.md")).unwrap();
+        }
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        assert_eq!(
+            store.disk_spelling(&PageId::from("pages/old.md")),
+            Some(PageId::from("pages/Old.md"))
+        );
+        assert!(store
+            .graph
+            .ensure_write_target(&store.graph.root.join("pages/old.md"))
+            .is_err());
+        let host = PageHost::start_for_tests(&store, &app).unwrap();
+        assert_eq!(host.spelling("pages/old.md"), PageId::from("pages/Old.md"));
+        if alias {
+            // All recovery I/O must now use the resolved entry, even when
+            // the old-path lookup disappears immediately after launch.
+            fs::remove_file(root.join("pages/old.md")).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while fs::read_to_string(root.join("pages/Old.md")).unwrap() != "title:: Old\n- [[Old]]\n" {
+            assert!(
+                Instant::now() < deadline,
+                "{phase}: {:?}",
+                host.draft_status()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let listed: Vec<_> = fs::read_dir(root.join("pages"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            // The killed temp is crash debris, never a live graph page.
+            .filter(|name| {
+                let name = name.to_string_lossy();
+                !(name.starts_with('.') && name.ends_with(".tmp"))
+            })
+            .collect();
+        assert_eq!(listed, ["Old.md"]);
+        host.stop();
+        store.close();
+    }
+}
+
+fn folding(live: &Live) -> bool {
+    let folding = super::rename::folds_case(&live.root);
+    if !folding {
+        eprintln!("S3 skipped: a folding filesystem is required; Linux green proves nothing here");
+    }
+    folding
+}
+
+#[test]
+fn a_folded_move_operation_keeps_its_key_and_rewrites_referrers() {
+    let live = Live::new(&[
+        ("pages/old.md", "title:: old\n- [[old]]\n"),
+        ("pages/Ref.md", "- [[old]]\n"),
+    ]);
+    if !folding(&live) {
+        live.host.stop();
+        return;
+    }
+    let (key, _) = live.open("pages/old.md");
+    assert_eq!(
+        live.host.apply(folded_op("title:: old\n- [[old]]\n")),
+        Ok(())
+    );
+    let listed: Vec<_> = fs::read_dir(live.root.join("pages"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert!(listed.contains(&"Old.md".into()) && !listed.contains(&"old.md".into()));
+    assert_eq!(live.disk("pages/Old.md"), "title:: Old\n- [[Old]]\n");
+    assert_eq!(live.disk("pages/Ref.md"), "- [[Old]]\n");
+    assert_eq!(trashed(&live, "title:: old\n- [[old]]\n"), 1);
+    assert_eq!(
+        live.host
+            .try_identify(&PageId::from("pages/Old.md"))
+            .unwrap()
+            .0,
+        key
+    );
+    live.until_indexed("pages/Old.md", "title:: Old\n- [[Old]]\n");
+    let (opened_key, page) = live.open("pages/Old.md");
+    assert_eq!(opened_key, key);
+    live.submit(&key, "title:: Old\n- edited\n", page.version, None)
+        .unwrap();
+    live.until_disk("pages/Old.md", "title:: Old\n- edited\n");
+    live.host.stop();
+}
+
+#[test]
+fn a_folded_move_refuses_unsaved_input_before_any_write() {
+    let live = Live::new(&[
+        ("pages/old.md", "title:: old\n- [[old]]\n"),
+        ("pages/Ref.md", "- [[old]]\n"),
+    ]);
+    if !folding(&live) {
+        live.host.stop();
+        return;
+    }
+    let (key, _) = live.open("pages/Ref.md");
+    live.pause(true);
+    live.host.driver.shared.with_state_for_tests(|state| {
+        state.progress.with_host(|host| {
+            host.version += 1;
+            let page = host.pages.get_mut(&key).unwrap();
+            page.buf = Some(bytes("- [[old]] typed\n"));
+            page.typed = true;
+            page.version = host.version;
+            host.mark(&key);
+        });
+    });
+    assert_eq!(
+        live.host.apply(folded_op("title:: old\n- [[old]]\n")),
+        Err(ApplyRefusal::Unsaved(PageId::from("pages/Ref.md")))
+    );
+    assert_eq!(live.disk("pages/old.md"), "title:: old\n- [[old]]\n");
+    assert_eq!(live.disk("pages/Ref.md"), "- [[old]]\n");
+    live.host.stop();
+}
+
+#[test]
+fn a_folded_entry_move_publishes_an_unheld_page_before_reply() {
+    let live = Live::watching(
+        &[("pages/old.md", "title:: Old\n- [[Old]]\n")],
+        crate::WatchMode::Poll,
+    );
+    if !folding(&live) {
+        live.host.stop();
+        return;
+    }
+    let src = PageId::from("pages/old.md");
+    let dst = PageId::from("pages/Old.md");
+    let (key, spelling, ..) = live.host.try_identify(&src).unwrap();
+    live.host.try_register(&key, &spelling).unwrap();
+    assert!(live.store.graph.disk_sourced(&live.root.join(src.as_str())));
+    assert_eq!(
+        live.host
+            .move_spelling(
+                src.clone(),
+                dst.clone(),
+                key,
+                bytes("title:: Old\n- [[Old]]\n"),
+                None,
+                None
+            )
+            .map(|_| ()),
+        Ok(())
+    );
+    assert!(live
+        .store
+        .snapshot_knows(&live.store.graph.root.join(dst.as_str())));
+    assert!(!live
+        .store
+        .snapshot_knows(&live.store.graph.root.join(src.as_str())));
+    live.host.stop();
+}
+
+#[test]
+fn a_failed_folded_entry_move_keeps_old_text_and_can_be_retried() {
+    let live = Live::new(&[
+        ("pages/old.md", "title:: old\n- [[old]]\n"),
+        ("pages/Ref.md", "- [[old]]\n"),
+    ]);
+    if !folding(&live) {
+        live.host.stop();
+        return;
+    }
+    live.store
+        .inject_fault(crate::FaultPoint::CaseMoveAliasRefusal);
+    live.store
+        .inject_fault(crate::FaultPoint::CaseMoveAliasNoop);
+    assert_eq!(
+        live.host.apply(folded_op("title:: old\n- [[old]]\n")),
+        Err(ApplyRefusal::SpellingIncomplete)
+    );
+    assert_eq!(live.disk("pages/old.md"), "title:: old\n- [[old]]\n");
+    assert_eq!(live.disk("pages/Ref.md"), "- [[old]]\n");
+    // A provider accepted the syscall but still lists old.md. The driver
+    // must keep the key, path lock and index at that observed spelling.
+    let (_, spelling, ..) = live
+        .host
+        .try_identify(&PageId::from("pages/old.md"))
+        .unwrap();
+    assert_eq!(spelling.as_str(), "pages/old.md");
+    let retry = folded_op("title:: old\n- [[old]]\n");
+    assert_eq!(live.host.apply(retry), Ok(()));
+    let listed: Vec<_> = fs::read_dir(live.root.join("pages"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert!(listed.contains(&"Old.md".into()) && !listed.contains(&"old.md".into()));
+    live.host.stop();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_folded_entry_sync_error_keeps_the_key_at_the_new_spelling() {
+    let live = Live::new(&[
+        ("pages/old.md", "title:: old\n- [[old]]\n"),
+        ("pages/Ref.md", "- [[old]]\n"),
+    ]);
+    if !folding(&live) {
+        live.host.stop();
+        return;
+    }
+    let (key, _) = live.open("pages/old.md");
+    // This transaction fault affects only the entry command's existing
+    // directory-sync recipe, before the ordinary content HostOp starts.
+    live.store.inject_fault(crate::FaultPoint::DirectorySyncIo);
+    assert_eq!(
+        live.host.apply(folded_op("title:: old\n- [[old]]\n")),
+        Err(ApplyRefusal::SpellingIncomplete)
+    );
+    let (same, spelling, ..) = live
+        .host
+        .try_identify(&PageId::from("pages/Old.md"))
+        .unwrap();
+    assert_eq!(same, key);
+    assert_eq!(spelling.as_str(), "pages/Old.md");
+    live.until_indexed("pages/Old.md", "title:: old\n- [[old]]\n");
+    assert_eq!(live.disk("pages/Ref.md"), "- [[old]]\n");
+    let (_, page) = live.open("pages/Old.md");
+    live.submit(&key, "title:: Old\n- after error\n", page.version, None)
+        .unwrap();
+    live.until_disk("pages/Old.md", "title:: Old\n- after error\n");
+    live.host.stop();
 }
 
 /// The files under the graph's trash holding `body`.
@@ -260,7 +926,10 @@ fn a_move_applies_and_a_malformed_operation_is_refused() {
     let live = Live::new(&[("pages/a.md", "- a\n"), ("pages/c.md", "- c\n")]);
     let moving = |source: Expected, moved: Option<(&str, &str)>| HostOp {
         creation_checks: Vec::new(),
-        moved: moved.map(|(dst, src)| (PageId::from(dst), PageId::from(src))),
+        moves: moved
+            .map(|(dst, src)| (PageId::from(dst), PageId::from(src)))
+            .into_iter()
+            .collect(),
         ..op(
             vec![
                 (
@@ -326,5 +995,65 @@ fn a_move_applies_and_a_malformed_operation_is_refused() {
     assert_eq!(applied, Ok(()));
     assert_eq!(live.disk("pages/b.md"), "- a\n");
     assert!(!live.root.join("pages/a.md").exists());
+    live.host.stop();
+}
+
+/// S2: one operation carries several moves (a namespace rename); a page in
+/// two moves is not an operation.
+#[test]
+fn several_moves_apply_as_one_operation_and_a_shared_page_is_refused() {
+    let live = Live::new(&[("pages/a.md", "- a\n"), ("pages/c.md", "- c\n")]);
+    let pages = || {
+        vec![
+            (
+                "pages/b.md",
+                Effect::Write(bytes("- a\n")),
+                Expected::Absent,
+            ),
+            (
+                "pages/a.md",
+                Effect::Delete,
+                Expected::Bytes(bytes("- a\n")),
+            ),
+            (
+                "pages/d.md",
+                Effect::Write(bytes("- c\n")),
+                Expected::Absent,
+            ),
+            (
+                "pages/c.md",
+                Effect::Delete,
+                Expected::Bytes(bytes("- c\n")),
+            ),
+        ]
+    };
+    let moving = |moves: &[(&str, &str)]| HostOp {
+        moves: moves
+            .iter()
+            .map(|(dst, src)| (PageId::from(*dst), PageId::from(*src)))
+            .collect(),
+        ..op(pages(), Input::Refuse)
+    };
+    assert_eq!(
+        live.host.apply(moving(&[
+            ("pages/b.md", "pages/a.md"),
+            ("pages/d.md", "pages/a.md")
+        ])),
+        Err(ApplyRefusal::Refused),
+        "a source in two moves"
+    );
+    assert_eq!(live.disk("pages/a.md"), "- a\n");
+    assert_eq!(live.disk("pages/c.md"), "- c\n");
+    assert_eq!(
+        live.host.apply(moving(&[
+            ("pages/b.md", "pages/a.md"),
+            ("pages/d.md", "pages/c.md")
+        ])),
+        Ok(())
+    );
+    assert_eq!(live.disk("pages/b.md"), "- a\n");
+    assert_eq!(live.disk("pages/d.md"), "- c\n");
+    assert!(!live.root.join("pages/a.md").exists());
+    assert!(!live.root.join("pages/c.md").exists());
     live.host.stop();
 }

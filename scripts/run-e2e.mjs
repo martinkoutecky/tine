@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { buildInputState, normalizedBuildInputState } from "./build-e2e-inputs.mjs";
 import { windowsWebviewProfileSnapshot } from "./e2e-capabilities.mjs";
 import { privateSessionLaunch } from "./lib/e2e-session-bus.mjs";
+import { accountHomeFixture } from "./lib/e2e-account-home.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contractsPath = path.join(root, "tests/ui-regressions/e2e-contracts.json");
@@ -438,6 +439,9 @@ async function runScenario([id, script, extraEnv], contractEntry) {
         || path.join(os.tmpdir(), `tine-e2e-${suiteName}-${id}-${process.pid}-${driverPort}`);
     }
     const nativeLinux = process.platform === "linux" && id !== "selection-wrap" && id !== "wayland-app-id";
+    const owner = process.platform === "linux" && id !== "selection-wrap"
+      ? accountHomeFixture(dir, dir, env) : undefined;
+    if (owner) Object.assign(env, owner.env);
     // Tauri's Linux single-instance plugin owns a well-known session-bus name.
     // Give each native scenario a private bus so a slow WebKit/Tauri teardown
     // cannot forward the next scenario into the previous app. Processes spawned
@@ -464,6 +468,15 @@ async function runScenario([id, script, extraEnv], contractEntry) {
       child.once("exit", (code, signal) => resolve({ code: code ?? 1, signal }));
     });
     clearTimeout(timer);
+    if (owner) {
+      owner.close();
+      // The Wayland identity probe never opens a graph.
+      try { owner.verify({ requireLease: id !== "wayland-app-id" }); }
+      catch (error) {
+        result.code = 1;
+        fs.writeSync(stderr, `Owner fixture: ${error.message}\n`);
+      }
+    }
     if (process.platform === "win32") {
       fs.writeFileSync(
         path.join(dir, "webview2-profile.json"),

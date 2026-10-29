@@ -63,11 +63,74 @@ export interface GpuEnv {
    *  updater's installer would add a second, installed copy, so it updates by
    *  download. Absent from an older backend. */
   portable: boolean;
+  /** The package manager that built this copy (compile-time `TINE_PACKAGED_BY`,
+   *  tine#187): it owns updates, so the updater never checks, notifies or
+   *  installs and About names it. Null/absent = not a package-manager build. */
+  packaged_by?: string | null;
 }
 
-/** Settings → Graph → Git (ADR 0078): the bound graph's autocommit state. On a
+/** Settings → Graph → Git (ADR 0078): the bound graph's autocommit and sync state. On a
  *  platform without git only `available: false` is sent. */
-export type GitPolicy = "off" | "commit";
+export type GitPolicy = "off" | "commit" | "sync-on-demand" | "sync-automatically";
+/** The last sync cycle (ADR 0078 §4): `code` is its refusal-table row. */
+export interface GitSyncStatus {
+  /** A cycle is running now. */
+  running: boolean;
+  /** Unix seconds when the last cycle finished. */
+  at: number | null;
+  code: string | null;
+  message: string | null;
+  /** The file a held or refused pull names. */
+  path: string | null;
+  /** Unix seconds of the last cycle that succeeded. */
+  ok_at: number | null;
+  failures: number;
+  /** Shown outside Settings too. */
+  persistent: boolean;
+  line_endings?: GitLineEndingsProbe | null;
+}
+export interface GitLineEndingsProbe {
+  safe: boolean;
+  differing: number;
+  sample: string | null;
+  reason: string | null;
+}
+export interface GitRemote {
+  name: string;
+  url: string;
+  /** `https://host[:port]` when the remote takes a sign-in. */
+  https_origin: string | null;
+}
+/** Paths index roots, then each child list, in the exact currentText snapshot.
+ * They are structural addresses, not runtime document ids or persisted id::. */
+export type SeenBlockPath = number[];
+export interface SeenPageChanges {
+  available: boolean;
+  /** Why the page is unavailable; on an available result, a note on how the
+   * baseline was found (rewritten history, first-open fallback, walk bound). */
+  reason: string | null;
+  head_commit: string | null;
+  /** null means the empty-tree baseline when tracked; unavailable/absent also
+   * has null and no marks. The UI only needs the marks and availability. */
+  baseline_commit: string | null;
+  /** SHA-256 of the supplied UTF-8 currentText. Discard stale responses. */
+  current_text_sha256: string;
+  identity_known: boolean;
+  /** More than 200 touching commits, or a baseline past the 500-commit walk:
+   * the net diff counts every author. */
+  unattributed: boolean;
+  /** Only other-author committed changes still unchanged in currentText. */
+  blocks: { block_path: SeenBlockPath; persisted_id: string | null }[];
+  removed: {
+    /** One removed block body, properties included; descendants have own rows. */
+    text: string;
+    baseline_block_path: SeenBlockPath;
+    /** null = page roots. */
+    parent_path: SeenBlockPath | null;
+    /** null = before the first child/root of parent_path. */
+    previous_sibling_path: SeenBlockPath | null;
+  }[];
+}
 export interface GitAutocommitStatus {
   available: boolean;
   /** The graph is inside a git work tree. */
@@ -78,13 +141,25 @@ export interface GitAutocommitStatus {
   policy?: GitPolicy;
   interval_minutes?: number;
   last?: {
+    /** One ignore-setup event, retained until the graph worker ends. */
+    syncthing_ignore_added?: string | null;
+    syncthing_ignore_failed?: boolean;
+    repack_deferred?: boolean;
     /** Unix seconds of this process's last autocommit. */
     committed_at: number | null;
     commit: string | null;
     refused: [string, string] | null;
     /** An `index.lock` held through several cycles over 30 minutes. */
     stale_lock: string | null;
+    sync?: GitSyncStatus;
   };
+  /** The tracked remote, when sync can run here. */
+  remote?: GitRemote | null;
+  /** Why the sync options are refused: [code, message]. */
+  sync_unusable?: [string, string] | null;
+  line_endings?: GitLineEndingsProbe | null;
+  /** The username signed in for the remote's host on this device. */
+  signed_in?: string | null;
 }
 
 export interface BackupInfo {

@@ -4,6 +4,34 @@ use super::*;
 
 impl<F: ConformanceIo> Driver<F> {
     pub(super) fn step(&mut self, name: &str, args: &[Value]) -> bool {
+        self.host.fs.physical().assert_no_escapes();
+        let result = self.step_inner(name, args);
+        self.host.fs.physical().assert_no_escapes();
+        result
+    }
+
+    fn step_inner(&mut self, name: &str, args: &[Value]) -> bool {
+        // M3: a scripted successful platform flush can still fail the new
+        // publication-identity check. Select the existing Uncertain successor
+        // only from independent physical evidence of an intervening write.
+        // Do not inject an error: omitting the actual adapter check must fail
+        // the full observed-state/guarantee comparison against dirSync(false).
+        let sync_identity_lost = name == "dirSync"
+            && args
+                .first()
+                .is_some_and(|ok| ok == &json!(true) || ok == &json!(1))
+            && self.host.job.as_ref().is_some_and(|job| {
+                let physical = self.host.fs.physical();
+                job.bytes.is_some()
+                    && (physical.epochs.get(&job.page).copied().unwrap_or(0) != job.epoch
+                        || physical.files.get(&format!("graph/{}", job.page)).cloned() != job.bytes)
+            });
+        let failed_sync_args = [json!(false)];
+        let args = if sync_identity_lost {
+            &failed_sync_args[..]
+        } else {
+            args
+        };
         let prepare_operations = self.prepare_operations
             || (self.refinement_schedule
                 && (self.queued_refusals > 0 || self.occupied_refusals > 0));
@@ -518,7 +546,7 @@ impl<F: ConformanceIo> Driver<F> {
                     self.host.advance_save();
                     self.compare("trash sync");
                 }
-                if !b(0) {
+                if !b(0) && !sync_identity_lost {
                     // An explicit error wins over graph Unsupported too.
                     self.host
                         .fs

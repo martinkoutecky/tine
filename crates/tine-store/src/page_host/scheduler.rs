@@ -64,10 +64,6 @@ impl Driver {
                 "whole retirement lost custody of {page}"
             );
             assert_eq!(self.host.observe(&page), Disposition::Waiting);
-            assert_eq!(
-                self.host.reserve(&BTreeSet::from([page])),
-                Disposition::Waiting
-            );
         }
         self.assert_untouched(&before, "whole retirement busy probes");
     }
@@ -278,14 +274,11 @@ impl Driver {
                         .iter()
                         .map(|(&p, &t)| (key(p), (text(t), text(plan[&p]))))
                         .collect();
-                    let ends = (dst != NONE).then(|| (key(dst as usize), key(src as usize)));
-                    assert_eq!(
-                        self.host.apply(
-                            &effects,
-                            ends.as_ref().map(|(d, s)| (d.as_str(), s.as_str()))
-                        ),
-                        Disposition::Waiting
-                    );
+                    let moves: Vec<_> = (dst != NONE)
+                        .then(|| (key(dst as usize), key(src as usize)))
+                        .into_iter()
+                        .collect();
+                    assert_eq!(self.host.apply(&effects, &moves), Disposition::Waiting);
                 }
                 "switchReq" => assert_eq!(self.host.switch_request(), Disposition::Waiting),
                 "switchFin" => assert_eq!(self.host.switch_finish(), Disposition::Waiting),

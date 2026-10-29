@@ -3,6 +3,126 @@
 # Strings use the JSON-compatible TOML basic-string subset enforced by i01.
 
 [[site]]
+file = "crates/tine-store/src/model.rs"
+fn = "create_graph_dir"
+domain = "primitive"
+guard = ""
+test = "crates/tine-store/src/model/write_target.rs#rg7_unchecked_graph_primitives_panic_before_writing"
+oracle = false
+note = "New-graph directory primitive; Store::create_graph validates the selected new/empty child. RG7 checks the supplied scope in test builds; no independent HostIo claim."
+mutations = "fs::create_dir=1"
+
+[[site]]
+file = "crates/tine-store/src/model.rs"
+fn = "create_graph_dir_all"
+domain = "primitive"
+guard = ""
+test = "crates/tine-store/src/model/write_target.rs#rg7_unchecked_graph_primitives_panic_before_writing"
+oracle = false
+note = "New-graph seed-directory primitive; Store::create_graph checks the seed target first. RG7 checks the directory scope in test builds; same mkdir recipe."
+mutations = "fs::create_dir_all=1"
+
+[[site]]
+file = "crates/tine-store/src/model.rs"
+fn = "remove_graph_file"
+domain = "primitive"
+guard = ""
+test = "crates/tine-store/src/model/write_target.rs#rg7_unchecked_graph_primitives_panic_before_writing"
+oracle = false
+note = "Shared graph cleanup primitive. Transaction undo checks its resolved trash path; asset purge checks the trash root and supplies listing-derived children. RG7 asserts the scope; A-ROOT-BOUND still applies."
+mutations = "fs::remove_file=1"
+
+[[site]]
+file = "crates/tine-store/src/model.rs"
+fn = "remove_graph_dir"
+domain = "primitive"
+guard = ""
+test = "crates/tine-store/src/model/write_target.rs#rg7_unchecked_graph_primitives_panic_before_writing"
+oracle = false
+note = "Post-order asset-trash cleanup primitive, delegated from the containment-checked purge root. RG7 asserts the scope; no new durability or HostIo claim."
+mutations = "fs::remove_dir=1"
+
+[[site]]
+file = "crates/tine-store/src/publish.rs"
+fn = "remove_publish_stage"
+domain = "graph"
+guard = "crates/tine-store/src/publish.rs#reserve_publish_stage_at"
+test = "crates/tine-store/src/publish.rs#rg7_unchecked_publish_capability_mutations_panic_before_io"
+oracle = false
+note = "Same identity-checked stage cleanup through its bound parent capability, also used by external exports. Graph-local RG7 scopes survive delayed Drop; external stages retain their separate outside-graph guard."
+mutations = ".remove_dir_all=1"
+
+[[site]]
+file = "crates/tine-store/src/publish.rs"
+fn = "rename_publish_entry"
+domain = "graph"
+guard = "crates/tine-store/src/publish.rs#reserve_publish_recovery"
+test = "crates/tine-store/tests/publish_site.rs#staged_writer_publishes_files_and_retires_previous_site"
+oracle = false
+note = "Graph site retirement and invalid-stage isolation through the bound recovery capability. Same capability rename and sync recipe, with a test-only RG7 assertion."
+mutations = ".rename=1"
+
+[[site]]
+file = "crates/tine-store/src/restore.rs"
+fn = "remove_restore_temp"
+domain = "graph"
+guard = "crates/tine-store/src/restore.rs#real_parent"
+test = "crates/tine-store/src/restore.rs#rg7_unchecked_restore_capability_mutations_panic_before_io"
+oracle = false
+note = "Failed restore-copy temp cleanup through its bound live parent; real_parent rejects symlink/non-directory components. Same removal, with test-only RG7 scope assertion."
+mutations = ".remove_file=1"
+
+[[site]]
+file = "crates/tine-store/src/transaction/move_file.rs"
+fn = "rename_spelling_replace"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
+test = "crates/tine-store/src/transaction/move_file.rs#a_case_move_keeps_the_requested_leaf_when_its_alias_resolves_to_the_source"
+oracle = false
+note = "Only publish_move's source-identity/parent checks plus the unlisted same-file folded alias permit replacement. Same atomic rename, with test-only RG7 assertion; directory sync remains in publish_move."
+mutations = "atomic_file::rename_replace=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_autocommit.rs"
+fn = "append_syncthing_ignore"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#root_gitignore_keeps_the_non_page_revision_and_target_guards"
+oracle = false
+note = "D-20261026-GI: fixed root .gitignore only, through Store's non-page revision-guarded replace or no-replace create; no raw filesystem mutation or page write. Durable device-local attempt precedes the write; ordinary transaction crash scope applies."
+mutations = ".commit=1, .create=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_pull.rs"
+fn = "plan_pages"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
+test = "src-tauri/src/owner/owner_tests/git_pull_tests.rs#q_git_pull_lands_a_fast_forward"
+oracle = false
+note = "ADR 0078 §4 rev 2 step 2 (s3.7): a pull's pages as one page-host operation planned from H's bytes (replace_page_bytes, no-replace create, trash), Input::Refuse; the host applies it through the audited save path. Renames go through plan_rename (move_file, the receiver's Write effect patched to U's validated bytes)."
+mutations = ".create=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_pull.rs"
+fn = "plan_other"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
+test = "src-tauri/src/owner/owner_tests/git_pull_tests.rs#q_git_pull_lands_a_fast_forward"
+oracle = false
+note = "ADR 0078 §4 rev 2 step 3: plan one non-page pulled file per store transaction (revision-guarded replace from H's bytes, no-replace create, trash), validate before any host publication, then commit in apply; config.edn validates and reloads through the transaction's own config path."
+mutations = ".create=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_pull.rs"
+fn = "barrier"
+domain = "graph"
+guard = "crates/tine-store/src/root_binding.rs#BoundDirectory::check_path"
+test = "src-tauri/src/owner/owner_tests/git_pull_tests.rs#q_git_barrier_syncs_paths_already_at_u"
+oracle = false
+note = "s3.7 P2: under index.lock, fsync every changed path (those already at U included) and its folder before the index and ref move, each file bound to the graph root first. Writes no content: Unix opens read-only; Windows opens for write only because FlushFileBuffers needs it. Folder sync is the store's witness (Windows: no directory flush, D-20261028-WDD)."
+mutations = ".sync_all=1, .write=1, OpenOptions::new=1, sync_directory_witness=1"
+
+[[site]]
 file = "crates/tine-store/src/publish.rs"
 fn = "query_publication_snapshot"
 domain = "primitive"
@@ -59,8 +179,8 @@ domain = "primitive"
 guard = ""
 test = "src-tauri/src/root_identity.rs#relocation_is_idempotent_and_preserves_sealed_bytes"
 oracle = false
-note = "App-data caller of the existing shared directory witness; Unsupported is reported instead of accepted as strong. No new sync primitive or graph path."
-mutations = "directory_durability::sync_directory_witness=1"
+note = "App-data caller of the shared private Windows flush, followed by the existing directory witness; Unix Unsupported handling is unchanged. No new sync primitive or graph path."
+mutations = "directory_durability::sync_directory_witness=1, directory_durability::sync_private_directory=1"
 
 [[site]]
 file = "crates/tine-store/src/root_binding.rs"
@@ -87,60 +207,60 @@ mutations = ".graph_sync=1"
 file = "crates/tine-graph-features/src/config.rs"
 fn = "update"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Store/host transaction API; no raw graph filesystem access. Transaction::path is the delegated containment guard; outside HostIo refinement."
+note = "Store/host transaction API; no raw graph filesystem access. PagePlan::path is the delegated containment guard; outside HostIo refinement."
 mutations = ".create=1"
 
 [[site]]
 file = "crates/tine-graph-features/src/custom_css.rs"
 fn = "ensure_custom_css"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Store/host transaction API; no raw graph filesystem access. Transaction::path is the delegated containment guard; outside HostIo refinement."
+note = "Store/host transaction API; no raw graph filesystem access. PagePlan::path is the delegated containment guard; outside HostIo refinement."
 mutations = ".create=1"
 
 [[site]]
 file = "crates/tine-graph-features/src/guide.rs"
 fn = "create_if_absent"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Store/host transaction API; no raw graph filesystem access. Transaction::path is the delegated containment guard; outside HostIo refinement."
-mutations = ".create=1"
+note = "Store/host transaction API; no raw graph filesystem access. PagePlan::path is the delegated containment guard; outside HostIo refinement."
+mutations = ".create=2"
 
 [[site]]
 file = "crates/tine-graph-features/src/pages.rs"
 fn = "host_rename"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Store/host transaction API; no raw graph filesystem access. Transaction::path is the delegated containment guard; outside HostIo refinement."
+note = "Store/host transaction API; no raw graph filesystem access. PagePlan::path is the delegated containment guard; outside HostIo refinement."
 mutations = ".rename=1"
 
 [[site]]
 file = "crates/tine-graph-features/src/pdf.rs"
 fn = "sidecar_steps"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Store/host transaction API; no raw graph filesystem access. Transaction::path is the delegated containment guard; outside HostIo refinement."
+note = "Store/host transaction API; no raw graph filesystem access. PagePlan::path is the delegated containment guard; outside HostIo refinement."
 mutations = ".create=1"
 
 [[site]]
 file = "crates/tine-graph-features/src/pdf.rs"
 fn = "write_pdf_area_image"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Store/host transaction API; no raw graph filesystem access. Transaction::path is the delegated containment guard; outside HostIo refinement."
+note = "Store/host transaction API; no raw graph filesystem access. PagePlan::path is the delegated containment guard; outside HostIo refinement."
 mutations = ".create=1"
 
 [[site]]
@@ -315,12 +435,12 @@ mutations = "fs::write=1"
 
 [[site]]
 file = "crates/tine-store/src/directory_durability.rs"
-fn = "DirectoryCreation::finish"
+fn = "DirectoryCreation::finish_current_chain"
 domain = "primitive"
 guard = ""
 test = ""
 oracle = false
-note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
+note = "Every path-based mkdir rechecks the original caller binding and actual parent containment; path-based sync debt is retained on errors. The finish wrapper requests current-chain re-planning after missing-ancestor failures. Final check-to-call and parent-rename windows remain in ASSUMPTIONS. No independent oracle claim."
 mutations = "fs::create_dir=1"
 
 [[site]]
@@ -357,7 +477,7 @@ mutations = ".sync_all=1"
 file = "crates/tine-store/src/link_identity.rs"
 fn = "Store::ensure_link_identity"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
 note = "37-byte link UUID is created through the guarded transaction path; no direct filesystem publication."
@@ -381,7 +501,7 @@ guard = "crates/tine-store/src/model.rs#Graph::withdraw_file_to_conflict_if"
 test = "crates/tine-store/tests/f8_vcs_markers.rs#resolving_markers_stages_the_preresolution_file_in_recoverable_trash"
 oracle = false
 note = "Withdraw conflict copy uses ensure_write_target with the root witness and bounded durable parent creation. Outside oracle; full A-ROOT-BOUND/A-DIRSYNC environment proof remains pending."
-mutations = "directory_durability::create_dir_all_durable=1, move_file_noreplace=3"
+mutations = "directory_durability::create_dir_all_durable=1, move_file_noreplace=2"
 
 [[site]]
 file = "crates/tine-store/src/model.rs"
@@ -671,7 +791,7 @@ guard = "crates/tine-store/src/publish.rs#reserve_publish_stage_at"
 test = "crates/tine-store/tests/publish_site.rs#staged_writer_publishes_files_and_retires_previous_site"
 oracle = false
 note = "Graph publish stages/recovery (also used for external exports); cap-std directory handles contain stage mutations. Outside HostIo oracle; ambient directory sync/root binding remains an assumption."
-mutations = ".remove_dir_all=1"
+mutations = "remove_publish_stage=1"
 
 [[site]]
 file = "crates/tine-store/src/publish.rs"
@@ -691,7 +811,7 @@ guard = ""
 test = "crates/tine-store/tests/publish_external_kill.rs#a_killed_external_export_reopens_without_a_partial_site"
 oracle = false
 note = "Generated site output in a user-selected existing parent outside the graph; this entry point refuses an in-graph destination. Private stage then no-replace publication; outside HostIo oracle. Shared stage primitives also serve graph publication and have graph rows."
-mutations = "directory_durability::sync_directory_entry=2, model::move_file_noreplace=1"
+mutations = "directory_durability::sync_directory_entry=2, no_replace::move_file_noreplace=1"
 
 [[site]]
 file = "crates/tine-store/src/publish.rs"
@@ -701,7 +821,7 @@ guard = "crates/tine-store/src/publish.rs#commit_publish_stage_report"
 test = "crates/tine-store/tests/publish_site.rs#staged_writer_publishes_files_and_retires_previous_site"
 oracle = false
 note = "Graph publish stages/recovery (also used for external exports); cap-std directory handles contain stage mutations. Outside HostIo oracle; ambient directory sync/root binding remains an assumption."
-mutations = ".rename=2, directory_durability::sync_directory_entry=4, model::move_file_noreplace=1"
+mutations = "directory_durability::sync_directory_entry=4, model::move_file_noreplace=1, rename_publish_entry=2"
 
 [[site]]
 file = "crates/tine-store/src/publish.rs"
@@ -741,7 +861,7 @@ guard = "crates/tine-store/src/restore.rs#real_parent"
 test = "crates/tine-store/tests/i02_crash_gaps.rs#restore_kill_reopen_keeps_live_or_recovery_bytes"
 oracle = false
 note = "cap-std live/recovery directory handles; real_parent rejects symlink/non-directory components. Outside HostIo oracle; native crash journey covers live-or-recovery preservation."
-mutations = ".create_new=1, .remove_file=1, .sync_all=1, .write=1, OpenOptions::new=1, directory_durability::sync_directory_entry=1"
+mutations = ".create_new=1, .sync_all=1, .write=1, OpenOptions::new=1, directory_durability::sync_directory_entry=1, remove_restore_temp=1"
 
 [[site]]
 file = "crates/tine-store/src/restore.rs"
@@ -791,7 +911,7 @@ guard = ""
 test = "crates/tine-store/tests/i01_write_protocol_census.rs#oracle_rows_cover_the_mutating_phase_list_and_exceptions_are_pinned"
 oracle = false
 note = "The explicit new-graph operation is the sole root creation exception. The named test pins that exception, not a crash proof. Creates layout/config via atomic writers; outside oracle."
-mutations = "fs::create_dir=2, fs::create_dir_all=1, model::atomic_write_new=2"
+mutations = "model::atomic_write_new=2, model::create_graph_dir=2, model::create_graph_dir_all=1"
 
 [[site]]
 file = "crates/tine-store/src/store.rs"
@@ -801,7 +921,7 @@ guard = "crates/tine-store/src/store.rs#Store::purge_asset_trash"
 test = "crates/tine-store/tests/i22_deep_directories.rs#deep_trash_directory_is_counted_and_purged_iteratively"
 oracle = false
 note = "Purge checks the trash root with ensure_write_target; helper receives listing-derived child paths. No per-child binding guard; A-ROOT-BOUND still applies."
-mutations = "fs::remove_file=2"
+mutations = "model::remove_graph_file=2"
 
 [[site]]
 file = "crates/tine-store/src/store.rs"
@@ -811,7 +931,7 @@ guard = "crates/tine-store/src/store.rs#Store::purge_asset_trash"
 test = "crates/tine-store/tests/i22_deep_directories.rs#deep_trash_directory_is_counted_and_purged_iteratively"
 oracle = false
 note = "Purge checks the trash root with ensure_write_target; helper receives listing-derived child paths. No per-child binding guard; A-ROOT-BOUND still applies."
-mutations = "fs::remove_dir=1"
+mutations = "model::remove_graph_dir=1"
 
 [[site]]
 file = "crates/tine-store/src/store/checkpoint.rs"
@@ -855,72 +975,72 @@ mutations = ".publish=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
-fn = "Transaction::apply"
+fn = "PagePlan::apply"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
-test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
+test = "crates/tine-store/src/transaction_environment_tests.rs#m3_transaction_apply_and_apply_move_c2_c3_escape_only"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_copy_file_new=1, atomic_copy_new=1, atomic_file::sync_existing=1, atomic_write=1, atomic_write_new=2, atomic_write_with_check=1, directory_durability::create_dir_all_durable=4, fs::remove_file=3, move_file_noreplace=2, sync_move_dirs=2"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
-fn = "Transaction::commit_timed"
+fn = "PagePlan::commit_timed"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
-mutations = "directory_durability::sync_directory_entry=1, fs::remove_file=3"
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+mutations = "directory_durability::sync_directory_entry=1, fs::remove_file=2, model::remove_graph_file=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
-fn = "Transaction::fault_collision"
+fn = "PagePlan::fault_collision"
 domain = "graph"
 guard = "unguarded:A-MUTATION-CONTAINMENT"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
 note = "Syntactically shipped fault helper has no containment check of its own; fault() is false outside test-faults. It simulates an external writer; recorded conservatively, not a reachable user write claim."
-mutations = "atomic_write_new=1"
+mutations = "atomic_file::atomic_write_new=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
-fn = "Transaction::fault_twin"
+fn = "PagePlan::fault_twin"
 domain = "graph"
 guard = "unguarded:A-MUTATION-CONTAINMENT"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
 note = "Syntactically shipped fault helper has no containment check of its own; fault() is false outside test-faults. It simulates an external writer; recorded conservatively, not a reachable user write claim."
-mutations = "atomic_write_new=1"
+mutations = "atomic_file::atomic_write_new=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
-fn = "Transaction::undo"
+fn = "PagePlan::undo"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
-mutations = "atomic_write=1, atomic_write_new=3, move_file_noreplace=1, sync_move_dirs=1"
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+mutations = "atomic_write=1, move_file_noreplace=1, sync_move_dirs=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
-fn = "Transaction::write_old_copy"
+fn = "PagePlan::write_old_copy"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_write_new=1, directory_durability::create_dir_all_durable=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction.rs"
-fn = "Transaction::write_trash_copy"
+fn = "PagePlan::write_trash_copy"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_write_new=1, directory_durability::create_dir_all_durable=1"
 
 [[site]]
@@ -935,32 +1055,32 @@ mutations = "directory_durability::sync_directory_entry=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction/move_file.rs"
-fn = "Transaction::apply_move"
+fn = "PagePlan::apply_move"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
-test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
+test = "crates/tine-store/src/transaction_environment_tests.rs#m3_transaction_apply_and_apply_move_c2_c3_escape_only"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_write_with_check=1, directory_durability::create_dir_all_durable=2"
 
 [[site]]
 file = "crates/tine-store/src/transaction/move_file.rs"
-fn = "Transaction::publish_move"
+fn = "PagePlan::publish_move"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
-mutations = "atomic_file::rename_replace=1, move_file_noreplace=1, sync_move_dirs=1"
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+mutations = "move_file_noreplace=1, rename_spelling_replace=1, sync_move_dirs=1"
 
 [[site]]
 file = "crates/tine-store/src/transaction/read_checks.rs"
-fn = "Transaction::stage2_faults"
+fn = "PagePlan::stage2_faults"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
 oracle = false
-note = "Transaction target resolves through Transaction::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
+note = "Transaction target resolves through PagePlan::path; move helpers use spelled_path. Parent mkdir is bounded by graph/approved-assets root. Full root-fault coverage and rollback/cleanup remain outside HostIo refinement."
 mutations = "atomic_write=3, atomic_write_new=2"
 
 [[site]]
@@ -1134,13 +1254,33 @@ note = "Private app-data concord history/pins; atomic metadata publication and b
 mutations = "device_io::atomic_write=1, fs::create_dir_all=1"
 
 [[site]]
+file = "src-tauri/src/owner/seen.rs"
+fn = "save"
+domain = "app"
+guard = "src-tauri/src/owner/seen.rs#outside_graph"
+test = "src-tauri/src/owner/seen_tests.rs#seen_first_open_restart_mark_graph_forget_and_noop_writes"
+oracle = false
+note = "D-20261028-SG, ADR 0079: disposable device-local graph baselines through the existing atomic writer; no graph or git mutation."
+mutations = "device_io::atomic_write=1, fs::create_dir_all=1"
+
+[[site]]
+file = "src-tauri/src/owner/seen.rs"
+fn = "forget"
+domain = "app"
+guard = "src-tauri/src/owner/seen.rs#outside_graph"
+test = "src-tauri/src/owner/seen_tests.rs#seen_first_open_restart_mark_graph_forget_and_noop_writes"
+oracle = false
+note = "Forget removes only this graph's device-local baseline and syncs its parent directory."
+mutations = "directory_durability::sync_directory_entry=1, fs::remove_file=1"
+
+[[site]]
 file = "src-tauri/src/css_files.rs"
 fn = "graph_save"
 domain = "graph"
-guard = "crates/tine-store/src/transaction.rs#Transaction::path"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "src-tauri/src/css_files.rs#css_edits_refuse_external_replacement_and_concurrent_creation"
 oracle = false
-note = "Graph CSS uses Store transaction create/replace; delegated Transaction::path containment. Global CSS writes app data."
+note = "Graph CSS uses Store transaction create/replace; delegated PagePlan::path containment. Global CSS writes app data."
 mutations = ".create=1"
 
 [[site]]
@@ -1151,6 +1291,26 @@ guard = ""
 test = ""
 oracle = false
 note = "Global CSS app-data parent directory setup; graph CSS delegates to Transaction."
+mutations = "fs::create_dir_all=1"
+
+[[site]]
+file = "src-tauri/src/css_files.rs"
+fn = "edit_global_css"
+domain = "app"
+guard = ""
+test = ""
+oracle = false
+note = "GH #778: create the app-config parent directory for global.css handoff; file creation delegates to the existing global_save/device_io::atomic_update guarded writer. Rust owns the path."
+mutations = "fs::create_dir_all=1"
+
+[[site]]
+file = "src-tauri/src/css_files.rs"
+fn = "install_global_css_watcher"
+domain = "app"
+guard = ""
+test = ""
+oracle = false
+note = "GH #778: ensure the app-config directory exists before installing its non-recursive global.css watch. No CSS file or graph content is written."
 mutations = "fs::create_dir_all=1"
 
 [[site]]
@@ -1447,70 +1607,70 @@ mutations = ".write_all=1"
 file = "src-tauri/src/owner/git_autocommit.rs"
 fn = "remove_object"
 domain = "dotgit"
-guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = ""
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_repack_refuses_redirected_pack_directory"
 oracle = false
-note = "Repository-derived .git path/index/object/pack operation, protected by git's lock/publication protocol but no qualifying graph containment or bound-root guard. No page-data write; outside oracle."
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
 mutations = "fs::remove_file=1, fs::set_permissions=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_autocommit.rs"
-fn = "repack"
+fn = "repack_guarded"
 domain = "dotgit"
-guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = ""
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_repack_refuses_redirected_pack_directory"
 oracle = false
-note = "Repository-derived .git path/index/object/pack operation, protected by git's lock/publication protocol but no qualifying graph containment or bound-root guard. No page-data write; outside oracle."
-mutations = ".sync_all=1, .write=1, fs::create_dir_all=1, fs::remove_dir=1"
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
+mutations = ".write=1, fs::create_dir_all=1, fs::remove_dir=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_autocommit.rs"
 fn = "sync_dir"
 domain = "dotgit"
-guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = ""
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_repack_refuses_redirected_pack_directory"
 oracle = false
-note = "Repository-derived .git path/index/object/pack operation, protected by git's lock/publication protocol but no qualifying graph containment or bound-root guard. No page-data write; outside oracle."
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
 mutations = "directory_durability::sync_directory_entry=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_run.rs"
 fn = "IndexLock::acquire"
 domain = "dotgit"
-guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = ""
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_index_lock_refuses_a_redirected_index"
 oracle = false
-note = "Repository-derived .git path/index/object/pack operation, protected by git's lock/publication protocol but no qualifying graph containment or bound-root guard. No page-data write; outside oracle."
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
 mutations = ".create_new=1, .write=1, OpenOptions::new=1, fs::remove_file=3, fs::write=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_run.rs"
 fn = "IndexLock::drop"
 domain = "dotgit"
-guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = ""
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_index_cleanup_preserves_files_after_metadata_root_replacement"
 oracle = false
-note = "Repository-derived .git path/index/object/pack operation, protected by git's lock/publication protocol but no qualifying graph containment or bound-root guard. No page-data write; outside oracle."
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
 mutations = "fs::remove_file=3"
 
 [[site]]
 file = "src-tauri/src/owner/git_run.rs"
 fn = "IndexLock::install"
 domain = "dotgit"
-guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = ""
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#autocommit_index_is_durable_before_the_branch_moves"
 oracle = false
-note = "Repository-derived .git path/index/object/pack operation, protected by git's lock/publication protocol but no qualifying graph containment or bound-root guard. No page-data write; outside oracle."
-mutations = ".sync_all=1, .write_all=1, fs::rename=1"
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. s3.7 P1/P1b: the private copy is fsynced, renamed over the index and .git synced (sync_directory_witness, Unsupported refused: strict on Unix like libgit2's ref fsync; Windows identity checks without directory flush, D-20261028-WDD) while index.lock stays held, before the caller's compare-and-swap; an error refuses the branch move. Crash scope: old or new index under the old HEAD, a stale empty index.lock. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux evidence; Windows/macOS runtime acceptance pending."
+mutations = ".sync_all=1, .write=2, OpenOptions::new=1, directory_durability::sync_directory_witness=1, fs::rename=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_run.rs"
 fn = "remove_stale_copies"
 domain = "dotgit"
-guard = "unguarded:A-MUTATION-CONTAINMENT"
-test = ""
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_index_lock_refuses_a_redirected_index"
 oracle = false
-note = "Repository-derived .git path/index/object/pack operation, protected by git's lock/publication protocol but no qualifying graph containment or bound-root guard. No page-data write; outside oracle."
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
 mutations = "fs::remove_file=1"
 
 [[site]]
@@ -1540,8 +1700,38 @@ domain = "app"
 guard = ""
 test = ""
 oracle = false
-note = "Private application owner namespace setup (permissions 0700), outside graph."
-mutations = ".create=1, fs::create_dir_all=2"
+note = "Private application owner namespace setup (Unix permissions 0700), including missing state parents; Windows delegates protected-DACL creation to windows_security::create_directory. Outside graph."
+mutations = ".create=2"
+
+[[site]]
+file = "src-tauri/src/owner/namespace.rs"
+fn = "repair_private"
+domain = "app"
+guard = ""
+test = "src-tauri/src/owner/namespace.rs#explicit_permission_repair_keeps_the_held_inode_and_refuses_symlinks"
+oracle = false
+note = "Explicit Unix owner-directory permission repair opens O_DIRECTORY|O_NOFOLLOW, verifies the current uid, and tightens the same held directory inode to 0700. OpenOptions is read-only; no graph content or held lock inode is replaced."
+mutations = "OpenOptions::new=1"
+
+[[site]]
+file = "src-tauri/src/owner/windows_security.rs"
+fn = "create_directory"
+domain = "app"
+guard = ""
+test = ""
+oracle = false
+note = "Account-derived LocalAppData/tine/owners coordination directories only, outside graph; explicit current-user protected DACL, no reparse points, ownership and permissions checked on use. Existing ACLs are never repaired."
+mutations = "CreateDirectoryW=1"
+
+[[site]]
+file = "src-tauri/src/owner/windows.rs"
+fn = "truncate_start_log"
+domain = "app"
+guard = ""
+test = ""
+oracle = false
+note = "Private bounded owner startup log only. ReOpenFile obtains truncate rights on the existing append-only stderr file object without resolving a pathname; called only after bound_log checks regular-file metadata and size."
+mutations = ".set_len=1"
 
 [[site]]
 file = "src-tauri/src/owner/serve.rs"
@@ -1763,3 +1953,123 @@ oracle = false
 note = "Generated browser extension in app data, no graph path."
 mutations = "device_io::atomic_write=1"
 
+
+[[site]]
+file = "crates/tine-store/src/transaction.rs"
+fn = "PagePlan::restore_old_bytes"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::check_write_target"
+test = "crates/tine-store/tests/transaction.rs#preflight_refusals_leave_disk_and_rollback_empty"
+oracle = false
+note = "Undo rechecks the live graph/approved-assets target after withdrawal before no-replace restoration. No healthy edit I/O changes."
+mutations = "atomic_write_new=1"
+
+[[site]]
+file = "crates/tine-store/src/transaction.rs"
+fn = "Transaction::create"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
+test = "crates/tine-store/tests/host_only_writer.rs#public_transactions_refuse_dynamic_page_effects_before_any_write"
+oracle = false
+note = "Public non-page wrapper queues a shared guarded create; preflight rejects a dynamically resolved page before any mutation."
+mutations = ".create=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_autocommit.rs"
+fn = "commit_locked"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirected_object_fanout"
+oracle = false
+note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
+mutations = ".commit=1, .write_tree_to=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_autocommit.rs"
+fn = "stage"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirected_object_fanout"
+oracle = false
+note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
+mutations = ".blob_writer=1, .commit=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_run.rs"
+fn = "Repo::advance"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirected_object_fanout"
+oracle = false
+note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
+mutations = ".reference=1, .reference_matching=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_run.rs"
+fn = "Repo::tree_with_parts"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirected_object_fanout"
+oracle = false
+note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
+mutations = ".write=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_run.rs"
+fn = "commit_pair"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirected_object_fanout"
+oracle = false
+note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
+mutations = ".blob=2, .commit=2"
+
+[[site]]
+file = "src-tauri/src/owner/git_run.rs"
+fn = "run_end"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirected_object_fanout"
+oracle = false
+note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
+mutations = ".commit=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_sync/credentials.rs"
+fn = "Tokens::sign_in"
+domain = "app"
+guard = ""
+test = "src-tauri/src/owner/git_sync/credentials.rs#tokens_are_kept_per_origin_owner_only_and_never_in_errors"
+oracle = false
+note = "Private app-data git HTTPS tokens (git-credentials.json, owner-only), atomic JSON publication; the last sign-out deletes the file. Never in a graph (ADR 0078 §5, PENDING GIT-CRED)."
+mutations = ".write=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_sync/credentials.rs"
+fn = "Tokens::sign_out"
+domain = "app"
+guard = ""
+test = "src-tauri/src/owner/git_sync/credentials.rs#tokens_are_kept_per_origin_owner_only_and_never_in_errors"
+oracle = false
+note = "Private app-data git HTTPS tokens (git-credentials.json, owner-only), atomic JSON publication; the last sign-out deletes the file. Never in a graph (ADR 0078 §5, PENDING GIT-CRED)."
+mutations = ".write=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_sync/credentials.rs"
+fn = "Tokens::write"
+domain = "app"
+guard = ""
+test = "src-tauri/src/owner/git_sync/credentials.rs#tokens_are_kept_per_origin_owner_only_and_never_in_errors"
+oracle = false
+note = "Private app-data git HTTPS tokens (git-credentials.json, owner-only), atomic JSON publication; the last sign-out deletes the file. Never in a graph (ADR 0078 §5, PENDING GIT-CRED)."
+mutations = "atomic_write_private=1, directory_durability::sync_directory_entry=1, fs::create_dir_all=1, fs::remove_file=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_sync/line_endings.rs"
+fn = "disable"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_sync/line_endings.rs#crlf_fix_overrides_inherited_true_and_input_only_locally_without_file_changes"
+oracle = false
+note = "D-20261028-CRLF: explicit user repair only. RUN_LOCK and index.lock protect a repeated raw-byte probe; bound common-dir config and config.lock containment checks precede libgit2's locked local-config replace. No graph, index or ref publication; a crash leaves conversion enabled or disabled, both safe for the checked bytes. Included/global/system files are never written."
+mutations = ".set_bool=1, .set_multivar=1"

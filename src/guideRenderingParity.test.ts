@@ -1,5 +1,11 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+it("the Guide teaches calendar sidebar gestures and retained tagged-page folds", () => {
+  const journals = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
+  const references = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
+  expect(journals).toContain("Shift-clicking the calendar button itself opens today's journal there");
+  expect(references).toContain("remembers your fold choice for each page when you switch tabs");
+});
 it("the Guide explains query pauses and stale collapsed reference counts", () => {
   const queries = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
   const references = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
@@ -13,7 +19,7 @@ it("the Guide explains preview placement and reachable source actions (GH #750, 
 it("the Guide teaches time tracking for selected task cycling", () => {
   const guide = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
   for (const outcome of ["**Time tracking** on", "DOING / NOW records a clock-in", "into DONE records a clock-out", "Ctrl/Cmd+Enter cycles several selected blocks, in one Undo step"]) expect(guide).toContain(outcome);
-  for (const outcome of ["logbook stays out of the text editor", "**Enter** at the end of its text leaves the history on that task", "keeps both histories in the surviving block's logbook", "editor stays open with your typed text", "use **Copy** on that message"]) expect(guide).toContain(outcome);
+  for (const outcome of ["logbook stays out of the text editor", "**Enter** at the end of its text leaves the history on that task", "keeps only the surviving block's clock history", "heading and flashcard state, are dropped", "the merge leaves both blocks in place", "Undo restores a merge", "editor stays open with your typed text", "use **Copy** on that message"]) expect(guide).toContain(outcome);
   for (const outcome of ["type by hand stays visible until you leave the editor", "Copying or cutting whole blocks carries their clock history", "between Markdown and Org pages"]) expect(guide).toContain(outcome);
 });
 it("the Guide teaches result-scoped columns and retained saved choices", () => {

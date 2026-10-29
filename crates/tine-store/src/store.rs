@@ -372,6 +372,7 @@ mod name_search;
 #[cfg(test)]
 mod page_open_tests;
 mod page_read;
+mod scan_entry;
 mod snapshot;
 pub(crate) use snapshot::PublishedObservations;
 
@@ -891,12 +892,14 @@ fn remove_trash_entry_counted(
     removed_bytes: &mut u64,
     remove_file: &mut impl FnMut(&Path) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
+    #[cfg(test)]
+    crate::model::assert_checked_target(path);
     // Post-order with an explicit stack: a directory is removed after its
     // children, and depth costs heap, not stack (I-22).
     let mut pending = vec![(path.to_path_buf(), false)];
     while let Some((path, emptied)) = pending.pop() {
         if emptied {
-            fs::remove_dir(&path)?;
+            crate::model::remove_graph_dir(&path)?;
             continue;
         }
         let metadata = fs::symlink_metadata(&path)?;
@@ -1013,7 +1016,10 @@ impl Store {
                 "Choose a non-empty graph name without path separators, control characters or <>:\"/\\|?*. Names cannot be . or .., end with a dot or space, or use a Windows device name (CON, NUL, COM1, etc.).")));
         }
         let root = crate::path_identity::new_graph_root(parent, name.trim())?;
-        match fs::create_dir(&root) {
+        #[cfg(test)]
+        crate::model::checked_write_target(parent, &root, "new graph parent", None)
+            .map_err(|error| failed(&root, error))?;
+        match crate::model::create_graph_dir(&root) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 let metadata = fs::symlink_metadata(&root).map_err(|error| failed(&root, error))?;
@@ -1033,7 +1039,7 @@ impl Store {
         }
         for area in ["logseq", "pages", "journals", "assets"] {
             let dir = root.join(area);
-            fs::create_dir(&dir).map_err(|error| failed(&dir, error))?;
+            crate::model::create_graph_dir(&dir).map_err(|error| failed(&dir, error))?;
         }
         let config = root.join("logseq/config.edn");
         let supplied_config = seed
@@ -1042,6 +1048,8 @@ impl Store {
         let config_bytes = supplied_config
             .map(|(_, _, bytes)| bytes.as_slice())
             .unwrap_or(tine_core::guide::CONFIG_EDN.as_bytes());
+        crate::model::checked_write_target(&root, &config, "new graph root", None)
+            .map_err(|error| failed(&config, error))?;
         crate::model::atomic_write_new(&config, config_bytes)
             .map_err(|error| failed(&config, error))?;
         let mut used_config_seed = false;
@@ -1073,8 +1081,14 @@ impl Store {
                 }
             };
             let path = base.join(rel);
+            crate::model::checked_write_target(&root, &path, "new graph root", None)
+                .map_err(|error| failed(&path, error))?;
             if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).map_err(|error| failed(parent, error))?;
+                #[cfg(test)]
+                crate::model::checked_write_target(&root, parent, "new graph root", None)
+                    .map_err(|error| failed(parent, error))?;
+                crate::model::create_graph_dir_all(parent)
+                    .map_err(|error| failed(parent, error))?;
             }
             crate::model::atomic_write_new(&path, bytes).map_err(|error| failed(&path, error))?;
         }
@@ -1591,7 +1605,7 @@ impl Store {
                     let asset = asset
                         .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
                     remove_trash_entry_counted(&asset.path(), &mut removed.1, &mut |path| {
-                        fs::remove_file(path)
+                        crate::model::remove_graph_file(path)
                     })
                     .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
                     removed.0 += 1;
@@ -1602,7 +1616,7 @@ impl Store {
                     .metadata()
                     .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?
                     .len();
-                fs::remove_file(entry.path())
+                crate::model::remove_graph_file(&entry.path())
                     .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
                 removed.0 += 1;
                 removed.1 += bytes;
@@ -1776,18 +1790,7 @@ impl Store {
             out: &mut Listing,
             pending: &mut Vec<PathBuf>,
         ) {
-            #[cfg(test)]
-            let forced = SCAN_FAULTS.with(|faults| {
-                let rel = dir.strip_prefix(root).unwrap_or(dir).to_string_lossy();
-                (faults.borrow().1.as_deref() == Some(rel.as_ref())).then(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        "injected list failure",
-                    )
-                })
-            });
-            #[cfg(not(test))]
-            let forced: Option<std::io::Error> = None;
+            let forced = scan_entry::forced_list_failure(root, dir);
             let entries = match forced.map_or_else(|| fs::read_dir(dir), Err) {
                 Ok(entries) => entries,
                 Err(error) => {
@@ -1846,17 +1849,7 @@ impl Store {
                 if area == Area::Meta && rel != "config.edn" && rel != "custom.css" {
                     continue;
                 }
-                #[cfg(test)]
-                let forced = SCAN_FAULTS.with(|faults| {
-                    (faults.borrow().0.as_deref() == Some(rel.as_str())).then(|| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::PermissionDenied,
-                            "injected stat failure",
-                        )
-                    })
-                });
-                #[cfg(not(test))]
-                let forced: Option<std::io::Error> = None;
+                let forced = scan_entry::forced_stat_failure(&rel);
                 let ty = match forced.map_or_else(|| entry.file_type(), Err) {
                     Ok(ty) => ty,
                     Err(error) => {
@@ -1881,7 +1874,10 @@ impl Store {
                         ));
                     }
                 } else if ty.is_file() {
-                    match entry.metadata() {
+                    let Some(meta) = scan_entry::listed_file_metadata(&entry, &path) else {
+                        continue;
+                    };
+                    match meta {
                         Ok(meta) => {
                             if let Ok(id) = store.file_id(area, &rel) {
                                 out.files.push(FileEntry {
@@ -1934,6 +1930,14 @@ impl Store {
                 .push((under.unwrap_or("").to_owned(), error.into())),
         }
         listing.files.sort_by(|a, b| a.rel.cmp(&b.rel));
+        listing.unreadable = listing
+            .unreadable
+            .into_iter()
+            .filter_map(|(rel, error)| {
+                crate::model::unreadable_error(error, "Tine unreadable file producer=area-listing")
+                    .map(|error| (rel, error))
+            })
+            .collect();
         listing.unreadable.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(listing)
     }
@@ -2016,8 +2020,8 @@ impl Store {
     pub fn page_named(&self, name: &str, kind: PageKind) -> Result<Option<PageRead>, StoreError> {
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
             let read = self.page_named_from_files(name, kind)?;
-            // Journal claimants are files only (BqbeQ); a served checkpoint
-            // answers an unclaimed day itself.
+            // Journal/date-page fallback claimants are files only (BqbeQ);
+            // a served checkpoint answers an unclaimed day itself.
             if read.is_some() || (kind == PageKind::Journal && self.first_view_pending()) {
                 return Ok(read);
             }
@@ -2036,45 +2040,6 @@ impl Store {
             },
             Resolved::Absent { .. } => return Ok(None),
         };
-        match self.page(&id) {
-            Ok(read) => Ok(Some(read)),
-            Err(StoreError::NotFound) => Ok(None),
-            Err(error) => Err(error),
-        }
-    }
-
-    /// The file-name listing answer: read an ordinary page by effective name, or a journal by its file
-    /// stem or parseable display title, without waiting for the initial
-    /// parse. A page some file is named for is found from a listing of file
-    /// names and the matching files; otherwise the first lookup or
-    /// invalidation builds a live O(P) file/preamble index, seeing files
-    /// created after `open`, and warm lookups reuse it. This remains available after a
-    /// failed initial parse; aliases require a successful graph view and are
-    /// not resolved here. When files claim the same name or journal day, it
-    /// uses the same claimant ranking as `WholeGraph::resolve` (canonical
-    /// date-stem journal first, then Markdown before Org). A missing name
-    /// returns `None`, also while a file's name is undecodable: that file is
-    /// listed in `unreadable_files()` and one bad file never blocks the graph.
-    /// The selected file is read through `page()`, with the same safety, revision, and publication
-    /// rules, including lock wait and read errors. It writes no page bytes.
-    fn page_named_from_files(
-        &self,
-        name: &str,
-        kind: PageKind,
-    ) -> Result<Option<PageRead>, StoreError> {
-        let lookup = if kind == PageKind::Journal {
-            self.graph
-                .current_journal_format()
-                .parse(name)
-                .map(|date| self.graph.current_journal_format().title(date))
-                .unwrap_or_else(|| name.to_owned())
-        } else {
-            name.to_owned()
-        };
-        let Some(entry) = self.graph.find_entry_named_file_first(&lookup, kind) else {
-            return Ok(None);
-        };
-        let id = PageId::from(self.graph.rel_path(&entry.path));
         match self.page(&id) {
             Ok(read) => Ok(Some(read)),
             Err(StoreError::NotFound) => Ok(None),
@@ -2211,12 +2176,6 @@ pub struct Listing {
     /// Area-relative names that could not be read, with their errors. An empty
     /// name means directory iteration failed before an entry name was available.
     pub unreadable: Vec<(String, crate::IoError)>,
-}
-
-#[cfg(test)]
-thread_local! {
-    static SCAN_FAULTS: std::cell::RefCell<(Option<String>, Option<String>)> =
-        const { std::cell::RefCell::new((None, None)) };
 }
 
 /// Journal day encoded as a `yyyymmdd` integer. Construct it from
@@ -2957,8 +2916,11 @@ impl WholeGraph {
     }
 
     /// Resolve a name in this captured view. The caller supplies whether the
-    /// name is a journal title; using the wrong kind searches that other
-    /// namespace and may propose a new file. Real files win over aliases.
+    /// name is a journal title. For a parseable date with no journal file,
+    /// an ordinary file of the requested name is a navigation fallback;
+    /// its storage identity stays ordinary. This intentionally differs from
+    /// OG 0.10.9 `convert-page-if-journal-impl`, which classifies by name.
+    /// Other wrong-kind lookups may propose a new file. Real files win over aliases.
     /// Journal files with a configured date stem rank first, then Markdown
     /// before Org, then filename and full path lexicographically. Ordinary
     /// page claimants prefer the file named for the page, then use the latter
@@ -2987,7 +2949,10 @@ impl WholeGraph {
         } else {
             name.to_owned()
         };
-        let entries = self.name_claimants(&lookup, kind);
+        let mut entries = self.name_claimants(&lookup, kind);
+        if entries.is_empty() && is_journal && self.journal_format.parse(name).is_some() {
+            entries = self.name_claimants(name, PageKind::Page);
+        }
         if !entries.is_empty() {
             let mut ids = entries
                 .iter()
@@ -3696,7 +3661,7 @@ mod rev5_tests {
         let mut doc = read.doc;
         doc.blocks[0].raw = "committed while failed".into();
         *store.load.status.lock().unwrap() = LoadStatus::Failed("injected".into());
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.save_page(
             &[crate::EditKind::ReplacePage],
             &id,
@@ -3704,7 +3669,7 @@ mod rev5_tests {
             &doc,
         );
         assert!(
-            matches!(tx.commit(), crate::TxOutcome::Committed { graph_rev, .. } if graph_rev == prior)
+            matches!(tx.commit_internal(), crate::TxOutcome::Committed { graph_rev, .. } if graph_rev == prior)
         );
         assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
         store.refresh(crate::Depth::Stamps).unwrap();
@@ -4074,13 +4039,13 @@ mod rev5_tests {
             store.whole_graph().unwrap();
 
             let a = PageId::from("pages/A.md");
-            let mut create = store.transaction(Some(crate::EditKind::ReplacePage));
+            let mut create = store.page_plan(Some(crate::EditKind::ReplacePage));
             create.create(
                 &a.file(),
                 crate::Content::Bytes(b"- initial word\n".to_vec()),
             );
             assert!(matches!(
-                create.commit(),
+                create.commit_internal(),
                 crate::TxOutcome::Committed { .. }
             ));
             assert!(matches!(
@@ -4111,7 +4076,7 @@ mod rev5_tests {
                 }));
 
             let b = PageId::from("pages/B.md");
-            let mut moving = store.transaction(Some(crate::EditKind::ReplacePage));
+            let mut moving = store.page_plan(Some(crate::EditKind::ReplacePage));
             moving.move_file(
                 &a.file(),
                 FileRev::from_file(&root.join("pages/A.md")).unwrap(),
@@ -4119,7 +4084,7 @@ mod rev5_tests {
                 None,
             );
             assert!(matches!(
-                moving.commit(),
+                moving.commit_internal(),
                 crate::TxOutcome::Committed { .. }
             ));
             let moved = store.whole_graph().unwrap();
@@ -4507,9 +4472,12 @@ mod rev5_tests {
             .files
             .iter()
             .any(|(id, kind, _)| { id == &a.file() && *kind == ChangeKind::Removed }));
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.trash(&b.file(), read_b.rev, crate::TrashIf::Any);
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
         let trashed = changes.try_recv().unwrap().expect("own trash change");
         assert_eq!(trashed.origin, Origin::Own);
         assert!(trashed
@@ -4538,7 +4506,7 @@ mod rev5_tests {
         let stream_id = store.file_id(Area::Assets, "stream.bin").unwrap();
         let bytes_id = store.file_id(Area::Assets, "bytes.bin").unwrap();
         store.inject_fault(crate::FaultPoint::RemoveStreamStageAfterWrite);
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.create(
             &stream_id,
             crate::Content::Stream {
@@ -4546,7 +4514,10 @@ mod rev5_tests {
                 max_bytes: 1024,
             },
         );
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
         let stream_change = changes.try_recv().unwrap().unwrap();
         assert_eq!(stream_change.origin, Origin::Own);
         assert!(stream_change
@@ -4559,22 +4530,28 @@ mod rev5_tests {
             "present streamed asset was removed by a full watcher scan"
         );
         store.set_watch_mode(WatchMode::Poll);
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.create(&bytes_id, crate::Content::Bytes(b"byte content".to_vec()));
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present byte asset was removed by a full watcher scan"
         );
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.replace(
             &bytes_id,
             FileRev::from_file(&root.join("assets/bytes.bin")).unwrap(),
             b"replaced content".to_vec(),
         );
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
@@ -4582,27 +4559,33 @@ mod rev5_tests {
             "present replaced asset was removed by a full watcher scan"
         );
         let moved_id = store.file_id(Area::Assets, "moved.bin").unwrap();
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.move_file(
             &bytes_id,
             FileRev::from_file(&root.join("assets/bytes.bin")).unwrap(),
             &moved_id,
             None,
         );
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present moved asset was removed by a full watcher scan"
         );
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.trash(
             &moved_id,
             FileRev::from_file(&root.join("assets/moved.bin")).unwrap(),
             crate::TrashIf::Any,
         );
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
@@ -4697,13 +4680,16 @@ mod rev5_tests {
         store.whole_graph().unwrap();
         let changes = store.subscribe();
         let id = store.file_id(Area::Meta, "config.edn").unwrap();
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.replace(
             &id,
             FileRev::from_file(&path).unwrap(),
             b"{:foo 2}\n".to_vec(),
         );
-        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::Committed { .. }
+        ));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
@@ -4747,9 +4733,9 @@ mod rev5_tests {
         let id = store.file_id(Area::Assets, "raced.bin").unwrap();
         let writing = Arc::clone(&store);
         let tx = std::thread::spawn(move || {
-            let mut tx = writing.transaction(Some(crate::EditKind::ReplacePage));
+            let mut tx = writing.page_plan(Some(crate::EditKind::ReplacePage));
             tx.create(&id, crate::Content::Bytes(b"own".to_vec()));
-            tx.commit()
+            tx.commit_internal()
         });
         wait_hook(&pause);
         fs::write(outside.join("raced.bin"), b"external").unwrap();
@@ -4843,11 +4829,11 @@ mod rev5_tests {
             ),
             SaveOutcome::InvalidTarget(_)
         ));
-        let mut move_tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut move_tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         let moved = FileId::from("pages/Moved.md".to_string());
         move_tx.move_file(&a.file(), a_rev, &moved, None);
         assert!(matches!(
-            move_tx.commit(),
+            move_tx.commit_internal(),
             crate::TxOutcome::Committed { .. }
         ));
         assert_eq!(
@@ -4866,11 +4852,11 @@ mod rev5_tests {
             .unreadable_files()
             .iter()
             .any(|(id, _)| id == &a.file()));
-        let mut trash_tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut trash_tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         let b = PageId::from("pages/B.md");
         trash_tx.trash(&b.file(), b_rev, crate::TrashIf::Any);
         assert!(matches!(
-            trash_tx.commit(),
+            trash_tx.commit_internal(),
             crate::TxOutcome::Committed { .. }
         ));
         assert!(!b_path.exists());
@@ -4886,7 +4872,7 @@ mod rev5_tests {
         file.set_len(crate::PARSE_INPUT_MAX_BYTES + 1).unwrap();
         let d_rev = FileRev::from_file(&d_path).unwrap();
         store.inject_fault(crate::FaultPoint::MidStepIo);
-        let mut rollback_tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut rollback_tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         rollback_tx.move_file(
             &FileId::from("pages/D.md".to_string()),
             d_rev,
@@ -4894,7 +4880,7 @@ mod rev5_tests {
             None,
         );
         assert!(matches!(
-            rollback_tx.commit(),
+            rollback_tx.commit_internal(),
             crate::TxOutcome::NotCommitted { .. }
         ));
         assert!(d_path.exists());
@@ -4925,7 +4911,7 @@ mod rev5_tests {
         let mut doc_b = read_b.doc;
         doc_a.blocks[0].raw = "new A".into();
         doc_b.blocks[0].raw = "new B".into();
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.save_page(
             &[crate::EditKind::ReplacePage],
             &a,
@@ -4940,7 +4926,10 @@ mod rev5_tests {
         );
         store.inject_fault(crate::FaultPoint::MidStepIoAt(1));
         store.inject_fault(crate::FaultPoint::UndoLiveWrite);
-        assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
+        assert!(matches!(
+            tx.commit_internal(),
+            crate::TxOutcome::NotCommitted { .. }
+        ));
         let found: Vec<_> = std::iter::from_fn(|| changes.try_recv().unwrap()).collect();
         assert!(
             found.iter().any(|change| {
@@ -4974,6 +4963,7 @@ mod rev5_tests {
         fs::write(dir.join("two"), b"def").unwrap();
         let mut bytes = 0;
         let mut calls = 0;
+        crate::model::checked_write_target(&dir, &dir, "purge fixture", None).unwrap();
         let failure = remove_trash_entry_counted(&dir, &mut bytes, &mut |path| {
             calls += 1;
             if calls == 2 {
@@ -5428,13 +5418,13 @@ mod rev5_tests {
         let fresh_after_save = store.whole_graph().unwrap();
         assert_ne!(view_answers(&fresh_after_save), original_answers);
 
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.create(
             &FileId::from("logseq/config.edn".to_owned()),
             crate::transaction::Content::Bytes(b"{:file/name-format :triple-lowbar}\n".to_vec()),
         );
         assert!(matches!(
-            tx.commit(),
+            tx.commit_internal(),
             crate::transaction::TxOutcome::Committed { .. }
         ));
         assert_eq!(view_answers(&old), original_answers);
@@ -5526,11 +5516,11 @@ mod rev5_tests {
         fs::write(root.join("pages/Unreadable.md"), b"- page\n").unwrap();
         fs::write(root.join("pages/nested/Inside.md"), b"- page\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
-        SCAN_FAULTS.with(|faults| {
+        scan_entry::SCAN_FAULTS.with(|faults| {
             *faults.borrow_mut() = (Some("Unreadable.md".into()), Some("nested".into()));
         });
         let listing = store.scan_area(Area::Pages, None).unwrap();
-        SCAN_FAULTS.with(|faults| *faults.borrow_mut() = (None, None));
+        scan_entry::SCAN_FAULTS.with(|faults| *faults.borrow_mut() = (None, None));
         assert_eq!(
             listing
                 .unreadable
@@ -5544,6 +5534,81 @@ mod rev5_tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn scan_does_not_report_not_found_from_type_or_directory_reads() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("journals")).unwrap();
+        fs::write(root.path().join("journals/2026_10_26.md"), b"- day\n").unwrap();
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        for faults in [
+            (Some("2026_10_26.md".to_owned()), None),
+            (None, Some(String::new())),
+        ] {
+            scan_entry::SCAN_FAULT_KIND.with(|kind| kind.set(std::io::ErrorKind::NotFound));
+            scan_entry::SCAN_FAULTS.with(|known| *known.borrow_mut() = faults);
+            let listing = store.scan_area(Area::Journals, None).unwrap();
+            scan_entry::SCAN_FAULTS.with(|known| *known.borrow_mut() = (None, None));
+            scan_entry::SCAN_FAULT_KIND.with(|kind| kind.set(std::io::ErrorKind::PermissionDenied));
+            assert!(listing.unreadable.is_empty(), "{:?}", listing.unreadable);
+        }
+        store.close();
+    }
+
+    /// Martin 10/27: a journal a sync tool was replacing (old version moved
+    /// away, new one moved in) was reported "No such file or directory" while
+    /// it existed and loaded. A listed file that vanishes before its metadata
+    /// read is gone or being replaced, never unreadable.
+    #[test]
+    fn scan_treats_a_file_vanishing_mid_scan_as_gone_or_replaced() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-scan-vanish-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("journals")).unwrap();
+        fs::write(root.join("journals/2026_10_26.md"), b"- day\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+
+        // Replaced: gone at the first look, back at the second.
+        let parked = root.join("journals-parked.md");
+        let (away, back) = (parked.clone(), parked.clone());
+        scan_entry::SCAN_HOOKS.with(|hooks| {
+            *hooks.borrow_mut() = (
+                Some(Box::new(move |path: &Path| {
+                    fs::rename(path, &away).unwrap()
+                })),
+                Some(Box::new(move |path: &Path| {
+                    fs::rename(&back, path).unwrap()
+                })),
+            );
+        });
+        let listing = store.scan_area(Area::Journals, None).unwrap();
+        assert!(listing.unreadable.is_empty(), "{:?}", listing.unreadable);
+        assert_eq!(
+            listing
+                .files
+                .iter()
+                .map(|f| f.rel.as_str())
+                .collect::<Vec<_>>(),
+            ["2026_10_26.md"]
+        );
+
+        // Removed: gone at both looks.
+        scan_entry::SCAN_HOOKS.with(|hooks| {
+            *hooks.borrow_mut() = (
+                Some(Box::new(|path: &Path| fs::remove_file(path).unwrap())),
+                None,
+            );
+        });
+        let listing = store.scan_area(Area::Journals, None).unwrap();
+        scan_entry::SCAN_HOOKS.with(|hooks| *hooks.borrow_mut() = (None, None));
+        assert!(listing.unreadable.is_empty(), "{:?}", listing.unreadable);
+        assert!(listing.files.is_empty());
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn scan_reports_non_utf8_names_for_backup_completeness() {
@@ -5552,12 +5617,22 @@ mod rev5_tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("pages")).unwrap();
         let name = std::ffi::OsString::from_vec(b"lost-\xff.md".to_vec());
-        fs::write(root.join("pages").join(name), b"- text\n").unwrap();
+        let non_utf8 = root.join("pages").join(name);
+        let non_utf8_entries = match fs::write(&non_utf8, b"- text\n") {
+            Ok(()) => 1,
+            // APFS only accepts valid UTF-8 names. The filesystem refuses
+            // this input before a scanner or backup could encounter it.
+            Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => {
+                assert!(!non_utf8.exists());
+                0
+            }
+            Err(error) => panic!("could not create non-UTF-8 fixture: {error}"),
+        };
         fs::write(root.join("pages/invalid\\name.md"), b"- text\n").unwrap();
         fs::create_dir_all(root.join("pages/invalid\\directory")).unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
         let listing = store.scan_area(Area::Pages, None).unwrap();
-        assert_eq!(listing.unreadable.len(), 3);
+        assert_eq!(listing.unreadable.len(), 2 + non_utf8_entries);
         assert!(listing
             .unreadable
             .iter()
