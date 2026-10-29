@@ -10,51 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Picking a block in the `((` or `{{embed ((` block search no longer writes a short temporary id such as `((bmvsgco1s-11))` when the block had no `id::` yet: Tine now gives the block a proper UUID, as Logseq does, so the reference keeps working in Logseq and after restarting Tine. A block that already has an id keeps it (GH #798).
 - A first launch with a default journal template no longer sometimes opens Journals as "Couldn't open this page: Journal feed read failed" while today's template page is still being saved; Journals shows as soon as that save ends (GH #671, E2E-BASE-4).
 - Scrolling the Journals feed keeps loading older days while you are editing a journal day. After some graph-wide changes (for example a sync bringing in many files) the feed could stop at its first three days until you clicked outside the journals (UI-JOURNAL-FEED-PAGING-WHILE-EDITING).
-- The horizontal scrollbar under a long-line code block is easy to grab (GH #787). It is now a 14px strip with a visible thumb in every theme (it was a few-pixel overlay bar hidden in the card's padding), and pressing it scrolls the card instead of opening the block's editor; presses on the code text still edit. Cards that scroll sideways are 14px taller. Touch devices keep their own scrollbar.
-- Every ancestor crumb in a block embed's breadcrumb opens that block, not just the page: click to go there, Shift-click for the sidebar, Ctrl/Cmd-click for a new tab, Alt-click for the other pane (GH #779).
-- On long pages with images, Enter, Backspace, Tab, Shift+Tab, moves and drags no longer remount the blocks around the edit: the touched window keeps its other blocks, windows after it keep their boundaries, an outdent that leaves the list long keeps it windowed, so no image flashes back to its placeholder and the view does not jump (GH #745). An image that finishes loading after the edit no longer leaves the caret off screen.
-- Large graph PDFs load requested byte ranges through the read-only asset IPC, so opening one no longer copies the entire file into the webview first (D-20261028-PDF9 item 3).
-
-- PDF page eviction releases decoded images and drawing data once no split view retains the page, reducing retained memory while reading scanned books (D-20261028-PDF9, item 1).
-- Opening the right sidebar by a remapped shortcut keeps the main editor and caret when the sidebar shows the same block (UI-EDITOR-LATE-MOUNT).
-- Windows: automatic git cleanup no longer fails while flushing completed packs. Failed cleanup preserves loose objects, keeps commits running, and shows a quiet retry status in Settings → Git (REG-AUTOCOMMIT-WINDOWS-REPACK).
-- Clicking another block while journal days load keeps its editor and focus when the earlier Down navigation finishes (UI-EDITOR-C2).
-- Logseq-style query tables now let you toggle columns through View and save the choice as Logseq-compatible `query-properties::` (GH #749).
-- Date-shaped links open an existing ordinary page when no journal file exists for the day, avoiding an empty duplicate journal (UI-DATE-PAGE-LINK).
-- Backspace and Delete merges drop the absorbed block's hidden heading, flashcard state and clocks; referenced IDs transfer when possible, and merges that would lose a referenced ID leave both blocks in place (REG-F2-MERGE-HIDDEN-ROWS, hDI40A).
-- Links inside query-result ancestor breadcrumbs are clickable again (GH #743).
-- The “Pages tagged with” section stays folded when you return to a tab (GH #739).
-- Shift-click a calendar day, **Today**, or the calendar button to open that journal in the right sidebar, as in Logseq (GH #740).
-- A page embed's icon aligns with the first line of a title that wraps (GH #770).
-- Backspace removes an empty bullet inside a block embed when its source ancestor is folded (GH #766).
-- Refused renames of pages with duplicate identities now name the conflicting graph-relative files and explain that they must be merged or removed (GH #774).
-- Automatic git commits leave out Syncthing temporary files, add `.syncthing.*` to the graph's `.gitignore` once, and say so once in a toast and in Settings → Git. Removing the rule is respected; conflict copies remain committed (REG-AUTOCOMMIT-SYNCTHING-TEMP, D-20261026-GI).
-- Automatic git commits and `--run` commits write the repository's index to disk durably before moving the branch, so a crash or power cut can no longer leave the old index under the new commit, where your next plain `git commit` would have undone Tine's (REG-GIT-INDEX-DURABLE-BEFORE-REF).
-- macOS: command-line commands that talk to the running app or `tine serve` (`tine status`, page and query reads) no longer fail with "the owner's endpoint failed: Invalid argument" (GH #771).
-- Quick share initializes Android's device certificate verifier before connecting to GitHub, and packages its matching Kotlin component (D-20261025-QV).
-- Journal feeds, Upcoming, calendar dots and slash templates now refresh from their relevant changes, avoiding unrelated reads while typing. Queries skip unrelated saves and graph-wide queries wait for a 1.5-second typing pause; collapsed reference sections keep their last count with a stale indicator until opened. Clock queries invalidate when an edit follows an expired instant, and Pages and blocks queries keep the typing pause even when subscription renewal finishes late (GH #746).
-- Sidebar disclosure arrows now use the shared SVG triangle, including nested Favorites, Tabs and namespaces; graph and workspace switchers inherit the app font (GH #761).
-- Cmd+, on macOS and Ctrl+, elsewhere open Settings, including while editing a block; the existing `t s` shortcut remains available and both defaults appear in Keyboard shortcuts (GH #762).
-- Linux: input methods can show composing text inside the editor. Verified with IBus Hangul; this may fix Fcitx5 input not appearing (GH #575), but Fcitx5/Hyprland remains unverified.
-- Mobile: the help "?" button no longer covers the last buttons of the bottom-docked formatting toolbar while text is selected, with or without the keyboard (internal UI-HELP-FAB-ABOVE-DOCKED-TOOLBAR).
-- Block references keep resolving after a block moves between pages and after reopening the graph; dangling references no longer scan unrelated pages (GH #746, GH #623).
-- The exact block-owner index builds in bulk at cold launch and writes compact checkpoint rows without temporary page copies (GH #623).
-- The exact block-owner index keeps UUID keys in 16 bytes and shares one allocation per tree node, reducing its memory use on large graphs (GH #623).
-- Quick Capture keeps refused text on Escape, so reopening the box files it into the current graph; a claim retired before insertion no longer reports previous-graph uncertainty (GH #254). Deleting a conflicted page now refuses an unanswered input drain after five seconds and restores editable text.
-- Reference and embed rows validate their source page before becoming editable, so a copied block identity cannot expose another page's live block or selection (follow-up to GH #748).
-- Moving a graph preserves access to device-local unsaved edits through **Recover into this graph** and stops saves when an open folder moves or disconnects. Recovery excludes hosts still saving; open graphs permit drive eject, and recovery/backup notices explain that a graph may be moved or unavailable, including on a disconnected drive (L9-01, L9-02).
-- Windows now holds the same account-wide graph owner lock as Linux and macOS, so concurrent Tine apps cannot host one graph or adopt its live drafts (L9-01, L9-02).
-- An asset stays in place if sync replaces a set-aside duplicate journal while Tine checks whether the asset is unused; the check refuses stale bytes even when the replacement keeps the same length and modification time (GH #623).
-
 - A page file that a sync tool is replacing while Tine lists the folder is no longer reported as "couldn't be read" (REG-SCAN-VANISHED-ENTRY).
-
-Development-only fixes (not shipped in a release):
-
-- Queries and boards in a published export show their results again instead of “Query couldn't be loaded: This is a read-only published export.” (development-only regression; UI-PUBLISHED-QUERY-SUBSCRIPTION).
-- **Opening and scrolling a large page right after typing is fast again** (development only, internal card hDSCuw): the typing-stall diagnostics added for GH #746 ran work on every frame for two seconds after each key, which made a page opened from search or the page switcher, and its first scroll, about a frame slower. They now do no per-frame work.
-- Picking a block in the `((` or `{{embed ((` block search no longer writes a short temporary id such as `((bmvsgco1s-11))` when the block had no `id::` yet: Tine now gives the block a proper UUID, as Logseq does, so the reference keeps working in Logseq and after restarting Tine. A block that already has an id keeps it (GH #798).
 
 ## [0.8.1] - 2026-10-27
 
