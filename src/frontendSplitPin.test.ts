@@ -345,14 +345,18 @@ describe("small document intents retain visible and saved outcomes", () => {
     const disk = await bindDisk(pages);
     // A process lost right after the target's write: the source never reaches disk.
     disk.failWrites(sourceName);
-    const done = await persistBlockRefTarget(uuid, "M target", "page", undefined, uuid, () => {
-      setRaw(source.id, `((${uuid}))`);
+    // The target has no id:: yet, so it gets a fresh one, never its runtime key (GH #798).
+    let stamped = "";
+    const done = await persistBlockRefTarget(uuid, "M target", "page", undefined, uuid, (id) => {
+      stamped = id;
+      setRaw(source.id, `((${id}))`);
       return sourceName;
     });
     expect(done).toBe(true);
+    expect(stamped).not.toBe(uuid);
     await flushAll();
     expect(disk.writes[0][0], "the target's ID reaches disk first").toBe("pages/M target.md");
-    expect(disk.saved("M target")[0]).toContain(`id:: ${uuid}`);
+    expect(disk.saved("M target")[0]).toContain(`id:: ${stamped}`);
     expect(disk.saved(sourceName)).toEqual(["draft"]);
   });
 
