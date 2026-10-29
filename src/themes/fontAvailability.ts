@@ -29,6 +29,7 @@ function canvasMeasurer(font: string): number | null {
   return canvasContext.measureText(SAMPLE).width;
 }
 
+const MEMO_LIMIT = 256;
 const memo = new Map<string, FontPresence>();
 
 /** Probe `name` (a family name from a validated stack: letters, digits, `. _ -`
@@ -43,7 +44,10 @@ export function fontPresence(name: string, measure: TextMeasurer = canvasMeasure
     if (base === null || test === null || base === 0) { result = "unknown"; break; }
     if (Math.abs(base - test) > 0.01) { result = "installed"; break; }
   }
-  if (measure === canvasMeasurer) memo.set(name, result);
+  if (measure === canvasMeasurer) {
+    if (memo.size >= MEMO_LIMIT) memo.clear();
+    memo.set(name, result);
+  }
   return result;
 }
 
