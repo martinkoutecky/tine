@@ -39,7 +39,9 @@ mod tests {
         .unwrap();
         let html = &files["folds.html"];
         assert!(html.contains("<details class=\"outline-fold\"><summary class=\"b\">"));
-        assert!(html.contains("<details class=\"outline-fold\" open><summary class=\"b\">Open</summary><ul>"));
+        assert!(html.contains(
+            "<details class=\"outline-fold\" open><summary class=\"b\">Open</summary><ul>"
+        ));
         assert!(!html.contains(">Children<"));
         assert_eq!(html.matches("class=\"outline-fold\"").count(), 2);
         assert!(html.contains("<li id=\"b1\"><div class=\"b\">Hidden child</div></li>"));
