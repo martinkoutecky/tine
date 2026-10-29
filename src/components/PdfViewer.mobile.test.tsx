@@ -39,7 +39,7 @@ vi.mock("pdfjs-dist", () => ({
   },
 }));
 
-vi.mock("pdfjs-dist/build/pdf.worker.min.mjs?url", () => ({
+vi.mock("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url", () => ({
   default: "pdf.worker.test.js",
 }));
 

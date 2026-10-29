@@ -1443,6 +1443,19 @@ try {
   // Escape closes Find while leaving the viewer mounted.
   await browser.$('button[title="Find in document (Ctrl+F)"]').click();
   await browser.$(".pdf-find-bar").waitForExist({ timeout: 5000 });
+  // PDF-09 item 7: exercise the real pdf.js text extraction/selection after
+  // the major upgrade, in addition to the transient-owner checks below.
+  const findSidecarBefore = fs.readFileSync(sidecar, "utf8");
+  await browser.$(".pdf-find-input").setValue("viewer");
+  await browser.waitUntil(() => browser.execute(() =>
+    window.getSelection()?.toString().toLowerCase() === "viewer"
+      && /1.*1/.test(document.querySelector(".pdf-find-count")?.textContent ?? "")), {
+    timeout: 10_000,
+    timeoutMsg: "PDF Find did not locate and select the fixture's text",
+  });
+  if (fs.readFileSync(sidecar, "utf8") !== findSidecarBefore) throw new Error("PDF Find changed annotation bytes");
+  await browser.$(".pdf-find-input").clearValue();
+  await browser.waitUntil(() => browser.execute(() => !window.getSelection()?.toString()), { timeout: 5000 });
   const transientSidecarBefore = fs.readFileSync(sidecar, "utf8");
   const transientViewBefore = await browser.execute(() => ({
     filename: document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename"),

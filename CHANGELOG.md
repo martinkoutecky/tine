@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- The PDF reader uses pdf.js 5.7.284, with its image decoders and fonts bundled for offline reading (internal D-20261028-PDF9 item 7). Building Tine now requires Node.js 22.13 or newer.
 - The seen notice stays at the top so you can click it even in the middle of a page (UI-SEEN-STICKY).
 - The desktop formatting toolbar displays over the selection, including near the bottom of a long block, and moves below it when there is no room above (UI-SEL-TOOLBAR).
 - Expand or collapse bullets even in read-only exports, quick-share links and read-only pages. These viewing choices last while browsing; reloading restores the original folds without changing the graph. Static HTML exports keep the original folds too; click a folded block's arrow to open it, which works without JavaScript (UI-VIEW-FOLD, UI-VIEW-FOLD-STATIC).

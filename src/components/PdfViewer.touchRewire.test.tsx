@@ -21,7 +21,7 @@ vi.mock("pdfjs-dist", () => ({
     update() { return Promise.resolve(); }
   },
 }));
-vi.mock("pdfjs-dist/build/pdf.worker.min.mjs?url", () => ({ default: "pdf.worker.test.js" }));
+vi.mock("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url", () => ({ default: "pdf.worker.test.js" }));
 
 async function flush() {
   for (let i = 0; i < 16; i++) await Promise.resolve();

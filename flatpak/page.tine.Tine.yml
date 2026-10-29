@@ -18,7 +18,7 @@ runtime-version: "49"
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
-  - org.freedesktop.Sdk.Extension.node20
+  - org.freedesktop.Sdk.Extension.node22
 
 command: tine
 
@@ -50,7 +50,7 @@ finish-args:
 
 build-options:
   # Put the SDK-extension toolchains (cargo/rustc, node/npm) on PATH.
-  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node20/bin
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node22/bin
 
 modules:
   # libayatana-appindicator3 (+ libdbusmenu, ayatana-ido, libayatana-indicator,

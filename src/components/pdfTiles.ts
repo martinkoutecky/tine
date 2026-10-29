@@ -136,7 +136,7 @@ export function createPdfTiles(onError: (error: unknown) => void) {
         x: item.x * TILE_CSS_SIZE, y: item.y * TILE_CSS_SIZE, w: width, h: height });
       pending++;
       try {
-        tile.task = page.render({ canvasContext: canvas.getContext("2d")!, viewport,
+        tile.task = page.render({ canvas, viewport,
           transform: [ratio, 0, 0, ratio, -item.x * TILE_CSS_SIZE * ratio, -item.y * TILE_CSS_SIZE * ratio] });
         void tile.task.promise.then(() => pdfProbe({ type: "tile-end", page: pageNumber, key: item.key }))
           .catch((error: unknown) => {
