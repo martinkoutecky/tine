@@ -13,7 +13,23 @@ pub(super) struct IndexLockIdentity {
     file: u128,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test seam: make the next identity capture fail, as FileIdInfo and the
+    /// file-index fallback both would on a filesystem without file IDs.
+    pub(crate) static FAIL_CAPTURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 impl IndexLockIdentity {
+    /// The identity of the lock Tine just created.
+    pub(super) fn capture(file: &std::fs::File) -> std::io::Result<Self> {
+        #[cfg(test)]
+        if FAIL_CAPTURE.with(|fail| fail.replace(false)) {
+            return Err(std::io::Error::other("forced identity failure"));
+        }
+        Self::from_file(file)
+    }
+
     #[cfg(any(
         target_os = "linux",
         target_os = "macos",
@@ -50,12 +66,30 @@ impl IndexLockIdentity {
                 std::mem::size_of::<FILE_ID_INFO>() as u32,
             )
         };
-        if result == 0 {
+        if result != 0 {
+            return Self::checked(
+                info.VolumeSerialNumber,
+                u128::from_le_bytes(info.FileId.Identifier),
+            );
+        }
+        // FAT32/exFAT (fastfat) and Samba shares do not implement FileIdInfo;
+        // they do answer the older 32-bit volume serial + 64-bit file index.
+        Self::from_file_index(file)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn from_file_index(file: &std::fs::File) -> std::io::Result<Self> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        };
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
             return Err(std::io::Error::last_os_error());
         }
         Self::checked(
-            info.VolumeSerialNumber,
-            u128::from_le_bytes(info.FileId.Identifier),
+            u64::from(info.dwVolumeSerialNumber),
+            (u128::from(info.nFileIndexHigh) << 32) | u128::from(info.nFileIndexLow),
         )
     }
 
@@ -129,11 +163,11 @@ mod tests {
             .split("impl IndexLockIdentity {")
             .nth(1)
             .unwrap()
-            .split("#[cfg(test)]")
+            .split("#[cfg(test)]\nmod tests")
             .next()
             .unwrap();
         for os in ["linux", "macos", "ios", "android", "windows"] {
-            let expected = if os == "windows" { 2 } else { 3 };
+            let expected = 3;
             assert_eq!(
                 identity.matches(&format!("target_os = \"{os}\"")).count(),
                 expected,

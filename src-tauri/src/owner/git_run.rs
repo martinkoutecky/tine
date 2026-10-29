@@ -35,7 +35,7 @@ use tine_store::PageId;
 use super::wire::{ok, ErrorBody};
 use crate::state::GraphSlot;
 
-mod index_lock_identity;
+pub(super) mod index_lock_identity;
 use index_lock_identity::IndexLockIdentity;
 
 pub(crate) const TRAILER: &str = "Tine-Run";
@@ -639,9 +639,19 @@ impl IndexLock {
                 std::io::ErrorKind::AlreadyExists => LockRefusal::Held,
                 _ => LockRefusal::Failed(format!("{}: {e}", lock_file.display())),
             })?;
-        let identity = IndexLockIdentity::from_file(&lock).map_err(|e| {
-            LockRefusal::Failed(format!("the index lock identity could not be read: {e}"))
-        })?;
+        let identity = match IndexLockIdentity::capture(&lock) {
+            Ok(identity) => identity,
+            Err(e) => {
+                // create_new just made this lock, so it is ours: leaving it
+                // behind would make every later commit (and the user's own
+                // git) report the index as locked.
+                drop(lock);
+                let _ = std::fs::remove_file(&lock_file);
+                return Err(LockRefusal::Failed(format!(
+                    "the index lock identity could not be read: {e}"
+                )));
+            }
+        };
         remove_stale_copies(gitdir, &guard);
         let scratch = gitdir.join(format!(
             "{SCRATCH_PREFIX}{}.tmp",
