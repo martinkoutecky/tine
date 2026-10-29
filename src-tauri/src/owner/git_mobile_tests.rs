@@ -1142,7 +1142,33 @@ fn a_lock_replaced_between_check_and_move_is_linked_back_never_deleted() {
         fs::rename(&target, original).unwrap();
         fs::rename(replacement, target).unwrap();
     });
-    assert_eq!(click(&root, &token), Err(Refusal::Changed));
+    let probe = root.join("link-probe");
+    fs::write(&probe, "").unwrap();
+    let links = fs::hard_link(&probe, root.join("link-probe-2")).is_ok();
+    let refused = click(&root, &token);
+    // Android denies hard links even in app-private storage, so link-back
+    // falls to the contract's no-link outcome: the replacement is kept
+    // under the aside name the refusal gives, never deleted.
+    if cfg!(target_os = "android") && !links {
+        let Err(Refusal::Failed(message)) = &refused else {
+            panic!("{refused:?}");
+        };
+        let aside = fs::read_dir(repo.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("tine-stale-index-")
+            })
+            .unwrap();
+        assert!(message.contains(&aside.display().to_string()), "{message}");
+        assert_eq!(same_file::Handle::from_path(&aside).unwrap(), identity);
+        assert!(!lock.exists());
+        return;
+    }
+    assert_eq!(refused, Err(Refusal::Changed));
     assert_eq!(same_file::Handle::from_path(&lock).unwrap(), identity);
     assert_eq!(
         stale_lock::token(&fs::symlink_metadata(lock).unwrap()),
