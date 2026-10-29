@@ -53,3 +53,11 @@ it("the Guide's tab instructions follow available width on every platform", () =
   expect(context).toContain("At 640 px or wider, the tab strip is available on every platform");
   expect(context).not.toContain("the tab strip and splits are off");
 });
+
+it("the Guide documents where Search-tab results open and the setting that changes it (GH #796)", () => {
+  const refs = guide("pages-links-references-search");
+  expect(refs).toContain("Clicking a result opens a new tab and keeps Search unchanged");
+  expect(refs).toContain("**Settings → Editor → Advanced → Search results open in**");
+  expect(refs).toContain("**New tab** is the default");
+  expect(guide("tips")).toContain("**Settings → Editor → Advanced → Search results open in → This tab**");
+});

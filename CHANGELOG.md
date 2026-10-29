@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Settings → Editor → **Search results open in** chooses where a plain click or Enter on a Search-tab result opens: **New tab** (the default, as before) or **This tab**, which navigates the Search tab itself and leaves Back to return to the results. Shift, Ctrl/Cmd, Alt and middle-click choose the sidebar, a background tab or the other pane either way (#796).
 - The seen notice stays at the top so you can click it even in the middle of a page (UI-SEEN-STICKY).
 - The desktop formatting toolbar displays over the selection, including near the bottom of a long block, and moves below it when there is no room above (UI-SEL-TOOLBAR).
 - Expand or collapse bullets even in read-only exports, quick-share links and read-only pages. These viewing choices last while browsing; reloading restores the original folds without changing the graph. Static HTML exports keep the original folds too; click a folded block's arrow to open it, which works without JavaScript (UI-VIEW-FOLD, UI-VIEW-FOLD-STATIC).
