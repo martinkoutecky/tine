@@ -213,7 +213,8 @@ fn pending_upstream(repo: &Repo) -> Option<(Oid, Oid)> {
 /// root that differs from `H` holds its `U` blob or is a path this process's
 /// pull applied (P4). Then the half-applied tree is the pull's, not a local
 /// change, and committing it on `H` would make the next cycle diverge. Costs
-/// one status scan, and only while such a `U` exists.
+/// one status scan, and only while such a `U` exists. A scan that fails defers
+/// too (REG-SB1-GIT-RESUME-STATUS-ERROR).
 pub(super) fn defers_autocommit(repo: &Repo) -> bool {
     if !repo.prefix.as_os_str().is_empty() {
         return false;
@@ -239,8 +240,18 @@ pub(super) fn defers_autocommit(repo: &Repo) -> bool {
         .exclude_submodules(true)
         .renames_head_to_index(false)
         .renames_index_to_workdir(false);
-    let Ok(statuses) = repo.repo.statuses(Some(&mut options)) else {
-        return false;
+    let scanned = repo.repo.statuses(Some(&mut options));
+    #[cfg(test)]
+    let scanned = if test_hook::status_fails() {
+        Err(git2::Error::from_str("error reading file for hashing: "))
+    } else {
+        scanned
+    };
+    // A scan that fails (libgit2 hashing a file a page save is replacing)
+    // cannot rule the pull out, and committing then would record the
+    // half-applied tree as a local change: defer, the next one asks again.
+    let Ok(statuses) = scanned else {
+        return true;
     };
     let mut differs = false;
     for entry in statuses.iter() {
@@ -1195,6 +1206,7 @@ pub(crate) mod test_hook {
         static BEFORE_LOCK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
         static AFTER_HOST: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
         static FOLDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        static STATUS_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
     /// Answer the next host operations: `Some((apply_first, result))`
@@ -1216,6 +1228,17 @@ pub(crate) mod test_hook {
         BEFORE_LOCK.with(|h| *h.borrow_mut() = None);
         AFTER_HOST.with(|h| *h.borrow_mut() = None);
         FOLDING.with(|f| f.set(false));
+        STATUS_FAILS.with(|f| f.set(false));
+    }
+
+    /// Fail the next resume test's status scan, as a page save replacing a
+    /// file under libgit2's hashing does (one shot).
+    pub(crate) fn fail_status() {
+        STATUS_FAILS.with(|f| f.set(true));
+    }
+
+    pub(super) fn status_fails() -> bool {
+        STATUS_FAILS.with(|f| f.replace(false))
     }
 
     pub(super) fn host(op: &HostOp) -> Option<(bool, Result<(), ApplyRefusal>)> {

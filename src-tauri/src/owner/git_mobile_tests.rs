@@ -877,7 +877,16 @@ fn pull_until_killed(root: &Path, app_data: &Path, marks: &Path) {
     crate::owner::git_run::configure_libgit2();
     let slot = restarted(root, app_data);
     fs::write(marks.join("ready"), "").unwrap();
-    let done = cycle(&slot, &credentials());
+    // A process that exited right after a finished pull (the previous
+    // child) can leave that operation's draft vehicle, which the host
+    // retires after the pull answers: this launch recovers it as unsaved
+    // input and holds the pull until it is saved, as a resume may.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut done = cycle(&slot, &credentials());
+    while done.code.starts_with("pull-held") && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(200));
+        done = cycle(&slot, &credentials());
+    }
     if let Some(path) = &done.path {
         fs::write(marks.join("path"), path).unwrap();
     }
@@ -909,7 +918,7 @@ fn pull_kill_changes(i: usize) -> Vec<(String, Option<String>)> {
     ));
     changes.push((
         "pages/extra.md".into(),
-        (i % 2 == 0).then(|| format!("- extra {i}\n")),
+        i.is_multiple_of(2).then(|| format!("- extra {i}\n")),
     ));
     changes
 }

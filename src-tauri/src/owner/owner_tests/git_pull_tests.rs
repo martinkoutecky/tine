@@ -587,6 +587,40 @@ fn q_git_every_crash_point_keeps_head_and_index_consistent() {
     }
 }
 
+/// SB1-GITSYNC (REG-SB1-GIT-RESUME-STATUS-ERROR): the resume test's status
+/// scan fails while a restarted host saves a recovered page (libgit2 reads a
+/// file being replaced: "error reading file for hashing"). The autocommit
+/// must not take that as a local change: committing the half-applied tree
+/// on `H` makes the pull `diverged` (s3.7 P3).
+#[test]
+fn q_git_resume_test_that_cannot_scan_defers_the_autocommit() {
+    test_hook::clear();
+    let graph = Graph::new();
+    let repo = repo(&graph);
+    let slot = graph.slot();
+    let h = head(&repo);
+    let up = upstream(
+        &repo,
+        &[
+            Edit::Write("pages/a.md", b"- theirs\n"),
+            Edit::Write("assets/n.txt", b"note\n"),
+        ],
+    );
+    test_hook::crash_at(Step::AfterPages);
+    assert!(matches!(pull(&slot), PullOutcome::Incomplete(_)));
+    let _ = std::fs::remove_file(repo.path().join("index.lock"));
+    test_hook::restart(&graph.root);
+    test_hook::fail_status();
+    assert_eq!(
+        commit_now(&graph.root, "Tine: autosave").unwrap(),
+        Outcome::PullPending
+    );
+    assert_eq!(head(&repo), h, "the half-applied tree was committed");
+    landed(&pull(&slot));
+    assert_eq!(head(&repo), up);
+    assert_eq!(dirty(&repo), Vec::<String>::new());
+}
+
 #[test]
 fn q_git_resume_after_uncertain() {
     test_hook::clear();
