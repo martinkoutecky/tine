@@ -13,7 +13,7 @@ vi.mock("pdfjs-dist", () => ({
     cancel() {}
   },
 }));
-vi.mock("pdfjs-dist/build/pdf.worker.min.mjs?url", () => ({ default: "worker.js" }));
+vi.mock("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url", () => ({ default: "worker.js" }));
 
 class Visibility {
   static observers: Visibility[] = [];

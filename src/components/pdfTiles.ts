@@ -2,6 +2,7 @@ import * as pdfjs from "pdfjs-dist";
 import { isMobilePlatform } from "../nativeChrome";
 import { viewportOf } from "../windowRealm";
 import { pdfProbe } from "./pdfProbe";
+import { renderPdfPage } from "./pdfRenderTask";
 
 const TILE_CSS_SIZE = 768;
 const TILE_PIXEL_CAP = 1_572_864;
@@ -136,7 +137,7 @@ export function createPdfTiles(onError: (error: unknown) => void) {
         x: item.x * TILE_CSS_SIZE, y: item.y * TILE_CSS_SIZE, w: width, h: height });
       pending++;
       try {
-        tile.task = page.render({ canvasContext: canvas.getContext("2d")!, viewport,
+        tile.task = renderPdfPage(page, { canvas, viewport,
           transform: [ratio, 0, 0, ratio, -item.x * TILE_CSS_SIZE * ratio, -item.y * TILE_CSS_SIZE * ratio] });
         void tile.task.promise.then(() => pdfProbe({ type: "tile-end", page: pageNumber, key: item.key }))
           .catch((error: unknown) => {
