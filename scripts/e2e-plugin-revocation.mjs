@@ -149,6 +149,7 @@ async function settingsSnapshot(browser) {
     const text = (node) => (node?.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
     return {
       title: document.title,
+      page: { visibility: document.visibilityState, focused: document.hasFocus(), ready: document.readyState, size: `${innerWidth}x${innerHeight}`, url: location.href },
       overlays: [...document.querySelectorAll(".modal-overlay")].map((node) => node.className),
       settingsModal: Boolean(document.querySelector(".settings-modal")),
       navItems: [...document.querySelectorAll(".settings-nav-item")].map((node) => `${text(node)}${node.classList.contains("active") ? "*" : ""}`),
@@ -168,7 +169,19 @@ async function openInstalledTab(browser, label) {
   } catch (error) {
     const dir = process.env.E2E_ARTIFACT_DIR || TMP;
     fs.mkdirSync(dir, { recursive: true });
-    const shot = await browser.saveScreenshot(path.join(dir, `installed-tab-missing-${label}.png`)).then(() => "saved", (inner) => `failed: ${String(inner)}`);
+    // A web view that is not painting makes the screenshot hang for a minute;
+    // bound it so the rest of the evidence is still collected.
+    const shot = await Promise.race([
+      browser.saveScreenshot(path.join(dir, `installed-tab-missing-${label}.png`)).then(() => "saved", (inner) => `failed: ${String(inner)}`),
+      sleep(8_000).then(() => "timed out after 8s"),
+    ]);
+    const frames = await browser.executeAsync((done) => {
+      let count = 0;
+      const stop = Date.now() + 700;
+      const tick = () => { count += 1; if (Date.now() < stop) requestAnimationFrame(tick); else done(count); };
+      requestAnimationFrame(tick);
+      setTimeout(() => done(count), 1500);
+    }).catch((inner) => `unreadable: ${String(inner)}`);
     const handles = await browser.getWindowHandles().catch((inner) => `unreadable: ${String(inner)}`);
     const current = await browser.getWindowHandle().catch((inner) => `unreadable: ${String(inner)}`);
     const first = await settingsSnapshot(browser);
@@ -177,7 +190,10 @@ async function openInstalledTab(browser, label) {
     const lateMs = await browser.waitUntil(async () => (await browser.$$(".plugin-settings-nav button").length) > 0, { timeout: 15_000, interval: 250 })
       .then(() => Date.now() - started, () => null);
     const late = await settingsSnapshot(browser);
-    console.error(`installed-tab-missing in ${label} session: ${JSON.stringify({ shot, handles, current, first, lateMs, late })}`);
+    for (const name of fs.readdirSync(TMP)) {
+      if (name.endsWith("-tauri-driver.log")) fs.copyFileSync(path.join(TMP, name), path.join(dir, `evidence-${name}`));
+    }
+    console.error(`installed-tab-missing in ${label} session: ${JSON.stringify({ shot, framesIn700ms: frames, handles, current, first, lateMs, late })}`);
     throw error;
   }
 }
