@@ -131,6 +131,7 @@ import {
   textareaCaretLineRect,
 } from "../editor/caretRows";
 import { revealCaretColumn, revealCaretSettled } from "../editor/caretReveal";
+import { selectionToolbarPlacement } from "./block/selectionToolbarPlacement";
 import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, isEditorEmpty, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
 import { editorCommitRecovery } from "../editor/commitRecovery";
@@ -167,7 +168,7 @@ import { clipboardSizeAllowed } from "../clipboardImage";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
-import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
+import { blockFirstLine, formatForBlockId, isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
 import { commentFromEditor, replyOnEnter } from "../commentActions";
 import { AuthorChip, CommentActions, CommentComposer, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
@@ -589,11 +590,6 @@ async function getTemplates(): Promise<import("../types").TemplateDto[]> {
 }
 // Block editor for `props.id`. Inside quick capture, CaptureCtx repurposes
 // Enter/Escape when autocomplete is closed to commit or dismiss the capture.
-/** A host whose whole body is `{{embed ((uuid))}}`: the block-embed shape whose
- *  macro host is suppressed and whose folded root ends at the host (GH #642). */
-function isBlockEmbedMacro(m: ReturnType<typeof detectMacro>): boolean {
-  return m?.kind === "embed" && /^embed\s*\(\([^)]+\)\)\s*$/i.test(m.inner);
-}
 
 export function Editor(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
   const propertySession = props.propertySession ?? propertyEditorSession();
@@ -1097,34 +1093,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const [hasSel, setHasSel] = createSignal(false);
   const [selectionOverflowOpen, setSelectionOverflowOpen] = createSignal(false);
   let selectionOverflowRef: HTMLDivElement | undefined;
-  let selectionToolbarRef: HTMLDivElement | undefined;
-  const positionSelectionToolbar = () => {
-    if (touchPrimary() || !hasSel() || !selectionToolbarRef || !ref?.isConnected) return;
-    const toolbar = selectionToolbarRef;
-    const pane = ref.closest<HTMLElement>(".main-content, .right-sidebar") ?? nearestScrollableY(ref);
-    const viewport = viewportOf(ref);
-    const bounds = pane?.getBoundingClientRect();
-    const leftEdge = Math.max(0, bounds?.left ?? 0) + 8;
-    const rightEdge = Math.min(viewport.width, bounds?.right ?? viewport.width) - 8;
-    const notice = pane?.querySelector<HTMLElement>("[data-seen-header]")?.getBoundingClientRect();
-    const topEdge = Math.max(0, bounds?.top ?? 0, notice?.bottom ?? 0) + 4;
-    const bottomEdge = Math.min(viewport.height, bounds?.bottom ?? viewport.height) - 4;
-    toolbar.style.maxWidth = `${Math.max(0, rightEdge - leftEdge)}px`;
-    const box = ref.getBoundingClientRect();
-    const line = textareaCaretLineRect(ref, ref.selectionStart) ?? box;
-    const end = textareaCaretLineRect(ref, Math.max(ref.selectionStart, ref.selectionEnd - 1)) ?? line;
-    const size = toolbar.getBoundingClientRect();
-    const above = line.top - size.height - 4;
-    const top = Math.max(topEdge, Math.min(above >= topEdge ? above : end.bottom + 4, bottomEdge - size.height));
-    const left = Math.max(leftEdge, Math.min(box.left, rightEdge - size.width));
-    const parent = toolbar.offsetParent as HTMLElement | null;
-    const origin = parent?.getBoundingClientRect();
-    toolbar.style.top = `${top - (origin?.top ?? 0) + (parent?.scrollTop ?? 0) - (parent?.clientTop ?? 0)}px`;
-    toolbar.style.left = `${left - (origin?.left ?? 0) + (parent?.scrollLeft ?? 0) - (parent?.clientLeft ?? 0)}px`;
-    // A selection scrolled wholly out of the pane must not leave a stray menu
-    // clamped on top of unrelated text. It reappears when that selection returns.
-    toolbar.style.visibility = end.bottom < topEdge || line.top > bottomEdge ? "hidden" : "";
-  };
+  const selToolbar = selectionToolbarPlacement(() => ref, () => !touchPrimary() && hasSel());
   const updateSel = () => {
     if (!editorMounted || !ref.isConnected || !node()) return;
     codeView.syncSelection(ref);
@@ -1132,7 +1101,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     setHasSel(selected);
     if (!selected) setSelectionOverflowOpen(false);
     closeAutocompleteIfOutside();
-    queueMicrotask(positionSelectionToolbar);
+    queueMicrotask(selToolbar.position);
   };
   // OG `close-autocomplete-if-outside` (editor.cljs, on click and keyup): page,
   // tag and block search end once the caret leaves their reference; a stale
@@ -1155,11 +1124,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // editor that owns focus.
     owner.addEventListener("selectionchange", syncNativeSelection, true);
     onCleanup(() => owner.removeEventListener("selectionchange", syncNativeSelection, true));
-    onCleanup(listen(ref, "scroll", positionSelectionToolbar, true));
-    onCleanup(listen(ref, "resize", positionSelectionToolbar));
-    const observer = newResizeObserver(ref, positionSelectionToolbar);
-    observer?.observe(ref);
-    onCleanup(() => observer?.disconnect());
+    selToolbar.follow(ref);
   });
   createEffect(() => {
     if (!selectionOverflowOpen() || !hasSel()) return;
@@ -3375,7 +3340,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         </div>
       </Show>
       <Show when={hasSel()}>
-        <div ref={el => { selectionToolbarRef = el; queueMicrotask(positionSelectionToolbar); }} class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined} onMouseDown={(e) => e.preventDefault()}>
+        <div ref={selToolbar.toolbar} class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined} onMouseDown={(e) => e.preventDefault()}>
           <For each={essentialSelectionActions}>{(action) => (
             <button
               classList={{ "sel-action-page-link": action.id === "page-link" }}
