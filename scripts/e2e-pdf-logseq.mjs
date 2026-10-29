@@ -1668,54 +1668,6 @@ try {
     timeout: 10_000,
     timeoutMsg: "the first PDF annotation block reference did not resolve",
   });
-  // Diagnostic trace for the hosted-only failure of the same-PDF step below
-  // (PDF-LOGSEQ-HOSTED): what the native click hit, where the reference was, and
-  // what the reader did. Installed before the first click so it adds no delay there.
-  await browser.execute((secondId) => {
-    const started = performance.now();
-    const trace = [];
-    window.__sameTargetTrace = trace;
-    const t = () => Math.round(performance.now() - started);
-    const describe = (element) => element instanceof Element ? {
-      tag: element.tagName, className: String(element.className).slice(0, 60),
-      blockRef: element.closest("[data-block-ref]")?.getAttribute("data-block-ref")?.slice(-4),
-      blockRefTitle: element.closest("[data-block-ref]")?.getAttribute("title")?.slice(0, 30),
-      text: element.textContent?.slice(0, 50),
-    } : String(element);
-    const refs = () => [...document.querySelectorAll(`[data-block-ref="${secondId}"]`)].map((element) => {
-      const r = element.getBoundingClientRect();
-      return [element.className, element.getAttribute("title")?.slice(0, 30),
-        Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
-    });
-    const observed = new WeakSet();
-    for (const type of ["pointerdown", "mousedown", "click"]) {
-      document.addEventListener(type, (event) => {
-        trace.push([t(), type, event.clientX, event.clientY, describe(event.target),
-          type === "pointerdown" ? refs() : undefined, !!document.querySelector(".peek-popup"),
-          document.querySelector("main .page-title")?.textContent?.slice(0, 40)]);
-        const viewer = document.querySelector(".pdf-viewer");
-        if (!viewer || observed.has(viewer)) return;
-        observed.add(viewer);
-        new MutationObserver((records) => {
-          for (const record of records) {
-            trace.push([t(), "viewer-attr", record.attributeName, viewer.getAttribute(record.attributeName)]);
-          }
-        }).observe(viewer, { attributes: true });
-      }, true);
-    }
-    for (const type of ["pointerover", "pointerout"]) {
-      document.addEventListener(type, (event) => {
-        if (event.target instanceof Element && event.target.closest(".block-ref, .peek-popup")) {
-          trace.push([t(), type, event.pointerType, describe(event.target)]);
-        }
-      }, true);
-    }
-    document.addEventListener("scroll", (event) => {
-      if (event.target instanceof Element && event.target.matches(".pdf-scroll")) {
-        trace.push([t(), "pdf-scroll", event.target.scrollTop]);
-      }
-    }, true);
-  }, SECOND_SECOND_ID);
   await firstSecondRef.click();
   try {
     await browser.waitUntil(() => browser.execute((highlightId) =>
@@ -1760,6 +1712,31 @@ try {
     throw new Error("switching from PDF A wrote A's pending state or baseline into PDF B");
   }
 
+  // GH #735: a reference's hover preview opens after OG's 1000 ms dwell, below the
+  // reference, so over the next line. The WebDriver click above left the pointer
+  // resting on the first reference; on a slower runner its preview opened after the
+  // native click below was aimed and before it was dispatched, and the click opened
+  // the preview's source page instead (PDF-LOGSEQ-HOSTED). A user moves off the
+  // reference before aiming at the next one: do the same, and let any preview close.
+  const parking = await browser.execute(() => {
+    const rect = document.querySelector(".pdf-zoom-level")?.getBoundingClientRect();
+    return rect && rect.width > 0 ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+  });
+  if (!parking) throw new Error("the PDF zoom level is not visible to park the pointer on");
+  try {
+    await browser.performActions([{
+      type: "pointer",
+      id: "second-pdf-park",
+      parameters: { pointerType: "mouse" },
+      actions: [{ type: "pointerMove", duration: 0, origin: "viewport", x: Math.round(parking.x), y: Math.round(parking.y) }],
+    }]);
+  } finally {
+    await browser.releaseActions();
+  }
+  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".peek-popup")), {
+    timeout: 5_000,
+    timeoutMsg: "the first reference's hover preview stayed open after the pointer left it",
+  });
   const sameTargetClick = await nativeClickSelector(`[data-block-ref="${SECOND_SECOND_ID}"]`, "second-pdf-second-highlight");
   try {
     await browser.waitUntil(() => browser.execute((highlightId) =>
@@ -1772,24 +1749,17 @@ try {
     const diagnostic = await browser.execute((point) => {
       const viewer = document.querySelector(".pdf-viewer");
       const hit = document.elementFromPoint(point.x, point.y);
-      const scroll = document.querySelector(".pdf-scroll");
       return {
         target: viewer?.getAttribute("data-pdf-highlight-target"),
         ready: viewer?.getAttribute("data-pdf-ready"),
-        filename: viewer?.getAttribute("data-pdf-filename"),
-        scrollTop: scroll?.scrollTop,
-        pages: [...document.querySelectorAll(".pdf-page")].map((page) => ({
-          page: page.getAttribute("data-page"), canvas: !!page.querySelector("canvas"),
-          top: Math.round(page.getBoundingClientRect().top),
-        })),
+        scrollTop: document.querySelector(".pdf-scroll")?.scrollTop,
         highlights: [...document.querySelectorAll(".pdf-hl")].map((element) => ({
           id: element.getAttribute("data-highlight-id"), target: element.classList.contains("pdf-hl-target"),
-          page: element.closest(".pdf-page")?.getAttribute("data-page"),
           top: Math.round(element.getBoundingClientRect().top),
         })),
-        hitNow: hit ? { tag: hit.tagName, className: String(hit.className).slice(0, 80), text: hit.textContent?.slice(0, 80) } : null,
-        activeTabs: [...document.querySelectorAll(".tab.active, [aria-selected=true]")].map((element) => element.textContent?.slice(0, 40)),
-        trace: window.__sameTargetTrace,
+        hitNow: hit && { className: String(hit.className).slice(0, 60), text: hit.textContent?.slice(0, 60) },
+        peek: !!document.querySelector(".peek-popup"),
+        pageTitle: document.querySelector("main .page-title")?.textContent?.slice(0, 60),
       };
     }, sameTargetClick.point);
     throw new Error(`${error.message}: ${JSON.stringify({ click: sameTargetClick, ...diagnostic })}`, { cause: error });
