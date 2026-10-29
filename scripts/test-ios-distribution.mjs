@@ -243,6 +243,7 @@ try {
 
   const preparedProject = fs.readFileSync(path.join(fixtureApple, "project.yml"), "utf8");
   assert.match(preparedProject, /CODE_SIGN_STYLE: Manual/);
+  assert.match(preparedProject, /- framework: libapp\.a\n\s+embed: false\n\s+- sdk: libz\.tbd\n\s+- sdk: libiconv\.tbd/);
   assert.match(preparedProject, /- path: PrivacyInfo\.xcprivacy\s+buildPhase: resources/);
   assert.match(preparedProject, /CODE_SIGN_IDENTITY: "Apple Distribution: Martin Koutecky \(RQ5V4LK7N2\)"/);
   assert.match(preparedProject, /PROVISIONING_PROFILE_SPECIFIER: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"/);

@@ -119,6 +119,7 @@ import { hlsPageName } from "./pdf";
 import type { InvalidRoute } from "./routeTypes";
 import { installBackgroundFlush } from "./backgroundFlush";
 import { installSessionActivity } from "./sessionActivity";
+import { gitLifecycleEdge } from "./gitLifecycle";
 import { initSettingsLayout } from "./settingsLayout";
 import { initCodeDisplay } from "./codeDisplay";
 import { initStickyParents } from "./stickyParents";
@@ -577,18 +578,23 @@ export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen(
 export function App(): JSX.Element {
   // Every graph window mounts App and owns its own page-host client. Split panes
   // share it; the capture mini-window owns only an unsaved scratch page.
+  const flushEverything = async () => {
+    const [pagesSaved, cssSaved] = await Promise.all([flushAll(), flushCssEditor()]);
+    return pagesSaved && cssSaved;
+  };
   onMount(() => onCleanup(installBackgroundFlush({
     endEdit: () => endEdit("graph-switch"),
-    flushAll: async () => {
-      const [pagesSaved, cssSaved] = await Promise.all([flushAll(), flushCssEditor()]);
-      return pagesSaved && cssSaved;
-    },
+    flushAll: flushEverything,
     closeInFlight: safeClose.inFlight,
   })));
   // GH #426: on mobile an OS reap of a hidden app is not an unclean exit.
+  // ADR 0078 slice 3: the same edges commit and sync git graphs.
   onMount(() => onCleanup(installSessionActivity({
     isMobile: isMobilePlatform,
-    setActive: (active) => void recordSessionActive(active),
+    setActive: (active) => {
+      void recordSessionActive(active);
+      void gitLifecycleEdge(active, flushEverything);
+    },
   })));
   let openCalendarJump = () => {};
   // The page the focused pane shows, when it is one the user can share (not the bundled Guide).

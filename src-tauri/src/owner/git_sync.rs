@@ -1,4 +1,4 @@
-//! Desktop sync transport (ADR 0078 §5). Call only on the graph's dedicated
+//! Sync transport (ADR 0078 §5), on all five shipped targets. Call only on the graph's dedicated
 //! blocking git thread. This layer never applies a pull or changes graph files.
 //! The apply lane can hold git_run::serialized across fetch/apply/push and
 //! use the `_locked` entry points. Public entry points take that lock themselves.
@@ -19,8 +19,6 @@ use super::git_run::{open_repo_at, raw_content_conversion, Repo, RUN_LOCK};
 pub(crate) mod credentials;
 mod http;
 pub(crate) mod line_endings;
-
-pub(crate) const AVAILABLE: bool = true;
 
 /// No Debug/Serialize implementation: a status or log must not print a token.
 #[derive(Clone)]
@@ -216,17 +214,26 @@ impl Operation {
 
     /// Push current branch to its tracked upstream, even when the upstream's
     /// name differs. Configured push refspecs/mirrors are never executed.
+    ///
+    /// `index.lock` is held for the local checks only, not the transfer: a
+    /// push reads objects and writes nothing here (an anonymous remote moves
+    /// no remote-tracking ref), and the negotiation re-checks the branch, its
+    /// ref and the repository before anything is sent. So the OS ending the app
+    /// during a slow upload leaves no `index.lock` behind (ADR 0078 slice 3).
     pub(crate) fn push_upstream_locked(self, root: &Path) -> Outcome {
         self.execute(|| {
             let repo = checked(root)?;
-            let _index = repo.lock_index(false).map_err(lock_error)?;
-            let target = Target::read(&repo)?;
-            let head = repo
-                .tip()
-                .map_err(|e| Outcome::Refused(e.message))?
-                .ok_or_else(|| refused("commit the branch before syncing"))?
-                .id();
-            target.check_ref(&repo)?;
+            let (target, head) = {
+                let _index = repo.lock_index(false).map_err(lock_error)?;
+                let target = Target::read(&repo)?;
+                let head = repo
+                    .tip()
+                    .map_err(|e| Outcome::Refused(e.message))?
+                    .ok_or_else(|| refused("commit the branch before syncing"))?
+                    .id();
+                target.check_ref(&repo)?;
+                (target, head)
+            };
             let mut remote = validated_remote(&repo, &target.push_url)?;
             let mut rejection = None;
             let mut local_refusal = None;
@@ -350,6 +357,28 @@ pub(crate) fn remote(root: &Path) -> Result<Remote, Outcome> {
         // Target refuses an HTTPS URL carrying credentials; a file URL holds none.
         url: target.fetch_url,
     })
+}
+
+/// Whether the branch has commits its remote-tracking ref (the last fetch)
+/// lacks, and that ref has none the branch lacks: what a background push
+/// sends (slice 3). Reads refs only; the push itself checks again under the
+/// runs' lock.
+pub(crate) fn push_pending(root: &Path) -> bool {
+    let Ok(repo) = config_checked(root) else {
+        return false;
+    };
+    let Ok(target) = Target::read(&repo) else {
+        return false;
+    };
+    let (Ok(Some(head)), Ok(tracking)) = (repo.tip(), repo.repo.refname_to_id(&target.tracking))
+    else {
+        return false;
+    };
+    head.id() != tracking
+        && repo
+            .repo
+            .graph_descendant_of(head.id(), tracking)
+            .unwrap_or(false)
 }
 
 /// The tracked remote Settings names (Tine never changes remote configuration).

@@ -137,6 +137,10 @@ pub(crate) fn cycle(slot: &GraphSlot, credentials: &Arc<dyn Credentials>) -> Cyc
     if ahead == 0 {
         return ok("up-to-date");
     }
+    push_branch(root, credentials)
+}
+
+fn push_branch(root: &std::path::Path, credentials: &Arc<dyn Credentials>) -> Cycle {
     if stopped() {
         return cycle_of(Class::Quit, "cancelled", "");
     }
@@ -144,6 +148,18 @@ pub(crate) fn cycle(slot: &GraphSlot, credentials: &Arc<dyn Credentials>) -> Cyc
         Ok(Net::UpToDate) => ok("pushed"),
         Ok(other) | Err(other) => network_outcome(other),
     }
+}
+
+/// The app went to the background (slice 3): push the commits the last
+/// fetch shows the remote lacks; `None` when there are none. No fetch and no
+/// pull: a push changes nothing in this repository (it sends to an
+/// anonymous remote, which moves no remote-tracking ref), so one the OS
+/// freezes or ends leaves the repository as it was; the server takes the
+/// ref only with the whole pack. A remote that moved meanwhile rejects it
+/// as `diverged`, as a fetch would have found.
+pub(crate) fn push_pending(slot: &GraphSlot, credentials: &Arc<dyn Credentials>) -> Option<Cycle> {
+    let root = &slot.root_key;
+    (!stopped() && super::git_sync::push_pending(root)).then(|| push_branch(root, credentials))
 }
 
 /// A landed pull's pages, told to the window as the watcher tells it of
@@ -157,7 +173,7 @@ fn tell_window(slot: &GraphSlot, from: git2::Oid, to: git2::Oid) {
     let Some(link) = slot.window.get() else {
         return;
     };
-    let Ok(repo) = git2::Repository::open(&slot.root_key) else {
+    let Ok(repo) = super::git_run::discover(&slot.root_key) else {
         return;
     };
     let tree = |oid| repo.find_commit(oid).and_then(|c| c.tree());

@@ -132,6 +132,7 @@ import {
   textareaCaretLineRect,
 } from "../editor/caretRows";
 import { revealCaretColumn, revealCaretSettled } from "../editor/caretReveal";
+import { selectionToolbarPlacement } from "./block/selectionToolbarPlacement";
 import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, isEditorEmpty, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
 import { editorCommitRecovery } from "../editor/commitRecovery";
@@ -168,7 +169,7 @@ import { clipboardSizeAllowed } from "../clipboardImage";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
-import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
+import { blockFirstLine, formatForBlockId, isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
 import { commentFromEditor, replyOnEnter } from "../commentActions";
 import { AuthorChip, CommentActions, CommentComposer, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentFacts, marginNavigation, marginOutline } from "./blockComments";
@@ -586,11 +587,6 @@ async function getTemplates(): Promise<import("../types").TemplateDto[]> {
 }
 // Block editor for `props.id`. Inside quick capture, CaptureCtx repurposes
 // Enter/Escape when autocomplete is closed to commit or dismiss the capture.
-/** A host whose whole body is `{{embed ((uuid))}}`: the block-embed shape whose
- *  macro host is suppressed and whose folded root ends at the host (GH #642). */
-function isBlockEmbedMacro(m: ReturnType<typeof detectMacro>): boolean {
-  return m?.kind === "embed" && /^embed\s*\(\([^)]+\)\)\s*$/i.test(m.inner);
-}
 
 export function Editor(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
   const propertySession = props.propertySession ?? propertyEditorSession();
@@ -1094,6 +1090,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const [hasSel, setHasSel] = createSignal(false);
   const [selectionOverflowOpen, setSelectionOverflowOpen] = createSignal(false);
   let selectionOverflowRef: HTMLDivElement | undefined;
+  const selToolbar = selectionToolbarPlacement(() => ref, () => !touchPrimary() && hasSel());
   const updateSel = () => {
     if (!editorMounted || !ref.isConnected || !node()) return;
     codeView.syncSelection(ref);
@@ -1101,6 +1098,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     setHasSel(selected);
     if (!selected) setSelectionOverflowOpen(false);
     closeAutocompleteIfOutside();
+    queueMicrotask(selToolbar.position);
   };
   // OG `close-autocomplete-if-outside` (editor.cljs, on click and keyup): page,
   // tag and block search end once the caret leaves their reference; a stale
@@ -1123,6 +1121,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // editor that owns focus.
     owner.addEventListener("selectionchange", syncNativeSelection, true);
     onCleanup(() => owner.removeEventListener("selectionchange", syncNativeSelection, true));
+    selToolbar.follow(ref);
   });
   createEffect(() => {
     if (!selectionOverflowOpen() || !hasSel()) return;
@@ -3338,7 +3337,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         </div>
       </Show>
       <Show when={hasSel()}>
-        <div class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined} onMouseDown={(e) => e.preventDefault()}>
+        <div ref={selToolbar.toolbar} class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined} onMouseDown={(e) => e.preventDefault()}>
           <For each={essentialSelectionActions}>{(action) => (
             <button
               classList={{ "sel-action-page-link": action.id === "page-link" }}

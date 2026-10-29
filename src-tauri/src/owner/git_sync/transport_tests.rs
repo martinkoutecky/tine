@@ -899,10 +899,14 @@ fn https_timeout_and_buffer_limit_return_typed_errors() {
 }
 
 #[test]
-fn git_sync_names_all_five_targets_and_the_mobile_stub() {
-    let modules = include_str!("../mod.rs");
-    assert!(modules.contains("#[cfg(any(target_os = \"linux\", target_os = \"windows\", target_os = \"macos\"))]\npub(crate) mod git_sync;"));
-    assert!(modules.contains("#[cfg(any(target_os = \"ios\", target_os = \"android\"))]\n#[path = \"git_sync_mobile.rs\"]\npub(crate) mod git_sync;"));
-    const { assert!(AVAILABLE) };
-    assert!(include_str!("../git_sync_mobile.rs").contains("AVAILABLE: bool = false"));
+fn git_sync_tls_names_all_five_targets() {
+    // AGENTS §2: Windows takes Schannel, the other four rustls with the OS
+    // verifier; any other target fails to compile instead of syncing without TLS.
+    let http = include_str!("http.rs");
+    assert!(http.contains("#[cfg(target_os = \"windows\")]\n        {\n            builder = builder.tls_backend_native();"));
+    let rustls = "#[cfg(any(\n            target_os = \"linux\",\n            target_os = \"macos\",\n            target_os = \"android\",\n            target_os = \"ios\"\n        ))]\n        {\n            let _ = rustls::crypto::ring::default_provider().install_default();\n            builder = builder.tls_backend_rustls();";
+    assert!(http.contains(rustls));
+    assert!(http.contains(
+        "compile_error!(\"git sync declares a TLS transport for each shipped target only\")"
+    ));
 }

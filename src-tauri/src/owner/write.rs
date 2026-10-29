@@ -426,7 +426,6 @@ pub(super) fn write_page_with_create(
     })
 }
 
-#[cfg(desktop)]
 thread_local! {
     /// The git run the current write verb belongs to (set by the verb
     /// dispatcher for the duration of one verb), with the verb's commit subject.
@@ -436,7 +435,6 @@ thread_local! {
 
 /// Run `verb` with its writes committed to the graph's git repository as
 /// part of `run` (CLI slice 3, D-20261019-CL1).
-#[cfg(desktop)]
 pub(super) fn in_run<T>(
     run: Option<super::git_run::RunCtx>,
     subject: &str,
@@ -455,7 +453,6 @@ pub(super) fn in_run<T>(
 
 /// Commit a successful write when it belongs to a run. A commit that fails
 /// does not undo the saved write: the reply says so under `git`.
-#[cfg(desktop)]
 pub(super) fn commit_if_in_run(
     slot: &GraphSlot,
     page: &PageId,
@@ -489,7 +486,6 @@ pub(super) fn write_page_from_bytes(
     create: bool,
     mut compute: impl FnMut(&PageDto, &PageId, &[u8]) -> Result<Planned, ErrorBody>,
 ) -> Result<Value, ErrorBody> {
-    #[cfg(desktop)]
     if RUN.with(|r| r.borrow().is_some()) {
         super::git_run::check_page(slot, page)?;
     }
@@ -640,9 +636,7 @@ pub(super) fn write_page_from_bytes(
                         absent,
                     );
                 }
-                #[allow(unused_mut)]
                 let mut reply = written(&read.page, &reparsed.doc, &reparsed.rev, &planned.changed);
-                #[cfg(desktop)]
                 commit_if_in_run(
                     slot,
                     &read.page,

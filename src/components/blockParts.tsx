@@ -156,3 +156,9 @@ export function timeStamp(d = appNow()): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 // Template support: session-cached list of templates, dynamic-var substitution,
+
+/** A host whose whole body is `{{embed ((uuid))}}`: the block-embed shape whose
+ *  macro host is suppressed and whose folded root ends at the host (GH #642). */
+export function isBlockEmbedMacro(m: { kind: string; inner: string } | null | undefined): boolean {
+  return m?.kind === "embed" && /^embed\s*\(\([^)]+\)\)\s*$/i.test(m.inner);
+}

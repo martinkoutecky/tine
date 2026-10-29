@@ -832,6 +832,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async gitSyncNotice() {
       return null;
     },
+    async gitAppLifecycle() {},
     async getPageChanges() {
       return { available: false, reason: "Git is not available in a published graph.", head_commit: null,
         baseline_commit: null, current_text_sha256: "", identity_known: false, unattributed: false, blocks: [], removed: [] };
@@ -1048,6 +1049,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "takeDataHomeFallbackNotice",
   "gitAutocommitStatus",
   "gitSyncNotice",
+  "gitAppLifecycle",
   "getPageChanges",
   "getBackupKeep",
   "listBackups",

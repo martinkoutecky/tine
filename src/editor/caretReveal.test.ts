@@ -61,6 +61,19 @@ it("keeps the caret row below the sticky parent pins", () => {
   revealCaret(f.editor, f.scroller);
   expect(f.scroller.scrollTop).toBe(1000 + (10 - (60 + 8)));
 });
+it("keeps a revealed caret below a wrapped sticky seen notice", () => {
+  const f = fixture(30);
+  f.scroller.style.scrollPaddingTop = "82px";
+  revealCaret(f.editor, f.scroller);
+  expect(f.scroller.scrollTop).toBe(1000 + 30 - 82 - 8);
+});
+it("reserves both the seen notice and nested pinned ancestors", () => {
+  const f = fixture(30, 2);
+  f.scroller.style.scrollPaddingTop = "82px";
+  f.scroller.style.setProperty("--seen-header-height", "82px");
+  revealCaret(f.editor, f.scroller);
+  expect(f.scroller.scrollTop).toBe(1000 + 30 - 82 - 60 - 8);
+});
 it("ignores pins whose ancestor row is still on screen", () => {
   const f = fixture(10, 2, false);
   expect(revealCaret(f.editor, f.scroller)).toBe(false); // caret row at 10 is inside 8..492

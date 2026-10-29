@@ -649,6 +649,9 @@ export interface Backend {
   /** Keep a token for the remote's HTTPS host on this device (never in the graph or settings). */
   gitSignIn(username: string, token: string): Promise<GitAutocommitStatus>;
   gitSignOut(): Promise<GitAutocommitStatus>;
+  /** Android/iOS: the app went to the background (`false`; commit, and push when syncing
+   *  automatically) or came back (`true`; commit and sync). Answers at once. */
+  gitAppLifecycle(foreground: boolean): Promise<void>;
   /** How many launch snapshots to keep. */
   getBackupKeep(): Promise<number>;
   setBackupKeep(keep: number): Promise<void>;

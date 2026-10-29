@@ -3,7 +3,7 @@
  * listener, page traversal, model-sized cache or per-frame JavaScript. Mount
  * costs O(rendered ancestor depth), label changes O(this block's text). */
 import { createSignal, onCleanup, onMount, type JSX } from "solid-js";
-import { newIntersectionObserver } from "../windowRealm";
+import { newIntersectionObserver, windowOf } from "../windowRealm";
 import { revealOutlineBlock } from "../outlineViewport";
 import { visibleBody } from "../render/block";
 import { InlineText } from "../render/inline";
@@ -34,20 +34,27 @@ export function StickyAncestor(props: { id: string; raw: string }): JSX.Element 
     }
     setDepth(count);
     row.style.scrollMarginTop = `${count * 30}px`;
-    const observer = newIntersectionObserver(host, entries => {
-      for (const entry of entries) {
-        // Out below the viewport is not an offscreen ancestor. Replace the
-        // row when its bottom reaches the bottom of its sticky slot. Waiting
-        // for the slot's top lets the next child enter that slot first, then
-        // suddenly covers it when this pin appears (GH #717/#718).
-        setAbove(!entry.isIntersecting && entry.boundingClientRect.bottom <= (entry.rootBounds?.top ?? 0));
-      }
-    }, { root, rootMargin: `-${(count + 1) * 30}px 0px 0px 0px` });
-    observer?.observe(row);
-    onCleanup(() => observer?.disconnect());
+    let observer: IntersectionObserver | null = null;
+    const observe = () => {
+      observer?.disconnect();
+      const reserved = parseFloat(windowOf(root).getComputedStyle(root).getPropertyValue("--seen-header-height")) || 0;
+      observer = newIntersectionObserver(host, entries => {
+        for (const entry of entries) {
+          // Out below the viewport is not an offscreen ancestor. Replace the
+          // row when its bottom reaches the bottom of its sticky slot. Waiting
+          // for the slot's top lets the next child enter that slot first, then
+          // suddenly covers it when this pin appears (GH #717/#718).
+          setAbove(!entry.isIntersecting && entry.boundingClientRect.bottom <= (entry.rootBounds?.top ?? 0));
+        }
+      }, { root, rootMargin: `-${reserved + (count + 1) * 30}px 0px 0px 0px` });
+      observer?.observe(row);
+    };
+    observe();
+    root.addEventListener("seen-notice-resize", observe);
+    onCleanup(() => { observer?.disconnect(); root.removeEventListener("seen-notice-resize", observe); });
   });
   return <div ref={host} class="sticky-ancestor" data-sticky-block={props.id}
-    style={{ top: `${depth() * 30}px`, "z-index": String(stickyZ(depth())) }}>
+    style={{ top: `calc(var(--seen-header-height, 0px) + ${depth() * 30}px)`, "z-index": String(stickyZ(depth())) }}>
     <button type="button" hidden={!above()} onClick={() => {
       const block = host.parentElement!;
       revealOutlineBlock(props.id, block);

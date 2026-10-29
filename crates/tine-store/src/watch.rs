@@ -158,6 +158,30 @@ fn directory_identity(path: &Path) -> Option<u128> {
     }
 }
 
+fn record_walk_error(
+    unreadable: &mut HashMap<PathBuf, String>,
+    path: PathBuf,
+    error: std::io::Error,
+) {
+    if let Some(error) =
+        crate::model::unreadable_error(error, "Tine unreadable file producer=watch-listing")
+    {
+        unreadable.insert(path, error.to_string());
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn a_watch_listing_read_of_a_vanished_file_is_not_unreadable() {
+    let mut errors = HashMap::new();
+    record_walk_error(
+        &mut errors,
+        PathBuf::from("journals/gone.md"),
+        std::io::ErrorKind::NotFound.into(),
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
 fn collect_dir(
     root: &Path,
     dir: &Path,
@@ -172,7 +196,7 @@ fn collect_dir(
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => {
-                unreadable.insert(directory, error.to_string());
+                record_walk_error(unreadable, directory, error);
                 continue;
             }
         };
@@ -180,7 +204,7 @@ fn collect_dir(
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
-                    unreadable.insert(directory.clone(), error.to_string());
+                    record_walk_error(unreadable, directory.clone(), error);
                     continue;
                 }
             };
@@ -188,7 +212,7 @@ fn collect_dir(
             let kind = match entry.file_type() {
                 Ok(kind) => kind,
                 Err(error) => {
-                    unreadable.insert(path, error.to_string());
+                    record_walk_error(unreadable, path, error);
                     continue;
                 }
             };

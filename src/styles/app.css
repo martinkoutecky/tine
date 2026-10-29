@@ -31,7 +31,7 @@ body {
      padding, putting every bullet 2px above the middle of its own first line. A
      typography preset retunes the token, not three rules. Integer px, not a
      unitless ratio: see `.block-content`. */
-  --ls-block-line-height: 26px;
+  --ls-block-line-height: var(--tine-typography-line-height, 26px);
   --ls-block-content-pad-y: 2px;
   /* Width of the sidebar's drag-to-resize strip, and of the gutter the sidebar
      reserves so that strip never lands on top of the scrollbar (GH #435). */

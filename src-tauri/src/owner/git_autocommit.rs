@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-use git2::{Oid, Repository, Status, StatusOptions};
+use git2::{Oid, Status, StatusOptions};
 use serde::Serialize;
 
 #[cfg(test)]
@@ -59,7 +59,7 @@ const REPACK_COMMITS: u32 = 50;
 const REPACK_LOOSE_OBJECTS: usize = 6700;
 /// Failed maintenance must not run again on every commit/tick.
 const REPACK_RETRY: Duration = Duration::from_secs(10 * 60);
-/// Busy cycles over this long before Settings names a stale `index.lock`.
+/// Busy cycles over this long before Settings names a stale lock ([`held_lock`]).
 const STALE_LOCK_AFTER: Duration = Duration::from_secs(30 * 60);
 const STALE_LOCK_CYCLES: u32 = 3;
 /// The device-settings key (`tine-settings.json`), keyed by graph root.
@@ -312,7 +312,7 @@ fn lock_refused(refusal: LockRefusal) -> Unusable {
 
 /// Open and check the repository holding `root` for autocommits.
 pub(super) fn open_checked(root: &Path) -> Result<Repo, Unusable> {
-    match Repository::discover(root) {
+    match super::git_run::discover(root) {
         Err(error) if error.code() == git2::ErrorCode::NotFound => {
             return Err(Unusable::NotARepository)
         }
@@ -726,7 +726,7 @@ fn loose_objects(objects: &Path) -> Vec<Oid> {
 /// were deleted; `Ok(None)` when skipped (a `git gc` is running, or the
 /// repository is not SHA-1).
 #[cfg(test)]
-fn repack(repo: &Repository) -> Result<Option<usize>, String> {
+fn repack(repo: &git2::Repository) -> Result<Option<usize>, String> {
     let checked = open_checked(repo.workdir().unwrap()).map_err(|e| e.message())?;
     repack_guarded(&checked)
 }
@@ -757,7 +757,7 @@ fn repack_guarded(checked: &Repo) -> Result<Option<usize>, String> {
     // libgit2 1.9.7's indexer fsyncs both files on their writable creation
     // handles, unmaps/closes the pack, then renames it into place. Enable
     // that guarantee here too, including for callers outside open_repo_at.
-    super::git_run::enable_git_fsync();
+    super::git_run::configure_libgit2();
     let mut builder = repo.packbuilder().map_err(|e| e.to_string())?;
     for oid in &loose {
         builder
@@ -883,8 +883,8 @@ pub(crate) struct LastAttempt {
     pub(crate) commit: Option<String>,
     /// The last refusal (`Unusable::code`) and its message.
     pub(crate) refused: Option<(String, String)>,
-    /// `index.lock` stayed held through several cycles: probably left by a
-    /// crash. Settings names it; Tine never deletes it.
+    /// A lock ([`held_lock`]) stayed held through several cycles: probably
+    /// left by a crash. Settings names it; Tine never deletes it.
     pub(crate) stale_lock: Option<String>,
     pub(crate) sync: SyncStatus,
 }
@@ -909,6 +909,15 @@ mod registry {
         pub(super) last: LastAttempt,
         /// "Sync now" was asked for.
         pub(super) sync_requested: bool,
+        /// The app went to the background ([`backgrounded`]).
+        pub(super) background: bool,
+        /// The app came back to the foreground ([`foregrounded`]): sync at
+        /// once, commit only on cadence.
+        pub(super) foreground: bool,
+        /// The app is in the background: set by [`backgrounded`] (or at start,
+        /// when the app is away then), cleared by [`foregrounded`]; no
+        /// automatic or requested cycle (fetch, pull) starts meanwhile.
+        pub(super) away: bool,
         pub(super) credentials: Option<Arc<dyn Credentials>>,
         pub(super) commits_since_repack: u32,
         pub(super) repack_not_before: Option<Instant>,
@@ -995,6 +1004,7 @@ pub(crate) fn start_worker(
             return;
         }
         state.running = true;
+        state.away = lifecycle::app_away(&slot.root_key);
         drop(state);
         break worker;
     };
@@ -1029,6 +1039,27 @@ pub(crate) fn request_sync(root: &Path) -> bool {
     state.last.sync.running = true;
     worker.wake.notify_all();
     true
+}
+
+/// The lock a commit keeps finding held: `index.lock`, or the lock a git
+/// program (or Tine, ended by the OS mid-commit) left on `HEAD`, the branch
+/// or the packed refs. Tine names it and never removes it (ADR 0078 §1).
+pub(crate) fn held_lock(root: &Path) -> Option<String> {
+    let repo = super::git_run::discover(root).ok()?;
+    let mut locks = vec![
+        repo.path().join("index.lock"),
+        repo.path().join("HEAD.lock"),
+    ];
+    if let Some(branch) = repo
+        .find_reference("HEAD")
+        .ok()
+        .and_then(|head| head.symbolic_target().ok().flatten().map(str::to_owned))
+    {
+        locks.push(repo.commondir().join(format!("{branch}.lock")));
+    }
+    locks.push(repo.commondir().join("packed-refs.lock"));
+    let held = locks.into_iter().find(|lock| lock.exists())?;
+    Some(held.display().to_string())
 }
 
 pub(crate) fn last_attempt(root: &Path) -> LastAttempt {
@@ -1106,14 +1137,27 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
     let mut sync_after: Option<Instant> = None;
     let mut backing_off = false;
     loop {
-        let (settings, flush, slot, sync_now) = {
+        let (settings, flush, slot, sync_now, background, foreground, away) = {
             let mut state = worker.state.lock().unwrap();
-            if !state.flush && !state.sync_requested {
+            // A sync the person asked for while the app is away waits for
+            // the foreground (review r2 FU1): no fetch or pull starts away.
+            let asked = state.sync_requested && !state.away;
+            if !state.flush && !asked && !state.background && !state.foreground {
                 state = worker.wake.wait_timeout(state, TICK).unwrap().0;
             }
             let flush = std::mem::take(&mut state.flush);
-            let sync_now = std::mem::take(&mut state.sync_requested);
-            (state.settings, flush, state.slot.upgrade(), sync_now)
+            let sync_now = !state.away && std::mem::take(&mut state.sync_requested);
+            let background = std::mem::take(&mut state.background);
+            let foreground = std::mem::take(&mut state.foreground);
+            (
+                state.settings,
+                flush,
+                state.slot.upgrade(),
+                sync_now,
+                background,
+                foreground,
+                state.away,
+            )
         };
         let ending = ended(slot.as_ref());
         let rev = slot
@@ -1139,8 +1183,17 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
             && changed_at.is_none()
             && rev.is_some()
             && started.elapsed() >= IDLE;
+        // Backgrounded: commit what is pending (nothing committed yet this
+        // binding counts as pending), but no more often than the interval
+        // (D-20261026-GC: at most one autocommit per interval, the lever on
+        // its unit cost). Edits the interval holds back are already saved;
+        // they commit when the interval allows, or at the next launch.
+        let background_commit = background
+            && (last_commit.is_none()
+                || (changed_at.is_some()
+                    && last_commit.is_some_and(|at| at.elapsed() >= settings.interval)));
         let mut committed = false;
-        if commit && (flush || ending || due || first || sync_now) {
+        if commit && (flush || ending || due || first || sync_now || background_commit) {
             let outcome = commit_now(&root, MESSAGE);
             let mut state = worker.state.lock().unwrap();
             match &outcome {
@@ -1164,9 +1217,7 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
                         let (since, cycles) = busy_since.get_or_insert((Instant::now(), 0));
                         *cycles += 1;
                         if *cycles >= STALE_LOCK_CYCLES && since.elapsed() >= STALE_LOCK_AFTER {
-                            state.last.stale_lock = Repository::discover(&root)
-                                .ok()
-                                .map(|r| r.path().join("index.lock").display().to_string());
+                            state.last.stale_lock = held_lock(&root);
                         }
                     } else {
                         busy_since = None;
@@ -1189,9 +1240,19 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
             }
         }
         let automatic = settings.policy == Policy::SyncAutomatically
-            && ((committed && !backing_off) || sync_after.is_none_or(|at| Instant::now() >= at));
-        if !flush && !ending && !EXITING.load(Ordering::Acquire) && (sync_now || automatic) {
-            if let Some((delay, backoff)) = sync_on_worker(&worker, settings.interval) {
+            && !away
+            && (foreground
+                || (committed && !backing_off)
+                || sync_after.is_none_or(|at| Instant::now() >= at));
+        let live = !flush && !ending && !EXITING.load(Ordering::Acquire);
+        if live && background && settings.policy == Policy::SyncAutomatically {
+            // The full cycle (with its pull) waits for the foreground.
+            if let Some((delay, backoff)) = sync_on_worker(&worker, settings.interval, true) {
+                sync_after = Some(Instant::now() + delay);
+                backing_off = backoff;
+            }
+        } else if live && !background && (sync_now || automatic) {
+            if let Some((delay, backoff)) = sync_on_worker(&worker, settings.interval, false) {
                 sync_after = Some(Instant::now() + delay);
                 backing_off = backoff;
             }
@@ -1214,9 +1275,14 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
     }
 }
 
-/// One sync cycle on this thread; answers when the next automatic one is due
-/// and whether that is a back-off (`None`: the graph is unbinding).
-fn sync_on_worker(worker: &registry::Worker, interval: Duration) -> Option<(Duration, bool)> {
+/// One sync cycle on this thread, or with `background` only the push of what
+/// the remote lacks; answers when the next automatic one is due and whether
+/// that is a back-off (`None`: the graph is unbinding, or nothing to push).
+fn sync_on_worker(
+    worker: &registry::Worker,
+    interval: Duration,
+    background: bool,
+) -> Option<(Duration, bool)> {
     let (slot, credentials) = {
         let mut state = worker.state.lock().unwrap();
         state.last.sync.running = true;
@@ -1230,7 +1296,15 @@ fn sync_on_worker(worker: &registry::Worker, interval: Duration) -> Option<(Dura
         worker.state.lock().unwrap().last.sync.running = false;
         return None;
     };
-    let cycle = super::git_sync_cycle::cycle(&slot, &credentials);
+    let cycle = if background {
+        super::git_sync_cycle::push_pending(&slot, &credentials)
+    } else {
+        Some(super::git_sync_cycle::cycle(&slot, &credentials))
+    };
+    let Some(cycle) = cycle else {
+        worker.state.lock().unwrap().last.sync.running = false;
+        return None;
+    };
     // The transport refuses in words, the pull with its `conversion` code.
     let line_endings = (cycle.code == "conversion" || cycle.message.contains("conversion"))
         .then(|| super::git_sync::line_endings::probe(&slot.root_key));
@@ -1282,7 +1356,8 @@ fn maybe_repack(worker: &registry::Worker, root: &Path, due: bool) {
 /// What Settings → Graph → Git shows.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct GitStatus {
-    /// Git features exist on this platform (desktop in slice 1).
+    /// Git features exist here: always in the app (all five targets, slice 3);
+    /// the browser mock and a published graph send `false`.
     pub(crate) available: bool,
     /// The graph is inside a git work tree.
     pub(crate) repository: bool,
@@ -1339,7 +1414,7 @@ pub(crate) fn git_status(root: &Path, settings: GitSettings) -> GitStatus {
         .filter(|(code, why)| code == "conversion" || why.contains("conversion"))
         .map(|_| super::git_sync::line_endings::probe(root));
     GitStatus {
-        available: super::git_sync::AVAILABLE,
+        available: true,
         repository,
         branch,
         unusable,
@@ -1353,6 +1428,16 @@ pub(crate) fn git_status(root: &Path, settings: GitSettings) -> GitStatus {
     }
 }
 
+#[path = "git_lifecycle.rs"]
+mod lifecycle;
+pub(crate) use lifecycle::{backgrounded, foregrounded};
+#[cfg(test)]
+use lifecycle::{backgrounded_at, foregrounded_at};
+
 #[cfg(test)]
 #[path = "git_autocommit_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "git_mobile_tests.rs"]
+mod mobile_tests;

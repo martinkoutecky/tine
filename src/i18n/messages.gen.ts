@@ -2954,6 +2954,8 @@ export interface MessageArgs {
   "themes-default": {};
   "themes-details": {};
   "themes-details-screenshots": {};
+  "themes-font-not-installed": { "font": string | number };
+  "themes-fonts-and-block-line-height-from-a-theme-package": {};
   "themes-full": {};
   "themes-human-reviewed": {};
   "themes-install": {};
@@ -2979,13 +2981,16 @@ export interface MessageArgs {
   "themes-theme-packages-contain-only-whitelisted-color-tokens": {};
   "themes-theme-style": {};
   "themes-themes": {};
+  "themes-typography": {};
   "themes-typography-journal-headings-and-other-presentation-choices": {};
+  "themes-typography-selected": {};
   "themes-uninstall": {};
   "themes-uninstall-theme": {};
   "themes-uninstall-this-removes-the-theme-from": { "name": string | number };
   "themes-uninstalling": {};
   "themes-use-colors": {};
   "themes-use-style": {};
+  "themes-use-typography": {};
   "themes-validating": {};
   "themes-verifying": {};
   "themes-was-uninstalled": { "name": string | number };

@@ -2,7 +2,8 @@
 // page's context (read by its block rows), the header line, and the marker a
 // removed block leaves. A page outside a tracking surface (journal feed,
 // sidebar, zoom, references) reads no context and renders exactly as before.
-import { For, Show, createContext, createSignal, useContext, type JSX } from "solid-js";
+import { For, Show, createContext, createSignal, onMount, onCleanup, useContext, type JSX } from "solid-js";
+import { newResizeObserver } from "../windowRealm";
 import { t } from "../i18n";
 import type { PageSeen } from "./pageSeen";
 import { markPageSeenNow } from "./seenState";
@@ -45,6 +46,31 @@ export function SeenRemoved(props: { after?: string; first?: string | null }): J
   return <For each={marks()}>{(mark) => <RemovedMarker text={mark.text} child={props.after === undefined} />}</For>;
 }
 
+/** Mount with the visible notice, including when its answer arrives later.
+ * Reserve its actual wrapped height for scrollIntoView and caret reveals. */
+function StickyNotice(props: { children: JSX.Element }): JSX.Element {
+  let host!: HTMLDivElement;
+  onMount(() => {
+    const scroller = host.closest<HTMLElement>(".main-content, .right-sidebar");
+    if (!scroller) return;
+    const previous = scroller.style.getPropertyValue("--seen-header-height");
+    const measure = () => {
+      scroller.style.setProperty("--seen-header-height", `${host.getBoundingClientRect().height + 8}px`);
+      scroller.dispatchEvent(new Event("seen-notice-resize"));
+    };
+    measure();
+    const observer = newResizeObserver(host, measure);
+    observer?.observe(host);
+    onCleanup(() => {
+      observer?.disconnect();
+      if (previous) scroller.style.setProperty("--seen-header-height", previous);
+      else scroller.style.removeProperty("--seen-header-height");
+      scroller.dispatchEvent(new Event("seen-notice-resize"));
+    });
+  });
+  return <div ref={host} class="seen-header" role="status" data-seen-header>{props.children}</div>;
+}
+
 /** "N changes since you last looked" + Mark page seen, only while N > 0. */
 export function SeenHeader(props: { seen: PageSeen; pageName: string }): JSX.Element {
   const notes = () => [
@@ -54,7 +80,7 @@ export function SeenHeader(props: { seen: PageSeen; pageName: string }): JSX.Ele
   ].filter(Boolean).join(" ");
   return (
     <Show when={props.seen.count() > 0}>
-      <div class="seen-header" role="status" data-seen-header>
+      <StickyNotice>
         <span class="seen-header-text" classList={{ "has-note": !!notes() }} title={notes() || undefined}>
           {t("seen-header-count", { count: props.seen.count() })}
         </span>
@@ -64,7 +90,7 @@ export function SeenHeader(props: { seen: PageSeen; pageName: string }): JSX.Ele
         <Show when={props.seen.unattributed()}>
           <div class="seen-header-muted" data-seen-unattributed>{t("seen-note-unattributed-line")}</div>
         </Show>
-      </div>
+      </StickyNotice>
     </Show>
   );
 }
