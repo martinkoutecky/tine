@@ -437,10 +437,10 @@ async function nativeClickSelector(selector, id, text) {
         const style = getComputedStyle(element);
         // Inline references and links can wrap. Their union rectangle may
         // contain only whitespace; use a fragment that receives the pointer.
-        const point = [...element.getClientRects()].map((fragment) => ({
-          x: fragment.left + fragment.width / 2,
-          y: fragment.top + fragment.height / 2,
-        })).find(({ x, y }) => {
+        const point = [...element.getClientRects()].flatMap((fragment) =>
+          [[0.5, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]
+            .map(([fx, fy]) => ({ x: fragment.left + fragment.width * fx,
+              y: fragment.top + fragment.height * fy }))).find(({ x, y }) => {
           const hit = document.elementFromPoint(x, y);
           return hit && (hit === element || element.contains(hit));
         });

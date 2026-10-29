@@ -396,7 +396,9 @@ impl Graph {
                 if let SyncFileResult::ReadFailed(error) =
                     self.sync_file_internal(&winner.path, None)
                 {
-                    if error.kind() != std::io::ErrorKind::NotFound {
+                    if let Some(error) =
+                        unreadable_error(error, "Tine unreadable file producer=journal-claimant")
+                    {
                         let id = crate::FileId::from(winner.rel_path_str().to_owned());
                         let mut errors = self.derived.unreadable_pages.write().unwrap();
                         if !errors.iter().any(|(known, _)| *known == id) {
@@ -843,6 +845,7 @@ impl Graph {
             let mut unreadable = self.derived.unreadable_pages.write().unwrap();
             let id = crate::FileId::from(rel);
             if !unreadable.iter().any(|(known, _)| *known == id) {
+                tine_core::diag_line::diagnostic_line("Tine unreadable file producer=index-panic");
                 Arc::make_mut(&mut unreadable).push((id, ParserPanicked.to_string()));
             }
             drop(unreadable);
@@ -857,7 +860,11 @@ impl Graph {
     pub(super) fn record_name_discovery(&self, path: &Path, failure: Option<io::Error>) {
         let id = crate::FileId::from(self.rel_path(path));
         let _cache = self.derived.cache.read().unwrap();
-        let record = failure.filter(|_| self.disk_sourced(path));
+        let record = failure
+            .filter(|_| self.disk_sourced(path))
+            .and_then(|error| {
+                unreadable_error(error, "Tine unreadable file producer=direct-name-discovery")
+            });
         #[cfg(test)]
         crate::store::pause_at_hook(&self.discovery_record_pause);
         let mut known = self.derived.discovery_errors.write().unwrap();
@@ -880,6 +887,13 @@ impl Graph {
         let failures: Vec<_> = failures
             .into_iter()
             .filter(|(id, _)| self.disk_sourced_in(&mut memo, &self.root.join(id.as_str())))
+            .filter_map(|(id, error)| {
+                unreadable_error(
+                    error,
+                    "Tine unreadable file producer=listing-name-discovery",
+                )
+                .map(|error| (id, error))
+            })
             .collect();
         let mut known = self.derived.discovery_errors.write().unwrap();
         known.retain(|(id, _)| match kind {
@@ -982,7 +996,13 @@ impl Graph {
             rows.extend(owned.row);
         }
         if let Some(discovery) = discovery {
-            *self.derived.discovery_errors.write().unwrap() = discovery;
+            *self.derived.discovery_errors.write().unwrap() = discovery
+                .into_iter()
+                .filter_map(|(id, error)| {
+                    unreadable_error(error, "Tine unreadable file producer=launch-discovery")
+                        .map(|error| (id, error))
+                })
+                .collect();
         }
         unreadable.extend(
             self.derived
@@ -1352,15 +1372,32 @@ impl Graph {
         drop(guard);
     }
 
+    /// Retire error-only files too: a failed first read may never have installed
+    /// a page entry or watcher baseline. True when a reported row was removed.
+    pub(crate) fn forget_unreadable(&self, path: &Path) -> bool {
+        let guard = self.derived.cache.write().unwrap();
+        if !self.disk_sourced(path) {
+            return false;
+        }
+        let rel = self.rel_path(path);
+        let reported = self
+            .reported_unreadable_pages()
+            .iter()
+            .any(|(id, _)| id.as_str() == rel);
+        if reported {
+            self.retire_row(None, path, true);
+            self.move_generation(guard.is_none(), &[path]);
+        }
+        reported
+    }
+
     /// Drop one physical page from the cache after its file disappears,
     /// keeping same-name siblings. A disk disappearance never removes a held
     /// page: its row is its owner's (R1).
     pub(super) fn cache_remove_path(&self, entry: &PageEntry) {
         let mut guard = self.derived.cache.write().unwrap();
-        if let Some(pages) = guard.as_mut() {
-            if !matches!(self.authority(&entry.path), Authority::Owner(..)) {
-                self.retire_row(Some(Arc::make_mut(pages)), &entry.path, false);
-            }
+        if !matches!(self.authority(&entry.path), Authority::Owner(..)) {
+            self.retire_row(guard.as_mut().map(Arc::make_mut), &entry.path, true);
         }
         // Bump AFTER the removal is published (under the cache lock); see
         // `cache_upsert`.

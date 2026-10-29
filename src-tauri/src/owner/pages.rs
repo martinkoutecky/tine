@@ -119,7 +119,6 @@ fn flush_window(slot: &GraphSlot, page: Option<&str>) -> Result<(), ErrorBody> {
 }
 
 pub(super) fn delete_named_page(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
-    #[cfg(desktop)]
     let run = super::git_run::run_of(args)?;
     let args: PageArgs = parse(args)?;
     name_valid(&args.name)?;
@@ -131,7 +130,6 @@ pub(super) fn delete_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
         ));
     }
     let page = unique_page(slot, &args.name)?;
-    #[cfg(desktop)]
     if run.is_some() {
         super::git_run::check_page(slot, &page)?;
     }
@@ -241,7 +239,6 @@ pub(super) fn delete_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
         "page-deleted",
         json!({"page":page.as_str(),"name":parsed.doc.name,"broken_refs":broken}),
     );
-    #[cfg(desktop)]
     write::commit_if_in_run(slot, &page, Some(&bytes), None, &mut reply);
     Ok(reply)
 }

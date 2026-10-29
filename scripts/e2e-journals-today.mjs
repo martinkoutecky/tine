@@ -47,7 +47,10 @@ try {
   await browser.saveScreenshot(path.join(trial, "first-body.png"));
   proof.steps.push("today body visible");
   if (process.env.E2E_BASELINE !== "1") {
-    const older = await browser.$(".main-content .page-section:nth-child(2) .block-content-wrapper");
+    // The older file-backed day (4 days ago), picked by its title: the feed wraps every day in
+    // `.journal-feed-day`, so a positional `.page-section:nth-child(2)` no longer matches, and
+    // would name a different day once the fileless days are merged in.
+    const older = await browser.$(`//*[contains(@class,"main-content")]//*[contains(@class,"page-section")][.//h1[contains(@class,"journal-title")][normalize-space()="${title(date(4))}"]]//*[contains(@class,"block-content-wrapper")]`);
     await older.scrollIntoView({ block: "center" });
     await older.click();
     const editor = await browser.$(".main-content textarea.block-editor");
@@ -72,6 +75,14 @@ try {
       const section = [...document.querySelectorAll(".page-section")].find(el => el.querySelector("h1.journal-title")?.textContent.trim() === name);
       return section?.querySelector(".references-count")?.textContent.trim() === "1";
     }), [title(date(1)), title(date(3))]), { timeout: 30000, interval: 100, timeoutMsg: "inserted days' linked references did not finish" });
+    // The anchor restore for the late days lands a frame or two after their reference counts paint, so a
+    // single read can catch the editor mid-restore (a transient jump, under load). The contract is that the
+    // viewport position survives: wait until the same editor is back within the same 2px tolerance, then
+    // run the unchanged assertion below on that settled read. A position that never returns still fails.
+    await browser.waitUntil(() => browser.execute((top) => {
+      const editor = document.querySelector(".main-content textarea.block-editor");
+      return !!editor && Math.abs(editor.getBoundingClientRect().top - top) <= 2;
+    }, before.top), { timeout: 5000, interval: 50, timeoutMsg: "viewport did not settle back to the editor's position" });
     const after = await browser.execute(() => {
       const editor = document.querySelector(".main-content textarea.block-editor");
       return { sameEditor: editor === window.__gf4Editor, focused: document.activeElement === editor, value: editor?.value, top: editor?.getBoundingClientRect().top,

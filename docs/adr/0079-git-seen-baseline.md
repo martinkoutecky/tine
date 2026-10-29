@@ -5,7 +5,8 @@
 - Authority: D-20261028-SG, seen-git DESIGN rev 1 with rev 2 overrides;
   D-20261018-SN1, D-20261017-SB2 and ADR 0078 identity conventions.
 
-Desktop git graphs compare a page's baseline commit with HEAD. Only blocks
+Git graphs (all five targets since ADR 0078 slice 3) compare a page's baseline
+commit with HEAD. Only blocks
 last touched by other authors count. "Me" is exactly the identity Tine's git
 writers commit the user's changes as (ADR 0078; one function,
 `git_run::user_identity`): the repository's `user.name`/`user.email` where
@@ -59,7 +60,7 @@ absent. Writes use the existing atomic device writer, never graph storage.
 
 Git reads open an independent libgit2 handle off the UI thread; they never
 write `.git`, acquire the run lock, acquire `index.lock`, or watch `.git`.
-Android/iOS compile an unavailable stub. Read results map committed changes
+Android and iOS run the same code (D-20261028-GM). Read results map committed changes
 onto the supplied current page snapshot using structural block paths. Local
 changes do not acquire marks. Removed bodies carry surviving sibling anchors.
 The UI re-reads on focus/visibility or page-file changes and marks on leave;

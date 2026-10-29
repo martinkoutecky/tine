@@ -107,7 +107,7 @@ fn relative(path: &str) -> Result<(), String> {
 /// Mirror git_run's discovery and canonical worktree-prefix convention, without
 /// its write-side checks (detached HEAD and index.lock do not prevent a read).
 fn open(root: &Path) -> Result<(Repository, PathBuf), String> {
-    let repo = Repository::discover(root).map_err(|e| {
+    let repo = super::git_run::discover(root).map_err(|e| {
         if e.code() == ErrorCode::NotFound {
             "The graph is not in a git repository.".into()
         } else {

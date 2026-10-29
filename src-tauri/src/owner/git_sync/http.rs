@@ -47,7 +47,15 @@ impl Session {
         {
             builder = builder.tls_backend_native();
         }
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        // As quick share (DESIGN §3.3): rustls with the platform verifier, the
+        // OS trust store (Android: rustls-platform-verifier over the JVM,
+        // initialized by QuickShareTlsPlugin; D-20261019-G8).
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "android",
+            target_os = "ios"
+        ))]
         {
             let _ = rustls::crypto::ring::default_provider().install_default();
             builder = builder.tls_backend_rustls();
@@ -457,3 +465,12 @@ impl Write for HttpStream {
         Ok(())
     }
 }
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "android",
+    target_os = "ios",
+    target_os = "windows"
+)))]
+compile_error!("git sync declares a TLS transport for each shipped target only");

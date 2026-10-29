@@ -486,6 +486,79 @@ jobs:
       - name: Android app crate compiles (Android-only cfg paths)
         run: cargo check -p tine --target aarch64-linux-android
 
+  # Git on the phone (ADR 0078 slice 3): libgit2's commit, pull, push and
+  # repack, and a commit or push killed midway, with the graph on Android
+  # shared storage (MediaProvider's FUSE daemon). API 33 refuses the
+  # no-replace rename flag (GH #538-b); API 35 is current. Focused proof only:
+  # not part of `full`, and red by design until GS-S1 is decided:
+  # `a_pulled_case_only_rename_lands_on_the_graph_volume` fails on shared
+  # storage (a case-only rename keeps the old spelling). Keep it out of `full`.
+  android-git-storage:
+    name: Android git on shared storage (API ${{ matrix.api }})
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'android'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [33, 35]
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_DEV_INCREMENTAL: "false"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: x86_64-linux-android
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: android-git-storage-x86_64
+          cache-on-failure: true
+      - name: Install pinned Android NDK compiler
+        run: |
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;26.3.11579264" >/dev/null
+          NDK="$ANDROID_SDK_ROOT/ndk/26.3.11579264"
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "CC_x86_64_linux_android=$TOOLCHAIN/x86_64-linux-android24-clang" >> "$GITHUB_ENV"
+          echo "AR_x86_64_linux_android=$TOOLCHAIN/llvm-ar" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=$TOOLCHAIN/x86_64-linux-android24-clang" >> "$GITHUB_ENV"
+      - name: Build the app crate's tests for the emulator
+        run: |
+          mkdir -p target
+          cargo test -p tine --lib --no-run --target x86_64-linux-android \
+            --message-format=json > target/android-git-storage-build.json
+          bin=$(jq -r 'select(.reason == "compiler-artifact" and .profile.test and .target.name == "tine_lib") | .executable' \
+            target/android-git-storage-build.json | tail -n 1)
+          test -x "$bin"
+          echo "TINE_ANDROID_TEST_BIN=$bin" >> "$GITHUB_ENV"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run the git tests with the graph on shared storage
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: default
+          emulator-boot-timeout: 300
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash .github/scripts/android-git-storage.sh "$TINE_ANDROID_TEST_BIN"
+      - name: Upload device evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-git-storage-api${{ matrix.api }}-${{ github.run_attempt }}
+          path: artifacts/android-git-storage
+          if-no-files-found: warn
+          retention-days: 14
+
   plugin-launch-e2e:
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
     runs-on: ubuntu-22.04
