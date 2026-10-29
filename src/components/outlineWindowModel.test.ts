@@ -12,7 +12,7 @@ afterEach(resetStore);
 it("keeps reveal membership stable on text edits while updating multiline spacer geometry", () => {
   setDoc("byId", { root: row("root", ["child"]), child: row("child") });
   createRoot(dispose => {
-    const model = createOutlineWindowModel(() => ["root"], (_id, stored) => stored);
+    const model = createOutlineWindowModel(() => ["root"], () => (_id, _page, stored) => stored);
     const geometry = createOutlineWindowGeometry(model, () => 900, () => "16px sans-serif");
     let registrations = 0;
     createComputed(() => { model(); registrations++; });
@@ -38,7 +38,7 @@ it("rebuilds geometry and reveal membership for structure and occurrence folds, 
   setDoc("byId", { root: row("root", ["child"]), child: row("child"), added: row("added") });
   createRoot(dispose => {
     const [folded, setFolded] = createSignal(false);
-    const model = createOutlineWindowModel(() => ["root"], () => folded());
+    const model = createOutlineWindowModel(() => ["root"], () => () => folded());
     const geometry = createOutlineWindowGeometry(model, () => 900, () => "16px sans-serif");
     const old = geometry();
     setDoc("byId", "root", "children", ["added"]);
@@ -60,7 +60,7 @@ it("rebuilds geometry and reveal membership for structure and occurrence folds, 
 it("reuses content versions on remount and detects edits made with no window mounted", () => {
   setDoc("byId", { root: row("root") });
   const readVersion = () => createRoot(dispose => {
-    const model = createOutlineWindowModel(() => ["root"], (_id, stored) => stored);
+    const model = createOutlineWindowModel(() => ["root"], () => (_id, _page, stored) => stored);
     const geometry = createOutlineWindowGeometry(model, () => 900, () => "16px sans-serif");
     const version = geometry().version();
     dispose();

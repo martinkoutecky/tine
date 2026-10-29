@@ -149,6 +149,7 @@ Development-only fixes (not shipped in a release):
 
 - Queries and boards in a published export show their results again instead of “Query couldn't be loaded: This is a read-only published export.” (development-only regression; UI-PUBLISHED-QUERY-SUBSCRIPTION).
 - **Opening and scrolling a large page right after typing is fast again** (development only, internal card hDSCuw): the typing-stall diagnostics added for GH #746 ran work on every frame for two seconds after each key, which made a page opened from search or the page switcher, and its first scroll, about a frame slower. They now do no per-frame work.
+- Opening a large page no longer asks each of its blocks whether the page is read-only; window sizing asks once per page (development-only regression; REG-BIGLOAD-090-READONLY-PER-PAGE).
 
 ## [0.8.2] - 2026-10-29
 

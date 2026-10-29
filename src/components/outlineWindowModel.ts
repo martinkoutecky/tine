@@ -2,19 +2,21 @@ import { createComputed, createMemo, createSignal } from "solid-js";
 import { node } from "../document";
 import { clearOnBindingInvalidated } from "../binding";
 
-type Collapsed = (id: string, stored: boolean) => boolean;
+/** Makes one pass's fold answer: `(id, page, stored) => folded`. */
+type Folds = () => (id: string, page: string, stored: boolean) => boolean;
 
 /** Membership observes structure alone. Hidden descendants still participate in
  * reveal registration, but never contribute to the spacer's estimated height. */
-export function createOutlineWindowModel(ids: () => readonly string[], collapsed: Collapsed) {
+export function createOutlineWindowModel(ids: () => readonly string[], folds: Folds) {
   return createMemo(() => {
+    const collapsed = folds();
     const all: string[] = [];
     const rows: { id: string; depth: number; visible: boolean }[] = [];
     const structure: string[] = [];
     const visit = (id: string, depth: number, visible: boolean) => {
       const n = node(id);
       if (!n) return;
-      const folded = collapsed(id, n.collapsed);
+      const folded = collapsed(id, n.page, n.collapsed);
       all.push(id);
       rows.push({ id, depth, visible });
       structure.push(id, String(depth), String(folded));
