@@ -472,6 +472,7 @@ async function nativeClickSelector(selector, id, text) {
     throw new Error(`native pointer target was ${state}: ${selector} ${text ?? ""}; ${JSON.stringify(target.candidates)}`.trim());
   }
   await nativeClickAt(target.point, id);
+  return target;
 }
 
 // Reader tools remain available through the overflow menu in narrow panes.
@@ -1711,13 +1712,77 @@ try {
     throw new Error("switching from PDF A wrote A's pending state or baseline into PDF B");
   }
 
-  await nativeClickSelector(`[data-block-ref="${SECOND_SECOND_ID}"]`, "second-pdf-second-highlight");
-  await browser.waitUntil(() => browser.execute((highlightId) =>
-    document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlight-target") === highlightId &&
-    document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") === highlightId, SECOND_SECOND_ID), {
-    timeout: 10_000,
-    timeoutMsg: "a same-PDF block reference did not scroll to its exact second highlight",
+  // Diagnostic trace for the hosted-only failure of this step (PDF-LOGSEQ-HOSTED):
+  // what the native click hit, whether the reference moved, and what the reader did.
+  await browser.execute(() => {
+    const started = performance.now();
+    const trace = [];
+    window.__sameTargetTrace = trace;
+    const t = () => Math.round(performance.now() - started);
+    const describe = (element) => element instanceof Element ? {
+      tag: element.tagName, className: String(element.className).slice(0, 80),
+      blockRef: element.closest("[data-block-ref]")?.getAttribute("data-block-ref"),
+      blockRefClass: String(element.closest("[data-block-ref]")?.className ?? "").slice(0, 60),
+      pageRef: element.closest("[data-ref], .page-ref, a")?.textContent?.slice(0, 60),
+      text: element.textContent?.slice(0, 60),
+    } : String(element);
+    for (const type of ["pointerdown", "mousedown", "click"]) {
+      document.addEventListener(type, (event) => trace.push([t(), type, event.clientX, event.clientY,
+        describe(event.target), event.defaultPrevented]), true);
+    }
+    const viewer = document.querySelector(".pdf-viewer");
+    if (viewer) new MutationObserver((records) => {
+      for (const record of records) trace.push([t(), "viewer-attr", record.attributeName,
+        viewer.getAttribute(record.attributeName)]);
+    }).observe(viewer, { attributes: true });
+    const scroll = document.querySelector(".pdf-scroll");
+    scroll?.addEventListener("scroll", () => trace.push([t(), "pdf-scroll", scroll.scrollTop]));
+    new MutationObserver(() => trace.push([t(), "location", location.href,
+      document.querySelector("main .page-title, main h1")?.textContent?.slice(0, 60)]))
+      .observe(document.querySelector("main") ?? document.body, { childList: true, subtree: false });
+    const sample = () => {
+      const refs = [...document.querySelectorAll('[data-block-ref="7b6704f8-a337-4336-a711-2ba6bc14fbf2"]')]
+        .map((element) => { const r = element.getBoundingClientRect(); return [element.className, Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; });
+      trace.push([t(), "refs", refs, document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") ?? null]);
+    };
+    sample();
+    for (let i = 1; i <= 20; i++) setTimeout(sample, i * 50);
+    for (let i = 1; i <= 10; i++) setTimeout(sample, 1000 + i * 500);
   });
+  const sameTargetClick = await nativeClickSelector(`[data-block-ref="${SECOND_SECOND_ID}"]`, "second-pdf-second-highlight");
+  try {
+    await browser.waitUntil(() => browser.execute((highlightId) =>
+      document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlight-target") === highlightId &&
+      document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") === highlightId, SECOND_SECOND_ID), {
+      timeout: 10_000,
+      timeoutMsg: "a same-PDF block reference did not scroll to its exact second highlight",
+    });
+  } catch (error) {
+    const diagnostic = await browser.execute((point) => {
+      const viewer = document.querySelector(".pdf-viewer");
+      const hit = document.elementFromPoint(point.x, point.y);
+      const scroll = document.querySelector(".pdf-scroll");
+      return {
+        target: viewer?.getAttribute("data-pdf-highlight-target"),
+        ready: viewer?.getAttribute("data-pdf-ready"),
+        filename: viewer?.getAttribute("data-pdf-filename"),
+        scrollTop: scroll?.scrollTop,
+        pages: [...document.querySelectorAll(".pdf-page")].map((page) => ({
+          page: page.getAttribute("data-page"), canvas: !!page.querySelector("canvas"),
+          top: Math.round(page.getBoundingClientRect().top),
+        })),
+        highlights: [...document.querySelectorAll(".pdf-hl")].map((element) => ({
+          id: element.getAttribute("data-highlight-id"), target: element.classList.contains("pdf-hl-target"),
+          page: element.closest(".pdf-page")?.getAttribute("data-page"),
+          top: Math.round(element.getBoundingClientRect().top),
+        })),
+        hitNow: hit ? { tag: hit.tagName, className: String(hit.className).slice(0, 80), text: hit.textContent?.slice(0, 80) } : null,
+        activeTabs: [...document.querySelectorAll(".tab.active, [aria-selected=true]")].map((element) => element.textContent?.slice(0, 40)),
+        trace: window.__sameTargetTrace,
+      };
+    }, sameTargetClick.point);
+    throw new Error(`${error.message}: ${JSON.stringify({ click: sameTargetClick, ...diagnostic })}`, { cause: error });
+  }
   if ((await browser.$(".pdf-viewer")).elementId !== secondViewerElementId) {
     throw new Error("same-PDF highlight navigation remounted the PDF resource");
   }
