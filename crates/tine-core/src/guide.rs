@@ -937,7 +937,7 @@ mod rename_guide_tests {
             "Tine pushes and pulls only with a sync option",
             "**Commit and sync on demand** and **Commit and sync automatically**",
             "press **Sync now**",
-            "**Diverged** means this device and the remote both have commits",
+            "When this device and the remote **both have new commits**",
             "Tine then stops syncing and changes nothing",
             "Merging inside Tine comes later",
             "press **Sign in**",
