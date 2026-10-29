@@ -2,6 +2,7 @@ icon:: ⌨️
 
 - # Tips & shortcuts
 	- A quick tour of the things that aren't obvious on day one. (Shortcuts are remappable in Settings.)
+	- On desktop, the formatting toolbar follows your selection, even near the bottom of a long block. It appears below the selection when there is no room above; choose an action there to format the selected words.
 	- With a non-Latin keyboard layout, shortcuts and recording use the physical key's Latin letter or digit: **Ctrl+K** still works when that key types **л**. Latin layouts such as AZERTY and Dvorak keep their letter-based shortcuts. Text you type keeps the selected language.
 - ## Find anything — Ctrl+K
 	- To switch graphs, press **g Shift+G**, choose a remembered graph with **Up/Down**, then press **Enter**. **All graphs** is also in the command palette.
