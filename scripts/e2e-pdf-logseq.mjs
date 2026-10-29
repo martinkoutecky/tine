@@ -1668,6 +1668,54 @@ try {
     timeout: 10_000,
     timeoutMsg: "the first PDF annotation block reference did not resolve",
   });
+  // Diagnostic trace for the hosted-only failure of the same-PDF step below
+  // (PDF-LOGSEQ-HOSTED): what the native click hit, where the reference was, and
+  // what the reader did. Installed before the first click so it adds no delay there.
+  await browser.execute((secondId) => {
+    const started = performance.now();
+    const trace = [];
+    window.__sameTargetTrace = trace;
+    const t = () => Math.round(performance.now() - started);
+    const describe = (element) => element instanceof Element ? {
+      tag: element.tagName, className: String(element.className).slice(0, 60),
+      blockRef: element.closest("[data-block-ref]")?.getAttribute("data-block-ref")?.slice(-4),
+      blockRefTitle: element.closest("[data-block-ref]")?.getAttribute("title")?.slice(0, 30),
+      text: element.textContent?.slice(0, 50),
+    } : String(element);
+    const refs = () => [...document.querySelectorAll(`[data-block-ref="${secondId}"]`)].map((element) => {
+      const r = element.getBoundingClientRect();
+      return [element.className, element.getAttribute("title")?.slice(0, 30),
+        Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+    });
+    const observed = new WeakSet();
+    for (const type of ["pointerdown", "mousedown", "click"]) {
+      document.addEventListener(type, (event) => {
+        trace.push([t(), type, event.clientX, event.clientY, describe(event.target),
+          type === "pointerdown" ? refs() : undefined, !!document.querySelector(".peek-popup"),
+          document.querySelector("main .page-title")?.textContent?.slice(0, 40)]);
+        const viewer = document.querySelector(".pdf-viewer");
+        if (!viewer || observed.has(viewer)) return;
+        observed.add(viewer);
+        new MutationObserver((records) => {
+          for (const record of records) {
+            trace.push([t(), "viewer-attr", record.attributeName, viewer.getAttribute(record.attributeName)]);
+          }
+        }).observe(viewer, { attributes: true });
+      }, true);
+    }
+    for (const type of ["pointerover", "pointerout"]) {
+      document.addEventListener(type, (event) => {
+        if (event.target instanceof Element && event.target.closest(".block-ref, .peek-popup")) {
+          trace.push([t(), type, event.pointerType, describe(event.target)]);
+        }
+      }, true);
+    }
+    document.addEventListener("scroll", (event) => {
+      if (event.target instanceof Element && event.target.matches(".pdf-scroll")) {
+        trace.push([t(), "pdf-scroll", event.target.scrollTop]);
+      }
+    }, true);
+  }, SECOND_SECOND_ID);
   await firstSecondRef.click();
   try {
     await browser.waitUntil(() => browser.execute((highlightId) =>
@@ -1712,43 +1760,6 @@ try {
     throw new Error("switching from PDF A wrote A's pending state or baseline into PDF B");
   }
 
-  // Diagnostic trace for the hosted-only failure of this step (PDF-LOGSEQ-HOSTED):
-  // what the native click hit, whether the reference moved, and what the reader did.
-  await browser.execute(() => {
-    const started = performance.now();
-    const trace = [];
-    window.__sameTargetTrace = trace;
-    const t = () => Math.round(performance.now() - started);
-    const describe = (element) => element instanceof Element ? {
-      tag: element.tagName, className: String(element.className).slice(0, 80),
-      blockRef: element.closest("[data-block-ref]")?.getAttribute("data-block-ref"),
-      blockRefClass: String(element.closest("[data-block-ref]")?.className ?? "").slice(0, 60),
-      pageRef: element.closest("[data-ref], .page-ref, a")?.textContent?.slice(0, 60),
-      text: element.textContent?.slice(0, 60),
-    } : String(element);
-    for (const type of ["pointerdown", "mousedown", "click"]) {
-      document.addEventListener(type, (event) => trace.push([t(), type, event.clientX, event.clientY,
-        describe(event.target), event.defaultPrevented]), true);
-    }
-    const viewer = document.querySelector(".pdf-viewer");
-    if (viewer) new MutationObserver((records) => {
-      for (const record of records) trace.push([t(), "viewer-attr", record.attributeName,
-        viewer.getAttribute(record.attributeName)]);
-    }).observe(viewer, { attributes: true });
-    const scroll = document.querySelector(".pdf-scroll");
-    scroll?.addEventListener("scroll", () => trace.push([t(), "pdf-scroll", scroll.scrollTop]));
-    new MutationObserver(() => trace.push([t(), "location", location.href,
-      document.querySelector("main .page-title, main h1")?.textContent?.slice(0, 60)]))
-      .observe(document.querySelector("main") ?? document.body, { childList: true, subtree: false });
-    const sample = () => {
-      const refs = [...document.querySelectorAll('[data-block-ref="7b6704f8-a337-4336-a711-2ba6bc14fbf2"]')]
-        .map((element) => { const r = element.getBoundingClientRect(); return [element.className, Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; });
-      trace.push([t(), "refs", refs, document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") ?? null]);
-    };
-    sample();
-    for (let i = 1; i <= 20; i++) setTimeout(sample, i * 50);
-    for (let i = 1; i <= 10; i++) setTimeout(sample, 1000 + i * 500);
-  });
   const sameTargetClick = await nativeClickSelector(`[data-block-ref="${SECOND_SECOND_ID}"]`, "second-pdf-second-highlight");
   try {
     await browser.waitUntil(() => browser.execute((highlightId) =>
