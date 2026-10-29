@@ -14,6 +14,7 @@ import { paletteCommands } from "../keybindings";
 import { setToasts } from "../toasts";
 import { noteSeenAnswer, resetSeenForTests } from "../seen/seenState";
 import { resetNearObserverForTests } from "../lazyObserve";
+import { maybeEditorIn } from "../tests/editorDriver";
 import { PageView } from "./Page";
 
 // The windowing tests' observer: nothing is "near", so windows beyond the first stay unmounted shells.
@@ -136,7 +137,7 @@ it("opens a collapsed parent in memory only and never enters edit mode", async (
     expect(node("seen-0")?.collapsed).toBe(false);
     expect(node("seen-0")?.raw).toBe("Alpha"); // no collapsed:: edit, so nothing to save
     expect(editingId()).toBeNull();
-    expect(host.querySelector("textarea")).toBeNull();
+    expect(maybeEditorIn(host)).toBeNull();
   } finally { dispose(); }
 });
 

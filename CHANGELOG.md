@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 - The seen notice stays at the top so you can click it even in the middle of a page (UI-SEEN-STICKY).
+- **Previous change / Next change** in the "Changed since you last looked" notice step through a page's changed blocks and removed-block markers in page order, wrapping at the ends ("3 of 12"), highlighting each one and opening a folded parent on the way without editing the file or entering edit mode. The same two steps are in the command palette, with no key assigned (UI-SEEN-STEPS, discussion 645).
 - The desktop formatting toolbar displays over the selection, including near the bottom of a long block, and moves below it when there is no room above (UI-SEL-TOOLBAR).
 - Expand or collapse bullets even in read-only exports, quick-share links and read-only pages. These viewing choices last while browsing; reloading restores the original folds without changing the graph. Static HTML exports keep the original folds too; click a folded block's arrow to open it, which works without JavaScript (UI-VIEW-FOLD, UI-VIEW-FOLD-STATIC).
 - Mouse back/forward buttons also navigate on macOS; dragging with a side button does not navigate. macOS also accepts Cmd+[ and Cmd+] for history (#780).
