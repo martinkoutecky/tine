@@ -22,8 +22,8 @@ import { startEditing, endEdit } from "../editorController";
 import { backend } from "../backend";
 import { resetStore } from "../document";
 import { contextMenu, closeAllRightSidebarItems, rightSidebar } from "../ui";
-import { resetPaneLayoutToSingle, paneRouter, layoutPaneIds } from "../panes";
-import { resetQueryTextOpenForTests } from "../navSettings";
+import { resetPaneLayoutToSingle, paneRouter, layoutPaneIds, openRouteInOtherPane } from "../panes";
+import { resetQueryTextOpenForTests, resetSearchResultsOpenInThisTabForTests } from "../navSettings";
 import { setActiveLocale } from "../i18n";
 
 beforeAll(initParser);
@@ -31,6 +31,7 @@ beforeAll(initParser);
 afterEach(() => {
   clearTransientLayersForTest();
   resetQueryTextOpenForTests(false);
+  resetSearchResultsOpenInThisTabForTests(false);
   document.body.innerHTML = "";
 });
 
@@ -970,6 +971,130 @@ describe("QueryWorkspace", () => {
       expect(router.route()).toEqual(route);
       expect(root.querySelector<HTMLInputElement>(".query-workspace-source")!.value).toBe("alpha");
     } finally { dispose(); closeAllRightSidebarItems(); resetPaneLayoutToSingle(); }
+  });
+
+  // GH #796 (D-20261029-ST): Settings > Search results open in > This tab. The
+  // default (New tab) is the GH #416 test above and is unchanged.
+  describe("GH #796: Search results open in = This tab", () => {
+    const searchRoute = (id: string, presentation: QueryRoute["presentation"] = "search"): QueryRoute =>
+      ({ kind: "query", id, sourceKind: "search", source: "alpha", presentation });
+    const rowsOf = (root: HTMLElement) => {
+      const page = root.querySelector<HTMLButtonElement>('[data-query-result-kind="page"] button.query-result-row')!;
+      const blockSurface = root.querySelector<HTMLElement>('[data-query-result-kind="block"] [data-inpage-find-surface]')!;
+      const block = blockSurface instanceof HTMLButtonElement ? blockSurface : blockSurface.querySelector<HTMLButtonElement>("button")!;
+      return { page, block };
+    };
+    const tabOf = (router: PaneRouter, id: string) => router.tabs().find((tab) => tab.id === id)!;
+
+    it.each(["search", "list", "table", "board"] as const)("a plain click opens page and block results in this tab, which keeps Search one Back away (%s)", async (presentation) => {
+      resetSearchResultsOpenInThisTabForTests(true);
+      const route = searchRoute("here-click", presentation);
+      resetPaneLayoutToSingle({ tabs: [{ history: [route], pos: 0, pinned: false }], activeIndex: 0 });
+      const router = paneRouter("main");
+      const searchId = router.activeId();
+      const root = document.createElement("div"); document.body.append(root);
+      const dispose = render(() => <QueryWorkspace route={route} router={router} deps={workspaceDeps()} />, root);
+      try {
+        await waitFor(() => expect(root.querySelectorAll("[data-inpage-find-surface]")).toHaveLength(2));
+        const { page, block } = rowsOf(root);
+        page.click();
+        expect(router.tabs()).toHaveLength(1);
+        expect(router.activeId()).toBe(searchId);
+        expect(router.route()).toMatchObject({ kind: "page", name: "Alpha notes", path: "pages/alpha.md" });
+        expect(tabOf(router, searchId).history).toEqual([route, expect.objectContaining({ kind: "page", name: "Alpha notes" })]);
+        router.goBack();
+        expect(router.route()).toEqual(route);
+        block.click();
+        expect(router.tabs()).toHaveLength(1);
+        expect(router.route()).toMatchObject({ kind: "page", name: "Research", path: "pages/client-b/Research.md" });
+      } finally { dispose(); closeAllRightSidebarItems(); resetPaneLayoutToSingle(); }
+    });
+
+    it("modifier and middle clicks keep their link destinations", async () => {
+      resetSearchResultsOpenInThisTabForTests(true);
+      const route = searchRoute("here-modifiers");
+      resetPaneLayoutToSingle({ tabs: [{ history: [route], pos: 0, pinned: false }], activeIndex: 0 });
+      const router = paneRouter("main");
+      const searchId = router.activeId();
+      const root = document.createElement("div"); document.body.append(root);
+      const dispose = render(() => <QueryWorkspace route={route} router={router} deps={workspaceDeps()} />, root);
+      try {
+        await waitFor(() => expect(root.querySelectorAll("[data-inpage-find-surface]")).toHaveLength(2));
+        const { page, block } = rowsOf(root);
+        page.dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true }));
+        expect(router.tabs()).toHaveLength(2);
+        expect(router.activeId()).toBe(searchId);
+        block.dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true }));
+        expect(router.tabs()).toHaveLength(3);
+        expect(router.activeId()).toBe(searchId);
+        page.dispatchEvent(new MouseEvent("click", { shiftKey: true, bubbles: true }));
+        expect(rightSidebar()).toContainEqual(expect.objectContaining({ kind: "page", name: "Alpha notes" }));
+        const panes = layoutPaneIds().length;
+        page.dispatchEvent(new MouseEvent("click", { altKey: true, bubbles: true }));
+        expect(layoutPaneIds().length).toBeGreaterThan(panes);
+        expect(router.route()).toEqual(route);
+        expect(router.tabs()).toHaveLength(3);
+      } finally { dispose(); closeAllRightSidebarItems(); resetPaneLayoutToSingle(); }
+    });
+
+    it("Enter on a highlighted result opens it in this tab; Ctrl+Enter still opens a background tab", async () => {
+      resetSearchResultsOpenInThisTabForTests(true);
+      const route = searchRoute("here-enter");
+      resetPaneLayoutToSingle({ tabs: [{ history: [route], pos: 0, pinned: false }], activeIndex: 0 });
+      const router = paneRouter("main");
+      const root = document.createElement("div"); document.body.append(root);
+      const previous = HTMLElement.prototype.scrollIntoView;
+      HTMLElement.prototype.scrollIntoView = vi.fn();
+      const dispose = render(() => <QueryWorkspace route={route} router={router} deps={workspaceDeps()} />, root);
+      try {
+        await waitFor(() => expect(root.querySelectorAll("button[data-query-result]")).toHaveLength(2));
+        const input = root.querySelector<HTMLInputElement>(".query-workspace-source")!;
+        const key = (name: string, init: KeyboardEventInit = {}) => (document.activeElement as HTMLElement).dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true, ...init }));
+        input.focus();
+        key("ArrowDown");
+        key("Enter", { ctrlKey: true });
+        expect(router.tabs()).toHaveLength(2);
+        expect(router.route()).toEqual(route);
+        key("Enter");
+        expect(router.tabs()).toHaveLength(2);
+        expect(router.route()).toMatchObject({ kind: "page", name: "Alpha notes", path: "pages/alpha.md" });
+      } finally { dispose(); closeAllRightSidebarItems(); resetPaneLayoutToSingle(); HTMLElement.prototype.scrollIntoView = previous; }
+    });
+
+    it("a Search tab in a second pane navigates that pane's tab, not the main pane", async () => {
+      resetSearchResultsOpenInThisTabForTests(true);
+      const route = searchRoute("here-pane");
+      resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name: "Home", pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });
+      const otherId = openRouteInOtherPane(route)!;
+      const other = paneRouter(otherId);
+      const mainBefore = paneRouter("main").route();
+      const root = document.createElement("div"); document.body.append(root);
+      const dispose = render(() => <QueryWorkspace route={route} router={other} deps={workspaceDeps()} />, root);
+      try {
+        expect(other.route()).toMatchObject({ kind: "query", id: "here-pane" });
+        await waitFor(() => expect(root.querySelectorAll("[data-inpage-find-surface]")).toHaveLength(2));
+        rowsOf(root).page.click();
+        expect(other.tabs()).toHaveLength(1);
+        expect(other.route()).toMatchObject({ kind: "page", name: "Alpha notes" });
+        expect(paneRouter("main").route()).toEqual(mainBefore);
+      } finally { dispose(); closeAllRightSidebarItems(); resetPaneLayoutToSingle(); }
+    });
+
+    it("the default stays New tab: a plain click leaves Search in place and opens a foreground tab", async () => {
+      const route = searchRoute("default-new-tab");
+      resetPaneLayoutToSingle({ tabs: [{ history: [route], pos: 0, pinned: false }], activeIndex: 0 });
+      const router = paneRouter("main");
+      const searchId = router.activeId();
+      const root = document.createElement("div"); document.body.append(root);
+      const dispose = render(() => <QueryWorkspace route={route} router={router} deps={workspaceDeps()} />, root);
+      try {
+        await waitFor(() => expect(root.querySelectorAll("[data-inpage-find-surface]")).toHaveLength(2));
+        rowsOf(root).page.click();
+        expect(router.tabs()).toHaveLength(2);
+        expect(router.activeId()).not.toBe(searchId);
+        expect(tabOf(router, searchId).history).toEqual([route]);
+      } finally { dispose(); closeAllRightSidebarItems(); resetPaneLayoutToSingle(); }
+    });
   });
 
   it("shows evidence, diagnostics and explanations, and switches presentations without changing membership", async () => {

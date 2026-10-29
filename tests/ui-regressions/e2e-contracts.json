@@ -347,7 +347,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-search-tab-keyboard.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"A bound Search tab shortcut opens the persistent input; typing finds pages, ArrowDown twice highlights the second displayed result with accessible focus, and Enter opens that page.","blocking":true}],
+      "contracts": [{"class":"core-operation","userOutcome":"A bound Search tab shortcut opens the persistent input; typing finds pages, ArrowDown twice highlights the second displayed result with accessible focus, and Enter opens that page in a new tab beside Search; after Settings > Editor > Advanced > Search results open in is set to This tab (GH #796), Enter on a result navigates the Search tab itself.","blocking":true}],
       "acceptableVariations":["Result ordering, layout, focus styling and search latency may vary while keyboard selection and opened page agree."],
       "nonRequirements":["Exact pixels, a particular fixture page ranking, or native certification outside Linux WebKitGTK; modifier destinations are covered in component tests."],
       "stability":"burn-in"

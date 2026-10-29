@@ -43,7 +43,7 @@ export const SURFACES = Object.freeze({
   "settings.appearance.open": settingsOpen("appearance", 28),
   "settings.appearance.advanced": settingsAdvanced("appearance", 14),
   "settings.editor.open": settingsOpen("editor", 9),
-  "settings.editor.advanced": settingsAdvanced("editor", 10),
+  "settings.editor.advanced": settingsAdvanced("editor", 11),
   "settings.journals.open": settingsOpen("journals", 13),
   "settings.journals.advanced": settingsAdvanced("journals", 1),
   "settings.files.open": settingsOpen("files", 7),

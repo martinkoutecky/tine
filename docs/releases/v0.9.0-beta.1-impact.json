@@ -1506,6 +1506,42 @@
       }
     },
     {
+      "section": "Added",
+      "text": "Settings → Editor → **Search results open in** chooses where a plain click or Enter on a Search-tab result opens: **New tab** (the default, as before) or **This tab**, which navigates the Search tab itself and leaves Back to return to the results. Shift, Ctrl/Cmd, Alt and middle-click choose the sidebar, a background tab or the other pane either way (#796).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH796-SEARCH-RESULT-OPENS-HERE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "UI-GH796-SEARCH-RESULT-OPENS-HERE: covered, fail-before proven (6 of 8 QueryWorkspace tests fail with the fix reverted); e2e-search-tab-keyboard covers This tab.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/QueryWorkspace.test.tsx",
+          "scripts/e2e-search-tab-keyboard.mjs"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Bundled Guide documents the setting; src/guideBeta090.test.ts guards it.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md",
+          "crates/tine-core/src/templates/tips.md",
+          "src/guideBeta090.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
       "section": "Changed",
       "text": "`:feature/enable-journals? false` in `logseq/config.edn` shows the configured home page in the sidebar in place of Journals, as in Logseq. Each comma item of a property listed in `:property/separated-by-commas` is now a page link in page and block properties.",
       "userVisible": true,

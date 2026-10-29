@@ -57,6 +57,9 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-10-29, D-20261029-ST (GH #796): `settings.editor.advanced` 10→11 for the explicitly
+  decided **Search results open in** (New tab / This tab) setting. It sits behind the Advanced
+  disclosure beside "Switch to an already-open tab", so `settings.editor.open` stays 9.
 - 2026-10-29, D-20261029-SS (Previous / Next change in the seen notice, discussion 645):
   `commands.registry` 129→131 for the required bindable **Next change since you last looked**
   and **Previous change since you last looked** commands. Both are offered (palette and

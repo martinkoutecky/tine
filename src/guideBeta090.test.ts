@@ -54,6 +54,14 @@ it("the Guide's tab instructions follow available width on every platform", () =
   expect(context).not.toContain("the tab strip and splits are off");
 });
 
+it("the Guide documents where Search-tab results open and the setting that changes it (GH #796)", () => {
+  const refs = guide("pages-links-references-search");
+  expect(refs).toContain("Clicking a result opens a new tab and keeps Search unchanged");
+  expect(refs).toContain("**Settings → Editor → Advanced → Search results open in**");
+  expect(refs).toContain("**New tab** is the default");
+  expect(guide("tips")).toContain("**Settings → Editor → Advanced → Search results open in → This tab**");
+});
+
 it("the Beta Guide explains seen marks, controls and the reachable notice", () => {
   const files = guide("files-external-edits-backups");
   for (const detail of ["thin bar in the margin", "A block was removed here", "Your own commits never count", "**Mark page seen**", "**Mark whole graph seen**", "**Forget seen state**", "notice stays at the top while you scroll"]) expect(files).toContain(detail);

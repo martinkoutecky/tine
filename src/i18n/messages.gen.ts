@@ -2464,6 +2464,10 @@ export interface MessageArgs {
   "settings-rescan": {};
   "settings-reset": {};
   "settings-reset-control": { "title": string | number };
+  "settings-result-destination-hint": {};
+  "settings-result-destination-label": {};
+  "settings-result-destination-new-tab": {};
+  "settings-result-destination-this-tab": {};
   "settings-same-as-other-links": {};
   "settings-scan-for-orphans": {};
   "settings-scanning": {};
@@ -2555,6 +2559,7 @@ export interface MessageArgs {
   "settings-search-reuse-tabs": {};
   "settings-search-safe-mode-broken-stylesheet-unreadable-session": {};
   "settings-search-scheduled-deadline-days": {};
+  "settings-search-search-tab-results-open-in-new-tab-this-tab": {};
   "settings-search-shift-tab-following-siblings-roam-config": {};
   "settings-search-show-brackets": {};
   "settings-search-show-tine-in-the-system-tray": {};

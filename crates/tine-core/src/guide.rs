@@ -245,6 +245,12 @@ mod journal_guide_tests {
         assert!(reference.contains("Page results offer the same right-click menu"));
         assert!(tips.contains("**Enter** / **Shift+Enter** move forward / backward"));
         assert!(tips.contains("In a Search tab, clicking a result opens a new tab"));
+        // GH #796: where a plain click or Enter opens a Search-tab result is a setting.
+        assert!(reference.contains("**Settings → Editor → Advanced → Search results open in**"));
+        assert!(reference.contains("**New tab** is the default"));
+        assert!(
+            tips.contains("**Settings → Editor → Advanced → Search results open in → This tab**")
+        );
     }
 
     #[test]
