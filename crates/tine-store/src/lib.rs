@@ -115,6 +115,7 @@ pub mod publish;
 pub mod query;
 pub mod query_plan;
 pub mod restore;
+mod scan_recheck;
 #[cfg(test)]
 mod search_edit_tests;
 pub mod store;
