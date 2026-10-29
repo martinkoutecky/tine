@@ -139,6 +139,26 @@ const env = {
   LIBGL_ALWAYS_SOFTWARE: "1",
   GDK_BACKEND: "x11",
 };
+// The Installed tab label carries the live count. Once, in the full release
+// suite, `button=Installed (1)` was not found although the same journey passes
+// alone and in repeat runs (2026-10-29, 0.9.0-beta.1 candidate). Keep the
+// assertion exactly as strict, but when it fails leave the evidence that
+// distinguishes "count not yet 1", "wrong Settings tab" and "covered".
+async function openInstalledTab(browser, label) {
+  try {
+    await browser.$("button=Installed (1)").click();
+  } catch (error) {
+    const dir = process.env.E2E_ARTIFACT_DIR || TMP;
+    fs.mkdirSync(dir, { recursive: true });
+    await browser.saveScreenshot(path.join(dir, `installed-tab-missing-${label}.png`)).catch(() => {});
+    const nav = await browser.execute(() => ({
+      tabs: [...document.querySelectorAll(".plugin-settings-nav button")].map((node) => (node.textContent ?? "").trim()),
+      settings: (document.querySelector(".settings")?.textContent ?? "").slice(0, 400),
+    })).catch((inner) => ({ unreadable: String(inner) }));
+    console.error(`installed-tab-missing in ${label} session: ${JSON.stringify(nav)}`);
+    throw error;
+  }
+}
 async function withAppSession(label, check) {
   const sessionLog = fs.openSync(path.join(TMP, `${label}-tauri-driver.log`), "w");
   const td = spawn(TD, [
@@ -197,7 +217,7 @@ try {
 
     await browser.$('[title="Settings (t s)"]').click();
     await browser.$("button=Plugins").click();
-    await browser.$("button=Installed (1)").click();
+    await openInstalledTab(browser, label);
     await browser.waitUntil(async () => browser.execute((id) => {
       const row = [...document.querySelectorAll(".settings-field")].find((candidate) => candidate.textContent?.includes(id));
       const toggle = row?.querySelector('[role="switch"]');
@@ -227,7 +247,7 @@ try {
     await assertNoContribution(browser, "restart-without-cache");
     await browser.$('[title="Settings (t s)"]').click();
     await browser.$("button=Plugins").click();
-    await browser.$("button=Installed (1)").click();
+    await openInstalledTab(browser, label);
     await browser.waitUntil(async () => browser.execute((id) => {
       const row = [...document.querySelectorAll(".settings-field")].find((candidate) => candidate.textContent?.includes(id));
       const toggle = row?.querySelector('[role="switch"]');
