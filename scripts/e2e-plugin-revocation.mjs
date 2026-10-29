@@ -150,6 +150,7 @@ async function settingsSnapshot(browser) {
     return {
       title: document.title,
       page: { visibility: document.visibilityState, focused: document.hasFocus(), ready: document.readyState, size: `${innerWidth}x${innerHeight}`, url: location.href },
+      document: { bodyChildren: document.body?.children.length ?? -1, bodyText: text(document.body).slice(0, 160), headerButtons: document.querySelectorAll("button.icon-btn").length },
       overlays: [...document.querySelectorAll(".modal-overlay")].map((node) => node.className),
       settingsModal: Boolean(document.querySelector(".settings-modal")),
       navItems: [...document.querySelectorAll(".settings-nav-item")].map((node) => `${text(node)}${node.classList.contains("active") ? "*" : ""}`),
