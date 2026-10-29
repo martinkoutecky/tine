@@ -65,6 +65,8 @@ it("the Guide documents where Search-tab results open and the setting that chang
 it("the Beta Guide explains seen marks, controls and the reachable notice", () => {
   const files = guide("files-external-edits-backups");
   for (const detail of ["thin bar in the margin", "A block was removed here", "Your own commits never count", "**Mark page seen**", "**Mark whole graph seen**", "**Forget seen state**", "notice stays at the top while you scroll"]) expect(files).toContain(detail);
+  for (const detail of ["Whenever there is a change, even a single one", "**Previous change**", "**Next change**", "page order", "wrapped around", "without changing the file", "never put a block into edit mode", "**Next change since you last looked**", "**Previous change since you last looked**"]) expect(files).toContain(detail);
+  expect(files).not.toContain("When there is more than one change");
 });
 
 it("the Beta Guide covers git sign-in, divergence, repair and phone lifecycle", () => {
@@ -94,7 +96,12 @@ it("the Beta Guide describes desktop selection formatting and macOS history", ()
 
 it("the Beta Guide explains distribution updates and existing PDF view state", () => {
   expect(guide("platforms-and-mobile")).toContain("TINE_PACKAGED_BY");
-  for (const detail of ["**Open another view**", "Each view keeps its own page and zoom", "Your page and zoom are restored"]) expect(guide("pdf")).toContain(detail);
+  for (const detail of ["**Open another view**", "Each view keeps its own page and zoom", "Your page and zoom are restored", "a highlight made, recolored or removed in one appears in the other at once"]) expect(guide("pdf")).toContain(detail);
+});
+
+it("the Beta Guide covers sidebar tabs and query refresh without unrelated reads", () => {
+  for (const detail of ["**Open tabs**", "hold a row still", "**Move out of group**", "Pinned tabs", "come back after a restart"]) expect(guide("keep-context-visible")).toContain(detail);
+  for (const detail of ["Queries refresh when an edit can affect their results", "1.5 seconds", "Continuous typing keeps the last answer visible"]) expect(guide("queries")).toContain(detail);
 });
 
 it("the Beta Guide maps a graph with journals disabled to its home page", () => {

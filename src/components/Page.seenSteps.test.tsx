@@ -80,6 +80,26 @@ it("shows Previous and Next change only while there are changes", async () => {
   } finally { dispose(); }
 });
 
+it("offers both steps for a single change and wraps back to it", async () => {
+  vi.spyOn(backend(), "getPageChanges").mockResolvedValue(reply({
+    blocks: [{ block_path: [2], persisted_id: null }],
+  }));
+  const { host, dispose } = openPage();
+  host0 = host;
+  try {
+    await settle();
+    expect(button(host, "previous").textContent).toBe("Previous change");
+    expect(button(host, "next").textContent).toBe("Next change");
+    button(host, "next").click();
+    await vi.waitFor(() => expect(position(host)).toBe("1 of 1"));
+    expect(flashed(host)?.getAttribute("data-block-id")).toBe("seen-2");
+    button(host, "previous").click();
+    await vi.waitFor(() => expect(position(host)).toBe("1 of 1, wrapped around"));
+    expect(flashed(host)?.getAttribute("data-block-id")).toBe("seen-2");
+    expect(editingId()).toBeNull();
+  } finally { dispose(); }
+});
+
 it("steps through changed blocks and removed markers in page order, wrapping with a visible indication", async () => {
   vi.spyOn(backend(), "getPageChanges").mockResolvedValue(threeChanges());
   const { host, dispose } = openPage();
