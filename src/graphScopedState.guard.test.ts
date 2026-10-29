@@ -34,6 +34,7 @@ const CLASSIFIED: Record<string, string> = {
   "src/components/DeepLinkGraphChoice.tsx#choice": "a pending choice among known graph roots for an external link (paths, not graph content); the chosen target is re-resolved through the graph-switch door, which refuses a missing page or block",
   "src/components/TabBar.tsx#currentTabDropTarget": "tab drop target (pane/tab ids, not graph content)",
   "src/document/model.ts#collapseEpochState": "a counter compared for equality by embed folds, never written back to a graph; cleared by resetStore (clearCollapseEpochs)",
+  "src/components/block/readOnlyFold.ts#view": "presentation-only folds of read-only pages, never written to a graph; the accessor checks graphEpoch and clearOnBindingInvalidated drops them",
   "src/document/edits/selection.ts#selAnchor": "cleared by clearOnBindingInvalidated",
   "src/document/edits/selection.ts#selFocus": "cleared by clearOnBindingInvalidated",
   "src/editorController.ts#editingId": "resetStore ends the edit (endEdit \"graph-switch\")",

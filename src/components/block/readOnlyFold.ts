@@ -1,4 +1,5 @@
 import { createStore } from "solid-js/store";
+import { clearOnBindingInvalidated } from "../../binding";
 import { graphEpoch } from "../../graphSession";
 import { blockPageReadOnly, node, toggleCollapse } from "../../document";
 import type { CollapseSurfaceApi } from "../Block";
@@ -7,6 +8,7 @@ import type { CollapseSurfaceApi } from "../Block";
 // Keep choices across page remounts, and discard them on a graph session change.
 // Deliberate difference from editable folds: reloading starts from collapsed::.
 const [view, setView] = createStore<{ epoch: number; folds: Record<string, boolean> }>({ epoch: -1, folds: {} });
+clearOnBindingInvalidated(() => setView({ epoch: -1, folds: {} }));
 const key = (id: string) => JSON.stringify([node(id)?.page, id]);
 export const readOnlyFold: CollapseSurfaceApi = {
   collapsed: (id, stored) => view.epoch === graphEpoch() ? view.folds[key(id)] ?? stored : stored,
