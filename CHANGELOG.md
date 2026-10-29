@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - Opening a large page no longer sets up one height observer per block; each outline window keeps one, so large pages open faster (development-only regression; REG-BIGLOAD-090B-WINDOW-RAW-FUNNEL).
+- Opening a large page no longer makes the comment margin watch every block to decide whether the page has comments (development-only regression; REG-BIGLOAD-090B-MARGIN-SCAN-UNTRACKED).
 
 ## [0.9.0-beta.1] - 2026-10-29
 

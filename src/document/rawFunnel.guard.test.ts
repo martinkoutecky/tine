@@ -1,7 +1,10 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { produce } from "solid-js/store";
+import { afterEach, describe, expect, it } from "vitest";
+import { resetStore } from "./workingSet";
+import { setDoc, structureRevision, writeRaw, type Node } from "./model";
 
 // BIGLOAD-090b: outline windows learn about raw edits from the one notification
 // in model.ts (`onBlockRawChanged`) instead of one tracked computation per row.
@@ -90,5 +93,25 @@ describe("block raw writes go through the raw-change funnel (BIGLOAD-090b)", () 
     }
     expect(check("src/planted.ts", "setDoc(\"byId\", id, \"raw\", next); setDoc(produce((s) => writeRaw(s, id, next)));"))
       .toEqual({ rawAssignments: 0, violations: [] });
+  });
+});
+
+// The margin's comment scan reads blocks untracked and depends on
+// structureRevision alone, so every write that can move structure must move it.
+// setDoc is the only writer (the guard above pins its forms); only the field
+// forms that cannot change structure leave the revision alone.
+describe("structureRevision follows every structural write (BIGLOAD-090b)", () => {
+  afterEach(resetStore);
+  const row = (id: string, children: string[] = []): Node => ({ id, raw: id, children, collapsed: false, parent: null, page: "P" });
+  it("moves on producer, merge and children/parent writes, not on raw or fold fields", () => {
+    setDoc("byId", { a: row("a", ["b"]), b: row("b") });
+    const moved = (write: () => void) => { const before = structureRevision(); write(); return structureRevision() !== before; };
+    expect(moved(() => setDoc("byId", "a", "children", []))).toBe(true);
+    expect(moved(() => setDoc("byId", "b", "parent", "a"))).toBe(true);
+    expect(moved(() => setDoc(produce((s) => { s.byId.a.children.push("b"); })))).toBe(true);
+    expect(moved(() => setDoc("byId", { c: row("c") }))).toBe(true);
+    expect(moved(() => setDoc("byId", "a", "raw", "edited"))).toBe(false);
+    expect(moved(() => setDoc("byId", "a", "collapsed", true))).toBe(false);
+    expect(moved(() => setDoc(produce((s) => writeRaw(s, "b", "edited"))))).toBe(true);
   });
 });

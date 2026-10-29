@@ -158,6 +158,10 @@ interface AuthoredIdentityPage {
 const authoredIdentityPages = new Map<string, AuthoredIdentityPage>();
 clearOnBindingInvalidated(() => authoredIdentityPages.clear());
 const [identityStructureRevision, setIdentityStructureRevision] = createSignal(0);
+/** Moves on every write that can change any page's structure (each setDoc write
+ * except the raw/loadedRaw/collapsed/preBlock/title fields, feed and loaded).
+ * A whole-document question can read nodes untracked and depend on this alone. */
+export const structureRevision = (): number => identityStructureRevision();
 
 function updateAuthoredIdentity(id: string): void {
   const node = doc.byId[id];

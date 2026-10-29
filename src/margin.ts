@@ -7,7 +7,7 @@
 import { createSignal, untrack } from "solid-js";
 import { quoteSelectorOf } from "./comments";
 import { facetsOf } from "./render/facets";
-import { nextVisible, prevVisible, node as docNode, type OutlineScope } from "./document";
+import { nextVisible, prevVisible, node as docNode, structureRevision, type OutlineScope } from "./document";
 import type { Format } from "./render/ast";
 
 /** The narrowest main pane (its scroller's width, px) that gets the margin. The
@@ -31,21 +31,23 @@ export const watchCommentsWritten = (): number => commentsEpoch();
 
 /** Whether some block of the page is a comment. Stops at the first one.
  *
- * Tracks the page's STRUCTURE only (roots and children lists), never a block's
- * text: a keystroke in any block must not make the margin look at the other
- * blocks (GH #248, keystrokeScaling.guard). A comment arrives as a new child,
- * so a structural change re-asks; a block edited by hand into (or out of) a
- * comment is noticed at the next structural change or page reload. */
+ * Depends on the document's structure revision only, and reads the blocks
+ * untracked (BIGLOAD-090b): opening a large page must not subscribe to every
+ * block, and a keystroke in any block must not make the margin look at the
+ * other blocks (GH #248, keystrokeScaling.guard). A comment arrives as a new
+ * child, so a structural change re-asks; a block edited by hand into (or out of)
+ * a comment is noticed at the next structural change or page reload. */
 export function pageHasComment(roots: readonly string[], format: Format): boolean {
+  structureRevision();
   const visit = (ids: readonly string[]): boolean => {
     for (const id of ids) {
-      if (untrack(() => isCommentId(id, format))) return true;
+      if (isCommentId(id, format)) return true;
       const n = docNode(id);
       if (n && visit(n.children)) return true;
     }
     return false;
   };
-  return visit(roots);
+  return untrack(() => visit(roots));
 }
 
 /** The comment whose thread holds `id` (itself or its nearest comment
