@@ -262,7 +262,7 @@
       ],
       "regressionEvidence": {
         "status": "current",
-        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-SEEN-STICKY: covered, fail-before proven; UI-SEEN-CHANGES-MARKS: covered, fail-before proven; UI-SEEN-CHANGES-LEAVE: covered, fail-before proven; UI-SEEN-CHANGES-ACTIONS: covered, fail-before proven",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-SEEN-STICKY: covered, fail-before proven; UI-SEEN-CHANGES-MARKS: covered, fail-before proven; UI-SEEN-CHANGES-LEAVE: covered, fail-before proven; UI-SEEN-CHANGES-ACTIONS: covered, fail-before proven; UI-SEEN-STEPS: covered, fail-before proven (catalog inventory; not a native rerun in this lane).",
         "refs": [
           "tests/ui-regressions/catalog.json",
           "src/editor/caretReveal.test.ts",
@@ -275,7 +275,10 @@
           "src/backend.seenDrop.test.ts",
           "src/components/ContextMenu.test.tsx",
           "src/components/SeenSettings.test.tsx",
-          "src/seen/commands.test.ts"
+          "src/seen/commands.test.ts",
+          "src/seen/steps.test.ts",
+          "src/components/Page.seenSteps.test.tsx",
+          "scripts/e2e-seen-changes.mjs"
         ]
       },
       "docs": {
@@ -2295,6 +2298,38 @@
     },
     {
       "section": "Fixed",
+      "text": "Picking a block in the `((` or `{{embed ((` block search no longer writes a short temporary id such as `((bmvsgco1s-11))` when the block had no `id::` yet: Tine now gives the block a proper UUID, as Logseq does, so the reference keeps working in Logseq and after restarting Tine. A block that already has an id keeps it (GH #798).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH798-PICKER-RUNTIME-REF-ID"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog inventory only; not rerun in this documentation lane. UI-GH798-PICKER-RUNTIME-REF-ID: covered, fail-before proven. Existing authored IDs remain unchanged.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/Block.referenceAuthoring.test.tsx",
+          "src/store.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores durable reference authoring without changing the picker workflow; no additional Guide instructions are needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated in this Beta lane.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No blog is prepared for this Beta.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
       "text": "The desktop formatting toolbar displays over the selection, including near the bottom of a long block, and moves below it when there is no room above (UI-SEL-TOOLBAR).",
       "userVisible": true,
       "regressions": [
@@ -3104,12 +3139,9 @@
         ]
       },
       "docs": {
-        "status": "update",
-        "reason": "Bundled Guide documents this capability; src/guideBeta090.test.ts guards its onboarding instructions. Existing accurate text is retained where no new instructions are needed.",
-        "refs": [
-          "crates/tine-core/src/templates/files-external-edits-backups.md",
-          "src/guideBeta090.test.ts"
-        ]
+        "status": "not-applicable",
+        "reason": "Index durability is an implementation correction with no new Guide workflow. Existing storage wording is retained pending the storage-claim decision.",
+        "refs": []
       },
       "website": {
         "status": "not-applicable",
@@ -3437,39 +3469,7 @@
     },
     {
       "section": "Fixed",
-      "text": "The exact block-owner index builds in bulk at cold launch and writes compact checkpoint rows without temporary page copies (GH #623).",
-      "userVisible": true,
-      "regressions": [
-        "REG-BLOCK-INDEX-CHECKPOINT-COST"
-      ],
-      "regressionEvidence": {
-        "status": "current",
-        "reason": "Catalog inventory evidence, not a new execution receipt. REG-BLOCK-INDEX-CHECKPOINT-COST (status covered, fail-before see catalog qualification). The referenced catalog retains the exact proof limits and platform scope; this docs lane has not rerun runtime coverage.",
-        "refs": [
-          "tests/regressions/non-ui.json",
-          "crates/tine-store/src/model/checkpoint_state.rs::block_index_wire_keeps_runtime_ids_compact",
-          "scripts/e2e-block-index-checkpoint.mjs"
-        ]
-      },
-      "docs": {
-        "status": "not-applicable",
-        "reason": "Restores expected behavior or changes implementation/diagnostics without adding a Guide workflow; no documented step becomes wrong.",
-        "refs": []
-      },
-      "website": {
-        "status": "not-applicable",
-        "reason": "Beta preparation: website/guide follows stable (D-20261019-G1); bundled Guide changes wait for a stable cut. No website output is regenerated by this lane.",
-        "refs": []
-      },
-      "blog": {
-        "status": "not-applicable",
-        "reason": "Beta notes live in the changelog and prerelease; no blog post is prepared by this lane.",
-        "refs": []
-      }
-    },
-    {
-      "section": "Fixed",
-      "text": "The exact block-owner index keeps UUID keys in 16 bytes and shares one allocation per tree node, reducing its memory use on large graphs (GH #623).",
+      "text": "The exact block-owner index builds in bulk at cold launch and writes compact checkpoint rows without temporary page copies; it keeps UUID keys in 16 bytes and shares one allocation per tree node, reducing its memory use on large graphs (GH #623).",
       "userVisible": true,
       "regressions": [
         "REG-BLOCK-INDEX-CHECKPOINT-COST"

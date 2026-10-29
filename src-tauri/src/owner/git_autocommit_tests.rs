@@ -5,6 +5,15 @@ use super::*;
 use git2::{Repository, Signature};
 use std::fs;
 
+#[test]
+fn precompose_refusal_applies_to_macos_and_ios() {
+    assert_eq!(Unusable::Precompose.code(), "precompose");
+    assert_eq!(
+        Unusable::Precompose.message(),
+        "On this device the repository needs `git config core.precomposeunicode true`, or page names with accents would be recorded as renames."
+    );
+}
+
 #[cfg(unix)]
 fn directory_alias(target: &Path, path: &Path) {
     std::os::unix::fs::symlink(target, path).unwrap();

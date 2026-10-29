@@ -8,7 +8,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
-
 ### Added
 
 - Expand or collapse bullets even in read-only exports, quick-share links and read-only pages. These viewing choices last while browsing; reloading restores the original folds without changing the graph. Static HTML exports keep the original folds too; click a folded block's arrow to open it, which works without JavaScript (UI-VIEW-FOLD, UI-VIEW-FOLD-STATIC).
@@ -119,8 +118,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Linux: input methods can show composing text inside the editor. Verified with IBus Hangul; this may fix Fcitx5 input not appearing (GH #575), but Fcitx5/Hyprland remains unverified.
 - Mobile: the help "?" button no longer covers the last buttons of the bottom-docked formatting toolbar while text is selected, with or without the keyboard (internal UI-HELP-FAB-ABOVE-DOCKED-TOOLBAR).
 - Block references keep resolving after a block moves between pages and after reopening the graph; dangling references no longer scan unrelated pages (GH #746, GH #623).
-- The exact block-owner index builds in bulk at cold launch and writes compact checkpoint rows without temporary page copies (GH #623).
-- The exact block-owner index keeps UUID keys in 16 bytes and shares one allocation per tree node, reducing its memory use on large graphs (GH #623).
+- The exact block-owner index builds in bulk at cold launch and writes compact checkpoint rows without temporary page copies; it keeps UUID keys in 16 bytes and shares one allocation per tree node, reducing its memory use on large graphs (GH #623).
 - Quick Capture keeps refused text on Escape, so reopening the box files it into the current graph; a claim retired before insertion no longer reports previous-graph uncertainty (GH #254). Deleting a conflicted page now refuses an unanswered input drain after five seconds and restores editable text.
 - Reference and embed rows validate their source page before becoming editable, so a copied block identity cannot expose another page's live block or selection (follow-up to GH #748).
 - Moving a graph preserves access to device-local unsaved edits through **Recover into this graph** and stops saves when an open folder moves or disconnects. Recovery excludes hosts still saving; open graphs permit drive eject, and recovery/backup notices explain that a graph may be moved or unavailable, including on a disconnected drive (L9-01, L9-02).

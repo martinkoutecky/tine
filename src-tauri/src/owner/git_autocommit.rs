@@ -210,7 +210,7 @@ impl Unusable {
                 "the repository filters or re-encodes this graph's files ({m}); committing them as they are on disk would bypass that"
             ),
             Self::Sparse => "The repository uses sparse checkout; Tine would record the files it leaves out as deleted.".into(),
-            Self::Precompose => "On this Mac the repository needs `git config core.precomposeunicode true`, or page names with accents would be recorded as renames.".into(),
+            Self::Precompose => "On this device the repository needs `git config core.precomposeunicode true`, or page names with accents would be recorded as renames.".into(),
             Self::Busy => LockRefusal::Held.message(),
             Self::Conflicted => LockRefusal::Conflicted.message(),
             Self::Quitting => "Tine quit before this commit finished; it is made on the next start.".into(),

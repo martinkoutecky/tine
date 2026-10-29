@@ -2,7 +2,7 @@
 // whether the graph can answer at all (checked once per binding, from
 // getPageChanges.available), the revision every open page re-reads on, and the
 // mark / forget actions. Marking and forgetting are skipped, silently, while the
-// graph cannot answer (not a git repository, mobile): no error toasts.
+// graph cannot answer (not a git repository): no error toasts on any platform.
 import { createSignal } from "solid-js";
 import { backend } from "../backend";
 import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
