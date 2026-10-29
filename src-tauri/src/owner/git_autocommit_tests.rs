@@ -386,8 +386,10 @@ fn syncthing_filter_is_relative_to_the_graph_and_retires_old_tracked_temps() {
     );
 }
 
+const BOTH: [&str; 2] = [".syncthing.*", "logseq/.tine-*"];
+
 #[test]
-fn syncthing_ignore_is_appended_once_and_removal_survives_reopen() {
+fn ignore_lines_are_appended_once_and_removal_survives_reopen() {
     for original in [
         None,
         Some("# keep\r\nassets/private"),
@@ -403,12 +405,17 @@ fn syncthing_ignore_is_appended_once_and_removal_survives_reopen() {
             .unwrap()
             .0;
         write(&f.work, "pages/.syncthing.a.md.tmp", "partial");
+        write(&f.work, "logseq/.tine-trash/pages/x__a.md", "- trashed\n");
         write(
             &f.work,
             "pages/a.sync-conflict-20261026-device.md",
             "- conflict\n",
         );
-        assert!(prepare_syncthing_ignore(&store, &f.work, &app_data).unwrap());
+        // Both lines in one write, one notice (D-20261029-GT).
+        assert_eq!(
+            prepare_git_ignore(&store, &f.work, Some(&app_data)).unwrap(),
+            BOTH
+        );
         let newline = if original.is_some_and(|s| s.contains("\r\n")) {
             "\r\n"
         } else {
@@ -418,42 +425,96 @@ fn syncthing_ignore_is_appended_once_and_removal_survives_reopen() {
         if !expected.is_empty() && !expected.ends_with('\n') {
             expected.push_str(newline);
         }
-        expected.push_str(".syncthing.*");
-        expected.push_str(newline);
+        for line in BOTH {
+            expected.push_str(line);
+            expected.push_str(newline);
+        }
         assert_eq!(
             fs::read_to_string(f.work.join(".gitignore")).unwrap(),
             expected
         );
+        assert!(f
+            .repo
+            .status_should_ignore(Path::new("logseq/.tine-trash/pages/x__a.md"))
+            .unwrap());
         commit_now(&f.work, MESSAGE).unwrap();
         assert_eq!(at_head(&f.repo, ".gitignore"), Some(expected.clone()));
         assert_eq!(at_head(&f.repo, "pages/.syncthing.a.md.tmp"), None);
+        assert_eq!(at_head(&f.repo, "logseq/.tine-trash/pages/x__a.md"), None);
         assert_eq!(
             at_head(&f.repo, "pages/a.sync-conflict-20261026-device.md").as_deref(),
             Some("- conflict\n")
         );
-        assert!(!prepare_syncthing_ignore(&store, &f.work, &app_data).unwrap());
+        assert!(prepare_git_ignore(&store, &f.work, Some(&app_data))
+            .unwrap()
+            .is_empty());
         assert_eq!(
             fs::read_to_string(f.work.join(".gitignore")).unwrap(),
             expected
         );
         assert_eq!(commit_now(&f.work, MESSAGE).unwrap(), Outcome::Clean);
 
-        write(&f.work, ".gitignore", "# user removed the rule\n");
+        write(&f.work, ".gitignore", "# user removed the rules\n");
         drop(store);
         let reopened = tine_store::Store::open(&f.work, Default::default())
             .unwrap()
             .0;
-        assert!(!prepare_syncthing_ignore(&reopened, &f.work, &app_data).unwrap());
+        assert!(prepare_git_ignore(&reopened, &f.work, Some(&app_data))
+            .unwrap()
+            .is_empty());
         assert_eq!(
             fs::read_to_string(f.work.join(".gitignore")).unwrap(),
-            "# user removed the rule\n"
+            "# user removed the rules\n"
         );
+        // Without the rule Tine's own files still stay out of its commits.
+        write(&f.work, "pages/a.md", "- a2\n");
+        commit_now(&f.work, MESSAGE).unwrap();
+        assert_eq!(at_head(&f.repo, "logseq/.tine-trash/pages/x__a.md"), None);
+        assert!(f.work.join("logseq/.tine-trash/pages/x__a.md").is_file());
+    }
+}
+
+/// A device that already added (or was asked about) `.syncthing.*` gets only
+/// the new line, once, whether the old line is still there or was removed.
+#[test]
+fn a_device_that_had_the_syncthing_line_gets_only_the_tine_line_once() {
+    for kept in [true, false] {
+        let f = fixture(&[("pages/a.md", "- a\n")]);
+        let app_data = f._dir.path().join("device");
+        let gitignore = if kept {
+            "# mine\n.syncthing.*\n"
+        } else {
+            "# mine\n"
+        };
+        write(&f.work, ".gitignore", gitignore);
+        crate::settings::set_notice_at(&app_data, &f.work, "git-syncthing-ignore-checked", true)
+            .unwrap();
+        let store = tine_store::Store::open(&f.work, Default::default())
+            .unwrap()
+            .0;
+        assert_eq!(
+            prepare_git_ignore(&store, &f.work, Some(&app_data)).unwrap(),
+            ["logseq/.tine-*"]
+        );
+        assert_eq!(
+            fs::read_to_string(f.work.join(".gitignore")).unwrap(),
+            format!("{gitignore}logseq/.tine-*\n")
+        );
+        assert!(prepare_git_ignore(&store, &f.work, Some(&app_data))
+            .unwrap()
+            .is_empty());
     }
 }
 
 #[test]
-fn syncthing_ignore_uses_git_rules_and_only_writes_the_nested_graph() {
-    for rule in [Some(".syncthing.*\n"), Some(".*\n"), None] {
+fn ignore_lines_use_git_rules_and_only_write_the_nested_graph() {
+    // (the parent's rule, the lines the nested graph's own .gitignore gets)
+    for (rule, added) in [
+        (Some(".syncthing.*\n"), vec!["logseq/.tine-*"]),
+        (Some(".*\n"), vec![]),
+        (Some("**/logseq/.tine-*\n"), vec![".syncthing.*"]),
+        (None, BOTH.to_vec()),
+    ] {
         let f = fixture(&[("Notes [work]/pages/a.md", "- a\n")]);
         let root = f.work.join("Notes [work]");
         let original = rule.unwrap_or("# parent stays untouched\n");
@@ -463,40 +524,52 @@ fn syncthing_ignore_uses_git_rules_and_only_writes_the_nested_graph() {
             .0;
         let app_data = f._dir.path().join("device");
         assert_eq!(
-            prepare_syncthing_ignore(&store, &root, &app_data).unwrap(),
-            rule.is_none()
+            prepare_git_ignore(&store, &root, Some(&app_data)).unwrap(),
+            added
         );
         assert_eq!(
             fs::read_to_string(f.work.join(".gitignore")).unwrap(),
             original
         );
-        if rule.is_none() {
-            assert_eq!(
-                fs::read_to_string(root.join(".gitignore")).unwrap(),
-                ".syncthing.*\n"
-            );
-        } else {
+        if added.is_empty() {
             assert!(
                 !root.join(".gitignore").exists(),
-                "parent pattern already covers temps"
+                "the parent pattern already covers both"
             );
-            write(&f.work, ".gitignore", "# removed broader user rule\n");
-            assert!(!prepare_syncthing_ignore(&store, &root, &app_data).unwrap());
-            assert!(!root.join(".gitignore").exists());
+        } else {
+            let lines: String = added.iter().map(|l| format!("{l}\n")).collect();
+            assert_eq!(fs::read_to_string(root.join(".gitignore")).unwrap(), lines);
         }
+        // The graph-relative line matches the nested graph's own folder,
+        // and nothing outside it.
+        let repo = &f.repo;
+        assert!(repo
+            .status_should_ignore(Path::new("Notes [work]/logseq/.tine-trash/pages/x.md"))
+            .unwrap());
+        if rule.is_none() {
+            assert!(!repo
+                .status_should_ignore(Path::new("logseq/.tine-trash/pages/x.md"))
+                .unwrap());
+        }
+        write(&f.work, ".gitignore", "# removed broader user rule\n");
+        assert!(prepare_git_ignore(&store, &root, Some(&app_data))
+            .unwrap()
+            .is_empty());
     }
 }
 
 #[test]
-fn syncthing_ignore_failure_never_allows_a_temp_commit_or_retries_the_write() {
+fn ignore_failure_never_allows_a_temp_or_own_commit_or_retries_the_write() {
     let f = fixture(&[("pages/a.md", "- a\n")]);
     let store = tine_store::Store::open(&f.work, Default::default())
         .unwrap()
         .0;
     let app_data = f._dir.path().join("device");
     fs::create_dir(f.work.join(".gitignore")).unwrap();
-    assert!(prepare_syncthing_ignore(&store, &f.work, &app_data).is_err());
+    let (lines, _) = prepare_git_ignore(&store, &f.work, Some(&app_data)).unwrap_err();
+    assert_eq!(lines, BOTH);
     write(&f.work, "pages/.syncthing.a.md.tmp", "partial");
+    write(&f.work, "logseq/.tine-trash/pages/x__a.md", "- trashed\n");
     write(
         &f.work,
         "pages/a.sync-conflict-20261026-device.md",
@@ -504,25 +577,120 @@ fn syncthing_ignore_failure_never_allows_a_temp_commit_or_retries_the_write() {
     );
     commit_now(&f.work, MESSAGE).unwrap();
     assert_eq!(at_head(&f.repo, "pages/.syncthing.a.md.tmp"), None);
+    assert_eq!(at_head(&f.repo, "logseq/.tine-trash/pages/x__a.md"), None);
     assert_eq!(
         at_head(&f.repo, "pages/a.sync-conflict-20261026-device.md").as_deref(),
         Some("- conflict\n")
     );
     fs::remove_dir(f.work.join(".gitignore")).unwrap();
-    assert!(!prepare_syncthing_ignore(&store, &f.work, &app_data).unwrap());
+    assert!(prepare_git_ignore(&store, &f.work, Some(&app_data))
+        .unwrap()
+        .is_empty());
     assert!(!f.work.join(".gitignore").exists());
 }
 
 #[test]
-fn syncthing_ignore_does_not_write_without_durable_attempt_memory() {
+fn ignore_setup_does_not_write_without_durable_attempt_memory() {
     let f = fixture(&[("pages/a.md", "- a\n")]);
     let store = tine_store::Store::open(&f.work, Default::default())
         .unwrap()
         .0;
     let app_data = f._dir.path().join("not-a-directory");
     fs::write(&app_data, "occupied").unwrap();
-    assert!(prepare_syncthing_ignore(&store, &f.work, &app_data).is_err());
+    assert!(prepare_git_ignore(&store, &f.work, Some(&app_data)).is_err());
     assert!(!f.work.join(".gitignore").exists());
+    let (lines, _) = prepare_git_ignore(&store, &f.work, None).unwrap_err();
+    assert_eq!(lines, BOTH, "without app data every line is named");
+    assert!(!f.work.join(".gitignore").exists());
+}
+
+/// D-20261029-GT: `logseq/.tine-*` files an older Tine committed leave the
+/// history in a Tine commit of their own, just before the next real change;
+/// they stay on disk, and an untrack alone makes no commit.
+#[test]
+fn committed_own_files_are_untracked_in_their_own_commit_with_the_next_change() {
+    for prefix in ["", "Notes [work]/"] {
+        let files = [
+            (format!("{prefix}pages/a.md"), "- a\n"),
+            (format!("{prefix}logseq/config.edn"), "{}\n"),
+            (format!("{prefix}logseq/.tine-trash/pages/x__b.md"), "- b\n"),
+            (format!("{prefix}logseq/.tine-other"), "own\n"),
+            // Outside the nested graph: not its own folder.
+            (
+                "logseq/.tine-outside-the-graph".to_owned(),
+                "not this graph's\n",
+            ),
+        ];
+        let files: Vec<(&str, &str)> = files
+            .iter()
+            .filter(|(path, _)| !prefix.is_empty() || !path.contains("outside"))
+            .map(|(path, text)| (path.as_str(), *text))
+            .collect();
+        let f = fixture(&files);
+        let root = f.work.join(prefix.trim_end_matches('/'));
+        let initial = head(&f.repo).id();
+        assert_eq!(commit_now(&root, MESSAGE).unwrap(), Outcome::Clean);
+        assert_eq!(
+            head(&f.repo).id(),
+            initial,
+            "an untrack alone makes no commit"
+        );
+
+        write(&root, "pages/a.md", "- a2\n");
+        let Ok(Outcome::Committed(oid)) = commit_now(&root, MESSAGE) else {
+            panic!("the edit is committed");
+        };
+        let edit = f.repo.find_commit(oid).unwrap();
+        assert_eq!(edit.message().ok(), Some(MESSAGE));
+        let untrack = edit.parent(0).unwrap();
+        assert_eq!(untrack.message().ok(), Some(UNTRACK_MESSAGE));
+        assert_eq!(untrack.parent_id(0).unwrap(), initial);
+        let at = |commit: &git2::Commit<'_>, path: &str| {
+            commit.tree().unwrap().get_path(Path::new(path)).is_ok()
+        };
+        for own in ["logseq/.tine-trash/pages/x__b.md", "logseq/.tine-other"] {
+            let path = format!("{prefix}{own}");
+            assert!(!at(&untrack, &path) && !at(&edit, &path), "{path}");
+            assert!(f.work.join(&path).is_file(), "{path} stays on disk");
+        }
+        // Only the own files changed in the untrack commit.
+        assert!(!at(&untrack, &format!("{prefix}logseq/.tine-trash")));
+        assert!(at(&untrack, &format!("{prefix}logseq/config.edn")));
+        assert_eq!(
+            at_head(&f.repo, &format!("{prefix}pages/a.md")).as_deref(),
+            Some("- a2\n")
+        );
+        let initial_tree = f.repo.find_commit(initial).unwrap().tree().unwrap();
+        let diff = f
+            .repo
+            .diff_tree_to_tree(Some(&initial_tree), Some(&untrack.tree().unwrap()), None)
+            .unwrap();
+        let mut changed: Vec<String> = diff
+            .deltas()
+            .map(|d| {
+                d.old_file()
+                    .path()
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        changed.sort();
+        assert_eq!(
+            changed,
+            [
+                format!("{prefix}logseq/.tine-other"),
+                format!("{prefix}logseq/.tine-trash/pages/x__b.md"),
+            ]
+        );
+        if !prefix.is_empty() {
+            assert!(
+                at(&edit, "logseq/.tine-outside-the-graph"),
+                "only the graph's own folder is Tine's"
+            );
+        }
+        assert_eq!(commit_now(&root, MESSAGE).unwrap(), Outcome::Clean);
+    }
 }
 
 #[test]
@@ -567,7 +735,7 @@ fn root_gitignore_keeps_the_non_page_revision_and_target_guards() {
 
 #[cfg(unix)]
 #[test]
-fn syncthing_ignore_refuses_a_root_symlink_to_an_outside_file() {
+fn ignore_setup_refuses_a_root_symlink_to_an_outside_file() {
     let f = fixture(&[("pages/a.md", "- a\n")]);
     let outside = f._dir.path().join("outside-ignore");
     fs::write(&outside, "# outside\n").unwrap();
@@ -575,7 +743,7 @@ fn syncthing_ignore_refuses_a_root_symlink_to_an_outside_file() {
     let store = tine_store::Store::open(&f.work, Default::default())
         .unwrap()
         .0;
-    assert!(prepare_syncthing_ignore(&store, &f.work, &f._dir.path().join("device")).is_err());
+    assert!(prepare_git_ignore(&store, &f.work, Some(&f._dir.path().join("device"))).is_err());
     assert_eq!(fs::read_to_string(outside).unwrap(), "# outside\n");
 }
 

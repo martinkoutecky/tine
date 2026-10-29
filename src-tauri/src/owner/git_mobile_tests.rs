@@ -860,6 +860,81 @@ fn commit_only_never_pushes_from_the_background() {
     slot.background_cancelled.store(true, Ordering::Release);
 }
 
+/// The `logseq/.tine-*` paths `commit`'s tree holds.
+fn tine_own_in(repo: &Repository, commit: Oid) -> Vec<String> {
+    let tree = repo.find_commit(commit).unwrap().tree().unwrap();
+    let mut own = Vec::new();
+    tree.walk(git2::TreeWalkMode::PreOrder, |dir, entry| {
+        let path = format!("{dir}{}", entry.name().unwrap());
+        if path.starts_with("logseq/.tine-") && entry.kind() == Some(git2::ObjectType::Blob) {
+            own.push(path);
+        }
+        git2::TreeWalkResult::Ok
+    })
+    .unwrap();
+    own
+}
+
+/// REG-SB1-GIT-TINE-OWN-TRASH (D-20261029-GT): a pulled deletion leaves this
+/// device's trash copy on disk; the next pull's pre-pull autocommit must not
+/// commit it and turn the fast-forward into `diverged`.
+#[test]
+fn a_pulled_deletion_does_not_make_the_next_pull_diverge() {
+    let phone = Phone::new();
+    let slot = phone.slot();
+    phone.peer_pushes(&[("pages/gone.md", None)]);
+    assert_eq!(cycle(&slot, &credentials()).code, "pulled");
+    assert!(
+        phone.root.join("logseq/.tine-trash").is_dir(),
+        "the pulled deletion keeps its bytes in this device's trash"
+    );
+    let theirs = phone.peer_pushes(&[("pages/a.md", Some("- from the laptop\n"))]);
+    let next = cycle(&slot, &credentials());
+    assert_eq!(next.code, "pulled", "{next:?}");
+    assert_eq!(head(&phone.repo), theirs);
+    assert_eq!(tine_own_in(&phone.repo, theirs), Vec::<String>::new());
+    assert!(
+        phone.root.join("logseq/.tine-trash").is_dir(),
+        "the trash stays on disk"
+    );
+    slot.background_cancelled.store(true, Ordering::Release);
+}
+
+/// REG-SB1-GIT-TINE-OWN-TRASH: another Tine device (one that committed its
+/// trash) pushes a deletion with its trash copy; this device's pull lands
+/// without writing that copy, and its next commit untracks it in a commit of
+/// its own.
+#[test]
+fn another_devices_trash_copy_does_not_stop_the_pull() {
+    let phone = Phone::new();
+    let slot = phone.slot();
+    let laptop_trash = "logseq/.tine-trash/pages/20261029T000000Z__c.md";
+    let theirs = phone.peer_pushes(&[("pages/c.md", None), (laptop_trash, Some("- lower case\n"))]);
+    let next = cycle(&slot, &credentials());
+    assert_eq!(next.code, "pulled", "{next:?}");
+    assert_eq!(head(&phone.repo), theirs);
+    assert!(!phone.root.join("pages/c.md").exists());
+    assert!(
+        !phone.root.join(laptop_trash).exists(),
+        "a pull never writes Tine's own files"
+    );
+
+    // The next commit with a real change first untracks the laptop's copy.
+    phone.edit("pages/a.md", "- edited here\n");
+    let Ok(Outcome::Committed(mine)) = commit_now(&phone.root, MESSAGE) else {
+        panic!("the edit is committed");
+    };
+    assert_eq!(tine_own_in(&phone.repo, mine), Vec::<String>::new());
+    let mine = phone.repo.find_commit(mine).unwrap();
+    assert_eq!(mine.message().ok(), Some(MESSAGE));
+    let untrack = mine.parent(0).unwrap();
+    assert_eq!(untrack.message().ok(), Some(UNTRACK_MESSAGE));
+    assert_eq!(untrack.parent_id(0).unwrap(), theirs);
+    assert_eq!(cycle(&slot, &credentials()).code, "pushed");
+    assert_eq!(phone.remote_tip(), mine.id());
+    slot.background_cancelled.store(true, Ordering::Release);
+}
+
 /// A bound graph after a restart: a fresh Store and page host on the same
 /// app data, as the next launch has.
 fn restarted(root: &Path, app_data: &Path) -> GraphSlot {

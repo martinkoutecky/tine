@@ -939,6 +939,8 @@ export interface MessageArgs {
   "formula-year": {};
   "git-settings-branch": { "branch": string | number };
   "git-settings-hint": {};
+  "git-settings-ignore-added": { "path": string | number; "which": string | number };
+  "git-settings-ignore-failed": { "which": string | number };
   "git-settings-interval": {};
   "git-settings-interval-aria": {};
   "git-settings-label": {};
@@ -968,8 +970,6 @@ export interface MessageArgs {
   "git-settings-sync-now": {};
   "git-settings-sync-now-failed": { "error": string | number };
   "git-settings-sync-unusable": { "message": string | number };
-  "git-settings-syncthing-ignore-added": { "path": string | number };
-  "git-settings-syncthing-ignore-failed": {};
   "git-settings-token": {};
   "git-settings-unusable": { "message": string | number };
   "git-settings-username": {};

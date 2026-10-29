@@ -20,6 +20,7 @@ DESIGN (rev 0 + §8–§9) and the seen design (rev 1). Dossier with line number
 | D-20261018-G3 | generic messages; a structural operation commits at its boundaries with its verb as message; no op log, no diff-derived messages | follow |
 | D-20261018-G4 | `author::` stays | untouched |
 | D-20261018-G5 | an autocommit includes every change git sees under the graph root, honouring `.gitignore`; Tine applies pulls itself through the audited writer; sync off under eol/filter conversion; Tine never writes `.gitignore` unasked | follow, with the scoped D-20261026-GI exception in §2 |
+| D-20261029-GT | like `.syncthing.*` (D-20261026-GI): add `logseq/.tine-*` to `.gitignore` once with the same toast and Settings line, untrack already-committed copies (they stay on disk), a pull ignores those paths; rejected: excluding them only in staging | follow (§2, §4) |
 | D-20261028-CRLF | offer a repository-local autocrlf repair only when raw tracked bytes match the index and no other conversion blocks sync; otherwise commit first, then re-checkout | follow; pull keeps refusing conversion |
 | D-20261018-G6 | lands in whatever release the timing gives; no release waits for it | follow (card hBpb2k's "after model v0" is stale) |
 | D-20261018-G7 | libgit2 (git2-rs, `default-features = false`) on all five platforms; HTTPS through Tine's own Rust HTTP/TLS stack as a registered smart transport; no OpenSSL | follow |
@@ -66,7 +67,14 @@ Follow-up D-20261026-GI: with autocommit enabled, at binding start and when enab
 Tine checks git's ignore rules for a representative `.syncthing.*` name. If not ignored,
 it appends `.syncthing.*` to **the graph root's** `.gitignore`, including for a graph nested
 inside a larger repository. Existing bytes and line endings survive; the new line ends
-with a newline. This is the sole exception to autocommit never writing graph files: it
+with a newline. Follow-up D-20261029-GT adds a second line the same way, `logseq/.tine-*`
+(Tine's own per-device files: the trash), checked with a representative
+`logseq/.tine-ignore-check` name and remembered under its own key
+`git-tine-own-ignore-checked`; lines due together go into one write and one notice, and a
+device that already had the Syncthing attempt gets only the new line, once. The line is
+graph-relative, so in the graph root's `.gitignore` it matches only the graph's own
+`logseq/` folder, also for a graph nested in a larger repository. These two lines are the
+only exception to autocommit never writing graph files: it
 uses Store's guarded non-page transaction (create-if-absent or revision-checked replace,
 lock, temp, fsync, rename). Store accepts only the fixed root `.gitignore` identity in
 addition to its existing file areas; this does not widen graph discovery or backups.
@@ -81,13 +89,21 @@ status surface reports the added file and rule (and that it may be removed), or 
 failure, for the current binding. Clearing device-local app data or moving the graph
 resets this memory, just like other graph notices.
 
-Staging independently removes `.syncthing.*` paths under the graph root from its private
-index copy, including pre-staged and previously tracked temps, and skips matching working
-files. This keeps temps out even when ignore setup fails or a narrower rule leaves some
+Staging independently removes `.syncthing.*` and `logseq/.tine-*` paths under the graph
+root from its private index copy, including pre-staged and previously tracked ones, and
+skips matching working files. `logseq/.tine-*` files an older Tine committed leave `HEAD`
+in a commit of their own (`Tine: stop tracking its own device files (logseq/.tine-*); they
+stay on disk`), made just before the next commit with a real change and never alone: two
+devices untracking the same files would otherwise diverge over that commit alone. A pull
+compares `H` and `U` without `logseq/.tine-*` (§4): it neither writes those paths nor
+refuses over them (before, a trash copy in `U` was `pull-refused`, and a committed trash
+copy made the next pull `diverged`: REG-SB1-GIT-TINE-OWN-TRASH). This keeps temps out even when ignore setup fails or a narrower rule leaves some
 directories visible. It never deletes their working files. Conflict copies
 (`*.sync-conflict-*`) remain user data and are committed unless the user's rules ignore
-them. No new per-edit file or transport record: setup adds 13 bytes (`.syncthing.*\n`),
-or 14 with CRLF, plus a missing separator newline, and one device-local notice key once;
+them. No new per-edit file or transport record: setup adds 13 bytes (`.syncthing.*\n`)
+and 15 bytes (`logseq/.tine-*\n`), one more each with CRLF, plus a missing separator
+newline, and one device-local notice key per line once; the untrack is one commit per
+repository, once;
 one-block and 60-block page edits both add zero bytes/files/transport beyond §Unit cost.
 
 Every change git sees under the graph root, honouring `.gitignore`: Tine's saves, other programs' edits,

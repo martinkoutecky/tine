@@ -7,6 +7,7 @@ import { Field } from "./settingsField";
 import { DialogActions } from "./DialogActions";
 import { GitSyncFixes } from "./GitSyncNotice";
 import { gitLineEndingsProblem, gitSyncProblem, gitSyncResult } from "../gitSync";
+import { ignoreLines } from "../gitIgnoreNotice";
 
 const SYNCS: readonly GitPolicy[] = ["sync-on-demand", "sync-automatically"];
 
@@ -105,8 +106,8 @@ export function GitAutocommitSetting(): JSX.Element {
         <GitSyncFixes problem={{ ...p(), fixes: p().fixes.filter((fix) => fix !== "sync-now") }} onSignIn={() => setSigningIn(true)} onSyncNow={syncNow} onRepaired={(value) => setStatus(value)} />
       </div>}</Show>
       <Show when={s().last?.stale_lock}>{(path) => <div>{t("git-settings-stale-lock", { path: path() })}</div>}</Show>
-      <Show when={s().last?.syncthing_ignore_added}>{(path) => <div role="status">{t("git-settings-syncthing-ignore-added", { path: path() })}</div>}</Show>
-      <Show when={s().last?.syncthing_ignore_failed}><div role="status">{t("git-settings-syncthing-ignore-failed")}</div></Show>
+      <Show when={s().last?.gitignore_added}>{(path) => <div role="status">{t("git-settings-ignore-added", { path: path(), which: ignoreLines(s().last) })}</div>}</Show>
+      <Show when={s().last?.gitignore_failed}><div role="status">{t("git-settings-ignore-failed", { which: ignoreLines(s().last) })}</div></Show>
       <Show when={s().last?.repack_deferred}><div role="status">{t("git-settings-repack-deferred")}</div></Show>
       <Show when={s().remote?.https_origin}>{(origin) => <div data-git-sign-in>
         <Show when={s().signed_in} fallback={<>{t("git-settings-not-signed-in", { origin: origin() })}{" "}

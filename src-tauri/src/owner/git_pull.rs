@@ -42,9 +42,6 @@ use super::git_run::{LockRefusal, Repo, RUN_LOCK};
 use crate::state::GraphSlot;
 
 const REFLOG: &str = "tine: pull (fast-forward)";
-/// Tine's own files in the graph (`logseq/.tine-trash`, …), which the store
-/// never writes for a caller.
-const TINE_OWN: &str = "logseq/.tine-";
 
 /// Why a pull did not land now, but may on a later cycle.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -259,9 +256,9 @@ pub(super) fn defers_autocommit(repo: &Repo) -> bool {
             return false;
         };
         // Tine's own folders (the graph trash a pulled deletion fills) are
-        // not the pull's paths: `U` cannot change them (step 1 refuses).
+        // not the pull's paths: the pull leaves them out of `H` and `U`.
         if path.ends_with('/')
-            || path.starts_with(TINE_OWN)
+            || git_autocommit::tine_own(path.as_bytes())
             || git_autocommit::tine_temp(path)
             || git_autocommit::syncthing_temp(path.as_bytes())
         {
@@ -647,9 +644,6 @@ fn pre_check(
     for change in changes {
         let mut pending: Vec<&str> = Vec::new();
         for path in change.paths() {
-            if path.starts_with(TINE_OWN) {
-                return Err(refused(path, "Tine's own folder"));
-            }
             if let Some(attr) = conversion(repo, path).map_err(git)? {
                 return Err(refused(
                     path,
@@ -761,12 +755,15 @@ fn apply_pull(slot: &GraphSlot, repo: &Repo, head: Oid, up: Oid) -> PullOutcome 
     let Some(key) = work_tree_key(repo) else {
         return PullOutcome::Unusable(Unusable::Repository("the work tree is gone".into()));
     };
-    let trees = (|| {
-        Ok::<_, git2::Error>((
-            repo.repo.find_commit(head)?.tree()?,
-            repo.repo.find_commit(up)?.tree()?,
-        ))
-    })();
+    // Tine's own `logseq/.tine-*` files are per-device (D-20261029-GT): a
+    // pull neither writes them nor refuses over them, so both sides are
+    // compared without them (an old Tine may have committed its trash).
+    let own_free = |commit: Oid| -> Result<git2::Tree<'_>, git2::Error> {
+        let tree = repo.repo.find_commit(commit)?.tree()?;
+        repo.repo
+            .find_tree(git_autocommit::without_tine_own(repo, &tree, "")?)
+    };
+    let trees = (|| Ok::<_, git2::Error>((own_free(head)?, own_free(up)?)))();
     let (h_tree, u_tree) = match trees {
         Ok(trees) => trees,
         Err(error) => return git(error),

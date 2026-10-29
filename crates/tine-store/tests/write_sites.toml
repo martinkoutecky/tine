@@ -83,13 +83,13 @@ note = "Only publish_move's source-identity/parent checks plus the unlisted same
 mutations = "atomic_file::rename_replace=1"
 
 [[site]]
-file = "src-tauri/src/owner/git_autocommit.rs"
-fn = "append_syncthing_ignore"
+file = "src-tauri/src/owner/git_ignore_setup.rs"
+fn = "append_git_ignore"
 domain = "graph"
 guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
 test = "src-tauri/src/owner/git_autocommit_tests.rs#root_gitignore_keeps_the_non_page_revision_and_target_guards"
 oracle = false
-note = "D-20261026-GI: fixed root .gitignore only, through Store's non-page revision-guarded replace or no-replace create; no raw filesystem mutation or page write. Durable device-local attempt precedes the write; ordinary transaction crash scope applies."
+note = "D-20261026-GI, D-20261029-GT: fixed root .gitignore only (appends .syncthing.* and logseq/.tine-*, each once per device, in one write), through Store's non-page revision-guarded replace or no-replace create; no raw filesystem mutation or page write. Durable device-local attempt precedes the write; ordinary transaction crash scope applies."
 mutations = ".commit=1, .create=1"
 
 [[site]]
@@ -1991,8 +1991,18 @@ domain = "dotgit"
 guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
 test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirected_object_fanout"
 oracle = false
-note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
-mutations = ".commit=1, .write_tree_to=1"
+note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain. D-20261029-GT: a second commit object, the untrack commit (tracked logseq/.tine-* removed), is written on the tip only together with a real change; each commit is preceded by its own check_git."
+mutations = ".commit=2, .write_tree_to=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_autocommit.rs"
+fn = "without_tine_own"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#committed_own_files_are_untracked_in_their_own_commit_with_the_next_change"
+oracle = false
+note = "D-20261029-GT: writes the graph's logseq tree object without its .tine-* entries (autocommit's untrack commit, and the pull's H/U comparison); check_git before the write, the rest through Repo::tree_with. Object writes only: no ref, index or work-tree write."
+mutations = ".write=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_autocommit.rs"

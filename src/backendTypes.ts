@@ -141,9 +141,11 @@ export interface GitAutocommitStatus {
   policy?: GitPolicy;
   interval_minutes?: number;
   last?: {
-    /** One ignore-setup event, retained until the graph worker ends. */
-    syncthing_ignore_added?: string | null;
-    syncthing_ignore_failed?: boolean;
+    /** One `.gitignore` setup event, retained until the graph worker ends:
+     *  the file, and the lines added (or attempted, when it failed). */
+    gitignore_added?: string | null;
+    gitignore_lines?: string[];
+    gitignore_failed?: boolean;
     repack_deferred?: boolean;
     /** Unix seconds of this process's last autocommit. */
     committed_at: number | null;

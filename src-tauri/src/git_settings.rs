@@ -39,9 +39,8 @@ fn prepare_ignore(app: &tauri::AppHandle, slot: &GraphSlot, settings: GitSetting
     if !settings.policy.commits() {
         return;
     }
-    let result = crate::graph::checkpoint_app_data(app)
-        .ok_or_else(|| "no app-data directory for remembering the attempt".to_owned())
-        .and_then(|dir| autocommit::prepare_syncthing_ignore(&slot.store, &slot.root_key, &dir));
+    let app_data = crate::graph::checkpoint_app_data(app);
+    let result = autocommit::prepare_git_ignore(&slot.store, &slot.root_key, app_data.as_deref());
     autocommit::report_ignore_setup(&slot.root_key, result);
 }
 

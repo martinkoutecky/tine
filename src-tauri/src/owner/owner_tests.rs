@@ -628,6 +628,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             include_str!("git_autocommit_tests.rs"),
         ),
         ("git_identity", include_str!("git_identity.rs")),
+        ("git_ignore_setup", include_str!("git_ignore_setup.rs")),
         ("git_lifecycle", include_str!("git_lifecycle.rs")),
         ("git_mobile_tests", include_str!("git_mobile_tests.rs")),
         ("git_pull", include_str!("git_pull.rs")),

@@ -21,9 +21,11 @@
 //! the sync cycles ([`super::git_sync_cycle`]): after each autocommit and on
 //! the interval when automatic, on "Sync now" either way.
 //!
-//! Only `.git` objects, refs and the index are normally written here. The
-//! single graph-file exception (D-20261026-GI) appends `.syncthing.*` once
-//! to the root `.gitignore` through Store's guarded non-page transaction.
+//! Only `.git` objects, refs and the index are normally written here. The one
+//! graph-file exception appends two lines to the graph root's `.gitignore`,
+//! each once per device, through Store's guarded non-page transaction:
+//! `.syncthing.*` (D-20261026-GI) and `logseq/.tine-*` (D-20261029-GT)
+//! ([`ignore_setup`]).
 //! Repacking deletes only loose objects contained in the pack it
 //! just wrote and fsynced (git's `prune-packed`), never unreachable ones.
 
@@ -65,9 +67,9 @@ const STALE_LOCK_CYCLES: u32 = 3;
 /// The device-settings key (`tine-settings.json`), keyed by graph root.
 pub(crate) const SETTINGS_KEY: &str = "git_autocommit";
 pub(super) const MESSAGE: &str = "Tine: autosave";
-const SYNCTHING_IGNORE_CHECKED: &str = "git-syncthing-ignore-checked";
-const SYNCTHING_IGNORE_LINE: &[u8] = b".syncthing.*";
-static IGNORE_SETUP_LOCK: Mutex<()> = Mutex::new(());
+/// The commit that stops tracking Tine's own `logseq/.tine-*` files (D-20261029-GT).
+pub(super) const UNTRACK_MESSAGE: &str =
+    "Tine: stop tracking its own device files (logseq/.tine-*); they stay on disk";
 /// What the exit flush leaves an aborting commit to release its lock.
 const EXIT_GRACE: Duration = Duration::from_millis(500);
 
@@ -158,86 +160,6 @@ pub(crate) fn settings_into_json(json: &mut serde_json::Value, root: &Path, sett
 }
 
 // ---- the repository ------------------------------------------------------
-
-/// One durable attempt per device/graph, before any graph write. Marking first
-/// favours respecting a later removal over retrying after a crash or I/O error.
-/// A broader/parent git rule counts; staging remains the unconditional backstop.
-pub(crate) fn prepare_syncthing_ignore(
-    store: &tine_store::Store,
-    root: &Path,
-    app_data: &Path,
-) -> Result<bool, String> {
-    let _setup = IGNORE_SETUP_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    if crate::settings::notice_dismissed(app_data, root, SYNCTHING_IGNORE_CHECKED) {
-        return Ok(false);
-    }
-    let repo = open_checked(root).map_err(|e| e.message())?;
-    let ignored = repo
-        .repo
-        .status_should_ignore(&repo.prefix.join(".syncthing.tine-ignore-check.tmp"))
-        .map_err(|e| e.to_string())?;
-    crate::settings::set_notice_at(app_data, root, SYNCTHING_IGNORE_CHECKED, true)?;
-    if ignored {
-        return Ok(false);
-    }
-    append_syncthing_ignore(store)?;
-    Ok(true)
-}
-
-/// Fixed non-page target; read exact bytes once, then create without replacing
-/// an occupied path or replace against that byte revision under Store's lock.
-fn append_syncthing_ignore(store: &tine_store::Store) -> Result<(), String> {
-    use tine_store::{Content, FileId, StoreError, TxOutcome};
-    let id = FileId::from(".gitignore".to_owned());
-    let (mut bytes, base) = match store.read(&id, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-        Ok((bytes, rev)) => (bytes, Some(rev)),
-        Err(StoreError::NotFound) => (Vec::new(), None),
-        Err(error) => return Err(format!("{error:?}")),
-    };
-    // Use the first existing newline's style, preserving every original byte.
-    let newline: &[u8] = match bytes.iter().position(|b| *b == b'\n') {
-        Some(at) if at > 0 && bytes[at - 1] == b'\r' => b"\r\n",
-        _ => b"\n",
-    };
-    if !bytes.is_empty() && !bytes.ends_with(b"\n") {
-        bytes.extend_from_slice(newline);
-    }
-    bytes.extend_from_slice(SYNCTHING_IGNORE_LINE);
-    bytes.extend_from_slice(newline);
-    let mut tx = store.transaction(None);
-    if let Some(base) = base {
-        tx.replace(&id, base, bytes);
-    } else {
-        tx.create(&id, Content::Bytes(bytes));
-    }
-    match tx.commit() {
-        TxOutcome::Committed { .. } => Ok(()),
-        other => {
-            crate::debug::diag_private("git-ignore-write-failed", format!("{other:?}"));
-            Err("the file changed or could not be safely written".into())
-        }
-    }
-}
-
-/// Keep this setup result on the existing Settings git status surface. A later
-/// no-op check must not erase the notice before the user can read it.
-pub(crate) fn report_ignore_setup(root: &Path, result: Result<bool, String>) {
-    if let Some(worker) = registry::get(root) {
-        let mut state = worker.state.lock().unwrap();
-        match result {
-            Ok(true) => {
-                state.last.syncthing_ignore_added =
-                    Some(root.join(".gitignore").display().to_string());
-                state.last.syncthing_ignore_failed = false;
-            }
-            Ok(false) => {}
-            Err(error) => {
-                crate::debug::diag_private("git-ignore-setup-failed", error);
-                state.last.syncthing_ignore_failed = true;
-            }
-        }
-    }
-}
 
 /// Why the graph's repository cannot take an autocommit (ADR 0078 §1).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -385,6 +307,55 @@ pub(super) fn syncthing_temp(path: &[u8]) -> bool {
         .any(|part| part.starts_with(b".syncthing."))
 }
 
+/// Tine's own per-device files in the graph (`logseq/.tine-trash`, …; a
+/// graph-relative path), which stay out of git (D-20261029-GT).
+pub(super) const TINE_OWN: &str = "logseq/.tine-";
+
+pub(super) fn tine_own(path: &[u8]) -> bool {
+    path.starts_with(TINE_OWN.as_bytes())
+}
+
+/// `tree` without the graph's `logseq/.tine-*` entries (`prefix`: the graph
+/// root in the work tree, "" for the top folder).
+pub(super) fn without_tine_own(
+    repo: &Repo,
+    tree: &git2::Tree<'_>,
+    prefix: &str,
+) -> Result<Oid, git2::Error> {
+    let logseq = if prefix.is_empty() {
+        "logseq".to_owned()
+    } else {
+        format!("{prefix}/logseq")
+    };
+    let Some(entry) = tree
+        .get_path(Path::new(&logseq))
+        .ok()
+        .filter(|e| e.kind() == Some(git2::ObjectType::Tree))
+    else {
+        return Ok(tree.id());
+    };
+    let folder = repo.repo.find_tree(entry.id())?;
+    let own: Vec<Vec<u8>> = folder
+        .iter()
+        .map(|e| e.name_bytes().to_vec())
+        .filter(|name| name.starts_with(b".tine-"))
+        .collect();
+    if own.is_empty() {
+        return Ok(tree.id());
+    }
+    let mut builder = repo.repo.treebuilder(Some(&folder))?;
+    for name in own {
+        builder.remove(name)?;
+    }
+    let left = if builder.len() > 0 {
+        repo.guard.check_git(&repo.repo, &repo.branch)?;
+        Some(builder.write()?)
+    } else {
+        None
+    };
+    repo.tree_with(Some(tree), &logseq, left, 0o040000)
+}
+
 /// One of Tine's own in-flight atomic-save temp files
 /// (`.{name}.{pid}.{seq}{tag}.tmp`, `tine_store::atomic_file::temp_path`).
 pub(super) fn tine_temp(path: &str) -> bool {
@@ -461,9 +432,35 @@ pub(super) fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusa
             // The copy may hold refreshed entries; the index is left as it was.
             return Ok(Outcome::Clean);
         }
+        // Tracked `logseq/.tine-*` files leave the history in a commit of
+        // their own (D-20261029-GT), made only with a real change: two
+        // devices untracking the same files must not diverge over that alone.
+        let untracked = tip_tree
+            .as_ref()
+            .map(|t| without_tine_own(&repo, t, &prefix))
+            .transpose()
+            .map_err(failed)?;
+        if untracked == Some(tree) {
+            return Ok(Outcome::Clean);
+        }
         let tree = repo.repo.find_tree(tree).map_err(failed)?;
         let user = repo.user();
-        let parents: Vec<&git2::Commit<'_>> = tip.iter().collect();
+        let tip_id = tip.as_ref().map(|c| c.id());
+        let mut parent = tip;
+        if let Some(untracked) = untracked.filter(|u| Some(*u) != tip_tree.as_ref().map(|t| t.id()))
+        {
+            let untracked = repo.repo.find_tree(untracked).map_err(failed)?;
+            let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
+            repo.guard
+                .check_git(&repo.repo, &repo.branch)
+                .map_err(failed)?;
+            let oid = repo
+                .repo
+                .commit(None, &user, &user, UNTRACK_MESSAGE, &untracked, &parents)
+                .map_err(failed)?;
+            parent = Some(repo.repo.find_commit(oid).map_err(failed)?);
+        }
+        let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
         repo.guard
             .check_git(&repo.repo, &repo.branch)
             .map_err(failed)?;
@@ -480,7 +477,7 @@ pub(super) fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusa
         lock.install()
             .map_err(|e| Unusable::Failed(format!("the index could not be written: {e}")))?;
         if repo
-            .advance(tip.as_ref().map(|c| c.id()), oid, "tine: autocommit")
+            .advance(tip_id, oid, "tine: autocommit")
             .map_err(failed)?
         {
             return Ok(Outcome::Committed(oid));
@@ -492,7 +489,8 @@ pub(super) fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusa
 /// Stage every change git sees under the graph root into `index` (a copy):
 /// new and modified regular files with their exact bytes, deletions removed.
 /// Ignored files, untracked nested repositories, symlinks, Tine's own temp
-/// files and Syncthing's in-flight copies are left out. A file `.gitattributes`
+/// files, Tine's own `logseq/.tine-*` files and Syncthing's in-flight copies
+/// are left out (tracked ones are removed from the index copy). A file `.gitattributes`
 /// filters or re-encodes refuses the whole commit (git-lfs, git-crypt: its raw bytes must not be
 /// committed). A file the user untracked with `git rm --cached` but did not
 /// ignore is added back: G5 commits every change git sees, and `.gitignore`
@@ -503,16 +501,20 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
     } else {
         prefix.len() + 1
     };
-    // A copied index can already contain a temp staged by another git program.
-    // Removing it here also retires old tracked temps without touching disk.
-    let temps: Vec<Vec<u8>> = index
+    // A copied index can already contain a temp or one of Tine's own files
+    // staged by another git program, or tracked from before they were left
+    // out. Removing them here untracks them without touching disk.
+    let left_out: Vec<Vec<u8>> = index
         .iter()
-        .filter(|e| under(&e.path, prefix) && syncthing_temp(&e.path[graph_start..]))
+        .filter(|e| {
+            under(&e.path, prefix)
+                && (syncthing_temp(&e.path[graph_start..]) || tine_own(&e.path[graph_start..]))
+        })
         .map(|e| e.path)
         .collect();
-    for path in temps {
+    for path in left_out {
         let path = std::str::from_utf8(&path)
-            .map_err(|_| Unusable::Failed("a Syncthing temp path is not UTF-8".into()))?;
+            .map_err(|_| Unusable::Failed("a left-out path is not UTF-8".into()))?;
         index.remove_path(Path::new(path)).map_err(failed)?;
     }
     let workdir = repo
@@ -546,7 +548,8 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
         let Ok(path) = std::str::from_utf8(path) else {
             continue;
         };
-        if tine_temp(path) || syncthing_temp(&path.as_bytes()[graph_start..]) {
+        let in_graph = &path.as_bytes()[graph_start..];
+        if tine_temp(path) || syncthing_temp(in_graph) || tine_own(in_graph) {
             continue;
         }
         if EXITING.load(Ordering::Acquire) {
@@ -872,10 +875,12 @@ pub(crate) fn around<T, E>(
 /// What Settings shows about the last attempt.
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 pub(crate) struct LastAttempt {
-    /// One setup event, retained for this worker's lifetime so Settings can
-    /// disclose the changed file even when opened after the initial bind.
-    pub(crate) syncthing_ignore_added: Option<String>,
-    pub(crate) syncthing_ignore_failed: bool,
+    /// One `.gitignore` setup event, retained for this worker's lifetime so
+    /// Settings can disclose the changed file even when opened after the
+    /// initial bind: the file, the lines added (or attempted, on failure).
+    pub(crate) gitignore_added: Option<String>,
+    pub(crate) gitignore_lines: Vec<String>,
+    pub(crate) gitignore_failed: bool,
     /// Maintenance waits for retry; this is separate from a commit refusal.
     pub(crate) repack_deferred: bool,
     /// Unix seconds of the last autocommit this process made.
@@ -1427,6 +1432,10 @@ pub(crate) fn git_status(root: &Path, settings: GitSettings) -> GitStatus {
         signed_in: None,
     }
 }
+
+#[path = "git_ignore_setup.rs"]
+mod ignore_setup;
+pub(crate) use ignore_setup::{prepare_git_ignore, report_ignore_setup};
 
 #[path = "git_lifecycle.rs"]
 mod lifecycle;

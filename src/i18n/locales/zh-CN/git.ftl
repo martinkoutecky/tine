@@ -17,8 +17,18 @@ git-settings-repack-deferred = Git 清理正在等待；提交仍会继续。Tin
 git-settings-stale-lock = { $path } 已被占用超过 30 分钟，可能有 git 程序崩溃了。确认没有 git 命令在运行后请删除它。Tine 不会删除它。
 git-settings-load-failed = 无法加载 git 设置：{ $error }
 git-settings-save-failed = 无法更改 git 设置：{ $error }
-git-settings-syncthing-ignore-added = Tine 已将 .syncthing.* 添加到 { $path }，以免将 Syncthing 的临时文件提交到 git。你可以删除这一行；Tine 不会在本设备上再次添加它。除非你自己的规则将其忽略，否则冲突副本仍会被提交。
-git-settings-syncthing-ignore-failed = Tine 无法确认是否已将 .syncthing.* 添加到图谱的 .gitignore。Tine 的提交仍会排除临时文件。如果希望其他 git 工具也忽略它们，请检查该文件并手动添加这一行。
+git-settings-ignore-added =
+    { $which ->
+        [tine] Tine 已将 logseq/.tine-* 添加到 { $path }，以免将 Tine 在本设备上的自有文件（例如其回收站）提交到 git，这样同步同一仓库的多台设备不会在删除页面后停止同步。已在 git 中的副本会在一次单独的 Tine 提交中从 git 移除，但不会从磁盘删除。你可以删除这一行；Tine 不会在本设备上再次添加它，并且仍会将这些文件排除在其提交之外。
+        [both] Tine 已将 .syncthing.* 和 logseq/.tine-* 添加到 { $path }，以免将 Syncthing 的临时文件和 Tine 在本设备上的自有文件（例如其回收站）提交到 git。已在 git 中的副本会在一次单独的 Tine 提交中从 git 移除，但不会从磁盘删除。你可以删除这些行；Tine 不会在本设备上再次添加它们。除非你自己的规则将其忽略，否则冲突副本仍会被提交。
+       *[syncthing] Tine 已将 .syncthing.* 添加到 { $path }，以免将 Syncthing 的临时文件提交到 git。你可以删除这一行；Tine 不会在本设备上再次添加它。除非你自己的规则将其忽略，否则冲突副本仍会被提交。
+    }
+git-settings-ignore-failed =
+    { $which ->
+        [tine] Tine 无法确认是否已将 logseq/.tine-* 添加到图谱的 .gitignore。Tine 的提交仍会排除其自有文件。如果希望其他 git 工具也忽略它们，请检查该文件并手动添加这一行。
+        [both] Tine 无法确认是否已将 .syncthing.* 和 logseq/.tine-* 添加到图谱的 .gitignore。Tine 的提交仍会排除临时文件和 Tine 的自有文件。如果希望其他 git 工具也忽略它们，请检查该文件并手动添加这些行。
+       *[syncthing] Tine 无法确认是否已将 .syncthing.* 添加到图谱的 .gitignore。Tine 的提交仍会排除临时文件。如果希望其他 git 工具也忽略它们，请检查该文件并手动添加这一行。
+    }
 git-settings-remote = 远程仓库：{ $name }（{ $url }）
 git-settings-sync-unusable = Tine 无法在此同步：{ $message }
 git-settings-sync-now = 立即同步

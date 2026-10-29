@@ -109,7 +109,7 @@ it("names the ignore file and rule, explains removal, and discloses a failed set
   const status = vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo({
     policy: "commit", last: {
       committed_at: null, commit: null, refused: null, stale_lock: null,
-      syncthing_ignore_added: "/graph/.gitignore",
+      gitignore_added: "/graph/.gitignore", gitignore_lines: [".syncthing.*"],
     },
   }));
   let view = mount();
@@ -121,12 +121,48 @@ it("names the ignore file and rule, explains removal, and discloses a failed set
   status.mockResolvedValue(repo({
     policy: "commit", last: {
       committed_at: null, commit: null, refused: null, stale_lock: null,
-      syncthing_ignore_failed: true,
+      gitignore_failed: true, gitignore_lines: [".syncthing.*"],
     },
   }));
   view = mount();
   await vi.waitFor(() => expect(view.root.textContent).toContain("couldn't confirm adding .syncthing.*"));
   expect(view.root.textContent).toContain("Temporary files are still excluded from Tine's commits");
+  view.dispose();
+});
+
+it("names the Tine line, alone or with the Syncthing line, in the same status line (D-20261029-GT)", async () => {
+  const status = vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo({
+    policy: "sync-automatically", last: {
+      committed_at: null, commit: null, refused: null, stale_lock: null,
+      gitignore_added: "/graph/.gitignore", gitignore_lines: ["logseq/.tine-*"],
+    },
+  }));
+  let view = mount();
+  await vi.waitFor(() => expect(view.root.textContent).toContain("Tine added logseq/.tine-* to /graph/.gitignore"));
+  expect(view.root.textContent).toContain("Copies already in git are removed from it, not from disk, in a separate Tine commit");
+  expect(view.root.textContent).not.toContain(".syncthing.*");
+  view.dispose(); document.body.innerHTML = "";
+
+  status.mockResolvedValue(repo({
+    policy: "commit", last: {
+      committed_at: null, commit: null, refused: null, stale_lock: null,
+      gitignore_added: "/graph/.gitignore", gitignore_lines: [".syncthing.*", "logseq/.tine-*"],
+    },
+  }));
+  view = mount();
+  await vi.waitFor(() => expect(view.root.textContent).toContain("Tine added .syncthing.* and logseq/.tine-* to /graph/.gitignore"));
+  expect(view.root.querySelectorAll("[role=status]").length).toBe(1);
+  view.dispose(); document.body.innerHTML = "";
+
+  status.mockResolvedValue(repo({
+    policy: "commit", last: {
+      committed_at: null, commit: null, refused: null, stale_lock: null,
+      gitignore_failed: true, gitignore_lines: ["logseq/.tine-*"],
+    },
+  }));
+  view = mount();
+  await vi.waitFor(() => expect(view.root.textContent).toContain("couldn't confirm adding logseq/.tine-*"));
+  expect(view.root.textContent).toContain("Tine's own files are still excluded from its commits");
   view.dispose();
 });
 

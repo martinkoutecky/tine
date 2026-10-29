@@ -759,11 +759,6 @@ fn q_git_refuses_by_name_before_writing() {
             "pages/a.md",
         ),
         (
-            "tine-own",
-            vec![Edit::Write("logseq/.tine-trash/pages/x.md", b"- x\n")],
-            "logseq/.tine-trash/pages/x.md",
-        ),
-        (
             "file-to-folder",
             vec![
                 Edit::Remove("pages/dup.md"),
@@ -791,6 +786,42 @@ fn q_git_refuses_by_name_before_writing() {
         assert_eq!(head(&repo), h, "{name}");
         assert_eq!(disk(&graph, "pages/b.md"), before, "{name}");
     }
+}
+
+/// D-20261029-GT: another device's `logseq/.tine-*` files (an older Tine
+/// committed its trash) are neither written nor a reason to refuse; the
+/// rest of the pull lands. (Until then this was a by-name refusal.)
+#[test]
+fn q_git_pull_skips_tine_own_paths_without_refusing() {
+    test_hook::clear();
+    let graph = Graph::new();
+    let repo = repo(&graph);
+    let slot = graph.slot();
+    let h = head(&repo);
+    let trash = "logseq/.tine-trash/pages/x.md";
+    let up = upstream(
+        &repo,
+        &[
+            Edit::Write(trash, b"- x\n"),
+            Edit::Write("pages/b.md", b"- theirs\n"),
+        ],
+    );
+    let outcome = pull(&slot);
+    assert_eq!(
+        outcome,
+        PullOutcome::Landed {
+            from: h,
+            to: up,
+            written: 1
+        }
+    );
+    assert_eq!(head(&repo), up);
+    assert_eq!(disk(&graph, "pages/b.md"), at_u(&repo, up, "pages/b.md"));
+    assert_eq!(
+        disk(&graph, trash),
+        None,
+        "another device's trash is not written"
+    );
 }
 
 #[test]
