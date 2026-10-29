@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "version": "0.9.0-beta.1",
-  "baseTag": "v0.8.1",
+  "baseTag": "v0.8.2",
   "focusedAudit": {
     "required": false,
     "reason": "Beta text preparation only. No exact-candidate release audit was delegated or performed; this records a deferral, not audit certification. The manager owns release acceptance."
@@ -1545,6 +1545,40 @@
       }
     },
     {
+      "section": "Added",
+      "text": "**Remove the stale lock** (git graphs, all platforms; GS-LOCK): when Tine, or another git program, was stopped in the middle of a commit and left an empty `.git/index.lock`, every later commit used to wait until you deleted the file yourself, which on a phone takes a file manager or a git app. Once that lock has not changed for 10 minutes and Tine itself is not using git, the git notice and Settings → Graph offer **Remove the stale lock**. Tine checks the file again when you press it, removes only that file, and commits right away. It never removes a lock by itself, and never a lock on a branch.",
+      "userVisible": true,
+      "regressions": [
+        "REG-GS-LOCK-STALE-INDEX-LOCK"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "REG-GS-LOCK-STALE-INDEX-LOCK: owner tests for the offer and the click-time recheck, the capture-failure cleanup (index_lock_identity_failure_leaves_no_lock_behind) and the write-site census row; local gate gate-stalelock-r3 green (rust, unit, real-app e2e-git-sync); hosted Windows rerun passed the stale-lock tests.",
+        "refs": [
+          "tests/regressions/non-ui.json",
+          "src-tauri/src/owner/git_mobile_tests.rs",
+          "crates/tine-store/tests/write_sites.toml"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The bundled Guide's git autocommit section describes the offer, its 10-minute and no-Tine-git conditions, and that Tine never removes a lock by itself.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated for a Beta.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Beta notes live in the changelog and prerelease; no blog post for this Beta.",
+        "refs": []
+      }
+    },
+    {
       "section": "Changed",
       "text": "`:feature/enable-journals? false` in `logseq/config.edn` shows the configured home page in the sidebar in place of Journals, as in Logseq. Each comma item of a property listed in `:property/separated-by-commas` is now a page link in page and block properties.",
       "userVisible": true,
@@ -2293,6 +2327,40 @@
       "blog": {
         "status": "not-applicable",
         "reason": "Beta notes live in the changelog and prerelease; no blog post is prepared by this lane.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "The PDF reader uses pdf.js 5.7.284, with image decoders and fonts bundled for offline reading. JPEG 2000 scans use a source-built decoder compatible with WebKit, and large decoded images retain the previous cleanup policy (D-20261028-PDF9 item 7; UI-PDFJS5-JPX, UI-PDFJS5-IMAGE-RETENTION). Building Tine requires Node.js 22.13 or newer and Emscripten 4.0.20.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDFJS5-JPX",
+        "UI-PDFJS5-IMAGE-RETENTION",
+        "UI-PDF09-PDFJS5-OFFLINE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-PDFJS5-JPX, UI-PDFJS5-IMAGE-RETENTION and UI-PDF09-PDFJS5-OFFLINE; full hosted CI 40851852661 green on the branch; local gate gate-pdfjs5-r1 green including real-app e2e-pdf-logseq.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/components/pdfRenderTask.test.ts",
+          "scripts/e2e-pdf-logseq.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No user-visible workflow changes; reading, highlights and zoom behave as before. The build requirement (Node.js 22.13, Emscripten) is developer-facing and in the changelog.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Website Guide follows stable (D-20261019-G1); no website output is regenerated for a Beta.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Beta notes live in the changelog and prerelease; no blog post for this Beta.",
         "refs": []
       }
     },

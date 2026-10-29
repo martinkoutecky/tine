@@ -8,6 +8,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.9.0-beta.1] - 2026-10-29
+
+The first Tine 0.9 Beta. Git sync on phones and computers, with sign-in and automatic commits; "Changed since you last looked", which marks what other people or tools committed to a page, with buttons to step through each change; pages shared as encrypted links that open in the browser; margin comments with replies; a command line that can write, now also on Windows, for scripts and AI agents; tabs organized in the sidebar; theme fonts; the PDF viewer on pdf.js 5; and the 0.9 storage checks described below. It includes every fix in stable 0.8.2.
+
+**Storage checks in 0.9.** Tine 0.9 tests its page-saving code against a published storage model. It also checks a list of file-changing code paths and fault-tests selected cases where folders disappear or move, other programs change files, or drafts must be recovered. Directory behaviour is tested against the model, never proven, and full step-by-step model coverage does not extend to every write path. These checks have passed recorded Linux, Windows and macOS runs, each on the platforms the ledger names for it; Beta testers check Android and iOS devices, cloud-synced folders (such as OneDrive or iCloud Drive placeholders) and other network mounts from this release on. For each storage assumption covered here, the ledger names a code check and completed fault tests, and states the remaining race and filesystem limits. The [assumptions and limits page](https://github.com/martinkoutecky/tine/blob/v0.9.0-beta.1/docs/storage-model/ASSUMPTIONS.md) records the tested cases and exclusions.
+
+Outside the model: torn reads while another program writes; other programs' in-place writes; correctness of the reference index; Markdown/Org serialization. Named limits:
+
+- If the single-writer lock fails, the graph stays editable and Tine shows a persistent indicator.
+- On Android shared storage, a pulled rename that changes only letter case stops git sync ("pull incomplete") until the rename is undone upstream.
+- Settings offers to remove an empty git `index.lock` that has not changed for 10 minutes while Tine runs no git operation. Its age cannot prove the program that took it has exited: one that is frozen or suspended, or a clock that is off, looks the same.
+- On Windows, creating and removing the drafts folder, and the fallback rename, are not proven to survive power loss (Windows has no documented folder flush; Tine flushes the app-data folder on a best-effort basis).
+- Desktop checks cover local disks (ext4, NTFS, APFS) and a few Windows network-share (UNC) cases.
+- If a file a pull changed is edited back to exactly its old text and Tine then crashes or switches graphs before the pull finishes, the resumed pull writes the pulled version again; the old text stays in git history.
+- Developer export and test helpers are not containment-guarded; native check-to-call races and weak file identities remain.
+
 ### Added
 
 - Expand or collapse bullets even in read-only exports, quick-share links and read-only pages. These viewing choices last while browsing; reloading restores the original folds without changing the graph. Static HTML exports keep the original folds too; click a folded block's arrow to open it, which works without JavaScript (UI-VIEW-FOLD, UI-VIEW-FOLD-STATIC).
@@ -132,6 +148,17 @@ Development-only fixes (not shipped in a release):
 
 - Queries and boards in a published export show their results again instead of “Query couldn't be loaded: This is a read-only published export.” (development-only regression; UI-PUBLISHED-QUERY-SUBSCRIPTION).
 - **Opening and scrolling a large page right after typing is fast again** (development only, internal card hDSCuw): the typing-stall diagnostics added for GH #746 ran work on every frame for two seconds after each key, which made a page opened from search or the page switcher, and its first scroll, about a frame slower. They now do no per-frame work.
+
+## [0.8.2] - 2026-10-29
+
+Bug fixes for Tine 0.8.1: block references picked from the `((` search, Journals on a first launch and while editing, and a page file a sync tool is replacing.
+
+### Fixed
+
+- Picking a block in the `((` or `{{embed ((` block search no longer writes a short temporary id such as `((bmvsgco1s-11))` when the block had no `id::` yet: Tine now gives the block a proper UUID, as Logseq does, so the reference keeps working in Logseq and after restarting Tine. A block that already has an id keeps it (GH #798).
+- A first launch with a default journal template no longer sometimes opens Journals as "Couldn't open this page: Journal feed read failed" while today's template page is still being saved; Journals shows as soon as that save ends (GH #671, E2E-BASE-4).
+- Scrolling the Journals feed keeps loading older days while you are editing a journal day. After some graph-wide changes (for example a sync bringing in many files) the feed could stop at its first three days until you clicked outside the journals (UI-JOURNAL-FEED-PAGING-WHILE-EDITING).
+- A page file that a sync tool is replacing while Tine lists the folder is no longer reported as "couldn't be read" (REG-SCAN-VANISHED-ENTRY).
 
 ## [0.8.1] - 2026-10-27
 
@@ -7161,7 +7188,9 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.9.0-beta.1...HEAD
+[0.9.0-beta.1]: https://github.com/martinkoutecky/tine/compare/v0.8.2...v0.9.0-beta.1
+[0.8.2]: https://github.com/martinkoutecky/tine/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/martinkoutecky/tine/compare/v0.8.0...v0.8.1
 [0.6.98]: https://github.com/martinkoutecky/tine/compare/v0.6.97...v0.6.98
 [0.6.90]: https://github.com/martinkoutecky/tine/compare/v0.6.5...v0.6.90
