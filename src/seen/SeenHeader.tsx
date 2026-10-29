@@ -7,6 +7,7 @@ import { newResizeObserver } from "../windowRealm";
 import { t } from "../i18n";
 import type { PageSeen } from "./pageSeen";
 import { markPageSeenNow } from "./seenState";
+import { registerSeenStepper } from "./stepper";
 import "../styles/seen.css";
 
 const SeenContext = createContext<PageSeen | undefined>(undefined);
@@ -22,10 +23,10 @@ export function useSeenRow(id: string): { changed: () => boolean } {
   return { changed: () => seen?.changed(id) ?? false };
 }
 
-function RemovedMarker(props: { text: string; child: boolean }): JSX.Element {
+function RemovedMarker(props: { text: string; child: boolean; item: string }): JSX.Element {
   const [open, setOpen] = createSignal(false);
   return (
-    <div class="seen-removed" classList={{ "seen-removed-child": props.child }} data-seen-removed>
+    <div class="seen-removed" classList={{ "seen-removed-child": props.child }} data-seen-removed data-seen-item={props.item}>
       <button type="button" class="seen-removed-toggle" aria-expanded={open()} onClick={() => setOpen(!open())}>
         <span class="seen-removed-caret" aria-hidden="true">{open() ? "▾" : "▸"}</span>
         {t("seen-removed-block")}
@@ -43,7 +44,9 @@ export function SeenRemoved(props: { after?: string; first?: string | null }): J
   const seen = useContext(SeenContext);
   if (!seen) return null;
   const marks = () => props.after !== undefined ? seen.removedAfter(props.after) : seen.removedFirst(props.first ?? null);
-  return <For each={marks()}>{(mark) => <RemovedMarker text={mark.text} child={props.after === undefined} />}</For>;
+  // The n-th marker of its anchor: the key Previous / Next change finds it by (steps.ts).
+  const anchor = () => props.after !== undefined ? `a:${props.after}` : `f:${props.first ?? ""}`;
+  return <For each={marks()}>{(mark, n) => <RemovedMarker text={mark.text} child={props.after === undefined} item={`${anchor()}:${n()}`} />}</For>;
 }
 
 /** Mount with the visible notice, including when its answer arrives later.
@@ -71,7 +74,34 @@ function StickyNotice(props: { children: JSX.Element }): JSX.Element {
   return <div ref={host} class="seen-header" role="status" data-seen-header>{props.children}</div>;
 }
 
-/** "N changes since you last looked" + Mark page seen, only while N > 0. */
+/** Previous / Next change and "3 of 12". Also offers the same steps to the
+ *  command palette while this notice is on screen. */
+function SeenSteps(props: { seen: PageSeen; pageName: string }): JSX.Element {
+  let group!: HTMLSpanElement;
+  const scroller = () => group.closest<HTMLElement>(".main-content, .right-sidebar");
+  const go = (direction: 1 | -1) => { const host = scroller(); if (host) void props.seen.step(direction, host); };
+  onMount(() => onCleanup(registerSeenStepper(props.pageName, go)));
+  return (
+    <span class="seen-header-steps" ref={group}>
+      <button type="button" class="settings-btn seen-header-step" data-seen-step="previous" onClick={() => go(-1)}>
+        {t("seen-previous-change")}
+      </button>
+      <button type="button" class="settings-btn seen-header-step" data-seen-step="next" onClick={() => go(1)}>
+        {t("seen-next-change")}
+      </button>
+      <Show when={props.seen.position()}>
+        {(at) => (
+          <span class="seen-header-position" classList={{ wrapped: at().wrapped }} data-seen-position aria-live="polite">
+            {at().wrapped ? t("seen-change-position-wrapped", { index: at().index, total: at().total }) : t("seen-change-position", { index: at().index, total: at().total })}
+          </span>
+        )}
+      </Show>
+    </span>
+  );
+}
+
+/** "N changes since you last looked" + Previous / Next change + Mark page seen,
+ *  only while N > 0. */
 export function SeenHeader(props: { seen: PageSeen; pageName: string }): JSX.Element {
   const notes = () => [
     props.seen.identityKnown() ? "" : t("seen-note-identity-unknown"),
@@ -84,6 +114,7 @@ export function SeenHeader(props: { seen: PageSeen; pageName: string }): JSX.Ele
         <span class="seen-header-text" classList={{ "has-note": !!notes() }} title={notes() || undefined}>
           {t("seen-header-count", { count: props.seen.count() })}
         </span>
+        <SeenSteps seen={props.seen} pageName={props.pageName} />
         <button type="button" class="settings-btn seen-header-mark" onClick={() => void markPageSeenNow(props.pageName, false)}>
           {t("seen-mark-page")}
         </button>

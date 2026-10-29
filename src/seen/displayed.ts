@@ -17,7 +17,7 @@ const displayed = new Map<string, DisplayedSeenPage>();
 
 // A route names the page as typed; the page itself carries its file name. Both
 // reach the same entry through the page identity key.
-function keyOf(name: string): string {
+export function keyOf(name: string): string {
   try { return pageIdentityKey(name); } catch { return name.trim().toLowerCase(); }
 }
 

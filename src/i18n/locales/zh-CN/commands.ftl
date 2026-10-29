@@ -287,3 +287,5 @@ all-graphs-keyboard-help = 使用上下方向键选择图谱，按 Enter 打开�
 all-graphs-new-window-help = 按 Shift+Enter 在新窗口中打开所选图谱。
 command-seen-mark-page = 标记页面为已看
 command-seen-mark-graph = 标记整个图谱为已看
+command-seen-next-change = 下一处自上次查看以来的更改
+command-seen-previous-change = 上一处自上次查看以来的更改
