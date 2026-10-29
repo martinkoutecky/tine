@@ -114,6 +114,16 @@ mutations = ".create=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_pull.rs"
+fn = "apply_pull"
+domain = "graph"
+guard = "crates/tine-store/src/transaction.rs#PagePlan::path"
+test = "src-tauri/src/owner/owner_tests/git_pull_tests.rs#q_git_pull_lands_a_fast_forward"
+oracle = false
+note = "ADR 0078 §4 rev 2 step 3 (SB1-GITSYNC census): commit each non-page transaction plan_other built and validated. The commit is the store's audited transaction path (base-revision guard, temp + fsync + rename, trash for deletions); a refusal after page publications is a late refusal that names partial progress. Index and ref moves are IndexLock::install and Repo::advance."
+mutations = ".commit=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_pull.rs"
 fn = "barrier"
 domain = "graph"
 guard = "crates/tine-store/src/root_binding.rs#BoundDirectory::check_path"
@@ -1993,6 +2003,16 @@ test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_libgit_refuses_redirecte
 oracle = false
 note = "SB1 libgit2 metadata mutation: recheck graph and gitdir/commondir identity, object fanout and ref/reflog/index containment before invocation. No model oracle refinement; internal multi-syscall and check-to-call races remain."
 mutations = ".blob_writer=1, .commit=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_sync.rs"
+fn = "Operation::fetch_locked"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_git"
+test = "src-tauri/src/owner/git_sync/transport_tests.rs#file_fetch_updates_only_tracking_ref_and_preserves_dirty_worktree_and_index"
+oracle = false
+note = "ADR 0078 fetch (SB1-GITSYNC census): under index.lock, an anonymous remote downloads exactly the tracked branch (libgit2 writes the pack under .git/objects/pack), then the tracking ref moves by Git's ref lock with old-oid comparison. check_ref runs check_git on the tracking ref before the download and again after network IO; no FETCH_HEAD, tags, HEAD, index or work-tree write. libgit2's internal pack write is not containment-checked per syscall (same limit as Repo::advance)."
+mutations = ".download=1, .reference=1, .reference_matching=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_run.rs"
