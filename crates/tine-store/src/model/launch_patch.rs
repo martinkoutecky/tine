@@ -143,8 +143,11 @@ impl Graph {
                         pass.discovery
                             .push((crate::FileId::from(rel.clone()), failure.into()));
                     }
-                    let failure = PageParseFailure::Unreadable(rel.clone(), error.to_string());
-                    pass.built.collect(Err(failure));
+                    pass.built.collect(PageParseFailure::unreadable(
+                        rel.clone(),
+                        error,
+                        "Tine unreadable file producer=launch-patch",
+                    ));
                     pass.stamps.insert(path.clone(), stamp);
                     pass.named.push(entry);
                     continue;

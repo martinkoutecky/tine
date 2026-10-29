@@ -39,9 +39,16 @@ impl Graph {
     /// cache. The page is named and parsed from its file: a build leaves a
     /// held page out, and its row is its owner's (`install_built`, (G)).
     pub(super) fn parse_page_entry_isolated(&self, mut e: PageEntry) -> PageParseResult {
-        let content = read_parse_input(&e.path).map_err(|error| {
-            PageParseFailure::Unreadable(e.rel_path_str().to_owned(), error.to_string())
-        })?;
+        let content = match read_parse_input(&e.path) {
+            Ok(content) => content,
+            Err(error) => {
+                return PageParseFailure::unreadable(
+                    e.rel_path_str().to_owned(),
+                    error,
+                    "Tine unreadable file producer=on-demand-build",
+                )
+            }
+        };
         if let Ok(name) = self.name_from(&e, &content) {
             e.name = name;
         }
@@ -106,7 +113,7 @@ pub(super) fn isolate_page_parse(
                 .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
                 .unwrap_or("unknown panic payload");
             tine_core::diag_line::diagnostic_line(
-                "Tine search index skipped a page after parse/projection panic",
+                "Tine search index skipped a page after parse/projection panic producer=page-parse",
             );
             Err(PageParseFailure::Panic(
                 e.rel_path_str().to_owned(),
