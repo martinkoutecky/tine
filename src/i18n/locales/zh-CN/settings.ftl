@@ -40,6 +40,14 @@ settings-mobile-navigation-label = 导航按钮置于底部
 
 settings-mobile-navigation-hint = 手机和平板：把侧边栏、搜索、后退和前进放在屏幕底部的一行（单手易触及），不放在顶栏。键盘弹出时，这一行让位给编辑工具栏。默认关闭，保存在本设备上。
 
+settings-result-destination-label = 搜索结果打开位置
+
+settings-result-destination-hint = 在搜索标签页中单击或按 Enter 打开结果时的位置。“新标签页”会保留搜索标签页及其结果，页面在旁边的新标签页中打开。“当前标签页”则直接在搜索标签页中显示该页面，点击后退即可回到结果。无论哪种，Shift+点击都会在侧边栏打开，Ctrl/Cmd+点击或中键点击会在后台标签页打开，Alt+点击会在另一窗格打开。默认为新标签页，保存在本设备上。
+
+settings-result-destination-new-tab = 新标签页
+
+settings-result-destination-this-tab = 当前标签页
+
 settings-embed-breadcrumbs = 块嵌入面包屑
 
 settings-embed-breadcrumbs-hint = 在嵌入块上方显示来源页面和父块路径。默认关闭。

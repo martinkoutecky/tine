@@ -57,6 +57,9 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-10-29, D-20261029-ST (GH #796): `settings.editor.advanced` 10→11 for the explicitly
+  decided **Search results open in** (New tab / This tab) setting. It sits behind the Advanced
+  disclosure beside "Switch to an already-open tab", so `settings.editor.open` stays 9.
 - 2026-10-28, sweep-nav dossier / GH #785: `commands.registry` 126→129 and
   `commands.palette` 71→74 for the explicitly requested localized **Expand all**,
   **Collapse all**, and OG's remappable **t o** toggle. No new topbar control.
