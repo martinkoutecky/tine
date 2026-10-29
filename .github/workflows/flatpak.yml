@@ -55,7 +55,7 @@ jobs:
       # node because it shares scripts/lib/app-identity.mjs with the release layout.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Derive a CI manifest that builds the checked-out tree
         id: derive

@@ -9,7 +9,7 @@ import { KeyedPdfViewer } from "./KeyedPdfViewer";
 
 const getDocument = vi.hoisted(() => vi.fn());
 vi.mock("pdfjs-dist", () => ({ GlobalWorkerOptions: {}, getDocument }));
-vi.mock("pdfjs-dist/build/pdf.worker.min.mjs?url", () => ({ default: "test-worker" }));
+vi.mock("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url", () => ({ default: "test-worker" }));
 
 async function flush() {
   for (let i = 0; i < 24; i++) await Promise.resolve();

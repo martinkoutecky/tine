@@ -222,6 +222,15 @@ samples/             Demo graph used by tests/screenshots
 
 ## Build & run
 
+Use Node.js 22.13 or newer (pdf.js 5 requires Node 22).
+The PDF image decoder also requires Emscripten **4.0.20**, activated with
+`emsdk install 4.0.20` and `emsdk activate 4.0.20`; source `emsdk_env.sh` so
+`EMSDK` points to that installation. `npm run build:pdf-decoder` compiles pinned,
+vendored OpenJPEG sources with standard SIMD, without network access. Builds and
+tests reuse the verified result until its inputs change. See
+[`vendor/pdfjs-openjpeg/README.md`](vendor/pdfjs-openjpeg/README.md) for provenance
+and the offline Flatpak setup.
+
 ```bash
 source scripts/env.sh        # toolchain env (CARGO_HOME/RUSTUP_HOME, lib paths)
 npm install                  # first time
