@@ -80,6 +80,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Picking a block in the `((` or `{{embed ((` block search no longer writes a short temporary id such as `((bmvsgco1s-11))` when the block had no `id::` yet: Tine now gives the block a proper UUID, as Logseq does, so the reference keeps working in Logseq and after restarting Tine. A block that already has an id keeps it (GH #798).
 - The desktop formatting toolbar displays over the selection, including near the bottom of a long block, and moves below it when there is no room above (UI-SEL-TOOLBAR).
 - Mouse back/forward buttons also navigate on macOS; dragging with a side button does not navigate. macOS also accepts Cmd+[ and Cmd+] for history (#780).
 - Query and Markdown tables: a table in a query box or a sidebar item stays inside its box and scrolls there; long text cells wrap instead of cramming every column to a few letters, and numbers never split; a visible scrollbar strip shows when a table still overflows. Board column counts no longer touch their labels, table and board page links read as links, and the "Grouped by" breakdown above a board is folded behind its summary. Collapse all sits in the Linked/Unlinked References header row, the gap above Linked References is smaller, a stale count shows a small refresh icon instead of a stray "·", and an image in a reference breadcrumb renders at breadcrumb height (UI-LP-QUERY-TABLE-BOX, UI-LP-BOARD-CARDS, UI-LP-REFERENCES-HEADER, UI-LP-BREADCRUMB-IMAGE).
