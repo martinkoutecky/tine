@@ -1568,11 +1568,11 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       const editorValue = ref.value;
       let inserted = false;
       const intended = () => bindingCurrent(binding) && ac() === trigger && ref.value === editorValue;
-      void persistBlockRefTarget(uuid, page, kind, undefined, externalId, () => {
+      void persistBlockRefTarget(uuid, page, kind, undefined, externalId, (stampedId) => {
         if (!bindingCurrent(binding) || ac() !== trigger || ref.value !== editorValue) return null;
         const sourcePage = docNode(props.id)?.page;
         if (!sourcePage) return null;
-        replaceTrigger(`((${externalId}))`);
+        replaceTrigger(`((${stampedId}))`);
         inserted = true;
         return sourcePage;
       }, intended).then((saved) => {

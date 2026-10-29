@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Picking a block in the `((` or `{{embed ((` block search no longer writes a short temporary id such as `((bmvsgco1s-11))` when the block had no `id::` yet: Tine now gives the block a proper UUID, as Logseq does, so the reference keeps working in Logseq and after restarting Tine. A block that already has an id keeps it (GH #798).
+
 ## [0.8.1] - 2026-10-27
 
 Bug fixes for Tine 0.8.0: a blank window on Linux with older NVIDIA drivers, a new page in the right sidebar, cloze reveal, Expand and Collapse in embeds, and a Windows save race.

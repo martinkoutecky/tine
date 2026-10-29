@@ -5,7 +5,7 @@ import { backend } from "../backend";
 import { startEditing } from "../editorController";
 import { pageByName, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
-import { doc } from "../document/model";
+import { doc, freshId } from "../document/model";
 import { initParser } from "../render/parse";
 import { refreshPageIndex, resetPageIndex } from "../pageIndex";
 import type { BlockDto, PageDto, PageEntry, PageRead } from "../types";
@@ -17,6 +17,8 @@ import { setPinyinMatchingEnabled } from "../launcherRanking";
 import { setActiveLocale } from "../i18n";
 
 beforeAll(() => initParser());
+
+const V4_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -292,12 +294,15 @@ describe("reference authoring", () => {
     }
   });
 
-  const blockReferenceCases: Array<[string, [string, string][] | undefined, string]> = [
+  // An id-less target gets a fresh random UUID, never its runtime locator, even
+  // a UUID-shaped one (GH #373, GH #798): `null` means "freshly minted".
+  const blockReferenceCases: Array<[string, [string, string][] | undefined, string | null]> = [
     ["authored id", [["id", "11111111-1111-4111-8111-111111111111"]], "11111111-1111-4111-8111-111111111111"],
-    ["id-less fallback", undefined, "f8358fac-56bd-8bb1-ba45-bd7fd1ba2add"],
+    ["authored non-UUID id", [["id", "my-own-id"]], "my-own-id"],
+    ["id-less fallback", undefined, null],
   ];
 
-  it.each(blockReferenceCases)("inserts the %s for an accepted block-reference suggestion", async (_case, properties, expectedId) => {
+  it.each(blockReferenceCases)("inserts the %s for an accepted block-reference suggestion", async (_case, properties, authoredId) => {
     vi.spyOn(backend(), "search").mockResolvedValue([{
       page: "Source",
       kind: "page",
@@ -312,7 +317,7 @@ describe("reference authoring", () => {
     }]);
     vi.spyOn(backend(), "getPage").mockResolvedValue({
       id: "pages/Source.md", name: "Source", kind: "page", title: "Source", pre_block: null,
-      blocks: [{ id: "f8358fac-56bd-8bb1-ba45-bd7fd1ba2add", raw: properties ? `test\nid:: ${expectedId}` : "test", collapsed: false, children: [] }],
+      blocks: [{ id: "f8358fac-56bd-8bb1-ba45-bd7fd1ba2add", raw: properties ? `test\nid:: ${authoredId}` : "test", collapsed: false, children: [] }],
     });
     openAsLoaded(await bindTestHost());
     const save = vi.spyOn(backend(), "pageSubmit");
@@ -326,12 +331,82 @@ describe("reference authoring", () => {
       inputAt(textarea, "((test", 6);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
       accept(textarea);
-      await vi.waitFor(() => expect(doc.byId["reference-authoring"].raw).toBe(`((${expectedId})) `));
+      await vi.waitFor(() => expect(doc.byId["reference-authoring"].raw).toMatch(/^\(\([^)]+\)\) $/));
+      const inserted = doc.byId["reference-authoring"].raw.slice(2, -3);
+      if (authoredId) expect(inserted).toBe(authoredId);
+      else {
+        expect(inserted).toMatch(V4_UUID);
+        expect(inserted).not.toBe("f8358fac-56bd-8bb1-ba45-bd7fd1ba2add");
+      }
       // The target's ID went to the host before the reference (STEP3 §8, Q2).
-      if (!properties) expect(submittedPages(save, "Source")[0].blocks[0].raw).toContain(expectedId);
+      if (!properties) expect(submittedPages(save, "Source")[0].blocks[0].raw).toBe(`test\nid:: ${inserted}`);
     } finally {
       dispose();
     }
+  });
+
+  it.each([
+    ["block reference", "((test", (id: string) => `((${id})) `],
+    ["block embed", "{{embed ((test", (id: string) => `{{embed ((${id})) `],
+  ] as const)("never persists a block created this session by its runtime key from the %s picker (GH #798)", async (_case, typed, expected) => {
+    // A block typed in this session keeps its frontend key (`b<base36>-<n>`) in
+    // the backend too, so the block search returns that key as the row's id.
+    const runtime = freshId();
+    expect(runtime).toMatch(/^b[0-9a-z]+-\d+$/);
+    const target: BlockDto = { id: runtime, raw: "test", collapsed: false, children: [] };
+    vi.spyOn(backend(), "search").mockResolvedValue([{ page: "Source", kind: "page", blocks: [target], evidence: [] }]);
+    vi.spyOn(backend(), "getPage").mockResolvedValue({
+      id: "pages/Source.md", name: "Source", kind: "page", title: "Source", pre_block: null, blocks: [structuredClone(target)],
+    });
+    openAsLoaded(await bindTestHost());
+    const save = vi.spyOn(backend(), "pageSubmit");
+    loadSingle(page(typed));
+    startEditing("reference-authoring", typed.length);
+    const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, typed, typed.length);
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
+      accept(textarea);
+      await vi.waitFor(() => expect(doc.byId["reference-authoring"].raw).not.toBe(typed));
+      const written = submittedPages(save, "Source")[0].blocks[0].raw;
+      const stamped = /^id:: (.+)$/m.exec(written)?.[1];
+      expect(stamped, "the target's id:: is a UUID Logseq can resolve").toMatch(V4_UUID);
+      expect(doc.byId["reference-authoring"].raw).toBe(expected(stamped!));
+      const raws = (dto: { blocks: BlockDto[] }) => { const out: string[] = []; const walk = (b: BlockDto) => { out.push(b.raw); b.children.forEach(walk); }; dto.blocks.forEach(walk); return out; };
+      const fileText = [...submittedPages(save, "Source"), ...submittedPages(save, "Reference authoring")].flatMap(raws).join("\n");
+      expect(fileText, "the runtime key never reaches a file").not.toContain(runtime);
+    } finally { dispose(); }
+  });
+
+  it("references the picked id-less block, not an authored block whose id equals its runtime key (GH #798)", async () => {
+    // Runtime keys of loaded blocks are position-derived UUIDs: a block that
+    // moved into a position inherits the key another block was once stamped with.
+    const shared = "f8358fac-56bd-8bb1-ba45-bd7fd1ba2add";
+    const picked: BlockDto = { id: shared, raw: "picked", collapsed: false, children: [] };
+    const owner: BlockDto = { id: "e1d2c3b4-a596-8877-8665-544332211000", raw: `owner\nid:: ${shared}`, collapsed: false, children: [] };
+    vi.spyOn(backend(), "search").mockResolvedValue([{ page: "Source", kind: "page", blocks: [picked], evidence: [] }]);
+    vi.spyOn(backend(), "getPage").mockResolvedValue({
+      id: "pages/Source.md", name: "Source", kind: "page", title: "Source", pre_block: null, blocks: [structuredClone(picked), structuredClone(owner)],
+    });
+    openAsLoaded(await bindTestHost());
+    const save = vi.spyOn(backend(), "pageSubmit");
+    loadSingle(page("((picked"));
+    startEditing("reference-authoring", 8);
+    const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, "((picked", 8);
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("picked"));
+      accept(textarea);
+      await vi.waitFor(() => expect(doc.byId["reference-authoring"].raw).toMatch(/^\(\([^)]+\)\) $/));
+      const inserted = doc.byId["reference-authoring"].raw.slice(2, -3);
+      expect(inserted).not.toBe(shared);
+      expect(inserted).toMatch(V4_UUID);
+      const blocks = submittedPages(save, "Source")[0].blocks;
+      expect(blocks[0].raw).toBe(`picked\nid:: ${inserted}`);
+      expect(blocks[1].raw).toBe(`owner\nid:: ${shared}`);
+    } finally { dispose(); }
   });
 
   it("leaves the source unedited and the target conflicted when the target's ID cannot publish", async () => {
@@ -367,12 +442,14 @@ describe("reference authoring", () => {
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
       accept(textarea);
       await vi.waitFor(() => expect(isConflicted("Source")).toBe(true));
-      expect(submittedPages(save, "Source")[0].blocks[0].raw).toContain(uuid);
+      // The id-less target was stamped with a fresh UUID, not its runtime key (GH #798).
+      const stamped = /^id:: (.+)$/m.exec(submittedPages(save, "Source")[0].blocks[0].raw)?.[1];
+      expect(stamped).toMatch(V4_UUID);
       // A reference reaches disk only after its target ID does (STEP3 §8, Q2).
-      expect(doc.byId["reference-authoring"].raw).not.toContain(uuid);
-      expect(submittedPages(save, "Reference authoring").some((dto) => JSON.stringify(dto).includes(uuid))).toBe(false);
+      expect(doc.byId["reference-authoring"].raw).not.toContain(stamped!);
+      expect(submittedPages(save, "Reference authoring").some((dto) => JSON.stringify(dto).includes(stamped!))).toBe(false);
       // The stamped target stays in the window for conflict resolution.
-      expect(doc.byId[uuid].raw).toContain(uuid);
+      expect(doc.byId[uuid].raw).toContain(`id:: ${stamped}`);
     } finally { dispose(); }
   });
 

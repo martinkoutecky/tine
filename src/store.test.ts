@@ -2132,6 +2132,23 @@ describe("save engine (persistence)", () => {
     expect(random).not.toHaveBeenCalled();
   });
 
+  it("never stamps Tine's non-UUID runtime key as a committed reference's id (GH #798)", async () => {
+    const runtime = "bmvsgco1s-11";
+    load([{ id: runtime, raw: "Session-created target", collapsed: false, children: [] }]);
+
+    expect(await persistBlockRefTarget(runtime, "Test", "page")).toBe(false);
+
+    expect(doc.byId[runtime].raw).toBe("Session-created target");
+  });
+
+  it("keeps an authored non-UUID id that a committed reference already names (GH #798)", async () => {
+    load([{ id: "bmvsgco1s-11", raw: "Authored target\nid:: my-own-id", collapsed: false, children: [] }]);
+
+    expect(await persistBlockRefTarget("my-own-id", "Test", "page")).toBe(true);
+
+    expect(doc.byId["bmvsgco1s-11"].raw).toBe("Authored target\nid:: my-own-id");
+  });
+
   it("derives a fresh Org journal's persistent identity from its format-aware drawer", async () => {
     const uuid = "87654321-4321-4321-8321-cba987654321";
     vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);

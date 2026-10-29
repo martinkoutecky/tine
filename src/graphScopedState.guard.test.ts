@@ -309,7 +309,7 @@ describe("graph-scoped UI state (I-20)", () => {
     const session = readFileSync("src/session.ts", "utf8");
     expect(session).toMatch(/const mayApply = \(\) => owner\(\) && JSON\.stringify\(buildPersistedSession\(\)\) === initialSession/);
     const block = readFileSync("src/components/Block.tsx", "utf8");
-    expect(block).toMatch(/persistBlockRefTarget\([\s\S]*?\(\) => \{\s*if \(!bindingCurrent\(binding\) \|\| ac\(\) !== trigger/);
+    expect(block).toMatch(/persistBlockRefTarget\([\s\S]*?\(stampedId\) => \{\s*if \(!bindingCurrent\(binding\) \|\| ac\(\) !== trigger/);
   });
 
   it("every module-level signal that can name graph content is graph-scoped or classified", () => {
