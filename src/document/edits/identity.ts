@@ -65,14 +65,24 @@ function positionOf(roots: readonly string[], target: string): number[] | null {
  * acts as a second identity (GH #373). `navigation` is for a route or sidebar
  * item that opened an ID-less block by its runtime key and must keep showing it
  * after a reference to it stamps an `id::` in the same session: there the key
- * stays a locator for a block on the ref's page even once it has an id. */
-export function resolveBlockRef(ref: LoadedBlockRef, opts: { navigation?: boolean } = {}): string | null {
+ * stays a locator for a block on the ref's page even once it has an id.
+ * `locator` is for a caller that read `ref.uuid` as a runtime key and nothing
+ * else: only the live node under that key, on the ref's page, matches. */
+export function resolveBlockRef(ref: LoadedBlockRef, opts: { navigation?: boolean; locator?: boolean } = {}): string | null {
   const owner = pageByName(ref.page);
   if (
     !owner
     || owner.kind !== ref.pageKind
     || (ref.path !== undefined && owner.id !== ref.path)
   ) return null;
+
+  if (opts.locator) {
+    // The caller holds only a runtime key (a picker row for a block that had no
+    // authored id): that key names the block it was read from, even when another
+    // block's authored id happens to equal it (runtime keys are position-derived).
+    const runtime = doc.byId[ref.uuid];
+    return runtime && runtime.page === ref.page ? ref.uuid : null;
+  }
 
   if (ref.blockPos) {
     // A restored, not-yet-settled ref: only the position names the block, and
@@ -169,6 +179,9 @@ async function stampBlockId(id: string, committed: string): Promise<string | nul
   const fmt = formatForBlock(id);
   const existing = existingBlockId(node.raw, fmt);
   if (existing && existing !== committed) return null;
+  // GH #798: Tine's own `b<base36>-<n>` key is never an id:: in a file; a
+  // reference to it cannot resolve in Logseq, nor in Tine after a restart.
+  if (!existing && committed === id && !isBlockRefUuid(committed)) return null;
   const uuid = existing ?? committed;
   if (!existing) {
     setDoc("byId", id, "raw", rawWithBlockId(node.raw, uuid, fmt));
@@ -213,11 +226,17 @@ export function settleBlockRef(ref: LoadedBlockRef): LoadedBlockRef | null {
  * default `externalId`. Resolution goes through {@link resolveBlockRef}, so an
  * authored id wins and a runtime key is only a fallback for an ID-less block
  * (GH #373). Backend read errors reject; a missing, stale or unwritable
- * target resolves false. `externalId` is the ID to persist, stamped exactly. Without a callback,
- * flush the target page and resolve true only when its ID reaches disk.
- * With `insertReference`, stamp the ID, wait until the target's published bytes
- * carry it (STEP3 §8, Q2), then call it to edit the source and return its page
- * name (null aborts). `intended` is the caller's editor intent, checked before
+ * target resolves false. Without a callback, `externalId` is the ID an existing
+ * reference already carries: it is stamped exactly, flushed, and true resolves
+ * only when it reaches disk; a non-UUID runtime key is refused (GH #798).
+ * With `insertReference`, the reference is not written yet: stamp the target's
+ * ID, wait until its published bytes carry it (STEP3 §8, Q2), then call it with
+ * that ID to edit the source and return its page name (null aborts). The ID is
+ * the target's authored id when it has one, else `externalId` when the caller
+ * read it as an authored id, else a fresh random UUID: when `externalId` is the
+ * runtime locator `uuid` and the block has no id yet, that key is never
+ * persisted (GH #373, GH #798; OG's block-on-chosen-handler writes the block's
+ * random UUID). `intended` is the caller's editor intent, checked before
  * the stamp; `insertReference` checks it again and returns null once it expired
  * (Q-TS6), so an intent that expired during a lookup or a barrier stamps or
  * inserts nothing. A crash between the two leaves at most an unreferenced ID.
@@ -230,12 +249,14 @@ export async function persistBlockRefTarget(
   kind: PageKind,
   path?: string,
   externalId: string = uuid,
-  insertReference?: () => string | null,
+  insertReference?: (stampedId: string) => string | null,
   intended: () => boolean = () => true,
 ): Promise<boolean> {
   const owner = bindingOwner();
   const ref: LoadedBlockRef = { uuid: externalId, page, pageKind: kind, ...(path ? { path } : {}) };
-  if (!resolveBlockRef(ref)) {
+  // A pick whose only id is its runtime key names the block under that key.
+  const locator = !!insertReference && externalId === uuid;
+  if (!resolveBlockRef(ref, { locator })) {
     const result = await readOwned(owner, path
       ? backend().getPageByPath(path)
       : backend().getPage(page, kind));
@@ -246,17 +267,17 @@ export async function persistBlockRefTarget(
   // Re-check: a concurrent navigation may have loaded the page meanwhile, or the
   // cache may have been rebuilt (external change) and reassigned the block a new
   // uuid — in which case there's nothing safe to stamp.
-  const id = resolveBlockRef(ref);
+  const id = resolveBlockRef(ref, { locator });
   if (!id || !owner() || !blockWritable(id)) return false;
-  // `externalId` is the value the caller has committed (or will commit) as the
-  // reference, so it is stamped exactly, even when it equals the runtime key.
+  // Without a callback `externalId` is already committed as a reference, so it
+  // is stamped exactly (a UUID-shaped runtime key included, GH #373).
   if (!insertReference) return (await stampBlockId(id, externalId)) === externalId;
   if (!intended()) return false;
   const target = doc.byId[id];
   const fmt = formatForBlock(id);
   const existing = existingBlockId(target.raw, fmt);
-  const stableId = existing ?? externalId;
-  if (stableId !== externalId) return false;
+  const stableId = existing ?? (locator ? crypto.randomUUID() : externalId);
+  if (!locator && stableId !== externalId) return false;
   if (!existing) {
     setDoc("byId", id, "raw", rawWithBlockId(target.raw, stableId, fmt));
     markDirty(target.page, "save-block");
@@ -266,5 +287,5 @@ export async function persistBlockRefTarget(
   // and the live target still holds it. A failed barrier leaves the source as it was.
   if (!await settleWithWitness(target.page, stableId) || !owner() || doc.byId[id]?.page !== target.page
     || existingBlockId(doc.byId[id].raw, fmt) !== stableId) return false;
-  return !!insertReference() && !!owner();
+  return !!insertReference(stableId) && !!owner();
 }

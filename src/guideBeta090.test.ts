@@ -53,3 +53,51 @@ it("the Guide's tab instructions follow available width on every platform", () =
   expect(context).toContain("At 640 px or wider, the tab strip is available on every platform");
   expect(context).not.toContain("the tab strip and splits are off");
 });
+
+it("the Guide documents where Search-tab results open and the setting that changes it (GH #796)", () => {
+  const refs = guide("pages-links-references-search");
+  expect(refs).toContain("Clicking a result opens a new tab and keeps Search unchanged");
+  expect(refs).toContain("**Settings → Editor → Advanced → Search results open in**");
+  expect(refs).toContain("**New tab** is the default");
+  expect(guide("tips")).toContain("**Settings → Editor → Advanced → Search results open in → This tab**");
+});
+
+it("the Beta Guide explains seen marks, controls and the reachable notice", () => {
+  const files = guide("files-external-edits-backups");
+  for (const detail of ["thin bar in the margin", "A block was removed here", "Your own commits never count", "**Mark page seen**", "**Mark whole graph seen**", "**Forget seen state**", "notice stays at the top while you scroll"]) expect(files).toContain(detail);
+});
+
+it("the Beta Guide covers git sign-in, divergence, repair and phone lifecycle", () => {
+  const files = guide("files-external-edits-backups");
+  for (const detail of ["**Sign in**", "**Commit and sync automatically**", "**both have new commits**", "**Copy the git command**", "**Turn off line-ending conversion for this repository**", "When you switch to another app", "at most once per interval", "never starts bringing in changes while in the background"]) expect(files).toContain(detail);
+});
+
+it("the Beta Guide makes quick-share links discoverable on phones", () => {
+  const share = guide("share-pages");
+  for (const detail of ["On Android and iOS", "**Link**", "**Connect GitHub**", "compatible reader"]) expect(share).toContain(detail);
+});
+
+it("the Beta Guide explains theme typography independently of colors and style", () => {
+  const extend = guide("extend-tine");
+  for (const detail of ["**Use typography**", "**Use colors**", "**Use style**", "**Typography**", "fonts already installed on your device", "fallback fonts"]) expect(extend).toContain(detail);
+});
+
+it("the Beta Guide covers page folding and read-only viewing folds", () => {
+  for (const detail of ["Collapse all blocks on current page", "Expand all blocks on current page", "**t o**", "one Undo step"]) expect(guide("tips")).toContain(detail);
+  for (const detail of ["reloading restores the original folds", "JavaScript turned off"]) expect(guide("share-pages")).toContain(detail);
+});
+
+it("the Beta Guide describes desktop selection formatting and macOS history", () => {
+  expect(guide("tips")).toContain("formatting toolbar follows your selection");
+  expect(guide("where-things-are")).toContain("**Cmd+[** and **Cmd+]**");
+});
+
+it("the Beta Guide explains distribution updates and existing PDF view state", () => {
+  expect(guide("platforms-and-mobile")).toContain("TINE_PACKAGED_BY");
+  for (const detail of ["**Open another view**", "Each view keeps its own page and zoom", "Your page and zoom are restored"]) expect(guide("pdf")).toContain(detail);
+});
+
+it("the Beta Guide maps a graph with journals disabled to its home page", () => {
+  expect(guide("where-things-are")).toContain(":feature/enable-journals? false");
+  expect(guide("where-things-are")).toContain("configured home page");
+});

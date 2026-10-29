@@ -245,6 +245,12 @@ mod journal_guide_tests {
         assert!(reference.contains("Page results offer the same right-click menu"));
         assert!(tips.contains("**Enter** / **Shift+Enter** move forward / backward"));
         assert!(tips.contains("In a Search tab, clicking a result opens a new tab"));
+        // GH #796: where a plain click or Enter opens a Search-tab result is a setting.
+        assert!(reference.contains("**Settings → Editor → Advanced → Search results open in**"));
+        assert!(reference.contains("**New tab** is the default"));
+        assert!(
+            tips.contains("**Settings → Editor → Advanced → Search results open in → This tab**")
+        );
     }
 
     #[test]
@@ -937,7 +943,7 @@ mod rename_guide_tests {
             "Tine pushes and pulls only with a sync option",
             "**Commit and sync on demand** and **Commit and sync automatically**",
             "press **Sync now**",
-            "**Diverged** means this device and the remote both have commits",
+            "When this device and the remote **both have new commits**",
             "Tine then stops syncing and changes nothing",
             "Merging inside Tine comes later",
             "press **Sign in**",
@@ -980,6 +986,11 @@ mod rename_guide_tests {
             "invisible until it is committed",
             "Your own commits never count",
             "A block was removed here",
+            "**Previous change** and **Next change**",
+            "step through them in page order",
+            "“3 of 12”",
+            "never put a block into edit mode",
+            "**Next change since you last looked**",
             "**Mark page seen**",
             "**Mark whole graph seen**",
             "**Forget seen state**",

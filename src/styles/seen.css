@@ -46,6 +46,22 @@
 .seen-header-text {
   color: var(--text-secondary);
 }
+/* Previous / Next change sit between the count and Mark page seen; on a narrow
+   notice they wrap onto their own line (the notice is a wrapping flex row). */
+.seen-header-steps {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-right: auto;
+}
+.seen-header-position {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.seen-header-position.wrapped {
+  color: var(--text-primary);
+}
 .seen-header-muted {
   flex-basis: 100%;
   color: var(--text-tertiary, var(--text-secondary));
@@ -104,4 +120,13 @@
   text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
   background: color-mix(in srgb, var(--seen-changed-color) 12%, transparent);
   border-radius: 4px;
+}
+
+/* Previous / Next change landed on a removed-block marker: the same brief flash
+   a block row gets (app.css .block-flash). */
+.seen-removed.block-flash {
+  animation: block-flash 1.2s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .seen-removed.block-flash { animation: none; background: color-mix(in srgb, var(--seen-changed-color) 25%, transparent); }
 }

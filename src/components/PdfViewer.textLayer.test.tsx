@@ -35,7 +35,7 @@ vi.mock("pdfjs-dist", () => ({
     cancel() { this.layer.cancel(); }
   },
 }));
-vi.mock("pdfjs-dist/build/pdf.worker.min.mjs?url", () => ({ default: "pdf.worker.test.js" }));
+vi.mock("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url", () => ({ default: "pdf.worker.test.js" }));
 
 class Observer {
   static instances: Observer[] = [];
@@ -49,9 +49,9 @@ class Observer {
   }
 }
 
-function pdfPage() {
+function pdfPage(userUnit = 1) {
   return {
-    getViewport: vi.fn(({ scale }: { scale: number }) => ({ width: 612 * scale, height: 792 * scale })),
+    getViewport: vi.fn(({ scale }: { scale: number }) => ({ width: 612 * scale * userUnit, height: 792 * scale * userUnit, userUnit })),
     getTextContent: vi.fn().mockResolvedValue({ items: [] }),
     render: vi.fn().mockReturnValue({ promise: Promise.resolve(), cancel: vi.fn() }),
     cleanup: vi.fn(() => true),
@@ -60,12 +60,12 @@ function pdfPage() {
 
 async function flush() { for (let i = 0; i < 24; i++) await Promise.resolve(); }
 
-async function mount() {
+async function mount(userUnit = 1) {
   vi.spyOn(backend() as any, "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
   vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
   vi.spyOn(backend(), "readHighlights").mockResolvedValue([]);
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
-  const page = pdfPage();
+  const page = pdfPage(userUnit);
   h.getDocument.mockReturnValue({ promise: Promise.resolve({
     numPages: 1, getPage: vi.fn(async () => page), getOutline: vi.fn().mockResolvedValue([]),
     getDestination: vi.fn().mockResolvedValue(null), getPageIndex: vi.fn().mockResolvedValue(0),
@@ -96,6 +96,22 @@ describe("PdfViewer text layer ownership", () => {
     vi.restoreAllMocks();
     document.body.replaceChildren();
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  });
+
+  it("keeps pdf.js 5 glyph scale aligned for UserUnit pages across zoom and text updates", async () => {
+    vi.useFakeTimers();
+    const { host, dispose } = await mount(2);
+    try {
+      const layer = host.querySelector<HTMLElement>(".textLayer")!;
+      expect(layer.style.getPropertyValue("--total-scale-factor")).toBe("2");
+      h.layers[0].finish(); await flush();
+      (host.querySelector('button[title="Zoom in"]') as HTMLButtonElement).click();
+      expect(layer.style.getPropertyValue("--total-scale-factor")).toBe("2");
+      expect(layer.style.transform).toBe("scale(1.1)");
+      await vi.advanceTimersByTimeAsync(400); await flush();
+      expect(layer.style.getPropertyValue("--total-scale-factor")).toBe("2.2");
+      expect(layer.style.transform).toBe("");
+    } finally { dispose(); }
   });
 
   it("shows a failed text-layer render instead of leaving an unhandled rejection", async () => {

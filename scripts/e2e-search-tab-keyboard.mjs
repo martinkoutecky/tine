@@ -1,4 +1,6 @@
 // GH #697: native Search tab typing, roving highlight, and keyboard navigation.
+// GH #796: Settings > Editor > Advanced > "Search results open in": New tab (default,
+// GH #416) opens the highlighted page beside Search; This tab opens it in the Search tab.
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -27,7 +29,7 @@ const driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", webdriverServer
   { env, stdio: ["ignore", log, log], detached: true });
 const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   workingDiff: true, app, sha256: crypto.createHash("sha256").update(fs.readFileSync(app)).digest("hex"),
-  journey: "Open Search tab through bound shortcut; type; ArrowDown then ArrowUp returns to the search box; ArrowDown twice; Enter opens second displayed page" };
+  journey: "Open Search tab through bound shortcut; type; ArrowDown then ArrowUp returns to the search box; ArrowDown twice; Enter opens second displayed page in a new tab; Settings: Search results open in = This tab; Enter on the first result navigates the Search tab itself" };
 let browser;
 let stage = "startup";
 try {
@@ -70,12 +72,52 @@ try {
     active: document.activeElement?.classList.contains("active"), tabIndex: document.activeElement?.tabIndex }));
   if (selected.text !== rows[1] || !selected.active || selected.tabIndex !== 0) throw Error(`Expected second accessible highlighted row: ${JSON.stringify({ rows, selected })}`);
   try { execFileSync("import", ["-window", "root", path.join(out, "highlight.png")], { env }); } catch {}
+  const tabState = () => browser.execute(() => ({ count: document.querySelectorAll(".tab-strip-scroll .tab[data-tab-id]").length,
+    active: document.querySelector(".tab-strip-scroll .tab.active[data-tab-id]")?.getAttribute("data-tab-id") ?? null }));
+  const tabsBefore = await tabState();
   stage = "Enter opens highlighted page";
   await browser.keys(["Enter"]);
   await browser.waitUntil(async () => (await browser.$(".page-title").getText()).trim() === rows[1],
     { timeout: 10000, timeoutMsg: "Enter did not open the highlighted page" });
+  // Default (GH #416): the page opened in a NEW foreground tab and Search stays beside it.
+  const tabsAfterDefault = await tabState();
+  if (tabsAfterDefault.count !== tabsBefore.count + 1 || tabsAfterDefault.active === tabsBefore.active)
+    throw Error(`Default Enter should open a new tab: ${JSON.stringify({ tabsBefore, tabsAfterDefault })}`);
   try { execFileSync("import", ["-window", "root", path.join(out, "opened.png")], { env }); } catch {}
-  proof.outcome = "PASS"; proof.rows = rows; proof.opened = rows[1];
+  stage = "GH #796: choose This tab in Settings";
+  await browser.$('button[title^="Settings"]').click();
+  await browser.$(".settings-modal").waitForExist({ timeout: 5000 });
+  await browser.$("//button[contains(@class,'settings-nav-item') and normalize-space(.)='Editor']").click();
+  const advanced = await browser.$(".settings-advanced-toggle");
+  if ((await advanced.getAttribute("aria-expanded")) !== "true") await advanced.click();
+  const choice = await browser.$('[data-setting-label="Search results open in"] select');
+  await choice.waitForExist({ timeout: 5000 });
+  await choice.scrollIntoView();
+  if ((await choice.getValue()) !== "tab") throw Error("Search results open in should default to New tab");
+  await choice.selectByAttribute("value", "here");
+  await browser.waitUntil(async () => (await choice.getValue()) === "here", { timeout: 5000 });
+  await browser.$("//div[contains(@class,'settings-modal')]//button[normalize-space(.)='✕']").click();
+  await browser.$(".settings-modal").waitForExist({ timeout: 5000, reverse: true });
+  stage = "GH #796: return to the Search tab";
+  await browser.execute((id) => document.querySelector(`.tab-strip-scroll .tab[data-tab-id="${id}"]`)?.click(), tabsBefore.active);
+  const searchInput = await browser.$(".query-workspace-source");
+  await searchInput.waitForDisplayed({ timeout: 10000 });
+  await browser.waitUntil(() => browser.execute(() => document.querySelectorAll(".query-workspace button[data-query-result]").length === 3),
+    { timeout: 10000, timeoutMsg: "Search tab lost its results" });
+  const tabsInSearch = await tabState();
+  await searchInput.click();
+  await browser.keys(["ArrowDown"]);
+  // The first row differs from the page already open in the second tab, so tab reuse cannot explain a switch.
+  stage = "GH #796: Enter opens the first result in this tab";
+  await browser.keys(["Enter"]);
+  await browser.waitUntil(async () => (await browser.$(".page-title").getText()).trim() === rows[0],
+    { timeout: 10000, timeoutMsg: "Enter did not open the first result" });
+  const tabsInPlace = await tabState();
+  if (tabsInPlace.count !== tabsInSearch.count || tabsInPlace.active !== tabsBefore.active)
+    throw Error(`This tab should navigate the Search tab itself: ${JSON.stringify({ tabsInSearch, tabsInPlace })}`);
+  if (await browser.$(".query-workspace").isExisting()) throw Error("Search workspace still shown after opening in this tab");
+  try { execFileSync("import", ["-window", "root", path.join(out, "opened-here.png")], { env }); } catch {}
+  proof.outcome = "PASS"; proof.rows = rows; proof.opened = rows[1]; proof.openedHere = rows[0];
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));
   console.log(`PASS GH #697: ${out}`);
 } catch (error) {
