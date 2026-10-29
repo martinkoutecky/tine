@@ -918,6 +918,26 @@ fn another_devices_trash_copy_does_not_stop_the_pull() {
         !phone.root.join(laptop_trash).exists(),
         "a pull never writes Tine's own files"
     );
+    // Nothing is staged under the published HEAD (the index's own entries
+    // are the pulled commit's), and a no-op autocommit keeps it that way.
+    let staged = |repo: &git2::Repository| {
+        let mut index = repo.index().unwrap();
+        index.read(true).unwrap();
+        index.write_tree().unwrap()
+    };
+    let theirs_tree = phone.repo.find_commit(theirs).unwrap().tree_id();
+    assert_eq!(
+        staged(&phone.repo),
+        theirs_tree,
+        "nothing staged after the pull"
+    );
+    assert_eq!(commit_now(&phone.root, MESSAGE).unwrap(), Outcome::Clean);
+    assert_eq!(head(&phone.repo), theirs);
+    assert_eq!(
+        staged(&phone.repo),
+        theirs_tree,
+        "nor after a no-op autocommit"
+    );
 
     // The next commit with a real change first untracks the laptop's copy.
     phone.edit("pages/a.md", "- edited here\n");
@@ -930,6 +950,11 @@ fn another_devices_trash_copy_does_not_stop_the_pull() {
     let untrack = mine.parent(0).unwrap();
     assert_eq!(untrack.message().ok(), Some(UNTRACK_MESSAGE));
     assert_eq!(untrack.parent_id(0).unwrap(), theirs);
+    assert_eq!(
+        staged(&phone.repo),
+        mine.tree_id(),
+        "nothing staged after it"
+    );
     assert_eq!(cycle(&slot, &credentials()).code, "pushed");
     assert_eq!(phone.remote_tip(), mine.id());
     slot.background_cancelled.store(true, Ordering::Release);

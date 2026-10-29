@@ -513,6 +513,12 @@ fn ignore_lines_use_git_rules_and_only_write_the_nested_graph() {
         (Some(".syncthing.*\n"), vec!["logseq/.tine-*"]),
         (Some(".*\n"), vec![]),
         (Some("**/logseq/.tine-*\n"), vec![".syncthing.*"]),
+        // Narrower or negated rules leave the real trash visible: not present.
+        (
+            Some(".*\n!**/logseq/.tine-trash/\n!**/logseq/.tine-trash/**\n"),
+            vec!["logseq/.tine-*"],
+        ),
+        (Some("**/logseq/.tine-trash/\n"), BOTH.to_vec()),
         (None, BOTH.to_vec()),
     ] {
         let f = fixture(&[("Notes [work]/pages/a.md", "- a\n")]);
@@ -543,9 +549,7 @@ fn ignore_lines_use_git_rules_and_only_write_the_nested_graph() {
         // The graph-relative line matches the nested graph's own folder,
         // and nothing outside it.
         let repo = &f.repo;
-        assert!(repo
-            .status_should_ignore(Path::new("Notes [work]/logseq/.tine-trash/pages/x.md"))
-            .unwrap());
+        assert!(!listed(repo, "Notes [work]/logseq/.tine-trash/pages/x.md"));
         if rule.is_none() {
             assert!(!repo
                 .status_should_ignore(Path::new("logseq/.tine-trash/pages/x.md"))
@@ -556,6 +560,55 @@ fn ignore_lines_use_git_rules_and_only_write_the_nested_graph() {
             .unwrap()
             .is_empty());
     }
+}
+
+/// R3: a user negation that re-includes the trash under a covering rule
+/// does not count as the line being present; the appended line comes last,
+/// so terminal git then ignores the trash too.
+#[test]
+fn a_negated_trash_rule_still_gets_the_tine_line() {
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    let original = ".syncthing.*\nlogseq/.tine-*\n!logseq/.tine-trash/\n!logseq/.tine-trash/**\n";
+    write(&f.work, ".gitignore", original);
+    let trash = "logseq/.tine-trash/pages/x__a.md";
+    assert!(
+        listed(&f.repo, trash),
+        "the negation keeps the trash visible"
+    );
+    let store = tine_store::Store::open(&f.work, Default::default())
+        .unwrap()
+        .0;
+    let app_data = f._dir.path().join("device");
+    assert_eq!(
+        prepare_git_ignore(&store, &f.work, Some(&app_data)).unwrap(),
+        vec!["logseq/.tine-*"]
+    );
+    assert_eq!(
+        fs::read_to_string(f.work.join(".gitignore")).unwrap(),
+        format!("{original}logseq/.tine-*\n")
+    );
+    assert!(
+        !listed(&f.repo, trash),
+        "the appended line comes last and wins"
+    );
+}
+
+/// Whether git lists `path` (created for the question) as untracked:
+/// libgit2's status walk, like git's, never enters an ignored folder (its
+/// single-path ignore query lets a negation for the path itself win).
+fn listed(repo: &git2::Repository, path: &str) -> bool {
+    let full = repo.workdir().unwrap().join(path);
+    fs::create_dir_all(full.parent().unwrap()).unwrap();
+    fs::write(&full, "x").unwrap();
+    let mut options = git2::StatusOptions::new();
+    options.include_untracked(true).recurse_untracked_dirs(true);
+    let listed = repo
+        .statuses(Some(&mut options))
+        .unwrap()
+        .iter()
+        .any(|e| e.path().ok() == Some(path));
+    fs::remove_file(&full).unwrap();
+    listed
 }
 
 #[test]

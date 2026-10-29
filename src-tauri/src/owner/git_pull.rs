@@ -14,6 +14,8 @@
 //!    those skipped as already at `U` included (P2);
 //! 5. the index entries moved to `U`'s blobs and the index installed durably,
 //!    then the branch moved from `H` to `U` by compare-and-swap (P1, P1b).
+//!    Tine's own `logseq/.tine-*` entries take `U`'s too, though their files
+//!    are never written (D-20261029-GT), so nothing is staged after a pull.
 //!
 //! Anything that stops before step 5 leaves `HEAD` at `H`; the next cycle
 //! resumes from step 1. Meanwhile every autocommit skips ([`defers_autocommit`],
@@ -924,6 +926,9 @@ fn apply_pull(slot: &GraphSlot, repo: &Repo, head: Oid, up: Oid) -> PullOutcome 
             }
         }
     }
+    if let Err(error) = own_entries_at(repo, &mut lock.index, up) {
+        return git(error);
+    }
     if let Err(error) = lock.install() {
         return PullOutcome::Incomplete(format!("the index could not be written: {error}"));
     }
@@ -946,6 +951,65 @@ fn apply_pull(slot: &GraphSlot, repo: &Repo, head: Oid, up: Oid) -> PullOutcome 
         Ok(false) => PullOutcome::Diverged("the branch moved while the pull was applied".into()),
         Err(error) => git(error),
     }
+}
+
+/// D-20261029-GT: the index's `logseq/.tine-*` entries become exactly `U`'s,
+/// so publishing `U` leaves nothing staged (an ordinary `git commit` would
+/// otherwise record a deletion or revert of them). Their files are not
+/// written: this device's own bytes stay, and git may list them as unstaged
+/// until the next real autocommit untracks them. Unchanged entries keep their
+/// stat data.
+fn own_entries_at(repo: &Repo, index: &mut git2::Index, up: Oid) -> Result<(), git2::Error> {
+    let tree = repo.repo.find_commit(up)?.tree()?;
+    let mut want: HashMap<Vec<u8>, (Oid, u32)> = HashMap::new();
+    if let Some(logseq) = tree
+        .get_name("logseq")
+        .filter(|e| e.kind() == Some(ObjectType::Tree))
+    {
+        repo.repo
+            .find_tree(logseq.id())?
+            .walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+                if entry.kind() != Some(ObjectType::Tree) {
+                    let mut path = format!("logseq/{root}").into_bytes();
+                    path.extend_from_slice(entry.name_bytes());
+                    if git_autocommit::tine_own(&path) {
+                        want.insert(path, (entry.id(), entry.filemode() as u32));
+                    }
+                }
+                git2::TreeWalkResult::Ok
+            })?;
+    }
+    let mut stale = Vec::new();
+    for entry in index.iter().filter(|e| git_autocommit::tine_own(&e.path)) {
+        if want.get(&entry.path) == Some(&(entry.id, entry.mode)) {
+            want.remove(&entry.path);
+        } else {
+            stale.push(entry.path);
+        }
+    }
+    for path in stale {
+        let path = std::str::from_utf8(&path)
+            .map_err(|_| git2::Error::from_str("an own index path is not UTF-8"))?;
+        index.remove_path(Path::new(path))?;
+    }
+    for (path, (id, mode)) in want {
+        let size = repo.repo.find_blob(id).map_or(0, |b| b.size() as u32);
+        index.add(&git2::IndexEntry {
+            ctime: git2::IndexTime::new(0, 0),
+            mtime: git2::IndexTime::new(0, 0),
+            dev: 0,
+            ino: 0,
+            mode,
+            uid: 0,
+            gid: 0,
+            file_size: size,
+            id,
+            flags: 0,
+            flags_extended: 0,
+            path,
+        })?;
+    }
+    Ok(())
 }
 
 /// The edit kinds of a host operation's pages.

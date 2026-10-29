@@ -8,7 +8,7 @@ use git2::{Index, IndexEntry, Oid, Repository, Signature};
 use std::path::Path;
 
 use super::Graph;
-use crate::owner::git_autocommit::{commit_now, Outcome};
+use crate::owner::git_autocommit::{commit_now, Outcome, UNTRACK_MESSAGE};
 use crate::owner::git_pull::{pull, test_hook, Held, PullOutcome, Step};
 use tine_store::{ApplyRefusal, PageId};
 
@@ -790,38 +790,130 @@ fn q_git_refuses_by_name_before_writing() {
 
 /// D-20261029-GT: another device's `logseq/.tine-*` files (an older Tine
 /// committed its trash) are neither written nor a reason to refuse; the
-/// rest of the pull lands. (Until then this was a by-name refusal.)
+/// rest of the pull lands. The index's own entries follow the pulled commit,
+/// so nothing is staged after it (an ordinary `git commit` records nothing
+/// of them); this device's own bytes survive; a no-op autocommit changes
+/// nothing, and the next real change untracks them in a parent of its own.
 #[test]
 fn q_git_pull_skips_tine_own_paths_without_refusing() {
     test_hook::clear();
     let graph = Graph::new();
     let repo = repo(&graph);
     let slot = graph.slot();
+    let added = "logseq/.tine-trash/pages/x.md";
+    let gone = "logseq/.tine-trash/pages/gone.md";
+    let mine = "logseq/.tine-trash/pages/mine.md";
+    std::fs::create_dir_all(graph.root.join("logseq/.tine-trash/pages")).unwrap();
+    std::fs::write(graph.root.join(mine), b"- this device\n").unwrap();
+    let nothing_staged = |at: Oid, step: &str| {
+        assert_eq!(
+            index_tree(&repo),
+            tree_of(&repo, at),
+            "{step}: nothing staged"
+        );
+    };
     let h = head(&repo);
-    let trash = "logseq/.tine-trash/pages/x.md";
-    let up = upstream(
+    // Incoming own adds, one where this device has other bytes, with a page.
+    let u1 = upstream(
         &repo,
         &[
-            Edit::Write(trash, b"- x\n"),
+            Edit::Write(added, b"- x\n"),
+            Edit::Write(gone, b"- gone\n"),
+            Edit::Write(mine, b"- the laptop's\n"),
             Edit::Write("pages/b.md", b"- theirs\n"),
         ],
     );
-    let outcome = pull(&slot);
     assert_eq!(
-        outcome,
+        pull(&slot),
         PullOutcome::Landed {
             from: h,
-            to: up,
+            to: u1,
             written: 1
         }
     );
-    assert_eq!(head(&repo), up);
-    assert_eq!(disk(&graph, "pages/b.md"), at_u(&repo, up, "pages/b.md"));
+    nothing_staged(u1, "add");
+    assert_eq!(disk(&graph, "pages/b.md"), at_u(&repo, u1, "pages/b.md"));
     assert_eq!(
-        disk(&graph, trash),
+        disk(&graph, added),
         None,
         "another device's trash is not written"
     );
+    assert_eq!(disk(&graph, mine), Some(b"- this device\n".to_vec()));
+    // An incoming own change and delete, with a page.
+    let u2 = upstream(
+        &repo,
+        &[
+            Edit::Write(added, b"- x, again\n"),
+            Edit::Remove(gone),
+            Edit::Write("pages/c.md", b"- new\n"),
+        ],
+    );
+    assert_eq!(
+        pull(&slot),
+        PullOutcome::Landed {
+            from: u1,
+            to: u2,
+            written: 1
+        }
+    );
+    nothing_staged(u2, "change and delete");
+    assert_eq!(disk(&graph, added), None);
+    assert_eq!(
+        commit_now(&graph.root, "Tine: autosave").unwrap(),
+        Outcome::Clean
+    );
+    assert_eq!(head(&repo), u2);
+    nothing_staged(u2, "no-op autocommit");
+    // The next real change untracks them first, in a commit of its own.
+    std::fs::write(graph.root.join("pages/b.md"), b"- mine\n").unwrap();
+    let Outcome::Committed(real) = commit_now(&graph.root, "Tine: autosave").unwrap() else {
+        panic!("the edit is committed");
+    };
+    let real = repo.find_commit(real).unwrap();
+    let untrack = real.parent(0).unwrap();
+    assert_eq!(untrack.message().ok(), Some(UNTRACK_MESSAGE));
+    assert_eq!(untrack.parent_id(0).unwrap(), u2);
+    for path in [added, mine] {
+        assert!(
+            real.tree().unwrap().get_path(Path::new(path)).is_err(),
+            "{path}"
+        );
+    }
+    nothing_staged(real.id(), "after the untrack");
+    assert_eq!(disk(&graph, mine), Some(b"- this device\n".to_vec()));
+}
+
+/// The own entries are part of the index published before the ref (P1): a
+/// crash between the two resumes to the same consistent state.
+#[test]
+fn q_git_own_entries_resume_across_index_and_ref() {
+    test_hook::clear();
+    let graph = Graph::new();
+    let repo = repo(&graph);
+    let slot = graph.slot();
+    let h = head(&repo);
+    let own = "logseq/.tine-trash/pages/x.md";
+    let up = upstream(
+        &repo,
+        &[
+            Edit::Write(own, b"- x\n"),
+            Edit::Write("pages/a.md", b"- theirs\n"),
+        ],
+    );
+    test_hook::crash_at(Step::AfterIndex);
+    assert!(matches!(pull(&slot), PullOutcome::Incomplete(_)));
+    assert_eq!(head(&repo), h);
+    assert_eq!(index_tree(&repo), tree_of(&repo, up), "the index names U");
+    test_hook::restart(&graph.root);
+    remove_lock(&repo);
+    assert_eq!(
+        commit_now(&graph.root, "Tine: autosave").unwrap(),
+        Outcome::PullPending
+    );
+    assert_eq!(landed(&pull(&slot)), 0);
+    assert_eq!(head(&repo), up);
+    assert_eq!(index_tree(&repo), tree_of(&repo, up), "nothing staged");
+    assert_eq!(disk(&graph, own), None);
 }
 
 #[test]

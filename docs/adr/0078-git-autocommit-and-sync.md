@@ -68,8 +68,11 @@ Tine checks git's ignore rules for a representative `.syncthing.*` name. If not 
 it appends `.syncthing.*` to **the graph root's** `.gitignore`, including for a graph nested
 inside a larger repository. Existing bytes and line endings survive; the new line ends
 with a newline. Follow-up D-20261029-GT adds a second line the same way, `logseq/.tine-*`
-(Tine's own per-device files: the trash), checked with a representative
-`logseq/.tine-ignore-check` name and remembered under its own key
+(Tine's own per-device files: the trash), counted as present only when git ignores both a
+representative `logseq/.tine-ignore-check` and a real trash file (a file below an ignored
+folder counts as ignored, as in git; so a negation such as `!logseq/.tine-trash/**` still
+gets the line, which comes last and wins; staging excludes these files regardless), and
+remembered under its own key
 `git-tine-own-ignore-checked`; lines due together go into one write and one notice, and a
 device that already had the Syncthing attempt gets only the new line, once. The line is
 graph-relative, so in the graph root's `.gitignore` it matches only the graph's own
@@ -97,13 +100,23 @@ stay on disk`), made just before the next commit with a real change and never al
 devices untracking the same files would otherwise diverge over that commit alone. A pull
 compares `H` and `U` without `logseq/.tine-*` (§4): it neither writes those paths nor
 refuses over them (before, a trash copy in `U` was `pull-refused`, and a committed trash
-copy made the next pull `diverged`: REG-SB1-GIT-TINE-OWN-TRASH). This keeps temps out even when ignore setup fails or a narrower rule leaves some
+copy made the next pull `diverged`: REG-SB1-GIT-TINE-OWN-TRASH). The pull still sets the
+index's `logseq/.tine-*` entries to exactly `U`'s, before the index install that precedes
+the ref move, so publishing `U` leaves nothing staged (an ordinary `git commit` records
+nothing of them); their files are not written, so a terminal `git status` may list them as
+modified or deleted until the next real autocommit untracks them. The namespace is literal:
+any file named `logseq/.tine-*` counts as Tine's own, whoever wrote it. Tine's byte-exact
+`logseq/.tine-` prefix governs staging, untracking and the pull; on a case-insensitive
+repository (`core.ignorecase`) git's matching of the `.gitignore` line is wider (it also
+matches `logseq/.TINE-x`), which, like any ignore rule, only keeps such an untracked file
+from being added: a tracked one stays tracked and is pulled as ordinary content. This keeps temps out even when ignore setup fails or a narrower rule leaves some
 directories visible. It never deletes their working files. Conflict copies
 (`*.sync-conflict-*`) remain user data and are committed unless the user's rules ignore
 them. No new per-edit file or transport record: setup adds 13 bytes (`.syncthing.*\n`)
 and 15 bytes (`logseq/.tine-*\n`), one more each with CRLF, plus a missing separator
 newline, and one device-local notice key per line once; the untrack is one commit per
-repository, once;
+graph (a nested graph cleans up separately) each time tracked own files appear, normally
+once, again only if an older peer re-adds its own files;
 one-block and 60-block page edits both add zero bytes/files/transport beyond §Unit cost.
 
 Every change git sees under the graph root, honouring `.gitignore`: Tine's saves, other programs' edits,

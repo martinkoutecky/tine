@@ -6,22 +6,29 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use super::{open_checked, registry};
+use super::{open_checked, prefix_of, registry};
 
 /// The `.gitignore` lines autocommit adds once per device and graph: the
-/// device-local notice key that remembers the attempt, the line, and a
-/// graph-relative name git's rules are asked about (D-20261026-GI,
-/// D-20261029-GT).
-const IGNORE_LINES: [(&str, &str, &str); 2] = [
+/// device-local notice key that remembers the attempt, the line, and the
+/// graph-relative names git's rules are asked about (D-20261026-GI,
+/// D-20261029-GT). A line counts as present only when git ignores every
+/// name: a representative one and a real trash file, so a narrower rule or
+/// a negation such as `!logseq/.tine-trash/**` still gets the line (the
+/// appended line comes last, so it wins; staging excludes these files
+/// regardless, so the negation could never have made them tracked).
+const IGNORE_LINES: [(&str, &str, &[&str]); 2] = [
     (
         "git-syncthing-ignore-checked",
         ".syncthing.*",
-        ".syncthing.tine-ignore-check.tmp",
+        &[".syncthing.tine-ignore-check.tmp"],
     ),
     (
         "git-tine-own-ignore-checked",
         "logseq/.tine-*",
-        "logseq/.tine-ignore-check",
+        &[
+            "logseq/.tine-ignore-check",
+            "logseq/.tine-trash/pages/tine-ignore-check.md",
+        ],
     ),
 ];
 static IGNORE_SETUP_LOCK: Mutex<()> = Mutex::new(());
@@ -58,13 +65,17 @@ pub(crate) fn prepare_git_ignore(
     let fail = |error: String| (lines.clone(), error);
     let repo = open_checked(root).map_err(|e| fail(e.message()))?;
     let mut missing = Vec::new();
-    for (_, line, probe) in &due {
-        let ignored = repo
-            .repo
-            .status_should_ignore(&repo.prefix.join(probe))
-            .map_err(|e| fail(e.to_string()))?;
-        if !ignored {
-            missing.push(*line);
+    for (_, line, probes) in &due {
+        for probe in *probes {
+            let path = match prefix_of(&repo) {
+                prefix if prefix.is_empty() => (*probe).to_owned(),
+                prefix => format!("{prefix}/{probe}"),
+            };
+            let ignored = git_ignores(&repo.repo, &path).map_err(|e| fail(e.to_string()))?;
+            if !ignored {
+                missing.push(*line);
+                break;
+            }
         }
     }
     for (key, _, _) in &due {
@@ -74,6 +85,19 @@ pub(crate) fn prepare_git_ignore(
         append_git_ignore(store, &missing).map_err(|e| (missing.clone(), e))?;
     }
     Ok(missing)
+}
+
+/// Whether git ignores the work-tree `path` (slash-separated). Like git, and
+/// unlike libgit2's single-path query, a path below an ignored folder is
+/// ignored whatever a later negation for the path itself says; each folder
+/// is asked with a trailing slash so folder-only rules apply.
+fn git_ignores(repo: &git2::Repository, path: &str) -> Result<bool, git2::Error> {
+    for (at, _) in path.match_indices('/') {
+        if repo.status_should_ignore(Path::new(&path[..=at]))? {
+            return Ok(true);
+        }
+    }
+    repo.status_should_ignore(Path::new(path))
 }
 
 /// Fixed non-page target; read exact bytes once, then create without replacing
