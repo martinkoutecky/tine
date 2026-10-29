@@ -195,6 +195,8 @@ try {
     }, v.place);
     await delay(200);
     const before = await caretProbe();
+    // Remount accounting: every window shell that exists now must still be the same element after the edit.
+    await browser.execute(() => { window.__w0 = [...document.querySelectorAll("[data-outline-window]")]; });
     const steps = [];
     const stepKeys = v.paste ? ["paste"] : v.keys;
     for (const key of stepKeys) {
@@ -224,19 +226,21 @@ try {
       if (process.env.TRACE) { console.log(v.name, key, frames.join(" ")); console.log((await browser.execute(() => window.__frames)).join("\n")); }
       steps.push({ key, probe });
     }
+    const remountedWindows = await browser.execute(() => window.__w0.filter((w) => !w.isConnected).length);
     const last = steps[steps.length - 1].probe;
     const moved = last ? Math.abs(last.scrollTop - before.scrollTop) : null;
     // "Least movement": a view that moved at all must have moved just far enough, so the caret ends up
     // at an edge of the viewport. A caret left mid-screen means the view was re-centred (the WebView2 jump).
     const flush = !last || moved <= 20 || last.caretTop <= last.pinBottom + 40 || last.caretBottom >= last.viewHeight - 40;
-    const result = { variant: v.name, flush, images: process.env.IMAGES !== "0", sidebar, nested, atBottom: atBottom.top, atTop: atTop.top, before, steps, caretVisible: steps.every((s) => visible(s.probe)), scrollMoved: moved };
+    const result = { variant: v.name, flush, images: process.env.IMAGES !== "0", sidebar, nested, atBottom: atBottom.top, atTop: atTop.top, before, remountedWindows, steps, caretVisible: steps.every((s) => visible(s.probe)), scrollMoved: moved };
     results.push(result);
     console.log(JSON.stringify(result));
     await browser.keys("Escape");
     await delay(400);
   }
-  const bad = results.filter((r) => !r.caretVisible || !r.flush);
-  if (bad.length) throw new Error(`caret lost or view jumped after: ${bad.map((r) => `${r.variant} (visible=${r.caretVisible}, flush=${r.flush}, scrollMoved=${r.scrollMoved})`).join("; ")}`);
+  // A flat page edits inside one window list: no structural key may replace any window shell (GH #745 follow-up).
+  const bad = results.filter((r) => !r.caretVisible || !r.flush || (!nested && r.remountedWindows > 0));
+  if (bad.length) throw new Error(`caret lost or view jumped after: ${bad.map((r) => `${r.variant} (visible=${r.caretVisible}, flush=${r.flush}, scrollMoved=${r.scrollMoved}, remountedWindows=${r.remountedWindows})`).join("; ")}`);
   console.log(`PASS: every structural edit kept the caret on screen with a minimal scroll. Artifacts: ${tmp}`);
 } catch (error) {
   if (browser) { try { await browser.saveScreenshot(`${tmp}/failure.png`); } catch {} }

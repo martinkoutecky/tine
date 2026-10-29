@@ -501,7 +501,12 @@ export function PageView(): JSX.Element {
           if (!owned()) return;
           // A withheld feed is not a failed read: stay on the route, say why,
           // and let the pending refresh fill it in place.
-          if (!hasPublishedFeed(epoch) && !(feedError instanceof FeedWithheld)) {
+          // A read deferred by a save, edit or conflict still held on a feed page (it returned null
+          // and armed pendingFeedRestart; the retry effect below fires on the gate's release) is no
+          // failed read either: at startup a template-created today page is still being saved. Throwing
+          // here showed "Couldn't open this page" and the later retry never cleared it (GH #671).
+          const deferred = feedError == null && pendingFeedRestart && feedHasActiveEdit();
+          if (!hasPublishedFeed(epoch) && !(feedError instanceof FeedWithheld) && !deferred) {
             recordFeedReason("route-unpublished");
             throw feedError ?? new Error("Journal feed read failed.");
           }
@@ -590,7 +595,11 @@ export function PageView(): JSX.Element {
     if (route.kind !== "journals") return;
     const owner = journalOwner(route);
     if (!ownerIsLive(owner)) return;
-    if (pendingFeedRestart || journalAsOfDay !== localDayKey()) {
+    // A restart deferred for an edit in the loaded window waits for that edit
+    // (the lifecycle effect below retries it); appending older days touches
+    // no loaded page, so scrolling still pages meanwhile. Retrying here only
+    // deferred again, pinning the feed at its first page.
+    if ((pendingFeedRestart && !feedHasActiveEdit()) || journalAsOfDay !== localDayKey()) {
       await refreshJournalFeedForCurrentDay(owner);
       return;
     }

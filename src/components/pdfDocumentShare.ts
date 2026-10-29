@@ -4,7 +4,7 @@ import { discardPdfDocument } from "./pdfViewerPrimitives";
 /** What a view gets from the shared load: the document, or the message its
  * error surface shows. */
 export type SharedPdfDocument =
-  | { kind: "ok"; doc: pdfjs.PDFDocumentProxy }
+  | { kind: "ok"; doc: pdfjs.PDFDocumentProxy; failure?: Promise<string> }
   | { kind: "error"; message: string };
 
 /** Starts one load: read the bytes, hand the pdf.js loading task over as soon

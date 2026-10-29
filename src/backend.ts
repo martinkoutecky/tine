@@ -614,6 +614,11 @@ class TauriBackend implements Backend {
     const buf = await this.call<ArrayBuffer>("read_asset", { name, maxBytes });
     return new Uint8Array(buf);
   }
+  async pdfAssetSource(name: string, maxBytes: number, bindingGeneration: number) {
+    const info = await this.assetCall<import("./pdfAssetSource").PdfAssetInfo>("stat_asset", { name, maxBytes }, bindingGeneration);
+    return { length: info.length, read: async (begin: number, end: number) => new Uint8Array(
+      await this.assetCall<ArrayBuffer>("read_asset_range", { name, maxBytes, begin, end, version: info.version }, bindingGeneration)) };
+  }
   async streamAsset(name: string) {
     const path = await this.call<string>("stream_asset_path", { name });
     return this.convertFileSrc(path, "tine-media");

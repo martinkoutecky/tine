@@ -114,6 +114,10 @@ function installFakeWindow() {
   };
 
   return {
+    dispatchMouse(type: string, button: number, buttons = 0) {
+      const event = { type, button, buttons, clientX: 20, clientY: 20, preventDefault() {} } as MouseEvent;
+      listeners.filter(l => l.type === type && l.capture).forEach(l => l.listener(event));
+    },
     dispatchCaptureKeydown(event: KeyboardEvent) {
       listeners
         .filter((l) => l.type === "keydown" && l.capture)
@@ -268,6 +272,15 @@ afterEach(() => {
 });
 
 describe("mouse side-button navigation (#156)", () => {
+  it("routes the macOS Wry down/up events into page history (GH #780)", () => {
+    const back = vi.spyOn(router, "goBack").mockImplementation(() => {});
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    fake.dispatchMouse("mousedown", 3, 8);
+    fake.dispatchMouse("mouseup", 3);
+    expect(back).toHaveBeenCalledTimes(1);
+    dispose();
+  });
   it("aux button 3 (X1) goes back and button 4 (X2) goes forward, once each", () => {
     const back = vi.spyOn(router, "goBack").mockImplementation(() => {});
     const fwd = vi.spyOn(router, "goForward").mockImplementation(() => {});

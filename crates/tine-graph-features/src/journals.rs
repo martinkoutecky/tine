@@ -73,7 +73,12 @@ where
         match load(&id)? {
             Loaded::Page(value) => out.push(value),
             Loaded::Gone => {}
-            Loaded::Unreadable(reason) => unreadable.push(format!("{}: {reason}", id.as_str())),
+            Loaded::Unreadable(reason) => {
+                tine_core::diag_line::diagnostic_line(
+                    "Tine unreadable file producer=journal-feed-read",
+                );
+                unreadable.push(format!("{}: {reason}", id.as_str()));
+            }
         }
         if out.len() == limit {
             break;

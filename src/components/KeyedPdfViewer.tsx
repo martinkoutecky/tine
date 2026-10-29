@@ -53,7 +53,7 @@ export function KeyedPdfViewer(props: {
             focused={props.focused}
             onClose={props.onClose}
             onOpenNotes={props.onOpenNotes}
-            onViewState={props.onViewState}
+            onViewState={(state) => { if (resourceKey() === _key) props.onViewState?.(state); }}
             onAnotherView={props.onAnotherView}
           />
         );

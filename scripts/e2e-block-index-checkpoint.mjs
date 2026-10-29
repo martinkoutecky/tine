@@ -1,6 +1,8 @@
 // Native observation of exact block ownership after watcher delivery and a
 // checkpoint restart. Build the app with custom-protocol and the existing
-// checkpoint_launch_bench example with test-faults before running under Xvfb.
+// checkpoint_launch_bench example with test-faults before running under Xvfb. The journey builds
+// that example itself when it is missing (the integration gate's stage build makes only the app),
+// and fails loudly when the build fails; TINE_CHECKPOINT_BENCH names a prebuilt one instead.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import net from "node:net";
@@ -30,6 +32,16 @@ const env = { ...process.env, TINE_GRAPH: graph,
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const app = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
 const bench = process.env.TINE_CHECKPOINT_BENCH || path.join(ROOT, "target/release/examples/checkpoint_launch_bench");
+if (!fs.existsSync(bench)) {
+  if (process.env.TINE_CHECKPOINT_BENCH) throw new Error(`TINE_CHECKPOINT_BENCH does not exist: ${bench}`);
+  console.log(`checkpoint_launch_bench missing at ${bench}; building it (cargo build --release -p tine-store --features test-faults --example checkpoint_launch_bench)`);
+  // No memory cap here: only the bench run below is capped; compiling needs more than the bench does.
+  const built = spawnSync("cargo", ["build", "--release", "-p", "tine-store", "--features", "test-faults", "--example", "checkpoint_launch_bench"],
+    { cwd: ROOT, stdio: "inherit", timeout: 1_800_000, env: { ...process.env, CARGO_TARGET_DIR: path.join(ROOT, "target") } });
+  if (built.status !== 0 || !fs.existsSync(bench)) {
+    throw new Error(`could not build the checkpoint_launch_bench example this journey needs (exit ${built.status}${built.error ? `, ${built.error}` : ""}); expected ${bench}`);
+  }
+}
 const driver = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(process.env.CARGO_HOME, "bin/tauri-driver") : "tauri-driver");
 let browser, processGroup, log;
 let stage = "launch";

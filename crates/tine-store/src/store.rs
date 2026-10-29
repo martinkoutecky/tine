@@ -1930,6 +1930,14 @@ impl Store {
                 .push((under.unwrap_or("").to_owned(), error.into())),
         }
         listing.files.sort_by(|a, b| a.rel.cmp(&b.rel));
+        listing.unreadable = listing
+            .unreadable
+            .into_iter()
+            .filter_map(|(rel, error)| {
+                crate::model::unreadable_error(error, "Tine unreadable file producer=area-listing")
+                    .map(|error| (rel, error))
+            })
+            .collect();
         listing.unreadable.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(listing)
     }
@@ -5524,6 +5532,26 @@ mod rev5_tests {
         assert!(listing.files.is_empty());
         drop(store);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_does_not_report_not_found_from_type_or_directory_reads() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("journals")).unwrap();
+        fs::write(root.path().join("journals/2026_10_26.md"), b"- day\n").unwrap();
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        for faults in [
+            (Some("2026_10_26.md".to_owned()), None),
+            (None, Some(String::new())),
+        ] {
+            scan_entry::SCAN_FAULT_KIND.with(|kind| kind.set(std::io::ErrorKind::NotFound));
+            scan_entry::SCAN_FAULTS.with(|known| *known.borrow_mut() = faults);
+            let listing = store.scan_area(Area::Journals, None).unwrap();
+            scan_entry::SCAN_FAULTS.with(|known| *known.borrow_mut() = (None, None));
+            scan_entry::SCAN_FAULT_KIND.with(|kind| kind.set(std::io::ErrorKind::PermissionDenied));
+            assert!(listing.unreadable.is_empty(), "{:?}", listing.unreadable);
+        }
+        store.close();
     }
 
     /// Martin 10/27: a journal a sync tool was replacing (old version moved
