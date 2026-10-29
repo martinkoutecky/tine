@@ -1640,8 +1640,8 @@ domain = "dotgit"
 guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
 test = "src-tauri/src/owner/git_autocommit_tests.rs#sb1_index_lock_refuses_a_redirected_index"
 oracle = false
-note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. A failed lock-identity read removes the lock create_new just made (index_lock_identity_failure_leaves_no_lock_behind). Linux fault evidence; Windows/macOS runtime acceptance pending."
-mutations = ".create_new=1, .write=1, OpenOptions::new=1, fs::remove_file=4, fs::write=1"
+note = "SB1: graph and selected Git metadata directory witnesses plus the shared Store containment check precede mutations and cleanup. Detached cleanup leaves files for inspection. Libgit2/internal and final check-to-call races remain; no page write or model oracle refinement. Linux fault evidence; Windows/macOS runtime acceptance pending."
+mutations = ".create_new=1, .write=1, OpenOptions::new=1, fs::remove_file=3, fs::write=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_run.rs"
@@ -2073,6 +2073,16 @@ test = "src-tauri/src/owner/git_sync/line_endings.rs#crlf_fix_overrides_inherite
 oracle = false
 note = "D-20261028-CRLF: explicit user repair only. RUN_LOCK and index.lock protect a repeated raw-byte probe; bound common-dir config and config.lock containment checks precede libgit2's locked local-config replace. No graph, index or ref publication; a crash leaves conversion enabled or disabled, both safe for the checked bytes. Included/global/system files are never written."
 mutations = ".set_bool=1, .set_multivar=1"
+
+[[site]]
+file = "src-tauri/src/owner/git_run/index_lock_identity.rs"
+fn = "IndexLockIdentity::capture_new"
+domain = "dotgit"
+guard = "src-tauri/src/owner/git_run.rs#GitMutationGuard::check_path"
+test = "src-tauri/src/owner/git_autocommit_tests.rs#index_lock_identity_failure_leaves_no_lock_behind"
+oracle = false
+note = "GS-LOCK-FIX2: called only by IndexLock::acquire right after its guard-checked create_new; a failed identity read removes that just-created, still-empty index.lock (it is Tine's own), so no lock is left behind. No other path."
+mutations = "fs::remove_file=1"
 
 [[site]]
 file = "src-tauri/src/owner/git_run/index_lock_identity.rs"

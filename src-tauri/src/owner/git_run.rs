@@ -639,19 +639,7 @@ impl IndexLock {
                 std::io::ErrorKind::AlreadyExists => LockRefusal::Held,
                 _ => LockRefusal::Failed(format!("{}: {e}", lock_file.display())),
             })?;
-        let identity = match IndexLockIdentity::capture(&lock) {
-            Ok(identity) => identity,
-            Err(e) => {
-                // create_new just made this lock, so it is ours: leaving it
-                // behind would make every later commit (and the user's own
-                // git) report the index as locked.
-                drop(lock);
-                let _ = std::fs::remove_file(&lock_file);
-                return Err(LockRefusal::Failed(format!(
-                    "the index lock identity could not be read: {e}"
-                )));
-            }
-        };
+        let (lock, identity) = IndexLockIdentity::capture_new(lock, &lock_file)?;
         remove_stale_copies(gitdir, &guard);
         let scratch = gitdir.join(format!(
             "{SCRATCH_PREFIX}{}.tmp",

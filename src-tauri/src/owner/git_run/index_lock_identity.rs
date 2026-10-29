@@ -30,6 +30,26 @@ impl IndexLockIdentity {
         Self::from_file(file)
     }
 
+    /// The identity of the lock `create_new` just made at `lock_file`. If it
+    /// cannot be read, the lock is ours, so it is removed again: leaving it
+    /// behind would make every later commit (and the user's own git) report
+    /// the index as locked.
+    pub(super) fn capture_new(
+        lock: std::fs::File,
+        lock_file: &Path,
+    ) -> Result<(std::fs::File, Self), LockRefusal> {
+        match Self::capture(&lock) {
+            Ok(identity) => Ok((lock, identity)),
+            Err(e) => {
+                drop(lock);
+                let _ = std::fs::remove_file(lock_file);
+                Err(LockRefusal::Failed(format!(
+                    "the index lock identity could not be read: {e}"
+                )))
+            }
+        }
+    }
+
     #[cfg(any(
         target_os = "linux",
         target_os = "macos",
