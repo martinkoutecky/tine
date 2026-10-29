@@ -4,12 +4,20 @@ import { releasePdfPage, renderPdfPage } from "./pdfRenderTask";
 
 afterEach(() => { vi.useRealTimers(); });
 
+// Promise.withResolvers needs Node 22; local gates run Node 20.
+type Job = { promise: Promise<void>; resolve: () => void; reject: (error: unknown) => void };
+function deferred(): Job {
+  let resolve!: () => void, reject!: (error: unknown) => void;
+  const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
 function fixture(bytes = 14_641_011) {
   const images = new Map<string, unknown>([["image", { dataLen: bytes }]]);
-  const jobs: ReturnType<typeof Promise.withResolvers<void>>[] = [];
+  const jobs: Job[] = [];
   const cleanup = vi.fn(() => { images.clear(); return true; });
   const page = { objs: images, cleanup, render: vi.fn(() => {
-    const job = Promise.withResolvers<void>(); jobs.push(job);
+    const job = deferred(); jobs.push(job);
     return { promise: job.promise, cancel: vi.fn() };
   }) } as unknown as PDFPageProxy;
   return { page, images, jobs, cleanup };
