@@ -10,7 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- Linux: the carry buttons and the star, share and page-actions icons on a journal title should no longer flicker when the pointer leaves the title row; they now appear and disappear at once instead of fading (the cause was inferred from a screen recording, not yet confirmed on that GPU).
+- Linux: the carry buttons and the star, share and page-actions icons on a journal title should no longer flicker (back at full opacity for a moment after fading out) when the pointer leaves the title row. It showed only with GPU rendering (`TINE_GPU=0` avoided it); the fade is kept.
 
 ## [0.9.0-beta.1] - 2026-10-29
 

@@ -8,27 +8,28 @@ function rule(selector: string): string {
   return new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`).exec(css)?.[1] ?? "";
 }
 
-// Martin's recording (2026-10-29, development on Linux): moving the pointer off a journal
-// title row made the hover-revealed carry buttons (with the star, share and actions
-// icons) fade out, come back at full opacity for a frame or two, and vanish again. The
-// reveal is an opacity change on elements whose only job is to appear on hover; a
-// composited opacity transition is what ends in that flash, so the reveal is a plain
-// switch. Colour/background transitions on hover stay.
-describe("title-row hover reveals do not animate opacity (carry-button flicker)", () => {
-  it.each([".page-carry-actions", ".carry-btn", ".fav-star", ".page-share-btn", ".page-actions-trigger", ".tag-table-toggle"])(
-    "%s has no opacity transition",
-    (selector) => {
-      const body = rule(selector);
-      expect(body).not.toBe("");
-      const transition = /(?:^|;|\s)transition:\s*([^;]*);/.exec(body)?.[1] ?? "";
-      expect(transition).not.toMatch(/\bopacity\b/);
-    },
-  );
+const FADING = [".page-carry-actions", ".fav-star", ".page-share-btn", ".page-actions-trigger", ".tag-table-toggle"];
 
-  it.each([".page-carry-actions", ".fav-star", ".page-share-btn", ".page-actions-trigger", ".tag-table-toggle"])(
-    "%s is still hidden at rest",
+// Martin's recording (2026-10-29, development on Linux; the flicker is gone with TINE_GPU=0): moving
+// the pointer off a journal title row made the hover-revealed carry buttons (with the star, share and
+// actions icons) fade out, come back at full opacity for a frame or two, and vanish again. With GPU
+// compositing, the layer that a running opacity transition creates and removes flashes the old
+// opacity as the fade ends. The fade stays (Martin's call); each fading element instead keeps a
+// standing compositing layer (`will-change: opacity`), so no layer comes and goes. The layer belongs on
+// the small fading element, never on the title row or the whole actions strip.
+describe("title-row hover reveals keep their fade on a standing compositing layer (carry-button flicker)", () => {
+  it.each(FADING)("%s fades and keeps an opacity compositing layer", (selector) => {
+    const body = rule(selector);
+    expect(body).not.toBe("");
+    expect(body).toMatch(/(?:^|;|\s)will-change:\s*opacity\s*;/);
+    expect(/(?:^|;|\s)transition:\s*([^;]*);/.exec(body)?.[1] ?? "").toMatch(/\bopacity\b/);
+    expect(body).toMatch(/opacity:\s*0\s*;/);
+  });
+
+  it.each([".page-title-row", ".page-title-main", ".page-title-actions", ".page-section", ".page-title"])(
+    "%s is not promoted to a layer",
     (selector) => {
-      expect(rule(selector)).toMatch(/opacity:\s*0\s*;/);
+      expect(rule(selector)).not.toMatch(/will-change/);
     },
   );
 });
