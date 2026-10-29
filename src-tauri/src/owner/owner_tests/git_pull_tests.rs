@@ -427,6 +427,59 @@ fn q_git_page_changed_after_the_pre_pull_autocommit_holds_then_diverges() {
     assert_eq!(disk(&graph, "pages/a.md").unwrap(), b"- mine, just now\n");
 }
 
+/// SB1-GITSYNC: another program rewrites a pulled non-page file after the
+/// pages landed and before step 3 writes it (s3.7 MGO's check). The store's
+/// revision guard keeps the outside bytes; the pull holds at `H`, and the
+/// next cycle records the edit and reports the divergence.
+#[test]
+fn q_git_outside_edit_to_a_pulled_file_during_the_apply_is_kept() {
+    test_hook::clear();
+    let graph = Graph::new();
+    let repo = repo(&graph);
+    std::fs::create_dir_all(graph.root.join("assets")).unwrap();
+    std::fs::write(graph.root.join("assets/n.txt"), "note at H\n").unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    assert!(matches!(
+        commit_now(&graph.root, "Tine: autosave").unwrap(),
+        Outcome::Committed(_)
+    ));
+    let slot = graph.slot();
+    let h = head(&repo);
+    upstream(
+        &repo,
+        &[
+            Edit::Write("pages/a.md", b"- theirs\n"),
+            Edit::Write("assets/n.txt", b"note at U\n"),
+        ],
+    );
+    let root = graph.root.clone();
+    test_hook::on_after_host(move || {
+        std::fs::write(root.join("assets/n.txt"), "outside, just now\n").unwrap();
+    });
+    let outcome = pull(&slot);
+    assert_eq!(
+        outcome,
+        PullOutcome::Held(Held::Changed("assets/n.txt".into()))
+    );
+    test_hook::clear();
+    assert_eq!(head(&repo), h);
+    assert_eq!(disk(&graph, "pages/a.md").unwrap(), b"- theirs\n");
+    assert_eq!(
+        disk(&graph, "assets/n.txt").unwrap(),
+        b"outside, just now\n"
+    );
+    assert!(!repo.path().join("index.lock").exists());
+    // Not a half-applied pull (the file holds neither H nor U): the next
+    // cycle's autocommit records it; the remote has other commits.
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    assert!(matches!(pull(&slot), PullOutcome::Diverged(_)));
+    assert_ne!(head(&repo), h);
+    assert_eq!(
+        disk(&graph, "assets/n.txt").unwrap(),
+        b"outside, just now\n"
+    );
+}
+
 /// The model's crash after the index install and before the branch moves
 /// (P1, P1b): the index names `U`'s blobs under `HEAD` = `H`.
 fn crash_after_index(

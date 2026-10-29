@@ -859,3 +859,306 @@ fn commit_only_never_pushes_from_the_background() {
     );
     slot.background_cancelled.store(true, Ordering::Release);
 }
+
+/// A bound graph after a restart: a fresh Store and page host on the same
+/// app data, as the next launch has.
+fn restarted(root: &Path, app_data: &Path) -> GraphSlot {
+    let store = Arc::new(Store::open(root, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    let mut slot = GraphSlot::new(store.clone(), root.to_path_buf());
+    let host = PageHost::start_for_tests(&store, app_data).unwrap();
+    *slot.host.get_mut().unwrap() = PageHostSlot::Running(host);
+    slot
+}
+
+/// The child half of the pull kill test: one sync cycle (fetch, pull through
+/// the page host, index, ref), unless the parent ends this process first.
+fn pull_until_killed(root: &Path, app_data: &Path, marks: &Path) {
+    crate::owner::git_run::configure_libgit2();
+    let slot = restarted(root, app_data);
+    fs::write(marks.join("ready"), "").unwrap();
+    let done = cycle(&slot, &credentials());
+    fs::write(marks.join("done"), done.code).unwrap();
+}
+
+const PULL_KILL_PAGES: usize = 150;
+
+/// Version `i` of the laptop's commit: every numbered page rewritten, the
+/// asset rewritten, `moving` renamed, and `extra` deleted (odd `i`) or
+/// created (even `i`). Version 0 creates them all.
+fn pull_kill_changes(i: usize) -> Vec<(String, Option<String>)> {
+    let mut changes: Vec<(String, Option<String>)> = (0..PULL_KILL_PAGES)
+        .map(|n| {
+            let filler = "lorem ipsum ".repeat(20);
+            (
+                format!("pages/p{n}.md"),
+                Some(format!("- page {n} version {i}\n- {filler}\n")),
+            )
+        })
+        .collect();
+    changes.push(("assets/data.txt".into(), Some(format!("asset {i}\n"))));
+    if i > 0 {
+        changes.push((format!("pages/moving {}.md", i - 1), None));
+    }
+    changes.push((
+        format!("pages/moving {i}.md"),
+        Some("- a page the laptop renames every time\n".into()),
+    ));
+    changes.push((
+        "pages/extra.md".into(),
+        (i % 2 == 0).then(|| format!("- extra {i}\n")),
+    ));
+    changes
+}
+
+#[derive(Debug, Default)]
+struct PullKills {
+    untouched: u32,
+    partial: u32,
+    index_at_u: u32,
+    landed: u32,
+    finished: u32,
+    locks_removed: u32,
+    held_resumes: u32,
+    max_resume_cycles: usize,
+}
+
+/// The OS ends the app in the middle of a pull: during the fetch, between
+/// the page host's publications, during the non-page writes, around the
+/// index and the ref (s3.7 P1/P2 with a real process cut, not a test hook).
+/// The kill is SIGKILL on Unix and TerminateProcess on Windows. After each
+/// one: every pulled path holds whole H or U bytes, the branch is at H or U
+/// and, at U, every changed path and index entry is U's. The next launch
+/// then lands exactly U (no autocommit of the half-applied tree, P3) with
+/// the deleted page's H bytes in the graph trash.
+#[test]
+fn a_pull_the_os_ends_resumes_to_the_fetched_tip() {
+    if let Some(root) = std::env::var_os("TINE_GIT_PULL_KILL_CHILD") {
+        let app = std::env::var_os("TINE_GIT_PULL_KILL_APP").unwrap();
+        let marks = std::env::var_os("TINE_GIT_PULL_KILL_MARKS").unwrap();
+        pull_until_killed(Path::new(&root), Path::new(&app), Path::new(&marks));
+        return;
+    }
+    let phone = Phone::new();
+    let volume = describe_volume(phone.root.parent().unwrap());
+    let marks = phone.private.join("marks");
+    fs::create_dir_all(&marks).unwrap();
+    let name = format!(
+        "{}::a_pull_the_os_ends_resumes_to_the_fetched_tip",
+        module_path!().split_once("::").unwrap().1
+    );
+    let blob_at = |repo: &Repository, commit: Oid, path: &str| {
+        let tree = repo.find_commit(commit).unwrap().tree().unwrap();
+        tree.get_path(Path::new(path)).ok().map(|e| e.id())
+    };
+    let on_disk = |path: &str| {
+        let full = phone.root.join(path);
+        full.is_file()
+            .then(|| Oid::hash_file(git2::ObjectType::Blob, &full).unwrap())
+    };
+    // One child per pull: `None` lets it finish, `Some(d)` kills it `d`
+    // after it is ready. Returns its cycle code if it finished.
+    let run = |kill: Option<Duration>| -> (Option<String>, Duration) {
+        for mark in ["ready", "done"] {
+            let _ = fs::remove_file(marks.join(mark));
+        }
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &name, "--nocapture", "--test-threads=1"])
+            .env("TINE_GIT_PULL_KILL_CHILD", &phone.root)
+            .env("TINE_GIT_PULL_KILL_APP", &phone.app_data)
+            .env("TINE_GIT_PULL_KILL_MARKS", &marks)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !marks.join("ready").exists() {
+            assert!(Instant::now() < deadline, "the child never started");
+            assert!(child.try_wait().unwrap().is_none(), "the child exited");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let started = Instant::now();
+        match kill {
+            Some(delay) => {
+                std::thread::sleep(delay);
+                child.kill().unwrap();
+                child.wait().unwrap();
+            }
+            None => assert!(child.wait().unwrap().success(), "the child failed"),
+        }
+        let elapsed = started.elapsed();
+        (fs::read_to_string(marks.join("done")).ok(), elapsed)
+    };
+    let mut kills = PullKills::default();
+    let mut orphan_temps = std::collections::BTreeSet::new();
+    let mut timing = Duration::ZERO;
+    // Latest kill that left nothing at U; latest that left the branch at H;
+    // earliest that found the branch at U (or the cycle finished).
+    let (mut untouched, mut at_h, mut moved) = (Duration::ZERO, Duration::ZERO, Duration::MAX);
+    let fractions = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.2];
+    let (mut bisect_pages, mut bisect_ref) = (0, 0);
+    let mut i = 0;
+    loop {
+        let kill = if i < 2 {
+            None
+        } else if i - 2 < fractions.len() {
+            Some(timing.mul_f64(fractions[i - 2]))
+        } else if kills.partial == 0 && bisect_pages < 14 {
+            // Bisect between nothing and landed until a kill lands inside
+            // the page writes (required below).
+            bisect_pages += 1;
+            Some(untouched + (moved.min(timing * 2) - untouched) / 2)
+        } else if kills.landed + kills.index_at_u == 0 && bisect_ref < 8 {
+            // Then try for the barrier, index and ref window (recorded,
+            // not required: it is a few milliseconds wide).
+            bisect_ref += 1;
+            Some(at_h + (moved.min(timing * 2) - at_h) / 2)
+        } else {
+            break;
+        };
+        let h = head(&phone.repo);
+        let changes = pull_kill_changes(i);
+        let borrowed: Vec<(&str, Option<&str>)> = changes
+            .iter()
+            .map(|(p, t)| (p.as_str(), t.as_deref()))
+            .collect();
+        let u = phone.peer_pushes(&borrowed);
+        let (done, elapsed) = run(kill);
+        if kill.is_none() {
+            assert_eq!(done.as_deref(), Some("pulled"), "unkilled pull {i}");
+            if i == 1 {
+                timing = elapsed;
+            }
+        }
+        let what = format!("pull {i} killed after {kill:?} (done {done:?}) on {volume}");
+
+        // What the killed process left.
+        let repo = Repository::open(&phone.root).unwrap();
+        let leftovers = assert_whole(&repo, &what);
+        let at = head(&repo);
+        assert!(at == h || at == u, "{what}: the branch is at {at}");
+        let index = repo.index().unwrap();
+        let (mut some_u, mut index_u) = (false, false);
+        for (path, _) in &changes {
+            let (bh, bu) = (blob_at(&phone.bare, h, path), blob_at(&phone.bare, u, path));
+            let disk = on_disk(path);
+            assert!(
+                disk == bh || disk == bu,
+                "{what}: {path} holds neither H's nor U's bytes"
+            );
+            let entry = index.get_path(Path::new(path), 0).map(|e| e.id);
+            assert!(entry == bh || entry == bu, "{what}: {path} index entry");
+            if at == u {
+                assert_eq!(disk, bu, "{what}: at U, {path} is not U's");
+                assert_eq!(entry, bu, "{what}: at U, {path}'s index entry");
+            }
+            some_u |= bh != bu && disk == bu;
+            index_u |= bh != bu && entry == bu;
+        }
+        if done.is_some() {
+            kills.finished += 1;
+        } else if at == u {
+            kills.landed += 1;
+        } else if some_u {
+            kills.partial += 1;
+            kills.index_at_u += u32::from(index_u);
+        } else {
+            kills.untouched += 1;
+        }
+        if let Some(delay) = kill {
+            if at == u || done.is_some() {
+                moved = moved.min(delay);
+            } else {
+                at_h = at_h.max(delay);
+                if !some_u {
+                    untouched = untouched.max(delay);
+                }
+            }
+        }
+        // ADR 0078 §1: Tine never removes a lock a killed process left;
+        // the person does, as Settings tells them.
+        for lock in leftovers
+            .iter()
+            .filter(|p| p.extension().is_some_and(|e| e == "lock"))
+        {
+            kills.locks_removed += 1;
+            fs::remove_file(lock).unwrap();
+        }
+        drop(index);
+
+        // The next launch resumes and lands exactly U.
+        let slot = restarted(&phone.root, &phone.app_data);
+        let mut codes = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while head(&repo) != u && Instant::now() < deadline {
+            if !codes.is_empty() {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            codes.push(cycle(&slot, &credentials()));
+        }
+        kills.max_resume_cycles = kills.max_resume_cycles.max(codes.len());
+        kills.held_resumes += u32::from(codes.len() > 1);
+        assert_eq!(head(&repo), u, "{what}: resumed {codes:?}");
+        // A pull killed inside a page-host operation leaves that operation's
+        // durable custody in app data. The restarted host finishes it first;
+        // until then the pull is held (its page has input, or the store has
+        // not yet seen the host's writes), never diverged or refused.
+        assert!(
+            codes.iter().all(|c| matches!(
+                c.code,
+                "pulled" | "up-to-date" | "pull-held-unsaved" | "pull-held-changed"
+            )),
+            "{what}: resumed {codes:?}"
+        );
+        let index = Repository::open(&phone.root).unwrap().index().unwrap();
+        for (path, _) in &changes {
+            let bu = blob_at(&phone.bare, u, path);
+            assert_eq!(on_disk(path), bu, "{what}: resumed {path}");
+            assert_eq!(index.get_path(Path::new(path), 0).map(|e| e.id), bu);
+        }
+        let dirty: Vec<String> = repo
+            .statuses(Some(git2::StatusOptions::new().include_untracked(true)))
+            .unwrap()
+            .iter()
+            .filter_map(|s| s.path().ok().map(str::to_owned))
+            .filter(|p| !p.starts_with("logseq/.tine-"))
+            .collect();
+        // A publication the kill interrupted leaves its hidden temp file,
+        // as any crash does; autocommit and the watcher skip it.
+        let (temps, dirty): (Vec<String>, Vec<String>) =
+            dirty.into_iter().partition(|p| tine_temp(p));
+        orphan_temps.extend(temps);
+        assert!(dirty.is_empty(), "{what}: resumed with {dirty:?}");
+        assert!(assert_whole(&repo, &what).is_empty(), "{what}: leftovers");
+        if i % 2 == 1 {
+            // The deleted page's H bytes are in the trash (A-TRASH-COUPLED).
+            let kept = format!("- extra {}\n", i - 1);
+            let trash = phone.root.join("logseq/.tine-trash/pages");
+            assert!(
+                fs::read_dir(&trash).unwrap().flatten().any(|e| {
+                    e.file_name().to_string_lossy().ends_with("__extra.md")
+                        && fs::read_to_string(e.path()).ok().as_deref() == Some(kept.as_str())
+                }),
+                "{what}: the deleted page is not in the trash"
+            );
+        }
+        // The cadence commit (the trash copy) and its push, before the
+        // laptop's next commit, as an idle app's interval would.
+        assert!(matches!(
+            commit_now(&phone.root, MESSAGE),
+            Ok(Outcome::Committed(_) | Outcome::Clean)
+        ));
+        let pushed = cycle(&slot, &credentials());
+        assert!(matches!(pushed.code, "pushed" | "up-to-date"), "{pushed:?}");
+        drop(slot);
+        i += 1;
+    }
+    assert!(
+        kills.partial > 0,
+        "no kill landed inside the pull's writes: {kills:?}, one pull takes {timing:?}"
+    );
+    eprintln!(
+        "GIT-PULL-KILL result=PASS pulls={i} pages={PULL_KILL_PAGES} one_pull={timing:?} {kills:?} orphan_temps={} {volume}",
+        orphan_temps.len()
+    );
+}
