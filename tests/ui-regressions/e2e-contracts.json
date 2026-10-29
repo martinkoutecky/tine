@@ -758,6 +758,12 @@
       "nonRequirements": ["No screenshots, geometry, row order, or bundle file names are asserted."],
       "stability": "stable"
     },
+    "scripts/e2e-view-fold.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Readers expand and collapse authored folds in the built quick-share and published viewers, keep choices across page navigation, and restore original folds on reload without mutation requests. Static HTML opens and closes child folds with JavaScript disabled.", "blocking": false }],
+      "acceptableVariations": ["Arrow styling, page layout and bundle filenames can change."],
+      "nonRequirements": ["Exact pixels, native desktop launch, or deployed G1 attestation."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-outline-guide.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "The outline guide toggles collapsible descendants in one accessible action and preserves the parent state.", "blocking": true }],
       "acceptableVariations": ["Guide visual treatment and control placement may evolve."],

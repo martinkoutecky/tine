@@ -6,11 +6,13 @@
  * and their rendered descendants (nearby, revealed, or editing groups; all for
  * printing or without IntersectionObserver). No document mutation or asynchronous
  * failure. IDs/content come from the document door; collapse follows the existing
- * Block surface context, and viewport/font come from DOM. Hosts register
+ * Block surface context (or session folds for read-only sources), and
+ * viewport/font come from DOM. Hosts register
  * descendant ids for model-driven reveal; callers provide only ids.
  */
 import { For, Show, batch, createEffect, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
-import { node } from "../document";
+import { blockPageReadOnly, node } from "../document";
+import { readOnlyFold } from "./block/readOnlyFold";
 import { editingId } from "../editorController";
 import { clearOnBindingInvalidated } from "../binding";
 import { listenForOutlinePrint, printingOutline, registerOutlineWindow } from "../outlineViewport";
@@ -117,7 +119,7 @@ export function blockListProps(idsOf: () => readonly string[]): { readonly each:
     const size = (id: string): number => {
       const n = node(id);
       let count = 1;
-      if (n && !(collapseSurface?.collapsed(id, n.collapsed) ?? n.collapsed)) for (const child of n.children) {
+      if (n && !((blockPageReadOnly(id) ? readOnlyFold : collapseSurface)?.collapsed(id, n.collapsed) ?? n.collapsed)) for (const child of n.children) {
         count += size(child);
         if (count > WINDOW_AT) break;
       }
@@ -186,7 +188,8 @@ function WindowedList(props: { groups: readonly WindowGroup[] }): JSX.Element {
 function BlockWindow(props: { ids: () => readonly string[]; first: boolean; width: number; font: string; observe: (host: HTMLElement, callback: (near: boolean) => void) => () => void }): JSX.Element {
   const surface = useContext(SurfaceContext);
   const collapseSurface = useContext(CollapseSurfaceContext);
-  const collapsed = (id: string, stored: boolean) => collapseSurface?.collapsed(id, stored) ?? stored;
+  const collapsed = (id: string, stored: boolean) =>
+    (blockPageReadOnly(id) ? readOnlyFold : collapseSurface)?.collapsed(id, stored) ?? stored;
   const cacheKey = () => `${surface}\0${props.width}\0${props.font}\0${props.ids()[0]}`;
   let host!: HTMLDivElement;
   const [near, setNear] = createSignal(props.first || typeof IntersectionObserver === "undefined");

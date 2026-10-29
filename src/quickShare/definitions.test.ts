@@ -337,5 +337,6 @@ it("the onboarding Guide says Delete takes the share's Exports definition and wh
   const { readFileSync } = await import("node:fs");
   const guide = readFileSync("crates/tine-core/src/templates/share-pages.md", "utf8");
   for (const detail of ["within about 5 minutes", "a definition the share added to the **Exports page** goes with it",
-    "only loses its `tine.share::` line"]) expect(guide).toContain(detail);
+    "only loses its `tine.share::` line", "fold arrow", "without changing the graph",
+    "reloading restores the original folds", "JavaScript turned off"]) expect(guide).toContain(detail);
 });

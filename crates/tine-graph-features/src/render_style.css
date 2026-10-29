@@ -61,6 +61,19 @@ li::before{content:"";position:absolute;left:-0.95rem;top:.62em;width:5px;height
   background:var(--muted);opacity:.45}
 ul.outline>li::before{display:none}
 .b{padding:1px 0}
+/* Native disclosure on the block row; the ordinary outline bullet stays put.
+   Interactive descendants (including links) retain their native activation. */
+.outline-fold>summary{display:block;list-style:none;cursor:pointer;position:relative}
+.outline-fold>summary::-webkit-details-marker{display:none}
+li.outline-parent::before{display:none}
+.outline-fold>summary::after{content:"";position:absolute;left:-.95rem;top:.62em;
+  width:5px;height:5px;border-radius:50%;background:var(--muted);opacity:.45}
+ul.outline>li>.outline-fold>summary::after,li.ol-item>.outline-fold>summary::after{display:none}
+.outline-fold>summary::before{content:"";position:absolute;left:-1.8rem;top:.45em;
+  border-top:4px solid transparent;border-bottom:4px solid transparent;
+  border-left:6px solid var(--muted);transform-origin:3px 4px;opacity:.65}
+.outline-fold[open]>summary::before{transform:rotate(90deg)}
+.outline-fold>summary:hover::before,.outline-fold>summary:focus-visible::before{opacity:1}
 h1,h2,h3,h4,h5,h6{line-height:1.3;margin:.5rem 0 .2rem;letter-spacing:-.01em}
 h2{font-size:1.4rem}h3{font-size:1.18rem}h4{font-size:1.04rem}
 /* block-level `# heading` bodies render as `.heading-text.h{n}` spans (lsdoc render_html). */

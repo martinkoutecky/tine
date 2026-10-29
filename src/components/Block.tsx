@@ -46,7 +46,7 @@ import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } f
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, prevVisible, nextVisible, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
@@ -108,6 +108,7 @@ import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
 import { ResultWriteTargetContext, liveWriteTarget } from "./queryResultIdentity";
 import { graphEpoch } from "../graphSession";
+import { toggleViewFold, viewFoldSurface } from "./block/readOnlyFold";
 import { changed } from "../changeKeys";
 import { pushToast, dismissToast } from "../toasts";
 import { copyBlockLink } from "./blockLinkCopy";
@@ -256,6 +257,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const surfaceKey = useContext(SurfaceContext);
   const outlineScope = useContext(OutlineScopeContext);
   const collapseSurface = useContext(CollapseSurfaceContext);
+  const viewCollapseSurface = () => viewFoldSurface(props.id, collapseSurface);
   const bulletOpen = useContext(BulletOpenContext);
   const seenRow = useSeenRow(props.id);
   const editing = () => {
@@ -276,7 +278,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   };
   const storedFolded = () => storedFold(props.id); // `collapsed::`, else a query's authored `:collapsed? true` (GH #619 Q8)
   bindCollapseCommandSurface(props.id, collapseSurface, outlineScope, editing);
-  const collapsed = () => collapseSurface?.collapsed(props.id, storedFolded()) ?? storedFolded();
+  const collapsed = () => viewCollapseSurface()?.collapsed(props.id, storedFolded()) ?? storedFolded();
   const fmt = createMemo(() => pageByName(node().page)?.format ?? "md");
   const blockFacets = createMemo<Facets>(() => {
     const n = node();
@@ -396,13 +398,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         <div class="block-controls">
           <span
             class="collapse-toggle"
-            classList={{ "has-children": hasFoldableBody(), disabled: readOnly() }}
-            aria-disabled={readOnly() ? "true" : undefined}
-            onClick={() => {
-              if (readOnly()) return;
-              if (collapseSurface) collapseSurface.toggle(props.id, collapsed());
-              else toggleCollapse(props.id);
-            }}
+            classList={{ "has-children": hasFoldableBody() }}
+            onClick={() => toggleViewFold(props.id, viewCollapseSurface(), collapsed())}
           >
             <Show when={hasFoldableBody()}>
               <svg viewBox="0 0 24 24" class="triangle">
@@ -515,7 +512,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           </Match>
           <Match when={true}>
             <div class="block-children-container">
-              <CollapseAllBorder id={props.id} readOnly={readOnly()} surface={collapseSurface} />
+              <CollapseAllBorder id={props.id} readOnly={readOnly()} surface={viewCollapseSurface()} />
               <div class="block-children">
                 <For {...blockListProps(outlineChildren)} />
               </div>
